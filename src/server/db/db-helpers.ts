@@ -1,10 +1,39 @@
 import { Prisma } from '@prisma/client';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { Pool } from 'pg';
+import { performance } from 'node:perf_hooks';
+import client from 'prom-client';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
+
+// Histogram for pg Pool acquire latency. Defined here (not in prom/client.ts)
+// to avoid a module-init cycle: prom/client.ts imports pgDb/notifDb/datapacketDb,
+// which import db-helpers. If db-helpers also imported a const from prom/client.ts,
+// webpack's CJS-style chunking can leave that binding in a Temporal Dead Zone
+// during module init — observed as "Cannot access 'S' before initialization" +
+// V8 heap OOM on PR-preview 2322 (commit 664aa4c2e).
+//
+// prom-client itself has no cycle back into our code, so importing it directly
+// is safe. Unprefixed name matches the existing node_postgres_pool_* gauges in
+// prom/client.ts so dashboards correlate on the same metric family.
+const PG_POOL_ACQUIRE_HISTOGRAM_NAME = 'node_postgres_pool_acquire_duration_seconds';
+const pgPoolAcquireHistogram = (() => {
+  try {
+    return new client.Histogram({
+      name: PG_POOL_ACQUIRE_HISTOGRAM_NAME,
+      help: 'Time spent awaiting a connection from a pg.Pool, by pool instance and result',
+      labelNames: ['pool', 'result'] as const,
+      buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+    });
+  } catch {
+    // HMR re-registration: prom-client throws on duplicate; reuse the existing one
+    return client.register.getSingleMetric(PG_POOL_ACQUIRE_HISTOGRAM_NAME) as client.Histogram<
+      'pool' | 'result'
+    >;
+  }
+})();
 
 const log = createLogger('pgDb', 'blue');
 
@@ -122,6 +151,50 @@ export function getClient(
     });
   }
 
+  // Wrap pool.connect() to record acquire latency. The pg.Pool `acquire` event fires
+  // when a client is handed out — it does NOT tell you how long the caller awaited.
+  // Timing around the await is the only way to see queue-wait time, which is the
+  // signal we want during pool-saturation incidents.
+  //
+  // pool.connect has two forms: Promise (no args) and callback ((err, client, done) => ...).
+  // Pool.prototype.query uses the CALLBACK form internally, so any pool.query(...) caller
+  // (including the /api/health probe) routes through here via that path. The async wrap
+  // resolves immediately for the callback form (pg-pool returns undefined synchronously),
+  // so we must wrap the callback itself to time when the client is actually delivered.
+  const originalConnect = pool.connect.bind(pool) as typeof pool.connect;
+  pool.connect = ((...args: Parameters<typeof pool.connect>) => {
+    const start = performance.now();
+    const elapsedSeconds = () => (performance.now() - start) / 1000;
+
+    // Callback form: pool.connect((err, client, done) => ...)
+    if (typeof args[0] === 'function') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cb = args[0] as (err: Error | undefined, client: any, done: any) => void;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (originalConnect as any)((err: Error | undefined, client: any, done: any) => {
+        pgPoolAcquireHistogram.observe(
+          { pool: instance, result: err ? 'err' : 'ok' },
+          elapsedSeconds()
+        );
+        cb(err, client, done);
+      });
+    }
+
+    // Promise form: await pool.connect()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (originalConnect as any)(...args).then(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (conn: any) => {
+        pgPoolAcquireHistogram.observe({ pool: instance, result: 'ok' }, elapsedSeconds());
+        return conn;
+      },
+      (e: unknown) => {
+        pgPoolAcquireHistogram.observe({ pool: instance, result: 'err' }, elapsedSeconds());
+        throw e;
+      }
+    );
+  }) as typeof pool.connect;
+
   pool.cancellableQuery = async function <R extends QueryResultRow = any>(
     sql: Prisma.Sql | string,
     params?: any[]
@@ -178,6 +251,49 @@ export function getClient(
   };
 
   return pool;
+}
+
+/**
+ * Run a read-only query against the given pool with a server-side
+ * `statement_timeout` ceiling. Uses an explicit BEGIN READ ONLY / SET LOCAL
+ * / COMMIT so the timeout is scoped to this transaction even under PgBouncer
+ * transaction pooling.
+ *
+ * Accepts either a Prisma.Sql (preferred — the codebase's raw-query convention)
+ * or a (text, params) pair, matching the shape of pg's `Pool.query`.
+ *
+ * Throws pg error with code `'57014'` (query_canceled) on timeout — callers
+ * should catch and decide whether to surface, return an empty page, or retry.
+ *
+ * Note: `timeoutMs` is interpolated literally because PostgreSQL does not
+ * accept `$1`-parameterized values in `SET LOCAL`. The argument MUST be a
+ * trusted JS number — never user input. `Number(...)` is a defensive cast.
+ */
+export async function queryWithTimeout<R extends QueryResultRow = any>(
+  pool: Pool,
+  timeoutMs: number,
+  sql: Prisma.Sql | string,
+  params?: ReadonlyArray<unknown>
+): Promise<QueryResult<R>> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN READ ONLY');
+    await client.query(`SET LOCAL statement_timeout = ${Number(timeoutMs)}`);
+    let result: QueryResult<R>;
+    if (typeof sql === 'string') {
+      result = await client.query<R>(sql, params as unknown[] | undefined);
+    } else {
+      // Prisma.Sql carries its own params in `.values`; pass as QueryConfig
+      result = await client.query<R>({ text: sql.text, values: sql.values });
+    }
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 function formatSqlType(value: any): string {

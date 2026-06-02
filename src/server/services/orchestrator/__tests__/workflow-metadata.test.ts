@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { buildStepSource, resolveStepSource } from '../workflow-metadata';
 import { getStepParams, getStepResources, WorkflowData, StepData } from '../index';
 import type { WorkflowDataOptions } from '../index';
 import type {
@@ -14,263 +13,6 @@ const defaultOptions: WorkflowDataOptions = {
 };
 
 // =============================================================================
-// Write Path
-// =============================================================================
-
-describe('buildStepSource', () => {
-  it('wraps source metadata in a source field', () => {
-    const result = buildStepSource({
-      params: { prompt: 'a cat', steps: 30 },
-      resources: [{ id: 123, model: 'sd15' }],
-    });
-
-    expect(result).toEqual({
-      source: {
-        params: { prompt: 'a cat', steps: 30 },
-        resources: [{ id: 123, model: 'sd15' }],
-      },
-    });
-  });
-
-  it('returns undefined when no source metadata', () => {
-    expect(buildStepSource(undefined)).toBeUndefined();
-  });
-
-  it('defaults missing params and resources to empty', () => {
-    const result = buildStepSource({});
-
-    expect(result).toEqual({
-      source: {
-        params: {},
-        resources: [],
-      },
-    });
-  });
-
-  it('passes flags through to source alongside params/resources', () => {
-    const result = buildStepSource({
-      params: { prompt: 'a cat' },
-      resources: [{ id: 1 }],
-      remixOfId: 42,
-    });
-
-    expect(result).toEqual({
-      source: {
-        params: { prompt: 'a cat' },
-        resources: [{ id: 1 }],
-        remixOfId: 42,
-      },
-    });
-  });
-
-  it('produces different source metadata per step (multi-step batch upscale)', () => {
-    const source1 = buildStepSource({
-      params: { prompt: 'a cat' },
-      resources: [{ id: 1 }],
-    });
-
-    const source2 = buildStepSource({
-      params: { prompt: 'a dog' },
-      resources: [{ id: 2 }],
-    });
-
-    expect(source1!.source.params).toEqual({ prompt: 'a cat' });
-    expect(source2!.source.params).toEqual({ prompt: 'a dog' });
-  });
-});
-
-// =============================================================================
-// Read Path
-// =============================================================================
-
-describe('resolveStepSource', () => {
-  it('returns source from new format (step.metadata.source)', () => {
-    const stepMeta = {
-      params: { upscaler: '4x-ultrasharp' },
-      resources: [],
-      source: {
-        params: { prompt: 'a cat', steps: 30 },
-        resources: [{ id: 123 }],
-      },
-    };
-
-    const result = resolveStepSource(stepMeta);
-
-    expect(result).toEqual({
-      params: { prompt: 'a cat', steps: 30 },
-      resources: [{ id: 123 }],
-    });
-  });
-
-  it('returns step root params/resources for legacy with transformations', () => {
-    const stepMeta = {
-      params: { prompt: 'original generation' },
-      resources: [{ id: 1 }],
-      transformations: [
-        {
-          workflow: 'img2img:upscale',
-          params: { upscaler: '4x-ultrasharp' },
-          resources: [{ id: 10 }],
-        },
-      ],
-    };
-
-    const result = resolveStepSource(stepMeta);
-
-    // In legacy format, step.metadata root IS the original generation
-    expect(result).toEqual({
-      params: { prompt: 'original generation' },
-      resources: [{ id: 1 }],
-    });
-  });
-
-  it('returns undefined for legacy without transformations (not an enhancement)', () => {
-    const stepMeta = {
-      params: { prompt: 'a cat' },
-      resources: [{ id: 1 }],
-    };
-
-    expect(resolveStepSource(stepMeta)).toBeUndefined();
-  });
-
-  it('returns undefined for empty step metadata', () => {
-    expect(resolveStepSource({})).toBeUndefined();
-  });
-
-  it('returns flags from new format source', () => {
-    const stepMeta = {
-      params: { upscaler: '4x-ultrasharp' },
-      resources: [],
-      source: {
-        params: { prompt: 'a cat' },
-        resources: [{ id: 1 }],
-        remixOfId: 42,
-      },
-    };
-
-    const result = resolveStepSource(stepMeta);
-    expect(result).toEqual({
-      params: { prompt: 'a cat' },
-      resources: [{ id: 1 }],
-      remixOfId: 42,
-    });
-  });
-
-  it('returns flags from legacy with transformations', () => {
-    const stepMeta = {
-      params: { prompt: 'a cat' },
-      resources: [{ id: 1 }],
-      remixOfId: 42,
-      isPrivateGeneration: true,
-      transformations: [
-        { workflow: 'img2img:upscale', params: { upscaler: '4x-ultrasharp' }, resources: [] },
-      ],
-    };
-
-    const result = resolveStepSource(stepMeta);
-    expect(result).toEqual({
-      params: { prompt: 'a cat' },
-      resources: [{ id: 1 }],
-      remixOfId: 42,
-      isPrivateGeneration: true,
-    });
-  });
-
-  it('prefers new format source over legacy transformations', () => {
-    const stepMeta = {
-      source: { params: { prompt: 'new source' }, resources: [] },
-      params: { prompt: 'legacy root' },
-      resources: [{ id: 1 }],
-      transformations: [{ workflow: 'upscale', params: {}, resources: [] }],
-    };
-
-    const result = resolveStepSource(stepMeta);
-
-    expect(result).toEqual({
-      params: { prompt: 'new source' },
-      resources: [],
-    });
-  });
-});
-
-// =============================================================================
-// Round-trip: Write → Read
-// =============================================================================
-
-describe('round-trip: write then read', () => {
-  it('standard generation — no source', () => {
-    const stepMeta = {
-      params: { prompt: 'a cat', steps: 30 },
-      resources: [{ id: 123 }],
-      remixOfId: 42,
-    };
-
-    const source = resolveStepSource(stepMeta);
-    expect(source).toBeUndefined();
-  });
-
-  it('enhancement step — source round-trips', () => {
-    const originalGeneration = {
-      params: { prompt: 'a cat', steps: 30 },
-      resources: [{ id: 123 }],
-    };
-
-    // Write: build source for enhancement step
-    const sourceField = buildStepSource(originalGeneration);
-    const stepMeta = {
-      params: { upscaler: '4x-ultrasharp', creativity: 0.5 },
-      resources: [],
-      ...sourceField,
-    };
-
-    // Read: resolve source
-    const resolved = resolveStepSource(stepMeta);
-
-    expect(resolved).toEqual({
-      params: { prompt: 'a cat', steps: 30 },
-      resources: [{ id: 123 }],
-    });
-  });
-
-  it('enhancement step — flags round-trip through source', () => {
-    const originalGeneration = {
-      params: { prompt: 'a cat', steps: 30 },
-      resources: [{ id: 123 }],
-      remixOfId: 42,
-    };
-
-    const sourceField = buildStepSource(originalGeneration);
-    const stepMeta = {
-      params: { upscaler: '4x-ultrasharp' },
-      resources: [],
-      ...sourceField,
-    };
-
-    const resolved = resolveStepSource(stepMeta);
-    expect(resolved!.remixOfId).toBe(42);
-    expect(resolved!.params).toEqual({ prompt: 'a cat', steps: 30 });
-  });
-
-  it('batch upscale — per-step source round-trips', () => {
-    const upscaleParams = { upscaler: '4x-ultrasharp' };
-
-    const step0Meta = {
-      params: upscaleParams,
-      resources: [],
-      ...buildStepSource({ params: { prompt: 'a cat' }, resources: [{ id: 1 }] }),
-    };
-    const step1Meta = {
-      params: upscaleParams,
-      resources: [],
-      ...buildStepSource({ params: { prompt: 'a dog' }, resources: [{ id: 2 }] }),
-    };
-
-    expect(resolveStepSource(step0Meta)!.params).toEqual({ prompt: 'a cat' });
-    expect(resolveStepSource(step1Meta)!.params).toEqual({ prompt: 'a dog' });
-  });
-});
-
-// =============================================================================
 // Client helpers: getStepParams / getStepResources
 // =============================================================================
 
@@ -283,9 +25,7 @@ function makeStep(metadata: Partial<NormalizedStep['metadata']>): NormalizedStep
   } as NormalizedStep;
 }
 
-function makeWorkflow(
-  metadata?: NormalizedWorkflow['metadata']
-): NormalizedWorkflow {
+function makeWorkflow(metadata?: NormalizedWorkflow['metadata']): NormalizedWorkflow {
   return {
     id: 'wf-1',
     status: 'succeeded',
@@ -526,6 +266,67 @@ describe('StepData', () => {
     const sd = new StepData(step, wf);
 
     expect(sd.params).toEqual({ prompt: 'wf prompt', steps: 20 });
+  });
+
+  it('enhancement step (sourceLineage): does NOT leak workflow form fields into source params', () => {
+    // Enhancement steps are flagged `sourceLineage: true` by the server and store the
+    // SOURCE generation's complete params; the workflow-level metadata is the upscale form
+    // input. The two must NOT merge â€” otherwise a remix of the upscaled output picks up the
+    // upscale form's `images`/`upscaler`/`workflow` and behaves like the enhancement
+    // workflow. Mirrors the real EXIF-sourced case where the source params carry no
+    // `workflow` key, so a merge would leak `img2img:upscale`.
+    const step = makeStep({
+      sourceLineage: true,
+      params: { prompt: 'a cat', seed: 123, baseModel: 'SDXL' },
+    });
+    const wf = makeWorkflowData({
+      params: {
+        workflow: 'img2img:upscale',
+        images: [{ url: 'https://example/source.png', width: 512, height: 512 }],
+        upscaler: 'air:upscaler',
+        upscaleWidth: 1024,
+        upscaleHeight: 1024,
+        outputFormat: 'png',
+      } as any,
+      resources: [],
+    });
+    const sd = new StepData(step, wf);
+
+    // Pure source params â€” none of the upscale form fields (incl. the workflow key) leak.
+    expect(sd.params).toEqual({ prompt: 'a cat', seed: 123, baseModel: 'SDXL' });
+  });
+
+  it('wildcard/snippet step (no sourceLineage): MERGES partial delta over workflow params', () => {
+    // Snippet variants store ONLY the substituted prompt fields on the step and rely on
+    // workflow.metadata.params for the full settings snapshot. Without sourceLineage the
+    // step delta must merge over the workflow params (step wins per-field).
+    const step = makeStep({
+      params: { prompt: 'a substituted cat', negativePrompt: 'blurry' },
+    });
+    const wf = makeWorkflowData({
+      params: {
+        workflow: 'txt2img',
+        prompt: 'a #animal', // template prompt â€” overridden by the substituted step prompt
+        negativePrompt: 'lowres', // overridden too
+        steps: 30,
+        cfgScale: 7,
+        sampler: 'Euler a',
+        seed: 999,
+      } as any,
+      resources: [],
+    });
+    const sd = new StepData(step, wf);
+
+    // Step delta wins on prompt/negativePrompt; all other settings come from workflow.
+    expect(sd.params).toEqual({
+      workflow: 'txt2img',
+      prompt: 'a substituted cat',
+      negativePrompt: 'blurry',
+      steps: 30,
+      cfgScale: 7,
+      sampler: 'Euler a',
+      seed: 999,
+    });
   });
 
   it('returns step resources when present', () => {

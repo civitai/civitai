@@ -686,7 +686,7 @@ export default function ModelDetailsV2({
     ...(totalRatingCount > 0 && {
       aggregateRating: {
         '@type': 'AggregateRating',
-        ratingValue: Math.min(Math.ceil((thumbsUpCount / totalRatingCount) * 5), 5),
+        ratingValue: Math.max(Math.min(Math.ceil((thumbsUpCount / totalRatingCount) * 5), 5), 1),
         reviewCount: totalRatingCount,
         bestRating: 5,
         worstRating: 1,
@@ -791,6 +791,7 @@ export default function ModelDetailsV2({
                   {latestGenerationVersion && (
                     <GenerateButton
                       versionId={latestGenerationVersion.id}
+                      modelId={model.id}
                       data-activity="create:model-stat"
                     >
                       <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>

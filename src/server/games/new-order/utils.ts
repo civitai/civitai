@@ -744,23 +744,82 @@ export const getImageRatingsCounter = (imageId: number) => {
   return counter;
 };
 
-type VotingRateLimitConfig = {
+export type VotingRateLimitConfig = {
   perMinute: number;
   perHour: number;
   perDay: number;
-  abuseThreshold: number;
+  /** Have the daily abuse-detection job auto-smite suspects matching strict signals. Off by default. */
+  autoSmiteAbusers?: boolean;
+  /**
+   * Tunable thresholds for the daily abuse-detection job. Live values come
+   * from Redis so they're not leaked via the public source tree — defaults
+   * here are a non-load-bearing fallback for first-boot before ops seeds the
+   * config. Calibrate against real queue composition and revisit as the
+   * NSFW sampling rate / pool mix shifts.
+   */
+  abuseDetection?: {
+    /** HAVING totalRatings >= X — minimum daily vote count to be considered. */
+    minTotalRatings?: number;
+    /** HAVING dominantPct >= X — detection-pool floor for skewed distributions. */
+    havingDominantPct?: number;
+    /** HAVING avgPerMinute > X — detection-pool floor for burst voting. */
+    havingAvgPerMinute?: number;
+    /** Smite filter — issue smite when dominantPct >= X. */
+    smiteDominantPct?: number;
+    /** Smite filter — issue smite when uniqueRatings <= X. */
+    smiteMaxUniqueRatings?: number;
+  };
+  /**
+   * Per-rank weight array indexed by priority slot (index 0 = priority 1, etc.).
+   * Used by `getImagesQueue` to mix images across pools instead of draining
+   * them in strict priority order — fixes the case where one pool dominates
+   * (e.g. Knight1 SFW flood starves Knight2 NSFW). Weights are renormalized
+   * over non-empty pools at read time, and missing/zero entries are treated
+   * as "do not pull from this pool". When the rank key is absent, the loop
+   * falls back to the legacy sequential drain.
+   */
+  poolQuotas?: Partial<Record<NewOrderRankType, number[]>>;
 };
 
-const DENIED_RESPONSE = { allowed: false, remaining: 0, resetTime: 0, isAbuse: false } as const;
+// Re-export the pure quota math from a side-effect-free module so unit tests
+// can import it without booting Redis/ClickHouse/DB modules transitively.
+export { DEFAULT_POOL_QUOTAS, computePoolTargets } from './pool-quotas';
+
+const DENIED_RESPONSE = { allowed: false, remaining: 0, cooldownUntil: 0 } as const;
 const MINUTE_WINDOW = 60 * 1000;
 const HOUR_WINDOW = 60 * MINUTE_WINDOW;
 const DAY_WINDOW = 24 * HOUR_WINDOW;
+
+// Cooldown durations matching each tripped window. Bots that hammer the
+// endpoint get locked out for wall-clock time rather than a 60s slide so
+// retry spam becomes uneconomical.
+const COOLDOWN_MS = {
+  minute: 10 * MINUTE_WINDOW,
+  hour: HOUR_WINDOW,
+  day: DAY_WINDOW,
+} as const;
+
+/**
+ * Read the active voting cooldown for a user. Returns the cooldown expiry
+ * timestamp (ms epoch) or null if no cooldown is active. Used by getPlayer
+ * to hydrate the UI so the countdown survives a page reload.
+ */
+export async function getVotingCooldownUntil(userId: number): Promise<number | null> {
+  if (!redis) return null;
+  try {
+    const key = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.COOLDOWN}:${userId}` as const;
+    const pttl = await redis.pTTL(key);
+    return pttl > 0 ? Date.now() + pttl : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Get rate limit config from Redis. Returns null if unavailable — callers
  * should deny the vote when config is not available.
  */
-async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig | null> {
+export async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig | null> {
   try {
     return await sysRedis.packed.get<VotingRateLimitConfig>(REDIS_SYS_KEYS.NEW_ORDER.CONFIG);
   } catch {
@@ -772,8 +831,7 @@ async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig | null>
 export async function checkVotingRateLimit(userId: number): Promise<{
   allowed: boolean;
   remaining: number;
-  resetTime: number;
-  isAbuse: boolean;
+  cooldownUntil: number;
 }> {
   if (!redis) {
     logToAxiom({
@@ -800,8 +858,15 @@ export async function checkVotingRateLimit(userId: number): Promise<{
   const minuteKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.MINUTE}:${userId}` as const;
   const hourKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.HOUR}:${userId}` as const;
   const dayKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.DAY}:${userId}` as const;
+  const cooldownKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.COOLDOWN}:${userId}` as const;
 
   try {
+    // Short-circuit if cooldown is active — bots can't slide past with retries.
+    const cooldownPttl = await redis.pTTL(cooldownKey);
+    if (cooldownPttl > 0) {
+      return { allowed: false, remaining: 0, cooldownUntil: now + cooldownPttl };
+    }
+
     // Clean up old entries
     await Promise.all([
       redis.zRemRangeByScore(minuteKey, '-inf', now - MINUTE_WINDOW),
@@ -816,12 +881,11 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       redis.zCard(dayKey),
     ]);
 
-    // Check limits
+    // Check limits — narrowest window first so the cooldown matches the trip
     const minuteAllowed = minuteCount < limits.perMinute;
     const hourAllowed = hourCount < limits.perHour;
     const dayAllowed = dayCount < limits.perDay;
-    const isAbuse = hourCount >= limits.abuseThreshold;
-    const allowed = minuteAllowed && hourAllowed && dayAllowed && !isAbuse;
+    const allowed = minuteAllowed && hourAllowed && dayAllowed;
 
     if (allowed) {
       // Add current request — use individual commands instead of multi() to avoid
@@ -837,13 +901,42 @@ export async function checkVotingRateLimit(userId: number): Promise<{
         redis.expire(hourKey, 3600),
         redis.expire(dayKey, 86400),
       ]);
+
+      return {
+        allowed: true,
+        remaining: Math.max(0, limits.perMinute - minuteCount - 1),
+        cooldownUntil: 0,
+      };
     }
 
+    // Trip → set cooldown matching the narrowest tripped window.
+    // Max-merge atomically via Lua: never shrink an active longer cooldown. A naive
+    // check-then-SET races when two trips on different windows land concurrently —
+    // the second SET could overwrite a longer cooldown with a shorter one.
+    const cooldownMs = !minuteAllowed
+      ? COOLDOWN_MS.minute
+      : !hourAllowed
+      ? COOLDOWN_MS.hour
+      : COOLDOWN_MS.day;
+
+    const maxMergeScript = `
+      local cur = redis.call('PTTL', KEYS[1])
+      local req = tonumber(ARGV[1])
+      if cur < req then
+        redis.call('SET', KEYS[1], '1', 'PX', req)
+        return req
+      end
+      return cur
+    `;
+    const effectiveCooldownMs = (await redis.eval(maxMergeScript, {
+      keys: [cooldownKey],
+      arguments: [cooldownMs.toString()],
+    })) as number;
+
     return {
-      allowed,
-      remaining: Math.max(0, limits.perMinute - minuteCount - (allowed ? 1 : 0)),
-      resetTime: now + MINUTE_WINDOW,
-      isAbuse,
+      allowed: false,
+      remaining: 0,
+      cooldownUntil: now + effectiveCooldownMs,
     };
   } catch (error) {
     handleLogError(error as Error, `Rate limiting failed for user ${userId}`);

@@ -5,6 +5,7 @@
 import type { IncomingMessage } from 'http';
 import type { NextApiRequest } from 'next';
 import type { NextRequest } from 'next/server';
+import { isDev } from '~/env/other';
 
 export type RegionInfo = {
   countryCode: string | null;
@@ -203,7 +204,7 @@ export function getRegion(req: NextRequest | NextApiRequest | IncomingMessage) {
     req.headers instanceof Headers
       ? req.headers.get('cf-ipcountry')
       : (req.headers['cf-ipcountry'] as string | null);
-  const regionCode =
+  let regionCode =
     req.headers instanceof Headers
       ? req.headers.get('cf-region-code')
       : (req.headers['cf-region-code'] as string | null);
@@ -215,6 +216,18 @@ export function getRegion(req: NextRequest | NextApiRequest | IncomingMessage) {
   // Override countryCode to GB if x-isuk header is present
   if (isUKHeader === 'true' || isUKHeader === '1') {
     countryCode = 'GB';
+  }
+
+  // Local dev requests don't route through Cloudflare, so cf-ipcountry/cf-region-code are absent.
+  // Default to US:CA so CIPA consent-gate flows can be tested without a CA VPN. Override with
+  // DEV_REGION_OVERRIDE (e.g. "US:CA", "GB", "US:NY").
+  if (isDev && !countryCode) {
+    const override = process.env.DEV_REGION_OVERRIDE ?? 'US:CA';
+    const [c, r] = override.split(':');
+    // Cloudflare emits uppercase codes (US, CA). Normalize the override so a
+    // lowercase value like "us:ca" still matches CONSENT_REQUIRED_REGIONS.
+    countryCode = c?.trim().toUpperCase() || null;
+    regionCode = r?.trim().toUpperCase() || null;
   }
 
   return {

@@ -137,6 +137,7 @@ export const ModelVersionEarlyAccessPurchase = ({
                   {resourceLabel}{' '}
                   <GenerateButton
                     versionId={modelVersionId}
+                    modelId={modelVersion?.model?.id}
                     data-activity="create:version-stat"
                     onClick={() => {
                       dialog.onClose();

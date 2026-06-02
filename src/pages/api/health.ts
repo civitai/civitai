@@ -6,8 +6,16 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
-import { metricsSearchClient } from '~/server/meilisearch/client';
-import { registerCounter } from '~/server/prom/client';
+import {
+  MeiliCallTimeoutError,
+  metricsSearchClient,
+  withMeiliHealthProbe,
+} from '~/server/meilisearch/client';
+import {
+  registerCounter,
+  registerCounterWithLabels,
+  registerHistogram,
+} from '~/server/prom/client';
 import { redis, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -89,8 +97,17 @@ const checkFns: Record<string, CancellableCheckFn> = {
 
   async searchMetrics(signal: AbortSignal) {
     if (signal.aborted) return false;
-    if (metricsSearchClient === null) return true;
-    return await metricsSearchClient.isHealthy().catch((e) => {
+    const client = metricsSearchClient;
+    if (client === null) return true;
+    // Wrap under withMeiliHealthProbe() — a dedicated tiny limiter that's
+    // ISOLATED from the user-traffic 'metricsSearch' limiter. Without this
+    // isolation, a backend brownout starves the probe first (because user
+    // calls fill the main limiter), kubelet trips at 10s, pods SIGKILL —
+    // exactly the 2026-05-29 cascade. The probe also inherits
+    // MEILI_CALL_TIMEOUT_MS so it can't hang.
+    // A MeiliCallTimeoutError here means "Meili is sick" → probe failure.
+    return await withMeiliHealthProbe(() => client.isHealthy()).catch((e) => {
+      if (e instanceof MeiliCallTimeoutError) return false;
       logError({ error: e, name: 'metricsSearch', details: null });
       return false;
     });
@@ -154,6 +171,30 @@ const counters = (() =>
     return agg;
   }, {} as Record<CheckKey | 'overall', client.Counter>))();
 
+// New per-attempt outcome counter (success | failure | timeout) and per-check
+// duration histogram. Added alongside the legacy per-check counters so existing
+// Grafana dashboards keep working — these metrics ADD signal, they do not
+// replace anything. See PR description for diagnostic context.
+const healthcheckAttemptsCounter = registerCounterWithLabels({
+  name: 'healthcheck_attempts_total',
+  help: 'Healthcheck attempts by check name and outcome (success|failure|timeout)',
+  labelNames: ['name', 'result'] as const,
+});
+
+const healthcheckDurationHistogram = registerHistogram({
+  name: 'healthcheck_duration_seconds',
+  help: 'Healthcheck wall-clock duration in seconds by check name',
+  labelNames: ['name'] as const,
+  // Buckets span 1ms..30s. Denser between 1-3.5s because that's where the
+  // HEALTHCHECK_TIMEOUT brownout zone lives — coarse buckets there make
+  // P95/P99 estimates useless for diagnosing the failure mode this exists for.
+  buckets: [
+    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 2.5, 3.5, 5, 7.5, 10, 15, 20, 30,
+  ],
+});
+
+type CheckOutcome = 'success' | 'failure' | 'timeout';
+
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
@@ -184,11 +225,20 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       .filter(([name]) => !disabledChecks.includes(name as CheckKey))
       .map(([name, fn]) =>
         runCheckWithTimeout(fn, signal, env.HEALTHCHECK_TIMEOUT)
-          .then((result) => {
+          .then(({ result, outcome, durationSeconds }) => {
+            // Existing per-check counter — preserved for Grafana dashboard back-compat.
             if (!result) counters[name as CheckKey]?.inc();
+            // New per-attempt outcome + duration metrics.
+            healthcheckAttemptsCounter.inc({ name, result: outcome });
+            healthcheckDurationHistogram.observe({ name }, durationSeconds);
             return { [name]: result };
           })
-          .catch(() => ({ [name]: false }))
+          .catch(() => {
+            // Defensive: runCheckWithTimeout already swallows inner errors,
+            // but if anything escapes treat as a failure for the attempts counter.
+            healthcheckAttemptsCounter.inc({ name, result: 'failure' });
+            return { [name]: false };
+          })
       )
   );
 
@@ -225,13 +275,23 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 /**
  * Run a cancellable check function with timeout.
  * The signal is passed to the check function for proper cancellation support.
+ *
+ * Returns the boolean result plus the diagnostic outcome (success/failure/
+ * timeout) and wall-clock duration. The outcome distinguishes "the dep
+ * returned/threw false" from "Promise.race hit the timeout ceiling" — the
+ * timeout path used to be invisible because it just resolved to false.
  */
 async function runCheckWithTimeout(
   fn: CancellableCheckFn,
   signal: AbortSignal,
   timeout: number
-): Promise<boolean> {
-  if (signal.aborted) return false;
+): Promise<{ result: boolean; outcome: CheckOutcome; durationSeconds: number }> {
+  const startNs = process.hrtime.bigint();
+  const elapsedSeconds = () => Number(process.hrtime.bigint() - startNs) / 1e9;
+
+  if (signal.aborted) {
+    return { result: false, outcome: 'failure', durationSeconds: elapsedSeconds() };
+  }
 
   // Create a combined signal that aborts on either:
   // 1. The parent signal (client disconnect)
@@ -250,15 +310,32 @@ async function runCheckWithTimeout(
   // (redis, clickhouse, meili) ignore AbortSignal on simple commands,
   // so signal-only cancellation can hang forever. Promise.race enforces
   // the ceiling regardless of signal support.
-  const timeoutPromise = new Promise<boolean>((resolve) => {
-    timeoutController.signal.addEventListener('abort', () => resolve(false), { once: true });
+  //
+  // Tag each branch of the race so the outer code can tell which one won
+  // — "timeout" vs "fn returned false" used to be indistinguishable.
+  const timeoutPromise = new Promise<{ kind: 'timeout' }>((resolve) => {
+    timeoutController.signal.addEventListener('abort', () => resolve({ kind: 'timeout' }), {
+      once: true,
+    });
   });
+  const fnPromise = fn(combinedController.signal).then(
+    (value) => ({ kind: 'value' as const, value }),
+    () => ({ kind: 'error' as const })
+  );
 
   try {
-    return await Promise.race([
-      fn(combinedController.signal).catch(() => false),
-      timeoutPromise,
-    ]);
+    const race = await Promise.race([fnPromise, timeoutPromise]);
+    if (race.kind === 'timeout') {
+      return { result: false, outcome: 'timeout', durationSeconds: elapsedSeconds() };
+    }
+    if (race.kind === 'error') {
+      return { result: false, outcome: 'failure', durationSeconds: elapsedSeconds() };
+    }
+    return {
+      result: race.value,
+      outcome: race.value ? 'success' : 'failure',
+      durationSeconds: elapsedSeconds(),
+    };
   } finally {
     clearTimeout(timeoutId);
     signal.removeEventListener('abort', abortCombined);

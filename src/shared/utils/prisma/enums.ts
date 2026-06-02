@@ -56,6 +56,7 @@ export const CashWithdrawalStatus = {
   PendingPayerFunds: 'PendingPayerFunds',
   InternalValue: 'InternalValue',
   FailedFee: 'FailedFee',
+  Reclaimed: 'Reclaimed',
 } as const;
 
 export type CashWithdrawalStatus = (typeof CashWithdrawalStatus)[keyof typeof CashWithdrawalStatus];

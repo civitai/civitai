@@ -207,9 +207,7 @@ export const createSubscribeSession = async ({
       });
 
       if (sanitizedRefCode) {
-        const { bindReferralCodeForUser } = await import(
-          '~/server/services/referral.service'
-        );
+        const { bindReferralCodeForUser } = await import('~/server/services/referral.service');
         await bindReferralCodeForUser(user.id, sanitizedRefCode).catch(handleLogError);
       }
 
@@ -556,6 +554,11 @@ export const upsertSubscription = async (
     }
   } else if (userHasSubscription && isCreatingSubscription) {
     log('Subscription already up to date');
+    // Webhook redelivery / duplicate event. The DB row is fine, but downstream
+    // caches (session, multipliers) may still be stale from a prior failed
+    // invalidation — re-bust them defensively so a redelivered event is a
+    // legitimate recovery path.
+    await invalidateSubscriptionCaches(user.id);
     return;
   }
 
@@ -861,6 +864,12 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
         stripeChargeId,
       },
     }).catch(handleLogError);
+
+    // Renewals (subscription_cycle) often arrive without a paired
+    // subscription.updated event, so the session/multiplier caches won't be
+    // refreshed by the upsertSubscription path. Bust here so the user's tier
+    // and Blue-Buzz multiplier reflect the just-renewed state.
+    await invalidateSubscriptionCaches(user.id);
   }
 };
 

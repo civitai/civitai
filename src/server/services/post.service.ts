@@ -186,6 +186,7 @@ export const getPostsInfinite = async ({
   collectionId,
   include,
   draftOnly,
+  scheduled,
   followed,
   clubId,
   browsingLevel,
@@ -255,7 +256,15 @@ export const getPostsInfinite = async ({
 
   const joins: string[] = [];
   if (!isOwnerRequest) {
-    AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
+    if (scheduled && userId) {
+      // Surface own scheduled posts alongside the public published feed. Mirrors
+      // the image service carve-out (image.service.ts ~line 4060).
+      AND.push(
+        Prisma.sql`(p."publishedAt" <= NOW() OR (p."userId" = ${userId} AND p."publishedAt" > NOW()))`
+      );
+    } else {
+      AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
+    }
 
     if (!!tags?.length)
       AND.push(Prisma.sql`EXISTS (
@@ -267,7 +276,10 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
     }
   } else {
-    if (draftOnly) AND.push(Prisma.sql`(p."publishedAt" IS NULL OR p."publishedAt" > NOW())`);
+    if (draftOnly) {
+      if (scheduled) AND.push(Prisma.sql`(p."publishedAt" IS NULL OR p."publishedAt" > NOW())`);
+      else AND.push(Prisma.sql`p."publishedAt" IS NULL`);
+    } else if (scheduled) AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
     else AND.push(Prisma.sql`p."publishedAt" <= NOW() AND p."publishedAt" IS NOT NULL`);
   }
 
@@ -336,8 +348,16 @@ export const getPostsInfinite = async ({
   }
 
   // sorting - always include id as tiebreaker for stable pagination
-  let orderBy = draftOnly ? 'p."createdAt" DESC, p.id DESC' : 'p."publishedAt" DESC, p.id DESC';
-  let primarySortProp = draftOnly ? 'p."createdAt"' : 'p."publishedAt"';
+  // draftOnly mixes drafts (publishedAt IS NULL) with scheduled (publishedAt > NOW()).
+  // Offsetting drafts by +100 years on the sort key keeps them ahead of any
+  // scheduled post (DESC) while preserving createdAt order among themselves;
+  // scheduled posts continue to sort by their publishedAt within that partition.
+  let orderBy = draftOnly
+    ? `COALESCE(p."publishedAt", p."createdAt" + interval '100 years') DESC, p.id DESC`
+    : 'p."publishedAt" DESC, p.id DESC';
+  let primarySortProp = draftOnly
+    ? `COALESCE(p."publishedAt", p."createdAt" + interval '100 years')`
+    : 'p."publishedAt"';
   let isDateSort = true;
 
   if (sort === PostSort.MostComments) {
@@ -985,6 +1005,9 @@ export const addPostImage = async ({
   const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
   if (meta && 'engine' in meta) {
     toolId = (await getToolByAlias(meta.engine as string))?.id;
+    if (!toolId) {
+      toolId = (await getToolByName(meta.engine as string))?.id;
+    }
   } else if (sourceName || sourceHomepage) {
     if (sourceName) {
       toolId = (await getToolByName(sourceName))?.id;

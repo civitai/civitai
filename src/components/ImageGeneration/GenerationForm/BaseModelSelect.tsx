@@ -110,7 +110,15 @@ function BaseModelSelectModal({ type }: { type: MediaType }) {
 
   const handleSelect = (group: BaseModelGroup) => {
     const resource = generationConfig[group as GenerationConfigKey].checkpoint;
-    generationGraphPanel.open({ type: 'modelVersion', id: resource.id });
+    // Mid-session base-model swap — the user is already in the generator
+    // (the BaseModelSelect dialog only opens from inside the form). Pass
+    // `preserveEntryAction` so this in-panel re-entry doesn't overwrite the
+    // upstream attribution (e.g. a user who entered via Remix then changes
+    // base model should still submit with fromAction='remix', not 'create').
+    generationGraphPanel.open(
+      { type: 'modelVersion', id: resource.id },
+      { preserveEntryAction: true }
+    );
     dialog.onClose();
   };
 

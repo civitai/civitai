@@ -24,7 +24,13 @@ import { trpc } from '~/utils/trpc';
 type AccountType = 'cashPending' | 'cashSettled';
 type Direction = 'grant' | 'deduct';
 
-const refundableStatuses = new Set(['Paid', 'Scheduled', 'Submitted', 'InternalValue']);
+const refundableStatuses = new Set([
+  'Paid',
+  'Scheduled',
+  'Submitted',
+  'InternalValue',
+  'Reclaimed',
+]);
 
 function centsToDollars(cents: number) {
   return (cents / 100).toFixed(2);
@@ -283,6 +289,8 @@ export function CashManagementPage() {
                                 ? 'green'
                                 : w.status === 'Rejected' || w.status === 'Canceled'
                                 ? 'red'
+                                : w.status === 'Reclaimed'
+                                ? 'gray'
                                 : 'yellow'
                             }
                             variant="light"

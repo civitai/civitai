@@ -354,6 +354,16 @@ function EditorBody({
         blockquote: false,
         codeBlock: false,
         horizontalRule: false,
+        // Also drop every inline mark StarterKit v3 ships by default.
+        // Otherwise pasting rich HTML (e.g. a Danbooru tag link) leaves
+        // the text wrapped in <a>/<i>/<b>/etc. — the prompt looks plain
+        // but clicks navigate and the form value carries hidden styling.
+        bold: false,
+        italic: false,
+        strike: false,
+        code: false,
+        link: false,
+        underline: false,
       }),
     ];
     if (snippetsEnabled) {

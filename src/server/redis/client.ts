@@ -719,6 +719,12 @@ export const REDIS_SYS_KEYS = {
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
+    // Accumulator for models-index re-index requests originating in the
+    // per-minute model-metrics job. Flushed into the search-index queue
+    // on a 15-min cadence (matches the search-index sync cron) to avoid
+    // generating ~15× more re-index work than the consumer can drain.
+    MODEL_METRIC_AFFECTED: 'index-updates:model-metric-affected',
+    MODEL_METRIC_LAST_FLUSH: 'index-updates:model-metric-last-flush',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',
@@ -788,6 +794,63 @@ export const REDIS_SYS_KEYS = {
       PENDING_COUNT: 'new-order:processing:pending-count',
       LOCK: 'new-order:processing:lock',
     },
+  },
+  SCANNER_POLICY: {
+    /*
+      Use: Per-(mode,label) ordered list of candidate IDs.
+      Structure: hset, field = `${mode}:${label}` (e.g. 'prompt:Young'),
+      value = packed string[] of candidate IDs in display order.
+     */
+    CANDIDATE_IDS: 'packed:system:scanner-policy:candidate-ids',
+    /*
+      Use: Candidate payloads keyed by mode + label + id.
+      Structure: hset, field = `${mode}:${label}:${id}`,
+      value = packed ScannerPolicyCandidate.
+     */
+    CANDIDATES: 'packed:system:scanner-policy:candidates',
+    /*
+      Use: Track S3-uploaded dataset workbooks AND result workbooks per
+      (mode, label) so the moderator UI can list them for re-download.
+      Structure: hset, field = `${mode}:${label}`, value = packed
+      DatasetExportRecord[] (most recent first).
+     */
+    EXPORTS: 'packed:system:scanner-policy:exports',
+    /*
+      Use: Per-mode system prompt override for the test bench.
+      Falls back to the live xguard registry's systemPrompt when unset.
+      Structure: hset, field = 'prompt' | 'text', value = packed string.
+     */
+    SYSTEM_PROMPTS: 'packed:system:scanner-policy:system-prompts',
+    /*
+      Use: Cooperative cancel flag for an in-progress scoring run. Set to
+      '1' by the cancelRun endpoint; the scoring loop reads it between
+      rows and exits cleanly when set.
+      Structure: string, key = `system:scanner-policy:run-cancel:${runId}`,
+      value = '1'. TTL: 1 hour.
+     */
+    RUN_CANCEL: 'system:scanner-policy:run-cancel',
+    /*
+      Use: Per-run frozen metadata (dataset, candidates, rows, baseline,
+      systemPrompt snapshot) referenced by the callback webhook. Each run
+      has its own keyed copy.
+      Structure: packed JSON, key = `packed:system:scanner-policy:run-state:${runId}`.
+      TTL: 24 hours.
+     */
+    RUN_STATE: 'packed:system:scanner-policy:run-state',
+    /*
+      Use: Per-run results accumulator written by the callback webhook.
+      Field = `${rowIdx}:${candidateId}`, value = packed ScoredResultRow.
+      Structure: hash, key = `packed:system:scanner-policy:run-results:${runId}`.
+      TTL: 24 hours.
+     */
+    RUN_RESULTS: 'packed:system:scanner-policy:run-results',
+    /*
+      Use: Atomic counter for completed results. Incremented by the callback
+      webhook; finalization fires when value == expected total.
+      Structure: integer string, key = `system:scanner-policy:run-counter:${runId}`.
+      TTL: 24 hours.
+     */
+    RUN_COUNTER: 'system:scanner-policy:run-counter',
   },
   ENTITY_MODERATION: {
     // hset
@@ -938,6 +1001,7 @@ export const REDIS_KEYS = {
         MINUTE: 'new-order:rate-limit:minute',
         HOUR: 'new-order:rate-limit:hour',
         DAY: 'new-order:rate-limit:day',
+        COOLDOWN: 'new-order:rate-limit:cooldown',
       },
     },
     TOP_EARNERS: 'packed:caches:top-earners',

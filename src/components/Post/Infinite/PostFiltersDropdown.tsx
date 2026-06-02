@@ -6,21 +6,31 @@ import {
   Indicator,
   Popover,
   Stack,
+  Tooltip,
   useComputedColorScheme,
-  useMantineTheme,
 } from '@mantine/core';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
+import { FilterChip } from '~/components/Filters/FilterChip';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { PostsQueryInput } from '~/server/schema/post.schema';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 
-export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
+export function PostFiltersDropdown({
+  query,
+  onChange,
+  style,
+  showScheduled = true,
+  ...buttonProps
+}: Props) {
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
+  const currentUser = useCurrentUser();
+  const isModerator = currentUser?.isModerator;
 
   const [opened, setOpened] = useState(false);
 
@@ -32,16 +42,22 @@ export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
   const mergedFilters = query || filters;
 
   const filterLength =
-    mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0;
+    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
+    (showScheduled && mergedFilters.scheduled ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
       period: MetricTimeframe.AllTime,
+      scheduled: undefined,
     };
 
     if (onChange) onChange(reset);
     else setFilters(reset);
   }, [onChange, setFilters]);
+
+  const handleChange: Props['onChange'] = (value) => {
+    onChange ? onChange(value) : setFilters(value);
+  };
 
   const target = (
     <Indicator
@@ -52,7 +68,12 @@ export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
       disabled={!filterLength}
       inline
     >
-      <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+      <FilterButton
+        {...buttonProps}
+        icon={IconFilter}
+        onClick={() => setOpened((o) => !o)}
+        active={opened}
+      >
         Filters
       </FilterButton>
     </Indicator>
@@ -73,6 +94,21 @@ export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
           <PeriodFilter type="posts" variant="chips" />
         )}
       </Stack>
+      {showScheduled && currentUser && !isModerator && (
+        <Stack gap="md">
+          <Divider label="Modifiers" className="text-sm font-bold" />
+          <div className="flex flex-wrap gap-2">
+            <FilterChip
+              checked={!!mergedFilters.scheduled}
+              onChange={(checked) => handleChange({ scheduled: checked })}
+            >
+              <Tooltip label="Include your scheduled posts">
+                <span>Scheduled</span>
+              </Tooltip>
+            </FilterChip>
+          </div>
+        </Stack>
+      )}
       {filterLength > 0 && (
         <Button
           color="gray"
@@ -131,4 +167,5 @@ export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
 type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   query?: Partial<PostsQueryInput>;
   onChange?: (params: Partial<PostsQueryInput>) => void;
+  showScheduled?: boolean;
 };

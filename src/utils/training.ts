@@ -227,7 +227,7 @@ export const trainingModelInfo: {
     description: 'High-quality image generation with advanced understanding.',
     air: 'urn:air:qwen:checkpoint:civitai:1864281@2110043',
     baseModel: 'Qwen',
-    isNew: true,
+    isNew: false,
     aiToolkit: { ecosystem: 'qwen' },
   },
   //
@@ -238,7 +238,7 @@ export const trainingModelInfo: {
     description: 'High-speed image generation with turbo acceleration.',
     air: 'urn:air:zimageturbo:checkpoint:civitai:2168935@2442439',
     baseModel: 'ZImageTurbo',
-    isNew: true,
+    isNew: false,
     aiToolkit: { ecosystem: 'zimageturbo' },
   },
   zimagebase: {
@@ -248,7 +248,7 @@ export const trainingModelInfo: {
     description: 'High-quality image generation with the ZImage Base model.',
     air: 'urn:air:zimagebase:checkpoint:civitai:2342797@2635223',
     baseModel: 'ZImageBase',
-    isNew: true,
+    isNew: false,
     aiToolkit: { ecosystem: 'zimagebase' },
   },
   //
@@ -259,7 +259,7 @@ export const trainingModelInfo: {
     description: "Baidu's ERNIE image generation model.",
     air: 'urn:air:ernie:checkpoint:civitai:2548387@2863858',
     baseModel: 'Ernie',
-    isNew: true,
+    isNew: false,
     aiToolkit: { ecosystem: 'ernie' },
   },
   //
@@ -282,11 +282,11 @@ export const trainingModelInfo: {
   },
   //
   anima: {
-    label: 'Standard',
-    pretty: 'Anima',
+    label: 'Base [v1.0]',
+    pretty: 'Anima Base v1.0',
     type: 'anima',
     description:
-      "CircleStone Labs' Anima image model. Preview — settings, pricing, and results are subject to change.",
+      "CircleStone Labs' Anima image model (Base v1.0). Preview — settings, pricing, and results are subject to change.",
     air: 'urn:air:anima:checkpoint:civitai:2458426@2945208',
     baseModel: 'Anima',
     isNew: true,
@@ -300,7 +300,7 @@ export const trainingModelInfo: {
     description: 'Efficient 4B parameter Flux.2 Klein base model.',
     air: 'urn:air:flux2klein:checkpoint:civitai:2427783@2734041',
     baseModel: 'Flux.2 Klein 4B-base',
-    isNew: true,
+    isNew: false,
     aiToolkit: { ecosystem: 'flux2klein', modelVariant: '4b' },
   },
   flux2klein_9b: {
@@ -310,7 +310,7 @@ export const trainingModelInfo: {
     description: 'High-quality 9B parameter Flux.2 Klein base model.',
     air: 'urn:air:flux2klein:checkpoint:civitai:2427783@2734042',
     baseModel: 'Flux.2 Klein 9B-base',
-    isNew: true,
+    isNew: false,
     aiToolkit: { ecosystem: 'flux2klein', modelVariant: '9b' },
   },
   //
@@ -342,7 +342,7 @@ export const trainingModelInfo: {
     description: 'Next generation high-quality image generation.',
     air: 'urn:air:flux2:checkpoint:civitai:2165902@2439067',
     baseModel: 'Flux.2 D',
-    isNew: true,
+    isNew: false,
   },
   //
   acestep_15: {

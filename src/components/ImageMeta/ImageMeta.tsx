@@ -22,6 +22,7 @@ import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import type { ImageGenerationProcess } from '~/shared/utils/prisma/enums';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { fromJson } from '~/utils/json-helpers';
 import { encodeMetadata } from '~/utils/metadata';
 import { titleCase } from '~/utils/string-helpers';
@@ -62,6 +63,7 @@ export function ImageMeta({
   hideSoftware,
 }: Props) {
   const flags = useFeatureFlags();
+  const { trackAction } = useTrackEvent();
 
   const metas = useMemo(() => {
     const long: MetaDisplay[] = [];
@@ -222,7 +224,23 @@ export function ImageMeta({
                 leftSection={<IconBrush size={16} />}
                 data-activity="remix:image-meta"
                 onClick={() => {
-                  generationGraphPanel.open({ type: 'image', id: imageId ?? 0 });
+                  // Only act when we actually have an imageId — `imageId ?? 0`
+                  // would pollute the funnel with imageId=0 events AND fail
+                  // server-side at getGenerationData. Track + open share the
+                  // same guard so a falsy imageId is a complete no-op for
+                  // the funnel; the `onCreateClick?.()` parent callback
+                  // still fires either way (preserves prior behavior).
+                  if (imageId) {
+                    trackAction({
+                      type: 'Image_Remix_Click',
+                      details: {
+                        imageId,
+                        imageType: 'image',
+                        source: 'remix:image-meta',
+                      },
+                    }).catch(() => undefined);
+                    generationGraphPanel.open({ type: 'image', id: imageId });
+                  }
                   onCreateClick?.();
                 }}
                 style={{ flex: 1 }}

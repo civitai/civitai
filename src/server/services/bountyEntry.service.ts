@@ -16,6 +16,7 @@ import {
   createEntityImages,
   invalidateManyImageExistence,
   updateEntityImages,
+  ingestImage,
 } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
@@ -112,7 +113,10 @@ export const upsertBountyEntry = async ({
   userId,
 }: UpsertBountyEntryInput & { userId: number }) => {
   if (description) await throwOnBlockedLinkDomain(description);
-  return dbWrite.$transaction(async (tx) => {
+
+  let imagesToIngest: { id: number; url: string }[] = [];
+
+  const result = await dbWrite.$transaction(async (tx) => {
     if (id) {
       const [awarded] = await getBountyEntryEarnedBuzz({ ids: [id] });
 
@@ -134,7 +138,7 @@ export const upsertBountyEntry = async ({
       }
 
       if (images) {
-        await updateEntityImages({
+        imagesToIngest = await updateEntityImages({
           images,
           tx,
           userId,
@@ -164,7 +168,7 @@ export const upsertBountyEntry = async ({
       }
 
       if (images) {
-        await createEntityImages({
+        imagesToIngest = await createEntityImages({
           images,
           tx,
           userId,
@@ -180,6 +184,22 @@ export const upsertBountyEntry = async ({
       return entry;
     }
   });
+
+  if (imagesToIngest.length > 0) {
+    for (const img of imagesToIngest) {
+      ingestImage({ image: img }).catch((error) => {
+        logToAxiom({
+          name: 'bounty-entry-image-ingest',
+          type: 'error',
+          userId,
+          imageId: img.id,
+          message: error instanceof Error ? error.message : String(error),
+        }).catch(() => {});
+      });
+    }
+  }
+
+  return result;
 };
 
 export const awardBountyEntry = async ({ id, userId }: { id: number; userId: number }) => {
@@ -195,7 +215,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
   const benefactor = await dbWrite.$transaction(
     async (tx) => {
       // 1. Fetch entry details
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -218,7 +238,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       logData.bountyId = entry.bountyId;
 
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -229,7 +249,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       // 2. Validate entry has a user
       if (!entry.userId) {
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'error',
@@ -240,7 +260,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       // 3. Validate bounty is not already complete
       if (entry.bounty.complete) {
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'error',
@@ -250,7 +270,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       }
 
       // 4. Fetch benefactor details
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -266,7 +286,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         },
       });
 
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -279,7 +299,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       // 5. Validate benefactor hasn't already awarded
       if (benefactor.awardedToId) {
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'error',
@@ -290,7 +310,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       }
 
       // 6. Update benefactor with award
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -310,7 +330,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         },
       });
 
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -318,7 +338,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       }).catch(() => null);
 
       // 7. Create buzz transaction
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -429,7 +449,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
                 entityType: 'Bounty',
               },
             });
-            await logToAxiom({
+            logToAxiom({
               ...logData,
               name: 'bounty-award',
               type: 'info',
@@ -445,7 +465,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       }
 
       // 8. Check if all benefactors have awarded (use tx context for consistency)
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -462,7 +482,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       // 9. Mark bounty as complete only if ALL benefactors have awarded
       if (!unawardedBountyBenefactors) {
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'info',
@@ -474,14 +494,14 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
           data: { complete: true },
         });
 
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'info',
           message: 'Bounty marked as complete',
         }).catch(() => null);
       } else {
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'info',

@@ -1,3 +1,5 @@
+import { ThemeIcon, Tooltip } from '@mantine/core';
+import { IconClock2 } from '@tabler/icons-react';
 import { memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
@@ -17,7 +19,7 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 
 export function PostsCard({
-  data: { images, id, stats, imageCount, cosmetic, user },
+  data: { images, id, stats, imageCount, cosmetic, user, publishedAt },
   height,
 }: {
   data: PostsInfiniteModel;
@@ -26,6 +28,7 @@ export function PostsCard({
   const currentUser = useCurrentUser();
   const image = images[0];
   const isOwner = currentUser?.id === user.id;
+  const scheduled = publishedAt && new Date(publishedAt) > new Date();
   return (
     <TwCosmeticWrapper cosmetic={cosmetic?.data} style={cosmetic?.data ? { height } : undefined}>
       <TwCard className="border shadow" style={!cosmetic?.data ? { height } : undefined}>
@@ -36,21 +39,32 @@ export function PostsCard({
 
               <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
               {safe && (
-                <ImageContextMenu
-                  image={image}
-                  context="post"
-                  className="absolute right-2 top-2 z-10"
-                  additionalMenuItems={
-                    isOwner ? (
-                      <AddArtFrameMenuItem
-                        entityType={CosmeticEntity.Post}
-                        entityId={id}
-                        image={image}
-                        currentCosmetic={cosmetic}
-                      />
-                    ) : null
-                  }
-                />
+                <div className="absolute right-2 top-2 z-10">
+                  <div className="flex flex-col items-center gap-2">
+                    <ImageContextMenu
+                      image={image}
+                      context="post"
+                      className=""
+                      additionalMenuItems={
+                        isOwner ? (
+                          <AddArtFrameMenuItem
+                            entityType={CosmeticEntity.Post}
+                            entityId={id}
+                            image={image}
+                            currentCosmetic={cosmetic}
+                          />
+                        ) : null
+                      }
+                    />
+                    {scheduled && (
+                      <Tooltip label="Scheduled">
+                        <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
+                          <IconClock2 size={16} strokeWidth={2.5} />
+                        </ThemeIcon>
+                      </Tooltip>
+                    )}
+                  </div>
+                </div>
               )}
 
               <NextLink href={`/posts/${id}`}>

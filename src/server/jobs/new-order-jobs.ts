@@ -2,7 +2,7 @@ import { env } from '~/env/server';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
-import { newOrderConfig } from '~/server/common/constants';
+import { constants, newOrderConfig } from '~/server/common/constants';
 import { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -12,6 +12,7 @@ import {
   expCounter,
   fervorCounter,
   getActiveSlot,
+  getVotingRateLimitConfig,
   pendingBuzzCounter,
   poolCounters,
   recentlyGrantedBuzzCounter,
@@ -25,8 +26,10 @@ import {
   cleanseSmite,
   clearRatedImages,
   processFinalRatings,
+  smitePlayer,
 } from '~/server/services/games/new-order.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { handleLogError } from '~/server/utils/errorHandling';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
@@ -493,11 +496,33 @@ const newOrderChangeRateTarget = createJob(
   }
 );
 
-// Periodic abuse detection: identify users with suspicious rating patterns
-// Runs daily at 23:00 UTC, logs to Axiom and Discord for monitoring
-const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * *', async () => {
+// Periodic abuse detection: identify users with suspicious rating patterns.
+// Runs daily at 23:00 UTC, logs to Axiom and Discord for monitoring, and (when
+// `autoSmiteAbusers` is enabled in Redis config) auto-smites suspects matching
+// strict signals via the system actor.
+export async function runAbuseDetectionScan() {
   if (!clickhouse) return;
   log('AbuseDetection :: Scanning for suspicious rating patterns');
+
+  // All tunable thresholds live in Redis so the operational values aren't
+  // visible to anyone reading the public source tree. Defaults below are a
+  // first-boot fallback; once ops seeds the config, those take precedence.
+  // Every value is coerced to a finite number before being interpolated into
+  // the ClickHouse query because `formatSqlType` passes strings through
+  // unquoted — a non-numeric value sneaking into the config blob would
+  // otherwise be a SQL-injection vector. Zod already validates writes via
+  // the mod endpoint; this is defense-in-depth for direct Redis edits.
+  const config = await getVotingRateLimitConfig();
+  const det = config?.abuseDetection ?? {};
+  const asFinite = (v: unknown, fallback: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const minTotalRatings = asFinite(det.minTotalRatings, 10);
+  const havingDominantPct = asFinite(det.havingDominantPct, 10);
+  const havingAvgPerMinute = asFinite(det.havingAvgPerMinute, 10);
+  const smiteDominantPct = asFinite(det.smiteDominantPct, 100);
+  const smiteMaxUniqueRatings = asFinite(det.smiteMaxUniqueRatings, 1);
 
   const suspects = await clickhouse.$query<{
     userId: number;
@@ -511,7 +536,7 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
         SELECT
           userId,
           topK(1)(rating)[1] as dominantRating
-        FROM knights_new_order_image_rating
+        FROM knights_new_order_image_rating FINAL
         WHERE createdAt >= now() - INTERVAL 24 HOUR
           AND rank != 'Acolyte'
         GROUP BY userId
@@ -523,13 +548,13 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
         d.dominantRating,
         countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
         count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute
-      FROM knights_new_order_image_rating r
+      FROM knights_new_order_image_rating r FINAL
       JOIN user_dominant d ON r.userId = d.userId
       WHERE r.createdAt >= now() - INTERVAL 24 HOUR
         AND r.rank != 'Acolyte'
       GROUP BY r.userId, d.dominantRating
-      HAVING totalRatings >= 100
-        AND (uniqueRatings = 1 OR dominantPct >= 90 OR avgPerMinute > 15)
+      HAVING totalRatings >= ${minTotalRatings}
+        AND (uniqueRatings <= ${smiteMaxUniqueRatings} OR dominantPct >= ${havingDominantPct} OR avgPerMinute > ${havingAvgPerMinute})
       ORDER BY totalRatings DESC
       LIMIT 50
     `;
@@ -583,10 +608,56 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
         }),
       }).catch(() => null);
     }
+
+    // Auto-smite branch: gated by Redis config flag (off by default). Smite
+    // filter applies the tighter `smite*` thresholds against the broader
+    // detection pool; the `having*` thresholds (looser) feed the alert path
+    // but don't auto-smite alone. The avgPerMinute signal is intentionally
+    // excluded from the smite filter — power users can spike during bursts.
+    // The 3-active-smites rule in `smitePlayer` chains into the existing
+    // `resetPlayer` flow on the third strike.
+    if (config?.autoSmiteAbusers === true) {
+      const isStrictSignal = (s: (typeof suspects)[number]) =>
+        s.uniqueRatings <= smiteMaxUniqueRatings || s.dominantPct >= smiteDominantPct;
+      const targets = suspects.filter(isStrictSignal);
+      log(`AbuseDetection :: Auto-smiting ${targets.length} strict-signal suspect(s)`);
+
+      for (const s of targets) {
+        const reasonParts: string[] = [];
+        if (s.uniqueRatings <= smiteMaxUniqueRatings)
+          reasonParts.push(`only ${s.uniqueRatings} unique rating value(s)`);
+        if (s.dominantPct >= smiteDominantPct)
+          reasonParts.push(`${Math.round(s.dominantPct)}% same rating value`);
+        const reason = `Auto-smite from abuse detection scan: ${reasonParts.join(', ')}.`;
+
+        try {
+          await smitePlayer({
+            playerId: s.userId,
+            modId: constants.system.user.id,
+            reason,
+            size: newOrderConfig.smiteSize * 50,
+          });
+          await logToAxiom({
+            type: 'warning',
+            name: 'new-order-auto-smite',
+            details: { playerId: s.userId, source: 'detection-job', reason },
+            message: `Auto-smite issued for player ${s.userId}`,
+          }).catch(() => null);
+        } catch (e) {
+          handleLogError(e as Error, `auto-smite failed for player ${s.userId}`);
+        }
+      }
+    }
   } else {
     log('AbuseDetection :: No suspicious users found');
   }
-});
+}
+
+const newOrderAbuseDetection = createJob(
+  'new-order-abuse-detection',
+  '0 23 * * *',
+  runAbuseDetectionScan
+);
 
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,

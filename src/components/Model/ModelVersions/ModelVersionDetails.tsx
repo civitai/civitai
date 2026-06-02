@@ -529,6 +529,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               {canGenerate && isOwnerOrMod && (
                 <GenerateButton
                   versionId={version.id}
+                  modelId={model.id}
                   wildcardSetId={version.wildcardSetId}
                   data-tour="model:create"
                   data-activity="create:model"
@@ -597,6 +598,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   {canGenerate ? (
                     <GenerateButton
                       versionId={version.id}
+                      modelId={model.id}
                       wildcardSetId={version.wildcardSetId}
                       data-tour="model:create"
                       data-activity="create:model"

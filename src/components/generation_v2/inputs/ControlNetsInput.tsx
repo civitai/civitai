@@ -18,6 +18,7 @@
 
 import {
   Badge,
+  Button,
   Group,
   Input,
   RangeSlider,
@@ -28,9 +29,11 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { IconPhoto, IconPlus, IconX } from '@tabler/icons-react';
+import { IconEraser, IconPhoto, IconPlus, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useEffect, useMemo, useState } from 'react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { MaskEditorModal } from '~/components/Generation/Input/MaskEditor/MaskEditorModal';
 import {
   controlNetCategories,
   controlNetPreprocessors,
@@ -404,6 +407,20 @@ function ControlNetEditor({
     onChange({ image: { url: image.url, width: image.width, height: image.height } });
   }
 
+  function handleEditMask() {
+    const img = entry.image;
+    if (!img?.url || !img.width || !img.height) return;
+    dialogStore.trigger({
+      component: MaskEditorModal,
+      props: {
+        sourceImage: { url: img.url, width: img.width, height: img.height },
+        onConfirm: (result: { url: string; width: number; height: number }) => {
+          onChange({ image: { url: result.url, width: result.width, height: result.height } });
+        },
+      },
+    });
+  }
+
   return (
     <Stack
       gap="sm"
@@ -419,6 +436,17 @@ function ControlNetEditor({
         max={1}
         aspect="square"
       />
+      {entry.image?.url && entry.image.width && entry.image.height && (
+        <Button
+          variant="default"
+          size="xs"
+          leftSection={<IconEraser size={14} />}
+          onClick={handleEditMask}
+          className="self-start"
+        >
+          Erase mask
+        </Button>
+      )}
 
       <Select
         label="Category"

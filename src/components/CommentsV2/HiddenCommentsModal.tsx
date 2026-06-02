@@ -1,12 +1,13 @@
 import { Button, Center, Loader, Modal, Stack, Text } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
 import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-
-import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
+import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
+import { ReviewSort } from '~/server/common/enums';
+import { trpc } from '~/utils/trpc';
 
 type CommentEntityType =
   | 'model'
@@ -44,12 +45,54 @@ export default function HiddenCommentsModal({
           environment. Moderated for respectful and relevant discussions.
         </AlertWithIcon>
         {entityType === 'model' ? (
-          <ModelDiscussionV2 modelId={entityId} onlyHidden />
+          <HiddenModelCommentsContent modelId={entityId} />
         ) : (
           <HiddenCommentsContent entityType={entityType} entityId={entityId} userId={userId} />
         )}
       </Stack>
     </Modal>
+  );
+}
+
+function HiddenModelCommentsContent({ modelId }: { modelId: number }) {
+  const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage } =
+    trpc.comment.getAll.useInfiniteQuery(
+      { modelId, limit: 20, sort: ReviewSort.Newest, hidden: true },
+      { getNextPageParam: (lastPage) => lastPage.nextCursor, keepPreviousData: false }
+    );
+
+  const comments = useMemo(() => data?.pages.flatMap((x) => x.comments) ?? [], [data?.pages]);
+
+  if (isLoading) {
+    return (
+      <Center mt="xl">
+        <Loader type="bars" />
+      </Center>
+    );
+  }
+
+  if (!comments.length) {
+    return <Text>No hidden comments</Text>;
+  }
+
+  return (
+    <Stack>
+      {comments.map((comment) => (
+        <CommentDiscussionItem key={comment.id} data={comment} />
+      ))}
+      {hasNextPage && (
+        <Center>
+          <Button
+            onClick={() => fetchNextPage()}
+            loading={isFetchingNextPage}
+            variant="subtle"
+            size="md"
+          >
+            Load More Comments
+          </Button>
+        </Center>
+      )}
+    </Stack>
   );
 }
 

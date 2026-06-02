@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconCategory, IconCheck, IconChevronDown, IconDownload } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -68,17 +68,11 @@ export function DownloadVariantDropdown({
     return getPrimaryFile(modelFiles, { metadata: userPreferences });
   }, [modelFiles, userPreferences]);
 
-  // State for selected file - initialize with best match
-  const [selectedFile, setSelectedFile] = useState<FileType | null>(null);
-
-  // Update selected file when best match changes (on initial load)
-  useEffect(() => {
-    if (!selectedFile && bestMatchFile) {
-      setSelectedFile(bestMatchFile);
-    }
-  }, [bestMatchFile, selectedFile]);
-
-  const activeFile = selectedFile ?? bestMatchFile ?? modelFiles[0];
+  // Track user's explicit selection by id only; derive the active file from
+  // the current files list so a stale id from a prior version is ignored.
+  const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
+  const activeFile =
+    modelFiles.find((f) => f.id === selectedFileId) ?? bestMatchFile ?? modelFiles[0];
 
   // Calculate download URL
   const downloadUrl = activeFile
@@ -91,7 +85,7 @@ export function DownloadVariantDropdown({
     : undefined;
 
   const handleSelectFile = (file: FileType) => {
-    setSelectedFile(file);
+    setSelectedFileId(file.id);
   };
 
   const handleDownloadClick = () => {

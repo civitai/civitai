@@ -117,12 +117,72 @@ export const serverSchema = z.object({
   SEARCH_API_KEY: z.string().optional(),
   METRICS_SEARCH_HOST: z.url().optional(),
   METRICS_SEARCH_API_KEY: z.string().optional(),
+  // Per-call Meilisearch timeout in ms. Calls wrapped via withMeili() fail
+  // fast with MeiliCallTimeoutError once exceeded, instead of hanging until
+  // Traefik's 30s router timeout fires. Default tuned for the image feed
+  // hot path (typical P99 ~700ms under healthy load).
+  MEILI_CALL_TIMEOUT_MS: z.coerce.number().optional().default(2500),
+  // Server-side deadline for fetchDocumentsAbortable in ms. Distinct from
+  // MEILI_CALL_TIMEOUT_MS — that one wraps SDK calls via withMeili();
+  // this one is the local AbortController timer on the raw fetch path
+  // (image:meili:http span). Generous default (5_000) so healthy
+  // /documents/fetch calls complete cleanly; tunable down at runtime if
+  // the backend tightens up, or up if a brownout needs more headroom
+  // without a code redeploy. Defensive cap: prevents pods from holding
+  // event-loop slots for the Node default (~30s) when -new goes slow.
+  MEILI_FETCH_TIMEOUT_MS: z.coerce.number().optional().default(5000),
+  // Per-pod cap on in-flight Meilisearch calls wrapped via withMeili().
+  // When saturated, additional calls fail fast with MeiliCallTimeoutError
+  // rather than queueing forever and pressuring the event loop.
+  MEILI_CALL_CONCURRENCY: z.coerce.number().optional().default(50),
+  // Per-backend circuit breaker (see src/server/meilisearch/client.ts). If
+  // `MEILI_CIRCUIT_TRIP_THRESHOLD` MeiliCallTimeoutErrors accumulate within
+  // `MEILI_CIRCUIT_WINDOW_SECONDS` on a backend, the circuit OPENs and all
+  // calls fail at 0ms (no acquire, no setTimeout, no request) for
+  // `MEILI_CIRCUIT_COOLDOWN_SECONDS`, then transitions to HALF_OPEN for a
+  // single trial request. This eliminates the ~125 worker-seconds of
+  // accumulated 2.5s waits per pod per cycle during chronic brownouts —
+  // the mechanism that bled the api-primary pool past kubelet TCP probe
+  // timeout on 2026-05-30.
+  // .int().min(1) on all three: a blank env value coerces to NaN under
+  // z.coerce.number(), which silently makes the >= comparison false →
+  // breaker disabled. Zero values would either trip on first failure
+  // (threshold=0), prune all failures immediately (window=0), or skip
+  // cooldown entirely (cooldown=0). Reject all three at boot.
+  MEILI_CIRCUIT_TRIP_THRESHOLD: z.coerce.number().int().min(1).optional().default(10),
+  MEILI_CIRCUIT_WINDOW_SECONDS: z.coerce.number().int().min(1).optional().default(30),
+  MEILI_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().int().min(1).optional().default(30),
   PODNAME: z.string().optional(),
   INTEGRATION_TOKEN: z.string().optional(),
   NEWSLETTER_ID: z.string().optional(),
   NEWSLETTER_KEY: z.string().optional(),
   BUZZ_ENDPOINT: isProd ? z.url() : z.url().optional(),
   SIGNALS_ENDPOINT: isProd ? z.url() : z.url().optional(),
+  // Per-call signals timeout in ms. Calls wrapped via withSignals() fail
+  // fast with SignalsCallTimeoutError once exceeded, instead of hanging
+  // until Traefik's 30s router timeout fires. Default tuned for signals
+  // normal latency (higher than Meili due to Orleans grain init).
+  SIGNALS_CALL_TIMEOUT_MS: z.coerce.number().int().min(1).optional().default(5000),
+  // Per-pod cap on in-flight signals HTTP calls wrapped via withSignals().
+  // When saturated, additional calls fail fast with SignalsCallTimeoutError
+  // rather than queueing forever and pressuring the event loop.
+  SIGNALS_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
+  // Single-backend circuit breaker for signals (see src/server/signals/wrapper.ts).
+  // If `SIGNALS_CIRCUIT_TRIP_THRESHOLD` SignalsCallTimeoutErrors accumulate
+  // within `SIGNALS_CIRCUIT_WINDOW_SECONDS`, the circuit OPENs and all calls
+  // fail at 0ms (no acquire, no setTimeout, no request) for
+  // `SIGNALS_CIRCUIT_COOLDOWN_SECONDS`, then transitions to HALF_OPEN for a
+  // single trial request. This is the load-shed mechanism that protects the
+  // event loop from accumulated wait time during signals chronic brownouts —
+  // the failure mode that drove the 2026-05-30 api-primary SIGKILL cascade
+  // (signals Traefik P99 pegged at 30s router timeout). Window is longer than
+  // Meili's (30→60s) because signals normal latency is higher.
+  // .int().min(1) on all three: a blank env value coerces to NaN under
+  // z.coerce.number(), which silently makes the >= comparison false →
+  // breaker disabled. Reject all three at boot.
+  SIGNALS_CIRCUIT_TRIP_THRESHOLD: z.coerce.number().int().min(1).optional().default(10),
+  SIGNALS_CIRCUIT_WINDOW_SECONDS: z.coerce.number().int().min(1).optional().default(60),
+  SIGNALS_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().int().min(1).optional().default(30),
   CACHE_DNS: zc.booleanString,
   MINOR_FALLBACK_SYSTEM: zc.booleanString,
   CSAM_UPLOAD_KEY: z.string().default(''),

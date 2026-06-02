@@ -14,11 +14,14 @@ import {
   Loader,
   LoadingOverlay,
   Pagination,
+  Paper,
+  ScrollArea,
   Stack,
   Table,
   Tabs,
   Text,
   TextInput,
+  Title,
   Tooltip,
 } from '@mantine/core';
 import { IconDownload, IconInfoCircle } from '@tabler/icons-react';
@@ -34,7 +37,7 @@ import {
   type ScannerAuditMode,
 } from '~/components/Moderator/ScannerAuditLayout';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import type { QueueView } from '~/server/schema/scanner-review.schema';
+import type { QueueView, Scanner } from '~/server/schema/scanner-review.schema';
 import type { QueueRow } from '~/server/services/scanner-review.service';
 import { ReviewVerdict } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
@@ -134,6 +137,8 @@ function ScannerAuditTablePage() {
             Search
           </Button>
         </Group>
+
+        <ReviewCoveragePanel scanner={scanner} mode={mode} />
 
         <Tabs
           value={view}
@@ -242,6 +247,118 @@ function ScannerAuditTablePage() {
         )}
       </ScannerAuditLayout>
     </>
+  );
+}
+
+/**
+ * Per-label moderator-review coverage for the current scanner. Shows how many
+ * verdicts each label has accumulated (and the verdict split) so a mod can see
+ * which labels are well-covered vs. untouched at a glance. Counts are all-time
+ * and scoped to the scanner via the content snapshot's `scanner` column — a
+ * shared label like `young` counts separately on the Text vs Prompt tabs.
+ */
+function ReviewCoveragePanel({ scanner, mode }: { scanner: Scanner; mode: ScannerAuditMode }) {
+  const { data, isFetching } = trpc.scannerReview.reviewStats.useQuery({ scanner });
+
+  const active = data?.active ?? [];
+  const retired = data?.retired ?? [];
+  const totalReviews = useMemo(() => active.reduce((sum, r) => sum + r.total, 0), [active]);
+
+  return (
+    <Paper withBorder p="sm" radius="md">
+      <Group justify="space-between" mb="xs">
+        <Title order={5}>Moderator review coverage</Title>
+        {data && (
+          <Text size="xs" c="dimmed">
+            {totalReviews.toLocaleString()} reviews across {active.length}{' '}
+            {active.length === 1 ? 'label' : 'labels'}
+          </Text>
+        )}
+      </Group>
+
+      {!data && isFetching ? (
+        <Center py="md">
+          <Loader size="sm" />
+        </Center>
+      ) : active.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          No moderator reviews recorded yet for this scanner.
+        </Text>
+      ) : (
+        <ScrollArea.Autosize mah={260}>
+          <Table striped highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Label</Table.Th>
+                <Table.Th>Reviews</Table.Th>
+                <Table.Th>Mods</Table.Th>
+                <Table.Th>Verdicts</Table.Th>
+                <Table.Th>Last reviewed</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {active.map((r) => (
+                <Table.Tr key={r.label}>
+                  <Table.Td>
+                    <Link
+                      href={`/moderator/scanner-audit/${mode}/${encodeURIComponent(r.label)}`}
+                      style={{ color: 'inherit', textDecoration: 'none' }}
+                    >
+                      <code style={{ textDecoration: 'underline', cursor: 'pointer' }}>
+                        {r.label}
+                      </code>
+                    </Link>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{r.total.toLocaleString()}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{r.reviewers.toLocaleString()}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap={4}>
+                      <VerdictCount verdict={ReviewVerdict.TruePositive} count={r.truePositive} />
+                      <VerdictCount verdict={ReviewVerdict.FalsePositive} count={r.falsePositive} />
+                      <VerdictCount verdict={ReviewVerdict.TrueNegative} count={r.trueNegative} />
+                      <VerdictCount verdict={ReviewVerdict.FalseNegative} count={r.falseNegative} />
+                      <VerdictCount verdict={ReviewVerdict.Unsure} count={r.unsure} />
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" c="dimmed">
+                      {r.lastReviewedAt ? new Date(r.lastReviewedAt).toLocaleString() : '—'}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea.Autosize>
+      )}
+
+      {retired.length > 0 && (
+        <Text size="xs" c="dimmed" mt="xs">
+          Hidden — retired labels no longer produced by this scanner:{' '}
+          {retired.map((r) => `${r.label} (${r.total.toLocaleString()})`).join(', ')}
+        </Text>
+      )}
+    </Paper>
+  );
+}
+
+/** A single verdict tally in the coverage table — dimmed out when zero so the
+ * eye lands on the verdicts a label actually accumulated. */
+function VerdictCount({ verdict, count }: { verdict: ReviewVerdict; count: number }) {
+  if (count === 0)
+    return (
+      <Badge size="xs" variant="light" color="gray" style={{ opacity: 0.4 }}>
+        {verdictShort(verdict)} 0
+      </Badge>
+    );
+  return (
+    <Badge size="xs" variant="light" color={verdictColor(verdict)}>
+      {verdictShort(verdict)} {count.toLocaleString()}
+    </Badge>
   );
 }
 

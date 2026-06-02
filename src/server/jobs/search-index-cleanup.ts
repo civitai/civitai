@@ -8,14 +8,17 @@ export const searchIndexCleanupJob = createJob(
   async (jobContext) => {
     const results = await cleanupAllIndexes(null, {
       apply: true,
-      concurrency: 8,
       batch: 1000,
       jobContext,
       onError: ({ key, offset, error }) => {
+        // `offset === -1` is the sentinel for preflight or delete-phase
+        // errors (no scan cursor associated). Otherwise it's the cursor
+        // (last id seen) at the point of failure.
+        const phase = offset === -1 ? 'preflight/delete' : `cursor=${offset}`;
         logToAxiom({
           type: 'error',
           name: 'search-index-cleanup',
-          message: `batch error in ${key} at offset ${offset}: ${error.message}`,
+          message: `error in ${key} (${phase}): ${error.message}`,
         }).catch();
       },
     });

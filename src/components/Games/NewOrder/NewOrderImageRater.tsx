@@ -28,10 +28,11 @@ export function NewOrderImageRater({
 }: Props) {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const [showReasons, setShowReasons] = useState(false);
+  const isDisabled = disabled;
 
   const debouncedRatingClick = useCallback(
     (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => {
-      if (disabled) return;
+      if (isDisabled) return;
       if (timeoutRef) {
         clearTimeout(timeoutRef);
       }
@@ -40,10 +41,11 @@ export function NewOrderImageRater({
         setShowReasons(false);
       }, 200);
     },
-    [disabled, onRatingClick]
+    [isDisabled, onRatingClick]
   );
 
   const debouncedSkipClick = useCallback(() => {
+    if (isDisabled) return;
     if (timeoutRef) {
       clearTimeout(timeoutRef);
     }
@@ -51,7 +53,7 @@ export function NewOrderImageRater({
       onSkipClick();
       setShowReasons(false);
     }, 200);
-  }, [onSkipClick]);
+  }, [isDisabled, onSkipClick]);
 
   const handleHotkeyPress = useCallback(
     (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => {
@@ -61,7 +63,7 @@ export function NewOrderImageRater({
   );
 
   const hotKeys: HotkeyItem[] = useMemo(() => {
-    if (disabled) return [];
+    if (isDisabled) return [];
 
     return showReasons
       ? [
@@ -109,7 +111,7 @@ export function NewOrderImageRater({
           ['5', handleHotkeyPress({ rating: NsfwLevel.XXX })],
           ['6', () => setShowReasons(true)],
         ];
-  }, [disabled, showReasons, handleHotkeyPress]);
+  }, [isDisabled, showReasons, handleHotkeyPress]);
 
   useHotkeys([
     ['m', () => onVolumeClick()],
@@ -177,7 +179,7 @@ export function NewOrderImageRater({
                       onClick={() =>
                         isBlocked ? setShowReasons(true) : handleRatingClick({ rating })
                       }
-                      disabled={disabled}
+                      disabled={isDisabled}
                     >
                       {isBlocked ? <IconFlag size={18} /> : level}
                     </Button>
@@ -185,7 +187,12 @@ export function NewOrderImageRater({
                 );
               })}
             </Button.Group>
-            <Button variant="default" size={mobile ? 'xs' : undefined} onClick={debouncedSkipClick}>
+            <Button
+              variant="default"
+              size={mobile ? 'xs' : undefined}
+              onClick={debouncedSkipClick}
+              disabled={isDisabled}
+            >
               Skip
             </Button>
           </>

@@ -12,7 +12,7 @@
  * never propagates back to the operational webhook path.
  */
 import crypto from 'crypto';
-import type { Workflow, XGuardModerationStep } from '@civitai/client';
+import type { MediaRatingOutput, Workflow, XGuardModerationStep } from '@civitai/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -20,30 +20,57 @@ import {
   type DerivedLabelInput,
   type DerivedLabelMode,
 } from '~/server/services/scanner-derived-labels.service';
+import { matchAllLabels, REGEX_VERSION } from '~/server/services/scanner-label-regex';
 
 /**
- * Age-classifier topK band names that count as minor. Includes Teenager 13-20
- * intentionally — the band spans both minor and adult ages, but for FN-browse
- * purposes we want the score to reflect "how close to a minor classification"
- * the model put this image, not just whether isMinor flipped.
+ * Age-classifier topK band names that count as minor. Stored in normalized
+ * form (lowercase, ASCII hyphen) and matched after normalizing the input key,
+ * so locale variants ("Child 0–12" with en-dash, lowercase, etc.) still hit.
+ * Includes Teenager 13-20 intentionally — the band spans both minor and adult
+ * ages, but for FN-browse purposes we want the score to reflect "how close
+ * to a minor classification" the model put this image, not just isMinor.
  */
-const MINOR_AGE_BANDS = new Set(['Child 0-12', 'Teenager 13-20']);
+const MINOR_AGE_BANDS_NORMALIZED = new Set(['child 0-12', 'teenager 13-20']);
 
-type MediaRatingOutput = {
-  nsfwLevel: string;
-  isBlocked: boolean;
-  blockedReason?: string;
-  ageClassification?: {
-    detections: Array<{
-      isMinor: boolean;
-      confidence: number;
-      topK?: Record<string, number>;
-    }>;
-  };
-  faceRecognition?: { faces: Array<unknown> };
-  aiRecognition?: { label: string; confidence: number };
-  animeRecognition?: { label: string; confidence: number };
-};
+function normAgeBandKey(k: string): string {
+  return k.trim().toLowerCase().replace(/[–—]/g, '-');
+}
+
+/** Normalize classifier label output (lowercase + trim) so casing drift in
+ *  the orchestrator response doesn't fracture the audit table. The 'na'
+ *  sentinel from the NsfwLevel union is the one value we deliberately drop —
+ *  it means "not analyzed", not a real rating. */
+function normClassifierLabel(v: string | null | undefined): string {
+  return (v ?? '').trim().toLowerCase();
+}
+
+/**
+ * ClickHouse async_insert settings. Audit-table inserts run at high frequency
+ * once image scanning ramps up — one insert per scan, 5-10 rows each. Without
+ * server-side batching that's hundreds of small parts per partition per
+ * second and we hit `parts_to_throw_insert` (~300 active parts) fast.
+ *
+ * async_insert tells ClickHouse to buffer incoming rows server-side and flush
+ * them as a single part when either `busy_timeout_ms` elapses since the first
+ * buffered row OR `max_data_size` bytes are accumulated. The wait-flag is 0
+ * because every caller of insertRows / writeRegexShadowComparison is
+ * fire-and-forget — we don't need to know the row landed before we return.
+ *
+ * Worst-case durability: server crash during the ~1s buffer window loses
+ * those rows. Acceptable for an audit log (we already swallow ClickHouse
+ * errors and log to Axiom; same defensive posture).
+ */
+const CLICKHOUSE_AUDIT_INSERT_SETTINGS = {
+  async_insert: 1,
+  wait_for_async_insert: 0,
+  async_insert_busy_timeout_ms: 1000,
+  async_insert_max_data_size: '10000000',
+} as const;
+
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
 
 type LabelRowSeed = {
   label: string;
@@ -143,6 +170,7 @@ async function insertRows({
       table: 'scanner_label_results',
       values: rows,
       format: 'JSONEachRow',
+      clickhouse_settings: CLICKHOUSE_AUDIT_INSERT_SETTINGS,
     });
   } catch (e) {
     const error = e as Error;
@@ -156,6 +184,85 @@ async function insertRows({
       entityId,
       contentHash,
       labelRowCount: rows.length,
+    });
+  }
+}
+
+/**
+ * Cheap script-detection gate for the regex shadow pass. Returns true when
+ * the text is plausibly English (mostly Latin script). Non-English prompts
+ * skip the regex matcher — the regex term lists are English-only by design;
+ * see docs/features/scanner-label-architecture.md for the tiered detection
+ * plan.
+ */
+function isLikelyEnglishForRegex(text: string): boolean {
+  if (!text) return false;
+  // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec
+  const nonLatin = text.match(
+    /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Cyrillic}\p{Script=Arabic}\p{Script=Hangul}\p{Script=Devanagari}\p{Script=Thai}\p{Script=Hebrew}]/gu
+  );
+  if (!nonLatin) return true;
+  return nonLatin.length / text.length < 0.05; // <5% non-Latin chars = treat as English
+}
+
+/**
+ * Shadow-write: compare regex-detector output to XGuard for each atomic
+ * label and persist the comparison to `scanner_regex_shadow_results` for
+ * later audit. Phase 1 of the regex-rollout plan in
+ * docs/features/scanner-label-architecture.md — does not change the audit
+ * data the moderator queue sees.
+ *
+ * Fire-and-forget: any failure here is logged to Axiom but does not
+ * propagate. We never block the main audit write on regex shadow data.
+ */
+async function writeRegexShadowComparison(args: {
+  workflowId: string;
+  contentHash: string;
+  scanner: 'xguard_prompt' | 'xguard_text';
+  positivePrompt: string;
+  xguardLabels: LabelRowSeed[];
+  scannedAt: Date;
+}) {
+  if (!clickhouse) return;
+  if (!isLikelyEnglishForRegex(args.positivePrompt)) return;
+
+  try {
+    const regexResults = matchAllLabels(args.positivePrompt);
+    if (regexResults.length === 0) return;
+
+    const rows = regexResults.map((r) => {
+      const xg = args.xguardLabels.find((l) => l.label === r.label);
+      return {
+        workflowId: args.workflowId,
+        contentHash: args.contentHash,
+        scanner: args.scanner,
+        label: r.label,
+        regexMatched: r.matched ? 1 : 0,
+        regexReason: r.reason,
+        regexMatchedTerms: r.matchedTerms,
+        regexVersion: REGEX_VERSION,
+        xguardTriggered: xg ? xg.triggered : null,
+        xguardScore: xg?.score ?? null,
+        xguardThreshold: xg?.threshold ?? null,
+        xguardPolicyHash: xg?.version ?? null,
+        scannedAt: args.scannedAt,
+      };
+    });
+
+    await clickhouse.insert({
+      table: 'scanner_regex_shadow_results',
+      values: rows,
+      format: 'JSONEachRow',
+      clickhouse_settings: CLICKHOUSE_AUDIT_INSERT_SETTINGS,
+    });
+  } catch (e) {
+    const error = e as Error;
+    await logToAxiom({
+      name: 'scanner-regex-shadow-write-failed',
+      type: 'error',
+      message: error.message,
+      workflowId: args.workflowId,
+      contentHash: args.contentHash,
     });
   }
 }
@@ -219,6 +326,22 @@ export async function recordXGuardScanFromWorkflow(workflow: Workflow) {
 
   const entityType = (workflow.metadata.entityType as string | undefined) ?? '';
   const entityIdRaw = workflow.metadata.entityId as number | string | undefined;
+
+  // Phase 1 (shadow mode) regex comparison. Doesn't change what's recorded
+  // to scanner_label_results — purely an analytical sidecar in
+  // scanner_regex_shadow_results so we can audit regex accuracy vs XGuard on
+  // real production traffic before flipping the regex authoritative. Prompt
+  // mode + English-only; see writeRegexShadowComparison.
+  if (mode === 'prompt' && workflow.id && input.positivePrompt) {
+    void writeRegexShadowComparison({
+      workflowId: workflow.id,
+      contentHash,
+      scanner: 'xguard_prompt',
+      positivePrompt: input.positivePrompt,
+      xguardLabels: labels,
+      scannedAt: workflow.completedAt ? new Date(workflow.completedAt) : new Date(),
+    });
+  }
 
   // Apply derived-label rules — suppress redundant rows (e.g. `suggestive`
   // when `explicit` also triggered) and synthesize computed rows (e.g.
@@ -290,77 +413,117 @@ export async function recordImageScan({
   if (!clickhouse) return;
 
   const labels: LabelRowSeed[] = [];
-  labels.push({
-    label: 'nsfw_level',
-    labelValue: mediaRating.nsfwLevel,
-    score: 1,
-    threshold: null,
-    triggered: 1,
-    version: '1',
-    matchedText: [],
-    matchedPositivePrompt: [],
-    matchedNegativePrompt: [],
-  });
-  labels.push({
-    label: 'is_blocked',
-    labelValue: '',
-    score: mediaRating.isBlocked ? 1 : 0,
-    threshold: null,
-    triggered: mediaRating.isBlocked ? 1 : 0,
-    version: '1',
-    matchedText: [],
-    matchedPositivePrompt: [],
-    matchedNegativePrompt: [],
-  });
 
-  if (mediaRating.ageClassification) {
-    const detections = mediaRating.ageClassification.detections ?? [];
+  // Shared row defaults — image rows have no text-side matched-term arrays
+  // and no per-row threshold. Spread this into each push to keep them tidy.
+  const baseRow = {
+    threshold: null,
+    version: '1',
+    matchedText: [] as string[],
+    matchedPositivePrompt: [] as string[],
+    matchedNegativePrompt: [] as string[],
+  };
+
+  // --- 1. NSFW level → the LEVEL itself becomes the label name -------------
+  // pg / pg13 / r / x / xxx are queryable directly. 'na' is the orchestrator's
+  // "not analyzed" sentinel — recorded as a distinct audit signal, not a real
+  // rating. Anything else (case drift, future variant) gets surfaced as
+  // unknown_nsfw_level so an audit trail exists for new shapes.
+  // nsfw_level — label IS the level. Skip the 'na' sentinel.
+  const nsfwLevel = normClassifierLabel(mediaRating.nsfwLevel);
+  if (nsfwLevel && nsfwLevel !== 'na') {
+    labels.push({
+      ...baseRow,
+      label: nsfwLevel,
+      labelValue: 'nsfw_level',
+      score: 1,
+      triggered: 1,
+    });
+  }
+
+  // is_blocked — emit when blocked, with blockedReason in labelValue.
+  if (mediaRating.isBlocked) {
+    labels.push({
+      ...baseRow,
+      label: 'is_blocked',
+      labelValue: mediaRating.blockedReason ?? '',
+      score: 1,
+      triggered: 1,
+    });
+  }
+
+  // content_label — one row per orchestrator-provided label.
+  for (const orchLabel of mediaRating.labels ?? []) {
+    if (!orchLabel) continue;
+    labels.push({
+      ...baseRow,
+      label: 'content_label',
+      labelValue: orchLabel,
+      score: 1,
+      triggered: 1,
+    });
+  }
+
+  // minor — score is sum of minor-band topK probabilities (max across
+  // detections); triggered tracks isMinor; labelValue carries the joined
+  // ageLabel(s) so mods can see 'Teenager 13-20' vs 'Adult 21-44'.
+  const detections = mediaRating.ageClassification?.detections ?? [];
+  if (detections.length > 0) {
     const minorScore = detections.reduce((max, d) => {
       const topK = d.topK ?? {};
       const probSum = Object.entries(topK).reduce(
-        (sum, [band, p]) => (MINOR_AGE_BANDS.has(band) ? sum + p : sum),
+        (sum, [band, p]) => (MINOR_AGE_BANDS_NORMALIZED.has(normAgeBandKey(band)) ? sum + p : sum),
         0
       );
       return Math.max(max, probSum);
     }, 0);
+    const ageLabels = detections
+      .map((d) => d.ageLabel)
+      .filter((x): x is string => !!x)
+      .join(', ');
     labels.push({
+      ...baseRow,
       label: 'minor',
-      labelValue: '',
-      score: minorScore,
-      threshold: null,
+      labelValue: ageLabels,
+      score: clamp01(minorScore),
       triggered: detections.some((d) => d.isMinor) ? 1 : 0,
-      version: '1',
-      matchedText: [],
-      matchedPositivePrompt: [],
-      matchedNegativePrompt: [],
     });
   }
 
-  if (mediaRating.aiRecognition) {
+  // ai_recognition / anime_recognition — emit whatever the classifier said.
+  // labelValue carries the detector source so 'real' rows from the two
+  // classifiers don't collide on the `label` column.
+  if (mediaRating.aiRecognition?.label) {
     labels.push({
-      label: 'ai',
-      labelValue: mediaRating.aiRecognition.label,
-      score: mediaRating.aiRecognition.confidence,
-      threshold: null,
-      triggered: mediaRating.aiRecognition.label === 'AI' ? 1 : 0,
-      version: '1',
-      matchedText: [],
-      matchedPositivePrompt: [],
-      matchedNegativePrompt: [],
+      ...baseRow,
+      label: normClassifierLabel(mediaRating.aiRecognition.label),
+      labelValue: 'ai_recognition',
+      score: clamp01(mediaRating.aiRecognition.confidence),
+      triggered: 1,
+    });
+  }
+  if (mediaRating.animeRecognition?.label) {
+    labels.push({
+      ...baseRow,
+      label: normClassifierLabel(mediaRating.animeRecognition.label),
+      labelValue: 'anime_recognition',
+      score: clamp01(mediaRating.animeRecognition.confidence),
+      triggered: 1,
     });
   }
 
-  if (mediaRating.animeRecognition) {
+  // faces — emit when the classifier detected any. score carries the count
+  // so a query can still filter by "images with > N faces". boundingBoxes,
+  // landmarks, embeddings, and similarityMatrix are intentionally not
+  // persisted (high-cardinality, partly PII).
+  const faces = mediaRating.faceRecognition?.faces ?? [];
+  if (faces.length > 0) {
     labels.push({
-      label: 'anime',
-      labelValue: mediaRating.animeRecognition.label,
-      score: mediaRating.animeRecognition.confidence,
-      threshold: null,
-      triggered: mediaRating.animeRecognition.label === 'anime' ? 1 : 0,
-      version: '1',
-      matchedText: [],
-      matchedPositivePrompt: [],
-      matchedNegativePrompt: [],
+      ...baseRow,
+      label: 'faces',
+      labelValue: '',
+      score: faces.length,
+      triggered: 1,
     });
   }
 

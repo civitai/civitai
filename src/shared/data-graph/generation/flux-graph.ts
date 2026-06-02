@@ -114,9 +114,14 @@ const standardModeBaseGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
     sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5, presets: fluxGuidancePresets })
   )
   .node('steps', sliderNode({ min: 20, max: 50, defaultValue: 25 }))
+  // ControlNets — only available for txt2img workflows.
   .node(
     'controlNets',
-    controlNetsNode({ preprocessors: fluxControlNetPreprocessors, limit: CONTROLNET_LIMIT })
+    (ctx) => ({
+      ...controlNetsNode({ preprocessors: fluxControlNetPreprocessors, limit: CONTROLNET_LIMIT }),
+      when: ctx.workflow === 'txt2img',
+    }),
+    ['workflow']
   )
   .node('seed', seedNode());
 

@@ -3,6 +3,7 @@ import Script from 'next/script';
 import React, { createContext, useContext, useEffect } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
+import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { isDev } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -60,6 +61,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const browserBlocked = useAdProviderStore((state) => state.browserBlocked);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const { allowed: consentAllowed } = useThirdPartyConsent();
 
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
@@ -71,9 +73,12 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   // Snigel loader succeeds, so `onError` never fires and we can't rely on
   // `adsBlocked` alone. Disable ads entirely when the browser is known to
   // silently block — no Snigel script, no interleaved slots.
+  // Also gated on CIPA consent: in regions where consent is required, the Snigel
+  // loader (and the prebid/ad-tech cascade behind it) cannot fire until accepted.
   const adsEnabled = isDev
     ? false
     : !browserBlocked &&
+      consentAllowed &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url)) &&
       !router.asPath.split('?')[0].endsWith('/edit');
