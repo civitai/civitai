@@ -5,6 +5,7 @@ import { ActionIcon, Box, Group, Menu } from '@mantine/core';
 import { IconApps, IconDots } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BlockFallback } from './BlockFallback';
+import { failureSnapshot } from './failureSnapshot';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -12,7 +13,6 @@ import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
-import type { BlockWorkflowSnapshot } from '~/server/schema/blocks/workflow.schema';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
@@ -65,18 +65,6 @@ function intersectSandbox(raw: string | undefined, trustTier: string): string {
   const tokens = new Set(declared.length > 0 ? declared : ['allow-scripts']);
   if (TRUSTED_TIERS.has(trustTier)) tokens.add('allow-same-origin');
   return Array.from(tokens).join(' ');
-}
-
-// Failure-shape snapshot returned to the block when a tRPC call throws. The
-// SDK contract treats throws from useBuzzWorkflow.* as block lifecycle errors;
-// posting a snapshot with status:'failed' instead lets the block surface a
-// recoverable UX (e.g. "Top up Buzz" CTA) without tearing down the iframe.
-function failureSnapshot(err: unknown): BlockWorkflowSnapshot {
-  return {
-    workflowId: '',
-    status: 'failed',
-    error: err instanceof Error ? err.message : 'workflow request failed',
-  };
 }
 
 // Reduce a thrown tRPC error to a single short string the block can surface.

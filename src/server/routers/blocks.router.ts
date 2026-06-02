@@ -1030,7 +1030,11 @@ export const blocksRouter = router({
       if (cost > claims.buzzBudget) {
         return {
           snapshot: {
-            workflowId: '',
+            // Non-empty sentinel: the block SDK validator drops empty-workflowId
+            // snapshots, which would silently swallow this insufficient-budget
+            // reply and hang submit to its 120s timeout instead of surfacing the
+            // top-up CTA. (Same class as failureSnapshot in IframeHost.tsx.)
+            workflowId: 'failed',
             status: 'failed' as const,
             cost: { total: cost },
             error: `insufficient buzz budget: estimate ${cost} exceeds budget ${claims.buzzBudget}`,
