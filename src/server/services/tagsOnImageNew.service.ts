@@ -118,7 +118,7 @@ async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[])
 
 async function applyTagRules(args: TagsOnImageNewArgs[]) {
   const tagRules = await getTagRules();
-  return tagRules.reduce<TagsOnImageNewArgs[]>(
+  const applied = tagRules.reduce<TagsOnImageNewArgs[]>(
     (tags, rule) => {
       const index = tags.findIndex((x) => x.tagId === rule.toId);
       if (index === -1) return tags;
@@ -132,5 +132,15 @@ async function applyTagRules(args: TagsOnImageNewArgs[]) {
       return [...tags, { ...existing, tagId: rule.fromId, confidence: 70, source: 'Computed' }];
     },
     [...args]
+  );
+
+  return Object.values(
+    applied.reduce<Record<string, TagsOnImageNewArgs>>((acc, tag) => {
+      const key = `${tag.imageId}-${tag.tagId}`;
+      if (!acc[key] || (acc[key].confidence ?? 0) < (tag.confidence ?? 0)) {
+        acc[key] = tag;
+      }
+      return acc;
+    }, {})
   );
 }
