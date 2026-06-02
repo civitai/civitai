@@ -44,7 +44,8 @@ export type ConnectType =
   | 'bountyEntry'
   | 'club'
   | 'article'
-  | 'comicChapter';
+  | 'comicChapter'
+  | 'model3d';
 
 export type ImageGuardConnect = { connectType: ConnectType; connectId: ConnectId };
 
