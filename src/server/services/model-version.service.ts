@@ -621,10 +621,28 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
 
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
-    await deleteBidsForModelVersion({ modelVersionId: id });
 
     return deleted;
   });
+
+  // Post-commit: deleteBidsForModelVersion issues external Buzz refunds
+  // (buzzApiFetch + retries) and notifications. It runs on its own connection
+  // (no tx), so awaiting it inside the interactive transaction only added an
+  // external HTTP round-trip to the txn's wall-clock budget for no atomicity
+  // benefit — a Postgres rollback can't undo a refund that already hit the Buzz
+  // ledger. Behavior change: a refund failure no longer rolls back the version
+  // delete (the delete is already committed); it's best-effort + logged here,
+  // consistent with the other post-commit side effects below.
+  try {
+    await deleteBidsForModelVersion({ modelVersionId: id });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-version-delete-bids',
+      message: `Failed to delete/refund bids for deleted model version ${id}`,
+      error,
+    });
+  }
 
   // Post-commit: Redis-level flags and cache busts must run only after the
   // Postgres transaction actually commits. Running them inside the txn would
