@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import { getUserBuzzAccounts } from '~/server/services/buzz.service';
 import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
@@ -93,6 +94,69 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
       code: 'FORBIDDEN',
       message: 'App Blocks is restricted to the civitai team',
     });
+  }
+}
+
+// ---- Cumulative Buzz-spend cap (audit A7 / design-gaps H1) -----------------
+//
+// `claims.buzzBudget` is a PER-CALL ceiling only. Without an aggregate cap, a
+// block holding a valid token (15-min lifetime, freely re-minted) can issue
+// unlimited sequential `submitWorkflow` calls each ≤ budget and drain the
+// viewer's entire Buzz balance. This adds a per-(user, app_block, UTC-day)
+// cumulative ceiling enforced server-side in submitWorkflow, backed by a Redis
+// counter that self-expires at the end of its window.
+//
+// The aggregate ceiling is a fixed platform default today. When the W5 consent
+// layer lands (app_user_scope_grants), the per-install/consent aggregate limit
+// should override this default — surfaced to the user at install/consent time.
+const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
+// 25h TTL: comfortably covers a UTC-day window plus clock skew; the key is
+// re-derived per day so a stale counter never bleeds into the next window.
+const BLOCK_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
+
+function buzzCapWindowKey(): string {
+  // UTC calendar day, e.g. '2026-06-02'.
+  return new Date().toISOString().slice(0, 10);
+}
+
+function buzzCapRedisKey(
+  userId: number,
+  appBlockId: string
+): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${string}` {
+  return `${REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${userId}:${appBlockId}:${buzzCapWindowKey()}`;
+}
+
+/**
+ * Returns the cumulative Buzz already spent by this (user, app_block) in the
+ * current UTC-day window. 0 when the key is absent (fresh window / first spend).
+ */
+async function getBlockBuzzSpentInWindow(userId: number, appBlockId: string): Promise<number> {
+  const raw = await sysRedis.get(buzzCapRedisKey(userId, appBlockId));
+  const n = raw == null ? 0 : Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/**
+ * Records `cost` against the cumulative window counter after a successful
+ * submit. Sets the TTL on the (effectively) first write so the per-window key
+ * self-expires. INCRBY is atomic, so concurrent submits accumulate correctly.
+ */
+async function recordBlockBuzzSpend(
+  userId: number,
+  appBlockId: string,
+  cost: number
+): Promise<void> {
+  if (cost <= 0) return;
+  const key = buzzCapRedisKey(userId, appBlockId);
+  const total = await sysRedis.incrBy(key, Math.ceil(cost));
+  // Set expiry once: if the counter just became >= the increment, this is the
+  // first write of the window. (ttl<0 guard also re-arms a key that somehow
+  // lost its TTL.)
+  if (total <= Math.ceil(cost)) {
+    await sysRedis.expire(key, BLOCK_BUZZ_CAP_TTL_SECONDS);
+  } else {
+    const ttl = await sysRedis.ttl(key);
+    if (ttl < 0) await sysRedis.expire(key, BLOCK_BUZZ_CAP_TTL_SECONDS);
   }
 }
 
@@ -1079,6 +1143,27 @@ export const blocksRouter = router({
         };
       }
 
+      // CUMULATIVE Buzz-spend cap (audit A7 / design-gaps H1). The per-call
+      // check above only bounds THIS submit; check the running per-(user,
+      // app_block, UTC-day) total so a block can't drain the balance via many
+      // sequential ≤budget submits. Reject (without spending) when this submit
+      // would push the cumulative spend over the daily ceiling. The increment
+      // happens AFTER a successful submit below — failed/blocked submits don't
+      // consume the cap.
+      const alreadySpent = await getBlockBuzzSpentInWindow(userId, claims.appBlockId);
+      if (alreadySpent + cost > BLOCK_BUZZ_CAP_PER_DAY) {
+        return {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed' as const,
+            cost: { total: cost },
+            error:
+              `daily Buzz cap reached for this app: ${alreadySpent} already spent today, ` +
+              `this generation costs ${cost}, daily cap is ${BLOCK_BUZZ_CAP_PER_DAY}`,
+          },
+        };
+      }
+
       // Daily-boost autoclaim. Cost cleared the install's budget cap; check
       // whether the user's actual spendable Buzz can pay for it. If they're
       // short AND the 25-blue daily boost would close the gap, fire the
@@ -1102,6 +1187,18 @@ export const blocksRouter = router({
         body: { steps: [step], tags, currencies: BLOCK_CURRENCIES },
       });
       const snapshot = snapshotFromWorkflow(submitted);
+
+      // Record the spend against the cumulative daily cap. Only on a real
+      // submit (this line is reached only after submitWorkflow resolved). Use
+      // the whatif estimate as the charged amount — it's what the per-call
+      // check used and what the orchestrator bills against. Fire-and-forget so
+      // a Redis blip can't poison the user-facing response, but await-able for
+      // tests; a missed increment fails OPEN (under-counts) which is the safe
+      // direction for a spend CAP only in that it never over-rejects — the
+      // per-call ceiling still bounds each individual submit.
+      await recordBlockBuzzSpend(userId, claims.appBlockId, cost).catch(() => {
+        /* swallow — see note above */
+      });
 
       // Log the workflow submission to the per-user activity feed so
       // /apps/installed → Activity shows "this app ran a workflow on

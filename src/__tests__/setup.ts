@@ -119,6 +119,16 @@ vi.mock('~/server/prom/client', () => ({
   creatorCompAmountPaidCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
   userUpdateCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
   dbReadFallbackCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+  // App-Blocks W4 KV storage metrics (apps.router). These were missing from
+  // the global prom mock, so every apps.router.storage test 500'd at the first
+  // metric touch with `No "appStorageLatencyHistogram" export`.
+  appStorageOpsCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+  appStorageQuotaExceededCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+  appStorageLatencyHistogram: {
+    startTimer: vi.fn(() => vi.fn()),
+    observe: vi.fn(),
+    labels: vi.fn(() => ({ observe: vi.fn(), startTimer: vi.fn(() => vi.fn()) })),
+  },
 }));
 
 // Mock logging

@@ -113,6 +113,26 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
     appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
     throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
   }
+  // A5 / design-gaps H4: storage is a DECLARED, approved scope — not an
+  // ambient capability. Before touching appsDb, assert the token actually
+  // carries the storage scope appropriate to the op. The scope only reaches
+  // the token if it was in the manifest AND in the block's approvedScopes
+  // snapshot (block-tokens/index.ts), so this re-checks the issuance contract
+  // at the point of use. Reads need apps:storage:read; mutations need
+  // apps:storage:write. (Previously resolveStorageContext never inspected
+  // claims.scopes, so a block approved for e.g. only models:read:self could
+  // still read/write 50MB of per-user KV it never disclosed.)
+  const requiredScope: string = op === 'set' || op === 'delete'
+    ? 'apps:storage:write'
+    : 'apps:storage:read';
+  if (!Array.isArray(claims.scopes) || !claims.scopes.includes(requiredScope)) {
+    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: `storage ${op} requires the ${requiredScope} scope`,
+    });
+  }
+
   const userId = parseSubjectUserId(claims.sub);
   // Phase 2: moderator-only until GA. A non-null subject must be a moderator;
   // anon subjects (userId === null) fall through to each op's existing

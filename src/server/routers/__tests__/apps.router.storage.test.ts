@@ -82,7 +82,10 @@ function validClaims(over: Record<string, unknown> = {}) {
     appId: 'app_test',
     blockInstanceId: 'mbi_inst',
     ctx: { modelId: 7, slotId: 'model.sidebar_top' },
-    scopes: [],
+    // Fix 3 / audit A5: storage is now a declared scope. The default claims
+    // carry both read+write so the existing happy-path tests exercise the data
+    // path; the scope-gate tests below override `scopes` to assert rejection.
+    scopes: ['apps:storage:read', 'apps:storage:write'],
     ...over,
   };
 }
@@ -210,6 +213,55 @@ describe('apps.storage shared gates', () => {
     await expect(
       caller.storage.get({ blockToken: 't', key: 'k' })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  // Fix 3 / audit A5 (design-gaps H4): storage is a DECLARED, approved scope —
+  // not an ambient capability. A block approved for some OTHER scope (e.g.
+  // models:read:self) but NOT apps:storage:* must be denied at the storage
+  // resolver before it touches appsDb.
+  it('rejects a token without apps:storage:read on a read op (FORBIDDEN)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(
+      validClaims({ scopes: ['models:read:self'] })
+    );
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.get({ blockToken: 't', key: 'k' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // The block with no storage scope must never reach the data pool.
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects a token without apps:storage:write on a write op (FORBIDDEN)', async () => {
+    // Read scope present, write scope absent → set/delete must still 403.
+    mockVerifyBlockToken.mockResolvedValueOnce(
+      validClaims({ scopes: ['apps:storage:read'] })
+    );
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('read scope alone is sufficient for a read op (no write needed)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(
+      validClaims({ scopes: ['apps:storage:read'] })
+    );
+    mockPool.query.mockResolvedValueOnce({ rows: [{ value: 1 }], rowCount: 1 });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    const out = await caller.storage.get({ blockToken: 't', key: 'k' });
+    expect(out).toEqual({ value: 1 });
+  });
+
+  it('rejects a delete without apps:storage:write (FORBIDDEN)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(
+      validClaims({ scopes: ['apps:storage:read'] })
+    );
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.delete({ blockToken: 't', key: 'k' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockPool.connect).not.toHaveBeenCalled();
   });
 });
 

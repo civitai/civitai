@@ -54,7 +54,11 @@ const {
     mockDbWrite: {
       appBlockPublishRequest: { create: vi.fn(), update: vi.fn() },
       appBlock: { create: vi.fn(), update: vi.fn() },
-      oauthClient: { create: vi.fn() },
+      // `update` added 2026-06-02 (audit A1 fix): approveRequest now re-caps
+      // the app-block OauthClient's allowedScopes to the manifest-derived
+      // ceiling + forces grants:[] on the subsequent-version + P2002-retry
+      // paths.
+      oauthClient: { create: vi.fn(), update: vi.fn() },
     },
     mockS3Send: vi.fn(),
     mockBundleBuffer: { current: null as Buffer | null },
@@ -1032,6 +1036,14 @@ describe('approveRequest', () => {
     expect(ocArg.userId).toBe(42);
     expect(ocArg.isConfidential).toBe(false);
 
+    // A1 fix: app-block client is structurally non-interactive. grants:[]
+    // removes the Prisma default ["authorization_code","refresh_token"] so it
+    // can never drive the OAuth code/device flow that mints account tokens.
+    // allowedScopes is the manifest-derived ceiling — for the default
+    // zero-scope manifest that's 0, NOT TokenScope.Full (33554431).
+    expect(ocArg.grants).toEqual([]);
+    expect(ocArg.allowedScopes).toBe(0);
+
     // commitFiles received the bundle contents with replaceAllFiles=true.
     const commitArg = mockForgejo.commitFiles.mock.calls[0][0];
     expect(commitArg.slug).toBe('hello');
@@ -1041,6 +1053,35 @@ describe('approveRequest', () => {
       'block.manifest.json',
       'index.html',
     ]);
+  });
+
+  it('A1: caps OauthClient.allowedScopes to the manifest-derived bitmask (not Full)', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    // models:read:self (bit 1<<2 = 4) + user:read:self (1<<0 = 1) +
+    // apps:storage:write (SKIP_OAUTH_CHECK → contributes 0). Derived OAuth
+    // ceiling must be 4|1 = 5, never 33554431 (Full). approveRequest reads the
+    // scopes from request.manifest (the publish_request row), not the bundle.
+    const scopedManifest = manifest({
+      scopes: ['models:read:self', 'user:read:self', 'apps:storage:write'],
+    });
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ manifest: scopedManifest })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle({
+      scopes: ['models:read:self', 'user:read:self', 'apps:storage:write'],
+    });
+
+    await approveRequest({
+      publishRequestId: 'pubreq_1',
+      reviewerUserId: 999,
+      approvalNotes: 'lgtm',
+    });
+
+    const ocArg = mockDbWrite.oauthClient.create.mock.calls[0][0].data;
+    expect(ocArg.allowedScopes).toBe(5);
+    expect(ocArg.allowedScopes).not.toBe(33554431);
+    expect(ocArg.grants).toEqual([]);
   });
 
   it('subsequent-version happy path skips OauthClient + repo create', async () => {
@@ -1072,6 +1113,16 @@ describe('approveRequest', () => {
     expect(mockForgejo.ensurePushWebhook).not.toHaveBeenCalled();
     expect(mockDbWrite.appBlock.update).toHaveBeenCalledOnce();
     expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
+
+    // A1 fix: the existing OauthClient's ceiling is re-capped to the derived
+    // bitmask + forced to grants:[] on every subsequent approve — self-heals
+    // a row that was created as Full (33554431) + interactive grants before
+    // this fix. Default manifest has no scopes → ceiling 0.
+    expect(mockDbWrite.oauthClient.update).toHaveBeenCalledOnce();
+    const ocUpdateArg = mockDbWrite.oauthClient.update.mock.calls[0][0];
+    expect(ocUpdateArg.where).toEqual({ id: 'oc_existing' });
+    expect(ocUpdateArg.data.grants).toEqual([]);
+    expect(ocUpdateArg.data.allowedScopes).toBe(0);
   });
 
   // C-2 regression — failure at step 2 (Forgejo repo create) leaves the

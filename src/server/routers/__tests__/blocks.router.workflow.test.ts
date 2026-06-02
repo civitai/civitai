@@ -29,6 +29,7 @@ const {
   mockDailyBoostGetDetails,
   mockGetUserBuzzAccounts,
   mockLogToAxiom,
+  mockSysRedis,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -50,6 +51,14 @@ const {
     modelMetric: { findFirst: vi.fn() },
   },
   mockRedis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
+  // sysRedis surface used by the cumulative Buzz-cap (audit A7). Default to an
+  // empty window (get → null) so the cap is non-binding unless a test seeds it.
+  mockSysRedis: {
+    get: vi.fn(async () => null),
+    incrBy: vi.fn(async () => 0),
+    expire: vi.fn(async () => true),
+    ttl: vi.fn(async () => -1),
+  },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockDailyBoostApply: vi.fn(async () => undefined),
   mockDailyBoostGetDetails: vi.fn(async () => ({
@@ -94,7 +103,9 @@ vi.mock('~/server/db/client', () => ({
 }));
 vi.mock('~/server/redis/client', () => ({
   redis: mockRedis,
+  sysRedis: mockSysRedis,
   REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
+  REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
@@ -238,9 +249,19 @@ beforeEach(() => {
     mockDailyBoostGetDetails,
     mockGetUserBuzzAccounts,
     mockLogToAxiom,
+    mockSysRedis.get,
+    mockSysRedis.incrBy,
+    mockSysRedis.expire,
+    mockSysRedis.ttl,
   ]) {
     fn.mockReset();
   }
+  // Buzz-cap (audit A7): default to an empty window so the cap is non-binding
+  // unless a test seeds prior spend via mockSysRedis.get.
+  mockSysRedis.get.mockResolvedValue(null);
+  mockSysRedis.incrBy.mockResolvedValue(0);
+  mockSysRedis.expire.mockResolvedValue(true);
+  mockSysRedis.ttl.mockResolvedValue(-1);
   // Defaults — every test starts with the flag on, a valid claim, an
   // authenticated subject, a fresh user/version row. Tests override only the
   // gate they're exercising. NB: mockReset wipes the implementation, so the
@@ -491,6 +512,74 @@ describe('blocks.submitWorkflow', () => {
     await expect(
       caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  // ---- A7 cumulative Buzz-spend cap --------------------------------------
+  it('A7: rejects (no real submit) when prior spend + cost would exceed the daily cap', async () => {
+    // Per-call budget high enough to clear the per-call check; the cumulative
+    // window counter already at 49,990 so a 25-cost submit (→ 50,015) trips the
+    // 50,000 daily cap.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    mockSysRedis.get.mockResolvedValue('49990');
+    mockSubmitWorkflow.mockResolvedValueOnce({
+      id: '',
+      status: 'succeeded',
+      cost: { total: 25 },
+      steps: [],
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect(result.snapshot.status).toBe('failed');
+    expect(result.snapshot.error).toMatch(/daily Buzz cap/i);
+    // The whatif ran (1 call) but the REAL submit must NOT have fired.
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    // A blocked submit must not consume the cap.
+    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+  });
+
+  it('A7: a submit within the cap succeeds and records the spend', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // Window already has 100 spent; a 25-cost submit → 125, well under 50,000.
+    mockSysRedis.get.mockResolvedValue('100');
+    mockSysRedis.incrBy.mockResolvedValue(125);
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+      .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect(result.snapshot.workflowId).toBe('wf_real');
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+    // The successful spend is recorded against the cumulative counter.
+    expect(mockSysRedis.incrBy).toHaveBeenCalledTimes(1);
+    const incrArgs = mockSysRedis.incrBy.mock.calls[0];
+    expect(String(incrArgs[0])).toContain('system:blocks:buzz-cap');
+    expect(incrArgs[1]).toBe(25);
+  });
+
+  it('A7: cap counts cumulatively — N submits at budget each still trip the cap', async () => {
+    // Simulate the drain attack: per-call budget=1000 (each submit passes the
+    // per-call check), but the window counter is already at 50,000 — the very
+    // next submit is rejected.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    mockSysRedis.get.mockResolvedValue('50000');
+    mockSubmitWorkflow.mockResolvedValueOnce({
+      id: '',
+      status: 'succeeded',
+      cost: { total: 1 },
+      steps: [],
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect(result.snapshot.status).toBe('failed');
+    expect(result.snapshot.error).toMatch(/daily Buzz cap/i);
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
   });
 
   it('rejects when the token has no buzzBudget claim', async () => {

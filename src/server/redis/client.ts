@@ -913,6 +913,16 @@ export const REDIS_SYS_KEYS = {
      * disable a runaway block without a deploy.
      */
     EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
+    /**
+     * Cumulative Buzz-spend cap counter (audit A7 / design-gaps H1). The
+     * per-call `claims.buzzBudget` only bounds a SINGLE submitWorkflow; a
+     * block holding a valid token can issue unlimited sequential capped
+     * submits and drain the whole balance. This is an integer counter, keyed
+     * `system:blocks:buzz-cap:${userId}:${appBlockId}:${UTC-day}`, INCRBY'd by
+     * the cost of each successful submit and checked before submit. TTL is set
+     * on first write so the per-window key self-expires.
+     */
+    BUZZ_CAP: 'system:blocks:buzz-cap',
   },
 } as const;
 

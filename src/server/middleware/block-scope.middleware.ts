@@ -445,6 +445,20 @@ export function enforceContextBinding(
         }
         break;
       }
+      case 'apps:storage:read':
+      case 'apps:storage:write': {
+        // The W4 KV store is per-(app, instance, user). There is no anonymous
+        // "self" storage, so a token carrying a storage scope must have an
+        // authenticated subject. The (instance,user) tuple binding itself is
+        // enforced in `resolveStorageContext` (apps.router.ts) where the
+        // actual KV read/write happens; this case exists so adding these
+        // scopes to BLOCK_SCOPE_TO_OAUTH_BIT does NOT silently reintroduce the
+        // fail-open the comment below warns about (audit fix 3 / L-M6).
+        if (claims.sub === 'anon') {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
       // No `default` — the unknown-scope reject above is the exhaustive
       // gate. Adding a new known scope to BLOCK_SCOPE_TO_OAUTH_BIT without
       // a case here means it is accepted with no extra binding.

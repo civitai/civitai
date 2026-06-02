@@ -70,6 +70,18 @@ describe('enforceContextBinding', () => {
     expect(() => enforceContextBinding(tipAnon, fakeReq({}))).toThrow();
   });
 
+  it('apps:storage:* block anon subjects (fix 3 / L-M6 no-fail-open)', () => {
+    // Adding apps:storage:{read,write} to BLOCK_SCOPE_TO_OAUTH_BIT requires a
+    // matching enforceContextBinding case, else the unknown-scope reject is
+    // bypassed and the scope is accepted with no binding (fail-open).
+    const anonRead = fakeClaims({ sub: 'anon', scopes: ['apps:storage:read'] });
+    expect(() => enforceContextBinding(anonRead, fakeReq({}))).toThrow();
+    const anonWrite = fakeClaims({ sub: 'anon', scopes: ['apps:storage:write'] });
+    expect(() => enforceContextBinding(anonWrite, fakeReq({}))).toThrow();
+    const authed = fakeClaims({ sub: 'user:42', scopes: ['apps:storage:write'] });
+    expect(() => enforceContextBinding(authed, fakeReq({}))).not.toThrow();
+  });
+
   it('block:settings:* binds to blockInstanceId in query', () => {
     const claims = fakeClaims({ scopes: ['block:settings:read'], blockInstanceId: 'bki_A' });
     expect(() =>
@@ -110,7 +122,7 @@ describe('isBlockJwt header decode (audit H-1.5 / strict)', () => {
     // it falls through to the wrapped handler (no 401 with "invalid block token").
     // We don't have direct access to isBlockJwt — but we can assert the
     // observable: a non-JWT bearer reaches the wrapped handler.
-    const { withBlockScope } = await import('../../block-scope.middleware');
+    const { withBlockScope } = await import('../block-scope.middleware');
     const wrappedHandler = vi.fn(async (_req: unknown, res: { _status: number; status: (n: number) => unknown }) => {
       res._status = 200;
       res.status(200);

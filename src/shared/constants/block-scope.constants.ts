@@ -45,6 +45,19 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   'block:settings:read': SKIP_OAUTH_CHECK,
   'block:settings:write': SKIP_OAUTH_CHECK,
   'social:tip:self': TokenScope.SocialTip,
+  // apps:storage:* — the W4 KV datastore. There is no OAuth bitmask bit for
+  // per-app storage (it never touches the user's civitai resources via the
+  // OAuth surface), so it uses SKIP_OAUTH_CHECK like block:settings:*. The
+  // real gate is two-fold: (1) the scope must be in the block's
+  // `approvedScopes` snapshot to be minted into the token, and (2)
+  // `resolveStorageContext` asserts the scope is present on `claims.scopes`
+  // per op (read vs write). Without this entry the scope was an *ambient*
+  // capability — every approved block could read/write the KV store with no
+  // declared/approved scope (audit A5 / design-gaps H4). Adding it here also
+  // makes it a declarable manifest scope (the manifest validator rejects
+  // unknown scopes, so previously a manifest *couldn't* even list it).
+  'apps:storage:read': SKIP_OAUTH_CHECK,
+  'apps:storage:write': SKIP_OAUTH_CHECK,
 } as const;
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
@@ -78,4 +91,50 @@ export function validateBlockScopesAgainstOauthClient(
     }
   }
   return { valid: rejected.length === 0, rejectedScopes: rejected };
+}
+
+/**
+ * Deterministic id prefix every App-Blocks-provisioned OauthClient carries
+ * (`appblk-<slug>`, set in publish-request.service.ts approveRequest). Genuine
+ * developer-registered OAuth-apps clients use a uuidv4 id (oauth-client.router
+ * create), so the prefix is a mutually-exclusive, migration-free discriminator
+ * between the two client populations.
+ *
+ * SECURITY (audit A1/A2): App-block clients exist ONLY to be the policy ceiling
+ * for block-token minting — they must never participate in the interactive
+ * authorization_code / device OAuth flows (that path mints a real account
+ * Bearer token). Every OAuth-provider surface that could turn one of these rows
+ * into an account-takeover primitive gates on this predicate. The gate is
+ * scoped to `appblk-` rows ONLY — the legitimate OAuth-apps feature
+ * (uuid-id `oauth_app` clients) is left byte-for-byte unaffected.
+ */
+export const APP_BLOCK_OAUTH_CLIENT_ID_PREFIX = 'appblk-';
+
+export function isAppBlockOauthClientId(clientId: string | null | undefined): boolean {
+  return typeof clientId === 'string' && clientId.startsWith(APP_BLOCK_OAUTH_CLIENT_ID_PREFIX);
+}
+
+/**
+ * Derive the OAuth-bitmask ceiling an app-block OauthClient should carry from
+ * its manifest's declared block scopes. App-block clients must NOT default to
+ * `TokenScope.Full` (audit A1/A3/A4) — that made the auto-provisioned client a
+ * Full-scope authorization_code client and rendered the manifest scope gate
+ * inert (any manifest scope was always within the all-bits ceiling).
+ *
+ * The bitmask is the OR of the OAuth bits each known scope maps to. Scopes
+ * with `SKIP_OAUTH_CHECK` (block:settings:*, apps:storage:*) and unknown
+ * scopes contribute nothing — they are gated by other mechanisms, not the
+ * OAuth bitmask. Result is therefore the *intersection* of the manifest with
+ * the OAuth-eligible scope set, exactly what the validator / token-mint path
+ * expects as the per-client ceiling.
+ */
+export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number {
+  let bitmask = 0;
+  for (const scope of blockScopes) {
+    if (!isKnownBlockScope(scope)) continue;
+    const requirement = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
+    if (requirement === SKIP_OAUTH_CHECK) continue;
+    bitmask |= requirement;
+  }
+  return bitmask;
 }

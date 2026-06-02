@@ -13,6 +13,25 @@ import {
   updateOauthClientSchema,
 } from '~/server/schema/oauth-client.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
+
+/**
+ * SECURITY (audit A1/A2): App-Blocks-provisioned OauthClients (`appblk-<slug>`)
+ * are managed exclusively by the App-Blocks publish-request flow. The generic
+ * OAuth-client router must NEVER mutate them — most importantly `update` must
+ * not be able to add a `redirectUri` (which would convert the otherwise-inert
+ * `redirectUris:[]` app-block client into a working interactive phishing
+ * client) or widen `allowedScopes`. This guard is scoped to `appblk-` ids
+ * ONLY; the legitimate OAuth-apps feature (uuid-id clients) is unaffected.
+ */
+function rejectAppBlockClient(clientId: string): void {
+  if (isAppBlockOauthClientId(clientId)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'App Block clients are managed by the App Blocks platform and cannot be modified here',
+    });
+  }
+}
 
 export const oauthClientRouter = router({
   // Public: get client info by ID (used by consent page)
@@ -104,6 +123,7 @@ export const oauthClientRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(updateOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
+      rejectAppBlockClient(input.id);
       const client = await dbWrite.oauthClient.findFirst({
         where: { id: input.id, userId: ctx.user.id },
       });
@@ -120,6 +140,7 @@ export const oauthClientRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(rotateOauthClientSecretSchema)
     .mutation(async ({ ctx, input }) => {
+      rejectAppBlockClient(input.id);
       const client = await dbWrite.oauthClient.findFirst({
         where: { id: input.id, userId: ctx.user.id, isConfidential: true },
       });
@@ -143,6 +164,7 @@ export const oauthClientRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(deleteOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
+      rejectAppBlockClient(input.id);
       const client = await dbWrite.oauthClient.findFirst({
         where: { id: input.id, userId: ctx.user.id },
       });

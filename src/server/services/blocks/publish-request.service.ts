@@ -6,6 +6,9 @@ import {
   MAX_FILES_IN_BUNDLE,
   MAX_FILE_SIZE_BYTES,
 } from '~/server/schema/blocks/publish-request.schema';
+// Pure shared module (only depends on token-scope.constants) — safe to import
+// statically without coupling to env/Prisma, so the pure-helper tests still run.
+import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -957,14 +960,28 @@ export async function approveRequest(
   const { BlockManifestValidator } = await import(
     '~/server/services/block-manifest-validator.service'
   );
-  const NEW_OAUTH_CLIENT_DEFAULT_SCOPES = 33554431;
+  // A1/A3/A4 fix: the OAuth ceiling for an app-block client is the bitmask
+  // DERIVED from the manifest's declared scopes (intersection with the
+  // OAuth-eligible bit set), NOT TokenScope.Full (33554431). Previously the
+  // auto-provisioned client defaulted to all 25 bits, which (a) made it a
+  // Full-scope authorization_code client → account-takeover primitive, and
+  // (b) rendered this very manifest scope gate inert (every manifest scope is
+  // trivially within an all-bits ceiling). Feeding the derived ceiling here
+  // means the validator below enforces a real subset check, and it matches
+  // exactly what we write to OauthClient.allowedScopes in the create.
+  const derivedOauthCeiling = deriveOauthBitmaskFromBlockScopes(manifestScopes);
   const validationCtx = isFirstVersion
     ? {
-        allowedScopes: NEW_OAUTH_CLIENT_DEFAULT_SCOPES,
+        allowedScopes: derivedOauthCeiling,
         allowedOrigins: [`https://${request.slug}.${env.APPS_DOMAIN}`],
       }
     : {
-        allowedScopes: existingAppBlock!.app.allowedScopes ?? 0,
+        // On a subsequent version the live client still carries whatever
+        // ceiling the previous approve set. Re-derive from THIS manifest and
+        // union with the existing ceiling so the validator validates against
+        // the ceiling we'll actually persist below (we re-cap allowedScopes to
+        // the derived value on every approve — see the appBlock.update path).
+        allowedScopes: derivedOauthCeiling,
         allowedOrigins: (existingAppBlock!.app.allowedOrigins ?? []).map(
           (o: string) => o.toLowerCase()
         ),
@@ -1011,6 +1028,17 @@ export async function approveRequest(
           allowedOrigins: [`https://${request.slug}.${env.APPS_DOMAIN}`],
           isConfidential: false,
           userId: request.submittedByUserId,
+          // A1 fix — structurally non-interactive client.
+          //  - grants:[] removes the Prisma default
+          //    ["authorization_code","refresh_token"], so this row can never
+          //    drive the interactive OAuth flow that mints account Bearer
+          //    tokens. (The authorize/device endpoints + oauthClient.router
+          //    also hard-reject `appblk-*` ids as defense-in-depth.)
+          //  - allowedScopes is the manifest-derived ceiling, NOT
+          //    TokenScope.Full. This is the policy ceiling for block-token
+          //    minting (block-tokens/index.ts intersects against it).
+          grants: [],
+          allowedScopes: derivedOauthCeiling,
         },
       });
     } catch (err) {
@@ -1027,6 +1055,14 @@ export async function approveRequest(
         // unique constraint we don't know about; surface the original.
         throw err;
       }
+      // A1 fix — converge an already-existing app-block client to the
+      // structurally-safe shape on this retry. This also self-heals any row
+      // created by an earlier code version with the all-bits Full default and
+      // the inherited interactive grants.
+      await dbWrite.oauthClient.update({
+        where: { id: oauthClientId },
+        data: { grants: [], allowedScopes: derivedOauthCeiling },
+      });
     }
 
     // (2) Create Forgejo repo seeded from the starter + push webhook.
@@ -1111,6 +1147,16 @@ export async function approveRequest(
         renderMode: manifestRenderMode,
         trustTier: resolvedTrustTier,
       },
+    });
+    // A1 fix — keep the OauthClient ceiling in sync with the newly-approved
+    // manifest. Re-cap to the derived bitmask so the policy ceiling never
+    // exceeds what this version's manifest declares, and force grants:[] so an
+    // older row created before this fix (Full + interactive grants) is
+    // self-healed on its next approve. This is byte-for-byte scoped to the
+    // app-block client (existingAppBlock.appId is the `appblk-<slug>` id).
+    await dbWrite.oauthClient.update({
+      where: { id: existingAppBlock.appId },
+      data: { grants: [], allowedScopes: derivedOauthCeiling },
     });
   }
 
