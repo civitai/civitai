@@ -49,9 +49,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     sub: user.id.toString(),
     id: user.id,
     username: user.username,
-    // OIDC standard profile claims
+    // OIDC standard profile claims. `name` intentionally mirrors the username
+    // rather than `user.name`: the display name is only ever populated by our
+    // own OAuth ingestion from upstream providers (Google, etc.), is not
+    // user-settable, and we don't want to hand that PII to third-party apps.
     preferred_username: user.username ?? undefined,
-    name: user.name ?? user.username ?? undefined,
+    name: user.username ?? undefined,
     picture: user.image ?? undefined,
     image: user.image,
     ...(user.email ? { email: user.email, email_verified: !!user.emailVerified } : {}),
