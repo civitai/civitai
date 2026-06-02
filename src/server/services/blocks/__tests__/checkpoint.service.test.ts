@@ -8,10 +8,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * override.
  */
 
-const { mockDbRead, mockRedis } = vi.hoisted(() => ({
+const { mockDbRead, mockRedis, mockResolveBlockInstance } = vi.hoisted(() => ({
   mockDbRead: {
     modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-    modelBlockInstall: { findUnique: vi.fn() },
     blockUserSettings: { findUnique: vi.fn() },
     modelMetric: { findFirst: vi.fn() },
   },
@@ -23,12 +22,23 @@ const { mockDbRead, mockRedis } = vi.hoisted(() => ({
     get: vi.fn<(key: string) => Promise<string | null>>(async () => null),
     set: vi.fn(async () => undefined),
   },
+  // The publisher-install settings now flow through
+  // BlockRegistry.resolveBlockInstance (post kill_per_model_installs:
+  // model_block_installs was absorbed into block_user_subscriptions, and
+  // synthetic blockInstanceIds resolve their settings from the source row).
+  // checkpoint.service reads `install.settings` from this resolver, so the
+  // tests drive the publisher default through it rather than the retired
+  // dbRead.modelBlockInstall.findUnique seam.
+  mockResolveBlockInstance: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 vi.mock('~/server/redis/client', () => ({
   redis: mockRedis,
   REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
+}));
+vi.mock('~/server/services/block-registry.service', () => ({
+  BlockRegistry: { resolveBlockInstance: mockResolveBlockInstance },
 }));
 
 import {
@@ -42,11 +52,13 @@ beforeEach(() => {
   mockDbRead.modelVersion.findUnique.mockReset();
   mockDbRead.modelVersion.findFirst.mockReset();
   mockDbRead.modelVersion.findMany.mockReset();
-  mockDbRead.modelBlockInstall.findUnique.mockReset();
   mockDbRead.blockUserSettings.findUnique.mockReset();
   mockDbRead.modelMetric.findFirst.mockReset();
   mockRedis.get.mockReset().mockImplementation(async () => null);
   mockRedis.set.mockReset().mockImplementation(async () => undefined);
+  // Default: no publisher install row resolved. Tests that exercise the
+  // publisher-default rung override this with a settings-bearing row.
+  mockResolveBlockInstance.mockReset().mockResolvedValue(null);
 });
 
 describe('validateBlockCheckpoint', () => {
@@ -273,13 +285,13 @@ describe('resolveBlockCheckpoint precedence chain', () => {
       modelVersionId: 555,
     });
     // No DB calls — Checkpoint-self is computed from the inputs.
-    expect(mockDbRead.modelBlockInstall.findUnique).not.toHaveBeenCalled();
+    expect(mockResolveBlockInstance).not.toHaveBeenCalled();
     expect(mockDbRead.blockUserSettings.findUnique).not.toHaveBeenCalled();
     expect(result.versionId).toBe(555);
   });
 
   it('uses the viewer override when set and valid (publisher default is ignored)', async () => {
-    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({
+    mockResolveBlockInstance.mockResolvedValue({
       settings: { default_checkpoint_version_id: 111 }, // publisher default
     });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue({
@@ -296,7 +308,7 @@ describe('resolveBlockCheckpoint precedence chain', () => {
   });
 
   it('falls through to publisher default when the viewer override is invalid (drop-on-stale)', async () => {
-    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({
+    mockResolveBlockInstance.mockResolvedValue({
       settings: { default_checkpoint_version_id: 691639 },
     });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue({
@@ -311,7 +323,7 @@ describe('resolveBlockCheckpoint precedence chain', () => {
   });
 
   it('uses publisher default when no viewer override row exists', async () => {
-    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({
+    mockResolveBlockInstance.mockResolvedValue({
       settings: { default_checkpoint_version_id: 691639 },
     });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
@@ -321,7 +333,7 @@ describe('resolveBlockCheckpoint precedence chain', () => {
   });
 
   it('falls back to platform per-ecosystem popular Checkpoint when neither is set', async () => {
-    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({ settings: {} });
+    mockResolveBlockInstance.mockResolvedValue({ settings: {} });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
     // Platform fallback queries modelMetric.findFirst for the top
     // Checkpoint by thumbsUpCount.
@@ -339,7 +351,7 @@ describe('resolveBlockCheckpoint precedence chain', () => {
   });
 
   it('throws BAD_REQUEST only when the ecosystem has no published Checkpoints at all', async () => {
-    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({ settings: {} });
+    mockResolveBlockInstance.mockResolvedValue({ settings: {} });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
     // Ecosystem genuinely empty (no Checkpoints exist for this family).
     mockDbRead.modelMetric.findFirst.mockResolvedValue(null);
@@ -349,7 +361,7 @@ describe('resolveBlockCheckpoint precedence chain', () => {
   });
 
   it('surfaces publisher-default validation failures (publisher must fix)', async () => {
-    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({
+    mockResolveBlockInstance.mockResolvedValue({
       settings: { default_checkpoint_version_id: 999 },
     });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);

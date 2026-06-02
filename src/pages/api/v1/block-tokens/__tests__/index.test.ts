@@ -218,8 +218,23 @@ describe('POST /api/v1/block-tokens', () => {
     expect(res._headers['access-control-allow-origin']).toBe('https://civitai.com');
   });
 
+  it('Phase 2: non-moderator is rejected at the mint-gate (App Blocks is mod-only)', async () => {
+    // App Blocks is internal-only until GA: minting a block token is the
+    // linchpin (the whole runtime is mod-only transitively), so a verified
+    // non-mod must be refused before any resolve/sign.
+    mockSession.value = { user: { id: 99, bannedAt: null, isModerator: false } } as never;
+    const { default: handler } = await import('../index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(403);
+    expect((res._body as { error: string }).error).toMatch(/civitai team/i);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+    expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
+  });
+
   it('M1: banned user is rejected at issuance', async () => {
-    mockSession.value = { user: { id: 99, bannedAt: new Date() } };
+    // Mod (passes the Phase-2 mint-gate) but banned → rejected at the ban check.
+    mockSession.value = { user: { id: 99, bannedAt: new Date(), isModerator: true } } as never;
     const { default: handler } = await import('../index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
@@ -228,7 +243,8 @@ describe('POST /api/v1/block-tokens', () => {
   });
 
   it('M1: soft-deleted user is rejected at issuance', async () => {
-    mockSession.value = { user: { id: 99, bannedAt: null } };
+    // Mod (passes the Phase-2 mint-gate) but soft-deleted → rejected downstream.
+    mockSession.value = { user: { id: 99, bannedAt: null, isModerator: true } } as never;
     mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: new Date(), bannedAt: null });
     const { default: handler } = await import('../index');
     const res = makeRes();
@@ -246,7 +262,10 @@ describe('POST /api/v1/block-tokens', () => {
         approvedScopes: ['block:settings:read'],
       },
     });
-    mockSession.value = { user: { id: 999, bannedAt: null } }; // not the installer (42)
+    // Mod-but-not-installer: passes the Phase-2 isModerator mint-gate so the
+    // assertion exercises the installer check (caller 999 != installer 42),
+    // not the upstream mod-gate.
+    mockSession.value = { user: { id: 999, bannedAt: null, isModerator: true } } as never; // not the installer (42)
     mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
     const { default: handler } = await import('../index');
     const res = makeRes();
@@ -265,7 +284,8 @@ describe('POST /api/v1/block-tokens', () => {
         approvedScopes: ['block:settings:read'],
       },
     });
-    mockSession.value = { user: { id: 42, bannedAt: null } }; // == installedByUserId
+    // == installedByUserId; mod gate satisfied (App Blocks is mod-only today).
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
     mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
     const { default: handler } = await import('../index');
     const res = makeRes();
@@ -284,6 +304,9 @@ describe('POST /api/v1/block-tokens', () => {
         app: { allowedScopes: 4 /* only ModelsRead bit set; BuzzRead missing */ },
       },
     });
+    // Mod session: pass the Phase-2 mint-gate so the scope-allowlist check
+    // (which fires after the mod-gate) is what produces the 403.
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
     const { default: handler } = await import('../index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
@@ -310,6 +333,7 @@ describe('POST /api/v1/block-tokens', () => {
     // E.g. caller-supplied modelId doesn't match the install row, or the
     // install row was deleted between page load and token mint.
     mockBlockRegistry.resolveBlockInstance.mockResolvedValueOnce(null);
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
     const { default: handler } = await import('../index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
@@ -323,6 +347,7 @@ describe('POST /api/v1/block-tokens', () => {
     // request — and we re-stamp ctx from the resolved row. An attacker who
     // lies about slotId here triggers a 404 (resolver returns null), not a
     // mint against the wrong slot.
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
     const { default: handler } = await import('../index');
     const res = makeRes();
     await handler(
@@ -340,6 +365,7 @@ describe('POST /api/v1/block-tokens', () => {
   });
 
   it('JWT ctx: extra slotContext fields beyond modelId/slotId never reach the JWT', async () => {
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
     const { default: handler } = await import('../index');
     const res = makeRes();
     await handler(
@@ -368,6 +394,7 @@ describe('POST /api/v1/block-tokens', () => {
       ...RESOLVED_INSTALL,
       source: 'publisher_subscription',
     });
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
     const { default: handler } = await import('../index');
     const res = makeRes();
     await handler(

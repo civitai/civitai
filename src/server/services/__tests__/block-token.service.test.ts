@@ -1,24 +1,18 @@
-import { describe, expect, it, beforeAll } from 'vitest';
-import { generateKeyPairSync } from 'crypto';
+import { describe, expect, it } from 'vitest';
 import { jwtVerify } from 'jose';
+import { createPublicKey } from 'crypto';
+// The block-token RSA keypair is provisioned globally in the test setup
+// (src/__tests__/setup.ts wires BLOCK_TOKEN_{PRIVATE,PUBLIC}_KEY into the
+// mocked ~/env/server, which the service reads). The same public PEM is
+// re-exported here so this test verifies the JWT against the key the service
+// actually signed with. Doing it in setup is required because env/server.ts
+// snapshots its values at import time — well before any per-file beforeAll.
+import { TEST_BLOCK_TOKEN_PUBLIC_PEM } from '~/__tests__/setup';
 
-// Generate a deterministic-per-test RSA keypair and wire it into the env BEFORE
-// importing the token service. The service caches keys on first use; setting
-// env up front avoids needing to reach into private cache state.
-let publicPem: string;
-let privatePem: string;
-
-beforeAll(() => {
-  const { publicKey, privateKey } = generateKeyPairSync('rsa', {
-    modulusLength: 2048,
-  });
-  publicPem = publicKey.export({ type: 'spki', format: 'pem' }) as string;
-  privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
-
-  // Set env vars before module import so the service picks them up.
-  process.env.BLOCK_TOKEN_PRIVATE_KEY = privatePem;
-  process.env.BLOCK_TOKEN_PUBLIC_KEY = publicPem;
-});
+const publicPem = TEST_BLOCK_TOKEN_PUBLIC_PEM;
+// jose v6 requires a KeyObject/CryptoKey/JWK for RS256 verification — a raw
+// PEM Buffer is rejected. Convert once and reuse for every jwtVerify call.
+const publicKey = createPublicKey(publicPem);
 
 describe('BlockTokenService.sign — JWT round-trip', () => {
   it('produces a token verifiable with the public key, with RS256 + correct claims', async () => {
@@ -48,7 +42,7 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
 
     const { payload } = await jwtVerify(
       result.token,
-      Buffer.from(publicPem),
+      publicKey,
       { issuer: 'civitai', audience: 'civitai-app-block', algorithms: ['RS256'] }
     );
     expect(payload.sub).toBe('user:42');
@@ -70,7 +64,7 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
       ctx: { modelId: 1 },
       buzzBudget: 200,
     });
-    const { payload } = await jwtVerify(withBudget.token, Buffer.from(publicPem), {
+    const { payload } = await jwtVerify(withBudget.token, publicKey, {
       issuer: 'civitai',
       audience: 'civitai-app-block',
       algorithms: ['RS256'],
@@ -89,7 +83,7 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
       scopes: ['models:read:self'],
       ctx: { modelId: 1 },
     });
-    const { payload } = await jwtVerify(r.token, Buffer.from(publicPem), {
+    const { payload } = await jwtVerify(r.token, publicKey, {
       issuer: 'civitai',
       audience: 'civitai-app-block',
       algorithms: ['RS256'],
@@ -117,7 +111,7 @@ describe('JWT classic attacks', () => {
     ).toString('base64url');
     const token = `${header}.${payload}.`;
     await expect(
-      jwtVerify(token, Buffer.from(publicPem), {
+      jwtVerify(token, publicKey, {
         issuer: 'civitai',
         audience: 'civitai-app-block',
         algorithms: ['RS256'],
@@ -162,7 +156,7 @@ describe('JWT classic attacks', () => {
     // Wait by manipulating `now` argument to jwtVerify.
     const farFuture = Math.floor(Date.now() / 1000) + 60 * 60 * 24;
     await expect(
-      jwtVerify(r.token, Buffer.from(publicPem), {
+      jwtVerify(r.token, publicKey, {
         issuer: 'civitai',
         audience: 'civitai-app-block',
         algorithms: ['RS256'],
@@ -183,7 +177,7 @@ describe('JWT classic attacks', () => {
       ctx: { modelId: 1 },
     });
     await expect(
-      jwtVerify(r.token, Buffer.from(publicPem), {
+      jwtVerify(r.token, publicKey, {
         issuer: 'NOT_CIVITAI',
         audience: 'civitai-app-block',
         algorithms: ['RS256'],
@@ -203,7 +197,7 @@ describe('JWT classic attacks', () => {
       ctx: { modelId: 1 },
     });
     await expect(
-      jwtVerify(r.token, Buffer.from(publicPem), {
+      jwtVerify(r.token, publicKey, {
         issuer: 'civitai',
         audience: 'some-other-audience',
         algorithms: ['RS256'],
@@ -224,7 +218,7 @@ describe('Settings-scope tokens get a shorter lifetime (audit H-2 partial)', () 
       scopes: ['block:settings:read'],
       ctx: { modelId: 1 },
     });
-    const { payload } = await jwtVerify(r.token, Buffer.from(publicPem), {
+    const { payload } = await jwtVerify(r.token, publicKey, {
       issuer: 'civitai',
       audience: 'civitai-app-block',
       algorithms: ['RS256'],
@@ -245,7 +239,7 @@ describe('Settings-scope tokens get a shorter lifetime (audit H-2 partial)', () 
       scopes: ['models:read:self'],
       ctx: { modelId: 1 },
     });
-    const { payload } = await jwtVerify(r.token, Buffer.from(publicPem), {
+    const { payload } = await jwtVerify(r.token, publicKey, {
       issuer: 'civitai',
       audience: 'civitai-app-block',
       algorithms: ['RS256'],
@@ -266,7 +260,7 @@ describe('Settings-scope tokens get a shorter lifetime (audit H-2 partial)', () 
       scopes: ['models:read:self'],
       ctx: { modelId: 1 },
     });
-    const { payload } = await jwtVerify(r.token, Buffer.from(publicPem), {
+    const { payload } = await jwtVerify(r.token, publicKey, {
       issuer: 'civitai',
       audience: 'civitai-app-block',
       algorithms: ['RS256'],

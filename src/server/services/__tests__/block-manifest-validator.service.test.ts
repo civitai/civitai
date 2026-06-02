@@ -19,9 +19,18 @@ const VALID_MANIFEST = {
   },
 };
 
+// H-8: the validator gates iframe.src against the app's registered
+// OauthClient.allowedOrigins. Tests that expect VALID_MANIFEST to pass must
+// supply an AppContext whose allowedOrigins covers blocks.civitai.com — the
+// bare-number form defaults allowedOrigins to [] and (correctly) rejects.
+const APP_CTX = {
+  allowedScopes: TokenScope.ModelsRead,
+  allowedOrigins: ['https://blocks.civitai.com'],
+};
+
 describe('BlockManifestValidator', () => {
   it('accepts a fully valid manifest', () => {
-    const result = BlockManifestValidator.validate(VALID_MANIFEST, TokenScope.ModelsRead);
+    const result = BlockManifestValidator.validate(VALID_MANIFEST, APP_CTX);
     expect(result).toEqual({ valid: true });
   });
 
@@ -86,11 +95,11 @@ describe('BlockManifestValidator', () => {
       iframe: { ...VALID_MANIFEST.iframe, sandbox: 'allow-scripts allow-modals' },
     };
     expect(
-      BlockManifestValidator.validate(unverified, TokenScope.ModelsRead).valid
+      BlockManifestValidator.validate(unverified, APP_CTX).valid
     ).toBe(false);
 
     const verified = { ...unverified, trustTier: 'verified' };
-    expect(BlockManifestValidator.validate(verified, TokenScope.ModelsRead).valid).toBe(true);
+    expect(BlockManifestValidator.validate(verified, APP_CTX).valid).toBe(true);
   });
 
   // M-POPUPS (audit medium): allow-popups is dropped from the unverified tier
@@ -219,7 +228,7 @@ describe('BlockManifestValidator', () => {
       ...VALID_MANIFEST,
       iframe: { ...VALID_MANIFEST.iframe, src: 'https://blocks.civitai.com/test' },
     };
-    expect(BlockManifestValidator.validate(manifest, TokenScope.ModelsRead).valid).toBe(true);
+    expect(BlockManifestValidator.validate(manifest, APP_CTX).valid).toBe(true);
   });
 
   it('H-8: rejects iframe.src on an origin not in OauthClient.allowedOrigins', () => {

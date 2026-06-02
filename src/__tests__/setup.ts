@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { generateKeyPairSync } from 'crypto';
 
 // Mock @civitai/client to avoid ESM resolution issues
 vi.mock('@civitai/client', () => ({
@@ -55,6 +56,24 @@ vi.mock('@civitai/client', () => ({
   },
 }));
 
+// App Blocks: provision a real RSA keypair so BlockTokenService can sign and
+// tests can verify against the matching public key. Generated once per test
+// process. The public PEM is re-exported so the block-token round-trip test
+// verifies against the exact key the service signed with. (The block-tokens
+// API "503 when keys not configured" test overrides ~/env/server per-test, so
+// these defaults don't interfere with that negative case.)
+const { publicKey: _btPublicKey, privateKey: _btPrivateKey } = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+});
+export const TEST_BLOCK_TOKEN_PUBLIC_PEM = _btPublicKey.export({
+  type: 'spki',
+  format: 'pem',
+}) as string;
+const TEST_BLOCK_TOKEN_PRIVATE_PEM = _btPrivateKey.export({
+  type: 'pkcs8',
+  format: 'pem',
+}) as string;
+
 // Mock environment variables. Use a Proxy so any env.X access returns a
 // reasonable default — saves us from enumerating every URL/endpoint var that
 // production code happens to read at module load.
@@ -62,6 +81,8 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   TIER_METADATA_KEY: 'tier',
   BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
   LOGGING: '',
+  BLOCK_TOKEN_PRIVATE_KEY: TEST_BLOCK_TOKEN_PRIVATE_PEM,
+  BLOCK_TOKEN_PUBLIC_KEY: TEST_BLOCK_TOKEN_PUBLIC_PEM,
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
   NOTIFICATION_DB_URL: 'postgres://user:pass@localhost:5432/notif',
   DATABASE_SSL: false,
