@@ -286,6 +286,20 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id ?? null;
 
+  // Phase 2 (internal-only graduation gate): App Blocks is moderator-only
+  // until GA. Block tokens are the linchpin — the entire block-token runtime
+  // (workflow submit/poll/cancel/estimate, KV storage, /blocks/me) is reachable
+  // only with a minted token, so gating MINTING on isModerator makes the whole
+  // surface transitively mod-only. Anon callers (no session) get no token.
+  // The per-call assertViewerIsModerator checks in blocks/apps routers are the
+  // defense-in-depth layer on top of this. Reject right after the session load
+  // (before the per-(subject,instance) rate-limit + resolveBlockInstance DB
+  // read) so a non-mod can't probe install existence or consume those buckets.
+  if (!session?.user?.isModerator) {
+    res.status(403).json({ error: 'App Blocks is restricted to the civitai team' });
+    return;
+  }
+
   // M1: gate banned and deleted users at issuance. Muted users can still
   // hold read-tokens (they can still see the page) but downstream interaction
   // routes enforce their own mute gates. Deleted accounts are rejected — a

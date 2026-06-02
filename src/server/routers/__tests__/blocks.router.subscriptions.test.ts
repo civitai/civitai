@@ -80,14 +80,13 @@ vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-function authedCtx(userId: number) {
+function authedCtx(userId: number, isModerator = true) {
   return {
     acceptableOrigin: true,
-    // onboarding=0x1F covers all flags including OnboardingSteps.Buzz (8) so
-    // the guardedProcedure's onboarding middleware passes. The exact flag set
-    // doesn't matter for the auth-gate tests; we just need the middleware
-    // to forward to the procedure body.
-    user: { id: userId, isModerator: false, onboarding: 0x1f } as never,
+    // Phase 2: the management procedures are now `moderatorProcedure`, so the
+    // happy path needs a moderator user. onboarding=0x1F is retained from the
+    // pre-Phase-2 guardedProcedure era (harmless — isMod doesn't require it).
+    user: { id: userId, isModerator, onboarding: 0x1f } as never,
     apiKeyId: null,
     tokenScope: TokenScope.Full,
     req: { headers: {} } as never,
@@ -154,9 +153,11 @@ describe('blocks.listAvailable (public)', () => {
     expect(mockListAvailable).not.toHaveBeenCalled();
   });
 
-  it('forwards query/slot/limit input to the service', async () => {
+  it('forwards query/slot/limit input to the service (moderator caller)', async () => {
     mockListAvailable.mockResolvedValue({ items: [], nextCursor: undefined });
-    const caller = blocksRouter.createCaller(anonCtx() as never);
+    // Phase 2: marketplace listing is moderator-only — a mod caller reaches
+    // the service.
+    const caller = blocksRouter.createCaller(authedCtx(42) as never);
     await caller.listAvailable({
       query: 'generate',
       slotId: 'model.sidebar_top',
@@ -165,6 +166,20 @@ describe('blocks.listAvailable (public)', () => {
     expect(mockListAvailable).toHaveBeenCalledWith(
       expect.objectContaining({ query: 'generate', slotId: 'model.sidebar_top', limit: 5 })
     );
+  });
+
+  it('returns empty for a non-mod caller (Phase 2 internal-only gate)', async () => {
+    const caller = blocksRouter.createCaller(authedCtx(42, false) as never);
+    const out = await caller.listAvailable({ limit: 20 });
+    expect(out).toEqual({ items: [], nextCursor: undefined });
+    expect(mockListAvailable).not.toHaveBeenCalled();
+  });
+
+  it('returns empty for an anon caller (Phase 2 internal-only gate)', async () => {
+    const caller = blocksRouter.createCaller(anonCtx() as never);
+    const out = await caller.listAvailable({ limit: 20 });
+    expect(out).toEqual({ items: [], nextCursor: undefined });
+    expect(mockListAvailable).not.toHaveBeenCalled();
   });
 });
 
@@ -275,5 +290,78 @@ describe('blocks.deleteSubscription (guarded)', () => {
       subscriptionId: 'bus_x',
       userId: 42,
     });
+  });
+});
+
+/**
+ * Phase 2 — App Blocks is moderator-only until GA. The ~23 management
+ * procedures were converted from `guardedProcedure` (= any verified, not-muted
+ * user) to `moderatorProcedure` (= protectedProcedure.use(isMod)). A NON-mod
+ * but otherwise-valid verified user must now get FORBIDDEN from every one of
+ * them. We sample a representative spread (install management, publish-request
+ * review, subscription writes, revenue reads) — they all share the same
+ * procedure builder, so one regression in `moderatorProcedure` would flip the
+ * whole set.
+ */
+describe('Phase 2 — management procedures reject non-mod verified users (FORBIDDEN)', () => {
+  function nonMod() {
+    return blocksRouter.createCaller(authedCtx(42, false) as never);
+  }
+
+  it('upsertSubscription → FORBIDDEN', async () => {
+    await expect(
+      nonMod().upsertSubscription({
+        appBlockId: 'ab_x',
+        scope: 'viewer_personal',
+        targetModelTypes: null,
+        targetBaseModels: null,
+        settings: {},
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockUpsertSubscription).not.toHaveBeenCalled();
+    // The app-block lookup must not even run — isMod gates before the body.
+    expect(mockDbReadAppBlockFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('deleteSubscription → FORBIDDEN', async () => {
+    await expect(
+      nonMod().deleteSubscription({ subscriptionId: 'bus_x' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockDeleteSubscription).not.toHaveBeenCalled();
+  });
+
+  it('listMySubscriptions → FORBIDDEN', async () => {
+    await expect(nonMod().listMySubscriptions()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockListUserSubscriptions).not.toHaveBeenCalled();
+  });
+
+  it('installOnModel → FORBIDDEN', async () => {
+    await expect(
+      nonMod().installOnModel({
+        modelId: 7,
+        appBlockId: 'ab_x',
+        slotId: 'model.sidebar_top',
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('listPendingRequests (mod queue) → FORBIDDEN', async () => {
+    await expect(nonMod().listPendingRequests({ limit: 20 })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('approveRequest → FORBIDDEN', async () => {
+    await expect(
+      nonMod().approveRequest({ publishRequestId: 'pubreq_x' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('getMyRevenue → FORBIDDEN', async () => {
+    await expect(nonMod().getMyRevenue({})).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('getMyApps → FORBIDDEN', async () => {
+    await expect(nonMod().getMyApps()).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

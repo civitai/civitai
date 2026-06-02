@@ -16,6 +16,7 @@ const {
   mockClient,
   mockGetQuota,
   mockLogToAxiom,
+  mockGetUserById,
 } = vi.hoisted(() => {
   const mockClient = {
     query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
@@ -36,6 +37,7 @@ const {
     mockClient,
     mockGetQuota: vi.fn(),
     mockLogToAxiom: vi.fn(async () => undefined),
+    mockGetUserById: vi.fn(),
   };
 });
 
@@ -60,6 +62,9 @@ vi.mock('~/server/services/apps/storage-provision.service', () => ({
 }));
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...args: unknown[]) => mockLogToAxiom(...args),
+}));
+vi.mock('~/server/services/user.service', () => ({
+  getUserById: (...args: unknown[]) => mockGetUserById(...args),
 }));
 
 import { appsRouter } from '../apps.router';
@@ -107,10 +112,14 @@ beforeEach(() => {
   mockClient.release.mockClear();
   mockGetQuota.mockReset();
   mockLogToAxiom.mockReset();
+  mockGetUserById.mockReset();
 
   // Sane defaults the happy-path tests inherit.
   mockIsAppBlocksEnabled.mockImplementation(async () => true);
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
+  // Phase 2: App Blocks is moderator-only; the storage resolver re-asserts the
+  // resolved viewer is a mod. Default the happy path to a moderator subject.
+  mockGetUserById.mockResolvedValue({ id: 42, isModerator: true });
   mockDbRead.appBlock.findUnique.mockResolvedValue({
     id: 'apb_test',
     status: 'approved',
@@ -168,6 +177,39 @@ describe('apps.storage shared gates', () => {
     await expect(
       caller.storage.get({ blockToken: 't', key: 'k' })
     ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+  });
+
+  // Phase 2: App Blocks is moderator-only until GA. A block token whose
+  // subject resolves to a non-mod user is rejected with FORBIDDEN by the
+  // shared resolveStorageContext gate — across every storage op.
+  it('rejects a non-mod resolved viewer with FORBIDDEN (get)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetUserById.mockResolvedValueOnce({ id: 42, isModerator: false });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.get({ blockToken: 't', key: 'k' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // The non-mod must never reach the data pool.
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-mod resolved viewer with FORBIDDEN (set)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetUserById.mockResolvedValueOnce({ id: 42, isModerator: false });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects a vanished resolved viewer with FORBIDDEN (getUserById → null)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockGetUserById.mockResolvedValueOnce(null);
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.get({ blockToken: 't', key: 'k' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });
 

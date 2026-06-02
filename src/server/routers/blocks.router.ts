@@ -47,7 +47,7 @@ import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing
 import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { createTextToImageStep } from '~/server/services/orchestrator/textToImage/textToImage';
 import { getUserById } from '~/server/services/user.service';
-import { guardedProcedure, middleware, publicProcedure, router } from '~/server/trpc';
+import { moderatorProcedure, middleware, publicProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { SessionUser } from 'next-auth';
 
@@ -70,6 +70,28 @@ const enforceAppBlocksFlag = middleware(async ({ next, type }) => {
   }
   throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
 });
+
+/**
+ * Phase 2 (internal-only graduation gate): App Blocks is moderator-only until
+ * GA. The management procedures use `moderatorProcedure` so the tRPC session
+ * user is checked at the procedure layer. But the runtime/read procedures are
+ * `publicProcedure` — they authenticate a block JWT that resolves to a viewer
+ * userId rather than `ctx.user`. For those, we re-assert that the RESOLVED
+ * viewer is a moderator (don't trust "only mods get block tokens" — block-token
+ * minting is also gated, but defense-in-depth means each call re-checks).
+ *
+ * Factored into one helper so the check can't drift across the ~14 call sites.
+ * Throws FORBIDDEN for a non-mod (or vanished) user.
+ */
+async function assertViewerIsModerator(userId: number): Promise<void> {
+  const row = await getUserById({ id: userId, select: { id: true, isModerator: true } });
+  if (!row?.isModerator) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'App Blocks is restricted to the civitai team',
+    });
+  }
+}
 
 // Free-form slot strings are a cache-busting surface for anon callers.
 // Bound to the explicit set we ship today; new slots ship by extending this.
@@ -148,13 +170,19 @@ export const blocksRouter = router({
     )
     .query(async ({ input, ctx }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
+      // Phase 2: App Blocks is moderator-only until GA. listForModel is a
+      // public procedure rendered on every model page — return [] for
+      // non-mods (the "no blocks installed" shape) rather than throwing on a
+      // user-facing page. UI also gates via features.appBlocks; this is the
+      // server-side belt-and-suspenders so a direct tRPC call leaks nothing.
+      if (!ctx.user?.isModerator) return [];
       return BlockRegistry.listForModel({
         ...input,
-        viewerUserId: ctx.user?.id ?? null,
+        viewerUserId: ctx.user.id,
       });
     }),
 
-  installOnModel: guardedProcedure
+  installOnModel: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -172,7 +200,7 @@ export const blocksRouter = router({
       });
     }),
 
-  updateSettings: guardedProcedure
+  updateSettings: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -193,7 +221,7 @@ export const blocksRouter = router({
    * so the NOT EXISTS subquery in listForModel suppresses platform defaults
    * for the same app_block_id. See plan §4 invariant.
    */
-  toggleEnabled: guardedProcedure
+  toggleEnabled: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -227,7 +255,7 @@ export const blocksRouter = router({
    * uninstall re-enables platform defaults for this (model, slot) pair;
    * toggleEnabled(false) keeps the opt-out row in place.
    */
-  uninstallFromModel: guardedProcedure
+  uninstallFromModel: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(z.object({ blockInstanceId: z.string().min(1).max(64) }))
     .mutation(async ({ ctx, input }) => {
@@ -261,7 +289,7 @@ export const blocksRouter = router({
    * for v0 (50 MiB max, 67 MiB encoded, well within reach of the default
    * Next.js body limit).
    */
-  submitVersion: guardedProcedure
+  submitVersion: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(submitVersionSchema)
     .mutation(async ({ ctx, input }) => {
@@ -315,7 +343,7 @@ export const blocksRouter = router({
    * Idempotent. Allows resubmitting against the same slug without
    * accumulating dead pending rows.
    */
-  withdrawPublishRequest: guardedProcedure
+  withdrawPublishRequest: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(withdrawRequestSchema)
     .mutation(async ({ ctx, input }) => {
@@ -344,7 +372,7 @@ export const blocksRouter = router({
    * instead of letting the user hit the same-slug error on submit.
    * Scoped to the caller's own rows by design.
    */
-  getMyPendingForSlug: guardedProcedure
+  getMyPendingForSlug: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(getMyPendingForSlugSchema)
     .query(async ({ ctx, input }) => {
@@ -363,7 +391,7 @@ export const blocksRouter = router({
    * Mod queue: paginated list of publish requests waiting for review,
    * oldest first. Powers /apps/review.
    */
-  listPendingRequests: guardedProcedure
+  listPendingRequests: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(listPendingRequestsSchema)
     .query(async ({ ctx, input }) => {
@@ -380,7 +408,7 @@ export const blocksRouter = router({
    * Mod history: paginated list of publish requests that were approved,
    * newest-first. Powers the Approved tab on /apps/review.
    */
-  listApprovedRequests: guardedProcedure
+  listApprovedRequests: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(listApprovedRequestsSchema)
     .query(async ({ ctx, input }) => {
@@ -397,7 +425,7 @@ export const blocksRouter = router({
    * Mod history: paginated list of publish requests that were rejected,
    * newest-first. Powers the Rejected tab on /apps/review.
    */
-  listRejectedRequests: guardedProcedure
+  listRejectedRequests: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(listRejectedRequestsSchema)
     .query(async ({ ctx, input }) => {
@@ -416,7 +444,7 @@ export const blocksRouter = router({
    * single atomic commit, and lets the existing git-push webhook fire
    * the Tekton build chain.
    */
-  approveRequest: guardedProcedure
+  approveRequest: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(approveRequestSchema)
     .mutation(async ({ ctx, input }) => {
@@ -447,7 +475,7 @@ export const blocksRouter = router({
    * status='approved' row linked to the existing app_blocks entry.
    * Idempotent at the (slug, bundleSha256) level.
    */
-  backfillPublishRequest: guardedProcedure
+  backfillPublishRequest: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(backfillPublishRequestSchema)
     .mutation(async ({ ctx, input }) => {
@@ -475,7 +503,7 @@ export const blocksRouter = router({
    * Reject a pending publish request. Reason is required (≥10 chars) and
    * shown to the dev inline on /apps/my-submissions.
    */
-  rejectRequest: guardedProcedure
+  rejectRequest: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(rejectRequestSchema)
     .mutation(async ({ ctx, input }) => {
@@ -506,7 +534,7 @@ export const blocksRouter = router({
    * Returns the rejection reason inline so the dev sees mod feedback
    * without a second round-trip.
    */
-  listMyPublishRequests: guardedProcedure
+  listMyPublishRequests: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .query(async ({ ctx }) => {
       if (!ctx.user) return [];
@@ -587,7 +615,7 @@ export const blocksRouter = router({
    * + scope intersections derived from existing tables (no grant schema
    * yet — that's W5 v1). See user-app-surface.service.ts for shape.
    */
-  listMyScopeGrants: guardedProcedure
+  listMyScopeGrants: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .query(async ({ ctx }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
@@ -607,7 +635,7 @@ export const blocksRouter = router({
    * Cursor pagination by id (createdAt desc, id desc tiebreak); cap 100
    * to keep the payload bounded.
    */
-  listMyAppActivity: guardedProcedure
+  listMyAppActivity: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -642,7 +670,7 @@ export const blocksRouter = router({
    * Id, and the management UI on /apps/installed reads `id` off the
    * SubscriptionRecord directly.
    */
-  setSubscriptionPinnedVersion: guardedProcedure
+  setSubscriptionPinnedVersion: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -667,7 +695,7 @@ export const blocksRouter = router({
    * "show me what just this app did" drill-down. Cursor is the BigSerial
    * row id as a string (JSON can't carry int64 losslessly).
    */
-  listMyScopeInvocations: guardedProcedure
+  listMyScopeInvocations: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -698,7 +726,7 @@ export const blocksRouter = router({
    * denormalised onto each subscription so the UI can render block name,
    * icon, and target slot without a second round-trip.
    */
-  listMySubscriptions: guardedProcedure
+  listMySubscriptions: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .query(async ({ ctx }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
@@ -717,6 +745,8 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [], nextCursor: undefined };
       }
+      // Phase 2: marketplace listing is moderator-only until GA.
+      if (!ctx.user?.isModerator) return { items: [], nextCursor: undefined };
       return BlockRegistry.listAvailable(input);
     }),
 
@@ -733,7 +763,7 @@ export const blocksRouter = router({
    * (mirrors per-model install row shape); `viewer_personal` is a viewer
    * write (mirrors per-viewer override row shape).
    */
-  upsertSubscription: guardedProcedure
+  upsertSubscription: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -791,7 +821,7 @@ export const blocksRouter = router({
    * (already deleted is a success); rows owned by another user raise
    * authorization at the service layer.
    */
-  deleteSubscription: guardedProcedure
+  deleteSubscription: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(z.object({ subscriptionId: z.string().min(1).max(64) }))
     .mutation(async ({ ctx, input }) => {
@@ -831,6 +861,7 @@ export const blocksRouter = router({
           message: 'workflow poll requires authenticated viewer',
         });
       }
+      await assertViewerIsModerator(userId);
       const token = await getOrchestratorToken(userId, ctx);
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
       return { snapshot: snapshotFromWorkflow(workflow) };
@@ -870,6 +901,7 @@ export const blocksRouter = router({
           message: 'workflow cancel requires authenticated viewer',
         });
       }
+      await assertViewerIsModerator(userId);
       const token = await getOrchestratorToken(userId, ctx);
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
@@ -905,6 +937,7 @@ export const blocksRouter = router({
           message: 'estimate requires authenticated viewer',
         });
       }
+      await assertViewerIsModerator(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
@@ -975,6 +1008,7 @@ export const blocksRouter = router({
           message: 'workflow submit requires authenticated viewer',
         });
       }
+      await assertViewerIsModerator(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
@@ -1108,7 +1142,17 @@ export const blocksRouter = router({
   getShowcaseImages: publicProcedure
     .use(enforceAppBlocksFlag)
     .input(z.object({ modelVersionId: z.number().int().positive() }))
-    .query(({ input }) => getModelShowcaseImages(input.modelVersionId)),
+    .query(({ input, ctx }) => {
+      // Phase 2: moderator-only until GA. This is a block-specific call (not a
+      // model-page render), so a hard FORBIDDEN is correct for non-mods.
+      if (!ctx.user?.isModerator) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'App Blocks is restricted to the civitai team',
+        });
+      }
+      return getModelShowcaseImages(input.modelVersionId);
+    }),
 
   /**
    * Compute the effective checkpoint for a (blockInstanceId, viewer) pair.
@@ -1133,7 +1177,15 @@ export const blocksRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
-      const userId = ctx.user?.id ?? null;
+      // Phase 2: moderator-only until GA. This is a block-specific resolver
+      // call (not a model-page render), so FORBIDDEN for non-mods.
+      if (!ctx.user?.isModerator) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'App Blocks is restricted to the civitai team',
+        });
+      }
+      const userId = ctx.user.id;
       const checkpoint = await BlockRegistry.getEffectiveCheckpoint({
         blockInstanceId: input.blockInstanceId,
         modelId: input.modelId,
@@ -1177,6 +1229,7 @@ export const blocksRouter = router({
           message: 'anon viewers cannot persist block settings',
         });
       }
+      await assertViewerIsModerator(userId);
       const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
       if (!Number.isInteger(ctxModelId)) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks modelId context' });
@@ -1264,10 +1317,10 @@ export const blocksRouter = router({
    * Publisher revenue summary. Caller must be the app owner — the
    * service filters by `app_owner_user_id` so even if the request
    * carries a different appBlockId, the rows are scoped to the caller.
-   * Auth check is enforced by guardedProcedure; no need to also assert
+   * Auth check is enforced by moderatorProcedure; no need to also assert
    * ownership of the requested appBlockId (the join filter does it).
    */
-  getMyRevenue: guardedProcedure
+  getMyRevenue: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -1296,7 +1349,7 @@ export const blocksRouter = router({
    * the per-app dropdown on /apps/revenue. OauthClient.userId is the
    * single source of truth for app ownership in v1.
    */
-  getMyApps: guardedProcedure
+  getMyApps: moderatorProcedure
     .use(enforceAppBlocksFlag)
     .query(async ({ ctx }) => {
       const user = ctx.user as SessionUser;

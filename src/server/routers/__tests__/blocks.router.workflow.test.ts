@@ -206,9 +206,15 @@ function happyVersionLookup() {
 }
 
 function happyUser() {
+  // Phase 2: App Blocks is moderator-only, and the runtime procedures now
+  // assert the resolved viewer (from the block token) isModerator via
+  // getUserById. The happy path therefore needs a moderator subject.
+  // getUserById is called BOTH by assertViewerIsModerator (select id+isMod)
+  // AND by getBlockSessionUser (submit path). A single mock resolution
+  // covers both since they read overlapping fields.
   mockGetUserById.mockResolvedValue({
     id: 42,
-    isModerator: false,
+    isModerator: true,
     tier: 'free',
     email: 'u@example.com',
     username: 'u',
@@ -240,6 +246,16 @@ beforeEach(() => {
   // gate they're exercising. NB: mockReset wipes the implementation, so the
   // default has to be re-set every beforeEach (not just at hoisted-init time).
   mockIsAppBlocksEnabled.mockImplementation(async () => true);
+  // Phase 2: default the resolved viewer to a moderator so every happy-path
+  // test passes the new assertViewerIsModerator gate. FORBIDDEN tests override
+  // this to a non-mod (or vanished) user.
+  mockGetUserById.mockResolvedValue({
+    id: 42,
+    isModerator: true,
+    tier: 'free',
+    email: 'u@example.com',
+    username: 'u',
+  });
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockAuditPromptServer.mockResolvedValue(undefined);
@@ -959,5 +975,81 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
         slotId: 'model.sidebar_top',
       })
     );
+  });
+});
+
+/**
+ * Phase 2 — App Blocks is moderator-only until GA. Every block-token-authed
+ * runtime procedure re-asserts that the RESOLVED viewer (from the token
+ * subject, NOT ctx.user) is a moderator. A token whose subject resolves to a
+ * non-mod verified user must be rejected with FORBIDDEN even though the token
+ * itself is otherwise valid (valid signature, correct scopes, matching ctx).
+ *
+ * This is the defense-in-depth layer beneath the mod-gated token minting
+ * endpoint: even if a token were somehow minted for a non-mod, the runtime
+ * refuses it.
+ */
+describe('Phase 2 — block-token runtime procedures reject non-mod viewers', () => {
+  function nonModViewer() {
+    mockGetUserById.mockResolvedValue({
+      id: 42,
+      isModerator: false,
+      tier: 'free',
+      email: 'u@example.com',
+      username: 'u',
+    });
+  }
+
+  it('pollWorkflow → FORBIDDEN for a non-mod resolved viewer', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    nonModViewer();
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // The orchestrator must never be reached for a non-mod.
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('cancelWorkflow → FORBIDDEN for a non-mod resolved viewer', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    nonModViewer();
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockCancelWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('estimateWorkflow → FORBIDDEN for a non-mod resolved viewer', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    nonModViewer();
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // No orchestrator interaction for a non-mod.
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('submitWorkflow → FORBIDDEN for a non-mod resolved viewer', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    nonModViewer();
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // The prompt audit + orchestrator must never run for a non-mod.
+    expect(mockAuditPromptServer).not.toHaveBeenCalled();
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('FORBIDDEN when the resolved viewer has vanished (getUserById → null)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockGetUserById.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

@@ -64,10 +64,24 @@ const baseHandler = withAxiom(async function handler(
   // banned-during-replication-lag user surface to the block as active.
   const user = await dbWrite.user.findUnique({
     where: { id: userId },
-    select: { id: true, username: true, bannedAt: true, muted: true, deletedAt: true },
+    select: {
+      id: true,
+      username: true,
+      bannedAt: true,
+      muted: true,
+      deletedAt: true,
+      isModerator: true,
+    },
   });
   if (!user || user.deletedAt) {
     res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  // Phase 2: App Blocks is moderator-only until GA. Block-token minting is
+  // mod-gated, but a token minted just before a demotion is valid for ~15min;
+  // re-assert the resolved viewer is a moderator as defense-in-depth.
+  if (!user.isModerator) {
+    res.status(403).json({ error: 'App Blocks is restricted to the civitai team' });
     return;
   }
   // M1+M6: a banned user with a still-valid session must NOT be surfaced

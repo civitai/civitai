@@ -25,7 +25,25 @@ import {
 import { logToAxiom } from '~/server/logging/client';
 import { requireAppsDb } from '~/server/db/appsDb';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
+import { getUserById } from '~/server/services/user.service';
 import { middleware, publicProcedure, router } from '~/server/trpc';
+
+/**
+ * Phase 2 (internal-only graduation gate): App Blocks is moderator-only until
+ * GA. Storage procedures are `publicProcedure` + block-token authed — the
+ * viewer is resolved from the JWT subject, not `ctx.user`. Re-assert the
+ * resolved viewer is a moderator here (block-token minting is also mod-gated,
+ * but defense-in-depth re-checks per call). Throws FORBIDDEN otherwise.
+ */
+async function assertViewerIsModerator(userId: number): Promise<void> {
+  const row = await getUserById({ id: userId, select: { id: true, isModerator: true } });
+  if (!row?.isModerator) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'App Blocks is restricted to the civitai team',
+    });
+  }
+}
 
 // 50 MB per-app quota. Soft-cap warnings + dynamic quotas are deferred
 // to v1; v0 hard-rejects writes that would cross this threshold.
@@ -96,6 +114,13 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
     throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
   }
   const userId = parseSubjectUserId(claims.sub);
+  // Phase 2: moderator-only until GA. A non-null subject must be a moderator;
+  // anon subjects (userId === null) fall through to each op's existing
+  // anon-handling (clean-null for reads, UNAUTHORIZED for writes) — block-token
+  // minting is itself mod-gated so an anon mod token can't be minted anyway.
+  if (userId != null) {
+    await assertViewerIsModerator(userId);
+  }
   return {
     userId,
     slug,
