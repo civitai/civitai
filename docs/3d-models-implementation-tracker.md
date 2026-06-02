@@ -71,6 +71,24 @@ All seven workstreams from `docs/3d-models-followups.md` shipped:
 
 Plan source of truth: `docs/3d-models-followups.md` (rev 1; profile feed + moderation phases).
 
+## Phase 2 — Wave 4 (post-launch polish) — COMPLETE
+
+User-driven follow-ups from card/mod review + generator surfacing:
+
+| Workstream | Commit | Notes |
+|------------|--------|-------|
+| U: mod actions → single dropdown menu | `7ad54c7ca` | `Model3DModBar` (button-row + inline Menu + Popover) replaced with `Model3DModMenu` — canonical Mantine pattern (LegacyActionIcon + IconDotsVertical + single Menu.Dropdown). Destructive confirms via `openConfirmModal`; NSFW level edits via a Mantine Modal. |
+| V: card redesign + inline preview | `071e06b6a` | `Model3DCard` rebuilt with ModelCard-shape footer (UserAvatarSimple + stat/rating chips). NSFW handling via `ImageGuard2` (added `'model3d'` to `ConnectType` union). Header IconEye Preview button lazily loads primary file via `trpc.model3d.getFiles` and renders three.js viewer inline as an absolute overlay. |
+| W: V2 generator integration | `07377c88b` | Registers PolyGen ecosystem (`ECO.PolyGen=71`, `BM.PolyGen=90`) and `'3D Models'` category in `GenerationFormV2`. Extends `WorkflowCategory`/`OutputType`/`MediaType` unions to include `'model3d'`. Adds `txt2model3d` + `img2model3d` workflow configs (feature-flagged on `model3dGenerator`, `noSubmit: true`). `Model3DGenerationForm` is rendered as the workflow body inside `GenerationForm.tsx` — bypasses the unified `generateFromGraph` path and uses the existing `generate3D` + `generate3DWhatIf` mutations. Empty `polygen-graph.ts` placeholder is registered in `ecosystem-graph.ts`. |
+
+**Reverted along the way**: `aaa9b7541` — first W attempt edited the legacy `GenerationForm.tsx` (no end-user importers; `GenerationFormLegacy` is dead code). Reverted via `96f48ade1`; replaced with the V2 integration above.
+
+**Open follow-ups from W** (intentional, not blockers):
+- `BaseModelRecord.type` for PolyGen is `'image'` because Prisma `MediaType` enum has no `'model3d'` variant. The record is `hidden: true` so it never surfaces in pickers. Future migration could extend the enum.
+- `WORKFLOW_TAGS` has no `'model3d'` tag. Orchestration would mis-tag PolyGen submissions as `'vid'`, but the dispatcher in `createEcosystemStep` throws before reaching that code (PolyGen submits via `generate3D`, not `generateFromGraph`). Add the tag if the unified path is ever wired.
+- The empty `polyGenGraph` means PolyGen contributes zero form nodes through the unified graph (intentional — the standalone form IS the workflow body). If a future workstream wants graph-driven PolyGen inputs, build out the nodes + a handler entry in `createEcosystemStep`.
+
+
 ## Active agents — Wave 2.5 (continuation) — DONE
 
 | Workstream | Status | Notes |
