@@ -47,7 +47,7 @@ import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
-import { Model3DModBar } from '~/components/Model3D/Moderation/Model3DModBar';
+import { Model3DModMenu } from '~/components/Model3D/Moderation/Model3DModMenu';
 import { GenerationDetails } from '~/components/Model3D/GenerationDetails/GenerationDetails';
 import { MakesUsesRail } from '~/components/Model3D/MakesUses/MakesUsesRail';
 import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
@@ -265,7 +265,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </Button>
               )}
               {isModerator && (
-                <Model3DModBar
+                <Model3DModMenu
                   model3d={{
                     id: model3d.id,
                     status: model3d.status,
