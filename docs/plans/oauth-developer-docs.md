@@ -97,6 +97,24 @@ GET https://civitai.com/api/auth/oauth/userinfo
 Authorization: Bearer civitai_abc123...
 ```
 
+Response (standard OIDC UserInfo claims):
+
+```json
+{
+  "sub": "12345",
+  "id": 12345,
+  "username": "creator",
+  "preferred_username": "creator",
+  "name": "Creator",
+  "picture": "https://...",
+  "image": "https://...",
+  "email": "creator@example.com",
+  "email_verified": true
+}
+```
+
+`email` and `email_verified` are released when the token carries the **UserRead** scope (the "Read profile & settings" consent permission). Claims are omitted when the underlying value is absent. The userinfo endpoint requires UserRead and returns `403 insufficient_scope` otherwise.
+
 Or use it with any Civitai API/tRPC endpoint:
 
 ```
@@ -305,6 +323,10 @@ Hitting `/api/v1/me` with a Bearer token returns the user's identity plus token-
   "status": "active" | "muted" | "banned",
   "isMember": false,
   "subscriptions": [],
+
+  // Present when session-authenticated or when the token has UserRead scope
+  "email": "creator@example.com",
+  "emailVerified": true,
 
   // Present only when authenticated via a non-Full token
   "tokenScope": 4194303,
