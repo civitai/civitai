@@ -333,13 +333,15 @@ export const updateUserProfile = async ({
   // if this inline enqueue fails.
   if (updatedCoverImage && updatedCoverImage.ingestion === ImageIngestionStatus.Pending) {
     ingestImage({ image: updatedCoverImage }).catch((error) =>
+      // Trailing .catch swallows Axiom-side rejections so a logging outage
+      // can't surface as an unhandledRejection (matches fail-open-log.ts).
       logToAxiom({
         name: 'user-profile-cover-ingest',
         type: 'error',
         userId,
         imageId: updatedCoverImage.id,
         message: error instanceof Error ? error.message : String(error),
-      })
+      }).catch(() => {})
     );
   }
 
