@@ -12,6 +12,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
+import { logToAxiom } from '~/server/logging/client';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import {
@@ -188,7 +189,7 @@ export const updateUserProfile = async ({
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }
 
-  await dbWrite.$transaction(
+  const { coverImage: updatedCoverImage } = await dbWrite.$transaction(
     async (tx) => {
       // const shouldUpdateCosmetics = badgeId !== undefined || nameplateId !== undefined;
       // const payloadCosmeticIds: number[] = [];
@@ -310,18 +311,39 @@ export const updateUserProfile = async ({
         },
       });
 
-      if (
-        updatedProfile.coverImage &&
-        updatedProfile.coverImage.ingestion === ImageIngestionStatus.Pending
-      ) {
-        await ingestImage({ image: updatedProfile.coverImage, tx });
-      }
+      return updatedProfile;
     },
     {
-      // Wait double of time because it might be a long transaction
       timeout: 15000,
     }
   );
+
+  // Ingest the cover image AFTER the transaction commits. ingestImage makes a
+  // blocking external HTTP call to the image scanner; keeping it inside the
+  // interactive transaction held the txn open past its 15s timeout whenever the
+  // scanner was slow ("Transaction already closed: a commit cannot be executed
+  // on an expired transaction"). Ingestion only needs the committed Image row,
+  // not transactional atomicity with the profile write.
+  //
+  // Fire-and-forget on purpose: the profile is already saved, so a scanner
+  // outage must NOT bubble up as "error updating your profile" on a successful
+  // save. Recovery is guaranteed independently — the `trg_image_scan_queue`
+  // trigger enqueues an ImageScan JobQueue row on the Pending insert, which the
+  // `ingest-images` sweeper drains, so the cover image still gets scanned even
+  // if this inline enqueue fails.
+  if (updatedCoverImage && updatedCoverImage.ingestion === ImageIngestionStatus.Pending) {
+    ingestImage({ image: updatedCoverImage }).catch((error) =>
+      // Trailing .catch swallows Axiom-side rejections so a logging outage
+      // can't surface as an unhandledRejection (matches fail-open-log.ts).
+      logToAxiom({
+        name: 'user-profile-cover-ingest',
+        type: 'error',
+        userId,
+        imageId: updatedCoverImage.id,
+        message: error instanceof Error ? error.message : String(error),
+      }).catch(() => {})
+    );
+  }
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
 
