@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Button,
   Center,
   Flex,
@@ -6,10 +7,12 @@ import {
   Image,
   Loader,
   Paper,
+  ScrollArea,
   Stack,
   Text,
   Textarea,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertCircle,
@@ -17,6 +20,7 @@ import {
   IconArrowRight,
   IconFileDownload,
 } from '@tabler/icons-react';
+import { CopyButton } from '~/components/CopyButton/CopyButton';
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
@@ -184,6 +188,59 @@ const EpochRow = ({
           )}
         </Group>
       </Stack>
+    </Paper>
+  );
+};
+
+// Read-only list of the sample-image prompts the user configured for this training.
+// Surfaced when a training fails before any epoch completes so the prompts (which are
+// still saved server-side) remain recoverable without inspecting the page source.
+const SamplePromptsPanel = ({ prompts }: { prompts: string[] }) => {
+  const nonEmptyPrompts = prompts.filter((p) => p.trim().length > 0);
+  if (!nonEmptyPrompts.length) return null;
+
+  return (
+    <Paper p="md" radius="md" withBorder className="w-full max-w-2xl">
+      <Group justify="space-between" mb="xs">
+        <Text fw={600}>Your saved sample prompts</Text>
+        <CopyButton value={nonEmptyPrompts.join('\n')}>
+          {({ copy, copied, Icon, color }) => (
+            <Tooltip label={copied ? 'Copied' : 'Copy all prompts'} withArrow>
+              <Button
+                size="compact-sm"
+                variant="light"
+                color={color}
+                leftSection={<Icon size={16} />}
+                onClick={copy}
+              >
+                Copy all
+              </Button>
+            </Tooltip>
+          )}
+        </CopyButton>
+      </Group>
+      <Text size="sm" c="dimmed" mb="sm">
+        The training failed before any sample images were generated, but these are the prompts you
+        configured. You can copy them to reuse if you submit the training again.
+      </Text>
+      <ScrollArea.Autosize mah={260}>
+        <Stack gap="xs">
+          {nonEmptyPrompts.map((prompt, index) => (
+            <Group key={index} gap="xs" align="flex-start" wrap="nowrap">
+              <CopyButton value={prompt}>
+                {({ copy, copied, Icon, color }) => (
+                  <Tooltip label={copied ? 'Copied' : 'Copy prompt'} withArrow>
+                    <ActionIcon variant="subtle" color={color} onClick={copy} mt={4}>
+                      <Icon size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </CopyButton>
+              <Textarea className="flex-1" autosize minRows={1} maxRows={4} value={prompt} readOnly />
+            </Group>
+          ))}
+        </Stack>
+      </ScrollArea.Autosize>
     </Paper>
   );
 };
@@ -453,12 +510,21 @@ export default function TrainingSelectFile({
   // Only show blocking error for Paused, Denied, or Failed without epochs
   const showBlockingError = !!errorMessage && !hasFailedWithEpochs;
 
+  // When a training fails before completing a single epoch, the user's configured sample
+  // prompts are still saved server-side but are otherwise only visible in the page source.
+  // Surface them so they can be copied/reused (Freshdesk #66457).
+  const showFailedSamplePrompts =
+    modelVersion.trainingStatus === TrainingStatus.Failed &&
+    noEpochs &&
+    samplePrompts.some((p) => p.trim().length > 0);
+
   return (
     <Stack>
       {showBlockingError ? (
         <Stack p="xl" align="center">
           <IconAlertCircle size={52} />
           <Text>{errorMessage}</Text>
+          {showFailedSamplePrompts && <SamplePromptsPanel prompts={samplePrompts} />}
         </Stack>
       ) : noEpochs ? (
         <Stack p="xl" align="center">

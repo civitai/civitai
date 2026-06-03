@@ -100,7 +100,19 @@ export const applyTagPostProcess = (
     .slice(0, opts.maxTags ?? autoLabelLimits.tag.tags.max)
     .map(([t]) => t);
 
-  tags = [...prependList, ...tags, ...appendList];
+  // Merge prepend/auto/append while deduping so a prepend/append tag the wd-tagger
+  // already produced isn't added twice (the reported duplication bug). Tagger keys and
+  // getTextTagsAsList output are both lowercased/trimmed, matching the blacklist compare
+  // above, so a Set keyed on the raw string is the correct equality. Order is preserved
+  // (prepend first, auto-tags middle, append last); the first occurrence wins its slot.
+  const seen = new Set<string>();
+  const dedupe = (list: string[]) =>
+    list.filter((t) => {
+      if (seen.has(t)) return false;
+      seen.add(t);
+      return true;
+    });
+  tags = [...dedupe(prependList), ...dedupe(tags), ...dedupe(appendList)];
   // Drop any individual tag that trips our prompt safety filter — no PII / banned terms.
   tags = tags.filter((tag) => auditPrompt(tag).success);
 
