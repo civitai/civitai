@@ -309,11 +309,10 @@ export default function ModelDetailsV2({
     id,
     excludeTrainingData: true,
   });
-  // v5: query onSuccess removed — default to latest version when the model loads.
-  useEffect(() => {
-    const latestVersion = model?.modelVersions[0];
-    if (latestVersion) setSelectedVersion(latestVersion);
-  }, [model]); // eslint-disable-line react-hooks/exhaustive-deps
+  // NOTE: the removed v4 `onSuccess` set selectedVersion to modelVersions[0] on each fetch.
+  // That is already covered (URL-aware) by the `selectedVersion` useState initializer below
+  // and the querystring-sync effect further down — replicating it via useEffect([model]) would
+  // also fire on cached/SSR mounts (where onSuccess did not) and clobber deep-linked versions.
   const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const rawVersionId = router.query.modelVersionId;
