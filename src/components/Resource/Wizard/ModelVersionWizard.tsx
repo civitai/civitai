@@ -234,7 +234,7 @@ const TrainSteps = ({
                   </Button>
                   <Button
                     type="submit"
-                    loading={loading || publishPrivateModelVersionMutation.isLoading}
+                    loading={loading || publishPrivateModelVersionMutation.isPending}
                     disabled={!canSave}
                   >
                     {isPrivateModel ? 'Complete' : 'Next'}

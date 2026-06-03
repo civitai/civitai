@@ -29,7 +29,7 @@ export const useBrowsingSettingsAddons = () => {
 export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.ReactNode }) => {
   const { data = DEFAULT_BROWSING_SETTINGS_ADDONS, isLoading } =
     trpc.system.getBrowsingSettingAddons.useQuery(undefined, {
-      cacheTime: Infinity,
+      gcTime: Infinity,
       staleTime: Infinity,
     });
   const currentUser = useCurrentUser();

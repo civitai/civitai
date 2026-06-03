@@ -1,7 +1,7 @@
 // src/utils/trpc.ts
 import { QueryClient, type QueryClientConfig } from '@tanstack/react-query';
-import type { CreateTRPCProxyClient, TRPCLink } from '@trpc/client';
-import { createTRPCProxyClient, httpLink, loggerLink } from '@trpc/client';
+import type { CreateTRPCClient, TRPCLink } from '@trpc/client';
+import { createTRPCClient, httpLink, loggerLink } from '@trpc/client';
 import type { CreateTRPCNext } from '@trpc/next';
 import { createTRPCNext } from '@trpc/next';
 import type { NextPageContext } from 'next';
@@ -139,8 +139,7 @@ function getHeaders(ctx?: NextPageContext) {
   };
 }
 
-export const trpcVanilla: CreateTRPCProxyClient<AppRouter> = createTRPCProxyClient<AppRouter>({
-  transformer: superjson,
+export const trpcVanilla: CreateTRPCClient<AppRouter> = createTRPCClient<AppRouter>({
   links: [
     authedCacheBypassLink,
     loggerLink({
@@ -149,6 +148,8 @@ export const trpcVanilla: CreateTRPCProxyClient<AppRouter> = createTRPCProxyClie
         (opts.direction === 'down' && opts.result instanceof Error),
     }),
     httpLink({
+      // v11: the data transformer moved from the root client config onto the link.
+      transformer: superjson,
       url,
       fetch: largeFetch,
       headers: getHeaders(),
@@ -156,7 +157,7 @@ export const trpcVanilla: CreateTRPCProxyClient<AppRouter> = createTRPCProxyClie
   ],
 });
 
-export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPCNext<AppRouter>({
+export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<AppRouter>({
   config(opts) {
     const { ctx } = opts;
     const isClient = typeof window !== 'undefined';
@@ -172,7 +173,6 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPC
       // module-scope singleton accumulated 11,962 `Query` objects per pod
       // (heap snapshot, civitai-dp-prod, 2026-05-14).
       ...(isClient ? { queryClient: getBrowserQueryClient() } : { queryClientConfig }),
-      transformer: superjson,
       links: [
         authedCacheBypassLink,
         loggerLink({
@@ -181,6 +181,8 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPC
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
         httpLink({
+          // v11: the data transformer moved from the root client config onto the link.
+          transformer: superjson,
           url: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,
           fetch: isClient ? largeFetch : undefined,
           headers: getHeaders(ctx),
@@ -197,6 +199,10 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPC
       ],
     };
   },
+  // v11: `createTRPCNext` requires the transformer at the top level of its options
+  // (WithTRPCOptions intersects TransformerOptions). The link carries it too for the
+  // actual wire (de)serialization.
+  transformer: superjson,
   ssr: false,
 });
 

@@ -81,7 +81,7 @@ export function GeneratedImageActions({
     });
   };
 
-  const isMutating = isLoading || createPostMutation.isLoading;
+  const isMutating = isLoading || createPostMutation.isPending;
 
   const postSelectedImages = async () => {
     // Audio outputs aren't supported by the post system — filter them out.

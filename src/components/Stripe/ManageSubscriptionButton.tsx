@@ -3,7 +3,7 @@ import { trpc } from '~/utils/trpc';
 import Router from 'next/router';
 
 export function StripeManageSubscriptionButton({ children }: { children: React.ReactElement }) {
-  const { mutate, isLoading } = trpc.stripe.createManageSubscriptionSession.useMutation();
+  const { mutate, isPending: isLoading } = trpc.stripe.createManageSubscriptionSession.useMutation();
 
   const handleClick = () => {
     mutate(undefined, {

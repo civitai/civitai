@@ -365,8 +365,8 @@ function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () =>
       onClose={handleClose}
       title="Register OAuth Application"
       size="lg"
-      closeOnClickOutside={!createMutation.isLoading}
-      closeOnEscape={!createMutation.isLoading}
+      closeOnClickOutside={!createMutation.isPending}
+      closeOnEscape={!createMutation.isPending}
     >
       {result ? (
         <SecretDisplay
@@ -432,12 +432,12 @@ function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () =>
           </Radio.Group>
           <ScopeSelector tokenScope={tokenScope} onChange={setTokenScope} />
           <Group justify="space-between">
-            <Button variant="default" onClick={handleClose} disabled={createMutation.isLoading}>
+            <Button variant="default" onClick={handleClose} disabled={createMutation.isPending}>
               Cancel
             </Button>
             <Button
               onClick={handleSubmit}
-              loading={createMutation.isLoading}
+              loading={createMutation.isPending}
               disabled={!name.trim()}
             >
               Register App
@@ -537,8 +537,8 @@ function EditAppModal({
       onClose={onClose}
       title="Edit OAuth Application"
       size="lg"
-      closeOnClickOutside={!updateMutation.isLoading}
-      closeOnEscape={!updateMutation.isLoading}
+      closeOnClickOutside={!updateMutation.isPending}
+      closeOnEscape={!updateMutation.isPending}
     >
       <Stack>
         <TextInput
@@ -583,10 +583,10 @@ function EditAppModal({
         />
         <ScopeSelector tokenScope={tokenScope} onChange={setTokenScope} />
         <Group justify="space-between">
-          <Button variant="default" onClick={onClose} disabled={updateMutation.isLoading}>
+          <Button variant="default" onClick={onClose} disabled={updateMutation.isPending}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} loading={updateMutation.isLoading} disabled={!name.trim()}>
+          <Button onClick={handleSubmit} loading={updateMutation.isPending} disabled={!name.trim()}>
             Save Changes
           </Button>
         </Group>

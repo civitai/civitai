@@ -207,7 +207,7 @@ export function PostImageDropzone({
           accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           disabled={!canAdd}
           error={error}
-          loading={createPostMutation.isLoading || loading}
+          loading={createPostMutation.isPending || loading}
           className="rounded-lg"
         />
       </div>

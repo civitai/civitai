@@ -85,7 +85,7 @@ export default function ReviewTrainingDataPage() {
                         size="md"
                         radius="xl"
                         loading={
-                          recheckTrainingStatusMutation.isLoading &&
+                          recheckTrainingStatusMutation.isPending &&
                           recheckTrainingStatusMutation.variables?.id === item.id
                         }
                         onClick={() => handleRecheckTrainingStatus(item.id)}

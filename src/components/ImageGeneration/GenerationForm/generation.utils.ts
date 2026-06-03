@@ -28,7 +28,7 @@ import type {
 const { updatedBy, ...defaultServiceStatus } = generationStatusSchema.parse({});
 export function useGetGenerationStatus() {
   return trpc.generation.getStatus.useQuery(undefined, {
-    cacheTime: 60,
+    gcTime: 60,
     placeholderData: defaultServiceStatus,
     trpc: { context: { skipBatch: true } },
   });
@@ -87,7 +87,7 @@ export const useGenerationConfig = () => {
   const { data = DEFAULT_GENERATION_CONFIG } = trpc.generation.getGenerationConfig.useQuery(
     undefined,
     {
-      cacheTime: Infinity,
+      gcTime: Infinity,
       staleTime: Infinity,
       trpc: { context: { skipBatch: true } },
     }
@@ -102,7 +102,7 @@ export const useUnsupportedResources = () => {
   const { data: unavailableResources = [] } = trpc.generation.getUnavailableResources.useQuery(
     undefined,
     {
-      cacheTime: Infinity,
+      gcTime: Infinity,
       staleTime: Infinity,
       trpc: { context: { skipBatch: true } },
     }
@@ -129,7 +129,7 @@ export const useUnsupportedResources = () => {
   return {
     unavailableResources,
     toggleUnavailableResource: handleToggleUnavailableResource,
-    toggling: toggleUnavailableResourceMutation.isLoading,
+    toggling: toggleUnavailableResourceMutation.isPending,
   };
 };
 

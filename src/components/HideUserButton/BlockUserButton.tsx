@@ -74,7 +74,7 @@ export function BlockUserButton({
       <Button
         variant={isBlocked ? 'outline' : 'filled'}
         onClick={handleBlockClick}
-        loading={toggleHiddenMutation.isLoading}
+        loading={toggleHiddenMutation.isPending}
         {...props}
       >
         {isBlocked ? unblockLabel ?? 'Unblock' : label ?? 'Block'}

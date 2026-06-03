@@ -77,7 +77,7 @@ export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
           <Button
             onClick={handleClose}
             color="gray"
-            disabled={publishPrivateModelMutation.isLoading}
+            disabled={publishPrivateModelMutation.isPending}
           >
             Cancel
           </Button>
@@ -85,8 +85,8 @@ export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
             onClick={() => {
               handleConfirm();
             }}
-            disabled={publishPrivateModelMutation.isLoading}
-            loading={publishPrivateModelMutation.isLoading}
+            disabled={publishPrivateModelMutation.isPending}
+            loading={publishPrivateModelMutation.isPending}
           >
             Make public
           </Button>

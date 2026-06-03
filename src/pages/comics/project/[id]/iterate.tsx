@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import { ActionIcon, Alert, Text, Title, Tooltip } from '@mantine/core';
 import { IconAlertTriangle, IconArrowLeft, IconMessages } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -96,7 +97,7 @@ function ComicIteratePage() {
       referenceIds: costParams.referenceIds,
       selectedImageIds: costParams.selectedImageIds,
     },
-    { staleTime: 30_000, enabled: !!project, keepPreviousData: true }
+    { staleTime: 30_000, enabled: !!project, placeholderData: keepPreviousData }
   );
 
   const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
@@ -193,7 +194,7 @@ function ComicIteratePage() {
       // transition. Mirrors the bypass `PanelCard` already uses.
       return utils.comics.pollIterationStatus.fetch(params, {
         staleTime: 0,
-        cacheTime: 0,
+        gcTime: 0,
       });
     },
     [utils]

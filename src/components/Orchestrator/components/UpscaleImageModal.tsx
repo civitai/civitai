@@ -178,7 +178,7 @@ export function UpscaleImageModal({ sourceImage, metadata }: UpscaleImageModalPr
           )}
           <ModalSubmitButton
             type="submit"
-            loading={generateMutation.isLoading}
+            loading={generateMutation.isPending}
             disabled={whatIf.isInitialLoading || whatIf.isError || !form.formState.isValid}
             cost={whatIf.data?.cost?.total ?? 0}
           >

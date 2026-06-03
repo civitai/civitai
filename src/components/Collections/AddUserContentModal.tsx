@@ -135,8 +135,8 @@ export function AddUserContentModal({ collectionId }: Props) {
   const uploading = files.some((file) => file.status === 'uploading');
   const loading =
     uploading ||
-    addSimpleImagePostCollectionMutation.isLoading ||
-    saveCollectionItemsMutation.isLoading;
+    addSimpleImagePostCollectionMutation.isPending ||
+    saveCollectionItemsMutation.isPending;
   const availableTags = (collection?.tags ?? []).filter((t) => !t.filterableOnly);
 
   return (

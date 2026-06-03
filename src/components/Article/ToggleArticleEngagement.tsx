@@ -37,7 +37,7 @@ export function ToggleArticleEngagement({
     };
   }, [data, articleId, bookmarkedArticles]);
 
-  const { mutate: toggleEngagement, isLoading: isLoadingToggleEngagement } =
+  const { mutate: toggleEngagement, isPending: isLoadingToggleEngagement } =
     trpc.user.toggleArticleEngagement.useMutation({
       onMutate: async ({ type, articleId }) => {
         const previousEngagements = queryUtils.user.getArticleEngagement.getData() ?? {};
@@ -77,7 +77,7 @@ export function ToggleArticleEngagement({
       },
     });
 
-  const { mutate: toggleBookmark, isLoading: isLoadingToggleBookmark } =
+  const { mutate: toggleBookmark, isPending: isLoadingToggleBookmark } =
     trpc.user.toggleBookmarkedArticle.useMutation({
       onMutate: async ({ id: articleId }) => {
         const previousBookmarks = queryUtils.user.getBookmarkedArticles.getData() ?? [];

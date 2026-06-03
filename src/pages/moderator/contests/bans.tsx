@@ -99,7 +99,7 @@ function ContestBanUserModal() {
           color="red"
           leftSection={<IconBan size={14} />}
           disabled={!selectedUser || !banReason}
-          loading={toggleBanMutation.isLoading}
+          loading={toggleBanMutation.isPending}
           onClick={onToggleBanUser}
         >
           Ban this user
@@ -210,7 +210,7 @@ export default function ContestsBans() {
                           onClick={() => {
                             onToggleBanUser(user.id);
                           }}
-                          loading={toggleBanMutation.isLoading}
+                          loading={toggleBanMutation.isPending}
                         >
                           <Tooltip label="Unban">
                             <IconTrashOff size={16} />

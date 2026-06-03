@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
 import { IconHeart } from '@tabler/icons-react';
@@ -22,7 +23,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
     { entities: showcaseItems },
     {
       enabled: showcaseItems.length > 0 && inView,
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
       trpc: { context: { skipBatch: true } },
     }
   );

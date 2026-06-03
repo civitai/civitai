@@ -43,7 +43,7 @@ export const useMutateStripe = () => {
 
   return {
     deletePaymentMethod: handleDeletePaymentMethod,
-    deletingPaymentMethod: deletePaymentMethodMutation.isLoading,
+    deletingPaymentMethod: deletePaymentMethodMutation.isPending,
   };
 };
 
@@ -94,7 +94,7 @@ export const usePaymentIntent = ({
   //     setupFuturePayment,
   //   },
   //   {
-  //     cacheTime: 0,
+  //     gcTime: 0,
   //     trpc: { context: { skipBatch: true } },
   //     enabled: !!unitAmount && !!currency && !!recaptchaToken,
   //   }

@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import type { InputWrapperProps } from '@mantine/core';
 import {
   Box,
@@ -39,7 +40,7 @@ export const ClubResourceManagementInput = ({
     },
     {
       enabled: clubResources.length > 0,
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
     }
   );
 

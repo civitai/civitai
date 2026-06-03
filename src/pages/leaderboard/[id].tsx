@@ -100,10 +100,12 @@ export default function Leaderboard() {
 
   const { data: leaderboards = [] } = trpc.leaderboard.getLeaderboards.useQuery(undefined, {
     trpc: { context: { skipBatch: true } },
-    onSuccess: (data) => {
-      if (selectedLeaderboard?.id !== id) setSelectedLeaderboard(data.find((x) => x.id === id));
-    },
   });
+  // v5: query onSuccess removed — select the active leaderboard once data loads.
+  useEffect(() => {
+    if (leaderboards.length && selectedLeaderboard?.id !== id)
+      setSelectedLeaderboard(leaderboards.find((x) => x.id === id));
+  }, [leaderboards, id]); // eslint-disable-line react-hooks/exhaustive-deps
   const { data: leaderboardSeason = [], isLoading: loadingLeaderboardSeason } =
     trpc.leaderboard.getLeaderboard.useQuery(
       { id, date },

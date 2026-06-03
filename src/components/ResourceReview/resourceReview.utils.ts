@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useMemo } from 'react';
@@ -271,10 +272,10 @@ export const useQueryResourceReview = (
   const { data, ...rest } = trpc.resourceReview.getInfinite.useInfiniteQuery(
     { ...filters },
     {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : undefined),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : undefined),
       trpc: { context: { skipBatch: true } },
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 

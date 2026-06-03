@@ -101,7 +101,7 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
         <ReactionPicker
           reactions={reactions}
           onSelect={handleReactionClick}
-          disabled={toggleReactionMutation.isLoading}
+          disabled={toggleReactionMutation.isPending}
         />
         <Group gap={4} wrap="nowrap">
           {currentUser?.isModerator && comment.tosViolation && (

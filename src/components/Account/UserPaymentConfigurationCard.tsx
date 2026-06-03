@@ -88,13 +88,13 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
             </Stack>
           </ScrollArea.Autosize>
           <Group ml="auto">
-            <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isLoading}>
+            <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isPending}>
               Go back
             </Button>
             <Button
               onClick={handleConfirm}
               disabled={!acceptedCoC}
-              loading={updateUserSettings.isLoading}
+              loading={updateUserSettings.isPending}
             >
               Accept
             </Button>

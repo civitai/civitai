@@ -28,7 +28,7 @@ export const FeatureFlagsProvider = ({
 
   const { data: userFeatures = {} as FeatureAccess } = trpc.user.getFeatureFlags.useQuery(
     undefined,
-    { cacheTime: Infinity, staleTime: Infinity, retry: 0, enabled: !!session.data }
+    { gcTime: Infinity, staleTime: Infinity, retry: 0, enabled: !!session.data }
   );
 
   const featureFlags = useMemo(

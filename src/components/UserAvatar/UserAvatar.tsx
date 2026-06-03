@@ -106,7 +106,7 @@ export function UserAvatar({
 
   const { data: fallbackUser, isInitialLoading } = trpc.user.getById.useQuery(
     { id: userId as number },
-    { enabled: !user && !!userId && userId > -1, cacheTime: Infinity, staleTime: Infinity }
+    { enabled: !user && !!userId && userId > -1, gcTime: Infinity, staleTime: Infinity }
   );
 
   const avatarUser = user ?? { ...fallbackUser, cosmetics: [] };

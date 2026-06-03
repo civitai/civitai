@@ -2,7 +2,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function useMutateEmerchantPay() {
-  const { mutateAsync: createBuzzOrder, isLoading: creatingBuzzOrder } =
+  const { mutateAsync: createBuzzOrder, isPending: creatingBuzzOrder } =
     trpc.emerchantpay.createBuzzOrder.useMutation({
       onError(error) {
         showErrorNotification({
@@ -23,7 +23,7 @@ export function useEmerchantPayStatus() {
     trpc: { context: { skipBatch: true } },
     refetchOnWindowFocus: false,
     refetchOnMount: false,
-    cacheTime: 1000 * 60 * 10, // 10 minutes
+    gcTime: 1000 * 60 * 10, // 10 minutes
   });
 
   return { healthy, isLoading };
@@ -34,7 +34,9 @@ export function useGetTransactionStatus(uniqueId?: string | null) {
     { id: uniqueId! },
     {
       enabled: !!uniqueId,
-      refetchInterval: (data) => {
+      // v5: refetchInterval receives the Query; read data off query.state.data.
+      refetchInterval: (query) => {
+        const data = query.state.data;
         if (!data) return 5000; // Refetch every 5 seconds if no data
         if (data.status === 'approved') return false; // Stop refetching if approved
         if (data.status === 'declined' || data.status === 'error') return false; // Stop refetching if failed

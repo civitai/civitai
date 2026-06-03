@@ -173,7 +173,7 @@ export function UpscaleVideoModal({ videoUrl, metadata }: UpscaleVideoModalProps
           )}
           <ModalSubmitButton
             type="submit"
-            loading={generateMutation.isLoading}
+            loading={generateMutation.isPending}
             disabled={whatIf.isInitialLoading || whatIf.isError}
             cost={whatIf.data?.cost?.total ?? 0}
           >

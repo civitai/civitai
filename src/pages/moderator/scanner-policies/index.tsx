@@ -511,7 +511,7 @@ export default function ScannerPoliciesPage() {
                   size="xs"
                   onClick={() => setSystemPromptM.mutate({ mode, body: systemPromptDraft })}
                   disabled={systemPromptDraft === (systemPromptQ.data ?? '')}
-                  loading={setSystemPromptM.isLoading}
+                  loading={setSystemPromptM.isPending}
                 >
                   Save override
                 </Button>
@@ -587,7 +587,7 @@ export default function ScannerPoliciesPage() {
                     size="xs"
                     leftSection={<IconPlus size={14} />}
                     onClick={handleAddLabel}
-                    disabled={!newLabelName.trim() || upsertM.isLoading}
+                    disabled={!newLabelName.trim() || upsertM.isPending}
                   >
                     Add
                   </Button>
@@ -630,7 +630,7 @@ export default function ScannerPoliciesPage() {
                             variant="subtle"
                             leftSection={<IconTrash size={14} />}
                             onClick={() => deleteLabelM.mutate({ mode, label: selectedLabel })}
-                            loading={deleteLabelM.isLoading}
+                            loading={deleteLabelM.isPending}
                           >
                             Delete empty label
                           </Button>
@@ -884,7 +884,7 @@ export default function ScannerPoliciesPage() {
                           <Button
                             onClick={handleSaveCandidate}
                             disabled={!draftCandidate.name.trim() || !draftCandidate.policy.trim()}
-                            loading={upsertM.isLoading}
+                            loading={upsertM.isPending}
                           >
                             {editingCandidate ? 'Save changes' : 'Create candidate'}
                           </Button>
@@ -1034,7 +1034,7 @@ export default function ScannerPoliciesPage() {
                                       }
                                     }}
                                     loading={
-                                      deleteExportM.isLoading &&
+                                      deleteExportM.isPending &&
                                       deleteExportM.variables?.exportId === d.id
                                     }
                                   >

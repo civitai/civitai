@@ -224,17 +224,24 @@ export const useJoinKnightsNewOrder = () => {
     },
   });
 
-  const { data: playerData, isInitialLoading } = trpc.games.newOrder.getPlayer.useQuery(undefined, {
+  const {
+    data: playerData,
+    isInitialLoading,
+    error: playerError,
+  } = trpc.games.newOrder.getPlayer.useQuery(undefined, {
     enabled: joined,
     retry: 1,
-    onError: (error) => {
+  });
+  // v5: query onError removed — react to load failures via effect.
+  useEffect(() => {
+    if (playerError) {
       setJoined(false);
       showErrorNotification({
         title: 'Failed to load player data',
-        error: new Error(error.message),
+        error: new Error(playerError.message),
       });
-    },
-  });
+    }
+  }, [playerError]);
 
   const resetCareerMutation = trpc.games.newOrder.resetCareer.useMutation({
     onSuccess: async () => {
@@ -251,7 +258,7 @@ export const useJoinKnightsNewOrder = () => {
     join: joinKnightsNewOrderMutation.mutateAsync,
     resetCareer: resetCareerMutation.mutateAsync,
     isLoading: isInitialLoading || !!joining,
-    resetting: resetCareerMutation.isLoading,
+    resetting: resetCareerMutation.isPending,
     joined,
     viewedRatingGuide,
     setViewedRatingGuide,
@@ -358,7 +365,7 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
 
   return {
     addRating: handleAddRating,
-    isLoading: addRatingMutation.isLoading,
+    isLoading: addRatingMutation.isPending,
     skipRating: handleSkipImage,
   };
 };
@@ -496,10 +503,10 @@ export const useInquisitorTools = () => {
     smitePayload: smitePlayerMutation.variables,
     cleanseSmite: cleanseSmiteMutation.mutate,
     cleansePayload: cleanseSmiteMutation.variables,
-    applyingSmite: smitePlayerMutation.isLoading,
-    cleansingSmite: cleanseSmiteMutation.isLoading,
+    applyingSmite: smitePlayerMutation.isPending,
+    cleansingSmite: cleanseSmiteMutation.isPending,
     resetPlayer: resetPlayerMutation.mutate,
-    resettingPlayer: resetPlayerMutation.isLoading,
+    resettingPlayer: resetPlayerMutation.isPending,
     resetPayload: resetPlayerMutation.variables,
   };
 };
