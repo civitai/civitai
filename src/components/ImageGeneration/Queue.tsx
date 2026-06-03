@@ -2,7 +2,7 @@ import { Alert, Center, Loader, Stack, Text, Anchor } from '@mantine/core';
 import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
-import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useGeneratedRequestsContext } from '~/components/ImageGeneration/GeneratedRequestsProvider';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -20,7 +20,7 @@ export function Queue() {
     isRefetching,
     isError,
     error,
-  } = useGetTextToImageRequests();
+  } = useGeneratedRequestsContext();
 
   if (isError)
     return (
