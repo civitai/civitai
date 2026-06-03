@@ -14,7 +14,7 @@ export const CollectionFollowAction = ({ collectionId, permissions, ...btnProps 
   const { permissions: serverPermissions } = useCollection(collectionId);
   const mergedPermissions = { ...serverPermissions, ...permissions };
 
-  const { isLoading: creatingFollow, mutate: followCollection } =
+  const { isPending: creatingFollow, mutate: followCollection } =
     trpc.collection.follow.useMutation({
       async onSuccess() {
         await utils.collection.getById.invalidate({ id: collectionId });
@@ -28,7 +28,7 @@ export const CollectionFollowAction = ({ collectionId, permissions, ...btnProps 
       },
     });
 
-  const { isLoading: removingFollow, mutate: unfollowCollection } =
+  const { isPending: removingFollow, mutate: unfollowCollection } =
     trpc.collection.unfollow.useMutation({
       async onSuccess() {
         await utils.collection.getById.invalidate({ id: collectionId });

@@ -43,7 +43,7 @@ export function PostImageTechnique({
           title: 'Remove technique',
           message: 'Are you sure you want to remove this technique?',
           labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          confirmProps: { color: 'red', loading: removeTechniqueMutation.isLoading },
+          confirmProps: { color: 'red', loading: removeTechniqueMutation.isPending },
           onConfirm: async () =>
             await removeTechniqueMutation.mutateAsync({
               data: [{ imageId: image.id, techniqueId: technique.id }],
@@ -72,7 +72,7 @@ export function PostImageTechnique({
   };
 
   const dirty = notes.length && notes !== technique.notes;
-  const saving = updateTechniqueMutation.isLoading;
+  const saving = updateTechniqueMutation.isPending;
 
   return (
     <div className="flex flex-col py-1">
@@ -94,7 +94,7 @@ export function PostImageTechnique({
         <LegacyActionIcon
           color="red"
           onClick={handleRemoveTechnique}
-          loading={removeTechniqueMutation.isLoading}
+          loading={removeTechniqueMutation.isPending}
         >
           <IconTrash size={16} />
         </LegacyActionIcon>

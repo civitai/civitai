@@ -1049,7 +1049,7 @@ const StripeTransactionModal = ({
     : undefined;
 
   // Show loading state while waiting for captcha or payment intent
-  if (!clientSecret || getPaymentIntentMutation.isLoading) {
+  if (!clientSecret || getPaymentIntentMutation.isPending) {
     return (
       <Modal {...dialog} size="lg" withCloseButton={false}>
         <Stack gap="md">

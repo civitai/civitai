@@ -400,12 +400,13 @@ export async function consumeRedeemableCode({
 
           if (!activeUserMembership) {
             // Log:
-            await logToAxiom({
+            // fire-and-forget: external Axiom POST must not block the txn budget
+            logToAxiom({
               message: `Redeemed code for user ${userId} but found no active membership, deleting old membership`,
               level: 'info',
               userId,
               code: consumedCode.code,
-            });
+            }).catch(() => undefined);
           }
 
           // Check provider compatibility for any remaining active membership
@@ -458,7 +459,8 @@ export async function consumeRedeemableCode({
                     prepaids: {}, // Clear legacy counter — tokens array is now the source of truth
                   },
                   status: 'active',
-                  currentPeriodEnd: dayjs(activeUserMembership.currentPeriodEnd)
+                  currentPeriodEnd: dayjs
+                    .utc(activeUserMembership.currentPeriodEnd)
                     .add(
                       consumedCode.unitValue,
                       consumedCode.price.interval as 'day' | 'month' | 'year'
@@ -468,7 +470,7 @@ export async function consumeRedeemableCode({
               });
             } else if (consumedTierOrder > membershipTierOrder) {
               // Upgrade to higher tier: first token unlocked, rest locked
-              const now = dayjs();
+              const now = dayjs.utc();
               const proratedDays =
                 dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') -
                 existingTokens.filter(
@@ -537,7 +539,7 @@ export async function consumeRedeemableCode({
 
         if (!activeUserMembership) {
           // New user: first token unlocked (user must claim manually), rest locked
-          const now = dayjs();
+          const now = dayjs.utc();
           const buzzAmount = Number(consumedProductMetadata.monthlyBuzz ?? 5000);
           const newTokens = createPrepaidTokens({
             count: consumedCode.unitValue,

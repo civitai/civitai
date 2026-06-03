@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import {
   ActionIcon,
   Badge,
@@ -44,7 +45,7 @@ export function DepositHistory() {
 
   const { data, isLoading } = trpc.nowPayments.getDepositHistory.useQuery(
     { page, perPage },
-    { keepPreviousData: true, staleTime: 30 * 1000, enabled: !!currentUser }
+    { placeholderData: keepPreviousData, staleTime: 30 * 1000, enabled: !!currentUser }
   );
 
   // Reuse supported currencies query (React Query deduplicates) for ticker/network display
@@ -437,7 +438,7 @@ function CheckDepositsNotice({ onSuccess }: { onSuccess: () => void }) {
     },
   });
 
-  const linkText = reconcileMutation.isLoading
+  const linkText = reconcileMutation.isPending
     ? 'Checking...'
     : reconcileMutation.isSuccess
     ? reconcileMutation.data.processed > 0
@@ -453,8 +454,8 @@ function CheckDepositsNotice({ onSuccess }: { onSuccess: () => void }) {
       <Text size="xs" c="dimmed" lh={1.4}>
         Deposits can take up to 1 hour to appear depending on network congestion.{' '}
         <UnstyledButton
-          onClick={() => !reconcileMutation.isLoading && reconcileMutation.mutate()}
-          disabled={reconcileMutation.isLoading}
+          onClick={() => !reconcileMutation.isPending && reconcileMutation.mutate()}
+          disabled={reconcileMutation.isPending}
           style={{ display: 'inline' }}
         >
           <Text
@@ -464,7 +465,7 @@ function CheckDepositsNotice({ onSuccess }: { onSuccess: () => void }) {
             td="underline"
             className="cursor-pointer"
           >
-            {reconcileMutation.isLoading && <IconLoader size={10} className="inline mr-1 animate-spin" />}
+            {reconcileMutation.isPending && <IconLoader size={10} className="inline mr-1 animate-spin" />}
             {linkText}
           </Text>
         </UnstyledButton>

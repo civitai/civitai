@@ -325,15 +325,14 @@ export default function ModelDetailsV2({
 
   const { blockedUsers } = useHiddenPreferencesData();
 
-  const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery(
-    { id, excludeTrainingData: true },
-    {
-      onSuccess(result) {
-        const latestVersion = result.modelVersions[0];
-        if (latestVersion) setSelectedVersion(latestVersion);
-      },
-    }
-  );
+  const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery({
+    id,
+    excludeTrainingData: true,
+  });
+  // NOTE: the removed v4 `onSuccess` set selectedVersion to modelVersions[0] on each fetch.
+  // That is already covered (URL-aware) by the `selectedVersion` useState initializer below
+  // and the querystring-sync effect further down — replicating it via useEffect([model]) would
+  // also fire on cached/SSR mounts (where onSuccess did not) and clobber deep-linked versions.
   const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const rawVersionId = router.query.modelVersionId;
@@ -344,7 +343,7 @@ export default function ModelDetailsV2({
   const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
-      cacheTime: Infinity,
+      gcTime: Infinity,
       staleTime: Infinity,
     });
   const isFavorite = model && reviewedModels.includes(model.id);
@@ -422,7 +421,7 @@ export default function ModelDetailsV2({
         : 'Are you sure you want to delete this model? This action is destructive and you will have to contact support to restore your data.',
       centered: true,
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red', disabled: deleteMutation.isLoading },
+      confirmProps: { color: 'red', disabled: deleteMutation.isPending },
       closeOnConfirm: false,
       onConfirm: () => {
         if (model) {
@@ -894,7 +893,7 @@ export default function ModelDetailsV2({
                           leftSection={<IconBan size={14} stroke={1.5} />}
                           color="yellow"
                           onClick={() => unpublishModelMutation.mutate({ id })}
-                          disabled={unpublishModelMutation.isLoading}
+                          disabled={unpublishModelMutation.isPending}
                         >
                           Unpublish
                         </Menu.Item>
@@ -906,7 +905,7 @@ export default function ModelDetailsV2({
                             leftSection={<IconRepeat size={14} stroke={1.5} />}
                             color="green"
                             onClick={handlePublishModel}
-                            disabled={publishModelMutation.isLoading}
+                            disabled={publishModelMutation.isPending}
                           >
                             Republish
                           </Menu.Item>
@@ -916,7 +915,7 @@ export default function ModelDetailsV2({
                           leftSection={<IconRecycle size={14} stroke={1.5} />}
                           color="green"
                           onClick={() => restoreModelMutation.mutate({ id })}
-                          disabled={restoreModelMutation.isLoading}
+                          disabled={restoreModelMutation.isPending}
                         >
                           Restore
                         </Menu.Item>
@@ -1013,7 +1012,7 @@ export default function ModelDetailsV2({
                       {isModerator && (
                         <Menu.Item
                           leftSection={
-                            rescanModelMutation.isLoading ? (
+                            rescanModelMutation.isPending ? (
                               <Loader size={14} />
                             ) : (
                               <IconRadar2 size={14} stroke={1.5} />

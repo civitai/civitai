@@ -1,6 +1,7 @@
 import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,
+  generationStatusModeSchema,
   getGenerationDataSchema,
   getGenerationResourcesSchema,
   getResourceDataByIdsSchema,
@@ -83,22 +84,31 @@ export const generationRouter = router({
   getStatus: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['generation-status'] }))
-    .query(() => getGenerationStatus()),
+    .query(async () => {
+      // Don't expose the moderator-identity audit stamp on the public,
+      // edge-cached endpoint — it's moderator-only (getStatusModerator).
+      const { updatedBy, ...status } = await getGenerationStatus();
+      return status;
+    }),
   getStatusModerator: moderatorProcedure.query(() => getGenerationStatus()),
   setStatus: moderatorProcedure
     .input(
       z.object({
-        available: z.boolean(),
+        mode: generationStatusModeSchema,
         message: z.string().max(2000).nullish(),
       })
     )
     .use(purgeOnSuccess(['generation-status']))
-    .mutation(({ input }) => setGenerationStatus(input)),
+    .mutation(({ input, ctx }) =>
+      setGenerationStatus({
+        mode: input.mode,
+        message: input.message,
+        updatedBy: { id: ctx.user.id, username: ctx.user.username ?? 'unknown' },
+      })
+    ),
   getGenerationConfig: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
-    .query(({ ctx }) =>
-    getGenerationConfig(ctx.user ?? {}, { isGreen: ctx.features.isGreen })
-  ),
+    .query(({ ctx }) => getGenerationConfig(ctx.user ?? {}, { isGreen: ctx.features.isGreen })),
   getEcosystemConfig: moderatorProcedure.query(async () => {
     // Strip the runtime-context fields (`hasTestingAccess`, `isGreen`) — the
     // moderator UI edits the raw operator-set config that gets persisted to Redis.

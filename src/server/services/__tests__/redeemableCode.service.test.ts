@@ -366,11 +366,16 @@ describe('redeemableCode.service', () => {
 
         await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
 
-        // Verify period end is 3 months from currentPeriodStart (unitValue = 3, interval = month)
-        const periodStart = dayjs(createdSubscription.currentPeriodStart);
-        const periodEnd = dayjs(createdSubscription.currentPeriodEnd);
-        const monthsDiff = periodEnd.diff(periodStart, 'month');
-        expect(monthsDiff).toBe(3);
+        // periodEnd must equal periodStart + 3 months (unitValue = 3, interval = month),
+        // computed in UTC. Exact-instant equality (not a coarse month-diff) so a 1-hour
+        // DST drift fails the assertion in EVERY timezone — matching the extension/upgrade
+        // guards. (A month-diff alone only flips for some TZ/season combinations and can
+        // silently pass through the drift.)
+        const expectedEnd = dayjs
+          .utc(createdSubscription.currentPeriodStart)
+          .add(3, 'month')
+          .toDate();
+        expect(createdSubscription.currentPeriodEnd.getTime()).toBe(expectedEnd.getTime());
       });
 
       it('should create N tokens where N equals unitValue, with first unlocked', async () => {

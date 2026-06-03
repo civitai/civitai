@@ -286,7 +286,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             <Button
               disabled={!canPublish || !!mutating}
               onClick={() => handlePublish()}
-              loading={updatePostMutation.isLoading}
+              loading={updatePostMutation.isPending}
               data-tour="post:publish"
             >
               {publishLabel}
@@ -296,7 +296,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               <Button
                 disabled={!canPublish || !!mutating}
                 onClick={() => handlePublish()}
-                loading={updatePostMutation.isLoading}
+                loading={updatePostMutation.isPending}
                 className="flex-1"
                 data-tour="post:publish"
               >
@@ -305,7 +305,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               <Tooltip label="Schedule Publish" disabled={!hasImages} withArrow>
                 <Button
                   variant="outline"
-                  loading={updatePostMutation.isLoading}
+                  loading={updatePostMutation.isPending}
                   onClick={handleScheduleClick}
                   disabled={!canPublish || !!mutating}
                 >
@@ -331,7 +331,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               <Button
                 variant="filled"
                 color="gray"
-                loading={updatePostMutation.isLoading}
+                loading={updatePostMutation.isPending}
                 onClick={handleScheduleClick}
                 disabled={!canPublish}
               >

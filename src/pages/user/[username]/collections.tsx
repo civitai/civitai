@@ -62,6 +62,9 @@ function UserCollectionsPage() {
     );
   }
 
+  // After the loading guard above, an absent user means not-found (also narrows the type).
+  if (!user) return <NotFound />;
+
   return (
     <Box mt="md">
       <MasonryProvider

@@ -53,7 +53,7 @@ export const trainingCompleteEmail = createEmail({
               style="padding: 0px 0px 10px 0px; font-size: 16px; line-height: 22px; font-family: Helvetica, Arial, sans-serif; color: ${
                 color.text
               };">
-              The wait is over! Click the button below to review some sample images and prepare your model for publishing, if you choose to share it. Results will remain available for 30 days.
+              The wait is over! Click the button below to review some sample images and prepare your model for publishing, if you choose to share it. Your training files and job results will be retained on our side for 30 days &mdash; make sure you've published or downloaded what you want to keep before then.
             </td>
           </tr>
           <tr>
@@ -84,7 +84,9 @@ export const trainingCompleteEmail = createEmail({
 
   /** Email Text body (fallback for email clients that don't render HTML, e.g. feature phones) */
   text({ mName, model }: TrainingCompleteEmailData) {
-    return `Your model "${model.name} - ${mName}" is ready for review:\n${reviewUrl(model)}\n\n`;
+    return `Your model "${model.name} - ${mName}" is ready for review:\n${reviewUrl(
+      model
+    )}\n\nYour training files and job results will be retained on our side for 30 days. Make sure you've published or downloaded what you want to keep before then.\n\n`;
   },
   testData: async () => ({
     model: {

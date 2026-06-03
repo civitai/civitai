@@ -199,7 +199,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                 e.stopPropagation();
                 handleDeleteArticle();
               }}
-              disabled={deleteArticleMutation.isLoading}
+              disabled={deleteArticleMutation.isPending}
             >
               Delete
             </Menu.Item>
@@ -209,7 +209,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                   <Menu.Item
                     color="yellow"
                     leftSection={
-                      unpublishArticleMutation.isLoading ? (
+                      unpublishArticleMutation.isPending ? (
                         <Loader size={14} />
                       ) : (
                         <IconBan size={14} stroke={1.5} />
@@ -220,7 +220,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                       e.stopPropagation();
                       handleUnpublishArticle();
                     }}
-                    disabled={unpublishArticleMutation.isLoading}
+                    disabled={unpublishArticleMutation.isPending}
                     closeMenuOnClick={false}
                   >
                     Unpublish
@@ -245,7 +245,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
               <Menu.Item
                 color="green"
                 leftSection={
-                  restoreArticleMutation.isLoading ? (
+                  restoreArticleMutation.isPending ? (
                     <Loader size={14} />
                   ) : (
                     <IconRecycle size={14} stroke={1.5} />
@@ -256,7 +256,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                   e.stopPropagation();
                   handleRestoreArticle();
                 }}
-                disabled={restoreArticleMutation.isLoading}
+                disabled={restoreArticleMutation.isPending}
                 closeMenuOnClick={false}
               >
                 Restore

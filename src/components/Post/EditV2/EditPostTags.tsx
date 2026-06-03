@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import {
   Alert,
   Box,
@@ -74,7 +75,7 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
   const colorScheme = useComputedColorScheme('dark');
 
   const previousTags = usePrevious(tags);
-  const { mutate, isLoading } = trpc.post.removeTag.useMutation({
+  const { mutate, isPending: isLoading } = trpc.post.removeTag.useMutation({
     onMutate({ tagId }) {
       setTags((tags) => tags.filter((x) => x.id !== tagId));
     },
@@ -133,7 +134,7 @@ function TagPicker() {
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isFetching } = trpc.post.getTags.useQuery(
     { query: debounced, nsfwLevel: browsingLevel },
-    { keepPreviousData: true }
+    { placeholderData: keepPreviousData }
   );
 
   // const test = trpc.tag.getAll.useQuery(
@@ -144,7 +145,7 @@ function TagPicker() {
   //     sort: TagSort.MostPosts,
   //     include: ['nsfwLevel'],
   //   },
-  //   { keepPreviousData: true }
+  //   { placeholderData: keepPreviousData }
   // );
   const { mutate } = trpc.post.addTag.useMutation({
     onSuccess: async (response) => {

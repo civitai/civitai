@@ -156,27 +156,24 @@ export class StepData {
     const stepParams = this.metadata.params;
     const wfParams = this.#workflow.metadata?.params;
 
-    // `step.metadata.params` is overloaded with two opposite meanings, told apart by the
-    // server-set `sourceLineage` flag (a per-step fact `formatStep` derives from the raw
-    // step's lineage marker):
+    // The server flags whether `step.metadata.params` is a partial DELTA vs a complete snapshot,
+    // so this getter never has to *decide* — it just applies the directive:
     //
-    // 1. sourceLineage === true (enhancement steps — upscale, remove-bg):
-    //    params is a COMPLETE, self-contained snapshot of the *source* generation. Use it
-    //    verbatim. Merging in workflow.metadata.params (the enhancement form input) would
-    //    leak fields the source doesn't override — e.g. `images:[sourceUrl]`, `upscaler`,
-    //    or the `img2img:upscale` workflow key — into a remix of the original, making the
-    //    remix behave like the enhancement workflow.
+    // - `partialParams` set (wildcard/snippet variant): `params` is a small overlay (e.g. the
+    //   substituted prompt). Spread it over the workflow-level form snapshot to reconstruct the
+    //   variant's effective params. The server sends only the delta — we complete it here, which
+    //   keeps the API payload small (no full params duplicated per variant).
+    // - otherwise: either/or. A complete snapshot (enhancement steps store the *source*
+    //   generation here) is used verbatim; an absent one falls back to workflow params. We must
+    //   NOT spread in this case, or the enhancement form's fields (`images`, `upscaler`, the
+    //   `img2img:*` workflow key) would leak into a remix of the original.
     //
-    // 2. sourceLineage falsy (wildcard/snippet variants):
-    //    params is a partial DELTA (only the substituted `prompt`/`negativePrompt`). It
-    //    MUST merge over workflow.metadata.params, which holds the full template + settings
-    //    snapshot (steps, cfgScale, sampler, seed, resources, workflow key).
-    //
-    // Empty/absent step params (standard new-format gen) fall back to workflow params.
-    if (this.metadata.sourceLineage && stepParams && Object.keys(stepParams).length > 0) {
-      return stepParams;
+    // See docs/generation-metadata-architecture.md.
+    if (this.metadata.partialParams && stepParams && Object.keys(stepParams).length > 0) {
+      return { ...wfParams, ...stepParams };
     }
-    return { ...wfParams, ...stepParams };
+    if (stepParams && Object.keys(stepParams).length > 0) return stepParams;
+    return wfParams ?? {};
   }
   get resources(): NormalizedWorkflowMetadata['resources'] {
     if (this.metadata.resources?.length) return this.metadata.resources;

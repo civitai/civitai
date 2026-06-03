@@ -10,7 +10,7 @@ export function RemoveAccountCard() {
   const user = useCurrentUser();
   const { logout } = useAccountContext();
 
-  const { mutate, isLoading, error } = trpc.user.delete.useMutation({
+  const { mutate, isPending: isLoading, error } = trpc.user.delete.useMutation({
     async onSuccess(user) {
       showSuccessNotification({ message: 'Your account has been removed' });
       logout();

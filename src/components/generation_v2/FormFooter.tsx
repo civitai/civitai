@@ -1182,7 +1182,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
           <QuantityField />
           <Button.Group className="flex-1">
             <SubmitButton
-              isLoading={generateMutation.isLoading || isMinLoading}
+              isLoading={generateMutation.isPending || isMinLoading}
               onSubmit={handleSubmit}
             />
             {currentUser && <ConnectedBuzzTypeSelector />}

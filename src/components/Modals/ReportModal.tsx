@@ -176,7 +176,7 @@ export default function ReportModal({
     { id: entityId },
     { enabled: entityType === ReportEntity.Model }
   );
-  const { mutate, isLoading: isLoading } = trpc.report.create.useMutation({
+  const { mutate, isPending: isLoading } = trpc.report.create.useMutation({
     onMutate() {
       showNotification({
         id: SEND_REPORT_ID,

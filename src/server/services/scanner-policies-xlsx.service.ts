@@ -179,6 +179,11 @@ export type ScoredResultRow = {
   errorMessage?: string;
   runId: string;
   runAt: string;
+  /** Orchestrator workflow that produced this result. Null when the row is an
+   *  early error (submit failed before a workflow was minted, or the callback
+   *  arrived without a workflowId). Surfaced in the per-policy detail sheet so
+   *  moderators can paste it into the orchestrator console for debugging. */
+  workflowId: string | null;
 };
 
 const SUMMARY_SHEET = 'Summary';
@@ -211,6 +216,7 @@ const POLICY_DATA_HEADER_ROW = POLICY_HEADER_ROWS + 1;
 
 const POLICY_DATA_COLUMNS = [
   { header: 'contentHash', width: 20 },
+  { header: 'workflowId', width: 28 },
   { header: 'score', width: 10 },
   { header: 'triggered', width: 10 },
   { header: 'expectedTrigger', width: 14 },
@@ -363,12 +369,13 @@ function writePolicyDetailSheet(args: {
     const r = sortedRows[i];
     const row = sheet.getRow(POLICY_DATA_HEADER_ROW + 1 + i);
     row.getCell(1).value = r.contentHash;
-    row.getCell(2).value = r.score;
-    row.getCell(3).value = r.triggered;
-    row.getCell(4).value = r.expectedTrigger;
-    row.getCell(5).value = r.correct;
-    row.getCell(6).value = r.verdictCategory;
-    row.getCell(7).value = r.errorMessage ?? null;
+    row.getCell(2).value = r.workflowId ?? null;
+    row.getCell(3).value = r.score;
+    row.getCell(4).value = r.triggered;
+    row.getCell(5).value = r.expectedTrigger;
+    row.getCell(6).value = r.correct;
+    row.getCell(7).value = r.verdictCategory;
+    row.getCell(8).value = r.errorMessage ?? null;
   }
 
   // Freeze the metadata header + the data header row.

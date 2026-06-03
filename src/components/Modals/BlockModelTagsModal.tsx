@@ -72,7 +72,7 @@ export default function BlockedModelTagsModal({ modelId }: { modelId: number }) 
                 <Button variant="default" onClick={dialog.onClose}>
                   Cancel
                 </Button>
-                <Button onClick={handleBlockTags} loading={toggleHiddenMutation.isLoading}>
+                <Button onClick={handleBlockTags} loading={toggleHiddenMutation.isPending}>
                   Save
                 </Button>
               </Group>

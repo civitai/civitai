@@ -14,7 +14,7 @@ export function useDailyBoostReward() {
     undefined,
     { enabled: !!currentUser }
   );
-  const { mutate: claim, isLoading: isClaiming } = trpc.buzz.claimDailyBoostReward.useMutation({
+  const { mutate: claim, isPending: isClaiming } = trpc.buzz.claimDailyBoostReward.useMutation({
     onSuccess: async () => {
       await queryUtils.user.userRewardDetails.invalidate();
     },

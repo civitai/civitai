@@ -140,7 +140,7 @@ export function BackgroundRemovalModal({ sourceImage, metadata }: BackgroundRemo
           )}
           <ModalSubmitButton
             type="submit"
-            loading={generateMutation.isLoading}
+            loading={generateMutation.isPending}
             disabled={whatIf.isInitialLoading || whatIf.isError}
             cost={whatIf.data?.cost?.total ?? 0}
           >

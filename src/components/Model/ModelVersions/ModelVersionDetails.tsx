@@ -44,7 +44,7 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
-import type { DefaultErrorShape } from '@trpc/server';
+import type { TRPCDefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { useMemo, useRef } from 'react';
@@ -373,7 +373,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       await queryUtils.modelVersion.getById.invalidate({ id: version.id });
       await queryUtils.image.getInfinite.invalidate();
     } catch (e) {
-      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      const error = e as TRPCClientErrorBase<TRPCDefaultErrorShape>;
       const reason = error?.message?.includes('Insufficient funds')
         ? 'You do not have enough funds to publish this model. You can remove early access or purchase more Buzz in order to publish.'
         : error.message ??
@@ -404,7 +404,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       await queryUtils.model.getById.invalidate({ id: model.id });
       await queryUtils.modelVersion.getById.invalidate({ id: version.id });
     } catch (e) {
-      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      const error = e as TRPCClientErrorBase<TRPCDefaultErrorShape>;
       showErrorNotification({
         error: new Error(error.message),
         title: 'Error requesting review',
@@ -433,7 +433,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     version.status === ModelStatus.UnpublishedViolation;
   const scheduledPublishDate =
     version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
-  const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
+  const publishing = publishModelMutation.isPending || publishVersionMutation.isPending;
   // Show republish button for private models that are unpublished
   const showRepublishPrivateButton =
     isPrivateModel &&
@@ -518,7 +518,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             <Button
               color="yellow"
               onClick={handleRequestReviewClick}
-              loading={requestReviewMutation.isLoading || requestVersionReviewMutation.isLoading}
+              loading={requestReviewMutation.isPending || requestVersionReviewMutation.isPending}
               disabled={!!(model.meta?.needsReview || version.meta?.needsReview)}
               fullWidth
             >
@@ -727,7 +727,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 type: isNotificationOn ? ModelEngagementType.Mute : undefined,
                               })
                             }
-                            loading={toggleNotifyModelMutation.isLoading}
+                            loading={toggleNotifyModelMutation.isPending}
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
                           >

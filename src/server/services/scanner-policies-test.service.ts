@@ -330,6 +330,7 @@ export async function handleResultCallback(args: {
       row,
       candidate,
       message: 'run cancelled before result arrived',
+      workflowId: args.workflowId,
     });
   } else if (args.status !== 'succeeded') {
     result = errorResultRow({
@@ -338,6 +339,7 @@ export async function handleResultCallback(args: {
       row,
       candidate,
       message: `workflow status: ${args.status}`,
+      workflowId: args.workflowId,
     });
   } else {
     result = await fetchAndScore({
@@ -489,8 +491,9 @@ function scoreFromWorkflow(args: {
   row: ScannerPolicyRunState['rows'][number];
   candidate: ScannerPolicyRunState['candidates'][number];
   workflow: unknown;
+  workflowId: string | null;
 }): ScoredResultRow {
-  const { row, candidate, runId, runAt, workflow } = args;
+  const { row, candidate, runId, runAt, workflow, workflowId } = args;
   const base = {
     contentHash: row.contentHash,
     candidateId: candidate.id,
@@ -503,6 +506,7 @@ function scoreFromWorkflow(args: {
     expectedTrigger: row.expectedTrigger,
     runId,
     runAt,
+    workflowId,
   };
 
   if (!workflow) {
@@ -562,7 +566,7 @@ async function fetchAndScore(args: {
       client: internalOrchestratorClient,
       path: { workflowId: args.workflowId },
     });
-    return scoreFromWorkflow({ ...args, workflow: data });
+    return scoreFromWorkflow({ ...args, workflow: data, workflowId: args.workflowId });
   } catch (err) {
     return {
       contentHash: args.row.contentHash,
@@ -576,6 +580,7 @@ async function fetchAndScore(args: {
       expectedTrigger: args.row.expectedTrigger,
       runId: args.runId,
       runAt: args.runAt,
+      workflowId: args.workflowId,
       score: null,
       triggered: null,
       correct: null,
@@ -591,6 +596,7 @@ function errorResultRow(args: {
   row: ScannerPolicyRunState['rows'][number];
   candidate: ScannerPolicyRunState['candidates'][number];
   message: string;
+  workflowId?: string | null;
 }): ScoredResultRow {
   return {
     contentHash: args.row.contentHash,
@@ -604,6 +610,7 @@ function errorResultRow(args: {
     expectedTrigger: args.row.expectedTrigger,
     runId: args.runId,
     runAt: args.runAt,
+    workflowId: args.workflowId ?? null,
     score: null,
     triggered: null,
     correct: null,

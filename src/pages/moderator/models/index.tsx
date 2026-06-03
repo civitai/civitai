@@ -19,7 +19,7 @@ import {
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { IconExternalLink } from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
-import type { DefaultErrorShape } from '@trpc/server';
+import type { TRPCDefaultErrorShape } from '@trpc/server';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
@@ -92,7 +92,7 @@ export default function ModeratorModels() {
       setState((s) => ({ ...s, opened: false, selectedModel: null }));
       await queryUtils.model.getAllPagedSimple.invalidate();
     } catch (e) {
-      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      const error = e as TRPCClientErrorBase<TRPCDefaultErrorShape>;
       showErrorNotification({
         title: 'Error declining request',
         error: new Error(error.message),
@@ -245,7 +245,7 @@ export default function ModeratorModels() {
                       </Button>
                       <Button
                         onClick={handleDeclineRequest}
-                        loading={declineReviewMutation.isLoading}
+                        loading={declineReviewMutation.isPending}
                       >
                         Send
                       </Button>

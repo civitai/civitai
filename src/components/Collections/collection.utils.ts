@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import type { Icon } from '@tabler/icons-react';
 import {
   IconCategory,
@@ -158,7 +159,7 @@ export const useQueryCollections = (
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 
@@ -422,16 +423,16 @@ export const useMutateCollection = () => {
 
   return {
     removeCollectionItem: removeCollectionItemHandler,
-    removingCollectionItem: removeCollectionItemMutation.isLoading,
+    removingCollectionItem: removeCollectionItemMutation.isPending,
     updateCollectionItemNsfwLevel: updateCollectionItemNsfwLevelHandler,
-    updatingCollectionItemNsfwLevel: updateCollectionItemNsfwLevelMutation.isLoading,
+    updatingCollectionItemNsfwLevel: updateCollectionItemNsfwLevelMutation.isPending,
     updateCollectionItemNsfwLevelPayload: updateCollectionItemNsfwLevelMutation.variables,
     getYoutubeAuthUrl: getYoutubeAuthUrlHandler,
-    getYoutubeAuthUrlLoading: getYoutubeAuthUrlMutation.isLoading,
+    getYoutubeAuthUrlLoading: getYoutubeAuthUrlMutation.isPending,
     enableYoutubeSupport: enableYoutubeSupportHandler,
-    enableYoutubeSupportLoading: enableYoutubeSupportMutation.isLoading,
+    enableYoutubeSupportLoading: enableYoutubeSupportMutation.isPending,
     joinCollectionAsManager: joinCollectionAsManagerHandler,
-    joinCollectionAsManagerLoading: joinCollectionAsManagerMutation.isLoading,
+    joinCollectionAsManagerLoading: joinCollectionAsManagerMutation.isPending,
   };
 };
 
@@ -455,7 +456,7 @@ export const useSetCollectionItemScore = () => {
 
   return {
     setItemScore: setItemScoreHandler,
-    loading: setItemScoreMutation.isLoading,
+    loading: setItemScoreMutation.isPending,
   };
 };
 

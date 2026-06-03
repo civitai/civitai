@@ -71,7 +71,7 @@ export function ApiKeyModal({ ...props }: Props) {
 
   const {
     data: apiKey,
-    isLoading: mutating,
+    isPending: mutating,
     mutate,
     reset,
   } = trpc.apiKey.add.useMutation({

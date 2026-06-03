@@ -2257,8 +2257,6 @@ export const unpublishModelById = async ({
         AND "modelVersionId" IN (${Prisma.join(versionIds)})
       `;
 
-      await userModelCountCache.refresh(updatedModel.userId);
-
       return updatedModel;
     },
     { timeout: 30000, maxWait: 10000 }
@@ -2270,6 +2268,7 @@ export const unpublishModelById = async ({
   const allVersionIds = model.modelVersions.map((x) => x.id);
   await preventModelVersionLagBatch(id, allVersionIds);
   await bustMvCache(allVersionIds, id);
+  await userModelCountCache.refresh(model.userId);
 
   // Use dbWrite for the search-index lookups for the same reason as
   // publishModelById — the replica may not yet reflect the txn we just
@@ -3151,8 +3150,10 @@ export async function copyGallerySettingsToAllModelsByUser({
         "userId" = ${userId}
     `;
 
-    await userModelCountCache.refresh(userId);
   });
+
+  // Count-cache refresh hits Redis — run after commit, off the txn budget.
+  await userModelCountCache.refresh(userId);
 
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
   const modelIds = models.map((x) => x.id);

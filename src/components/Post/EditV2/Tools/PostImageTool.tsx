@@ -43,7 +43,7 @@ export function PostImageTool({
           title: 'Remove tool',
           message: 'Are you sure you want to remove this tool?',
           labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          confirmProps: { color: 'red', loading: removeToolMutation.isLoading },
+          confirmProps: { color: 'red', loading: removeToolMutation.isPending },
           onConfirm: async () =>
             await removeToolMutation.mutateAsync({
               data: [{ imageId: image.id, toolId: tool.id }],
@@ -70,7 +70,7 @@ export function PostImageTool({
   };
 
   const dirty = notes.length && notes !== tool.notes;
-  const saving = updateToolMutation.isLoading;
+  const saving = updateToolMutation.isPending;
 
   return (
     <div className="flex flex-col py-1">
@@ -92,7 +92,7 @@ export function PostImageTool({
         <LegacyActionIcon
           color="red"
           onClick={handleRemoveTool}
-          loading={removeToolMutation.isLoading}
+          loading={removeToolMutation.isPending}
         >
           <IconTrash size={16} />
         </LegacyActionIcon>

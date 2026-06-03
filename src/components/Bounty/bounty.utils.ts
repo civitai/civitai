@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import dayjs from '~/shared/utils/dayjs';
 import { useMemo } from 'react';
@@ -101,7 +102,7 @@ export const useQueryBounties = (
     { ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      ...options,
+      ...withPlaceholderData(options),
       trpc: { context: { skipBatch: true } },
     }
   );
@@ -139,7 +140,7 @@ export const useQueryBountyEngagements = () => {
 
   const { data: engagements, isInitialLoading: loading } = trpc.user.getBountyEngagement.useQuery(
     undefined,
-    { enabled: !!currentUser, cacheTime: Infinity, staleTime: Infinity }
+    { enabled: !!currentUser, gcTime: Infinity, staleTime: Infinity }
   );
 
   return { engagements, loading };
@@ -234,7 +235,7 @@ export const useBountyEngagement = () => {
     await toggleEngagementMutation.mutateAsync(payload);
   };
 
-  return { engagements, toggle: handleToggle, toggling: toggleEngagementMutation.isLoading };
+  return { engagements, toggle: handleToggle, toggling: toggleEngagementMutation.isPending };
 };
 
 export const getMinMaxDates = () => {
@@ -384,14 +385,14 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
 
   return {
     createBounty: handleCreateBounty,
-    creating: createBountyMutation.isLoading,
+    creating: createBountyMutation.isPending,
     updateBounty: handleUpdateBounty,
-    updating: updateBountyMutation.isLoading,
+    updating: updateBountyMutation.isPending,
     deleteBounty: handleDeleteBounty,
-    deleting: deleteBountyMutation.isLoading,
+    deleting: deleteBountyMutation.isPending,
     refundBounty: handleRefundBounty,
-    refunding: refundBountyMutation.isLoading,
+    refunding: refundBountyMutation.isPending,
     upsertBounty: handleUpsertBounty,
-    upserting: upsertBountyMutation.isLoading,
+    upserting: upsertBountyMutation.isPending,
   };
 };

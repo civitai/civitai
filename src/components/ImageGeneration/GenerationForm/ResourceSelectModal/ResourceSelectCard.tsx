@@ -111,7 +111,7 @@ export function ResourceSelectCard({
 
   const favoriteMutation = useToggleFavoriteMutation();
   const handleToggleFavorite = ({ versionId, setTo }: { versionId?: number; setTo: boolean }) => {
-    if (favoriteMutation.isLoading) return;
+    if (favoriteMutation.isPending) return;
     favoriteMutation.mutate({
       modelId: data.id,
       modelVersionId: versionId,
