@@ -59,7 +59,7 @@ export function GenerationStatusCard() {
 
   useEffect(() => {
     if (!data || dirty) return;
-    setMode(data.mode);
+    setMode(data.mode in MODE_BADGE ? data.mode : 'enabled');
     setMessage(data.message ?? '');
   }, [data, dirty]);
 
@@ -98,11 +98,16 @@ export function GenerationStatusCard() {
             <IconPhoto size={20} />
             <Title order={4}>Image Generation</Title>
           </Group>
-          {!isLoading && data && (
-            <Badge color={MODE_BADGE[data.mode].color} variant="light">
-              {MODE_BADGE[data.mode].label}
-            </Badge>
-          )}
+          {!isLoading &&
+            data &&
+            (() => {
+              const badge = MODE_BADGE[data.mode] ?? MODE_BADGE.enabled;
+              return (
+                <Badge color={badge.color} variant="light">
+                  {badge.label}
+                </Badge>
+              );
+            })()}
         </Group>
 
         {isLoading ? (
