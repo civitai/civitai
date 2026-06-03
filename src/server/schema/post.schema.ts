@@ -152,6 +152,7 @@ export const postEditQuerySchema = z.object({
   postId: z.coerce.number().optional(),
   modelId: z.coerce.number().optional(),
   modelVersionId: z.coerce.number().nullish(),
+  model3dId: z.coerce.number().optional(),
   tag: z.coerce.number().optional(),
   video: z.coerce.boolean().optional(),
   returnUrl: z.string().optional(),

@@ -21,55 +21,9 @@ import type {
   PreprocessImageStepTemplate,
 } from '@civitai/client';
 import type { ControlNetPreprocessorKey } from '~/shared/constants/controlnets.constants';
+import { controlNetToPreprocessKind } from '~/shared/constants/controlnets.constants';
 import type { ControlNetsNodeValue } from '~/shared/data-graph/generation/common';
 import { buildStepRef } from '../step-ref';
-
-/**
- * Maps a ControlNet preprocessor key (camelCase, drives the ControlNet model
- * selection) to the corresponding `PreprocessImageInput.kind` value
- * (kebab-case, drives the orchestrator's preprocess step).
- *
- * Returns `null` for keys that have no auto-preprocess recipe (e.g. `gray`) —
- * those keys are flagged `requiresPreprocessedImage: true` in
- * `controlnets.constants.ts` and the UI forces their entries to
- * `mode: 'preprocessed'`, so this branch should be unreachable at runtime.
- */
-const controlNetToPreprocessKind: Record<ControlNetPreprocessorKey, string | null> = {
-  canny: 'canny',
-  mlsd: 'mlsd',
-  shuffle: 'shuffle',
-  tile: 'tile',
-  gray: null,
-  depthZoe: 'zoe-depth',
-  depthAnything: 'depth-anything',
-  depthAnythingV2: 'depth-anything-v2',
-  zoeDepthAnything: 'zoe-depth-anything',
-  zoeDepth: 'zoe-depth',
-  midasDepth: 'midas-depth',
-  leresDepth: 'leres-depth',
-  metric3dDepth: 'metric3d-depth',
-  lineartRealistic: 'lineart-realistic',
-  lineartStandard: 'lineart-standard',
-  anyline: 'anyline',
-  lineartAnime: 'lineart-anime',
-  lineartManga: 'lineart-manga',
-  midasNormal: 'midas-normal',
-  baeNormal: 'bae-normal',
-  dsineNormal: 'dsine-normal',
-  metric3dNormal: 'metric3d-normal',
-  openpose: 'openpose',
-  dwpose: 'dwpose',
-  scribble: 'scribble',
-  scribbleXdog: 'scribble-xdog',
-  scribblePidinet: 'scribble-pidinet',
-  fakeScribble: 'fake-scribble',
-  oneformerCoco: 'oneformer-coco',
-  oneformerAde20k: 'oneformer-ade20k',
-  uniformer: 'uniformer',
-  softedgePidinet: 'pidinet',
-  hed: 'hed',
-  teed: 'teed',
-};
 
 /** `$ref` output path for a `preprocessImage` step's preview blob URL. */
 const PREPROCESS_OUTPUT_REF_PATH = 'output.blob.url';

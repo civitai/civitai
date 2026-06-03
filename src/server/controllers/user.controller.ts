@@ -999,7 +999,6 @@ export const toggleMuteHandler = async ({
     data: {
       muted: !user.muted,
       mutedAt: !user.muted ? date : undefined,
-      muteConfirmedAt: !user.muted ? date : undefined,
     },
     updateSource: 'toggleMute',
   });

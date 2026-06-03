@@ -42,7 +42,7 @@ export function PostImageDropzone({
   ]);
   const params = usePostEditParams();
   const currentUser = useCurrentUser();
-  const { src, modelVersionId, tag, collectionId } = params;
+  const { src, modelVersionId, model3dId, tag, collectionId } = params;
   // #endregion
 
   // #region [mutations]
@@ -120,7 +120,7 @@ export function PostImageDropzone({
     if (post) upload(fileData);
     else {
       createPostMutation.mutate(
-        { modelVersionId, tag, collectionId },
+        { modelVersionId, model3dId, tag, collectionId },
         {
           onSuccess: async (data) => {
             queryUtils.post.getEdit.setData({ id: data.id }, () => data);

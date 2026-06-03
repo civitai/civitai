@@ -32,6 +32,7 @@ export const resourceDataCache = createCachedArray({
         mv."usageControl",
         mv."licensingFee",
         (CASE WHEN mv."availability" = 'EarlyAccess' AND mv."earlyAccessEndsAt" >= NOW() THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+        (mv."meta"->'generationAlias'->>'versionId')::int AS "aliasId",
         gc."covered",
         FALSE AS "hasAccess",
         (
@@ -80,6 +81,7 @@ export type GenerationResourceDataModel = {
   settings: RecommendedSettingsSchema | null;
   availability: Availability;
   earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
+  aliasId: number | null;
   covered: boolean | null;
   status: ModelStatus;
   usageControl?: string;

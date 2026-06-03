@@ -30,7 +30,9 @@ vi.mock('~/server/oauth/token-helpers', () => ({
 }));
 
 vi.mock('~/shared/utils/flags', () => ({ Flags: { hasFlag: () => true } }));
-vi.mock('~/shared/constants/token-scope.constants', () => ({ TokenScope: { Full: 33554431 } }));
+vi.mock('~/shared/constants/token-scope.constants', () => ({
+  TokenScope: { Full: 33554431, UserRead: 1 },
+}));
 
 import { oauthModel } from '../model';
 

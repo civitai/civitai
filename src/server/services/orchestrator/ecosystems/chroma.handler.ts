@@ -2,11 +2,11 @@
  * Chroma Ecosystem Handler
  *
  * Handles Chroma workflows using textToImage step type.
- * Chroma uses a fixed Euler sampler internally.
  */
 
 import type { ImageJobNetworkParams, Scheduler, TextToImageStepTemplate } from '@civitai/client';
 import { maxRandomSeed } from '~/server/common/constants';
+import { samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { defineHandler } from './handler-factory';
@@ -17,7 +17,6 @@ type ChromaCtx = EcosystemGraphOutput & { ecosystem: 'Chroma' };
 
 /**
  * Creates step input for Chroma ecosystem.
- * Chroma uses a fixed Euler sampler internally.
  */
 export const createChromaInput = defineHandler<ChromaCtx, [TextToImageStepTemplate]>(
   (data, ctx) => {
@@ -32,13 +31,18 @@ export const createChromaInput = defineHandler<ChromaCtx, [TextToImageStepTempla
       additionalNetworks[ctx.airs.getOrThrow(resource.id)] = { strength: resource.strength };
     }
 
+    const sampler = data.sampler ?? 'Euler';
+    const scheduler =
+      (samplersToSchedulers[sampler as keyof typeof samplersToSchedulers] as Scheduler) ??
+      ('euler' as Scheduler);
+
     return [
       {
         $type: 'textToImage',
         input: {
           model: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
           additionalNetworks,
-          scheduler: 'euler' as Scheduler,
+          scheduler,
           prompt: data.prompt,
           steps: data.steps ?? 28,
           cfgScale: data.cfgScale ?? 3.5,

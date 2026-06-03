@@ -119,6 +119,13 @@ import { PriorityInput } from './inputs/PriorityInput';
 import { OutputFormatInput } from './inputs/OutputFormatInput';
 import { ScaleFactorInput } from './inputs/ScaleFactorInput';
 import { UpscaleDimensionsInput } from './inputs/UpscaleDimensionsInput';
+import { PreprocessorExamples } from './inputs/PreprocessorExamples';
+import { MissingPreprocessorExamplesAlert } from './inputs/MissingPreprocessorExamplesAlert';
+import {
+  getGroupedPreprocessKindOptions,
+  getPreprocessKindExamples,
+  getPreprocessKindInfo,
+} from '~/shared/constants/controlnets.constants';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { KlingElementsInput } from './inputs/KlingElementsInput';
@@ -497,966 +504,996 @@ export function GenerationForm() {
           through this same body, with its field renderers gated on the
           PolyGen ecosystem (see the polygen group below). */}
       {snapshot.workflow !== 'img2meta' && snapshot.workflow !== 'prompt:enhance' && (
+        <>
           <>
-            <>
+            <Controller
+              graph={graph}
+              name="workflow"
+              render={({ value }) => {
+                const modes = snapshot.ecosystem
+                  ? getWorkflowModes(value as string, snapshot.ecosystem, snapshot.model?.id)
+                  : [];
+
+                return (
+                  <div className="flex flex-col gap-1">
+                    <SelectedWorkflowDisplay
+                      workflowId={value as string}
+                      ecosystemId={compatibility.currentEcosystemId}
+                      onBack={
+                        shouldShowBackButton(value as string) ? handleNavigationBack : undefined
+                      }
+                    />
+                    {modes.length > 0 && (
+                      <ButtonGroupInput
+                        value={
+                          workflowConfigByKey.get(value as string)?.variantOf ?? (value as string)
+                        }
+                        onChange={(v) =>
+                          graph.set({ workflow: v } as Parameters<typeof graph.set>[0])
+                        }
+                        data={modes}
+                      />
+                    )}
+                  </div>
+                );
+              }}
+            />
+
+            {/* Checkpoint/Model selector with version selector */}
+            <div className="flex flex-col gap-1">
               <Controller
                 graph={graph}
-                name="workflow"
-                render={({ value }) => {
-                  const modes = snapshot.ecosystem
-                    ? getWorkflowModes(value as string, snapshot.ecosystem, snapshot.model?.id)
-                    : [];
-
+                name="model"
+                render={({ value, meta, onChange }) => {
                   return (
-                    <div className="flex flex-col gap-1">
-                      <SelectedWorkflowDisplay
-                        workflowId={value as string}
-                        ecosystemId={compatibility.currentEcosystemId}
-                        onBack={
-                          shouldShowBackButton(value as string) ? handleNavigationBack : undefined
+                    <>
+                      <ResourceSelectInput
+                        value={value as any}
+                        onChange={onChange as any}
+                        label={
+                          <ControllerLabel
+                            label="Model"
+                            info="Models are the resources you're generating with. Using a different base model can drastically alter the style and composition of images, while adding additional resources can change the characters, concepts and objects."
+                          />
+                        }
+                        buttonLabel="Select Model"
+                        modalTitle="Select Model"
+                        options={meta.options}
+                        allowRemove={false}
+                        allowSwap={!meta.modelLocked}
+                        onRevertToDefault={
+                          meta.defaultModelId
+                            ? () => onChange({ id: meta.defaultModelId } as any)
+                            : undefined
                         }
                       />
-                      {modes.length > 0 && (
-                        <ButtonGroupInput
-                          value={
-                            workflowConfigByKey.get(value as string)?.variantOf ?? (value as string)
-                          }
-                          onChange={(v) =>
-                            graph.set({ workflow: v } as Parameters<typeof graph.set>[0])
-                          }
-                          data={modes}
+                      {/* Hierarchical version selectors (e.g., precision/variant for HiDream) */}
+                      {meta.versions && (
+                        <VersionGroupSelector
+                          versions={meta.versions}
+                          modelId={(value as any)?.id}
+                          onChange={onChange as any}
                         />
                       )}
-                    </div>
+                    </>
                   );
                 }}
               />
 
-              {/* Checkpoint/Model selector with version selector */}
-              <div className="flex flex-col gap-1">
-                <Controller
-                  graph={graph}
-                  name="model"
-                  render={({ value, meta, onChange }) => {
-                    return (
-                      <>
-                        <ResourceSelectInput
-                          value={value as any}
-                          onChange={onChange as any}
-                          label={
-                            <ControllerLabel
-                              label="Model"
-                              info="Models are the resources you're generating with. Using a different base model can drastically alter the style and composition of images, while adding additional resources can change the characters, concepts and objects."
-                            />
-                          }
-                          buttonLabel="Select Model"
-                          modalTitle="Select Model"
-                          options={meta.options}
-                          allowRemove={false}
-                          allowSwap={!meta.modelLocked}
-                          onRevertToDefault={
-                            meta.defaultModelId
-                              ? () => onChange({ id: meta.defaultModelId } as any)
-                              : undefined
-                          }
-                        />
-                        {/* Hierarchical version selectors (e.g., precision/variant for HiDream) */}
-                        {meta.versions && (
-                          <VersionGroupSelector
-                            versions={meta.versions}
-                            modelId={(value as any)?.id}
-                            onChange={onChange as any}
-                          />
-                        )}
-                      </>
-                    );
-                  }}
-                />
-
-                {/* Wan video version picker */}
-                <Controller
-                  graph={graph}
-                  name="wanVersion"
-                  render={({ value }) => (
-                    <ButtonGroupInput
-                      value={value}
-                      onChange={(v) => {
-                        const def = wanVersionDefs.find((d) => d.version === v);
-                        if (!def) return;
-                        const snap = graph.getSnapshot() as { workflow?: string };
-                        const isImg2vid = snap.workflow === 'img2vid';
-                        // Set ecosystem directly — wanVersion is computed from it
-                        // v2.1: always T2V, wan21Graph handles I2V (resolution-dependent)
-                        const eco =
-                          isImg2vid && def.version !== 'v2.1'
-                            ? def.ecosystems.i2v
-                            : def.ecosystems.t2v;
-                        (graph as { set: (v: Record<string, unknown>) => void }).set({
-                          ecosystem: eco,
-                        });
-                      }}
-                      data={wanVersionOptions}
-                    />
-                  )}
-                />
-              </div>
-
-              {/* API version selector (e.g., Veo 3.0 vs 3.1) */}
+              {/* Wan video version picker */}
               <Controller
                 graph={graph}
-                name="version"
-                render={({ value, meta, onChange }) => (
-                  <Radio.Group
-                    value={value}
-                    onChange={(v) => onChange(v as typeof value)}
-                    label="API Version"
-                  >
-                    <Group mt="xs">
-                      {meta.options.map((o: { label: string; value: string }) => (
-                        <Radio key={o.value} value={o.value} label={o.label} />
-                      ))}
-                    </Group>
-                  </Radio.Group>
-                )}
-              />
-
-              {/* Additional resources (LoRA, etc.) */}
-              <Controller
-                graph={graph}
-                name="resources"
-                render={({ value, meta, onChange }) => (
-                  <ResourceSelectMultipleInput
-                    value={value as any}
-                    onChange={onChange as any}
-                    label="Additional Resources"
-                    buttonLabel="Add LoRA"
-                    modalTitle="Select Resources"
-                    options={meta.options}
-                    limit={meta.limit}
-                  />
-                )}
-              />
-
-              {/* Generation mode (standard/professional) */}
-              <Controller
-                graph={graph}
-                name="mode"
-                render={({ value, meta, onChange }) => (
-                  <Radio.Group
-                    value={value}
-                    onChange={(v) => onChange(v as typeof value)}
-                    label={
-                      <ControllerLabel
-                        label="Mode"
-                        info="Standard mode is faster to generate and more cost-effective. Pro takes longer to generate and has higher quality output."
-                      />
-                    }
-                  >
-                    <Group mt="xs">
-                      {meta.options.map((o: { label: string; value: string }) => (
-                        <Radio key={o.value} value={o.value} label={o.label} />
-                      ))}
-                    </Group>
-                  </Radio.Group>
-                )}
-              />
-
-              {/* Resource Alerts - Unstable, Content Restricted */}
-              <MultiController
-                graph={graph}
-                names={['model', 'resources', 'vae'] as const}
-                render={({ values }) => (
-                  <ResourceAlerts
-                    model={values.model}
-                    resources={values.resources}
-                    vae={values.vae}
-                  />
-                )}
-              />
-
-              {/* Experimental Ecosystem Alert */}
-              <Controller
-                graph={graph}
-                name="ecosystem"
+                name="wanVersion"
                 render={({ value }) => (
-                  <>
-                    <ExperimentalModelAlert ecosystem={value} />
-                    <GrokEcosystemAlert ecosystem={value} />
-                  </>
+                  <ButtonGroupInput
+                    value={value}
+                    onChange={(v) => {
+                      const def = wanVersionDefs.find((d) => d.version === v);
+                      if (!def) return;
+                      const snap = graph.getSnapshot() as { workflow?: string };
+                      const isImg2vid = snap.workflow === 'img2vid';
+                      // Set ecosystem directly — wanVersion is computed from it
+                      // v2.1: always T2V, wan21Graph handles I2V (resolution-dependent)
+                      const eco =
+                        isImg2vid && def.version !== 'v2.1'
+                          ? def.ecosystems.i2v
+                          : def.ecosystems.t2v;
+                      (graph as { set: (v: Record<string, unknown>) => void }).set({
+                        ecosystem: eco,
+                      });
+                    }}
+                    data={wanVersionOptions}
+                  />
                 )}
               />
+            </div>
 
-              {/* Seedance img2vid copyright-filter warning */}
-              <MultiController
-                graph={graph}
-                names={['ecosystem', 'workflow'] as const}
-                render={({ values }) => (
-                  <SeedanceImg2VidAlert ecosystem={values.ecosystem} workflow={values.workflow} />
-                )}
-              />
+            {/* API version selector (e.g., Veo 3.0 vs 3.1) */}
+            <Controller
+              graph={graph}
+              name="version"
+              render={({ value, meta, onChange }) => (
+                <Radio.Group
+                  value={value}
+                  onChange={(v) => onChange(v as typeof value)}
+                  label="API Version"
+                >
+                  <Group mt="xs">
+                    {meta.options.map((o: { label: string; value: string }) => (
+                      <Radio key={o.value} value={o.value} label={o.label} />
+                    ))}
+                  </Group>
+                </Radio.Group>
+              )}
+            />
 
-              {/* Ready State Alert - Resources need downloading */}
-              <ReadyAlert />
+            {/* Additional resources (LoRA, etc.) */}
+            <Controller
+              graph={graph}
+              name="resources"
+              render={({ value, meta, onChange }) => (
+                <ResourceSelectMultipleInput
+                  value={value as any}
+                  onChange={onChange as any}
+                  label="Additional Resources"
+                  buttonLabel="Add LoRA"
+                  modalTitle="Select Resources"
+                  options={meta.options}
+                  limit={meta.limit}
+                />
+              )}
+            />
 
-              {/* Generate cover toggle (audio workflows) */}
-              <Controller
-                graph={graph}
-                name="generateCover"
-                render={({ value, onChange }) => (
-                  <Checkbox
-                    label="Generate cover image"
-                    description="Auto-generate an album cover using AI"
+            {/* Generation mode (standard/professional) */}
+            <Controller
+              graph={graph}
+              name="mode"
+              render={({ value, meta, onChange }) => (
+                <Radio.Group
+                  value={value}
+                  onChange={(v) => onChange(v as typeof value)}
+                  label={
+                    <ControllerLabel
+                      label="Mode"
+                      info="Standard mode is faster to generate and more cost-effective. Pro takes longer to generate and has higher quality output."
+                    />
+                  }
+                >
+                  <Group mt="xs">
+                    {meta.options.map((o: { label: string; value: string }) => (
+                      <Radio key={o.value} value={o.value} label={o.label} />
+                    ))}
+                  </Group>
+                </Radio.Group>
+              )}
+            />
+
+            {/* Resource Alerts - Unstable, Content Restricted */}
+            <MultiController
+              graph={graph}
+              names={['model', 'resources', 'vae'] as const}
+              render={({ values }) => (
+                <ResourceAlerts
+                  model={values.model}
+                  resources={values.resources}
+                  vae={values.vae}
+                />
+              )}
+            />
+
+            {/* Experimental Ecosystem Alert */}
+            <Controller
+              graph={graph}
+              name="ecosystem"
+              render={({ value }) => (
+                <>
+                  <ExperimentalModelAlert ecosystem={value} />
+                  <GrokEcosystemAlert ecosystem={value} />
+                </>
+              )}
+            />
+
+            {/* Seedance img2vid copyright-filter warning */}
+            <MultiController
+              graph={graph}
+              names={['ecosystem', 'workflow'] as const}
+              render={({ values }) => (
+                <SeedanceImg2VidAlert ecosystem={values.ecosystem} workflow={values.workflow} />
+              )}
+            />
+
+            {/* Preprocessor kind (img2img:preprocess) */}
+            <Controller
+              graph={graph}
+              name="preprocessKind"
+              render={({ value, meta, onChange }) => {
+                // Only offer kinds that have a valid example output image.
+                const available = meta.options
+                  .map((o: { value: string }) => o.value)
+                  .filter((v: string) => getPreprocessKindExamples(v).length > 0);
+                const groups = getGroupedPreprocessKindOptions(available);
+                // Flatten the grouped options into one ordered list so prev/next
+                // walks Edges → Depth → … in the same order the dropdown shows.
+                const ordered = groups.flatMap((g) => g.items.map((i) => i.value));
+                const cycle = (delta: number) => {
+                  if (!ordered.length) return;
+                  const i = ordered.indexOf(value as string);
+                  const next = ordered[(i + delta + ordered.length) % ordered.length];
+                  onChange(next as typeof value);
+                };
+                return (
+                  <div className="flex flex-col gap-2">
+                    <PreprocessorExamples
+                      examples={getPreprocessKindExamples(value)}
+                      description={getPreprocessKindInfo(value)?.description}
+                      onPrev={() => cycle(-1)}
+                      onNext={() => cycle(1)}
+                      header={
+                        <Select
+                          label="Preprocessor"
+                          description="Choose a control signal, or browse previews with the arrows below."
+                          data={groups}
+                          value={value}
+                          onChange={(v) => v && onChange(v as typeof value)}
+                          allowDeselect={false}
+                          searchable
+                          // Select the current value's text on focus so typing starts a
+                          // fresh search instead of appending to the selected label.
+                          onFocus={(e) => e.currentTarget.select()}
+                          comboboxProps={{ withinPortal: true }}
+                        />
+                      }
+                    />
+                    {/* Moderator-only: flags preprocessors missing examples
+                        (i.e. likely failing on the orchestrator). */}
+                    <MissingPreprocessorExamplesAlert />
+                  </div>
+                );
+              }}
+            />
+
+            {/* Ready State Alert - Resources need downloading */}
+            <ReadyAlert />
+
+            {/* Generate cover toggle (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="generateCover"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Generate cover image"
+                  description="Auto-generate an album cover using AI"
+                  checked={value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
+
+            {/* Source images with optional mode selector */}
+            <Controller
+              graph={graph}
+              name="images"
+              render={({ value, meta, onChange, error }) => (
+                <ImagesInput
+                  graph={graph}
+                  value={value}
+                  onChange={onChange}
+                  meta={meta}
+                  error={error}
+                  workflow={snapshot.workflow}
+                />
+              )}
+            />
+
+            {/* Kling V3: Multi-shot toggle */}
+            <Controller
+              graph={graph}
+              name="multiShot"
+              render={({ value, onChange }) => (
+                <Input.Wrapper
+                  label="Multi-Shot"
+                  description="Enable multi-segment video generation with per-element media and prompts"
+                >
+                  <Switch
                     checked={value}
                     onChange={(e) => onChange(e.currentTarget.checked)}
+                    mt={4}
                   />
-                )}
-              />
+                </Input.Wrapper>
+              )}
+            />
 
-              {/* Source images with optional mode selector */}
-              <Controller
-                graph={graph}
-                name="images"
-                render={({ value, meta, onChange, error }) => (
-                  <ImagesInput
-                    graph={graph}
+            {/* Kling V3: Multi-shot elements */}
+            <Controller
+              graph={graph}
+              name="klingElements"
+              render={({ value, onChange }) => (
+                <KlingElementsInput value={value ?? []} onChange={onChange} />
+              )}
+            />
+
+            {/* Source video (vid2vid only) */}
+            <Controller
+              graph={graph}
+              name="video"
+              render={({ value, onChange }) => (
+                <VideoInput
+                  value={value}
+                  onChange={onChange as (v: VideoValue | undefined) => void}
+                />
+              )}
+            />
+
+            {/* Interpolation factor (vid2vid:interpolate only) */}
+            <Controller
+              graph={graph}
+              name="interpolationFactor"
+              render={({ value, meta, onChange }) => {
+                const factor = value ?? 2;
+                return (
+                  <InterpolationFactorInput
                     value={value}
                     onChange={onChange}
                     meta={meta}
-                    error={error}
-                    workflow={snapshot.workflow}
+                    targetFps={meta.sourceFps ? factor * meta.sourceFps : undefined}
                   />
-                )}
-              />
+                );
+              }}
+            />
 
-              {/* Kling V3: Multi-shot toggle */}
-              <Controller
-                graph={graph}
-                name="multiShot"
-                render={({ value, onChange }) => (
-                  <Input.Wrapper
-                    label="Multi-Shot"
-                    description="Enable multi-segment video generation with per-element media and prompts"
-                  >
-                    <Switch
-                      checked={value}
-                      onChange={(e) => onChange(e.currentTarget.checked)}
-                      mt={4}
+            {/* Scale factor (vid2vid:upscale) */}
+            <Controller
+              graph={graph}
+              name="scaleFactor"
+              render={({ value, meta, onChange }) => (
+                <ScaleFactorInput
+                  value={value}
+                  onChange={onChange}
+                  width={meta.sourceWidth}
+                  height={meta.sourceHeight}
+                  maxResolution={meta.maxOutputResolution}
+                  options={meta.options}
+                />
+              )}
+            />
+
+            {/* Upscaler model (img2img:upscale) */}
+            <Controller
+              graph={graph}
+              name="upscaler"
+              render={({ value, meta, onChange }) => (
+                <ResourceSelectInput
+                  value={value as any}
+                  onChange={onChange as any}
+                  label={
+                    <ControllerLabel
+                      label="Upscaler"
+                      info="Select the upscaler model to use for enhancing image resolution."
                     />
-                  </Input.Wrapper>
-                )}
-              />
+                  }
+                  buttonLabel="Select Upscaler"
+                  modalTitle="Select Upscaler"
+                  options={meta.options}
+                  allowRemove
+                />
+              )}
+            />
 
-              {/* Kling V3: Multi-shot elements */}
-              <Controller
-                graph={graph}
-                name="klingElements"
-                render={({ value, onChange }) => (
-                  <KlingElementsInput value={value ?? []} onChange={onChange} />
-                )}
-              />
+            {/* Upscale selection (img2img:upscale) */}
+            <Controller
+              graph={graph}
+              name="upscaleSelection"
+              render={({ value, meta, onChange }) => (
+                <UpscaleDimensionsInput value={value} onChange={onChange} meta={meta} />
+              )}
+            />
 
-              {/* Source video (vid2vid only) */}
-              <Controller
-                graph={graph}
-                name="video"
-                render={({ value, onChange }) => (
-                  <VideoInput
-                    value={value}
-                    onChange={onChange as (v: VideoValue | undefined) => void}
-                  />
-                )}
-              />
+            {/* Preprocessor output resolution (img2img:preprocess) */}
+            <Controller
+              graph={graph}
+              name="preprocessResolution"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  label="Resolution"
+                  value={value}
+                  onChange={onChange}
+                  min={meta.min}
+                  max={meta.max}
+                  step={meta.step}
+                />
+              )}
+            />
 
-              {/* Interpolation factor (vid2vid:interpolate only) */}
-              <Controller
-                graph={graph}
-                name="interpolationFactor"
-                render={({ value, meta, onChange }) => {
-                  const factor = value ?? 2;
-                  return (
-                    <InterpolationFactorInput
-                      value={value}
-                      onChange={onChange}
-                      meta={meta}
-                      targetFps={meta.sourceFps ? factor * meta.sourceFps : undefined}
-                    />
-                  );
-                }}
-              />
-
-              {/* Scale factor (vid2vid:upscale) */}
-              <Controller
-                graph={graph}
-                name="scaleFactor"
-                render={({ value, meta, onChange }) => (
-                  <ScaleFactorInput
-                    value={value}
-                    onChange={onChange}
-                    width={meta.sourceWidth}
-                    height={meta.sourceHeight}
-                    maxResolution={meta.maxOutputResolution}
-                    options={meta.options}
-                  />
-                )}
-              />
-
-              {/* Upscaler model (img2img:upscale) */}
-              <Controller
-                graph={graph}
-                name="upscaler"
-                render={({ value, meta, onChange }) => (
-                  <ResourceSelectInput
-                    value={value as any}
-                    onChange={onChange as any}
-                    label={
-                      <ControllerLabel
-                        label="Upscaler"
-                        info="Select the upscaler model to use for enhancing image resolution."
-                      />
-                    }
-                    buttonLabel="Select Upscaler"
-                    modalTitle="Select Upscaler"
-                    options={meta.options}
-                    allowRemove
-                  />
-                )}
-              />
-
-              {/* Upscale selection (img2img:upscale) */}
-              <Controller
-                graph={graph}
-                name="upscaleSelection"
-                render={({ value, meta, onChange }) => (
-                  <UpscaleDimensionsInput value={value} onChange={onChange} meta={meta} />
-                )}
-              />
-
-              {/* Preprocessor kind (img2img:preprocess) */}
-              <Controller
-                graph={graph}
-                name="preprocessKind"
-                render={({ value, meta, onChange }) => (
-                  <Select
-                    label="Preprocessor"
-                    description="Choose which control signal to extract from the source image."
-                    data={meta.options}
-                    value={value}
-                    onChange={(v) => v && onChange(v as typeof value)}
-                    allowDeselect={false}
-                    searchable
-                    comboboxProps={{ withinPortal: true }}
-                  />
-                )}
-              />
-
-              {/* Preprocessor output resolution (img2img:preprocess) */}
-              <Controller
-                graph={graph}
-                name="preprocessResolution"
-                render={({ value, meta, onChange }) => (
-                  <SliderInput
-                    label="Resolution"
-                    value={value}
-                    onChange={onChange}
-                    min={meta.min}
-                    max={meta.max}
-                    step={meta.step}
-                  />
-                )}
-              />
-
-              {/* Per-kind parameters (img2img:preprocess) — renders one input
+            {/* Per-kind parameters (img2img:preprocess) — renders one input
                 per spec in the active kind's `preprocessKindParamSpecs`. */}
-              <Controller
-                graph={graph}
-                name="kindParams"
-                render={({ value, meta, onChange }) => {
-                  const specs = meta.specs;
-                  if (!specs?.length) return null;
-                  const params = (value ?? {}) as Record<string, unknown>;
-                  const setParam = (key: string, v: unknown) => onChange({ ...params, [key]: v });
-                  return (
-                    <div className="flex flex-col gap-2">
-                      {specs.map((spec) => {
-                        if (spec.type === 'slider') {
-                          const current =
-                            (params[spec.key] as number | undefined) ?? spec.defaultValue;
-                          return (
-                            <SliderInput
-                              key={spec.key}
-                              label={spec.label}
-                              value={current}
-                              onChange={(v) => setParam(spec.key, v)}
-                              min={spec.min}
-                              max={spec.max}
-                              step={spec.step ?? 1}
-                            />
-                          );
-                        }
-                        if (spec.type === 'boolean') {
-                          const current =
-                            (params[spec.key] as boolean | undefined) ?? spec.defaultValue;
-                          return (
-                            <Switch
-                              key={spec.key}
-                              label={spec.label}
-                              checked={current}
-                              onChange={(e) => setParam(spec.key, e.currentTarget.checked)}
-                            />
-                          );
-                        }
+            <Controller
+              graph={graph}
+              name="kindParams"
+              render={({ value, meta, onChange }) => {
+                const specs = meta.specs;
+                if (!specs?.length) return null;
+                const params = (value ?? {}) as Record<string, unknown>;
+                const setParam = (key: string, v: unknown) => onChange({ ...params, [key]: v });
+                return (
+                  <div className="flex flex-col gap-2">
+                    {specs.map((spec) => {
+                      if (spec.type === 'slider') {
                         const current =
-                          (params[spec.key] as string | undefined) ?? spec.defaultValue;
+                          (params[spec.key] as number | undefined) ?? spec.defaultValue;
                         return (
-                          <Select
+                          <SliderInput
                             key={spec.key}
                             label={spec.label}
-                            data={spec.options.map((o) => ({ label: o, value: o }))}
                             value={current}
-                            onChange={(v) => v && setParam(spec.key, v)}
-                            allowDeselect={false}
-                            comboboxProps={{ withinPortal: true }}
+                            onChange={(v) => setParam(spec.key, v)}
+                            min={spec.min}
+                            max={spec.max}
+                            step={spec.step ?? 1}
                           />
                         );
-                      })}
-                    </div>
-                  );
-                }}
-              />
-
-              {/* ACE Audio mode picker (simple | custom) — only renders for Ace ecosystem */}
-              <Controller
-                graph={graph}
-                name="aceAudioMode"
-                render={({ value, meta, onChange }) => (
-                  <div className="flex flex-col gap-1">
-                    <Input.Label>Mode</Input.Label>
-                    <SegmentedControlWrapper
-                      value={value}
-                      onChange={(v) => onChange(v as typeof value)}
-                      data={
-                        meta.options?.map((o: { label: string; value: string }) => ({
-                          label: o.label,
-                          value: o.value,
-                        })) ?? []
                       }
-                    />
+                      if (spec.type === 'boolean') {
+                        const current =
+                          (params[spec.key] as boolean | undefined) ?? spec.defaultValue;
+                        return (
+                          <Switch
+                            key={spec.key}
+                            label={spec.label}
+                            checked={current}
+                            onChange={(e) => setParam(spec.key, e.currentTarget.checked)}
+                          />
+                        );
+                      }
+                      const current = (params[spec.key] as string | undefined) ?? spec.defaultValue;
+                      return (
+                        <Select
+                          key={spec.key}
+                          label={spec.label}
+                          data={spec.options.map((o) => ({ label: o, value: o }))}
+                          value={current}
+                          onChange={(v) => v && setParam(spec.key, v)}
+                          allowDeselect={false}
+                          comboboxProps={{ withinPortal: true }}
+                        />
+                      );
+                    })}
                   </div>
-                )}
-              />
+                );
+              }}
+            />
 
-              {/* Snippet sources strip. Lives in its own Controller so it
+            {/* ACE Audio mode picker (simple | custom) — only renders for Ace ecosystem */}
+            <Controller
+              graph={graph}
+              name="aceAudioMode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Mode</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={
+                      meta.options?.map((o: { label: string; value: string }) => ({
+                        label: o.label,
+                        value: o.value,
+                      })) ?? []
+                    }
+                  />
+                </div>
+              )}
+            />
+
+            {/* Snippet sources strip. Lives in its own Controller so it
                 auto-hides whenever the active graph doesn't include the
                 snippets node — i.e. the ecosystem subgraph didn't opt the
                 feature in. Data plumbing (loadedSets, loadingSetIds, etc.)
                 lives inside ActiveWildcards via `useSnippetCategories`;
                 this form just supplies the mutating handlers. */}
-              <Controller
-                graph={graph}
-                name="snippets"
-                render={() => (
-                  <ActiveWildcards
-                    onRemoveSet={removeWildcardSet}
-                    onAdd={handleAddWildcardSet}
-                    isAdding={loadFromModelVersion.isPending}
-                  />
-                )}
-              />
+            <Controller
+              graph={graph}
+              name="snippets"
+              render={() => (
+                <ActiveWildcards
+                  onRemoveSet={removeWildcardSet}
+                  onAdd={handleAddWildcardSet}
+                  isAdding={loadFromModelVersion.isPending}
+                />
+              )}
+            />
 
-              {/* Prompt. Each ecosystem subgraph defines its own prompt node
+            {/* Prompt. Each ecosystem subgraph defines its own prompt node
                 (or omits it — e.g. ace custom mode), so the Controller
                 auto-hides when the node isn't in the active graph. The
                 snippets/triggerWords features are turned on by the editor's
                 meta (`createTextEditorGraph`), so the form just forwards
                 those flags — no data hooks here. */}
-              <Controller
-                graph={graph}
-                name="prompt"
-                render={({ value, onChange, meta, error }) => (
-                  <Input.Wrapper
-                    styles={{ label: { width: '100%' } }}
-                    label={
-                      <Group justify="space-between" wrap="nowrap" className="w-full">
-                        <ControllerLabel
-                          label="Prompt"
-                          info={
-                            (meta as { info?: string }).info ??
-                            "Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
-                          }
-                          required={meta.required}
-                        />
-                        {value && (
-                          <Button
-                            variant="subtle"
-                            size="compact-xs"
-                            leftSection={<IconSparkles size={14} />}
-                            onClick={() => {
-                              const snap = graph.getSnapshot() as {
-                                ecosystem?: string;
-                                negativePrompt?: string;
-                                resources?: ResourcesNodeValue;
-                                snippets?: SnippetsNodeValue;
-                              };
-                              triggerPromptEnhance(
-                                {
-                                  prompt: value as string,
-                                  negativePrompt: snap.negativePrompt,
-                                  ecosystem: snap.ecosystem ?? '',
-                                  resources: snap.resources,
-                                  snippetTargets: snap.snippets?.targets,
-                                },
-                                (wf) =>
-                                  graph.set({
-                                    workflow: wf,
-                                  } as Parameters<typeof graph.set>[0])
-                              );
-                            }}
-                          >
-                            Enhance
-                          </Button>
-                        )}
-                      </Group>
-                    }
-                    error={error?.message}
-                  >
-                    <Paper
-                      radius="md"
-                      withBorder
-                      data-tour="gen:prompt"
-                      className="bg-white focus-within:border-blue-6 dark:bg-dark-6 dark:focus-within:border-blue-8"
-                    >
-                      <GenerationTextEditor
-                        value={value as string}
-                        onChange={onChange}
-                        snippets={meta?.snippets}
-                        triggerWords={meta?.triggerWords}
-                        attentionEdit
-                        placeholder={
-                          (meta as { placeholder?: string }).placeholder ??
-                          'Your prompt goes here...'
+            <Controller
+              graph={graph}
+              name="prompt"
+              render={({ value, onChange, meta, error }) => (
+                <Input.Wrapper
+                  styles={{ label: { width: '100%' } }}
+                  label={
+                    <Group justify="space-between" wrap="nowrap" className="w-full">
+                      <ControllerLabel
+                        label="Prompt"
+                        info={
+                          (meta as { info?: string }).info ??
+                          "Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
                         }
-                        minRows={2}
-                        className="!border-0 !bg-transparent"
+                        required={meta.required}
                       />
-                      {/* Nested trigger words controller — surfaces the active
+                      {value && (
+                        <Button
+                          variant="subtle"
+                          size="compact-xs"
+                          leftSection={<IconSparkles size={14} />}
+                          onClick={() => {
+                            const snap = graph.getSnapshot() as {
+                              ecosystem?: string;
+                              negativePrompt?: string;
+                              resources?: ResourcesNodeValue;
+                              snippets?: SnippetsNodeValue;
+                            };
+                            triggerPromptEnhance(
+                              {
+                                prompt: value as string,
+                                negativePrompt: snap.negativePrompt,
+                                ecosystem: snap.ecosystem ?? '',
+                                resources: snap.resources,
+                                snippetTargets: snap.snippets?.targets,
+                              },
+                              (wf) =>
+                                graph.set({
+                                  workflow: wf,
+                                } as Parameters<typeof graph.set>[0])
+                            );
+                          }}
+                        >
+                          Enhance
+                        </Button>
+                      )}
+                    </Group>
+                  }
+                  error={error?.message}
+                >
+                  <Paper
+                    radius="md"
+                    withBorder
+                    data-tour="gen:prompt"
+                    className="bg-white focus-within:border-blue-6 dark:bg-dark-6 dark:focus-within:border-blue-8"
+                  >
+                    <GenerationTextEditor
+                      value={value as string}
+                      onChange={onChange}
+                      snippets={meta?.snippets}
+                      triggerWords={meta?.triggerWords}
+                      attentionEdit
+                      placeholder={
+                        (meta as { placeholder?: string }).placeholder ?? 'Your prompt goes here...'
+                      }
+                      minRows={2}
+                      className="!border-0 !bg-transparent"
+                    />
+                    {/* Nested trigger words controller — surfaces the active
                         model/resources' trained words as copy-able chips
                         below the editor. Auto-hides when the active
                         subgraph didn't merge `triggerWordsGraph`. */}
-                      <Controller
-                        graph={graph}
-                        name="triggerWords"
-                        render={({ value }) => {
-                          const triggerWords = value as string[] | undefined;
-                          if (!triggerWords || triggerWords.length === 0) return null;
-                          return (
-                            <div className="mb-1 flex flex-col gap-2 px-2">
-                              <Divider />
-                              <Text c="dimmed" className="text-xs font-semibold">
-                                Trigger words
-                              </Text>
-                              <div className="mb-2 flex items-center gap-1">
-                                <TrainedWords
-                                  type="LORA"
-                                  trainedWords={triggerWords}
-                                  badgeProps={{
-                                    style: {
-                                      textTransform: 'none',
-                                      height: 'auto',
-                                      cursor: 'pointer',
-                                    },
-                                  }}
-                                />
-                                <CopyButton value={triggerWords.join(', ')}>
-                                  {({ copied, copy, Icon, color }) => (
-                                    <Button
-                                      variant="subtle"
-                                      color={color ?? 'blue.5'}
-                                      onClick={copy}
-                                      size="compact-xs"
-                                      classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
-                                    >
-                                      {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
-                                    </Button>
-                                  )}
-                                </CopyButton>
-                              </div>
+                    <Controller
+                      graph={graph}
+                      name="triggerWords"
+                      render={({ value }) => {
+                        const triggerWords = value as string[] | undefined;
+                        if (!triggerWords || triggerWords.length === 0) return null;
+                        return (
+                          <div className="mb-1 flex flex-col gap-2 px-2">
+                            <Divider />
+                            <Text c="dimmed" className="text-xs font-semibold">
+                              Trigger words
+                            </Text>
+                            <div className="mb-2 flex items-center gap-1">
+                              <TrainedWords
+                                type="LORA"
+                                trainedWords={triggerWords}
+                                badgeProps={{
+                                  style: {
+                                    textTransform: 'none',
+                                    height: 'auto',
+                                    cursor: 'pointer',
+                                  },
+                                }}
+                              />
+                              <CopyButton value={triggerWords.join(', ')}>
+                                {({ copied, copy, Icon, color }) => (
+                                  <Button
+                                    variant="subtle"
+                                    color={color ?? 'blue.5'}
+                                    onClick={copy}
+                                    size="compact-xs"
+                                    classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
+                                  >
+                                    {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
+                                  </Button>
+                                )}
+                              </CopyButton>
                             </div>
-                          );
-                        }}
-                      />
-                    </Paper>
-                  </Input.Wrapper>
-                )}
-              />
-
-              {/* Negative prompt (SD only) */}
-              <Controller
-                graph={graph}
-                name="negativePrompt"
-                render={({ value, onChange, meta }) => (
-                  <GenerationTextEditor
-                    value={value as string}
-                    onChange={onChange}
-                    snippets={meta?.snippets}
-                    triggerWords={meta?.triggerWords}
-                    attentionEdit
-                    label="Negative Prompt"
-                    placeholder="What to avoid..."
-                    minRows={1}
-                  />
-                )}
-              />
-
-              {/* Music description (audio workflows) */}
-              <Controller
-                graph={graph}
-                name="musicDescription"
-                render={({ value, onChange, error }) => (
-                  <Textarea
-                    label="Music Description"
-                    description="Describe the music style, genre, mood, and instruments"
-                    placeholder="Neo-Soul: A warm, organic neo-soul track with smooth Rhodes chords..."
-                    value={value as string}
-                    onChange={(e) => onChange(e.currentTarget.value)}
-                    error={error?.message}
-                    autosize
-                    minRows={2}
-                  />
-                )}
-              />
-
-              {/* Lyrics (audio workflows) */}
-              <Controller
-                graph={graph}
-                name="lyrics"
-                render={({ value, onChange }) => (
-                  <Textarea
-                    label="Lyrics"
-                    description="Structured lyrics with section markers like [Verse], [Chorus], [Bridge]"
-                    placeholder={
-                      "[Verse]\nBreaking through the walls tonight\nNothing's gonna stop this fight\n\n[Chorus]\nRock and roll forever\nWe're in this together"
-                    }
-                    value={value as string}
-                    onChange={(e) => onChange(e.currentTarget.value)}
-                    autosize
-                    minRows={4}
-                  />
-                )}
-              />
-
-              {/* BPM (audio workflows) */}
-              <Controller
-                graph={graph}
-                name="bpm"
-                render={({ value, meta, onChange }) => (
-                  <SliderInput
-                    label="BPM"
-                    value={value as number}
-                    onChange={onChange}
-                    min={(meta as { min: number }).min}
-                    max={(meta as { max: number }).max}
-                  />
-                )}
-              />
-
-              {/* Instrumental weight (audio workflows) */}
-              <Controller
-                graph={graph}
-                name="instrumentalWeight"
-                render={({ value, meta, onChange }) => (
-                  <SliderInput
-                    label="Instrumental Weight"
-                    value={value as number}
-                    onChange={onChange}
-                    min={(meta as { min: number }).min}
-                    max={(meta as { max: number }).max}
-                    step={(meta as { step: number }).step}
-                    precision={1}
-                  />
-                )}
-              />
-
-              {/* Vocal weight (audio workflows) */}
-              <Controller
-                graph={graph}
-                name="vocalWeight"
-                render={({ value, meta, onChange }) => (
-                  <SliderInput
-                    label="Vocal Weight"
-                    value={value as number}
-                    onChange={onChange}
-                    min={(meta as { min: number }).min}
-                    max={(meta as { max: number }).max}
-                    step={(meta as { step: number }).step}
-                    precision={1}
-                  />
-                )}
-              />
-
-              {/* ============================================================
-                  PolyGen (3D Models) — Controllers auto-hide when the active
-                  graph doesn't include the node (i.e. ecosystem !== PolyGen),
-                  same auto-hide convention used by every other ecosystem
-                  block above (audio, video, etc.).
-                  ============================================================ */}
-
-              {/* PolyGen process selector — textTo3D | imageTo3D */}
-              <Controller
-                graph={graph}
-                name="process"
-                render={({ value, meta, onChange }) => (
-                  <Input.Wrapper label="Process">
-                    <ButtonGroupInput
-                      value={value as string}
-                      onChange={(v) => onChange(v as typeof value)}
-                      data={(meta as { options: { label: string; value: string }[] }).options}
+                          </div>
+                        );
+                      }}
                     />
-                  </Input.Wrapper>
-                )}
-              />
+                  </Paper>
+                </Input.Wrapper>
+              )}
+            />
 
-              {/* PolyGen source image (image-to-3D only) */}
-              <Controller
-                graph={graph}
-                name="sourceImage"
-                render={({ value, onChange, error }) => {
-                  const current = value as { url: string; width: number; height: number } | undefined;
-                  return (
-                    <ImageUploadMultipleInput
-                      label="Starting image"
-                      description="The reference Meshy will use to build the 3D mesh"
-                      required
-                      max={1}
-                      aspect="square"
-                      imageLayout="wrap"
-                      value={current ? [current] : []}
-                      onChange={(v) => onChange((v[0] ?? undefined) as typeof value)}
-                      error={error?.message}
-                    />
-                  );
-                }}
-              />
+            {/* Negative prompt (SD only) */}
+            <Controller
+              graph={graph}
+              name="negativePrompt"
+              render={({ value, onChange, meta }) => (
+                <GenerationTextEditor
+                  value={value as string}
+                  onChange={onChange}
+                  snippets={meta?.snippets}
+                  triggerWords={meta?.triggerWords}
+                  attentionEdit
+                  label="Negative Prompt"
+                  placeholder="What to avoid..."
+                  minRows={1}
+                />
+              )}
+            />
 
-              {/* PolyGen: generate texture toggle (image-to-3D only) */}
-              <Controller
-                graph={graph}
-                name="shouldTexture"
-                render={({ value, onChange }) => (
-                  <Checkbox
-                    label="Generate texture"
-                    description="Apply automatic texture to the generated mesh"
-                    checked={!!value}
-                    onChange={(e) => onChange(e.currentTarget.checked)}
-                  />
-                )}
-              />
+            {/* Music description (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="musicDescription"
+              render={({ value, onChange, error }) => (
+                <Textarea
+                  label="Music Description"
+                  description="Describe the music style, genre, mood, and instruments"
+                  placeholder="Neo-Soul: A warm, organic neo-soul track with smooth Rhodes chords..."
+                  value={value as string}
+                  onChange={(e) => onChange(e.currentTarget.value)}
+                  error={error?.message}
+                  autosize
+                  minRows={2}
+                />
+              )}
+            />
 
-              {/* PolyGen: text mode (preview | full) — text-to-3D only */}
-              <Controller
-                graph={graph}
-                name="polygenMode"
-                render={({ value, meta, onChange }) => (
-                  <Input.Wrapper
-                    label="Mode"
-                    description="Preview is faster and cheaper. Full produces the higher-quality mesh."
-                  >
-                    <ButtonGroupInput
-                      value={value as string}
-                      onChange={(v) => onChange(v as typeof value)}
-                      data={(meta as { options: { label: string; value: string }[] }).options}
-                    />
-                  </Input.Wrapper>
-                )}
-              />
-
-              {/* PolyGen: prompt expansion toggle (text-to-3D only) */}
-              <Controller
-                graph={graph}
-                name="enablePromptExpansion"
-                render={({ value, onChange }) => (
-                  <Checkbox
-                    label="Auto-expand prompt"
-                    description="Let Meshy elaborate sparse prompts before generation"
-                    checked={!!value}
-                    onChange={(e) => onChange(e.currentTarget.checked)}
-                  />
-                )}
-              />
-
-              {/* PolyGen: target polycount (shared by both processes) */}
-              <Controller
-                graph={graph}
-                name="targetPolycount"
-                render={({ value, meta, onChange }) => (
-                  <SliderInput
-                    label="Target polycount"
-                    description="Final triangle count target. Higher = more detail, more cost."
-                    value={value as number}
-                    onChange={onChange}
-                    min={(meta as { min: number }).min}
-                    max={(meta as { max: number }).max}
-                    step={(meta as { step: number }).step}
-                    presets={(meta as { presets?: { label: string; value: number }[] }).presets}
-                  />
-                )}
-              />
-
-              {/* PolyGen: topology */}
-              <Controller
-                graph={graph}
-                name="topology"
-                render={({ value, meta, onChange }) => (
-                  <Input.Wrapper label="Topology">
-                    <ButtonGroupInput
-                      value={value as string}
-                      onChange={(v) => onChange(v as typeof value)}
-                      data={(meta as { options: { label: string; value: string }[] }).options}
-                    />
-                  </Input.Wrapper>
-                )}
-              />
-
-              {/* PolyGen: symmetry mode */}
-              <Controller
-                graph={graph}
-                name="symmetryMode"
-                render={({ value, meta, onChange }) => (
-                  <Input.Wrapper label="Symmetry">
-                    <ButtonGroupInput
-                      value={value as string}
-                      onChange={(v) => onChange(v as typeof value)}
-                      data={(meta as { options: { label: string; value: string }[] }).options}
-                    />
-                  </Input.Wrapper>
-                )}
-              />
-
-              {/* Aspect ratio */}
-              <Controller
-                graph={graph}
-                name="aspectRatio"
-                render={({ value, meta, onChange }) => {
-                  // Prefer explicit priorityOptions from the node meta; otherwise
-                  // fall back to the middle 5 items when there are more than 5.
-                  const priorityOptions =
-                    (meta as { priorityOptions?: string[] }).priorityOptions ??
-                    (meta.options.length > 5
-                      ? meta.options.slice(1, 6).map((o) => o.value)
-                      : undefined);
-
-                  return (
-                    <AspectRatioInput
-                      value={value}
-                      onChange={onChange}
-                      label="Aspect Ratio"
-                      options={meta.options}
-                      priorityOptions={priorityOptions}
-                      maxVisible={5}
-                    />
-                  );
-                }}
-              />
-
-              {/* Duration (video ecosystems) */}
-              <Controller
-                graph={graph}
-                name="duration"
-                render={({ value, meta, onChange }) => {
-                  const sliderMeta = meta as {
-                    min?: number;
-                    max?: number;
-                    step?: number;
-                    options?: { label: string; value: string | number }[];
-                  };
-                  const disabled = (meta as { disabled?: boolean })?.disabled;
-                  if (sliderMeta.min !== undefined && sliderMeta.max !== undefined) {
-                    return (
-                      <SliderInput
-                        label="Duration (seconds)"
-                        value={value as number}
-                        onChange={onChange}
-                        min={sliderMeta.min}
-                        max={sliderMeta.max}
-                        step={sliderMeta.step ?? 1}
-                        disabled={disabled}
-                      />
-                    );
+            {/* Lyrics (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="lyrics"
+              render={({ value, onChange }) => (
+                <Textarea
+                  label="Lyrics"
+                  description="Structured lyrics with section markers like [Verse], [Chorus], [Bridge]"
+                  placeholder={
+                    "[Verse]\nBreaking through the walls tonight\nNothing's gonna stop this fight\n\n[Chorus]\nRock and roll forever\nWe're in this together"
                   }
-                  return (
-                    <div className="flex flex-col gap-1">
-                      <Input.Label>Duration</Input.Label>
-                      <SegmentedControlWrapper
-                        value={value}
-                        onChange={(v) => onChange(v)}
-                        data={
-                          sliderMeta.options?.map((o) => ({ label: o.label, value: o.value })) ?? []
-                        }
-                        disabled={disabled}
-                      />
-                    </div>
-                  );
-                }}
-              />
+                  value={value as string}
+                  onChange={(e) => onChange(e.currentTarget.value)}
+                  autosize
+                  minRows={4}
+                />
+              )}
+            />
 
-              {/* Style (Vidu - General/Anime) */}
-              <Controller
-                graph={graph}
-                name="style"
-                render={({ value, meta, onChange }) => (
-                  <Radio.Group
+            {/* BPM (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="bpm"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  label="BPM"
+                  value={value as number}
+                  onChange={onChange}
+                  min={(meta as { min: number }).min}
+                  max={(meta as { max: number }).max}
+                />
+              )}
+            />
+
+            {/* Instrumental weight (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="instrumentalWeight"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  label="Instrumental Weight"
+                  value={value as number}
+                  onChange={onChange}
+                  min={(meta as { min: number }).min}
+                  max={(meta as { max: number }).max}
+                  step={(meta as { step: number }).step}
+                  precision={1}
+                />
+              )}
+            />
+
+            {/* Vocal weight (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="vocalWeight"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  label="Vocal Weight"
+                  value={value as number}
+                  onChange={onChange}
+                  min={(meta as { min: number }).min}
+                  max={(meta as { max: number }).max}
+                  step={(meta as { step: number }).step}
+                  precision={1}
+                />
+              )}
+            />
+
+            {/* ============================================================
+                PolyGen (3D Models) — Controllers auto-hide when the active
+                graph doesn't include the node (i.e. ecosystem !== PolyGen),
+                same auto-hide convention used by every other ecosystem
+                block above (audio, video, etc.).
+                ============================================================ */}
+
+            {/* PolyGen process selector — textTo3D | imageTo3D */}
+            <Controller
+              graph={graph}
+              name="process"
+              render={({ value, meta, onChange }) => (
+                <Input.Wrapper label="Process">
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </Input.Wrapper>
+              )}
+            />
+
+            {/* PolyGen source image (image-to-3D only) */}
+            <Controller
+              graph={graph}
+              name="sourceImage"
+              render={({ value, onChange, error }) => {
+                const current = value as { url: string; width: number; height: number } | undefined;
+                return (
+                  <ImageUploadMultipleInput
+                    label="Starting image"
+                    description="The reference Meshy will use to build the 3D mesh"
+                    required
+                    max={1}
+                    aspect="square"
+                    imageLayout="wrap"
+                    value={current ? [current] : []}
+                    onChange={(v) => onChange((v[0] ?? undefined) as typeof value)}
+                    error={error?.message}
+                  />
+                );
+              }}
+            />
+
+            {/* PolyGen: generate texture toggle (image-to-3D only) */}
+            <Controller
+              graph={graph}
+              name="shouldTexture"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Generate texture"
+                  description="Apply automatic texture to the generated mesh"
+                  checked={!!value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
+
+            {/* PolyGen: text mode (preview | full) — text-to-3D only */}
+            <Controller
+              graph={graph}
+              name="polygenMode"
+              render={({ value, meta, onChange }) => (
+                <Input.Wrapper
+                  label="Mode"
+                  description="Preview is faster and cheaper. Full produces the higher-quality mesh."
+                >
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </Input.Wrapper>
+              )}
+            />
+
+            {/* PolyGen: prompt expansion toggle (text-to-3D only) */}
+            <Controller
+              graph={graph}
+              name="enablePromptExpansion"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Auto-expand prompt"
+                  description="Let Meshy elaborate sparse prompts before generation"
+                  checked={!!value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
+
+            {/* PolyGen: target polycount (shared by both processes) */}
+            <Controller
+              graph={graph}
+              name="targetPolycount"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  label="Target polycount"
+                  description="Final triangle count target. Higher = more detail, more cost."
+                  value={value as number}
+                  onChange={onChange}
+                  min={(meta as { min: number }).min}
+                  max={(meta as { max: number }).max}
+                  step={(meta as { step: number }).step}
+                  presets={(meta as { presets?: { label: string; value: number }[] }).presets}
+                />
+              )}
+            />
+
+            {/* PolyGen: topology */}
+            <Controller
+              graph={graph}
+              name="topology"
+              render={({ value, meta, onChange }) => (
+                <Input.Wrapper label="Topology">
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </Input.Wrapper>
+              )}
+            />
+
+            {/* PolyGen: symmetry mode */}
+            <Controller
+              graph={graph}
+              name="symmetryMode"
+              render={({ value, meta, onChange }) => (
+                <Input.Wrapper label="Symmetry">
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </Input.Wrapper>
+              )}
+            />
+
+            {/* Aspect ratio */}
+            <Controller
+              graph={graph}
+              name="aspectRatio"
+              render={({ value, meta, onChange }) => {
+                // Prefer explicit priorityOptions from the node meta; otherwise
+                // fall back to the middle 5 items when there are more than 5.
+                const priorityOptions =
+                  (meta as { priorityOptions?: string[] }).priorityOptions ??
+                  (meta.options.length > 5
+                    ? meta.options.slice(1, 6).map((o) => o.value)
+                    : undefined);
+
+                return (
+                  <AspectRatioInput
+                    value={value}
+                    onChange={onChange}
+                    label="Aspect Ratio"
+                    options={meta.options}
+                    priorityOptions={priorityOptions}
+                    maxVisible={5}
+                  />
+                );
+              }}
+            />
+
+            {/* Duration (video ecosystems) */}
+            <Controller
+              graph={graph}
+              name="duration"
+              render={({ value, meta, onChange }) => {
+                const sliderMeta = meta as {
+                  min?: number;
+                  max?: number;
+                  step?: number;
+                  options?: { label: string; value: string | number }[];
+                };
+                const disabled = (meta as { disabled?: boolean })?.disabled;
+                if (sliderMeta.min !== undefined && sliderMeta.max !== undefined) {
+                  return (
+                    <SliderInput
+                      label="Duration (seconds)"
+                      value={value as number}
+                      onChange={onChange}
+                      min={sliderMeta.min}
+                      max={sliderMeta.max}
+                      step={sliderMeta.step ?? 1}
+                      disabled={disabled}
+                    />
+                  );
+                }
+                return (
+                  <div className="flex flex-col gap-1">
+                    <Input.Label>Duration</Input.Label>
+                    <SegmentedControlWrapper
+                      value={value}
+                      onChange={(v) => onChange(v)}
+                      data={
+                        sliderMeta.options?.map((o) => ({ label: o.label, value: o.value })) ?? []
+                      }
+                      disabled={disabled}
+                    />
+                  </div>
+                );
+              }}
+            />
+
+            {/* Style (Vidu - General/Anime) */}
+            <Controller
+              graph={graph}
+              name="style"
+              render={({ value, meta, onChange }) => (
+                <Radio.Group
+                  value={value}
+                  onChange={(v) => onChange(v as typeof value)}
+                  label="Style"
+                >
+                  <Group mt="xs">
+                    {meta.options.map((o: { label: string; value: string }) => (
+                      <Radio key={o.value} value={o.value} label={o.label} />
+                    ))}
+                  </Group>
+                </Radio.Group>
+              )}
+            />
+
+            {/* Resolution (Wan/Sora video quality) */}
+            <Controller
+              graph={graph}
+              name="resolution"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Resolution</Input.Label>
+                  <SegmentedControlWrapper
                     value={value}
                     onChange={(v) => onChange(v as typeof value)}
-                    label="Style"
-                  >
-                    <Group mt="xs">
-                      {meta.options.map((o: { label: string; value: string }) => (
-                        <Radio key={o.value} value={o.value} label={o.label} />
-                      ))}
-                    </Group>
-                  </Radio.Group>
-                )}
-              />
+                    data={meta.options.map((o: { label: string; value: string }) => ({
+                      label: o.label,
+                      value: o.value,
+                    }))}
+                  />
+                </div>
+              )}
+            />
 
-              {/* Resolution (Wan/Sora video quality) */}
-              <Controller
-                graph={graph}
-                name="resolution"
-                render={({ value, meta, onChange }) => (
-                  <div className="flex flex-col gap-1">
-                    <Input.Label>Resolution</Input.Label>
-                    <SegmentedControlWrapper
-                      value={value}
-                      onChange={(v) => onChange(v as typeof value)}
-                      data={meta.options.map((o: { label: string; value: string }) => ({
-                        label: o.label,
-                        value: o.value,
-                      }))}
-                    />
-                  </div>
-                )}
-              />
+            {/* Creativity (Krea 2) */}
+            <Controller
+              graph={graph}
+              name="creativity"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Creativity</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={meta.options.map((o: { label: string; value: string }) => ({
+                      label: o.label,
+                      value: o.value,
+                    }))}
+                  />
+                </div>
+              )}
+            />
 
-              {/* Creativity (Krea 2) */}
-              <Controller
-                graph={graph}
-                name="creativity"
-                render={({ value, meta, onChange }) => (
-                  <div className="flex flex-col gap-1">
-                    <Input.Label>Creativity</Input.Label>
-                    <SegmentedControlWrapper
-                      value={value}
-                      onChange={(v) => onChange(v as typeof value)}
-                      data={meta.options.map((o: { label: string; value: string }) => ({
-                        label: o.label,
-                        value: o.value,
-                      }))}
-                    />
-                  </div>
-                )}
-              />
-
-              {/* Num Frames (LTXV23 vid2vid:extend) */}
-              {/* <Controller
+            {/* Num Frames (LTXV23 vid2vid:extend) */}
+            {/* <Controller
               graph={graph}
               name="numFrames"
               render={({ value, meta, onChange }) => (
@@ -1476,596 +1513,596 @@ export function GenerationForm() {
               )}
             /> */}
 
-              {/* Output Settings (image output only) */}
+            {/* Output Settings (image output only) */}
+            <Controller
+              graph={graph}
+              name="output"
+              render={({ value: outputValue }) =>
+                outputValue === 'image' ? (
+                  <div className="flex flex-col gap-1">
+                    <Input.Label>Output Settings</Input.Label>
+                    <div className="flex items-center gap-2">
+                      <Controller
+                        graph={graph}
+                        name="outputFormat"
+                        render={({ value, meta, onChange }) => (
+                          <OutputFormatInput
+                            value={value}
+                            onChange={onChange as (v: string) => void}
+                            options={meta?.options ?? []}
+                            isMember={meta?.isMember}
+                          />
+                        )}
+                      />
+                      <Controller
+                        graph={graph}
+                        name="priority"
+                        render={({ value, meta, onChange }) => (
+                          <PriorityInput
+                            value={value}
+                            onChange={onChange}
+                            options={meta?.options ?? []}
+                            isMember={meta?.isMember}
+                          />
+                        )}
+                      />
+                    </div>
+                  </div>
+                ) : null
+              }
+            />
+
+            {/* Advanced section */}
+            <AccordionLayout label="Advanced" storeKey="data-graph-v2-advanced">
+              {/* Frame Guide Strength (LTXV2/LTXV23 img2vid with both frames) */}
               <Controller
                 graph={graph}
-                name="output"
-                render={({ value: outputValue }) =>
-                  outputValue === 'image' ? (
-                    <div className="flex flex-col gap-1">
-                      <Input.Label>Output Settings</Input.Label>
-                      <div className="flex items-center gap-2">
-                        <Controller
-                          graph={graph}
-                          name="outputFormat"
-                          render={({ value, meta, onChange }) => (
-                            <OutputFormatInput
-                              value={value}
-                              onChange={onChange as (v: string) => void}
-                              options={meta?.options ?? []}
-                              isMember={meta?.isMember}
-                            />
-                          )}
-                        />
-                        <Controller
-                          graph={graph}
-                          name="priority"
-                          render={({ value, meta, onChange }) => (
-                            <PriorityInput
-                              value={value}
-                              onChange={onChange}
-                              options={meta?.options ?? []}
-                              isMember={meta?.isMember}
-                            />
-                          )}
-                        />
-                      </div>
-                    </div>
+                name="frameGuideStrength"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="Frame Guide Strength"
+                        info="Controls how strongly the first/last frame images guide the video generation."
+                      />
+                    }
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    presets={meta.presets}
+                  />
+                )}
+              />
+
+              {/* CFG Scale / Guidance - label varies by model family */}
+              <Controller
+                graph={graph}
+                name="cfgScale"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="CFG Scale"
+                        info="Controls how closely the generation follows the text prompt."
+                      />
+                    }
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    presets={meta.presets}
+                  />
+                )}
+              />
+
+              {/* Sampler */}
+              <Controller
+                graph={graph}
+                name="sampler"
+                render={({ value, meta, onChange }) => (
+                  <SelectInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="Sampler"
+                        info="Each will produce a slightly (or significantly) different result."
+                      />
+                    }
+                    options={meta.options}
+                    presets={meta.presets}
+                  />
+                )}
+              />
+
+              {/* Scheduler (SdCpp ecosystems) */}
+              <Controller
+                graph={graph}
+                name="scheduler"
+                render={({ value, meta, onChange }) => (
+                  <SelectInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="Scheduler"
+                        info="Controls the noise schedule during generation, affecting quality and style."
+                      />
+                    }
+                    options={meta.options}
+                  />
+                )}
+              />
+
+              {/* Steps */}
+              <Controller
+                graph={graph}
+                name="steps"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="Steps"
+                        info="The number of iterations spent generating."
+                      />
+                    }
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    presets={meta.presets}
+                  />
+                )}
+              />
+
+              {/* Canny Low Threshold (LTXV23 vid2vid:edit) */}
+              <Controller
+                graph={graph}
+                name="cannyLowThreshold"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="Canny Low Threshold"
+                        info="Lower threshold for Canny edge detection. Lower values detect more edges."
+                      />
+                    }
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    presets={meta.presets}
+                  />
+                )}
+              />
+
+              {/* Canny High Threshold (LTXV23 vid2vid:edit) */}
+              <Controller
+                graph={graph}
+                name="cannyHighThreshold"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="Canny High Threshold"
+                        info="Upper threshold for Canny edge detection. Higher values only keep strong edges."
+                      />
+                    }
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    presets={meta.presets}
+                  />
+                )}
+              />
+
+              {/* Guide Strength (LTXV23 vid2vid:edit) */}
+              <Controller
+                graph={graph}
+                name="guideStrength"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label={
+                      <ControllerLabel
+                        label="Guide Strength"
+                        info="Controls how closely the output follows the source video structure."
+                      />
+                    }
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    presets={meta.presets}
+                  />
+                )}
+              />
+
+              {/* Movement amplitude (Vidu) */}
+              <Controller
+                graph={graph}
+                name="movementAmplitude"
+                render={({ value, meta, onChange }) => (
+                  <div className="flex flex-col gap-1">
+                    <ControllerLabel
+                      label="Movement Amplitude"
+                      info="Control the scale of camera movements and subject actions. Default: Auto (fits most use cases)."
+                    />
+                    <SegmentedControlWrapper
+                      value={value}
+                      onChange={onChange}
+                      data={meta.options.map((o: { label: string; value: string }) => ({
+                        label: o.label,
+                        value: o.value,
+                      }))}
+                    />
+                  </div>
+                )}
+              />
+
+              {/* PolyGen advanced toggles — auto-hide when not in active graph */}
+              <Controller
+                graph={graph}
+                name="shouldRemesh"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Remesh"
+                    description="Re-tessellate the mesh for cleaner topology"
+                    checked={!!value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
+              <Controller
+                graph={graph}
+                name="enablePbr"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Enable PBR textures"
+                    description="Generate physically-based rendering textures (albedo, normal, roughness)"
+                    checked={!!value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
+              <Controller
+                graph={graph}
+                name="texturePrompt"
+                render={({ value, meta, onChange }) => (
+                  <Textarea
+                    label="Texture prompt"
+                    description="Describe the material / style for the texture"
+                    placeholder={
+                      (meta as { placeholder?: string })?.placeholder ??
+                      'Weathered oak with bronze fittings…'
+                    }
+                    value={(value as string) ?? ''}
+                    onChange={(e) => onChange(e.currentTarget.value)}
+                    autosize
+                    minRows={2}
+                    maxLength={(meta as { maxLength?: number })?.maxLength}
+                  />
+                )}
+              />
+              <Controller
+                graph={graph}
+                name="enableRigging"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Enable rigging"
+                    description="Add a skeleton to the mesh for animation"
+                    checked={!!value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
+              <Controller
+                graph={graph}
+                name="enableAnimation"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Enable animation"
+                    description="Generate idle animation for the rigged mesh"
+                    checked={!!value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
+
+              {/* Seed */}
+              <Controller
+                graph={graph}
+                name="seed"
+                render={({ value, onChange }) => (
+                  <SeedInput value={value} onChange={onChange} label="Seed" />
+                )}
+              />
+
+              {/* CLIP Skip (SD only) */}
+              <Controller
+                graph={graph}
+                name="clipSkip"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label="CLIP Skip"
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    presets={meta.presets}
+                    warning={
+                      value <= 1
+                        ? 'Low CLIP Skip values may not work well depending on the model'
+                        : undefined
+                    }
+                  />
+                )}
+              />
+
+              {/* Denoise (img2img only) */}
+              <Controller
+                graph={graph}
+                name="denoise"
+                render={({ value, meta, onChange }) =>
+                  meta ? (
+                    <SliderInput
+                      value={value}
+                      onChange={onChange}
+                      label="Denoise Strength"
+                      min={meta.min}
+                      max={meta.max}
+                      step={meta.step}
+                    />
                   ) : null
                 }
               />
 
-              {/* Advanced section */}
-              <AccordionLayout label="Advanced" storeKey="data-graph-v2-advanced">
-                {/* Frame Guide Strength (LTXV2/LTXV23 img2vid with both frames) */}
-                <Controller
-                  graph={graph}
-                  name="frameGuideStrength"
-                  render={({ value, meta, onChange }) => (
-                    <SliderInput
-                      value={value}
-                      onChange={onChange}
-                      label={
-                        <ControllerLabel
-                          label="Frame Guide Strength"
-                          info="Controls how strongly the first/last frame images guide the video generation."
-                        />
-                      }
-                      min={meta.min}
-                      max={meta.max}
-                      step={meta.step}
-                      presets={meta.presets}
-                    />
-                  )}
-                />
-
-                {/* CFG Scale / Guidance - label varies by model family */}
-                <Controller
-                  graph={graph}
-                  name="cfgScale"
-                  render={({ value, meta, onChange }) => (
-                    <SliderInput
-                      value={value}
-                      onChange={onChange}
-                      label={
-                        <ControllerLabel
-                          label="CFG Scale"
-                          info="Controls how closely the generation follows the text prompt."
-                        />
-                      }
-                      min={meta.min}
-                      max={meta.max}
-                      step={meta.step}
-                      presets={meta.presets}
-                    />
-                  )}
-                />
-
-                {/* Sampler */}
-                <Controller
-                  graph={graph}
-                  name="sampler"
-                  render={({ value, meta, onChange }) => (
-                    <SelectInput
-                      value={value}
-                      onChange={onChange}
-                      label={
-                        <ControllerLabel
-                          label="Sampler"
-                          info="Each will produce a slightly (or significantly) different result."
-                        />
-                      }
-                      options={meta.options}
-                      presets={meta.presets}
-                    />
-                  )}
-                />
-
-                {/* Scheduler (SdCpp ecosystems) */}
-                <Controller
-                  graph={graph}
-                  name="scheduler"
-                  render={({ value, meta, onChange }) => (
-                    <SelectInput
-                      value={value}
-                      onChange={onChange}
-                      label={
-                        <ControllerLabel
-                          label="Scheduler"
-                          info="Controls the noise schedule during generation, affecting quality and style."
-                        />
-                      }
-                      options={meta.options}
-                    />
-                  )}
-                />
-
-                {/* Steps */}
-                <Controller
-                  graph={graph}
-                  name="steps"
-                  render={({ value, meta, onChange }) => (
-                    <SliderInput
-                      value={value}
-                      onChange={onChange}
-                      label={
-                        <ControllerLabel
-                          label="Steps"
-                          info="The number of iterations spent generating."
-                        />
-                      }
-                      min={meta.min}
-                      max={meta.max}
-                      step={meta.step}
-                      presets={meta.presets}
-                    />
-                  )}
-                />
-
-                {/* Canny Low Threshold (LTXV23 vid2vid:edit) */}
-                <Controller
-                  graph={graph}
-                  name="cannyLowThreshold"
-                  render={({ value, meta, onChange }) => (
-                    <SliderInput
-                      value={value}
-                      onChange={onChange}
-                      label={
-                        <ControllerLabel
-                          label="Canny Low Threshold"
-                          info="Lower threshold for Canny edge detection. Lower values detect more edges."
-                        />
-                      }
-                      min={meta.min}
-                      max={meta.max}
-                      step={meta.step}
-                      presets={meta.presets}
-                    />
-                  )}
-                />
-
-                {/* Canny High Threshold (LTXV23 vid2vid:edit) */}
-                <Controller
-                  graph={graph}
-                  name="cannyHighThreshold"
-                  render={({ value, meta, onChange }) => (
-                    <SliderInput
-                      value={value}
-                      onChange={onChange}
-                      label={
-                        <ControllerLabel
-                          label="Canny High Threshold"
-                          info="Upper threshold for Canny edge detection. Higher values only keep strong edges."
-                        />
-                      }
-                      min={meta.min}
-                      max={meta.max}
-                      step={meta.step}
-                      presets={meta.presets}
-                    />
-                  )}
-                />
-
-                {/* Guide Strength (LTXV23 vid2vid:edit) */}
-                <Controller
-                  graph={graph}
-                  name="guideStrength"
-                  render={({ value, meta, onChange }) => (
-                    <SliderInput
-                      value={value}
-                      onChange={onChange}
-                      label={
-                        <ControllerLabel
-                          label="Guide Strength"
-                          info="Controls how closely the output follows the source video structure."
-                        />
-                      }
-                      min={meta.min}
-                      max={meta.max}
-                      step={meta.step}
-                      presets={meta.presets}
-                    />
-                  )}
-                />
-
-                {/* Movement amplitude (Vidu) */}
-                <Controller
-                  graph={graph}
-                  name="movementAmplitude"
-                  render={({ value, meta, onChange }) => (
-                    <div className="flex flex-col gap-1">
+              {/* VAE (SD only) */}
+              <Controller
+                graph={graph}
+                name="vae"
+                render={({ value, meta, onChange }) => (
+                  <ResourceSelectInput
+                    value={value as any}
+                    onChange={onChange as any}
+                    label={
                       <ControllerLabel
-                        label="Movement Amplitude"
-                        info="Control the scale of camera movements and subject actions. Default: Auto (fits most use cases)."
+                        label="VAE"
+                        info="These provide additional color and detail improvements."
                       />
-                      <SegmentedControlWrapper
-                        value={value}
-                        onChange={onChange}
-                        data={meta.options.map((o: { label: string; value: string }) => ({
-                          label: o.label,
-                          value: o.value,
-                        }))}
-                      />
-                    </div>
-                  )}
-                />
+                    }
+                    buttonLabel="Select VAE"
+                    modalTitle="Select VAE"
+                    options={meta.options}
+                    allowRemove
+                  />
+                )}
+              />
 
-                {/* PolyGen advanced toggles — auto-hide when not in active graph */}
-                <Controller
-                  graph={graph}
-                  name="shouldRemesh"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      label="Remesh"
-                      description="Re-tessellate the mesh for cleaner topology"
-                      checked={!!value}
-                      onChange={(e) => onChange(e.currentTarget.checked)}
-                    />
-                  )}
-                />
-                <Controller
-                  graph={graph}
-                  name="enablePbr"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      label="Enable PBR textures"
-                      description="Generate physically-based rendering textures (albedo, normal, roughness)"
-                      checked={!!value}
-                      onChange={(e) => onChange(e.currentTarget.checked)}
-                    />
-                  )}
-                />
-                <Controller
-                  graph={graph}
-                  name="texturePrompt"
-                  render={({ value, meta, onChange }) => (
-                    <Textarea
-                      label="Texture prompt"
-                      description="Describe the material / style for the texture"
-                      placeholder={
-                        (meta as { placeholder?: string })?.placeholder ??
-                        'Weathered oak with bronze fittings…'
-                      }
-                      value={(value as string) ?? ''}
-                      onChange={(e) => onChange(e.currentTarget.value)}
-                      autosize
-                      minRows={2}
-                      maxLength={(meta as { maxLength?: number })?.maxLength}
-                    />
-                  )}
-                />
-                <Controller
-                  graph={graph}
-                  name="enableRigging"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      label="Enable rigging"
-                      description="Add a skeleton to the mesh for animation"
-                      checked={!!value}
-                      onChange={(e) => onChange(e.currentTarget.checked)}
-                    />
-                  )}
-                />
-                <Controller
-                  graph={graph}
-                  name="enableAnimation"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      label="Enable animation"
-                      description="Generate idle animation for the rigged mesh"
-                      checked={!!value}
-                      onChange={(e) => onChange(e.currentTarget.checked)}
-                    />
-                  )}
-                />
+              <Controller
+                graph={graph}
+                name="enhancedCompatibility"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    checked={value}
+                    onChange={(e) => onChange(e.target.checked)}
+                    label="Enhanced Compatibility"
+                    description="We've updated our generation engine for better performance, but older prompts may look different. Turn this on to make new generations look more like your originals."
+                  />
+                )}
+              />
 
-                {/* Seed */}
-                <Controller
-                  graph={graph}
-                  name="seed"
-                  render={({ value, onChange }) => (
-                    <SeedInput value={value} onChange={onChange} label="Seed" />
-                  )}
-                />
+              {/* Sora Pro mode toggle */}
+              <Controller
+                graph={graph}
+                name="usePro"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    checked={value}
+                    onChange={(e) => onChange(e.target.checked)}
+                    label="Pro Mode"
+                    description="Generate with higher quality (uses more credits)"
+                  />
+                )}
+              />
 
-                {/* CLIP Skip (SD only) */}
-                <Controller
-                  graph={graph}
-                  name="clipSkip"
-                  render={({ value, meta, onChange }) => (
-                    <SliderInput
-                      value={value}
-                      onChange={onChange}
-                      label="CLIP Skip"
-                      min={meta.min}
-                      max={meta.max}
-                      step={meta.step}
-                      presets={meta.presets}
-                      warning={
-                        value <= 1
-                          ? 'Low CLIP Skip values may not work well depending on the model'
-                          : undefined
-                      }
-                    />
-                  )}
-                />
+              {/* Flux Ultra Raw mode toggle */}
+              <Controller
+                graph={graph}
+                name="fluxUltraRaw"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    checked={value}
+                    onChange={(e) => onChange(e.target.checked)}
+                    label="Raw Mode"
+                    description="Generate with more natural, less processed look"
+                  />
+                )}
+              />
 
-                {/* Denoise (img2img only) */}
-                <Controller
-                  graph={graph}
-                  name="denoise"
-                  render={({ value, meta, onChange }) =>
-                    meta ? (
-                      <SliderInput
-                        value={value}
-                        onChange={onChange}
-                        label="Denoise Strength"
-                        min={meta.min}
-                        max={meta.max}
-                        step={meta.step}
-                      />
-                    ) : null
-                  }
-                />
+              {/* OpenAI Transparent Background toggle */}
+              <Controller
+                graph={graph}
+                name="transparent"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    checked={value}
+                    onChange={(e) => onChange(e.target.checked)}
+                    label="Transparent Background"
+                    description="Generate image with transparent background"
+                  />
+                )}
+              />
 
-                {/* VAE (SD only) */}
-                <Controller
-                  graph={graph}
-                  name="vae"
-                  render={({ value, meta, onChange }) => (
-                    <ResourceSelectInput
-                      value={value as any}
-                      onChange={onChange as any}
-                      label={
-                        <ControllerLabel
-                          label="VAE"
-                          info="These provide additional color and detail improvements."
-                        />
-                      }
-                      buttonLabel="Select VAE"
-                      modalTitle="Select VAE"
-                      options={meta.options}
-                      allowRemove
-                    />
-                  )}
-                />
+              {/* OpenAI Quality selector */}
+              <Controller
+                graph={graph}
+                name="quality"
+                render={({ value, meta, onChange }) => (
+                  <SelectInput
+                    value={value}
+                    onChange={onChange as (v: string) => void}
+                    label="Quality"
+                    options={meta.options}
+                  />
+                )}
+              />
 
-                <Controller
-                  graph={graph}
-                  name="enhancedCompatibility"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      checked={value}
-                      onChange={(e) => onChange(e.target.checked)}
-                      label="Enhanced Compatibility"
-                      description="We've updated our generation engine for better performance, but older prompts may look different. Turn this on to make new generations look more like your originals."
-                    />
-                  )}
-                />
+              {/* Prompt enhancer toggle (video ecosystems) */}
+              <Controller
+                graph={graph}
+                name="enablePromptEnhancer"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Enhance prompt"
+                    description="Automatically improve your prompt for better results"
+                    checked={value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
 
-                {/* Sora Pro mode toggle */}
-                <Controller
-                  graph={graph}
-                  name="usePro"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      checked={value}
-                      onChange={(e) => onChange(e.target.checked)}
-                      label="Pro Mode"
-                      description="Generate with higher quality (uses more credits)"
-                    />
-                  )}
-                />
+              {/* NanoBanana V2: Web search toggle */}
+              <Controller
+                graph={graph}
+                name="enableWebSearch"
+                render={({ value, onChange }) => (
+                  <Switch
+                    label="Web Search"
+                    description="Enable web search for the image generation task. This will allow the model to use the latest information from the web to generate the image."
+                    checked={value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
 
-                {/* Flux Ultra Raw mode toggle */}
-                <Controller
-                  graph={graph}
-                  name="fluxUltraRaw"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      checked={value}
-                      onChange={(e) => onChange(e.target.checked)}
-                      label="Raw Mode"
-                      description="Generate with more natural, less processed look"
-                    />
-                  )}
-                />
+              {/* Generate audio toggle (video ecosystems) */}
+              <Controller
+                graph={graph}
+                name="generateAudio"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Generate audio"
+                    description="Generate audio along with the video"
+                    checked={value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
 
-                {/* OpenAI Transparent Background toggle */}
-                <Controller
-                  graph={graph}
-                  name="transparent"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      checked={value}
-                      onChange={(e) => onChange(e.target.checked)}
-                      label="Transparent Background"
-                      description="Generate image with transparent background"
-                    />
-                  )}
-                />
+              {/* Vidu Q3: Enable audio toggle */}
+              <Controller
+                graph={graph}
+                name="enableAudio"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Generate audio"
+                    description="Generate audio along with the video"
+                    checked={value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
 
-                {/* OpenAI Quality selector */}
-                <Controller
-                  graph={graph}
-                  name="quality"
-                  render={({ value, meta, onChange }) => (
-                    <SelectInput
-                      value={value}
-                      onChange={onChange as (v: string) => void}
-                      label="Quality"
-                      options={meta.options}
-                    />
-                  )}
-                />
+              {/* Time signature (audio workflows) */}
+              <Controller
+                graph={graph}
+                name="timeSignature"
+                render={({ value, onChange }) => (
+                  <TextInput
+                    label="Time Signature"
+                    description="e.g. 4/4, 3/4, 6/8"
+                    placeholder="4/4"
+                    value={(value as string) ?? ''}
+                    onChange={(e) => onChange(e.currentTarget.value)}
+                  />
+                )}
+              />
 
-                {/* Prompt enhancer toggle (video ecosystems) */}
-                <Controller
-                  graph={graph}
-                  name="enablePromptEnhancer"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      label="Enhance prompt"
-                      description="Automatically improve your prompt for better results"
-                      checked={value}
-                      onChange={(e) => onChange(e.currentTarget.checked)}
-                    />
-                  )}
-                />
+              {/* Language (audio workflows) */}
+              <Controller
+                graph={graph}
+                name="language"
+                render={({ value, onChange }) => (
+                  <TextInput
+                    label="Language"
+                    description='Language code (e.g. "en", "zh", "ja", "ko")'
+                    placeholder="en"
+                    value={(value as string) ?? ''}
+                    onChange={(e) => onChange(e.currentTarget.value)}
+                  />
+                )}
+              />
 
-                {/* NanoBanana V2: Web search toggle */}
-                <Controller
-                  graph={graph}
-                  name="enableWebSearch"
-                  render={({ value, onChange }) => (
-                    <Switch
-                      label="Web Search"
-                      description="Enable web search for the image generation task. This will allow the model to use the latest information from the web to generate the image."
-                      checked={value}
-                      onChange={(e) => onChange(e.currentTarget.checked)}
-                    />
-                  )}
-                />
+              {/* Musical key (audio workflows) */}
+              <Controller
+                graph={graph}
+                name="key"
+                render={({ value, onChange }) => (
+                  <TextInput
+                    label="Key"
+                    description='Musical key (e.g. "C major", "E minor")'
+                    placeholder="C major"
+                    value={(value as string) ?? ''}
+                    onChange={(e) => onChange(e.currentTarget.value)}
+                  />
+                )}
+              />
 
-                {/* Generate audio toggle (video ecosystems) */}
-                <Controller
-                  graph={graph}
-                  name="generateAudio"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      label="Generate audio"
-                      description="Generate audio along with the video"
-                      checked={value}
-                      onChange={(e) => onChange(e.currentTarget.checked)}
-                    />
-                  )}
-                />
+              {/* Wan: Draft mode toggle (v2.2-5b) / Vidu Q3: Draft mode */}
+              <Controller
+                graph={graph}
+                name="draft"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    checked={value}
+                    onChange={(e) => onChange(e.target.checked)}
+                    label="Draft Mode"
+                    description="Generate faster at with optimized settings (may reduce quality)"
+                  />
+                )}
+              />
 
-                {/* Vidu Q3: Enable audio toggle */}
-                <Controller
-                  graph={graph}
-                  name="enableAudio"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      label="Generate audio"
-                      description="Generate audio along with the video"
-                      checked={value}
-                      onChange={(e) => onChange(e.currentTarget.checked)}
-                    />
-                  )}
-                />
+              {/* Wan: Shift parameter (v2.2, v2.2-5b) */}
+              <Controller
+                graph={graph}
+                name="shift"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    value={value}
+                    onChange={onChange}
+                    label="Shift"
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                  />
+                )}
+              />
 
-                {/* Time signature (audio workflows) */}
-                <Controller
-                  graph={graph}
-                  name="timeSignature"
-                  render={({ value, onChange }) => (
-                    <TextInput
-                      label="Time Signature"
-                      description="e.g. 4/4, 3/4, 6/8"
-                      placeholder="4/4"
-                      value={(value as string) ?? ''}
-                      onChange={(e) => onChange(e.currentTarget.value)}
-                    />
-                  )}
-                />
+              {/* Wan: Interpolator model selector (v2.2) */}
+              <Controller
+                graph={graph}
+                name="interpolatorModel"
+                render={({ value, meta, onChange }) => (
+                  <SelectInput
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    label="Interpolator"
+                    options={meta.options}
+                  />
+                )}
+              />
 
-                {/* Language (audio workflows) */}
-                <Controller
-                  graph={graph}
-                  name="language"
-                  render={({ value, onChange }) => (
-                    <TextInput
-                      label="Language"
-                      description='Language code (e.g. "en", "zh", "ja", "ko")'
-                      placeholder="en"
-                      value={(value as string) ?? ''}
-                      onChange={(e) => onChange(e.currentTarget.value)}
-                    />
-                  )}
-                />
-
-                {/* Musical key (audio workflows) */}
-                <Controller
-                  graph={graph}
-                  name="key"
-                  render={({ value, onChange }) => (
-                    <TextInput
-                      label="Key"
-                      description='Musical key (e.g. "C major", "E minor")'
-                      placeholder="C major"
-                      value={(value as string) ?? ''}
-                      onChange={(e) => onChange(e.currentTarget.value)}
-                    />
-                  )}
-                />
-
-                {/* Wan: Draft mode toggle (v2.2-5b) / Vidu Q3: Draft mode */}
-                <Controller
-                  graph={graph}
-                  name="draft"
-                  render={({ value, onChange }) => (
-                    <Checkbox
-                      checked={value}
-                      onChange={(e) => onChange(e.target.checked)}
-                      label="Draft Mode"
-                      description="Generate faster at with optimized settings (may reduce quality)"
-                    />
-                  )}
-                />
-
-                {/* Wan: Shift parameter (v2.2, v2.2-5b) */}
-                <Controller
-                  graph={graph}
-                  name="shift"
-                  render={({ value, meta, onChange }) => (
-                    <SliderInput
-                      value={value}
-                      onChange={onChange}
-                      label="Shift"
-                      min={meta.min}
-                      max={meta.max}
-                      step={meta.step}
-                    />
-                  )}
-                />
-
-                {/* Wan: Interpolator model selector (v2.2) */}
-                <Controller
-                  graph={graph}
-                  name="interpolatorModel"
-                  render={({ value, meta, onChange }) => (
-                    <SelectInput
-                      value={value}
-                      onChange={(v) => onChange(v as typeof value)}
-                      label="Interpolator"
-                      options={meta.options}
-                    />
-                  )}
-                />
-
-                {/* Wan: Draft mode toggle (v2.2) */}
-                {/* <Controller
+              {/* Wan: Draft mode toggle (v2.2) */}
+              {/* <Controller
               graph={graph}
               name="draft"
               render={({ value, onChange }) => (
@@ -2078,50 +2115,50 @@ export function GenerationForm() {
               )}
             /> */}
 
-                {/* ControlNets — gated behind the `controlNets` Flipt flag, then
+              {/* ControlNets — gated behind the `controlNets` Flipt flag, then
                   only rendered for ecosystems that declare the node */}
-                {features.controlNets && (
-                  <Controller
-                    graph={graph}
-                    name="controlNets"
-                    render={({ value, meta, onChange, error }) => (
-                      <ControlNetsInput
-                        value={value as ControlNetsInputProps['value']}
-                        onChange={onChange as ControlNetsInputProps['onChange']}
-                        meta={meta as ControlNetsInputProps['meta']}
-                        error={error?.message}
-                      />
-                    )}
-                  />
-                )}
-
-                {/* Krea 2 style references — only rendered when the Krea2 graph
-                  declares the styleReferences node */}
+              {features.controlNets && (
                 <Controller
                   graph={graph}
-                  name="styleReferences"
+                  name="controlNets"
                   render={({ value, meta, onChange, error }) => (
-                    <Krea2StyleReferencesInput
-                      value={value as Krea2StyleReferencesInputProps['value']}
-                      onChange={onChange as Krea2StyleReferencesInputProps['onChange']}
-                      meta={meta as Krea2StyleReferencesInputProps['meta']}
+                    <ControlNetsInput
+                      value={value as ControlNetsInputProps['value']}
+                      onChange={onChange as ControlNetsInputProps['onChange']}
+                      meta={meta as ControlNetsInputProps['meta']}
                       error={error?.message}
                     />
                   )}
                 />
-              </AccordionLayout>
-            </>
-            <GenerationFooter>
-              <FormFooter
-                onSubmitSuccess={
-                  snapshot.workflow && shouldReturnAfterSubmit(snapshot.workflow)
-                    ? handleNavigationBack
-                    : undefined
-                }
+              )}
+
+              {/* Krea 2 style references — only rendered when the Krea2 graph
+                  declares the styleReferences node */}
+              <Controller
+                graph={graph}
+                name="styleReferences"
+                render={({ value, meta, onChange, error }) => (
+                  <Krea2StyleReferencesInput
+                    value={value as Krea2StyleReferencesInputProps['value']}
+                    onChange={onChange as Krea2StyleReferencesInputProps['onChange']}
+                    meta={meta as Krea2StyleReferencesInputProps['meta']}
+                    error={error?.message}
+                  />
+                )}
               />
-            </GenerationFooter>
+            </AccordionLayout>
           </>
-        )}
+          <GenerationFooter>
+            <FormFooter
+              onSubmitSuccess={
+                snapshot.workflow && shouldReturnAfterSubmit(snapshot.workflow)
+                  ? handleNavigationBack
+                  : undefined
+              }
+            />
+          </GenerationFooter>
+        </>
+      )}
     </GenerationLayout>
   );
 }

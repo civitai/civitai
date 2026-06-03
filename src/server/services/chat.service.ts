@@ -10,6 +10,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
+import { withSignals } from '~/server/signals/wrapper';
 import { getChatHash } from '~/server/utils/chat';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -116,19 +117,23 @@ export const upsertChat = async ({
 
   if (isModerator) {
     for (const cmId of userIds) {
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(`chat:${createdChat.id}`),
-      }).catch();
+      withSignals(() =>
+        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(`chat:${createdChat.id}`),
+        })
+      ).catch(() => undefined);
     }
   } else {
     // - add self to group
-    fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(`chat:${createdChat.id}`),
-    }).catch();
+    withSignals(() =>
+      fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(`chat:${createdChat.id}`),
+      })
+    ).catch(() => undefined);
   }
 
   // I don't like the idea of querying after an insert, but it's just easier than merging all the data together
@@ -146,22 +151,26 @@ export const upsertChat = async ({
   }
 
   if (isModerator) {
-    fetch(
-      `${env.SIGNALS_ENDPOINT}/groups/chat:${insertedChat.id}/signals/${SignalMessages.ChatNewRoom}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(insertedChat as ChatCreateChat),
-      }
-    ).catch();
+    withSignals(() =>
+      fetch(
+        `${env.SIGNALS_ENDPOINT}/groups/chat:${insertedChat.id}/signals/${SignalMessages.ChatNewRoom}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(insertedChat as ChatCreateChat),
+        }
+      )
+    ).catch(() => undefined);
   } else {
     // - sending new chat room signal without being part of the group
     for (const cmId of userIds) {
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(insertedChat as ChatCreateChat),
-      }).catch();
+      withSignals(() =>
+        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(insertedChat as ChatCreateChat),
+        })
+      ).catch(() => undefined);
     }
   }
 
@@ -272,11 +281,13 @@ export const createMessage = async ({
     data: { chatId, contentType, content, referenceMessageId, userId },
   });
 
-  fetch(`${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(resp as ChatAllMessages[number]),
-  }).catch();
+  withSignals(() =>
+    fetch(`${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(resp as ChatAllMessages[number]),
+    })
+  ).catch(() => undefined);
 
   if (userId !== -1) {
     const links = findLinks(content, linkifyOptions);
@@ -301,14 +312,16 @@ export const createMessage = async ({
               },
             })
             .then((embedResp) => {
-              fetch(
-                `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(embedResp as ChatAllMessages[number]),
-                }
-              ).catch();
+              withSignals(() =>
+                fetch(
+                  `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
+                  {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(embedResp as ChatAllMessages[number]),
+                  }
+                )
+              ).catch(() => undefined);
             });
         } else {
           unfurl(href)
@@ -331,14 +344,16 @@ export const createMessage = async ({
                 },
               });
 
-              fetch(
-                `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(embedResp as ChatAllMessages[number]),
-                }
-              ).catch();
+              withSignals(() =>
+                fetch(
+                  `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
+                  {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(embedResp as ChatAllMessages[number]),
+                  }
+                )
+              ).catch(() => undefined);
             })
             .catch();
         }

@@ -387,10 +387,12 @@ async function reportProhibitedRequest(options: {
         },
       });
 
-      const muteDate = new Date();
+      // Only gate the user via `muted`. `mutedAt` is reserved for moderator
+      // confirmation (uphold) — setting it here would make a Pending restriction
+      // display as "Upheld" and trip the confirm-mutes cron.
       await updateUserById({
         id: userId,
-        data: { muted: true, mutedAt: muteDate, muteConfirmedAt: muteDate },
+        data: { muted: true },
         updateSource: 'promptAuditing:autoMute',
       });
 

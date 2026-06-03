@@ -1,5 +1,6 @@
 import { dbWrite } from '~/server/db/client';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OAUTH_TOKEN_PREFIX, ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL } from './constants';
 
 interface TokenPair {
@@ -19,6 +20,12 @@ export async function createOAuthTokenPair(
   scope: number
 ): Promise<TokenPair> {
   const now = new Date();
+
+  // UserRead is a mandatory baseline on every OAuth token: an app acting on a
+  // user's behalf must always be able to identify whose account it's on (and
+  // read profile/email via the userinfo endpoint). Force the bit on regardless
+  // of what was requested so it can never be dropped by any grant flow.
+  scope = scope | TokenScope.UserRead;
 
   // Access token
   const accessToken = OAUTH_TOKEN_PREFIX + generateKey(36);

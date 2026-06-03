@@ -31,7 +31,7 @@ import {
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { searchClient } from '~/server/meilisearch/client';
+import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -304,9 +304,31 @@ export const getModelsRaw = async ({
       ].filter(isDefined),
     };
 
-    const results: SearchResponse<ModelSearchIndexRecord> = await searchClient
-      .index(MODELS_SEARCH_INDEX)
-      .search(query, request);
+    // Wrap the SDK call under withMeili('search', ...) so a backend brownout
+    // is bounded by MEILI_CALL_TIMEOUT_MS instead of bleeding the event loop
+    // until Traefik's 30s router timeout — same cascade pattern that bit
+    // image.getInfinite (PR #2351). Translate the timeout to a TRPCError
+    // TIMEOUT here (vs at each controller) so every getModelsRaw caller
+    // — models.getAll, recommenders, associated-resources, etc. — fails fast
+    // with a 408 instead of hanging on a slow Meili.
+    // searchClient was null-checked on the outer if; pin a local non-null
+    // reference so TS narrowing survives the closure boundary.
+    const client = searchClient;
+    let results: SearchResponse<ModelSearchIndexRecord>;
+    try {
+      results = await withMeili('search', () =>
+        client.index(MODELS_SEARCH_INDEX).search(query, request)
+      );
+    } catch (err) {
+      if (err instanceof MeiliCallTimeoutError) {
+        throw new TRPCError({
+          code: 'TIMEOUT',
+          message: 'Model search is temporarily overloaded — please retry.',
+          cause: err,
+        });
+      }
+      throw err;
+    }
 
     // console.log(results.hits);
     searchModelIds = results.hits.map((m) => m.id);
@@ -2081,12 +2103,14 @@ export const publishModelById = async ({
           });
         }
 
-        // Only restore posts that were unpublished alongside the model. Without
-        // the `p."publishedAt" IS NULL` guard, calling publish on an
-        // already-published model overwrites every attached post's publishedAt
-        // (and clears their prevPublishedAt metadata), letting an owner script
-        // repeated publish calls to keep bumping their old posts to the top of
-        // feeds. Mirrors the unpublish path's `WHERE "publishedAt" IS NOT NULL`.
+        // Restore posts that were unpublished alongside the model, and re-target
+        // posts that are still scheduled (future publishedAt) so a reschedule of
+        // the model also reschedules its attached posts. The `publishedAt <= NOW()`
+        // exclusion preserves the anti-bump guard for already-public posts —
+        // without it, calling publish on an already-published model would
+        // overwrite every attached post's publishedAt and let an owner repeatedly
+        // bump old posts to the top of feeds. Mirrors the unpublish path's
+        // `WHERE "publishedAt" IS NOT NULL`.
         await tx.$executeRaw`
           UPDATE "Post" p
           SET "publishedAt" = CASE
@@ -2099,7 +2123,7 @@ export const publishModelById = async ({
           WHERE mv.id = p."modelVersionId"
             AND p."userId" = ${model.userId}
             AND p."modelVersionId" IN (${Prisma.join(versionIds, ',')})
-            AND p."publishedAt" IS NULL
+            AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
         `;
       }
       if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });
@@ -2233,8 +2257,6 @@ export const unpublishModelById = async ({
         AND "modelVersionId" IN (${Prisma.join(versionIds)})
       `;
 
-      await userModelCountCache.refresh(updatedModel.userId);
-
       return updatedModel;
     },
     { timeout: 30000, maxWait: 10000 }
@@ -2246,6 +2268,7 @@ export const unpublishModelById = async ({
   const allVersionIds = model.modelVersions.map((x) => x.id);
   await preventModelVersionLagBatch(id, allVersionIds);
   await bustMvCache(allVersionIds, id);
+  await userModelCountCache.refresh(model.userId);
 
   // Use dbWrite for the search-index lookups for the same reason as
   // publishModelById — the replica may not yet reflect the txn we just
@@ -3127,8 +3150,10 @@ export async function copyGallerySettingsToAllModelsByUser({
         "userId" = ${userId}
     `;
 
-    await userModelCountCache.refresh(userId);
   });
+
+  // Count-cache refresh hits Redis — run after commit, off the txn budget.
+  await userModelCountCache.refresh(userId);
 
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
   const modelIds = models.map((x) => x.id);
@@ -3977,6 +4002,23 @@ export async function transferModelOwnership({
   if (models.some((m) => m.userId === targetUserId))
     throw throwBadRequestError('One or more models already belong to the target user');
 
+  const affectedPosts = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT p.id
+    FROM "Post" p
+    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+    WHERE mv."modelId" = ANY(${modelIds}::int[])
+    AND p."userId" = ANY(${sourceUserIds}::int[])
+  `;
+  const affectedPostIds = affectedPosts.map((p) => p.id);
+  const affectedImages = affectedPostIds.length
+    ? await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Image"
+        WHERE "postId" = ANY(${affectedPostIds}::int[])
+        AND "userId" = ANY(${sourceUserIds}::int[])
+      `
+    : [];
+  const affectedImageIds = affectedImages.map((i) => i.id);
+
   const result = await dbWrite.$transaction([
     dbWrite.model.updateMany({
       where: { id: { in: modelIds } },
@@ -3989,18 +4031,12 @@ export async function transferModelOwnership({
     dbWrite.$executeRaw`
       UPDATE "Post"
       SET "userId" = ${targetUserId}
-      WHERE "modelVersionId" IN (
-        SELECT id FROM "ModelVersion" WHERE "modelId" = ANY(${modelIds}::int[])
-      )
+      WHERE id = ANY(${affectedPostIds}::int[])
     `,
     dbWrite.$executeRaw`
       UPDATE "Image"
       SET "userId" = ${targetUserId}
-      WHERE "postId" IN (
-        SELECT p.id FROM "Post" p
-        JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-        WHERE mv."modelId" = ANY(${modelIds}::int[])
-      )
+      WHERE id = ANY(${affectedImageIds}::int[])
     `,
   ]);
 
@@ -4008,6 +4044,18 @@ export async function transferModelOwnership({
   for (const m of models) {
     await tracker.modelEvent({ type: 'Transfer', modelId: m.id, nsfw: m.nsfw });
   }
+
+  await Promise.all([
+    modelsSearchIndex.queueUpdate(
+      modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    ),
+    affectedImageIds.length
+      ? queueImageSearchIndexUpdate({
+          ids: affectedImageIds,
+          action: SearchIndexUpdateQueueAction.Update,
+        })
+      : Promise.resolve(),
+  ]);
 
   await logToAxiom({
     type: 'info',

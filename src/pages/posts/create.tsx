@@ -56,6 +56,7 @@ export default Page(
     const {
       modelId,
       modelVersionId,
+      model3dId,
       tag: tagId,
       video: postingVideo,
       clubId,
@@ -83,6 +84,11 @@ export default Page(
       { enabled: !!tagId }
     );
 
+    const { data: model3d, isLoading: model3dLoading } = trpc.model3d.getById.useQuery(
+      { id: model3dId ?? 0 },
+      { enabled: !!model3dId }
+    );
+
     const { data: currentUserReview, isLoading: loadingCurrentUserReview } =
       trpc.resourceReview.getUserResourceReview.useQuery(
         { modelVersionId: modelVersionId ?? 0 },
@@ -97,6 +103,7 @@ export default Page(
       ? getModelUrl({ modelId, modelName: version?.model.name, modelVersionId })
       : '/';
 
+    if (model3dId) backButtonUrl = `/3d-models/${model3dId}`;
     if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
     if (clubId) backButtonUrl = `/clubs/${clubId}`;
     if (collectionIds?.length)
@@ -154,6 +161,17 @@ export default Page(
                 Posting to{' '}
                 <Text component="span" td="underline">
                   {version?.model.name} - {version?.name}
+                </Text>
+              </Text>
+            </Group>
+          )}
+          {model3dId && (model3d || model3dLoading) && (
+            <Group gap="xs">
+              {model3dLoading && <Loader size="sm" />}
+              <Text size="sm" c="dimmed">
+                Posting to 3D model{' '}
+                <Text component="span" td="underline">
+                  {model3d?.name}
                 </Text>
               </Text>
             </Group>

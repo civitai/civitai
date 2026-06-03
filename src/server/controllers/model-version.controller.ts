@@ -129,6 +129,7 @@ const loadModelVersion = async ({
         licensingFee: true,
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
+        meta: true,
         model: {
           select: {
             id: true,
@@ -258,6 +259,7 @@ const loadModelVersion = async ({
           covered: version.generationCoverage?.covered ?? false,
           modelUserId: version.model.user.id,
           modelType: version.model.type,
+          modelVersionAlias: (version.meta as ModelVersionMeta | null)?.generationAlias,
         },
       ],
       {

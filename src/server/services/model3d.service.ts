@@ -807,22 +807,32 @@ export const getModel3DRelatedPosts = async ({
     const { model3dId, limit, cursor } = input;
     const isModerator = !!user?.isModerator;
 
-    // Look up the Model3D creator so we can exclude their own auto-Post (the
-    // generation thumbnail Post) from the Makes/Uses rail.
     const model3d = await dbRead.model3D.findUnique({
       where: { id: model3dId },
       select: { id: true, userId: true },
     });
     if (!model3d) throw throwNotFoundError(`No 3D model with id ${model3dId}`);
 
+    const viewerId = user?.id;
+
+    // Visibility:
+    //  - Moderators see everything.
+    //  - Everyone else sees published+public posts AND their own posts
+    //    (any state, so a user who just created a draft post linked to this
+    //    model3d sees it on the page immediately, before they hit Publish).
+    const publishedClause: Prisma.PostWhereInput = {
+      publishedAt: { lte: new Date() },
+      availability: { not: 'Private' },
+    };
+    const visibility: Prisma.PostWhereInput = isModerator
+      ? {}
+      : viewerId
+        ? { OR: [publishedClause, { userId: viewerId }] }
+        : publishedClause;
+
     const where: Prisma.PostWhereInput = {
       model3dId,
-      // Skip the creator's own Post(s); community Makes/Uses are by other users.
-      NOT: { userId: model3d.userId },
-      // Public visibility: only published posts unless the requester is a mod.
-      ...(isModerator
-        ? {}
-        : { publishedAt: { lte: new Date() }, availability: { not: 'Private' } }),
+      ...visibility,
     };
 
     const take = Math.min(limit, 50);

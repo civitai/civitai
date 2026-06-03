@@ -763,6 +763,12 @@ function EnableNsfwBlock() {
     }
   */
 
+// Friendly labels for the non-yellow Buzz types a user may have spent to generate.
+const refundableBuzzLabelMap: Partial<Record<TransactionInfo['accountType'], string>> = {
+  blue: 'Blue',
+  green: 'Green',
+};
+
 function CanUpgradeBlock({
   workflowId,
   transactions,
@@ -781,6 +787,17 @@ function CanUpgradeBlock({
     if (transaction.type === 'credit') return acc - transaction.amount;
     else return acc + transaction.amount;
   }, 0);
+
+  // Figure out which non-yellow Buzz type(s) were spent to generate this content, so we
+  // can tell the user that Buzz will be refunded once they unlock with yellow Buzz.
+  const refundedBuzzLabels = Array.from(
+    new Set(
+      transactions
+        .filter((t) => t.accountType !== 'yellow' && t.type === 'debit')
+        .map((t) => refundableBuzzLabelMap[t.accountType] ?? 'Buzz')
+    )
+  );
+  const refundedLabel = refundedBuzzLabels.length === 1 ? `${refundedBuzzLabels[0]} Buzz` : 'Buzz';
 
   const { mutate, isLoading } = useUpdateWorkflow();
 
@@ -819,6 +836,9 @@ function CanUpgradeBlock({
         onClick={handleClick}
         loading={isLoading}
       />
+      <Text align="center" size="xs" c="dimmed">
+        The {refundedLabel} you used to generate this content will be refunded.
+      </Text>
       {!isPaidMember && (
         <Text align="center" size="xs" c="dimmed">
           Or{' '}

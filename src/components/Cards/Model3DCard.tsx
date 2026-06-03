@@ -1,17 +1,20 @@
 import { ActionIcon, Badge, Box, Group, Stack, Text, Tooltip } from '@mantine/core';
 import {
+  IconArrowUpRight,
   IconCube,
   IconDownload,
   IconEye,
   IconHeart,
   IconMessageCircle2,
   IconStar,
+  IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import { memo, useState } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '~/server/routers';
@@ -186,9 +189,12 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
         footerGradient
       />
 
-      {/* Inline GLB preview overlay. Sits absolutely over the card's image and
-          remains until the user closes it (or the user navigates away). The
-          underlying card link still works — close the preview before clicking. */}
+      {/* Inline GLB preview overlay. Sits absolutely over the card's image
+          and captures pointer events so drag/orbit works in the viewer. The
+          overlay would otherwise trap users (it covers the card link AND the
+          header eye button), so we render two floating controls on top:
+          a "close preview" X (toggles back to the thumbnail) and an
+          "open model page" arrow (navigates into /3d-models/:id). */}
       {previewing && (
         <Box
           pos="absolute"
@@ -210,6 +216,47 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
               </Text>
             </Group>
           )}
+
+          {/* Floating action bar — sits above the viewer canvas. */}
+          <Group
+            gap={4}
+            pos="absolute"
+            top={8}
+            right={8}
+            style={{ zIndex: 6, pointerEvents: 'auto' }}
+            wrap="nowrap"
+          >
+            <Tooltip label="Open model page" withinPortal position="left">
+              <ActionIcon
+                component={Link}
+                href={`/3d-models/${id}`}
+                variant="filled"
+                color="dark"
+                radius="xl"
+                size="sm"
+                aria-label="Open 3D model page"
+                onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              >
+                <IconArrowUpRight size={14} stroke={2} />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label="Close preview" withinPortal position="left">
+              <ActionIcon
+                variant="filled"
+                color="dark"
+                radius="xl"
+                size="sm"
+                aria-label="Close preview"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setPreviewing(false);
+                }}
+              >
+                <IconX size={14} stroke={2} />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
         </Box>
       )}
     </Box>

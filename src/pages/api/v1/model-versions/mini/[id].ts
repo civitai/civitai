@@ -11,6 +11,7 @@ import {
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
 import { getFeaturedModels } from '~/server/services/model.service';
+import type { GenerationAlias } from '~/server/schema/model-version.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -49,6 +50,7 @@ type VersionRow = {
   requireAuth: boolean;
   checkPermission: boolean;
   covered?: boolean;
+  generationAlias?: GenerationAlias | null;
   freeTrialLimit?: number;
   minor: boolean;
   sfwOnly: boolean;
@@ -129,6 +131,7 @@ export default MixedAuthEndpoint(async function handler(
 
       ) AS "checkPermission",
       (SELECT covered FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
+      mv."meta"->'generationAlias' AS "generationAlias",
       (
         CASE
           mv."earlyAccessConfig"->>'chargeForGeneration'
@@ -240,6 +243,7 @@ export default MixedAuthEndpoint(async function handler(
         covered: modelVersion.covered ?? false,
         modelUserId: modelVersion.modelUserId,
         modelType: modelVersion.type,
+        modelVersionAlias: modelVersion.generationAlias,
       },
     ],
     {

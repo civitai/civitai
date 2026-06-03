@@ -893,8 +893,12 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // HappyHorse - checkpoint only
   { ecosystemId: ECO.HappyHorse, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // Anima - checkpoint, LORA generation, LORA training
-  { ecosystemId: ECO.Anima, supportType: 'generation', modelTypes: checkpointAndLora },
+  // Anima - checkpoint, LORA and DoRA generation, LORA training
+  {
+    ecosystemId: ECO.Anima,
+    supportType: 'generation',
+    modelTypes: [ModelType.Checkpoint, ModelType.LORA, ModelType.DoRA],
+  },
   { ecosystemId: ECO.Anima, supportType: 'training', modelTypes: loraOnly },
 
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
@@ -1836,17 +1840,19 @@ export const licenses: LicenseRecord[] = [
   {
     id: 4,
     name: 'Stability AI Non-Commercial Research Community License',
-    url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL-Turbo',
+    url: 'https://huggingface.co/stabilityai/sdxl-turbo/blob/main/LICENSE.md',
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+    poweredBy: 'Powered by Stability AI',
     disableMature: true,
   },
   {
     id: 5,
-    name: 'Stable Video Diffusion Non-Commercial Research Community License',
-    url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDV',
+    name: 'Stable Video Diffusion Community License',
+    url: 'https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt/blob/main/LICENSE.md',
     notice:
-      'Stable Video Diffusion is licensed under the Stable Video Diffusion Research License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+      'Stable Video Diffusion is licensed under the Stable Video Diffusion Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+    poweredBy: 'Powered by Stability AI',
     disableMature: true,
   },
   {
@@ -1864,12 +1870,14 @@ export const licenses: LicenseRecord[] = [
     name: 'SAI NC RC',
     url: 'https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE',
     notice:
-      'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+      'Stable Cascade is licensed under the Stable Cascade Non-Commercial Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
+    poweredBy: 'Powered by Stability AI',
     disableMature: true,
   },
   {
     id: 9,
     name: 'Stability AI Community License Agreement',
+    url: 'https://stability.ai/community-license-agreement',
     notice:
       'This Stability AI Model is licensed under the Stability AI Community License, Copyright (c)  Stability AI Ltd. All Rights Reserved.',
     poweredBy: 'Powered by Stability AI',
@@ -1879,6 +1887,9 @@ export const licenses: LicenseRecord[] = [
     id: 10,
     name: 'Tencent Hunyuan Community License Agreement',
     url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
+    notice:
+      'Tencent Hunyuan is licensed under the Tencent Hunyuan Community License Agreement, Copyright © 2024 Tencent. All Rights Reserved. The trademark rights of "Tencent Hunyuan" are owned by Tencent or its affiliate.',
+    poweredBy: 'Powered by Tencent Hunyuan',
   },
   {
     id: 11,
@@ -1892,6 +1903,8 @@ export const licenses: LicenseRecord[] = [
     id: 12,
     name: 'Kolors License',
     url: 'https://raw.githubusercontent.com/Kwai-Kolors/Kolors/master/MODEL_LICENSE',
+    notice:
+      'Kolors is licensed under the Kolors Model License Agreement, Copyright (c) Kuaishou Technology. All Rights Reserved.',
   },
   {
     id: 13,
@@ -1915,7 +1928,7 @@ export const licenses: LicenseRecord[] = [
   {
     id: 16,
     name: 'LTX Video License',
-    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/main/License.txt',
+    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/main/LTX-Video-Open-Weights-License-0.X.txt',
   },
   {
     id: 17,
@@ -1978,6 +1991,49 @@ export const licenses: LicenseRecord[] = [
     id: 28,
     name: 'Krea AI Terms of Service',
     url: 'https://www.krea.ai/terms',
+  },
+  {
+    id: 29,
+    name: 'FLUX.2 [dev] Non-Commercial License',
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/main/LICENSE.md',
+    notice:
+      'The FLUX.2 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.2 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+  },
+  {
+    id: 30,
+    name: 'FLUX.2 Klein 9B Non-Commercial License',
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/main/LICENSE.md',
+    notice:
+      'The FLUX.2 Klein 9B Model is licensed by Black Forest Labs. Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs. Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+  },
+  {
+    id: 31,
+    name: 'Alibaba Wan / Tongyi Wanxiang Terms of Service',
+    url: 'https://wan.video/',
+  },
+  {
+    id: 32,
+    name: 'ShengShu Vidu Terms of Service',
+    url: 'https://www.vidu.com/terms',
+  },
+  {
+    id: 33,
+    name: 'MiniMax Hailuo AI Terms of Service',
+    url: 'https://hailuoai.video/doc/terms-of-service.html',
+  },
+  {
+    id: 34,
+    name: 'Kuaishou Kling AI Terms of Service',
+    url: 'https://klingai.com/docs/user-policy',
+  },
+  {
+    id: 35,
+    name: 'LTX-2 Community License Agreement',
+    url: 'https://huggingface.co/Lightricks/LTX-2.3/blob/main/LICENSE',
   },
 ];
 
@@ -2188,7 +2244,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Next-generation Flux with enhanced capabilities',
     type: 'image',
     ecosystemId: ECO.Flux2,
-    licenseId: 14,
+    licenseId: 29,
   },
   {
     id: BM.Flux2Klein_9B,
@@ -2196,7 +2252,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Flux.2 Klein 9 billion parameter distilled model',
     type: 'image',
     ecosystemId: ECO.Flux2Klein_9B,
-    licenseId: 14,
+    licenseId: 30,
   },
   {
     id: BM.Flux2Klein_9B_base,
@@ -2204,7 +2260,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Flux.2 Klein 9 billion parameter base model',
     type: 'image',
     ecosystemId: ECO.Flux2Klein_9B_base,
-    licenseId: 14,
+    licenseId: 30,
   },
   {
     id: BM.Flux2Klein_4B,
@@ -2212,7 +2268,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Flux.2 Klein 4 billion parameter distilled model',
     type: 'image',
     ecosystemId: ECO.Flux2Klein_4B,
-    licenseId: 14,
+    licenseId: 13,
   },
   {
     id: BM.Flux2Klein_4B_base,
@@ -2220,7 +2276,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Flux.2 Klein 4 billion parameter base model',
     type: 'image',
     ecosystemId: ECO.Flux2Klein_4B_base,
-    licenseId: 14,
+    licenseId: 13,
   },
 
   // Grok
@@ -2344,7 +2400,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "Lightricks' LTX Video 2.3 generation model",
     type: 'video',
     ecosystemId: ECO.LTXV23,
-    licenseId: 16,
+    licenseId: 35,
   },
 
   // Lens
@@ -2472,7 +2528,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'SDXL-based model with extensive tag-based prompt support',
     type: 'image',
     ecosystemId: ECO.Pony,
-    licenseId: 3,
+    licenseId: 1,
   },
   {
     id: BM.PonyV7,
@@ -2536,7 +2592,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'SD 1.5 with Latent Consistency Model for faster inference',
     type: 'image',
     ecosystemId: ECO.SD1,
-    licenseId: 3,
+    licenseId: 1,
   },
   {
     id: BM.SD15Hyper,
@@ -2544,7 +2600,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'SD 1.5 with Hyper optimization for reduced steps',
     type: 'image',
     ecosystemId: ECO.SD1,
-    licenseId: 3,
+    licenseId: 1,
   },
 
   // SD 2.x
@@ -2554,7 +2610,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Second generation SD with improved architecture',
     type: 'image',
     ecosystemId: ECO.SD2,
-    licenseId: 1,
+    licenseId: 3,
   },
   {
     id: BM.SD20_768,
@@ -2563,7 +2619,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.SD2,
     hidden: true,
-    licenseId: 1,
+    licenseId: 3,
   },
   {
     id: BM.SD21,
@@ -2571,7 +2627,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Second generation SD with improved architecture and 768px support',
     type: 'image',
     ecosystemId: ECO.SD2,
-    licenseId: 1,
+    licenseId: 3,
   },
   {
     id: BM.SD21_768,
@@ -2580,7 +2636,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.SD2,
     hidden: true,
-    licenseId: 1,
+    licenseId: 3,
   },
   {
     id: BM.SD21Unclip,
@@ -2589,7 +2645,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.SD2,
     hidden: true,
-    licenseId: 1,
+    licenseId: 3,
   },
 
   // SD 3.x - fully disabled (no support for any type)
@@ -2839,7 +2895,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Latest text-to-video generation',
     type: 'video',
     ecosystemId: ECO.WanVideo25_T2V,
-    licenseId: 13,
+    licenseId: 31,
   },
   {
     id: BM.WanVideo25I2V,
@@ -2847,7 +2903,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Latest image-to-video generation',
     type: 'video',
     ecosystemId: ECO.WanVideo25_I2V,
-    licenseId: 13,
+    licenseId: 31,
   },
   {
     id: BM.WanImage27,
@@ -2855,7 +2911,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Image generation model from Alibaba',
     type: 'image',
     ecosystemId: ECO.WanImage27,
-    licenseId: 13,
+    licenseId: 31,
   },
   {
     id: BM.WanVideo27,
@@ -2863,7 +2919,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Video generation model from Alibaba',
     type: 'video',
     ecosystemId: ECO.WanVideo27,
-    licenseId: 13,
+    licenseId: 31,
   },
 
   // ZImageTurbo
@@ -2894,7 +2950,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'video',
     ecosystemId: ECO.Vidu,
     hidden: true,
-    licenseId: 22,
+    licenseId: 32,
   },
 
   // Hailuo by MiniMax
@@ -2905,7 +2961,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'video',
     ecosystemId: ECO.MiniMax,
     hidden: true,
-    licenseId: 22,
+    licenseId: 33,
   },
 
   // Kling
@@ -2916,7 +2972,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'video',
     ecosystemId: ECO.Kling,
     hidden: true,
-    licenseId: 22,
+    licenseId: 34,
   },
 
   // Seedance
@@ -2937,6 +2993,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'ACE Audio music generation model',
     type: 'audio',
     ecosystemId: ECO.AceAudio,
+    licenseId: 13,
   },
 
   // PolyGen (Meshy via Fal) — remote 3D model generator. Type='image' matches

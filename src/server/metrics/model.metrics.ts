@@ -6,7 +6,7 @@ import { templateHandler } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -114,13 +114,70 @@ export const modelMetrics = createMetricProcessor({
 
     // Update the search index
     //---------------------------------------
-    log('update search index');
-    await modelsSearchIndex.queueUpdate(
-      [...ctx.affected].map((id) => ({
-        id,
-        action: SearchIndexUpdateQueueAction.Update,
-      }))
+    // The metric job runs every minute and `ctx.affected` is dominated
+    // by `getVersionAggregationTasks` — any model whose ModelVersionMetric
+    // updatedAt changed in the last minute (downloads / generations etc.).
+    // On production that's ~1,900 distinct model ids per minute, even though
+    // only ~35 of those reflect a user-visible mutation. The models search-
+    // index sync cron is `*/15`, so queueing every minute generates 15×
+    // more work than the consumer can drain and the backlog grows forever.
+    //
+    // Accumulate affected ids into a Redis SET (deduplicates across ticks)
+    // and only flush to the search-index queue every ~15 minutes. The
+    // service-layer queueUpdate calls in model.service / model-version.service
+    // for genuine mutations (publish, edit, tag changes, etc.) are unaffected
+    // and still hit the search-index queue immediately on the user's request.
+    if (ctx.affected.size > 0) {
+      log('accumulate search index updates', ctx.affected.size);
+      await sysRedis.sAdd(
+        REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_AFFECTED,
+        [...ctx.affected].map(String)
+      );
+    }
+
+    const FLUSH_INTERVAL_MS = 15 * 60 * 1000;
+    const lastFlushStr = await sysRedis.get(
+      REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_LAST_FLUSH
     );
+    const lastFlush = lastFlushStr ? new Date(lastFlushStr).getTime() : 0;
+    const shouldFlush = Date.now() - lastFlush >= FLUSH_INTERVAL_MS;
+
+    if (shouldFlush) {
+      const pendingRaw = await sysRedis.sMembers(
+        REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_AFFECTED
+      );
+      // Mark the flush before draining so a crash mid-flush doesn't
+      // double-queue.
+      //
+      // Trade-off: if the process dies between the SET drain and the
+      // queueUpdate call, those ids stall in the search index until a
+      // NEW mvm.updatedAt change re-touches them (the mvm cursor is
+      // independent — it advances even for runs whose flush succeeds).
+      // For cold/idle models that may be hours. Accept this because
+      // (a) crash-window is small, (b) the next genuine user mutation
+      // re-indexes via the untouched service-layer path, (c) metric-
+      // drift staleness on the search doc is by definition cosmetic.
+      await sysRedis.set(
+        REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_LAST_FLUSH,
+        new Date().toISOString()
+      );
+      if (pendingRaw.length > 0) {
+        await sysRedis.del(REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_AFFECTED);
+        log('flush search index updates', pendingRaw.length);
+        // Chunk so a runaway accumulator (e.g. a Postgres mvm backfill
+        // bumping every row's updatedAt) doesn't push a single multi-MB
+        // request into the search-index queue path.
+        const QUEUE_CHUNK_SIZE = 5000;
+        for (const slice of chunk(pendingRaw, QUEUE_CHUNK_SIZE)) {
+          await modelsSearchIndex.queueUpdate(
+            slice.map((id) => ({
+              id: Number(id),
+              action: SearchIndexUpdateQueueAction.Update,
+            }))
+          );
+        }
+      }
+    }
   },
   rank: {
     async refresh() {

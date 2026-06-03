@@ -1,4 +1,4 @@
-import type { Counter, Histogram } from 'prom-client';
+import type { Counter, Gauge, Histogram } from 'prom-client';
 import client from 'prom-client';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
@@ -28,6 +28,23 @@ export function registerCounterWithLabels<T extends string>({
     return new client.Counter({ name: PROM_PREFIX + name, help, labelNames });
   } catch (e) {
     return client.register.getSingleMetric(PROM_PREFIX + name) as Counter<T>;
+  }
+}
+
+export function registerGaugeWithLabels<T extends string>({
+  name,
+  help,
+  labelNames,
+}: {
+  name: string;
+  help: string;
+  labelNames: readonly T[];
+}) {
+  // Do this to deal with HMR in nextjs
+  try {
+    return new client.Gauge({ name: PROM_PREFIX + name, help, labelNames });
+  } catch (e) {
+    return client.register.getSingleMetric(PROM_PREFIX + name) as Gauge<T>;
   }
 }
 

@@ -7,8 +7,9 @@ import type {
 } from '~/server/schema/club.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { logToAxiom } from '~/server/logging/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { createEntityImages, getImagesForPosts } from '~/server/services/image.service';
+import { createEntityImages, getImagesForPosts, ingestImage } from '~/server/services/image.service';
 import { userContributingClubs } from '~/server/services/club.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { GetModelsWithImagesAndModelVersions } from './model.service';
@@ -199,6 +200,18 @@ export const upsertClubPost = async ({
           images: [coverImage],
         })
       : [];
+
+  if (createdCoverImage) {
+    ingestImage({ image: createdCoverImage }).catch((error) => {
+      logToAxiom({
+        name: 'club-post-image-ingest',
+        type: 'error',
+        userId: userClub.userId,
+        imageId: createdCoverImage.id,
+        message: error instanceof Error ? error.message : String(error),
+      }).catch(() => {});
+    });
+  }
 
   if (input.id) {
     const post = await dbClient.clubPost.update({

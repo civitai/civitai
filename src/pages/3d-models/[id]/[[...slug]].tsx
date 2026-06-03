@@ -22,7 +22,6 @@ import {
   IconCube,
   IconDownload,
   IconFlag,
-  IconPencil,
   IconShare3,
   IconStar,
 } from '@tabler/icons-react';
@@ -47,7 +46,7 @@ import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
-import { Model3DModMenu } from '~/components/Model3D/Moderation/Model3DModMenu';
+import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
 import { GenerationDetails } from '~/components/Model3D/GenerationDetails/GenerationDetails';
 import { MakesUsesRail } from '~/components/Model3D/MakesUses/MakesUsesRail';
 import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
@@ -254,20 +253,10 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
             <Group gap={4} align="center" wrap="nowrap">
               {(isOwner || isModerator) && (
-                <Button
-                  component={Link}
-                  href={`/3d-models/${id}/edit`}
-                  variant="default"
-                  size="xs"
-                  leftSection={<IconPencil size={14} />}
-                >
-                  Edit
-                </Button>
-              )}
-              {isModerator && (
-                <Model3DModMenu
+                <Model3DActionsMenu
                   model3d={{
                     id: model3d.id,
+                    userId: model3d.userId,
                     status: model3d.status,
                     nsfw: model3d.nsfw,
                     tosViolation: model3d.tosViolation,

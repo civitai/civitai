@@ -82,27 +82,22 @@ interface TriggerButtonProps {
   disabled?: boolean;
   opened?: boolean;
   onClick: () => void;
-  onMouseEnter?: () => void;
-  onMouseLeave?: () => void;
 }
 
 const TriggerButton = forwardRef<HTMLButtonElement, TriggerButtonProps>(
-  ({ label, disabled, opened, onClick, onMouseEnter, onMouseLeave }, ref) => {
+  ({ label, disabled, opened, onClick }, ref) => {
     return (
       <UnstyledButton
         ref={ref}
         onClick={onClick}
-        onMouseEnter={onMouseEnter}
-        onMouseLeave={onMouseLeave}
         disabled={disabled}
         title={label}
         className={clsx(
-          'relative flex h-8 min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-md border px-2 transition-colors sm:flex-none sm:max-w-[240px]',
+          'relative flex h-8 min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-md border px-2 transition-colors sm:max-w-[240px] sm:flex-none',
           'border-gray-3 bg-white text-gray-7 hover:border-blue-3',
           'dark:border-dark-4 dark:bg-dark-6 dark:text-gray-3 dark:hover:border-dark-3',
           disabled && 'cursor-not-allowed opacity-50',
-          opened &&
-            'ring-2 ring-blue-5/20 after:absolute after:-bottom-2 after:left-0 after:h-2 after:w-full'
+          opened && 'ring-2 ring-blue-5/20'
         )}
       >
         <span className="shrink-0 border-r border-gray-3 pr-1.5 text-xs font-medium text-gray-6 dark:border-dark-4 dark:text-dark-2">
@@ -816,18 +811,16 @@ export function BaseModelInput({
     );
   }
 
-  // Desktop: use Popover with hover
-  const handleMouseEnter = () => {
-    if (!disabled) {
-      openPopover();
-    }
-  };
-
+  // Desktop: use Popover opened by click. Hover-to-open is unreliable here —
+  // the dropdown is rendered in a portal with an offset gap, so leaving the
+  // trigger closes (and unmounts) the dropdown before the cursor reaches it.
+  // Click-to-open/persist sidesteps the hover gap entirely.
   return (
     <Popover
       opened={popoverOpened}
       onChange={(isOpen) => {
-        if (!isOpen) {
+        if (isOpen) openPopover();
+        else {
           closePopover();
           setSearchValue('');
         }
@@ -841,17 +834,14 @@ export function BaseModelInput({
           label={readableName}
           disabled={disabled}
           opened={popoverOpened}
-          onClick={() => undefined}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={closePopover}
+          onClick={() => {
+            if (disabled) return;
+            if (popoverOpened) closePopover();
+            else openPopover();
+          }}
         />
       </Popover.Target>
-      <Popover.Dropdown
-        p="sm"
-        className="max-h-[70vh] min-w-[280px] overflow-y-auto before:absolute before:-top-2 before:left-0 before:h-2 before:w-full"
-        onMouseEnter={openPopover}
-        onMouseLeave={closePopover}
-      >
+      <Popover.Dropdown p="sm" className="max-h-[70vh] min-w-[280px] overflow-y-auto">
         <BaseModelListContent
           value={value}
           recentItems={recentItems}
