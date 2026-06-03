@@ -16,6 +16,11 @@ import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import React, { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
+import { GeneratedRequestsProvider } from '~/components/ImageGeneration/GeneratedRequestsProvider';
+import {
+  SelectionProvider,
+  generatedImageSelectStore,
+} from '~/components/ImageGeneration/utils/generationImage.select';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { GenerationFormV2 } from '~/components/generation_v2';
@@ -85,6 +90,8 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
   );
 
   const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
+  // The Queue/Feed views share one workflow fetch + selection order via the provider.
+  const showResults = !isImageFeedSeparate && view !== 'generate';
   const tabEntries = Object.entries(tabs).filter(([key]) =>
     isImageFeedSeparate ? key !== 'generate' : true
   );
@@ -94,7 +101,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
   if (!isClient) return null;
 
   return (
-    <>
+    <SelectionProvider store={generatedImageSelectStore}>
       <SignalStatusNotification
         icon={<IconWifiOff size={20} stroke={2} />}
         // title={(status) => `Connection status: ${status}`}
@@ -185,8 +192,14 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
         </div>
         {view !== 'generate' && !isGeneratePage && <GeneratedImageActions />}
       </div>
-      <View />
-    </>
+      {showResults ? (
+        <GeneratedRequestsProvider>
+          <View />
+        </GeneratedRequestsProvider>
+      ) : (
+        <View />
+      )}
+    </SelectionProvider>
   );
 }
 
