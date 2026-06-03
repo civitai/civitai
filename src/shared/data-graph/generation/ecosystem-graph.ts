@@ -60,6 +60,7 @@ import { grokGraph } from './grok-graph';
 import { ernieGraph } from './ernie-graph';
 import { lensGraph } from './lens-graph';
 import { krea2Graph } from './krea2-graph';
+import { maiGraph } from './mai-graph';
 import { seedanceGraph } from './seedance-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
@@ -269,6 +270,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Ernie'] as const, graph: ernieGraph },
     { values: ['Lens'] as const, graph: lensGraph },
     { values: ['Krea2'] as const, graph: krea2Graph },
+    { values: ['MAI'] as const, graph: maiGraph },
     { values: ['OpenAI'] as const, graph: openaiGraph },
     // Video ecosystems - Wan family (ONE type branch for all Wan variants)
     {
