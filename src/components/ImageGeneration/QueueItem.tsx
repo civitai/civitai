@@ -871,7 +871,20 @@ function Model3DQueueCardOutputs({
     .find((t): t is { url?: string } => !!t);
 
   const showSpinner = pending || processing;
-  const isComplete = !pending && !processing;
+  // Terminal failure states — workflow won't produce a thumbnail. The
+  // orchestrator auto-refunds spend buzz on these, so surface that to the
+  // user instead of the ambiguous "No preview available yet".
+  const isFailed =
+    request.status === 'failed' ||
+    request.status === 'expired' ||
+    request.status === 'canceled';
+  const failureLabel =
+    request.status === 'expired'
+      ? 'Generation expired'
+      : request.status === 'canceled'
+      ? 'Generation canceled'
+      : 'Generation failed';
+  const isComplete = !pending && !processing && !isFailed;
 
   // Resolve the Model3D draft for this workflow. The PolyGen result handler
   // creates it server-side keyed on workflowId (idempotent), so we only need
@@ -937,6 +950,16 @@ function Model3DQueueCardOutputs({
             <Loader size={24} />
             <Text c="dimmed" size="xs" align="center">
               Generating 3D model…
+            </Text>
+          </div>
+        ) : isFailed ? (
+          <div className="flex flex-col items-center gap-2 px-4 text-center">
+            <IconAlertTriangleFilled size={24} className="text-red-5" />
+            <Text size="sm" fw={600} c="red.4">
+              {failureLabel}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Your Buzz has been refunded.
             </Text>
           </div>
         ) : (
