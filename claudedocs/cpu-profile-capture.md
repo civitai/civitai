@@ -26,9 +26,14 @@ armed from `src/instrumentation.node.ts`) uses the in-process `node:inspector`
 - **Zero steady-state overhead.** Nothing runs until the signal arrives.
 - **In-process** — does NOT require the inspector port (`:9229`) to be open.
 - **Safe** — a second signal during an in-flight capture is ignored; all work is
-  wrapped in try/catch so a profiling failure can never crash the process; the
-  capture timer is `unref`'d so it never blocks shutdown. Server-side (nodejs
-  runtime) only.
+  wrapped in try/catch so a profiling failure can never crash the process; an
+  invalid `CPU_PROFILE_SIGNAL` logs a warning and no-ops (it does not throw, so
+  it can never take down the OTEL bootstrap). The 25s capture timer is a normal
+  ref'd timer so the bounded capture actually fires even on an idle pod
+  (rehearsal/validation) — it cannot meaningfully delay shutdown given
+  `terminationGracePeriodSeconds: 60` + the 20s preStop. If a capture is
+  interrupted before the profile is written, a warning is logged (never silent).
+  Server-side (nodejs runtime) only.
 
 ### Signal choice (important)
 
@@ -48,7 +53,7 @@ that Kubernetes never sends. It is overridable via `CPU_PROFILE_SIGNAL`.
 
 | Env var               | Default     | Meaning                                  |
 | --------------------- | ----------- | ---------------------------------------- |
-| `CPU_PROFILE_SECONDS` | `25`        | Capture duration in seconds              |
+| `CPU_PROFILE_SECONDS` | `25`        | Capture duration in seconds (clamped to a max of 120) |
 | `CPU_PROFILE_SIGNAL`  | `SIGWINCH`  | Signal that triggers a capture           |
 | `CPU_PROFILE_DIR`     | `/tmp`      | Output directory (must be writable)      |
 
@@ -85,15 +90,29 @@ prints the exact filename and the retrieval command.
 ## How to retrieve
 
 `curl` is **absent** from the container, but `tar` is present, so `kubectl cp`
-works:
+works. Note `kubectl cp` strips/rejects a leading `/` on the source path, so the
+source is passed **without** the leading slash (this matches the path printed in
+the completion log line):
 
 ```bash
 FILE=$(kubectl exec -n civitai-dp-prod "$POD" -- sh -c 'ls -t /tmp/*.cpuprofile | head -1')
-kubectl cp "civitai-dp-prod/${POD}:${FILE}" "./$(basename "$FILE")"
+# strip the leading slash from the source path for kubectl cp:
+kubectl cp "civitai-dp-prod/${POD}:${FILE#/}" "./$(basename "$FILE")"
 ```
 
-(`kubectl cp` strips a leading `/`; if it complains, pass the path without the
-leading slash: `civitai-dp-prod/${POD}:tmp/...`.)
+(The completion log prints the source with the slash already stripped and a
+`<namespace>` placeholder — swap in the real namespace, which is
+`civitai-dp-prod` for prod, but differs for `civitai-next` / `civitai-app` /
+PR previews.)
+
+## Cleanup
+
+`.cpuprofile` files persist in the pod's `/tmp` until the pod restarts. After
+retrieving, remove them so they don't accumulate:
+
+```bash
+kubectl exec -n civitai-dp-prod "$POD" -- rm -f /tmp/cpu-*.cpuprofile
+```
 
 ## How to view
 
