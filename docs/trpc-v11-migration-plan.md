@@ -215,3 +215,38 @@ Only after Phases 0–2 are green and merged.
 **Critical-path total ≈ 4–6 focused days**, with Phase 3 trickling in afterward. The
 type-checker carries Phases 1–2; the query-callback removals and Phase-3 cycle errors are the
 parts that need human eyes, not the compiler.
+
+## Phase 3 — `router.lazy()` (branch `trpc-v11-lazy-routers`)
+
+Converted all **92 routers** in [src/server/routers/index.ts](../src/server/routers/index.ts) to
+`lazy(() => import('<path>').then((m) => m.<router>))`. Single-file change — the router files keep
+their named exports (the `lazy()` overload accepts `() => Promise<TRouter>`). **Typecheck stays
+clean**: `lazy()` preserves the `AppRouter` type inference via `DecorateCreateRouterOptions`'
+`Lazy<Router<…>>` branch, so the client types don't collapse.
+
+### Cycle audit (the documented hazard)
+Lazy loading reorders module evaluation and can surface latent circular deps as runtime
+`TypeError: Cannot read properties of undefined`. The existing `circular-dependency-plugin` block
+in `next.config.mjs` only scans the **client** bundle (`!options.isServer`), so it would miss the
+**server** cycles that matter here. A static audit (12 agents, all 92 routers) found **11 unique
+import cycles**; **86 routers are cycle-free**.
+
+**All 11 are harmless under lazy loading** — verified by hand for the two the audit initially
+flagged "high":
+- `generation.schema ↔ generation.constants` — the back-edge is **`import type`** (erased at
+  runtime) → no runtime cycle → `generationSamplers` is initialized before the schema spreads it.
+- `image.service ↔ user.service` — a real runtime cycle, but **neither side reads the cross-import
+  at module top-level** (`deleteImageById` is used in a function body; `getBasicDataForUsers` /
+  `getCosmeticsForUsers` / `getProfilePicturesForUsers` likewise). Safe in both eval orders.
+
+The other 9 (medium/low: `stripe↔buzz↔user`, `research.router↔research.webhooks`, and several
+`image.service↔{post,report,collection,cosmetic,new-order,tagsOnImageNew}.service`) are all
+function-body-only cycles — harmless now, but **latent hazards**: if any of those modules later
+adds module-scope code that reads a cross-import, it will throw under lazy eval. The fix pattern is
+the established one ([version-ids.ts](../src/shared/data-graph/generation/version-ids.ts)): extract
+the shared value into a zero-import leaf module. **Not applied** — out of scope for the lazy
+conversion and unnecessary for correctness.
+
+**No cycle fixes were required.** Still recommended before merge: a runtime smoke-test (boot +
+exercise the heavy routes — image feed, model, generation, comics, stripe) since static analysis
+isn't a substitute for actually loading each lazy chunk once.
