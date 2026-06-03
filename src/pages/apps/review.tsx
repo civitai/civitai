@@ -636,7 +636,7 @@ function ReviewModal({
   const manifest = request.manifest as Record<string, unknown>;
   const fs = (request.fileSummary ?? {}) as FileSummary;
   const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
-  const busy = approveMut.isLoading || rejectMut.isLoading;
+  const busy = approveMut.isPending || rejectMut.isPending;
 
   const approved = mode === 'approved' ? (request as ApprovedRequest) : null;
   const rejected = mode === 'rejected' ? (request as RejectedRequest) : null;
@@ -831,7 +831,7 @@ function ReviewModal({
                   })
                 }
                 disabled={busy || rejectionReason.trim().length < 10}
-                loading={rejectMut.isLoading}
+                loading={rejectMut.isPending}
               >
                 Reject
               </Button>
@@ -869,7 +869,7 @@ function ReviewModal({
                   })
                 }
                 disabled={busy}
-                loading={approveMut.isLoading}
+                loading={approveMut.isPending}
               >
                 Approve + build
               </Button>

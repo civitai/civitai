@@ -364,7 +364,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
             </Button>
             <Button
               leftSection={<IconCheck size={16} />}
-              loading={upsertMutation.isLoading || deleteMutation.isLoading}
+              loading={upsertMutation.isPending || deleteMutation.isPending}
               onClick={handleSave}
             >
               Save

@@ -229,8 +229,8 @@ export default function SubmitAppPage() {
   const checkingPending = !!previewedSlug && pendingQuery.isFetching;
   const busy =
     encoding ||
-    submitMutation.isLoading ||
-    withdrawMutation.isLoading ||
+    submitMutation.isPending ||
+    withdrawMutation.isPending ||
     !!submitted ||
     checkingPending;
   const canSubmit = !!bundle && previewOk && !busy;

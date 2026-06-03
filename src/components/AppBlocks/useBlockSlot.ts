@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import { trpc } from '~/utils/trpc';
 import { computeSlotReservation } from './slotReservation';
 import type { SlotReservation } from './slotReservation';
@@ -55,7 +56,7 @@ export function useBlockSlot({
       // Keep the prior result visible across a refetch so the slot's reserved
       // height doesn't collapse to 0 (re-introducing the layout shift) while
       // the background refetch is in flight.
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
     }
   );
   const installs = Array.isArray(query.data) ? (query.data as BlockInstall[]) : [];

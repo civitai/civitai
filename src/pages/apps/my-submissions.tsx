@@ -273,7 +273,7 @@ export default function MySubmissionsPage() {
                               onWithdraw={() =>
                                 withdrawMutation.mutate({ publishRequestId: s.id })
                               }
-                              busy={withdrawMutation.isLoading}
+                              busy={withdrawMutation.isPending}
                             />
                           </Table.Td>
                         </Table.Tr>

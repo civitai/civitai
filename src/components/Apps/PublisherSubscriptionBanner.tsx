@@ -109,7 +109,7 @@ export function PublisherSubscriptionBanner({ modelId, modelType }: Props) {
                 size="xs"
                 variant="default"
                 leftSection={<IconX size={12} />}
-                loading={installMutation.isLoading || toggleMutation.isLoading}
+                loading={installMutation.isPending || toggleMutation.isPending}
                 onClick={() =>
                   openConfirmModal({
                     title: `Disable "${sub.manifest.name ?? sub.blockId}" for this model only?`,
