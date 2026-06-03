@@ -190,6 +190,9 @@ export const ECO = {
   // Krea AI
   Krea2: 70,
 
+  // Microsoft
+  MAI: 71,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -590,6 +593,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 150,
   },
 
+  // Microsoft Family (familyId: 21)
+  {
+    id: ECO.MAI,
+    key: 'MAI',
+    displayName: 'MAI',
+    familyId: 21,
+    sortOrder: 160,
+  },
+
   // HiDream Family (familyId: 19)
   {
     id: ECO.HiDream,
@@ -861,6 +873,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Krea 2 - checkpoint only (locked, no LoRA support)
   { ecosystemId: ECO.Krea2, supportType: 'generation', modelTypes: checkpointOnly },
 
+  // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
+  { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
+
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
 
@@ -1018,6 +1033,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Krea2,
     defaults: {
       model: { id: 2983022 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.MAI,
+    defaults: {
+      model: { id: 3002140 },
       modelLocked: true,
     },
   },
@@ -1777,6 +1799,7 @@ export const BM = {
   HappyHorse: 85,
   Lens: 88,
   Krea2: 89,
+  MAI: 90,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2018,6 +2041,11 @@ export const licenses: LicenseRecord[] = [
     name: 'LTX-2 Community License Agreement',
     url: 'https://huggingface.co/Lightricks/LTX-2.3/blob/main/LICENSE',
   },
+  {
+    id: 36,
+    name: 'Microsoft AI Terms of Use',
+    url: 'https://www.microsoft.com/en-us/servicesagreement',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2126,6 +2154,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 20,
     name: 'Krea AI',
     description: "Krea AI's in-house image generation models",
+  },
+  {
+    id: 21,
+    name: 'Microsoft',
+    description: "Microsoft AI's MAI family of image generation and editing models",
   },
 ];
 
@@ -2403,6 +2436,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Lumina,
     licenseId: 13,
+  },
+
+  // MAI
+  {
+    id: BM.MAI,
+    name: 'MAI',
+    description: "Microsoft's photorealistic text-to-image and image-editing model",
+    type: 'image',
+    ecosystemId: ECO.MAI,
+    licenseId: 36,
   },
 
   // Mochi

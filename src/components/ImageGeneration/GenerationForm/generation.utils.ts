@@ -1,7 +1,10 @@
 import type React from 'react';
 import { useCallback, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { generationStatusSchema } from '~/server/schema/generation.schema';
+import {
+  generationStatusDefaultMessage,
+  generationStatusSchema,
+} from '~/server/schema/generation.schema';
 import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
 import type { NormalizedWorkflowMetadata } from '~/server/services/orchestrator';
 import { showErrorNotification } from '~/utils/notifications';
@@ -20,7 +23,9 @@ import type {
 //   persist(() => ({}), { name: 'generation-form-2', version: 0 })
 // );
 
-const defaultServiceStatus = generationStatusSchema.parse({});
+// Mirror the public getStatus shape: it strips the moderator-only `updatedBy`
+// stamp, so the placeholder must match that stripped shape.
+const { updatedBy, ...defaultServiceStatus } = generationStatusSchema.parse({});
 export function useGetGenerationStatus() {
   return trpc.generation.getStatus.useQuery(undefined, {
     gcTime: 60,
@@ -33,10 +38,21 @@ export const useGenerationStatus = () => {
   const { data = defaultServiceStatus, isLoading } = useGetGenerationStatus();
 
   return useMemo(() => {
-    if (currentUser?.isModerator) data.available = true; // Always have generation available for mods
     const tier = currentUser?.tier ?? 'free';
+    const isModerator = currentUser?.isModerator ?? false;
+    // Resolve the mode to an effective available/message for THIS user.
+    // Moderators always bypass.
+    let available = true;
+    let message = data.message;
+    if (
+      !isModerator &&
+      (data.mode === 'disabled' || (data.mode === 'memberOnly' && tier === 'free'))
+    ) {
+      available = false;
+      message = data.message ?? generationStatusDefaultMessage;
+    }
     const limits = data.limits[tier];
-    return { ...data, tier, limits, isLoading };
+    return { ...data, available, message, tier, limits, isLoading };
   }, [data, currentUser, isLoading]);
 };
 

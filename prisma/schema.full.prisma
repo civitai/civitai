@@ -397,9 +397,8 @@ model User {
   createdAt               DateTime               @default(now())
   deletedAt               DateTime?
   subscriptions           CustomerSubscription[]
-  mutedAt                 DateTime? /// Updated via trigger
+  mutedAt                 DateTime? /// Set on moderator mute-confirmation; cleared via trigger on unmute
   muted                   Boolean                @default(false)
-  muteConfirmedAt         DateTime?
   muteExpiresAt           DateTime? /// For timed mutes from strike escalation
   bannedAt                DateTime?
   autoplayGifs            Boolean?               @default(true)

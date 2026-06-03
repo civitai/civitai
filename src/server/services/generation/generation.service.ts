@@ -15,6 +15,7 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   CheckResourcesCoverageSchema,
   GenerationStatus,
+  GenerationStatusMode,
   GetGenerationDataSchema,
   GetGenerationResourcesInput,
   ResolveImageMetaInput,
@@ -246,7 +247,11 @@ export async function getGenerationStatus() {
   return status as GenerationStatus;
 }
 
-export async function setGenerationStatus(input: { available: boolean; message?: string | null }) {
+export async function setGenerationStatus(input: {
+  mode: GenerationStatusMode;
+  message?: string | null;
+  updatedBy: { id: number; username: string };
+}) {
   // Read raw and throw on sysRedis error. We MUST NOT use the fail-open
   // getGenerationStatus() here: if its read failed open to '{}' and the
   // subsequent hSet succeeded, schema defaults (charge: true, limits:
@@ -255,17 +260,30 @@ export async function setGenerationStatus(input: { available: boolean; message?:
   // retries after sysRedis recovers.
   const raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
   const current = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
-  const next: GenerationStatus = {
-    ...current,
-    available: input.available,
-    message: input.message ?? null,
+  const stamp = {
+    id: input.updatedBy.id,
+    username: input.updatedBy.username,
+    at: new Date().toISOString(),
+  };
+  // Record the moderator when generation moves INTO a restricted mode
+  // (memberOnly/disabled). Returning to 'enabled' preserves the prior stamp —
+  // we don't care who re-enables.
+  const restricting = input.mode !== 'enabled' && input.mode !== current.mode;
+  const persisted = {
+    mode: input.mode,
+    // Persist the message independently of the mode: `undefined` (a mode-only
+    // save) keeps the stored message; `null`/string is an explicit edit.
+    message: input.message === undefined ? current.message : input.message,
+    updatedBy: restricting ? stamp : current.updatedBy,
+    limits: current.limits,
+    charge: current.charge,
   };
   await sysRedis.hSet(
     REDIS_SYS_KEYS.SYSTEM.FEATURES,
     REDIS_SYS_KEYS.GENERATION.STATUS,
-    JSON.stringify(next)
+    JSON.stringify(persisted)
   );
-  return next;
+  return generationStatusSchema.parse(persisted);
 }
 
 export type RemixOfProps = {

@@ -177,13 +177,17 @@ export const upsertBountyEntry = async ({
         });
       }
 
-      if (entry.userId) {
-        await userBountyEntryCountCache.refresh(entry.userId);
-      }
-
       return entry;
     }
   });
+
+  // Count-cache refresh hits Redis — run after commit, off the txn budget.
+  // Only on create (!id): updating an entry's description doesn't change the
+  // user's entry count, so the update path never refreshed it (and shouldn't).
+  // (result is BountyEntry | null — the txn returns null when an update finds nothing.)
+  if (!id && result?.userId) {
+    await userBountyEntryCountCache.refresh(result.userId);
+  }
 
   if (imagesToIngest.length > 0) {
     for (const img of imagesToIngest) {
@@ -357,6 +361,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
             // Process all transaction IDs in parallel for better performance
             const txResults = await Promise.allSettled(
               updatedBenefactor.buzzTransactionId.map(async (txId) => {
+                // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): Buzz API read inside the txn (award flow). Part of the financial settlement that needs a domain-owner refactor with compensation; left in-txn for now.
                 const data = await getMultiAccountTransactionsByPrefix(txId);
 
                 logToAxiom({
@@ -403,6 +408,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
                 externalTransactionId: `bounty-award-${id}-${accountType}`,
               }));
 
+              // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): Buzz settlement inside the txn (award flow). Needs charge→tx→refund-on-failure compensation; left for a domain-owner change.
               await createBuzzTransactionMany(transactions);
             } else {
               throw throwBadRequestError('No valid transactions found for multi-account award');
@@ -438,6 +444,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
             });
           } else {
             // Fallback: No transaction IDs recorded (legacy data)
+            // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): Buzz settlement inside the txn (award flow, legacy fallback). Needs compensation refactor; left for a domain-owner change.
             await createBuzzTransaction({
               fromAccountId: 0,
               toAccountId: entry.userId,
