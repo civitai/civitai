@@ -118,14 +118,18 @@ export const stableDiffusionGraph = new DataGraph<
   )
   .node('clipSkip', sliderNode({ min: 1, max: 3, defaultValue: 2 }))
   // ControlNets — SD1 has its own preprocessor list; SDXL/Pony/Illustrious/NoobAI/SDXLDistilled share SDXL's.
+  // Only available for txt2img workflows.
   .node(
     'controlNets',
     (ctx) => {
       const preprocessors =
         ctx.ecosystem === 'SD1' ? sd1ControlNetPreprocessors : sdxlControlNetPreprocessors;
-      return controlNetsNode({ preprocessors, limit: CONTROLNET_LIMIT });
+      return {
+        ...controlNetsNode({ preprocessors, limit: CONTROLNET_LIMIT }),
+        when: ctx.workflow === 'txt2img',
+      };
     },
-    ['ecosystem']
+    ['ecosystem', 'workflow']
   )
   .node('seed', seedNode())
   // Denoise is shown for face-fix/hires-fix (always) or img2img/txt2img when images are present

@@ -41,12 +41,21 @@ import {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { withSpan } from '~/server/utils/otel-helpers';
+import { withSpan, withDetachedSpan } from '~/server/utils/otel-helpers';
 import {
+  FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
+  MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
+  MeiliCallTimeoutError,
+  MeilisearchFetchError,
   SEARCH_ACTOR_HEADER,
+  failfastReasonForStatus,
   fetchDocumentsAbortable,
   getMetricsSearchClient,
+  isFailfastStatus,
+  meiliFetchFailfastTotal,
   metricsSearchClient,
+  withMeili,
+  wrapMeilisearchClientWithLimiter,
 } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter, registerCounterWithLabels } from '~/server/prom/client';
@@ -2051,19 +2060,39 @@ export const getAllImagesIndex = async (
 
   const currentUserId = user?.id;
 
-  const {
-    data: searchResults,
-    nextCursor: searchNextCursor,
-    source: searchSource,
-  } = await withSpan('image:getAllImagesIndex:search', () =>
-    getImagesFromSearch({
-      ...input,
-      currentUserId,
-      isModerator: user?.isModerator,
-      offset,
-      entry,
-    })
-  );
+  let searchResults: Awaited<ReturnType<typeof getImagesFromSearch>>['data'];
+  let searchNextCursor: Awaited<ReturnType<typeof getImagesFromSearch>>['nextCursor'];
+  let searchSource: Awaited<ReturnType<typeof getImagesFromSearch>>['source'];
+  try {
+    ({
+      data: searchResults,
+      nextCursor: searchNextCursor,
+      source: searchSource,
+    } = await withSpan('image:getAllImagesIndex:search', () =>
+      getImagesFromSearch({
+        ...input,
+        currentUserId,
+        isModerator: user?.isModerator,
+        offset,
+        entry,
+      })
+    ));
+  } catch (err) {
+    // Meilisearch saturation / timeout on the tRPC hot path (image.getInfinite).
+    // Surface as TRPCError TIMEOUT so the client returns 408 fast instead of
+    // bleeding until Traefik's 30s router timeout — which is what backed up
+    // the event loop and tipped api-primary into kubelet SIGKILL on 2026-05-29.
+    // tRPC v10 has no SERVICE_UNAVAILABLE / 503 code; TIMEOUT is the closest
+    // semantic match.
+    if (err instanceof MeiliCallTimeoutError) {
+      throw new TRPCError({
+        code: 'TIMEOUT',
+        message: 'Image search is temporarily overloaded — please retry.',
+        cause: err,
+      });
+    }
+    throw err;
+  }
 
   if (!searchResults.length) {
     return {
@@ -2488,8 +2517,14 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
 
 export async function getImagesFromSearch(input: ImageSearchInput) {
   let searchFn = getImagesFromSearchPreFilter;
-  const fliptClient = await FliptSingleton.getInstance();
-  if (fliptClient) {
+  // Wrap Flipt feature-flag evaluation so the trace shows whether per-request
+  // flag fetch is contributing to the parent span's latency. Includes the
+  // FliptSingleton.getInstance() handshake plus the three evaluateBoolean
+  // calls (FEED_POST_FILTER, MEILI_CACHE_OPS, MEILI_USER_OWN_PASS).
+  input = await withSpan('image:flipt:eval', async () => {
+    const fliptClient = await FliptSingleton.getInstance();
+    if (!fliptClient) return input;
+
     const flag = fliptClient.evaluateBoolean({
       flagKey: FLIPT_FEATURE_FLAGS.FEED_POST_FILTER,
       entityId: input.currentUserId?.toString() || 'anonymous',
@@ -2508,19 +2543,19 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       entityId: input.currentUserId?.toString() || 'anonymous',
       context: {},
     });
-    input = {
+    return {
       ...input,
       meiliCacheOps: cacheOpsFlag.enabled,
       meiliUserOwnPass: userOwnPassFlag.enabled,
     };
-  }
+  });
 
   // Check BitDex mode (off / shadow / primary)
   // Use buildFliptContext (same as comics) so both 'moderators' (isModerator=true)
   // and 'testers' (userId in list) segments match correctly.
   // Reuse the controller's pre-evaluated value when present (it queries the same
   // flag with the same entityId+context) to avoid a duplicate Flipt round-trip.
-  const bitdexMode =
+  const bitdexMode = await withSpan('image:flipt:bitdexMode', async () =>
     input.bitdexMode !== undefined
       ? input.bitdexMode
       : await getFliptVariant(
@@ -2531,7 +2566,8 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
               ? ({ id: input.currentUserId, isModerator: input.isModerator } as SessionUser)
               : undefined
           )
-        );
+        )
+  );
   console.log('[BitDex] flipt mode:', JSON.stringify(bitdexMode), 'user:', input.currentUserId);
 
   // Primary mode: bypass Meili entirely, query BitDex directly with full docs.
@@ -2539,7 +2575,9 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   // Post-filter re-adds the user's own private/blocked/poi/unpublished content.
   if (bitdexMode === 'primary') {
     try {
-      const result = await fetchBitdexPrimary(input);
+      const result = await withSpan('image:bitdex:primary', { 'bitdex.mode': 'primary' }, () =>
+        fetchBitdexPrimary(input)
+      );
       if (result) return { ...result, source: 'bitdex' as const };
       console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
     } catch (err) {
@@ -2554,33 +2592,41 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 
   // Shadow mode: run the same fetchBitdexPrimary path (cacheable filters + second pass)
   // that primary uses, compare results against Meili, but serve Meili results.
+  //
+  // The shadow span is detached (its own root with a Link back to the user-request
+  // trace) because shadow work intentionally outlives the user-facing return.
+  // Keeping it as an active child of image:getAllImagesIndex:search would produce
+  // a child span whose end-time is past its parent's, which confuses parent-
+  // duration interpretation in trace UIs.
   if (bitdexMode === 'shadow') {
     const meiliElapsed = Date.now() - meiliStart;
-    fetchBitdexPrimary(input)
-      .then((bitdexResult) => {
-        if (bitdexResult) {
-          compareBitdexResults({
-            bitdexIds: bitdexResult.data.map((d) => d.id),
-            meiliIds: result.data.map((i: { id: number }) => i.id),
-            bitdexTotalMatched: bitdexResult.data.length,
-            meiliTotalMatched: result.data.length,
-            bitdexElapsedMs: 0, // timing not available from fetchBitdexPrimary
-            meiliElapsedMs: meiliElapsed,
-            sort: input.sort ?? 'Newest',
-            hasPeriod: !!input.period,
-            hasFilters: !!(
-              input.tags?.length ||
-              input.types?.length ||
-              input.userId ||
-              input.withMeta ||
-              input.fromPlatform ||
-              input.baseModels?.length ||
-              input.postId
-            ),
-          });
-        }
-      })
-      .catch((err) => recordBitdexError(err));
+    void withDetachedSpan('image:bitdex:shadow', { 'bitdex.mode': 'shadow' }, () =>
+      fetchBitdexPrimary(input)
+        .then((bitdexResult) => {
+          if (bitdexResult) {
+            compareBitdexResults({
+              bitdexIds: bitdexResult.data.map((d) => d.id),
+              meiliIds: result.data.map((i: { id: number }) => i.id),
+              bitdexTotalMatched: bitdexResult.data.length,
+              meiliTotalMatched: result.data.length,
+              bitdexElapsedMs: 0, // timing not available from fetchBitdexPrimary
+              meiliElapsedMs: meiliElapsed,
+              sort: input.sort ?? 'Newest',
+              hasPeriod: !!input.period,
+              hasFilters: !!(
+                input.tags?.length ||
+                input.types?.length ||
+                input.userId ||
+                input.withMeta ||
+                input.fromPlatform ||
+                input.baseModels?.length ||
+                input.postId
+              ),
+            });
+          }
+        })
+        .catch((err) => recordBitdexError(err))
+    );
   }
 
   return { ...result, source: 'meili' as const };
@@ -2607,14 +2653,28 @@ export async function getImagesFromFeedSearch(
     }
 
     const feed = new ImagesFeed(
-      ({ apiKey, host }: { apiKey: string; host: string }) =>
-        new MeiliSearch({
+      ({ apiKey, host }: { apiKey: string; host: string }) => {
+        const client = new MeiliSearch({
           host,
           apiKey,
           requestConfig: input.actor
             ? { headers: { [SEARCH_ACTOR_HEADER]: input.actor } }
             : undefined,
-        }) as IMeilisearch,
+        });
+        // Wrap the returned IMeilisearch so that only the SDK calls inside
+        // event-engine-common's queryDocuments / populate go through
+        // withMeili('search'). Without this narrow scope, the previous wrap
+        // covered ALL of populatedQuery() — including Postgres / ClickHouse /
+        // Redis work in populateDocuments — which (a) falsely attributed
+        // slow DB queries as Meili timeouts and (b) held a Meili semaphore
+        // slot during non-Meili work, starving real Meili callers.
+        //
+        // NOTE: This is defense-in-depth. Verified hot path on 2026-05-29
+        // is getImagesFromSearch (above), not this feed path (REST-only,
+        // 0 errors/15min). Keeping this wrap so a future traffic-shift
+        // doesn't expose us again.
+        return wrapMeilisearchClientWithLimiter(client) as IMeilisearch;
+      },
       clickhouse as IClickhouseClient,
       pgDbWrite as IDbClient,
       new MetricService(clickhouse as IClickhouseClient, redis as unknown as IRedisClient),
@@ -2632,6 +2692,9 @@ export async function getImagesFromFeedSearch(
       enableExistenceCheck,
     };
 
+    // No outer withMeili() here — the wrap now lives on the SDK calls inside
+    // the client wrapper above. populatedQuery() does DB+CH+Redis work that
+    // should NOT consume a Meili semaphore slot.
     const feedResult = await feed.populatedQuery(feedInput as FeedQueryInput<ImageQueryInput>);
 
     // Transform PopulatedImage to match getAllImagesIndex return type
@@ -2703,6 +2766,17 @@ export async function getImagesFromFeedSearch(
     };
   } catch (err) {
     console.error('Error in getImagesFromFeedSearch:', err);
+    // Meili saturation / timeout → fail fast as TIMEOUT (HTTP 408) so the
+    // caller gets a fast, retryable response instead of bleeding 30s while
+    // Traefik gives up. tRPC v10 has no SERVICE_UNAVAILABLE / 503 code, so
+    // TIMEOUT (the closest semantic match) is used here.
+    if (err instanceof MeiliCallTimeoutError) {
+      throw new TRPCError({
+        code: 'TIMEOUT',
+        message: 'Image search is temporarily overloaded — please retry.',
+        cause: err,
+      });
+    }
     throw err;
   }
 }
@@ -2785,11 +2859,21 @@ async function fetchMeiliUserOwnPass(
   };
 
   try {
-    const { results } = await metricsSearchClient
-      .index(METRICS_SEARCH_INDEX)
-      .getDocuments<ImageMetricsSearchIndexRecord>(request);
+    // Narrow withMeili wrap to the SDK call only — this runs on the same hot
+    // path as the main pre-filter query and shares the same brownout risk.
+    const { results } = await withMeili('metricsSearch', () =>
+      metricsSearchClient!
+        .index(METRICS_SEARCH_INDEX)
+        .getDocuments<ImageMetricsSearchIndexRecord>(request)
+    );
     return results;
   } catch (err) {
+    // MeiliCallTimeoutError bubbles up so the parent prefilter call's outer
+    // try/catch can attribute it correctly and surface a 408. fetchMeili
+    // UserOwnPass is "best-effort enrichment" — if it times out independently
+    // (not part of the main race), we'd rather fail the whole request than
+    // silently lose the user's own private content.
+    if (err instanceof MeiliCallTimeoutError) throw err;
     console.error('fetchMeiliUserOwnPass error:', err);
     return [];
   }
@@ -3285,22 +3369,30 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // Only runs on the first page (no cursor/entry/offset) to keep merge simple.
     const runUserOwnPass = !!input.meiliUserOwnPass && !!currentUserId && !entry && !offset;
 
-    // Use the abortable raw fetch when a signal is available so client
-    // disconnects (e.g. the feed's slow-fetch timeout) actually cancel the
-    // underlying Meili request. The meilisearch-js client on 0.33/0.34 doesn't
-    // expose signal on getDocuments.
+    // Always use the abortable raw fetch path. Two reasons:
+    //   1. Client disconnect: a caller-supplied `input.signal` still cancels
+    //      the underlying request as before.
+    //   2. Hard local deadline: fetchDocumentsAbortable() now races against a
+    //      5s default timer (FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS). Before this,
+    //      the non-signal branch fell through to the SDK getDocuments, which
+    //      meilisearch-js 0.33/0.34 does NOT cancel — the only protection was
+    //      withMeili()'s 2.5s wrapper timer, with the orphan SDK promise still
+    //      running. Routing everything through fetchDocumentsAbortable gives
+    //      us one code path with a real abort, regardless of whether the
+    //      caller passed a signal.
+    //
+    // This is the hot tRPC path
+    // (image.getInfinite → getInfiniteImagesHandler → getAllImagesIndex →
+    //  this prefilter). Verification on 2026-05-29 showed this is where the
+    // 374-error/15min Meili bleed lives, NOT in getImagesFromFeedSearch.
     const [mainResult, userOwnHits] = await Promise.all([
       withSpan('image:meili:getDocuments', () =>
-        input.signal
-          ? fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(METRICS_SEARCH_INDEX, request, {
-              host: env.METRICS_SEARCH_HOST as string,
-              apiKey: env.METRICS_SEARCH_API_KEY,
-              signal: input.signal,
-              actor,
-            })
-          : (actor ? getMetricsSearchClient(actor) : metricsSearchClient)!
-              .index(METRICS_SEARCH_INDEX)
-              .getDocuments<ImageMetricsSearchIndexRecord>(request)
+        fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(METRICS_SEARCH_INDEX, request, {
+          host: env.METRICS_SEARCH_HOST as string,
+          apiKey: env.METRICS_SEARCH_API_KEY,
+          signal: input.signal,
+          actor,
+        })
       ),
       runUserOwnPass
         ? fetchMeiliUserOwnPass(input, nsfwLevelField, userId)
@@ -4165,7 +4257,9 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   };
 
   const actor = input.actor;
-  const actorClient = actor ? getMetricsSearchClient(actor) : metricsSearchClient;
+  // (No actorClient pinning needed here: the iteration loop now runs through
+  // fetchDocumentsAbortable, which propagates `actor` via the X-Search-Actor
+  // header on every request directly.)
 
   // User-own-pass mode: kick off the parallel user-scoped query up front. Only
   // on the first page (no offset) to keep the merge simple.
@@ -4185,22 +4279,92 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       request.limit = requestLimit;
       request.offset = currentOffset;
 
-      // See PreFilter path for why we fall back to raw fetch when a signal is
-      // provided.
-      const { results } = input.signal
-        ? await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
-            METRICS_SEARCH_INDEX,
-            request,
-            {
-              host: env.METRICS_SEARCH_HOST as string,
-              apiKey: env.METRICS_SEARCH_API_KEY,
-              signal: input.signal,
-              actor,
-            }
-          )
-        : await actorClient!
-            .index(METRICS_SEARCH_INDEX)
-            .getDocuments<ImageMetricsSearchIndexRecord>(request);
+      // Always use the abortable raw fetch path so every iteration races
+      // against the same 5s hard deadline (FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS).
+      // See PreFilter path for the rationale — meilisearch-js 0.33/0.34
+      // getDocuments() can't be cancelled, so signal-less requests used to
+      // hang the event loop on a slow backend.
+      //
+      // Graceful break-on-fast-fail: if a single iteration hits the local
+      // deadline OR the upstream signals unavailability (408/5xx), return
+      // whatever's already accumulated rather than failing the whole request.
+      // iteration 1 → empty page; iteration ≥ 2 → degraded (partial) page
+      // with nextCursor cleared further below. Downstream handles either
+      // shape fine; the alternative (throwing) would hand the user a 5xx
+      // instead of a usable feed, and clients would retry → load amplifies
+      // → cascade sustains.
+      //
+      // Status-code rationale:
+      //   - 408 (upstream-timeout)  → Meilisearch backend page-cache thrash
+      //   - 503 (upstream-overload) → civitai-feeds-proxy shed (MEILI_MAX_CONCURRENT)
+      //   - other 5xx               → upstream brownout / Traefik 504 / etc.
+      //   - 4xx-other (400/401/403) → real client error, MUST bubble up
+      let results: ImageMetricsSearchIndexRecord[];
+      try {
+        const fetchResult = await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
+          METRICS_SEARCH_INDEX,
+          request,
+          {
+            host: env.METRICS_SEARCH_HOST as string,
+            apiKey: env.METRICS_SEARCH_API_KEY,
+            signal: input.signal,
+            actor,
+          }
+        );
+        results = fetchResult.results;
+      } catch (e) {
+        const err = e as Error & { name?: string; message?: string };
+        const isLocalTimeout =
+          err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
+          (err?.name === 'AbortError' &&
+            (err as { cause?: { message?: string } })?.cause?.message ===
+              FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
+        if (isLocalTimeout) {
+          meiliFetchFailfastTotal.inc({
+            route: 'getImagesFromSearchPostFilter',
+            iteration: String(iteration),
+            reason: 'local-timeout',
+          });
+          // Fall out of the iteration loop with whatever's already in
+          // accumulatedHits. The nextCursor / merge logic below handles the
+          // partial / empty case (nextCursor cleared when mergedHits.length
+          // <= limit).
+          break;
+        }
+        // Upstream-side fast-fail: 408 (proxy/backend timeout) or 5xx
+        // (overload / brownout / bad gateway). Same graceful-break shape
+        // as the local-timeout path; 4xx-other re-throws below.
+        if (e instanceof MeilisearchFetchError && isFailfastStatus(e.status)) {
+          meiliFetchFailfastTotal.inc({
+            route: 'getImagesFromSearchPostFilter',
+            iteration: String(iteration),
+            reason: failfastReasonForStatus(e.status),
+          });
+          break;
+        }
+        // Wrapper-side fail-fast: runWithLimiter said no before the request
+        // touched the network — either the per-backend circuit breaker is
+        // OPEN / HALF_OPEN-busy or the wrapper's MEILI_CALL_TIMEOUT_MS timer
+        // fired on an SDK call. Both surface as MeiliCallTimeoutError and
+        // both indicate the same operational signal: "upstream is unhealthy,
+        // stop iterating". Without this branch the error re-throws and the
+        // user gets a 5xx → retries → the 900/day api-primary restart wave
+        // that remained after PR #2371 closed the HTTP-status paths.
+        //
+        // Branch order matters: this comes AFTER the local-timeout and
+        // MeilisearchFetchError checks (which are sibling failure modes
+        // surfaced through fetchDocumentsAbortable) and BEFORE the generic
+        // re-throw, so unrelated Errors still bubble up unchanged.
+        if (e instanceof MeiliCallTimeoutError) {
+          meiliFetchFailfastTotal.inc({
+            route: 'getImagesFromSearchPostFilter',
+            iteration: String(iteration),
+            reason: MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
+          });
+          break;
+        }
+        throw e;
+      }
 
       // If no more results, break the loop
       if (results.length === 0) {
@@ -5507,9 +5671,6 @@ export const createEntityImages = async ({
       const tasks = batch.map((image) => () => createImageResources({ imageId: image.id, tx }));
       await limitConcurrency(tasks, 10);
     }
-
-    const tasks = batch.map((image) => () => ingestImage({ image, tx }));
-    await limitConcurrency(tasks, 10);
   }
 
   if (entityType && entityId) {
@@ -5784,6 +5945,13 @@ export const updateEntityImages = async ({
   );
 
   const links = [...newLinkedImages.map((i) => i.id)];
+  let imageRecords: {
+    id: number;
+    url: string;
+    type: MediaType;
+    width: number | null;
+    height: number | null;
+  }[] = [];
 
   if (newImages.length > 0) {
     await dbClient.image.createMany({
@@ -5795,7 +5963,7 @@ export const updateEntityImages = async ({
       })),
     });
 
-    const imageRecords = await dbClient.image.findMany({
+    imageRecords = await dbClient.image.findMany({
       select: { id: true, url: true, type: true, width: true, height: true },
       where: {
         url: { in: newImages.map((i) => i.url) },
@@ -5813,8 +5981,6 @@ export const updateEntityImages = async ({
       if (shouldAddImageResources) {
         await Promise.all(batch.map((image) => createImageResources({ imageId: image.id, tx })));
       }
-
-      await Promise.all(batch.map((image) => ingestImage({ image, tx })));
     }
   }
 
@@ -5828,6 +5994,8 @@ export const updateEntityImages = async ({
       })),
     });
   }
+
+  return imageRecords;
 };
 
 const imageReviewQueueJoinMap = {
@@ -6112,6 +6280,62 @@ export const getImageModerationReviewQueue = async ({
     }
   }
 
+  // For the appeal queue, surface the report(s) that triggered the original moderation.
+  // Capped at 5 per image, newest first, so spam-report patterns are visible.
+  type AppealReport = {
+    id: number;
+    reason: string;
+    details: Prisma.JsonValue;
+    status: ReportStatus;
+    createdAt: Date;
+    user: { id: number; username?: string | null };
+  };
+  let appealReports: Map<number, AppealReport[]> | undefined;
+  if (needsReview === 'appeal' && imageIds.length > 0) {
+    const reportRows = await dbRead.$queryRaw<
+      {
+        imageId: number;
+        id: number;
+        reason: string;
+        details: Prisma.JsonValue;
+        status: ReportStatus;
+        createdAt: Date;
+        username: string | null;
+        userId: number;
+      }[]
+    >`
+      SELECT
+        imgr."imageId" as "imageId",
+        r.id as "id",
+        r.reason as "reason",
+        r.details as "details",
+        r.status as "status",
+        r."createdAt" as "createdAt",
+        ru.username as "username",
+        ru.id as "userId"
+      FROM "ImageReport" imgr
+      JOIN "Report" r ON r.id = imgr."reportId"
+      JOIN "User" ru ON ru.id = r."userId"
+      WHERE imgr."imageId" IN (${Prisma.join(imageIds)})
+      ORDER BY r."createdAt" DESC
+    `;
+
+    appealReports = new Map();
+    for (const row of reportRows) {
+      const report: AppealReport = {
+        id: row.id,
+        reason: row.reason,
+        details: row.details,
+        status: row.status,
+        createdAt: row.createdAt,
+        user: { id: row.userId, username: row.username },
+      };
+      const list = appealReports.get(row.imageId);
+      if (!list) appealReports.set(row.imageId, [report]);
+      else if (list.length < 5) list.push(report);
+    }
+  }
+
   const images: Array<
     Omit<ImageV2Model, 'stats' | 'metadata'> & {
       meta: ImageMetaProps | null;
@@ -6135,6 +6359,7 @@ export const getImageModerationReviewQueue = async ({
             moderator?: { id: number; username?: string | null };
           }
         | undefined;
+      reports?: AppealReport[] | undefined;
       publishedAt?: Date | null;
       modelVersionId?: number | null;
       entityType?: string | null;
@@ -6204,6 +6429,7 @@ export const getImageModerationReviewQueue = async ({
         : undefined,
       removedAt,
       tosReason: tosDetails?.get(i.id)?.tosReason,
+      reports: appealReports?.get(i.id),
     })
   );
 

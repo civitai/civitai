@@ -409,12 +409,21 @@ export const deleteExplorationPromptSchema = z.object({
   name: z.string().trim().min(1, 'Name cannot be empty.'),
 });
 
+export type GenerationAlias = { versionId: number; strength?: number };
+
 export type ModelVersionMeta = ModelMeta & {
   picFinderModelId?: number;
   earlyAccessDownloadData?: { date: string; downloads: number }[];
   generationImagesCount?: { date: string; generations: number }[];
   allowAIRecommendations?: boolean;
   hadEarlyAccessPurchase?: boolean;
+  /**
+   * When set, opening this version in the generator loads the target version's
+   * resource instead of this one (a 1:1 redirect). The cover version derives
+   * its `canGenerate` from the target, so the Create button hides on its own if
+   * the target is deleted/unpublished/uncovered (fail-closed).
+   */
+  generationAlias?: GenerationAlias;
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;

@@ -81,9 +81,14 @@ const turboModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
   .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
   .node('cfgScale', sliderNode({ min: 1, max: 2, step: 0.1, defaultValue: 1 }))
   .node('steps', sliderNode({ min: 1, max: 15, defaultValue: 9 }))
+  // ControlNets — only available for txt2img workflows.
   .node(
     'controlNets',
-    controlNetsNode({ preprocessors: zImageControlNetPreprocessors, limit: CONTROLNET_LIMIT })
+    (ctx) => ({
+      ...controlNetsNode({ preprocessors: zImageControlNetPreprocessors, limit: CONTROLNET_LIMIT }),
+      when: ctx.workflow === 'txt2img',
+    }),
+    ['workflow']
   )
   .node('seed', seedNode());
 
@@ -99,9 +104,14 @@ const baseModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
   .node('scheduler', schedulerNode({ options: zImageSchedules, defaultValue: 'simple' }))
   .node('cfgScale', sliderNode({ min: 1, max: 10, step: 0.5, defaultValue: 4 }))
   .node('steps', sliderNode({ min: 1, max: 50, defaultValue: 20 }))
+  // ControlNets — only available for txt2img workflows.
   .node(
     'controlNets',
-    controlNetsNode({ preprocessors: zImageControlNetPreprocessors, limit: CONTROLNET_LIMIT })
+    (ctx) => ({
+      ...controlNetsNode({ preprocessors: zImageControlNetPreprocessors, limit: CONTROLNET_LIMIT }),
+      when: ctx.workflow === 'txt2img',
+    }),
+    ['workflow']
   )
   .node('seed', seedNode());
 

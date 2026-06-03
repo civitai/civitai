@@ -46,7 +46,7 @@ function UserPostsPage() {
   } = usePostQueryParams();
   // const { replace, section: querySection, ...queryFilters } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
-  const sort = query.sort ?? PostSort.Newest;
+  const querySort = query.sort ?? PostSort.Newest;
   const selfView =
     !!currentUser &&
     !!query.username &&
@@ -56,6 +56,8 @@ function UserPostsPage() {
     selfView ? querySection ?? 'published' : 'published'
   );
   const viewingDraft = section === 'draft';
+  const effectiveScheduled = viewingDraft ? query.scheduled ?? true : query.scheduled;
+  const sort = viewingDraft ? PostSort.Newest : querySort;
 
   if (!query.username) return <NotFound />;
 
@@ -77,7 +79,8 @@ function UserPostsPage() {
                     setSection(section as 'published' | 'draft');
                     replace({
                       section: section as 'published' | 'draft',
-                      scheduled: section === 'draft' ? undefined : query.scheduled,
+                      scheduled: undefined,
+                      sort: section === 'draft' ? PostSort.Newest : undefined,
                     });
                   }}
                 />
@@ -87,17 +90,28 @@ function UserPostsPage() {
                   type="posts"
                   value={sort}
                   onChange={(x) => replace({ sort: x as PostSort })}
+                  options={
+                    viewingDraft ? [{ label: PostSort.Newest, value: PostSort.Newest }] : undefined
+                  }
                 />
                 <PostFiltersDropdown
-                  query={{ ...query, period, followed }}
+                  query={{ ...query, period, followed, scheduled: effectiveScheduled }}
                   onChange={(filters) => replace(filters)}
-                  showScheduled={selfView && !viewingDraft}
+                  showScheduled={selfView}
                   size="compact-sm"
                 />
               </Group>
             </Group>
             <PostsInfinite
-              filters={{ ...query, followed, period, sort, draftOnly: viewingDraft, pending: true }}
+              filters={{
+                ...query,
+                followed,
+                period,
+                sort,
+                scheduled: effectiveScheduled,
+                draftOnly: viewingDraft,
+                pending: true,
+              }}
             />
           </Stack>
         </MasonryContainer>

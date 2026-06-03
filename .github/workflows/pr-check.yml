@@ -51,3 +51,10 @@ jobs:
 
       - name: Run typecheck
         run: pnpm run typecheck
+
+      # Gates the custom `no-io-in-transaction` ESLint rule (eslint-local-rules.js)
+      # via its RuleTester suite. Scoped to the rule's own test rather than the
+      # full `test:unit:run` suite, which currently has pre-existing failures and
+      # isn't yet CI-green.
+      - name: Test lint rules
+        run: pnpm run test:lint-rules

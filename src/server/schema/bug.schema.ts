@@ -47,3 +47,8 @@ export type GetBugByIdInput = z.infer<typeof getBugByIdInput>;
 export const getBugByIdInput = z.object({
   id: z.number(),
 });
+
+export type GetBugReportStatsInput = z.infer<typeof getBugReportStatsInput>;
+export const getBugReportStatsInput = z.object({
+  bugIds: z.number().int().positive().array().min(1).max(200),
+});

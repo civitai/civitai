@@ -4,6 +4,7 @@ import {
   createBugInput,
   deleteBugInput,
   getBugByIdInput,
+  getBugReportStatsInput,
   getBugsInput,
   reportBugInput,
   updateBugInput,
@@ -13,6 +14,7 @@ import {
   createBug,
   deleteBug,
   getBugById,
+  getBugReportStats,
   getBugStatusForReport,
   getBugs,
   getLatestBugUpdate,
@@ -48,6 +50,10 @@ export const bugRouter = router({
     const newCount = await bugReportCounter.incrementBy(input.bugId, 1);
     return { reportCount: newCount };
   }),
+  getReportStats: moderatorProcedure
+    .input(getBugReportStatsInput)
+    .use(isFlagProtected('bugsEdit'))
+    .query(({ input }) => getBugReportStats(input)),
   create: moderatorProcedure
     .input(createBugInput)
     .use(isFlagProtected('bugsEdit'))

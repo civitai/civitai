@@ -84,7 +84,10 @@ export async function createComfyInput(
 export function resourcesToImageMetadataResources(resources?: Record<string, unknown>[]) {
   return resources?.map((r) =>
     removeEmpty({
-      modelVersionId: r.id,
+      // Form-supplied resources carry `id`; source metadata extracted from an
+      // image's EXIF carries `modelVersionId`. Fall back so upscale/enhance
+      // workflows don't drop the version IDs of the original resources.
+      modelVersionId: r.id ?? r.modelVersionId,
       strength: r.strength,
       type: (r.model as Record<string, unknown>)?.type ?? r.type,
     })

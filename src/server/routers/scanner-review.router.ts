@@ -5,6 +5,7 @@ import {
   focusedRunSchema,
   getScanDetailSchema,
   getWorkflowRawSchema,
+  labelReviewStatsSchema,
   listScansSchema,
   upsertLabelVerdictSchema,
 } from '~/server/schema/scanner-review.schema';
@@ -12,6 +13,7 @@ import {
   deleteLabelVerdict,
   focusedItemContent,
   focusedRun,
+  getLabelReviewStats,
   getScanDetail,
   listScans,
   upsertLabelVerdict,
@@ -25,6 +27,12 @@ export const scannerReviewRouter = router({
     .query(({ input, ctx }) => listScans(input, ctx.user.id)),
 
   detail: moderatorProcedure.input(getScanDetailSchema).query(({ input }) => getScanDetail(input)),
+
+  // Per-label moderator-review coverage for the scanner. Powers the coverage
+  // panel above the audit queue.
+  reviewStats: moderatorProcedure
+    .input(labelReviewStatsSchema)
+    .query(({ input }) => getLabelReviewStats(input)),
 
   upsertVerdict: moderatorProcedure
     .input(upsertLabelVerdictSchema)

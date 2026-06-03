@@ -192,7 +192,7 @@ image.step              // parent StepData
 
 **Helper modules (tested, 73 tests passing):**
 
-- `workflow-metadata.ts` — `buildStepSource()` / `resolveStepSource()` for writing and reading `source` on step metadata
+- ~~`workflow-metadata.ts` — `buildStepSource()` / `resolveStepSource()` for writing and reading `source` on step metadata~~ **(removed)** — this "Model A" representation (source nested under `step.metadata.source`, enhancement action at the root) was never wired into production. The live path stores the source generation's params at the step-metadata root with a `workflow` lineage marker, resolved inline by `formatStep()` in `orchestration-new.service.ts` and surfaced to clients as `NormalizedStepMetadata.sourceLineage`.
 - `step-ref.ts` — `$ref` helpers: `isStepRef`, `buildStepRef`, `assignStepNames`
 - `multi-graph.ts` — `processMultiGraphInputs()` for chained workflows
 - `index.ts` — `getStepParams()` / `getStepResources()` client helpers with fallback logic
@@ -284,7 +284,6 @@ function assignStepNames(steps: WorkflowStepTemplate[]): WorkflowStepTemplate[];
 | ---- | ---- |
 | `src/server/services/orchestrator/orchestration-new.service.ts` | Main service — write + read paths |
 | `src/server/services/orchestrator/index.ts` | Barrel exports, `getStepParams` / `getStepResources` helpers |
-| `src/server/services/orchestrator/workflow-metadata.ts` | `buildStepSource` / `resolveStepSource` helpers (tested) |
 | `src/server/services/orchestrator/step-ref.ts` | `$ref` helpers (tested) |
 | `src/server/services/orchestrator/legacy-metadata-mapper.ts` | `mapDataToGraphInput()` — maps raw metadata to graph format |
 | `src/shared/utils/resource.utils.ts` | `toStepMetadata()` — converts graph output to params/resources |

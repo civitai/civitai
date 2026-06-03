@@ -7,7 +7,7 @@
  * Chroma is an open-source model based on Flux architecture with improved
  * color and composition capabilities.
  *
- * Note: No negative prompts, samplers, or CLIP skip.
+ * Note: No negative prompts or CLIP skip.
  * Supports full addon types (LoRA, DoRA, LoCon, TextualInversion).
  */
 
@@ -18,6 +18,7 @@ import {
   createCheckpointGraph,
   createResourcesGraph,
   promptGraph,
+  samplerNode,
   seedNode,
   sliderNode,
   snippetsGraph,
@@ -43,6 +44,9 @@ const chromaGuidancePresets = [
   { label: 'High', value: 7 },
 ];
 
+/** Chroma sampler options (Flow-compatible) */
+const chromaSamplers = ['Euler', 'Euler a', 'DPM++ SDE', 'DPM++ 2M Karras', 'DPM++ SDE Karras'];
+
 // =============================================================================
 // Chroma Graph V2
 // =============================================================================
@@ -67,9 +71,10 @@ export const chromaGraph = new DataGraph<{ ecosystem: string; workflow: string }
   .merge(snippetsGraph)
   .merge(promptGraph)
   .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('sampler', samplerNode({ options: chromaSamplers, defaultValue: 'Euler' }))
   .node(
     'cfgScale',
-    sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5, presets: chromaGuidancePresets })
+    sliderNode({ min: 1, max: 20, defaultValue: 3.5, step: 0.5, presets: chromaGuidancePresets })
   )
-  .node('steps', sliderNode({ min: 20, max: 50, defaultValue: 25 }))
+  .node('steps', sliderNode({ min: 4, max: 50, defaultValue: 25 }))
   .node('seed', seedNode());

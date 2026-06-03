@@ -56,6 +56,22 @@ const trpcHandler = createNextApiHandler({
   },
   onError: async ({ error, type, path, input, ctx, req }) => {
     if (isProd) {
+      // Auth-class rejections (FORBIDDEN / UNAUTHORIZED) are client-fault 4xx
+      // responses — the status code already tells the caller + edge what
+      // happened, and at scraper/bot scale these are the dominant noise in
+      // Axiom while providing zero diagnostic value. Skip the stack capture +
+      // JSON.stringify + ingest to cut event-loop pressure during the storm.
+      //
+      // Originally surfaced by recommenders.getResourceRecommendations (~5/s
+      // cluster-wide of "API key does not have the required scope"), but the
+      // gate applies uniformly to every auth-rejection path
+      // (isAcceptableOrigin, isAuthed, enforceTokenScope, isFlagProtected).
+      // Other tRPC errors (Meili timeouts, DB errors, etc.) keep full
+      // observability.
+      if (error.code === 'FORBIDDEN' || error.code === 'UNAUTHORIZED') {
+        return error;
+      }
+
       let axInput: string | undefined;
       if (!!input) {
         try {

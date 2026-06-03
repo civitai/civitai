@@ -19,7 +19,11 @@ type SearchIndexSetKey = keyof typeof searchIndexSets;
 
 const cronTimeMap: Record<SearchIndexSetKey, string> = {
   models: '*/15 * * * *',
-  users: '*/15 * * * *',
+  // Hourly at :07. Username/profile search freshness budget is large
+  // (typeahead tolerates an hour of staleness fine), and offsetting from
+  // models's `*/15` (:00/:15/:30/:45) avoids both jobs firing on the same
+  // minute and contending for the Meilisearch write lock.
+  users: '7 * * * *',
   articles: '*/5 * * * *',
   images: '5 8 * * *',
   collections: '*/10 * * * *',

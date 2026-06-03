@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { NsfwLevel } from '~/server/common/enums';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -892,10 +893,11 @@ export const upsertArticle = async ({
           });
         }
 
-        await userArticleCountCache.refresh(article.userId);
-
         return article;
       });
+
+      // Count-cache refresh hits Redis — run after commit, off the txn budget.
+      await userArticleCountCache.refresh(result.userId);
 
       await preventReplicationLag('article', result.id);
       await preventReplicationLag('userArticles', userId);
@@ -1106,12 +1108,13 @@ export const upsertArticle = async ({
         });
       }
 
-      await userArticleCountCache.refresh(updated.userId);
-
       return updated;
     });
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
+
+    // Count-cache refresh hits Redis — run after commit, off the txn budget.
+    await userArticleCountCache.refresh(result.userId);
 
     await preventReplicationLag('article', result.id);
     await preventReplicationLag('userArticles', result.userId);
@@ -1564,11 +1567,12 @@ export async function linkArticleContentImages({
 }): Promise<{ orphanedImageIds: number[] }> {
   const contentImages = getContentMedia(content);
 
-  const orphanedImageIds = await dbWrite.$transaction(async (tx) => {
+  const { orphanedImageIds, imagesToIngest } = await dbWrite.$transaction(async (tx) => {
     const imageUrls = contentImages.map((img) => img.url);
 
     // Track content image IDs for orphan detection
     let contentImageIds: number[] = [];
+    let imagesToIngest: { id: number; url: string; ingestion?: ImageIngestionStatus }[] = [];
 
     if (!cleanupOnly) {
       // Batch query: Get all existing images in one query
@@ -1631,18 +1635,7 @@ export async function linkArticleContentImages({
       const pendingExistingImages = existingImages.filter(
         (img) => img.ingestion === ImageIngestionStatus.Pending
       );
-      const imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
-      if (imagesToIngest.length > 0) {
-        // TODO.articleImageScan: remove the lowPriority flag
-        for (const img of imagesToIngest) {
-          await ingestImage({ image: img, lowPriority: true, userId, tx }).catch((error) => {
-            handleLogError(error, 'article-image-ingestion', {
-              articleId,
-              imageIds: newlyCreatedImages.map((i) => i.id),
-            });
-          });
-        }
-      }
+      imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
     } else {
       // In cleanupOnly mode, we still need to know which images are in the current content
       // so we can detect orphans. Query by URL to get their IDs.
@@ -1683,6 +1676,7 @@ export async function linkArticleContentImages({
     }
 
     // Find truly orphaned images (no connections to ANY entity)
+    let trulyOrphanedIds: number[] = [];
     if (orphanedIds.length > 0) {
       const trulyOrphaned = await tx.image.findMany({
         where: {
@@ -1691,11 +1685,28 @@ export async function linkArticleContentImages({
         },
         select: { id: true },
       });
-      return trulyOrphaned.map((img) => img.id);
+      trulyOrphanedIds = trulyOrphaned.map((img) => img.id);
     }
 
-    return [];
+    return { orphanedImageIds: trulyOrphanedIds, imagesToIngest };
   });
+
+  if (imagesToIngest.length > 0) {
+    // TODO.articleImageScan: remove the lowPriority flag
+    const tasks = imagesToIngest.map((img) => () =>
+      ingestImage({ image: img, lowPriority: true, userId }).catch((error) => {
+        logToAxiom({
+          name: 'article-image-ingest',
+          type: 'error',
+          articleId,
+          userId,
+          imageId: img.id,
+          message: error instanceof Error ? error.message : String(error),
+        }).catch(() => {});
+      })
+    );
+    limitConcurrency(tasks, 5).catch(() => {});
+  }
 
   return { orphanedImageIds };
 }
