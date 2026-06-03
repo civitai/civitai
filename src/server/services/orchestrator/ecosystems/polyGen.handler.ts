@@ -1,54 +1,29 @@
 /**
- * PolyGen Ecosystem Handler
+ * PolyGen Result Handler
  *
- * Submits PolyGen (Meshy via Fal) workflows for 3D model generation, and
- * processes the workflow result into a Draft `Model3D` row.
+ * Processes a finished PolyGen (Meshy via Fal) workflow into a Draft
+ * `Model3D` row. Called from the orchestrator poll loop / webhook.
+ * Normalises blob formats, copies outputs to S3 (`3d/` prefix), ingests
+ * the thumbnail as a real `Image`, and upserts the `Model3D` +
+ * `Model3DFile` rows. Idempotent on `Model3D.workflowId`.
  *
- * Why a self-contained handler (not the `defineHandler` ecosystem pattern):
- * the ecosystem-handler factory routes off `data.ecosystem` and returns
- * `StepInput[]` to be bundled by `orchestration-new.service.ts`. PolyGen
- * is its own workflow with its own discriminated form schema and its own
- * post-processing (ingest thumbnail, copy 3D blobs, create Model3D draft),
- * so we expose two top-level functions:
- *
- *   - `submitPolyGenWorkflow`  — user submits the form; we enqueue the
- *     async workflow via `submitWorkflow`. Returns the orchestrator
- *     workflow id; the Draft Model3D is created later, in the result
- *     handler, not synchronously here.
- *   - `handlePolyGenWorkflowResult` — called when the workflow finishes
- *     (poll loop / webhook). Normalises blob formats, copies outputs to
- *     our S3 (`3d/` prefix), ingests the thumbnail as a real `Image`,
- *     and upserts the `Model3D` + `Model3DFile` rows. Idempotent on
- *     `Model3D.workflowId`.
- *
- * IMPORTANT: we explicitly do NOT call `invokePolyGenStepTemplate` —
- * that's the synchronous recipe-eval endpoint and bypasses the queue,
- * billing, and retry surfaces. See `docs/3d-models-plan.md` §2.2.
- *
- * Workstream-A dependency: the `Model3D` service (`upsertModel3DDraft`,
- * etc.) is being built in parallel. Where this file needs those calls
- * it has a TODO with the expected signature and uses a small adapter
- * stub so the file compiles. When workstream A lands, swap the stub for
- * the real import.
+ * Submission lives elsewhere now: PolyGen rides the unified V2 pipeline
+ * (`generateFromGraph` → `createPolyGenInput` in `polygen-graph.handler.ts`).
+ * The bespoke `submitPolyGenWorkflow` + `buildPolyGenStep` helpers that
+ * used to live here were retired alongside the deprecated `generate3D` /
+ * `generate3DWhatIf` tRPC mutations.
  */
 
 import type {
   ImageBlob,
-  MeshyImageTo3dFalPolyGenInput,
-  MeshyTextTo3dFalPolyGenInput,
   Model3dBlob,
   PolyGenOutput,
-  PolyGenStepTemplate,
   Workflow,
 } from '@civitai/client';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  toMeshyPolyGenInput,
-  type Model3DGenerationSchema,
-} from '~/server/orchestrator/polygen/polygen.schema';
-import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import type { Model3DGenerationSchema } from '~/server/orchestrator/polygen/polygen.schema';
 import { createImage } from '~/server/services/image.service';
 import { upsertModel3DFromWorkflow } from '~/server/services/model3d.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
@@ -62,86 +37,6 @@ import type { Prisma } from '@prisma/client';
 const POLYGEN_S3_PREFIX = '3d/';
 const PRIMARY_FORMAT = 'glb';
 const POLYGEN_LOG = 'polygen-handler';
-
-// =============================================================================
-// Submission
-// =============================================================================
-
-export type SubmitPolyGenArgs = {
-  /** Validated form input — output of `model3dGenerationSchema.parse(...)` */
-  data: Model3DGenerationSchema;
-  /** Orchestrator-scoped auth token for the submitting user */
-  token: string;
-  /** The Civitai user id submitting the workflow (for downstream linkage) */
-  userId: number;
-  /** Whether to allow mature outputs (passed through to orchestrator). */
-  allowMatureContent?: boolean;
-  /** Optional pre-ingested source image id (image-to-3D only). */
-  sourceImageId?: number;
-};
-
-/**
- * Build a `PolyGenStep` for the workflow body. Exported for tests +
- * for whatif/cost-preview callers that need just the step shape.
- */
-export function buildPolyGenStep(data: Model3DGenerationSchema): PolyGenStepTemplate {
-  const input = toMeshyPolyGenInput(data) as
-    | MeshyTextTo3dFalPolyGenInput
-    | MeshyImageTo3dFalPolyGenInput;
-  return {
-    $type: 'polyGen',
-    input,
-  } as PolyGenStepTemplate;
-}
-
-/**
- * Submit a PolyGen workflow to the orchestrator. Returns the orchestrator's
- * Workflow object (contains `id` — surface this to the queue UI and persist
- * onto the Draft Model3D when the result handler runs).
- */
-export async function submitPolyGenWorkflow({
-  data,
-  token,
-  userId,
-  allowMatureContent,
-}: SubmitPolyGenArgs) {
-  const step = buildPolyGenStep(data);
-
-  // Match the workflow-tagging shape used elsewhere (orchestration-new.service.ts).
-  const tags = [
-    'generation',
-    'model3d',
-    'polyGen',
-    'meshy',
-    data.process,
-  ];
-
-  // Pass through the userId in metadata so the result handler can link
-  // the created Model3D draft back to the originator without a second
-  // round-trip.
-  const metadata: Record<string, unknown> = {
-    type: 'model3d',
-    process: data.process,
-    userId,
-  };
-
-  const workflow = await submitWorkflow({
-    token,
-    body: {
-      tags,
-      // Cast to satisfy WorkflowStepTemplate[] — PolyGenStepTemplate is a
-      // valid concrete subtype but the registry type is the union of all
-      // known step templates and doesn't include PolyGen explicitly in
-      // every place the codebase narrows.
-      steps: [step] as unknown as PolyGenStepTemplate[],
-      metadata,
-      allowMatureContent,
-      currencies: [], // PolyGen pricing comes from the orchestrator whatIf; no per-workflow currency restriction
-    },
-  });
-
-  return workflow;
-}
 
 // =============================================================================
 // Result handling
