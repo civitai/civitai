@@ -44,10 +44,15 @@ export const useGenerationStatus = () => {
     // Moderators always bypass.
     let available = true;
     let message = data.message;
-    if (
-      !isModerator &&
-      (data.mode === 'disabled' || (data.mode === 'memberOnly' && tier === 'free'))
-    ) {
+    // `data.available === false` is the legacy fallback: during a rolling deploy
+    // an older server may return the boolean-only shape with no `mode`, in which
+    // case the mode checks below all miss — honor `available` so we don't fail
+    // open and show generation as available when an admin had it disabled.
+    const blocked =
+      data.mode === 'disabled' ||
+      (data.mode === 'memberOnly' && tier === 'free') ||
+      (!data.mode && data.available === false);
+    if (!isModerator && blocked) {
       available = false;
       message = data.message ?? generationStatusDefaultMessage;
     }
