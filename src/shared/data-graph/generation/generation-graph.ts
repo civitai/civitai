@@ -240,9 +240,8 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
         // Audio workflows with ecosystem support
         'txt2music',
         // 3D Model workflows with ecosystem support (PolyGen via Meshy/Fal).
-        // Both ride the same empty polygen-graph; the actual UI is the
-        // self-contained Model3DGenerationForm rendered inline in
-        // GenerationForm.tsx (analogous to img2meta / prompt:enhance).
+        // Both ride the polygen-graph and render through `GenerationForm.tsx`
+        // like every other ecosystem (audio/video/image).
         'txt2model3d',
         'img2model3d',
       ] as const,

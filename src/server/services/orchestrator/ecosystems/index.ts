@@ -52,6 +52,9 @@ import { createPonyV7Input } from './pony-v7.handler';
 // Audio ecosystem handlers
 import { createAceAudioInput } from './ace-audio.handler';
 
+// 3D model ecosystem handlers
+import { createPolyGenInput } from './polygen-graph.handler';
+
 // Video ecosystem handlers
 import { createWanSteps } from './wan.handler';
 import { createViduInput } from './vidu.handler';
@@ -222,6 +225,9 @@ export { createKrea2Input } from './krea2.handler';
 
 // Audio ecosystems
 export { createAceAudioInput } from './ace-audio.handler';
+
+// 3D model ecosystems
+export { createPolyGenInput } from './polygen-graph.handler';
 
 // Video ecosystems
 export { createWanSteps } from './wan.handler';
@@ -458,17 +464,11 @@ async function createEcosystemStep(
       return createAceAudioInput(normalizedData, handlerCtx);
 
     // =========================================================================
-    // 3D Model Ecosystems — submitted via the dedicated `generate3D` mutation,
-    // NOT through this unified dispatcher. The standalone Model3DGenerationForm
-    // calls `submitPolyGenWorkflow` directly. This case exists so unintentional
-    // routing through `generateFromGraph` surfaces a precise error rather than
-    // the generic "Unknown ecosystem".
+    // 3D Model Ecosystems — polyGen step (Meshy via Fal)
     // =========================================================================
 
     case 'PolyGen':
-      throw new Error(
-        'PolyGen workflows submit via trpc.orchestrator.generate3D, not generateFromGraph'
-      );
+      return createPolyGenInput(normalizedData, handlerCtx);
 
     default:
       throw new Error(`Unknown ecosystem: ${ecosystem}`);

@@ -347,11 +347,11 @@ export const workflowConfigs: WorkflowConfigs = {
   // 3D Model Workflows (PolyGen / Meshy via Fal)
   // ===========================================================================
   //
-  // Both workflows route through the standalone `Model3DGenerationForm` as a
-  // self-contained workflow body (see GenerationForm.tsx — same dispatch as
-  // `img2meta` and `prompt:enhance`). The form's own submit calls
-  // `trpc.orchestrator.generate3D` directly, so the V2 FormFooter is not
-  // rendered for these workflows. Feature-flagged behind `model3dGenerator`.
+  // Both workflows ride the unified V2 pipeline (graph → handler → submit).
+  // Field rendering lives in `GenerationForm.tsx`, gated on the PolyGen
+  // ecosystem; submission/whatif go through `generateFromGraph` /
+  // `whatIfFromGraph` like every other ecosystem. Feature-flagged behind
+  // `model3dGenerator`.
 
   txt2model3d: {
     label: 'Create 3D Model',
@@ -361,11 +361,6 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [ECO.PolyGen],
     featureFlag: 'model3dGenerator',
     isNew: true,
-    // noSubmit suppresses the unified V2 FormFooter and `whatIfFromGraph`
-    // for these workflows — the embedded Model3DGenerationForm has its own
-    // submit button + `generate3DWhatIf` cost preview, so neither belongs at
-    // the form-shell level. Same convention as `img2meta` / `prompt:enhance`.
-    noSubmit: true,
   },
 
   img2model3d: {
@@ -376,7 +371,6 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [ECO.PolyGen],
     featureFlag: 'model3dGenerator',
     isNew: true,
-    noSubmit: true,
   },
 
   // ===========================================================================

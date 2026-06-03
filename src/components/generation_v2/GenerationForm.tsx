@@ -76,7 +76,6 @@ import { useCompatibilityInfo } from './hooks/useCompatibilityInfo';
 import { AccordionLayout } from './AccordionLayout';
 import { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
 import { FormFooter, MetadataExtractionFooter } from './FormFooter';
-import { Model3DGenerationForm } from '~/components/Generation/Model3D/Model3DGenerationForm';
 import { GenerationLayout, GenerationFooter } from './GenerationLayout';
 import {
   ResourceAlerts,
@@ -494,27 +493,10 @@ export function GenerationForm() {
         </>
       )}
 
-      {/* 3D Models (PolyGen via Meshy): self-contained workflow body.
-          The Model3DGenerationForm is RHF-bound to `model3dGenerationSchema`
-          and calls `trpc.orchestrator.generate3D` directly, so no Controllers /
-          FormFooter are wired here — same self-contained pattern as
-          `img2meta` and `prompt:enhance`. */}
-      {(snapshot.workflow === 'txt2model3d' || snapshot.workflow === 'img2model3d') && (
-        <>
-          <SelectedWorkflowDisplay
-            workflowId={snapshot.workflow}
-            ecosystemId={compatibility.currentEcosystemId}
-            onBack={shouldShowBackButton(snapshot.workflow) ? handleNavigationBack : undefined}
-          />
-          <Model3DGenerationForm />
-        </>
-      )}
-
-      {/* Standard generation workflows */}
-      {snapshot.workflow !== 'img2meta' &&
-        snapshot.workflow !== 'prompt:enhance' &&
-        snapshot.workflow !== 'txt2model3d' &&
-        snapshot.workflow !== 'img2model3d' && (
+      {/* Standard generation workflows — PolyGen (3D Models) now renders
+          through this same body, with its field renderers gated on the
+          PolyGen ecosystem (see the polygen group below). */}
+      {snapshot.workflow !== 'img2meta' && snapshot.workflow !== 'prompt:enhance' && (
           <>
             <>
               <Controller
@@ -1211,6 +1193,144 @@ export function GenerationForm() {
                 )}
               />
 
+              {/* ============================================================
+                  PolyGen (3D Models) — Controllers auto-hide when the active
+                  graph doesn't include the node (i.e. ecosystem !== PolyGen),
+                  same auto-hide convention used by every other ecosystem
+                  block above (audio, video, etc.).
+                  ============================================================ */}
+
+              {/* PolyGen process selector — textTo3D | imageTo3D */}
+              <Controller
+                graph={graph}
+                name="process"
+                render={({ value, meta, onChange }) => (
+                  <Input.Wrapper label="Process">
+                    <ButtonGroupInput
+                      value={value as string}
+                      onChange={(v) => onChange(v as typeof value)}
+                      data={(meta as { options: { label: string; value: string }[] }).options}
+                    />
+                  </Input.Wrapper>
+                )}
+              />
+
+              {/* PolyGen source image (image-to-3D only) */}
+              <Controller
+                graph={graph}
+                name="sourceImage"
+                render={({ value, onChange, error }) => {
+                  const current = value as { url: string; width: number; height: number } | undefined;
+                  return (
+                    <ImageUploadMultipleInput
+                      label="Starting image"
+                      description="The reference Meshy will use to build the 3D mesh"
+                      required
+                      max={1}
+                      aspect="square"
+                      imageLayout="wrap"
+                      value={current ? [current] : []}
+                      onChange={(v) => onChange((v[0] ?? undefined) as typeof value)}
+                      error={error?.message}
+                    />
+                  );
+                }}
+              />
+
+              {/* PolyGen: generate texture toggle (image-to-3D only) */}
+              <Controller
+                graph={graph}
+                name="shouldTexture"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Generate texture"
+                    description="Apply automatic texture to the generated mesh"
+                    checked={!!value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
+
+              {/* PolyGen: text mode (preview | full) — text-to-3D only */}
+              <Controller
+                graph={graph}
+                name="polygenMode"
+                render={({ value, meta, onChange }) => (
+                  <Input.Wrapper
+                    label="Mode"
+                    description="Preview is faster and cheaper. Full produces the higher-quality mesh."
+                  >
+                    <ButtonGroupInput
+                      value={value as string}
+                      onChange={(v) => onChange(v as typeof value)}
+                      data={(meta as { options: { label: string; value: string }[] }).options}
+                    />
+                  </Input.Wrapper>
+                )}
+              />
+
+              {/* PolyGen: prompt expansion toggle (text-to-3D only) */}
+              <Controller
+                graph={graph}
+                name="enablePromptExpansion"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Auto-expand prompt"
+                    description="Let Meshy elaborate sparse prompts before generation"
+                    checked={!!value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
+
+              {/* PolyGen: target polycount (shared by both processes) */}
+              <Controller
+                graph={graph}
+                name="targetPolycount"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    label="Target polycount"
+                    description="Final triangle count target. Higher = more detail, more cost."
+                    value={value as number}
+                    onChange={onChange}
+                    min={(meta as { min: number }).min}
+                    max={(meta as { max: number }).max}
+                    step={(meta as { step: number }).step}
+                    presets={(meta as { presets?: { label: string; value: number }[] }).presets}
+                  />
+                )}
+              />
+
+              {/* PolyGen: topology */}
+              <Controller
+                graph={graph}
+                name="topology"
+                render={({ value, meta, onChange }) => (
+                  <Input.Wrapper label="Topology">
+                    <ButtonGroupInput
+                      value={value as string}
+                      onChange={(v) => onChange(v as typeof value)}
+                      data={(meta as { options: { label: string; value: string }[] }).options}
+                    />
+                  </Input.Wrapper>
+                )}
+              />
+
+              {/* PolyGen: symmetry mode */}
+              <Controller
+                graph={graph}
+                name="symmetryMode"
+                render={({ value, meta, onChange }) => (
+                  <Input.Wrapper label="Symmetry">
+                    <ButtonGroupInput
+                      value={value as string}
+                      onChange={(v) => onChange(v as typeof value)}
+                      data={(meta as { options: { label: string; value: string }[] }).options}
+                    />
+                  </Input.Wrapper>
+                )}
+              />
+
               {/* Aspect ratio */}
               <Controller
                 graph={graph}
@@ -1587,6 +1707,75 @@ export function GenerationForm() {
                         }))}
                       />
                     </div>
+                  )}
+                />
+
+                {/* PolyGen advanced toggles — auto-hide when not in active graph */}
+                <Controller
+                  graph={graph}
+                  name="shouldRemesh"
+                  render={({ value, onChange }) => (
+                    <Checkbox
+                      label="Remesh"
+                      description="Re-tessellate the mesh for cleaner topology"
+                      checked={!!value}
+                      onChange={(e) => onChange(e.currentTarget.checked)}
+                    />
+                  )}
+                />
+                <Controller
+                  graph={graph}
+                  name="enablePbr"
+                  render={({ value, onChange }) => (
+                    <Checkbox
+                      label="Enable PBR textures"
+                      description="Generate physically-based rendering textures (albedo, normal, roughness)"
+                      checked={!!value}
+                      onChange={(e) => onChange(e.currentTarget.checked)}
+                    />
+                  )}
+                />
+                <Controller
+                  graph={graph}
+                  name="texturePrompt"
+                  render={({ value, meta, onChange }) => (
+                    <Textarea
+                      label="Texture prompt"
+                      description="Describe the material / style for the texture"
+                      placeholder={
+                        (meta as { placeholder?: string })?.placeholder ??
+                        'Weathered oak with bronze fittings…'
+                      }
+                      value={(value as string) ?? ''}
+                      onChange={(e) => onChange(e.currentTarget.value)}
+                      autosize
+                      minRows={2}
+                      maxLength={(meta as { maxLength?: number })?.maxLength}
+                    />
+                  )}
+                />
+                <Controller
+                  graph={graph}
+                  name="enableRigging"
+                  render={({ value, onChange }) => (
+                    <Checkbox
+                      label="Enable rigging"
+                      description="Add a skeleton to the mesh for animation"
+                      checked={!!value}
+                      onChange={(e) => onChange(e.currentTarget.checked)}
+                    />
+                  )}
+                />
+                <Controller
+                  graph={graph}
+                  name="enableAnimation"
+                  render={({ value, onChange }) => (
+                    <Checkbox
+                      label="Enable animation"
+                      description="Generate idle animation for the rigged mesh"
+                      checked={!!value}
+                      onChange={(e) => onChange(e.currentTarget.checked)}
+                    />
                   )}
                 />
 

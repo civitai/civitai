@@ -127,8 +127,11 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     });
   }, [validationResult, graph]);
 
-  // Disable whatIf for workflows that don't submit (e.g. img2meta)
-  const isNoSubmit = workflowConfigByKey.get(snapshot?.workflow as string)?.noSubmit === true;
+  // Disable whatIf for workflows that don't submit (e.g. img2meta).
+  // Model3D workflows now ride the unified `whatIfFromGraph` path like every
+  // other ecosystem — no special-case gate needed.
+  const workflowConfig = workflowConfigByKey.get(snapshot?.workflow as string);
+  const isNoSubmit = workflowConfig?.noSubmit === true;
 
   const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
     enabled:
