@@ -986,10 +986,12 @@ export async function createWorkflowStepsFromGraph({
     );
 
     // Per-step metadata for snippet variants records ONLY the substituted
-    // snippet-target fields (e.g. `prompt`, `negativePrompt`) — the
-    // workflow-level metadata already carries the full template + params
-    // snapshot, so duplicating it on every step would just bloat storage.
-    // The overlay IS the per-step delta from the workflow params.
+    // snippet-target fields (e.g. `prompt`, `negativePrompt`) — a small DELTA — in
+    // `params`, plus `partialParams: true` to flag it as such. The workflow-level
+    // metadata already carries the full template + params snapshot, so we keep the
+    // per-step payload tiny (no full params duplicated per variant) and let the
+    // client spread the delta over the workflow params when reading.
+    // See docs/generation-metadata-architecture.md.
     if (isSnippetVariant) {
       for (const step of variantSteps) {
         const existingMeta = (step.metadata ?? {}) as Record<string, unknown>;
@@ -997,6 +999,7 @@ export async function createWorkflowStepsFromGraph({
         step.metadata = {
           ...existingMeta,
           params: { ...existingParams, ...overlay },
+          partialParams: true,
         };
       }
     }
@@ -1514,19 +1517,14 @@ export interface NormalizedStepMetadata {
    */
   params?: Partial<GenerationGraphValues> & Record<string, unknown>;
   /**
-   * When true, `params` is a COMPLETE, self-contained snapshot — the source generation of
-   * an enhancement step (upscale, remove-bg). Consumers (StepData.params) must use it
-   * verbatim, NOT merge it over workflow.metadata.params, or the enhancement form's fields
-   * (`images`, `upscaler`, its `workflow` key) leak into a remix of the original.
-   *
-   * Falsy/undefined means `params` is either absent (standard new-format gen → fall back to
-   * workflow.metadata.params) or a partial DELTA (wildcard/snippet variants store only the
-   * substituted prompt fields → merge over workflow.metadata.params).
-   *
-   * Derived per-step in formatStep from the raw step's lineage marker (`'workflow' in
-   * step.metadata`, plus the legacy `transformations`/`source` formats).
+   * When true, `params` is a partial DELTA (e.g. a wildcard/snippet variant's substituted
+   * `prompt`/`negativePrompt`) rather than a complete snapshot. The client (`StepData.params`)
+   * spreads it over `workflow.metadata.params`; the server passes the small delta through rather
+   * than pre-merging, to keep the API payload small (no full params duplicated per variant).
+   * Absent for complete-snapshot (enhancement) and standard steps. Set deliberately at the write
+   * site that produces the delta — not derived. See docs/generation-metadata-architecture.md.
    */
-  sourceLineage?: boolean;
+  partialParams?: boolean;
   /**
    * Source generation resources (for steps with source lineage).
    * Undefined for standard generation steps (use workflow.metadata.resources instead).
@@ -2047,16 +2045,14 @@ function formatStep(
   // via StepData.params. Running mapDataToGraphInput would double-resolve from
   // resources and inject a duplicate workflow key.
   const hasSourceLineage = 'workflow' in metadata;
-  // Whether the resolved step params are a COMPLETE source snapshot (enhancement step, or
-  // the legacy transformations/source formats) vs. a partial delta. Surfaced to the client
-  // as `metadata.sourceLineage` so StepData.params can pick verbatim-vs-merge.
-  const sourceLineage =
-    hasSourceLineage ||
-    (Array.isArray(transformations) && transformations.length > 0) ||
-    (metadata.source != null && typeof metadata.source === 'object');
+  // A partial-delta step (wildcard/snippet variant) carries only a small overlay (e.g. the
+  // substituted prompt). Pass it through raw — the client spreads it over workflow params.
+  // Don't run mapDataToGraphInput on a bare prompt delta: it would fabricate a workflow/
+  // ecosystem key from no context and pollute the delta.
+  const partialParams = (metadata as { partialParams?: boolean }).partialParams === true;
   let finalParams: Record<string, unknown> | undefined;
   if (resolvedParams) {
-    if (hasSourceLineage) {
+    if (partialParams || hasSourceLineage) {
       finalParams = removeEmpty(resolvedParams);
     } else {
       const mapped = mapDataToGraphInput(resolvedParams, resolvedResources ?? [], {
@@ -2085,8 +2081,6 @@ function formatStep(
     metadata: {
       ...removeEmpty({
         params: finalParams,
-        // Only emit when params is a complete snapshot — absent (falsy → merge) otherwise.
-        sourceLineage: sourceLineage && finalParams ? true : undefined,
         remixOfId,
         // Pass both raw keys through. Client merges `output + images` for display
         // via `BlobData.outputMeta`; client's patch builder inspects `output`
@@ -2096,6 +2090,9 @@ function formatStep(
         output: (metadata as any).output as NormalizedStepMetadata['output'],
         images: metadata.images as NormalizedStepMetadata['images'],
         suppressOutput: metadata.suppressOutput as boolean | undefined,
+        // Flag (not a pre-merge): tells the client to spread the small `params` delta over
+        // workflow params. Kept as a flag so the API payload stays minimal.
+        partialParams: partialParams && finalParams ? true : undefined,
       }),
       ...(resolvedResources?.length ? { resources: resolvedResources } : {}),
     },
