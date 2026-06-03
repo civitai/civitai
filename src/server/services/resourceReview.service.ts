@@ -464,7 +464,7 @@ export const getPagedResourceReviews = async ({
   ]);
   const excludedUserIds = [...new Set(excludedUsers.flat().map((user) => user.id))];
   if (excludedUserIds.length) {
-    AND.push(Prisma.sql`rr."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+    AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
   const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
