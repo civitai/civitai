@@ -14,6 +14,8 @@ import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import classes from './MasonryGrid.module.scss';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 type Props<TData> = {
@@ -35,9 +37,11 @@ export function MasonryGrid<TData>({
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
   const { adsEnabled, useDirectAds } = useAdsContext();
-  // Disable in-feed ads on civitai.red (direct ads) for now
+  const browsingLevel = useBrowsingLevelDebounced();
   const isMobile = useIsMobile();
-  const adsReallyAreEnabled = adsEnabled && !useDirectAds && isMobile && withAds;
+  // Programmatic ads (civitai.com) render on all devices; direct ads (civitai.red) are mobile-only.
+  const adsReallyAreEnabled =
+    adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds && (!useDirectAds || isMobile);
   const createAdFeed = useCreateAdFeed();
   const items = useMemo(
     () =>

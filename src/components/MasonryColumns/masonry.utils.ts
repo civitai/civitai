@@ -7,7 +7,8 @@ import type { AdFeedItem } from '~/components/Ads/ads.utils';
 import { useCreateAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 export function useMasonryColumns<TData>(
   data: TData[],
@@ -19,8 +20,8 @@ export function useMasonryColumns<TData>(
   withAds?: boolean
 ) {
   const { adsEnabled } = useAdsContext();
-  const isMobile = useIsMobile();
-  const adsReallyAreEnabled = adsEnabled && isMobile && withAds;
+  const browsingLevel = useBrowsingLevelDebounced();
+  const adsReallyAreEnabled = adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds;
   const createAdFeed = useCreateAdFeed();
 
   return useMemo(() => {
