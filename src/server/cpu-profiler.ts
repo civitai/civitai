@@ -174,8 +174,8 @@ async function captureProfile(): Promise<string> {
     }
     if (!wrote) {
       console.warn(
-        `[cpu-profiler] capture interrupted: no profile written to ${filePath} ` +
-          `(capture aborted before Profiler.stop, e.g. by shutdown).`
+        `[cpu-profiler] CPU profile capture did not complete (inspector or write error); ` +
+          `no profile written to ${filePath}.`
       );
     }
     try {

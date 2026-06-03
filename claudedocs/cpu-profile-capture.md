@@ -79,8 +79,37 @@ kubectl exec -n civitai-dp-prod "$POD" -- kill -WINCH 1
 kubectl logs -n civitai-dp-prod "$POD" --tail=20 | grep cpu-profiler
 ```
 
+> **Do not** run an external `:9229` heap snapshot (the cluster `heap-snapshot`
+> skill / `kill -USR1 1`) and a CPU profile on the same pod at the same time —
+> both drive the V8 inspector `Profiler` domain and may error.
+
 The capture runs for `CPU_PROFILE_SECONDS` (default 25s). The completion log line
 prints the exact filename and the retrieval command.
+
+### What this profile captures (and a wedged-loop caveat)
+
+This profiler captures **cumulative / multi-turn** event-loop saturation — many
+JS turns adding up to a pinned core over the capture window — which is the
+actual incident class here (the API pods peg ~1.0 core across a traffic wave,
+not in one giant synchronous call). It samples the running stack across that
+window, so it shows the functions that dominate self-time over all those turns.
+
+A single unyielding **synchronous** turn is the one case it can miss: the signal
+handler only runs when the event loop next yields, so a loop wedged inside one
+long synchronous turn can **delay or entirely prevent the handler from
+starting**. After firing the signal, **confirm the `capture started` log line
+appears**:
+
+```bash
+kubectl logs -n civitai-dp-prod "$POD" --tail=20 | grep 'capture started'
+```
+
+If it does **not** appear and `kubectl top pods` still shows the pod pinned at
+~1.0 core, the loop is wedged in a single long synchronous turn and the profiler
+cannot start — **that itself is a finding** (it narrows the cause to one
+unyielding turn rather than cumulative saturation; investigate with a different
+tool, e.g. an external `:9229` profile attached before the wedge, or code review
+of suspect synchronous paths).
 
 ## Where the file lands
 
