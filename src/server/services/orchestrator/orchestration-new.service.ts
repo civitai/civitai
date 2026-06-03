@@ -46,7 +46,7 @@ import type { GenerationResource } from '~/shared/types/generation.types';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
-import type { GenerationStatus } from '~/server/schema/generation.schema';
+import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
@@ -206,7 +206,7 @@ export type GenerationHandlerCtx = {
 export type GenerationContextResult = {
   externalCtx: GenerationCtx;
   status: {
-    available: boolean;
+    mode: GenerationStatusMode;
     message?: string;
   };
 };
@@ -261,7 +261,7 @@ export async function buildGenerationContext(
       gatedVersionIds: gated.gatedVersionIds,
     },
     status: {
-      available: status.available,
+      mode: status.mode,
       message: status.message ?? undefined,
     },
   };

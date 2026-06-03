@@ -13,6 +13,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
+import { generationStatusDefaultMessage } from '~/server/schema/generation.schema';
 import {
   imageTrainingRouterInputSchema,
   imageTrainingRouterWhatIfSchema,
@@ -369,10 +370,16 @@ export const orchestratorRouter = router({
       });
 
       // Check generation status early
-      if (!status.available && !ctx.user.isModerator) {
+      if (status.mode === 'disabled' && !ctx.user.isModerator) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: status.message ?? 'Generation is currently disabled',
+          message: status.message ?? generationStatusDefaultMessage,
+        });
+      }
+      if (status.mode === 'memberOnly' && userTier === 'free' && !ctx.user.isModerator) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: status.message ?? generationStatusDefaultMessage,
         });
       }
 
@@ -409,10 +416,16 @@ export const orchestratorRouter = router({
         isModerator: ctx.user.isModerator,
       });
 
-      if (!status.available && !ctx.user.isModerator) {
+      if (status.mode === 'disabled' && !ctx.user.isModerator) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: status.message ?? 'Generation is currently disabled',
+          message: status.message ?? generationStatusDefaultMessage,
+        });
+      }
+      if (status.mode === 'memberOnly' && userTier === 'free' && !ctx.user.isModerator) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: status.message ?? generationStatusDefaultMessage,
         });
       }
 
