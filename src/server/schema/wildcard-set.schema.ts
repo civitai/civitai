@@ -1,17 +1,21 @@
 import * as z from 'zod';
 import { MAX_SEED } from '~/shared/constants/generation.constants';
 import { MAX_PROMPT_LENGTH } from '~/shared/data-graph/generation/common';
+import { WILDCARD_CATEGORY_NAME } from '~/utils/prompt-helpers';
 
 // Category names match the import-side normalization (basename of the source
 // .txt, with path separators allowed for nested zip layouts). Trimmed to
-// avoid leading/trailing whitespace mismatching the citext index.
+// avoid leading/trailing whitespace mismatching the citext index. Charset is
+// shared (WILDCARD_CATEGORY_NAME) so it can't drift from the prompt `#ref`
+// parser or the import `__nested__` parser.
 const categoryNameSchema = z
   .string()
   .trim()
   .min(1)
   .max(120)
-  .regex(/^[A-Za-z][\w./-]*$/, {
-    error: 'Category name must start with a letter and contain only letters, numbers, _.-/',
+  .regex(new RegExp(`^${WILDCARD_CATEGORY_NAME}$`), {
+    error:
+      'Category name must start with a letter or number and contain only letters, numbers, _.-/',
   });
 
 // A snippet value is the literal text we store in WildcardSetCategory.values.
