@@ -40,8 +40,13 @@ function logError({ error, name, details }: { error: Error; name: string; detail
 type CancellableCheckFn = (signal: AbortSignal) => Promise<boolean>;
 
 const checkFns: Record<string, CancellableCheckFn> = {
-  // Prisma checks - use transaction timeout (Prisma doesn't support AbortSignal)
-  // The statement_timeout limits query duration on the server side
+  // Prisma checks (Prisma doesn't support AbortSignal). `statement_timeout`
+  // only bounds the query's *server-side duration once it RUNS* — it does NOT
+  // bound the wait to acquire a pool connection (the slow path during a deploy
+  // rollout, when PG connection churn can stall acquisition). The check is
+  // still hard-bounded, but by the per-check wall-clock `runCheckWithTimeout`
+  // race against setTimeout(HEALTHCHECK_TIMEOUT), NOT by statement_timeout: a
+  // connection-acquisition hang resolves as a `timeout` at HEALTHCHECK_TIMEOUT.
   async write(signal: AbortSignal) {
     if (signal.aborted) return false;
     return !!(await dbWrite
@@ -68,9 +73,13 @@ const checkFns: Record<string, CancellableCheckFn> = {
       }));
   },
 
-  // pg checks - use simple query with statement_timeout
+  // pg checks - simple query with statement_timeout.
   // Note: cancellableQuery adds overhead (extra connection for pg_cancel_backend)
-  // which isn't worth it for a simple SELECT 1. statement_timeout handles slow queries.
+  // which isn't worth it for a simple SELECT 1. As with the Prisma checks above,
+  // statement_timeout only limits query *duration* server-side once it runs — it
+  // does NOT bound connection-acquisition wait. The hard ceiling on a hung
+  // acquisition is the wall-clock `runCheckWithTimeout` race (HEALTHCHECK_TIMEOUT),
+  // not statement_timeout.
   async pgWrite(signal: AbortSignal) {
     if (signal.aborted) return false;
     try {
