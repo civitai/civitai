@@ -44,13 +44,18 @@ function createUserCache<T, TArgs extends { userId?: number }>({
   const getLegacyKey = ({ userId = -1 }: { userId?: number }) =>
     `${REDIS_KEYS.USER.CACHE}:${userId}:${key}` as RedisKeyTemplateCache;
 
-  // Fetch from source (DB) and write the field into the per-user hash, bumping
-  // the (jittered) hash TTL.
+  // Fetch from source (DB) and write the field into the per-user hash. The TTL
+  // is set with `NX` (only when the hash has none), so the whole hash ages out
+  // ~maxExpiry after its FIRST population rather than having its expiry bumped
+  // on every field write. This preserves the self-healing backstop the old
+  // per-key TTLs gave: if an invalidation is ever missed, the field can't go
+  // stale indefinitely — the hash expires and is rebuilt. (Jitter on first
+  // population still staggers expiry across users to avoid a herd.)
   const get = async ({ userId = -1, ...rest }: TArgs) => {
     const data = await callback({ userId, ...rest } as TArgs);
     const hashKey = getUserPrefsHashKey(userId);
     await redis.packed.hSet(hashKey, field, data);
-    await redis.expire(hashKey, getHiddenCacheExpiry());
+    await redis.expire(hashKey, getHiddenCacheExpiry(), 'NX');
     return data;
   };
 
@@ -62,7 +67,7 @@ function createUserCache<T, TArgs extends { userId?: number }>({
     if (legacy != null) {
       const hashKey = getUserPrefsHashKey(userId);
       await redis.packed.hSet(hashKey, field, legacy);
-      await redis.expire(hashKey, getHiddenCacheExpiry());
+      await redis.expire(hashKey, getHiddenCacheExpiry(), 'NX'); // NX: see get()
       return legacy;
     }
     return await get({ userId, ...rest } as TArgs);
