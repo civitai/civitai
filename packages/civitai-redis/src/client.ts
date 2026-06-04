@@ -3,11 +3,16 @@ import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
 import { createClient, createCluster } from 'redis';
 import { RESP_TYPES } from 'redis';
-import { isProd } from '~/env/other';
-import { env } from '~/env/server';
-import { createLogger } from '~/utils/logging';
-import { slugit } from '~/utils/string-helpers';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import slugify from 'slugify';
+import { redisEnv, type RedisConfig } from './env';
+
+export type { RedisConfig } from './env';
+export type RedisLogFn = (message: string, ...args: unknown[]) => void;
+/** Resolves whether enhanced cluster failover is enabled — injected app policy (Flipt). */
+export type RedisFailoverResolver = (context: Record<string, string>) => Promise<boolean>;
+
+// inlined — was slugit from ~/utils/string-helpers
+const slugit = (value: string) => slugify(value, { lower: true, strict: true });
 
 export type RedisKeyStringsCache = Values<typeof REDIS_KEYS>;
 export type RedisKeyStringsSys = Values<typeof REDIS_SYS_KEYS>;
@@ -176,14 +181,12 @@ interface CustomRedisClientCache extends CustomRedisClient<RedisKeyTemplateCache
 // eslint-disable-next-line @typescript-eslint/no-empty-interface
 interface CustomRedisClientSys extends CustomRedisClient<RedisKeyTemplateSys> {}
 
-declare global {
-  // eslint-disable-next-line no-var, vars-on-top
-  var globalRedis: CustomRedisClientCache | undefined;
-  // eslint-disable-next-line no-var, vars-on-top
-  var globalSysRedis: CustomRedisClientSys | undefined;
-}
-
-const log = createLogger('redis', 'green');
+// Configured once per process by createRedisClients(). The defaults keep the
+// module-level helpers safe if referenced before the factory runs. (HMR/global
+// singleton caching lives in the app shim, where the factory is called.)
+let config: RedisConfig = redisEnv;
+let log: RedisLogFn = () => {};
+let isEnhancedFailoverEnabled: RedisFailoverResolver = async () => false;
 
 // Track topology refresh intervals for cleanup
 const clusterRefreshIntervals = new Map<string, ReturnType<typeof setInterval>>();
@@ -230,8 +233,8 @@ function triggerTopologyRediscovery(clusterClient: any, reason: string) {
  * Falls back to single URL if REDIS_CLUSTER_NODES is not set.
  */
 function parseClusterNodes(fallbackUrl: string): { url: string }[] {
-  if (env.REDIS_CLUSTER_NODES) {
-    const nodes = env.REDIS_CLUSTER_NODES.split(',')
+  if (config.clusterNodes) {
+    const nodes = config.clusterNodes.split(',')
       .map((nodeUrl) => nodeUrl.trim())
       .filter(Boolean)
       .map((nodeUrl) => {
@@ -252,7 +255,7 @@ function parseClusterNodes(fallbackUrl: string): { url: string }[] {
 function getBaseClient(type: 'cache' | 'system') {
   log(`Creating Redis client (${type})`);
 
-  const REDIS_URL = type === 'system' ? env.REDIS_SYS_URL : env.REDIS_URL;
+  const REDIS_URL = type === 'system' ? config.sysUrl : config.url;
   const url = new URL(REDIS_URL);
   const connectionUrl = `${url.protocol}//${url.host}`;
 
@@ -262,7 +265,7 @@ function getBaseClient(type: 'cache' | 'system') {
       log(`Redis reconnecting, retry ${retries}`);
       return Math.min(retries * 100, 3000);
     },
-    connectTimeout: env.REDIS_TIMEOUT,
+    connectTimeout: config.timeout,
   };
 
   const authConfig = {
@@ -274,7 +277,7 @@ function getBaseClient(type: 'cache' | 'system') {
 
   // System redis is always a single node
   // Cache redis can be either cluster or single node based on env.REDIS_CLUSTER
-  const isCluster = type === 'cache' && env.REDIS_CLUSTER;
+  const isCluster = type === 'cache' && config.cluster;
 
   const baseClient = isCluster
     ? createCluster({
@@ -310,7 +313,7 @@ function getBaseClient(type: 'cache' | 'system') {
     const getFliptHostname = (): string => {
       try {
         // NEXTAUTH_URL contains the full URL like https://next.civitai.com
-        const nextAuthUrl = env.NEXTAUTH_URL;
+        const nextAuthUrl = config.nextAuthUrl;
         if (nextAuthUrl) {
           return new URL(nextAuthUrl).hostname;
         }
@@ -321,21 +324,16 @@ function getBaseClient(type: 'cache' | 'system') {
     };
     const fliptHostname = getFliptHostname();
     const fliptContext: Record<string, string> = { hostname: fliptHostname };
-    if (env.FLIPT_DEPLOYMENT_ID) fliptContext.deploymentId = env.FLIPT_DEPLOYMENT_ID;
+    if (config.fliptDeploymentId) fliptContext.deploymentId = config.fliptDeploymentId;
     log(
       `Flipt context for enhanced failover flag: hostname=${fliptHostname}, deploymentId=${
-        env.FLIPT_DEPLOYMENT_ID ?? 'unset'
+        config.fliptDeploymentId ?? 'unset'
       }`
     );
 
-    // Helper to check feature flag before triggering rediscovery
+    // Helper to check the injected app policy before triggering rediscovery
     const maybeRediscover = async (reason: string) => {
-      const isEnhancedFailoverEnabled = await isFlipt(
-        FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
-        'redis-cluster', // entityId
-        fliptContext // context for segment matching
-      );
-      if (isEnhancedFailoverEnabled) {
+      if (await isEnhancedFailoverEnabled(fliptContext)) {
         triggerTopologyRediscovery(baseClient, reason);
       }
     };
@@ -376,20 +374,16 @@ function getBaseClient(type: 'cache' | 'system') {
     const setupEnhancedFailover = async () => {
       try {
         log('Checking enhanced failover feature flag...');
-        const isEnhancedFailoverEnabled = await isFlipt(
-          FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
-          'redis-cluster', // entityId
-          fliptContext // context for segment matching
-        );
+        const enhancedFailoverEnabled = await isEnhancedFailoverEnabled(fliptContext);
 
-        if (!isEnhancedFailoverEnabled) {
+        if (!enhancedFailoverEnabled) {
           log('Enhanced cluster failover handling is DISABLED (feature flag off)');
           return;
         }
 
         log('Enhanced cluster failover handling is ENABLED');
 
-        const refreshInterval = env.REDIS_CLUSTER_REFRESH_INTERVAL;
+        const refreshInterval = config.clusterRefreshInterval;
         if (refreshInterval > 0) {
           const intervalId = setInterval(() => {
             triggerTopologyRediscovery(baseClient, 'periodic refresh');
@@ -656,21 +650,31 @@ function getSysClient() {
   return getClient<RedisKeyTemplateSys>('system') as CustomRedisClientSys;
 }
 
-export let redis: CustomRedisClientCache;
-export let sysRedis: CustomRedisClientSys;
-if (!env.IS_BUILD) {
-  if (isProd) {
-    redis = getCacheClient();
-    sysRedis = getSysClient();
-  } else {
-    if (!global.globalRedis) global.globalRedis = getCacheClient();
-    redis = global.globalRedis;
+export type RedisClients = { redis: CustomRedisClientCache; sysRedis: CustomRedisClientSys };
 
-    if (!global.globalSysRedis) global.globalSysRedis = getSysClient();
-    sysRedis = global.globalSysRedis;
-  }
-} else {
-  log('Skipping Redis initialization (build phase)');
+export type CreateRedisClientsOptions = Partial<RedisConfig> & {
+  /** Debug logger (app-defined). Defaults to a no-op. */
+  log?: RedisLogFn;
+  /**
+   * App policy resolving whether enhanced cluster failover is enabled for a given
+   * Flipt context. Defaults to always-off; the app shim wires the real Flipt call.
+   */
+  isEnhancedFailoverEnabled?: RedisFailoverResolver;
+};
+
+/**
+ * Build the cache + system Redis clients. Connection config defaults come from the
+ * package env schema (./env, overridable via options); app behavior (logger, failover
+ * policy) is injected. HMR/global singleton caching and the Next build guard live in
+ * the app shim that calls this. See the `~/server/redis/client` shim.
+ */
+export function createRedisClients(options: CreateRedisClientsOptions = {}): RedisClients {
+  const { log: logOption, isEnhancedFailoverEnabled: failoverOption, ...envOverrides } = options;
+  config = { ...redisEnv, ...envOverrides };
+  if (logOption) log = logOption;
+  if (failoverOption) isEnhancedFailoverEnabled = failoverOption;
+
+  return { redis: getCacheClient(), sysRedis: getSysClient() };
 }
 
 // Source of Truth data

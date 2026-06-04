@@ -11,8 +11,14 @@
 const fs = require('fs');
 const path = require('path');
 
-const FULL_SCHEMA_PATH = path.join(__dirname, '../prisma/schema.full.prisma');
-const SLIM_SCHEMA_PATH = path.join(__dirname, '../prisma/schema.prisma');
+const FULL_SCHEMA_PATH = path.join(
+  __dirname,
+  '../packages/civitai-db-schema/prisma/schema.full.prisma'
+);
+const SLIM_SCHEMA_PATH = path.join(
+  __dirname,
+  '../packages/civitai-db-schema/prisma/schema.prisma'
+);
 
 function generateSlimSchema() {
   console.log('📋 Reading full schema from:', FULL_SCHEMA_PATH);

@@ -798,6 +798,22 @@ importers:
         specifier: ^8.19.0
         version: 8.19.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
 
+  packages/civitai-axiom: {}
+
+  packages/civitai-clickhouse: {}
+
+  packages/civitai-db:
+    dependencies:
+      '@civitai/db-schema':
+        specifier: workspace:*
+        version: link:../civitai-db-schema
+
+  packages/civitai-db-schema: {}
+
+  packages/civitai-redis: {}
+
+  packages/civitai-telemetry: {}
+
 packages:
 
   '@acemir/cssom@0.9.31':

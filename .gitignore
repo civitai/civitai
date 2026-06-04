@@ -14,6 +14,7 @@ node_modules
 
 # Generated slim schema - edit schema.full.prisma instead
 prisma/schema.prisma
+packages/civitai-db-schema/prisma/schema.prisma
 
 # next.js
 /.next/

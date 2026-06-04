@@ -1,12 +1,15 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@civitai/db-schema';
 import type { QueryResult, QueryResultRow } from 'pg';
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
 import { performance } from 'node:perf_hooks';
 import client from 'prom-client';
-import { env } from '~/env/server';
-import { dbWrite } from '~/server/db/client';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { createLogger } from '~/utils/logging';
+import { dbEnv, type DbConfig, type DbLogFn } from './env';
+import { limitConcurrency } from './concurrency-helpers';
+
+// Fix Dates: TIMESTAMP comes back as a UTC Date (was set per-pool-module in the app).
+types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
+  return new Date(stringValue.replace(' ', 'T') + 'Z');
+});
 
 // Histogram for pg Pool acquire latency. Defined here (not in prom/client.ts)
 // to avoid a module-init cycle: prom/client.ts imports pgDb/notifDb/datapacketDb,
@@ -34,8 +37,6 @@ const pgPoolAcquireHistogram = (() => {
     >;
   }
 })();
-
-const log = createLogger('pgDb', 'blue');
 
 /**
  * Formats a value for SQL display/logging.
@@ -73,25 +74,31 @@ type ClientInstanceType =
   | 'notification'
   | 'notificationRead'
   | 'datapacketRead';
-const instanceUrlMap: Record<ClientInstanceType, string> = {
-  notification: env.NOTIFICATION_DB_URL,
-  notificationRead: env.NOTIFICATION_DB_REPLICA_URL ?? env.NOTIFICATION_DB_URL,
-  primary: env.DATABASE_URL,
-  primaryRead: env.DATABASE_REPLICA_URL ?? env.DATABASE_URL,
-  primaryReadLong: env.DATABASE_REPLICA_LONG_URL ?? env.DATABASE_URL,
-  datapacketRead: env.DATAPACKET_DATABASE_RO_URL ?? env.DATABASE_URL,
+export type GetClientOptions = Partial<DbConfig> & {
+  instance?: ClientInstanceType;
+  /** Debug logger (app-defined). Defaults to a no-op. */
+  log?: DbLogFn;
 };
 
-export function getClient(
-  { instance }: { instance: ClientInstanceType } = {
-    instance: 'primary',
-  }
-) {
+export function getClient(options: GetClientOptions = {}) {
+  const { instance = 'primary', log: logOption, ...envOverrides } = options;
+  const config = { ...dbEnv, ...envOverrides };
+  const log: DbLogFn = logOption ?? (() => {});
+
+  const instanceUrlMap: Record<ClientInstanceType, string> = {
+    notification: config.notificationUrl,
+    notificationRead: config.notificationReplicaUrl ?? config.notificationUrl,
+    primary: config.databaseUrl,
+    primaryRead: config.replicaUrl ?? config.databaseUrl,
+    primaryReadLong: config.replicaLongUrl ?? config.databaseUrl,
+    datapacketRead: config.datapacketReadUrl ?? config.databaseUrl,
+  };
+
   log(`Creating ${instance} client`);
 
   const envUrl = instanceUrlMap[instance];
   const connectionStringUrl = new URL(envUrl);
-  if (env.DATABASE_SSL !== false) connectionStringUrl.searchParams.set('sslmode', 'no-verify');
+  if (config.ssl !== false) connectionStringUrl.searchParams.set('sslmode', 'no-verify');
   const connectionString = connectionStringUrl.toString();
 
   const isNotification = instance === 'notification' || instance === 'notificationRead';
@@ -105,40 +112,40 @@ export function getClient(
   // For notification instances, we set it per-connection via SET instead.
   const notifStatementTimeout =
     instance === 'notificationRead'
-      ? (env.IS_DATAPACKET ? env.DATABASE_READ_TIMEOUT ?? 10000 : undefined)
+      ? (config.isDatapacket ? config.readTimeout ?? 10000 : undefined)
       : instance === 'notification'
-      ? env.DATABASE_WRITE_TIMEOUT
+      ? config.writeTimeout
       : undefined;
 
   const pool = new Pool({
     connectionString,
-    connectionTimeoutMillis: env.IS_DATAPACKET
-      ? env.DATABASE_CONNECTION_TIMEOUT || 5000
-      : env.DATABASE_CONNECTION_TIMEOUT,
+    connectionTimeoutMillis: config.isDatapacket
+      ? config.connectionTimeout || 5000
+      : config.connectionTimeout,
     min: 0,
-    max: isNotification ? (env.NOTIFICATION_POOL_MAX ?? env.DATABASE_POOL_MAX) : env.DATABASE_POOL_MAX,
+    max: isNotification ? (config.notificationPoolMax ?? config.poolMax) : config.poolMax,
     // trying this for leaderboard job
-    idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : env.DATABASE_POOL_IDLE_TIMEOUT,
+    idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : config.poolIdleTimeout,
     statement_timeout:
-      (isNotification || instance === 'datapacketRead') && env.IS_DATAPACKET
+      (isNotification || instance === 'datapacketRead') && config.isDatapacket
         ? undefined // DP: set per-connection below (PgBouncer ignores startup params)
         : instance === 'notificationRead'
         ? undefined // DOKS: standby doesn't support this
         : instance === 'primaryRead'
-        ? env.DATABASE_READ_TIMEOUT
-        : env.DATABASE_WRITE_TIMEOUT,
-    application_name: `${appBaseName}${env.PODNAME ? '-' + env.PODNAME : ''}`,
+        ? config.readTimeout
+        : config.writeTimeout,
+    application_name: `${appBaseName}${config.podName ? '-' + config.podName : ''}`,
   }) as AugmentedPool;
 
   // Set statement_timeout per-connection on DP instances that go through PgBouncer
   // (PgBouncer ignores statement_timeout as a startup parameter)
-  if (env.IS_DATAPACKET && isNotification && notifStatementTimeout) {
+  if (config.isDatapacket && isNotification && notifStatementTimeout) {
     pool.on('connect', (client) => {
       client.query(`SET statement_timeout = ${Number(notifStatementTimeout)}`).catch(() => {});
     });
   }
-  if (env.IS_DATAPACKET && instance === 'datapacketRead') {
-    const readTimeout = env.DATABASE_READ_TIMEOUT ?? 120000; // 2 minutes default
+  if (config.isDatapacket && instance === 'datapacketRead') {
+    const readTimeout = config.readTimeout ?? 120000; // 2 minutes default
     pool.on('connect', (client) => {
       client.query(`SET statement_timeout = ${Number(readTimeout)}`).catch(() => {});
     });
@@ -334,36 +341,8 @@ export function parameterizedTemplateHandler<T>(
   };
 }
 
-function lsnGTE(lsn1: string, lsn2: string): boolean {
-  const [a1, b1] = lsn1.split('/').map((part) => parseInt(part, 16));
-  const [a2, b2] = lsn2.split('/').map((part) => parseInt(part, 16));
-  return a1 > a2 || (a1 === a2 && b1 >= b2);
-}
-
-export async function getCurrentLSN() {
-  try {
-    const currentRes = await dbWrite.$queryRaw<
-      {
-        lsn: string;
-      }[]
-    >`SELECT pg_current_wal_lsn()::text AS lsn`;
-    return currentRes[0]?.lsn ?? '';
-  } catch (e) {
-    // TODO what to return here
-    return '';
-  }
-}
-
-export async function checkNotUpToDate(lsn: string) {
-  try {
-    const roRes = await dbWrite.$queryRaw<
-      { replay_lsn: string }[]
-    >`SELECT replay_lsn::text FROM get_replication_status() where application_name like 'ro-c16-%'`;
-    return roRes.some((row) => !lsnGTE(row.replay_lsn, lsn));
-  } catch (e) {
-    return true;
-  }
-}
+// getCurrentLSN / checkNotUpToDate / dbKV moved to ./kv-helpers (they need a Prisma
+// client; the app shim binds dbWrite and re-exports them under the same names).
 
 export type RunContext = {
   cancelFns: (() => Promise<void>)[];
@@ -535,19 +514,3 @@ export function getExplainSql(value: typeof Prisma.Sql) {
 export function jsonbArrayFrom(data: any): string {
   return `'${JSON.stringify(data)}'::jsonb`;
 }
-
-export const dbKV = {
-  get: async function <T>(key: string, defaultValue?: T) {
-    const stored = await dbWrite.keyValue.findUnique({ where: { key } });
-    return stored ? (stored.value as T) : defaultValue;
-  },
-  set: async function <T>(key: string, value: T) {
-    const json = JSON.stringify(value).replace(/'/g, "''");
-    await dbWrite.$executeRawUnsafe(`
-      INSERT INTO "KeyValue" ("key", "value")
-      VALUES ('${key}', '${json}'::jsonb)
-      ON CONFLICT ("key")
-      DO UPDATE SET "value" = '${json}'::jsonb
-    `);
-  },
-};

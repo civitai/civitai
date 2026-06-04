@@ -14,12 +14,12 @@ generator client {
 
 generator enums {
   provider = "node ./scripts/prisma-enum-generator.mjs"
-  output   = "../src/shared/utils/prisma/enums.ts"
+  output   = "../src/enums.ts"
 }
 
 generator typescriptInterfaces {
   provider = "prisma-generator-typescript-interfaces"
-  output   = "../src/shared/utils/prisma/models.ts"
+  output   = "../src/models.ts"
 }
 
 datasource db {

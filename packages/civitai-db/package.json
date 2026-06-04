@@ -1,0 +1,10 @@
+{
+  "name": "@civitai/db",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@civitai/db-schema": "workspace:*"
+  }
+}

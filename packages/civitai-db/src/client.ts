@@ -1,100 +1,88 @@
-// src/server/db/client.ts
-import type { Prisma } from '@prisma/client';
-import { PrismaClient } from '@prisma/client';
-import { isProd } from '~/env/other';
-import { env } from '~/env/server';
-import { logToAxiom } from '~/server/logging/client';
+// Prisma read/write client factory. The generated client + types come from the
+// @civitai/db-schema contract package, never @prisma/client directly.
+import type { Prisma } from '@civitai/db-schema';
+import { PrismaClient } from '@civitai/db-schema';
+import { dbEnv, type DbConfig } from './env';
 
-declare global {
-  // eslint-disable-next-line no-var, vars-on-top
-  var globalDbRead: PrismaClient | undefined;
-  // eslint-disable-next-line no-var, vars-on-top
-  var globalDbWrite: PrismaClient | undefined;
-}
+export type PrismaClients = { dbRead: PrismaClient; dbWrite: PrismaClient };
 
-const logFor = (target: 'write' | 'read') =>
-  async function logQuery(e: { query: string; params: string; duration: number }) {
-    if (e.duration < 2000) return;
-    let query = e.query;
-    const params = JSON.parse(e.params);
-    // Replace $X variables with params in query so it's possible to copy/paste and optimize
-    for (let i = 0; i < params.length; i++) {
-      // Negative lookahead for no more numbers, ie. replace $1 in '$1' but not '$11'
-      const re = new RegExp('\\$' + ((i as number) + 1) + '(?!\\d)', 'g');
-      // If string, will quote - if bool or numeric, will not - does the job here
-      if (typeof params[i] === 'string') params[i] = "'" + params[i].replace("'", "\\'") + "'";
-      //params[i] = JSON.stringify(params[i])
-      query = query.replace(re, params[i]);
-    }
+export type CreatePrismaClientsOptions = Partial<DbConfig> & {
+  /** Structured slow-query telemetry (the old logToAxiom call). Injected by the app. */
+  onSlowQuery?: (e: { query: string; duration: number; target: 'read' | 'write' }) => void;
+};
 
-    if (!isProd) console.log(query);
-    else logToAxiom({ query, duration: e.duration, target }, 'db-logs');
-  };
+/**
+ * Build the Prisma read/write clients. Connection config defaults come from the
+ * package env schema (./env, overridable via options); app behavior (logger, slow-query
+ * sink) is injected. HMR/global caching and the Next build guard live in the app shim
+ * that calls this. See the `~/server/db/client` shim.
+ */
+export function createPrismaClients(options: CreatePrismaClientsOptions = {}): PrismaClients {
+  const { onSlowQuery, ...envOverrides } = options;
+  const config = { ...dbEnv, ...envOverrides };
 
-const singleClient = env.DATABASE_REPLICA_URL === env.DATABASE_URL;
-const createPrismaClient = ({ readonly }: { readonly: boolean }): PrismaClient => {
-  const log: Prisma.LogDefinition[] = env.LOGGING.filter((x) => x.startsWith('prisma:')).map(
-    (x) => ({
-      emit: 'stdout',
-      level: x.replace('prisma:', '') as Prisma.LogLevel,
-    })
-  );
-  if (env.LOGGING.some((x) => x.includes('prisma-slow'))) {
-    const existingItemIndex = log.findIndex((x) => x.level === 'query');
-    log.splice(existingItemIndex, 1);
-    log.push({
-      emit: 'event',
-      level: 'query',
-    });
-  }
-  const dbUrl = readonly ? env.DATABASE_REPLICA_URL : env.DATABASE_URL;
-  const options = { log, datasources: { db: { url: dbUrl } } } as Prisma.PrismaClientOptions;
-  const prisma = new PrismaClient(options);
+  const singleClient = config.replicaUrl === config.databaseUrl;
 
-  // use with prisma-slow,prisma-showparams
-  if (env.LOGGING.some((x) => x === 'prisma-showparams')) {
-    // @ts-ignore
-    prisma.$on('query', async (e: { query: string; params: string; duration: number }) => {
+  const logFor = (target: 'write' | 'read') =>
+    async function logQuery(e: { query: string; params: string; duration: number }) {
+      if (e.duration < 2000) return;
       let query = e.query;
       const params = JSON.parse(e.params);
-
+      // Replace $X variables with params in query so it's possible to copy/paste and optimize
       for (let i = 0; i < params.length; i++) {
+        // Negative lookahead for no more numbers, ie. replace $1 in '$1' but not '$11'
         const re = new RegExp('\\$' + ((i as number) + 1) + '(?!\\d)', 'g');
+        // If string, will quote - if bool or numeric, will not - does the job here
         if (typeof params[i] === 'string') params[i] = "'" + params[i].replace("'", "\\'") + "'";
         query = query.replace(re, params[i]);
       }
 
-      console.log(query);
-    });
-  }
-  return prisma;
-};
+      if (!config.isProd) console.log(query);
+      else onSlowQuery?.({ query, duration: e.duration, target });
+    };
 
-export let dbRead: PrismaClient;
-export let dbWrite: PrismaClient;
-
-if (!env.IS_BUILD) {
-  if (isProd) {
-    dbWrite = createPrismaClient({ readonly: false });
-    dbRead = singleClient ? dbWrite : createPrismaClient({ readonly: true });
-  } else {
-    if (!global.globalDbWrite) {
-      global.globalDbWrite = createPrismaClient({ readonly: false });
-
-      if (env.LOGGING.includes('prisma-slow-write'))
-        // @ts-ignore - this is necessary to get the query event
-        global.globalDbWrite.$on('query', logFor('write'));
+  const createPrismaClient = ({ readonly }: { readonly: boolean }): PrismaClient => {
+    const logDef: Prisma.LogDefinition[] = config.logging
+      .filter((x) => x.startsWith('prisma:'))
+      .map((x) => ({ emit: 'stdout', level: x.replace('prisma:', '') as Prisma.LogLevel }));
+    if (config.logging.some((x) => x.includes('prisma-slow'))) {
+      const existingItemIndex = logDef.findIndex((x) => x.level === 'query');
+      if (existingItemIndex >= 0) logDef.splice(existingItemIndex, 1);
+      logDef.push({ emit: 'event', level: 'query' });
     }
-    if (!global.globalDbRead) {
-      global.globalDbRead = singleClient
-        ? global.globalDbWrite
-        : createPrismaClient({ readonly: true });
+    const dbUrl = readonly ? config.replicaUrl : config.databaseUrl;
+    const clientOptions = {
+      log: logDef,
+      datasources: { db: { url: dbUrl } },
+    } as Prisma.PrismaClientOptions;
+    const prisma = new PrismaClient(clientOptions);
 
-      if (env.LOGGING.includes('prisma-slow-read'))
-        // @ts-ignore - this is necessary to get the query event
-        global.globalDbRead.$on('query', logFor('read'));
+    // use with prisma-slow,prisma-showparams
+    if (config.logging.some((x) => x === 'prisma-showparams')) {
+      // @ts-ignore
+      prisma.$on('query', async (e: { query: string; params: string; duration: number }) => {
+        let query = e.query;
+        const params = JSON.parse(e.params);
+        for (let i = 0; i < params.length; i++) {
+          const re = new RegExp('\\$' + ((i as number) + 1) + '(?!\\d)', 'g');
+          if (typeof params[i] === 'string') params[i] = "'" + params[i].replace("'", "\\'") + "'";
+          query = query.replace(re, params[i]);
+        }
+        console.log(query);
+      });
     }
-    dbWrite = global.globalDbWrite;
-    dbRead = singleClient ? dbWrite : global.globalDbRead;
-  }
+    return prisma;
+  };
+
+  const dbWrite = createPrismaClient({ readonly: false });
+  const dbRead = singleClient ? dbWrite : createPrismaClient({ readonly: true });
+
+  if (config.logging.includes('prisma-slow-write'))
+    // @ts-ignore - necessary to get the query event
+    dbWrite.$on('query', logFor('write'));
+  if (config.logging.includes('prisma-slow-read'))
+    // @ts-ignore - necessary to get the query event
+    dbRead.$on('query', logFor('read'));
+
+  return { dbRead, dbWrite };
 }

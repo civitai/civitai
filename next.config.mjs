@@ -103,7 +103,14 @@ export default defineNextConfig(
             // removeConsole: true,
           }
         : {},
-    transpilePackages: [],
+    transpilePackages: [
+      '@civitai/db-schema',
+      '@civitai/db',
+      '@civitai/redis',
+      '@civitai/clickhouse',
+      '@civitai/axiom',
+      '@civitai/telemetry',
+    ],
     experimental: {
       // scrollRestoration: true,
       cpus: 8,

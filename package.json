@@ -66,7 +66,8 @@
     "ts-script": "NODE_ENV=development tsx"
   },
   "prisma": {
-    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+    "schema": "packages/civitai-db-schema/prisma/schema.prisma",
+    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} packages/civitai-db-schema/prisma/seed.ts"
   },
   "lint-staged": {
     "**/*.{ts,tsx}": "tsc-files --noEmit"
