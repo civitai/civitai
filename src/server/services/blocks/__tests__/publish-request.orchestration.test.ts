@@ -1048,8 +1048,11 @@ describe('approveRequest', () => {
     const commitArg = mockForgejo.commitFiles.mock.calls[0][0];
     expect(commitArg.slug).toBe('hello');
     expect(commitArg.replaceAllFiles).toBe(true);
+    // A8/BUILD-1 Phase 2: the platform-owned Dockerfile (and nginx.conf) are
+    // NOT committed to the canonical build-source repo — the pipeline injects
+    // its own recipe + ignores tenant copies. makeValidBundle ships a
+    // Dockerfile; it is dropped from the commit.
     expect(commitArg.files.map((f: { path: string }) => f.path).sort()).toEqual([
-      'Dockerfile',
       'block.manifest.json',
       'index.html',
     ]);

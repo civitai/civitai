@@ -662,6 +662,19 @@ export async function withdrawRequest(opts: {
 }
 
 /**
+ * Files the build pipeline OWNS + injects at build time (audit A8/BUILD-1
+ * Phase 2). The pipeline ignores any tenant-supplied Dockerfile/nginx.conf and
+ * builds with its own platform-owned recipe, so we don't commit tenant copies
+ * to the canonical build-source repo (civitai-apps/<slug>) — they'd be inert +
+ * misleading. Matched case-insensitively at the repo root only. (The in-review
+ * snapshot + the diff summary keep the full upload so mods see what was sent.)
+ */
+function isPlatformOwnedPath(path: string): boolean {
+  const lower = path.toLowerCase();
+  return lower === 'dockerfile' || lower === 'nginx.conf';
+}
+
+/**
  * Re-fetch the bundle from MinIO and extract path → content map. Used
  * during approve to push files to Forgejo. Returns Buffer per file (we
  * need binary fidelity for non-text files).
@@ -1161,8 +1174,13 @@ export async function approveRequest(
   }
 
   // (4) Fetch + extract bundle. Single MinIO GET; the per-file extract
-  // happens in-memory.
-  const files = await fetchAndExtractBundleFiles(request.bundleKey);
+  // happens in-memory. Platform-owned build files (Dockerfile/nginx.conf) are
+  // dropped from the commit — the pipeline injects its own recipe + ignores
+  // tenant copies, so committing them to the build-source repo is inert +
+  // misleading (audit A8/BUILD-1 Phase 2).
+  const files = (await fetchAndExtractBundleFiles(request.bundleKey)).filter(
+    (f) => !isPlatformOwnedPath(f.path)
+  );
 
   // (5) Atomic single-commit replacement of the repo contents. Fires
   // exactly one Forgejo webhook → one git-push handler invocation →
