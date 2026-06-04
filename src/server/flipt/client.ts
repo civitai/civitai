@@ -82,12 +82,19 @@ const FLIPT_EVAL_CACHE_MAX = 10_000;
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
 // flip to take effect ASAP and the eval is either rare (cold path) or the extra
-// staleness is not worth the CPU saved. REDIS_CLUSTER_ENHANCED_FAILOVER is
-// evaluated only from Redis node-error/disconnect handlers (near-zero call
-// volume → no CPU benefit) but gates failover during an incident, so caching it
-// is all downside.
+// staleness is not worth the CPU saved.
+// - REDIS_CLUSTER_ENHANCED_FAILOVER: evaluated only from Redis node-error/
+//   disconnect handlers (near-zero call volume → no CPU benefit) but gates
+//   failover during an incident, so caching it is all downside.
+// - HIGH_REPLICATION_LAG_MODE: an operator flips this ON during an active
+//   rep-lag incident to force RAW reads to primary; a ~70s (10s TTL + 60s poll)
+//   propagation delay prolongs the stale-read window the flag exists to close.
+//   It's only evaluated on the no-arg fallback path of getDbWithoutLag (RAW
+//   reads without per-id flagging — db-lag-helpers.ts:42,94), not the hot
+//   per-id path, so the CPU saved by caching it is modest. Correctness wins.
 const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
+  FLIPT_FEATURE_FLAGS.HIGH_REPLICATION_LAG_MODE,
 ]);
 
 type FliptCacheEntry<T> = { value: T; expiresAt: number };
