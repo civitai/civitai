@@ -112,21 +112,25 @@ export function ExistingChat() {
   const [replyId, setReplyId] = useState<number | undefined>(undefined);
 
   // TODO there is a bug here. upon rejoining, you won't get a signal for the messages in the timespan between leaving and rejoining
-  const { data, fetchNextPage, isLoading, isRefetching, hasNextPage } =
+  const { data, fetchNextPage, isLoading, isRefetching, hasNextPage, isError, error } =
     trpc.chat.getInfiniteMessages.useInfiniteQuery(
       {
         chatId: existingChatId!,
       },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
-        select: (data) => ({
-          pages: [...data.pages].reverse(),
-          pageParams: [...data.pageParams].reverse(),
-        }),
       }
     );
 
   const { data: allChatData, isLoading: allChatLoading } = trpc.chat.getAllByUser.useQuery();
+
+  // Reversal is intentionally here in useMemo, not in useInfiniteQuery's select.
+  // Mutating pages + pageParams simultaneously inside select breaks RQ v5 cursor
+  // tracking and causes the hook to return empty data.
+  const allChats = useMemo(() => {
+    if (!data?.pages) return [];
+    return [...data.pages].reverse().flatMap((x) => x.items);
+  }, [data]);
 
   const thisChat = useMemo(
     () => allChatData?.find((c) => c.id === existingChatId),
@@ -445,6 +449,10 @@ export function ExistingChat() {
             {isRefetching || isLoading ? (
               <Center h="100%">
                 <Loader />
+              </Center>
+            ) : isError ? (
+              <Center h="100%">
+                <Text color="red">Error: {error?.message}</Text>
               </Center>
             ) : allChats.length > 0 ? (
               <Stack style={{ overflowWrap: 'break-word' }} gap={12}>
