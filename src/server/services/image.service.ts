@@ -2130,21 +2130,25 @@ export const getAllImagesIndex = async (
     tagIdsVar,
   ] = await withSpan('image:getAllImagesIndex:parallelFetch', async () =>
     Promise.all([
-      // NOTE: original code uses `await` on each element below, which causes
-      // sequential evaluation. Preserving that behavior to keep this PR
-      // observability-only — see follow-up to actually parallelize.
-      await getBasicDataForUsers(userIds),
-      include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
-      include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+      // These enrichment fetches are independent (each takes pre-computed
+      // userIds/imageIds/videoIds/searchResults) and are issued WITHOUT awaiting
+      // each element so Promise.all runs them concurrently — node-redis pipelines
+      // the cache GETs queued in the same tick, collapsing ~9 sequential Redis
+      // round-trips into ~1 round-trip-time. The prior version awaited each
+      // element, forcing sequential evaluation (the span name was aspirational).
+      // Mirrors the concurrent block in getAllImages.
+      getBasicDataForUsers(userIds),
+      include?.includes('profilePictures') ? getProfilePicturesForUsers(userIds) : undefined,
+      include?.includes('cosmetics') ? getCosmeticsForUsers(userIds) : undefined,
       include?.includes('cosmetics')
-        ? await getCosmeticsForEntity({
+        ? getCosmeticsForEntity({
             ids: imageIds,
             entity: 'Image',
           })
         : undefined,
-      include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
-      await getMetadataForImages(videoIds), // Only need this for videos
-      await getThumbnailsForImages(videoIds), // Only need this for videos
+      include?.includes('metaSelect') ? getMetaForImages(imageIds) : undefined,
+      getMetadataForImages(videoIds), // Only need this for videos
+      getThumbnailsForImages(videoIds), // Only need this for videos
       getImageMetricsObject(searchResults),
       // Fetch tagIds from cache so client-side hidden-tag filtering works.
       // Search results from BitDex don't include tagIds (too expensive to store),
