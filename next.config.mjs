@@ -104,17 +104,26 @@ export default defineNextConfig(
           }
         : {},
     transpilePackages: [],
+    sassOptions: {
+      // Next 15's sass-loader uses Dart Sass's modern API, which surfaces
+      // pre-existing deprecation warnings loudly (global darken()/abs() and
+      // slash division in CosmeticLights.module.scss). Scoped to the IDs that
+      // actually fire so genuinely new deprecations still show. Proper fix is to
+      // migrate that file to color.adjust()/math.div() (or run sass-migrator).
+      silenceDeprecations: ['color-functions', 'global-builtin', 'slash-div'],
+    },
+    // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
+    serverExternalPackages: [
+      'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
+      '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
+      '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+    ],
     experimental: {
       // scrollRestoration: true,
       cpus: 8,
       serverSourceMaps: true,
-      instrumentationHook: true, // Enable instrumentation.ts for OTEL
+      // instrumentationHook removed in Next 15 — instrumentation.ts is enabled by default now
       largePageDataBytes: 512 * 100000,
-      serverComponentsExternalPackages: [
-        'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
-        '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
-        '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
-      ],
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',
