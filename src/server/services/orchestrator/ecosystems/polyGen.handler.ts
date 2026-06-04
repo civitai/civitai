@@ -22,12 +22,13 @@ import type {
 } from '@civitai/client';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import type { Model3DGenerationSchema } from '~/server/orchestrator/polygen/polygen.schema';
 import { createImage } from '~/server/services/image.service';
 import { upsertModel3DFromWorkflow } from '~/server/services/model3d.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
-import { getImageUploadBackend } from '~/utils/s3-utils';
+import { getImageUploadBackend, getUploadBucket, getUploadS3Client } from '~/utils/s3-utils';
 import type { Prisma } from '@prisma/client';
 
 // =============================================================================
@@ -195,7 +196,12 @@ export function normalizeFormat(format: string): string {
 /** A model3d blob that has been copied to our S3, ready for a Model3DFile row. */
 type CopiedModelFile = {
   format: string;
-  /** S3 key (the `Model3DFile.url` column stores this) */
+  /**
+   * Full B2 URL (path-style) — `Model3DFile.url` stores this. Storing a
+   * full URL (rather than a bare key) means `getModel3DFiles` can sign it
+   * through the existing `isFullUrl + isB2Url` path against the model
+   * upload bucket, exactly the way moderator-seeded files are signed.
+   */
   url: string;
   /** File size in kilobytes (Model3DFile.sizeKB) */
   sizeKB: number;
@@ -210,6 +216,11 @@ type CopiedModelFile = {
  * in the past — orchestrator-provided URLs are presigned with short
  * expirations. If a fetch fails we surface the failure to the caller; a
  * higher-level retry policy can poll the orchestrator for a fresh URL.
+ *
+ * Destination is the **model** B2 bucket (`getUploadBucket('b2')`), not
+ * the image bucket — these are downloadable 3D assets, semantically
+ * identical to user-uploaded `.glb` / `.fbx` files, and `getModel3DFiles`
+ * is wired to sign B2-backed URLs against that bucket.
  */
 async function copyModel3dBlobToS3(
   blob: Model3dBlob,
@@ -244,7 +255,15 @@ async function copyModel3dBlobToS3(
   const safeFormat = format || 'bin';
   const s3Key = `${POLYGEN_S3_PREFIX}${randomUUID()}.${safeFormat}`;
 
-  const { s3, bucket, backend } = await getImageUploadBackend();
+  const s3 = getUploadS3Client('b2');
+  const bucket = getUploadBucket('b2');
+  const endpoint = env.S3_UPLOAD_B2_ENDPOINT?.replace(/\/+$/, '');
+  if (!bucket || !endpoint) {
+    throw new Error(
+      'Model upload bucket / endpoint not configured (S3_UPLOAD_B2_BUCKET, S3_UPLOAD_B2_ENDPOINT)'
+    );
+  }
+
   await s3.send(
     new PutObjectCommand({
       Bucket: bucket,
@@ -253,11 +272,16 @@ async function copyModel3dBlobToS3(
       ContentType: contentTypeForFormat(safeFormat),
     })
   );
-  registerMediaLocation(s3Key, backend, buffer.length);
+
+  // Path-style URL. `parseKey` / `parseB2Url` / `isB2Url` all key off the
+  // configured B2 endpoint host, so consumers downstream (model3d.service
+  // `getModel3DFiles`, the inline viewer, the download link) recognise it
+  // as a B2 asset and sign against `getUploadBucket('b2')`.
+  const fullUrl = `${endpoint}/${bucket}/${s3Key}`;
 
   return {
     format: safeFormat,
-    url: s3Key,
+    url: fullUrl,
     sizeKB: buffer.length / 1024,
   };
 }
