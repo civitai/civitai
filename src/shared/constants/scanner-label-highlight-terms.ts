@@ -29,7 +29,7 @@ export const SCANNER_LABEL_HIGHLIGHT_TERMS: Record<string, LabelHighlightTerms> 
       // English youth nouns
       'child', 'children', 'kid', 'kids', 'toddler', 'baby', 'infant',
       'minor', 'minors', 'underage',
-      'loli', 'lolicon', 'shota', 'cub',
+      'loli', 'lolicon', 'shota', 'cub', 'cunny',
       'schoolgirl', 'schoolboy', 'schoolgirls', 'schoolboys',
       'elementary student', 'kindergartner', 'preschooler',
       'aged down', 'age regression', 'age-regressed',
