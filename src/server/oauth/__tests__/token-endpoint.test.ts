@@ -116,7 +116,7 @@ vi.mock('@node-oauth/oauth2-server', () => ({
 }));
 
 // Import after mocks so the handler picks them up.
-import handler from '../token';
+import handler from '~/pages/api/auth/oauth/token';
 
 beforeEach(() => {
   vi.clearAllMocks();
