@@ -6,6 +6,7 @@ import {
   deleteUserPaymentMethodHandler,
   dismissAlertHandler,
   restoreAlertHandler,
+  restoreUserHandler,
   getAllUsersHandler,
   getCreatorsHandler,
   getLeaderboardHandler,
@@ -46,6 +47,7 @@ import {
   deleteUserSchema,
   dismissAlertSchema,
   restoreAlertSchema,
+  restoreUserSchema,
   getAllUsersInput,
   getByUsernameSchema,
   getUserByUsernameSchema,
@@ -238,6 +240,7 @@ export const userRouter = router({
     .mutation(toggleFollowUserHandler),
   toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
   toggleBan: moderatorProcedure.input(toggleBanUserSchema).mutation(toggleBanHandler),
+  restoreAccount: moderatorProcedure.input(restoreUserSchema).mutation(restoreUserHandler),
   getToken: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })
     .query(({ ctx }) => ({ token: createToken(ctx.user.id) })),

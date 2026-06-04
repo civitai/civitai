@@ -11,6 +11,7 @@ import {
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
@@ -44,6 +45,7 @@ import type {
   GetByUsernameSchema,
   GetUserCosmeticsSchema,
   GetUserListSchema,
+  RestoreUserInput,
   ToggleBanUser,
   ToggleUserBountyEngagementsInput,
   UpdateContentSettingsInput,
@@ -950,6 +952,81 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
   `);
   userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
 }
+
+/**
+ * Restore a soft-deleted user account (the inverse of deleteUser).
+ *
+ * deleteUser scrubs username, email, paddleCustomerId, image, profilePictureId from the User row
+ * and sets deletedAt. It also hard-deletes Account / Session / UserEngagement rows and reassigns
+ * the user's Models to userId = -1. We can only restore what survives the deletion: the User row's
+ * scrubbed fields (caller supplies them) and the orphaned Model ownership (via ClickHouse audit).
+ *
+ * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
+ * (email magic-link or OAuth) which creates new rows.
+ */
+export const restoreUser = async ({
+  id,
+  username,
+  email,
+  restoreModels,
+}: RestoreUserInput) => {
+  const user = await dbWrite.user.findFirst({
+    where: { id },
+    select: { id: true, deletedAt: true },
+  });
+  if (!user) throw throwNotFoundError(`No user with id ${id}`);
+  if (!user.deletedAt) throw throwBadRequestError(`User ${id} is not deleted; nothing to restore`);
+
+  // Make sure the username and email aren't claimed by some other user since the closure.
+  const conflict = await dbWrite.user.findFirst({
+    where: { id: { not: id }, OR: [{ username }, { email }] },
+    select: { id: true, username: true, email: true },
+  });
+  if (conflict) {
+    throw throwBadRequestError(
+      `Cannot restore: username or email is already in use by user ${conflict.id}`
+    );
+  }
+
+  await dbWrite.user.update({
+    where: { id },
+    data: { deletedAt: null, username, email },
+  });
+
+  let modelsRestored = 0;
+  let restoredModelIds: number[] = [];
+  if (restoreModels) {
+    // The deletion path sets Model.userId = -1 (without touching status/deletedAt), so the
+    // historical owner-link is lost from Postgres. ClickHouse `modelEvents` still has the
+    // original userId per modelId, which is what we use to identify which orphans to reclaim.
+    const auditRows =
+      (await clickhouse?.$query<{ modelId: number }>(`
+        SELECT DISTINCT modelId
+        FROM modelEvents
+        WHERE userId = ${id}
+      `)) ?? [];
+    const auditIds = auditRows.map((r) => r.modelId);
+
+    if (auditIds.length > 0) {
+      const updated = await dbWrite.model.updateMany({
+        where: { id: { in: auditIds }, userId: -1 },
+        data: { userId: id },
+      });
+      modelsRestored = updated.count;
+
+      const restored = await dbWrite.model.findMany({
+        where: { id: { in: auditIds }, userId: id },
+        select: { id: true },
+      });
+      restoredModelIds = restored.map((m) => m.id);
+    }
+  }
+
+  userUpdateCounter?.inc({ location: 'user.service:restoreUser' });
+  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  return { id, username, email, modelsRestored, modelIds: restoredModelIds };
+};
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
 export async function softDeleteUser({ id, userId }: { id: number; userId: number }) {

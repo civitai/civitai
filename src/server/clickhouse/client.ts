@@ -136,6 +136,7 @@ export type UserActivityType =
   | 'Registration'
   | 'Login'
   | 'Account closure'
+  | 'Account restoration'
   | 'Subscribe'
   | 'Cancel'
   | 'Donate'
