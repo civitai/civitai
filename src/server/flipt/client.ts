@@ -60,6 +60,96 @@ export enum FLIPT_FEATURE_FLAGS {
 const FLIPT_INIT_TIMEOUT_MS = 5000;
 const FLIPT_FAILURE_COOLDOWN_MS = 30_000;
 
+// Per-request wasm `evaluateBoolean`/`evaluateVariant` calls showed up as a
+// top-10 CPU frame under load (~1500 req/s on a single JS thread). The wasm
+// engine result for a given (flag, entityId, context) is stable between config
+// refreshes, and the client only pulls new config every `updateInterval` (60s).
+// So a short in-process TTL cache cuts the wasm call rate hard while staying
+// *fresher* than the underlying config cadence. Tune via FLIPT_EVAL_CACHE_TTL_MS
+// (set to 0 to disable). Staleness is bounded by this TTL on top of the 60s
+// config pull — acceptable even for incident kill-switch flags.
+const FLIPT_EVAL_CACHE_TTL_MS = (() => {
+  const parsed = parseInt(process.env.FLIPT_EVAL_CACHE_TTL_MS ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 10_000;
+})();
+// Bound memory: entityId can be per-user for some flags, so cap entries and
+// drop the whole map on overflow (cheap; hot flags re-warm in one eval).
+const FLIPT_EVAL_CACHE_MAX = 10_000;
+
+type FliptCacheEntry<T> = { value: T; expiresAt: number };
+const boolEvalCache = new Map<string, FliptCacheEntry<boolean>>();
+const variantEvalCache = new Map<string, FliptCacheEntry<string | null>>();
+
+function fliptCacheKey(flag: string, entityId: string, context: Record<string, string>): string {
+  const keys = Object.keys(context);
+  if (keys.length === 0) return `${flag}|${entityId}`;
+  const ctx = keys
+    .sort()
+    .map((k) => `${k}=${context[k]}`)
+    .join('&');
+  return `${flag}|${entityId}|${ctx}`;
+}
+
+function fliptCacheGet<T>(
+  cache: Map<string, FliptCacheEntry<T>>,
+  key: string,
+  now: number
+): { hit: boolean; value?: T } {
+  const entry = cache.get(key);
+  if (entry) {
+    if (entry.expiresAt > now) return { hit: true, value: entry.value };
+    cache.delete(key);
+  }
+  return { hit: false };
+}
+
+function fliptCacheSet<T>(
+  cache: Map<string, FliptCacheEntry<T>>,
+  key: string,
+  value: T,
+  now: number
+): void {
+  if (FLIPT_EVAL_CACHE_TTL_MS === 0) return;
+  if (cache.size >= FLIPT_EVAL_CACHE_MAX) cache.clear();
+  cache.set(key, { value, expiresAt: now + FLIPT_EVAL_CACHE_TTL_MS });
+}
+
+// Evaluate a boolean flag against the wasm engine, memoized. Throws on engine
+// error so callers keep their existing try/catch fallback; only successful
+// evaluations are cached.
+function evalBooleanCached(
+  fliptClient: FliptClient,
+  flag: string,
+  entityId: string,
+  context: Record<string, string>
+): boolean {
+  const now = Date.now();
+  const key = fliptCacheKey(flag, entityId, context);
+  const cached = fliptCacheGet(boolEvalCache, key, now);
+  if (cached.hit) return cached.value as boolean;
+  const evaluation = fliptClient.evaluateBoolean({ flagKey: flag, entityId, context });
+  fliptCacheSet(boolEvalCache, key, evaluation.enabled, now);
+  return evaluation.enabled;
+}
+
+// Evaluate a variant flag against the wasm engine, memoized. Caches the
+// post-processed result (variantKey, or null when no match).
+function evalVariantCached(
+  fliptClient: FliptClient,
+  flag: string,
+  entityId: string,
+  context: Record<string, string>
+): string | null {
+  const now = Date.now();
+  const key = fliptCacheKey(flag, entityId, context);
+  const cached = fliptCacheGet(variantEvalCache, key, now);
+  if (cached.hit) return cached.value as string | null;
+  const evaluation = fliptClient.evaluateVariant({ flagKey: flag, entityId, context });
+  const result = evaluation.match ? evaluation.variantKey : null;
+  fliptCacheSet(variantEvalCache, key, result, now);
+  return result;
+}
+
 // Dev-only local overrides. Set FLIPT_LOCAL_OVERRIDES in .env to short-circuit
 // flag evaluation without touching shared Flipt state (GitOps overwrites it).
 // Format: comma-separated `flagKey=variantKey` pairs. Use `on`/`off` for booleans.
@@ -168,13 +258,7 @@ export async function isFlipt(
   if (!fliptClient) return false;
 
   try {
-    const evaluation = fliptClient.evaluateBoolean({
-      flagKey: flag,
-      entityId,
-      context,
-    });
-
-    return evaluation.enabled;
+    return evalBooleanCached(fliptClient, flag, entityId, context);
   } catch (e) {
     console.error('Flipt evaluation error:', e);
     return false;
@@ -191,14 +275,7 @@ export async function getFliptVariant(
   if (!fliptClient) return null;
 
   try {
-    const evaluation = fliptClient.evaluateVariant({
-      flagKey: flag,
-      entityId,
-      context,
-    });
-
-    if (!evaluation.match) return null;
-    return evaluation.variantKey;
+    return evalVariantCached(fliptClient, flag, entityId, context);
   } catch (e) {
     console.error('Flipt variant evaluation error:', e);
     return null;
@@ -214,12 +291,7 @@ export async function getFliptBoolean(
   if (!fliptClient) return false;
 
   try {
-    const evaluation = fliptClient.evaluateBoolean({
-      flagKey: flag,
-      entityId,
-      context,
-    });
-    return evaluation.enabled;
+    return evalBooleanCached(fliptClient, flag, entityId, context);
   } catch (e) {
     return false;
   }
@@ -239,16 +311,9 @@ export function isFliptSync(
   if (!fliptClient) return null;
 
   try {
-    const evaluation = fliptClient.evaluateBoolean({
-      flagKey: flag,
-      entityId,
-      context,
-    });
-
-    return evaluation.enabled;
+    return evalBooleanCached(fliptClient, flag, entityId, context);
   } catch (e) {
-    const err = e as Error;
-    // Log unexpected errors (not just "flag not found") for observability
+    // Swallow eval errors (incl. "flag not found"); caller falls back to null
     return null;
   }
 }
