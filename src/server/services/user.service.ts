@@ -988,42 +988,60 @@ export const restoreUser = async ({
     );
   }
 
-  await dbWrite.user.update({
-    where: { id },
-    data: { deletedAt: null, username, email },
-  });
-
-  let modelsRestored = 0;
-  let restoredModelIds: number[] = [];
+  // Look up the audited model ownership up front (ClickHouse lives outside Postgres).
+  let auditIds: number[] = [];
   if (restoreModels) {
-    // The deletion path sets Model.userId = -1 (without touching status/deletedAt), so the
-    // historical owner-link is lost from Postgres. ClickHouse `modelEvents` still has the
-    // original userId per modelId, which is what we use to identify which orphans to reclaim.
+    // `modelEvents.userId` is the actor of each event; for a model that's the original owner.
+    // The deletion path (removeModels:false) sets Model.userId = -1 without touching
+    // status/deletedAt, so we reclaim only those orphans. Models deleted via removeModels:true
+    // keep their userId and get status='Deleted' instead — they are intentionally NOT restored
+    // here, and a model with no tracked event won't appear, so reclaim is best-effort.
     const auditRows =
       (await clickhouse?.$query<{ modelId: number }>(`
         SELECT DISTINCT modelId
         FROM modelEvents
         WHERE userId = ${id}
       `)) ?? [];
-    const auditIds = auditRows.map((r) => r.modelId);
+    auditIds = auditRows.map((r) => r.modelId);
+  }
 
-    if (auditIds.length > 0) {
+  // Reclaim orphaned models BEFORE flipping deletedAt. We deliberately avoid wrapping the user and
+  // model writes in one transaction: a user can own thousands of models, and an interactive
+  // transaction would hold a connection + row locks open across the whole set (and risk Prisma's
+  // 5s timeout). The model reclaim is a single atomic UPDATE, so it doesn't need one. Doing it
+  // first also keeps the operation re-runnable — if it fails, deletedAt is still set, so a retry
+  // passes the guard above instead of being locked out.
+  let modelsRestored = 0;
+  let restoredModelIds: number[] = [];
+  if (restoreModels && auditIds.length > 0) {
+    // Capture the exact orphaned rows we're about to reclaim so the returned ids reflect what
+    // actually changed (rather than every audited model, some of which may not be orphaned).
+    const orphans = await dbWrite.model.findMany({
+      where: { id: { in: auditIds }, userId: -1 },
+      select: { id: true },
+    });
+    restoredModelIds = orphans.map((m) => m.id);
+
+    if (restoredModelIds.length > 0) {
       const updated = await dbWrite.model.updateMany({
-        where: { id: { in: auditIds }, userId: -1 },
+        where: { id: { in: restoredModelIds }, userId: -1 },
         data: { userId: id },
       });
       modelsRestored = updated.count;
-
-      const restored = await dbWrite.model.findMany({
-        where: { id: { in: auditIds }, userId: id },
-        select: { id: true },
-      });
-      restoredModelIds = restored.map((m) => m.id);
     }
   }
 
+  await dbWrite.user.update({
+    where: { id },
+    data: { deletedAt: null, username, email },
+  });
+
   userUpdateCounter?.inc({ location: 'user.service:restoreUser' });
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  // deleteUser refreshes userBasicCache (username/deletedAt/image, 1-day TTL) after scrubbing the
+  // row; mirror that here so the restored identity is visible immediately instead of serving the
+  // stale "deleted" values until the cache expires.
+  await deleteBasicDataForUser(id);
 
   return { id, username, email, modelsRestored, modelIds: restoredModelIds };
 };
