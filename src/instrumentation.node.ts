@@ -59,8 +59,16 @@ if (!OTEL_ENABLED) {
     const parsedRatio = parseFloat(process.env.OTEL_TRACES_SAMPLE_RATIO ?? '');
     const sampleRatio =
       Number.isFinite(parsedRatio) && parsedRatio >= 0 && parsedRatio <= 1 ? parsedRatio : 0.1;
+    const ratioSampler = new TraceIdRatioBasedSampler(sampleRatio);
     const sampler = new ParentBasedSampler({
-      root: new TraceIdRatioBasedSampler(sampleRatio),
+      root: ratioSampler,
+      // This is a PUBLIC API with no traceparent stripping at the edge, so an
+      // untrusted client could send `traceparent: ...-01` to force a sampled
+      // decision. ParentBased's default `remoteParentSampled` is AlwaysOn, which
+      // would let any client defeat the sampling cap and re-saturate CPU — the
+      // exact failure this change prevents. Apply the ratio to remote parents
+      // too. Local parents still inherit, so intra-process traces stay coherent.
+      remoteParentSampled: ratioSampler,
     });
     console.log(`[instrumentation.node] OTEL trace sampling ratio: ${sampleRatio}`);
 

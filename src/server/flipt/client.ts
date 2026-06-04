@@ -64,54 +64,87 @@ const FLIPT_FAILURE_COOLDOWN_MS = 30_000;
 // top-10 CPU frame under load (~1500 req/s on a single JS thread). The wasm
 // engine result for a given (flag, entityId, context) is stable between config
 // refreshes, and the client only pulls new config every `updateInterval` (60s).
-// So a short in-process TTL cache cuts the wasm call rate hard while staying
-// *fresher* than the underlying config cadence. Tune via FLIPT_EVAL_CACHE_TTL_MS
-// (set to 0 to disable). Staleness is bounded by this TTL on top of the 60s
-// config pull — acceptable even for incident kill-switch flags.
+// A short in-process TTL cache collapses the wasm call rate.
+//
+// Staleness note: the TTL is ADDITIVE to the 60s config poll, not absorbed by
+// it — worst-case propagation of a flipped flag is ~(60s + TTL) per pod, and
+// pods converge independently. That's fine for gradual rollout flags; incident
+// kill-switches that must take effect ASAP are listed in BYPASS below. Tune via
+// FLIPT_EVAL_CACHE_TTL_MS (set to 0 to disable).
 const FLIPT_EVAL_CACHE_TTL_MS = (() => {
   const parsed = parseInt(process.env.FLIPT_EVAL_CACHE_TTL_MS ?? '', 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 10_000;
 })();
-// Bound memory: entityId can be per-user for some flags, so cap entries and
-// drop the whole map on overflow (cheap; hot flags re-warm in one eval).
+// Per-generation entry cap. entityId/context are per-user for some flags, so the
+// keyspace is unbounded; we rotate generations at this size (see TtlCache) which
+// bounds memory to ~2x this without the thrash of a full wipe.
 const FLIPT_EVAL_CACHE_MAX = 10_000;
 
-type FliptCacheEntry<T> = { value: T; expiresAt: number };
-const boolEvalCache = new Map<string, FliptCacheEntry<boolean>>();
-const variantEvalCache = new Map<string, FliptCacheEntry<string | null>>();
+// Flags exempt from caching: incident kill-switches where an operator expects a
+// flip to take effect ASAP and the eval is either rare (cold path) or the extra
+// staleness is not worth the CPU saved. REDIS_CLUSTER_ENHANCED_FAILOVER is
+// evaluated only from Redis node-error/disconnect handlers (near-zero call
+// volume → no CPU benefit) but gates failover during an incident, so caching it
+// is all downside.
+const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
+  FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
+]);
 
+type FliptCacheEntry<T> = { value: T; expiresAt: number };
+
+// TTL cache with generational rotation instead of full-clear eviction. On
+// overflow the current generation becomes the "previous" one (the old previous
+// is dropped) and a fresh generation starts, so hot keys survive at least one
+// rotation and we never thrash to worse-than-no-cache under high key
+// cardinality. Single-threaded, so Map ops need no locking.
+class TtlCache<T> {
+  private current = new Map<string, FliptCacheEntry<T>>();
+  private previous = new Map<string, FliptCacheEntry<T>>();
+
+  get(key: string, now: number): { hit: boolean; value?: T } {
+    const cur = this.current.get(key);
+    if (cur) {
+      if (cur.expiresAt > now) return { hit: true, value: cur.value };
+      this.current.delete(key);
+    }
+    const prev = this.previous.get(key);
+    if (prev) {
+      if (prev.expiresAt > now) {
+        // Promote into the current generation so hot keys aren't lost on rotate.
+        this.previous.delete(key);
+        this.current.set(key, prev);
+        return { hit: true, value: prev.value };
+      }
+      this.previous.delete(key);
+    }
+    return { hit: false };
+  }
+
+  set(key: string, value: T, now: number): void {
+    if (FLIPT_EVAL_CACHE_TTL_MS === 0) return;
+    if (this.current.size >= FLIPT_EVAL_CACHE_MAX) {
+      this.previous = this.current;
+      this.current = new Map();
+    }
+    this.current.set(key, { value, expiresAt: now + FLIPT_EVAL_CACHE_TTL_MS });
+  }
+}
+
+const boolEvalCache = new TtlCache<boolean>();
+const variantEvalCache = new TtlCache<string | null>();
+
+// Build a collision-proof cache key. Components are URI-encoded so that a `|`,
+// `&`, or `=` inside an entityId or context value can't alias another key (the
+// context signature today is operator-controlled, but encoding makes the cache
+// safe for any future caller passing free-form values).
 function fliptCacheKey(flag: string, entityId: string, context: Record<string, string>): string {
   const keys = Object.keys(context);
-  if (keys.length === 0) return `${flag}|${entityId}`;
+  if (keys.length === 0) return `${flag}|${encodeURIComponent(entityId)}`;
   const ctx = keys
     .sort()
-    .map((k) => `${k}=${context[k]}`)
+    .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(context[k])}`)
     .join('&');
-  return `${flag}|${entityId}|${ctx}`;
-}
-
-function fliptCacheGet<T>(
-  cache: Map<string, FliptCacheEntry<T>>,
-  key: string,
-  now: number
-): { hit: boolean; value?: T } {
-  const entry = cache.get(key);
-  if (entry) {
-    if (entry.expiresAt > now) return { hit: true, value: entry.value };
-    cache.delete(key);
-  }
-  return { hit: false };
-}
-
-function fliptCacheSet<T>(
-  cache: Map<string, FliptCacheEntry<T>>,
-  key: string,
-  value: T,
-  now: number
-): void {
-  if (FLIPT_EVAL_CACHE_TTL_MS === 0) return;
-  if (cache.size >= FLIPT_EVAL_CACHE_MAX) cache.clear();
-  cache.set(key, { value, expiresAt: now + FLIPT_EVAL_CACHE_TTL_MS });
+  return `${flag}|${encodeURIComponent(entityId)}|${ctx}`;
 }
 
 // Evaluate a boolean flag against the wasm engine, memoized. Throws on engine
@@ -123,12 +156,15 @@ function evalBooleanCached(
   entityId: string,
   context: Record<string, string>
 ): boolean {
+  if (FLIPT_EVAL_CACHE_BYPASS.has(flag)) {
+    return fliptClient.evaluateBoolean({ flagKey: flag, entityId, context }).enabled;
+  }
   const now = Date.now();
   const key = fliptCacheKey(flag, entityId, context);
-  const cached = fliptCacheGet(boolEvalCache, key, now);
+  const cached = boolEvalCache.get(key, now);
   if (cached.hit) return cached.value as boolean;
   const evaluation = fliptClient.evaluateBoolean({ flagKey: flag, entityId, context });
-  fliptCacheSet(boolEvalCache, key, evaluation.enabled, now);
+  boolEvalCache.set(key, evaluation.enabled, now);
   return evaluation.enabled;
 }
 
@@ -140,13 +176,17 @@ function evalVariantCached(
   entityId: string,
   context: Record<string, string>
 ): string | null {
+  if (FLIPT_EVAL_CACHE_BYPASS.has(flag)) {
+    const evaluation = fliptClient.evaluateVariant({ flagKey: flag, entityId, context });
+    return evaluation.match ? evaluation.variantKey : null;
+  }
   const now = Date.now();
   const key = fliptCacheKey(flag, entityId, context);
-  const cached = fliptCacheGet(variantEvalCache, key, now);
+  const cached = variantEvalCache.get(key, now);
   if (cached.hit) return cached.value as string | null;
   const evaluation = fliptClient.evaluateVariant({ flagKey: flag, entityId, context });
   const result = evaluation.match ? evaluation.variantKey : null;
-  fliptCacheSet(variantEvalCache, key, result, now);
+  variantEvalCache.set(key, result, now);
   return result;
 }
 
