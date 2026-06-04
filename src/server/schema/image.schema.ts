@@ -330,6 +330,10 @@ export const getInfiniteImagesSchema = baseQuerySchema
     limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),
+    // Filter the gallery to posts linked to a single Model3D
+    // (Post.model3dId). Resolved server-side into a postIds prefilter so the
+    // existing image fetch path is reused unchanged.
+    model3dId: z.number().optional(),
     notPublished: z.coerce.boolean().optional(),
     period: z.enum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
     periodMode: periodModeSchema,

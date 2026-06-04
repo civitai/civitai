@@ -9,22 +9,23 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import type { ModelById } from '~/types/router';
 
-type ModelVersionsProps = { id: number; name: string; modelId: number };
-
-export type ModelGalleryProps = {
-  model: ModelById;
-  selectedVersionId?: number;
-  modelVersions?: ModelVersionsProps[];
-  showModerationOptions?: boolean;
-  showPOIWarning?: boolean;
-  canReview?: boolean;
-  username?: string;
-};
-
-export function ModelGallery(props: ModelGalleryProps) {
-  const { model, ...rest } = props;
+/**
+ * Model3DGallery
+ *
+ * Renders the canonical "as-posts" gallery (multi-image carousels, NSFW
+ * level gating, image metadata popovers) bound to a Model3D. Backed by the
+ * same `ImagesAsPostsInfinite` used on the regular model page — `model3dId`
+ * is forwarded to `getImagesAsPostsInfinite`, which pre-resolves it to
+ * `postIds` via `Post.model3dId`.
+ *
+ * Mirrors `ModelGallery` for the lazy-load + forced-minor-level wrapping.
+ */
+export function Model3DGallery({
+  model3d,
+}: {
+  model3d: { id: number; userId: number; minor?: boolean };
+}) {
   const node = useScrollAreaRef();
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView({
@@ -34,9 +35,11 @@ export function ModelGallery(props: ModelGalleryProps) {
   });
 
   const content = inView && (
-    <ImagesAsPostsInfinite source={{ kind: 'model', model }} {...rest} />
+    <ImagesAsPostsInfinite
+      source={{ kind: 'model3d', id: model3d.id, creatorUserId: model3d.userId, useIndex: false }}
+    />
   );
-  const forceMinorLevel = !!model.minor && !currentUser?.isModerator;
+  const forceMinorLevel = !!model3d.minor && !currentUser?.isModerator;
   const minorBrowsingLevel = currentUser ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
 
   return (

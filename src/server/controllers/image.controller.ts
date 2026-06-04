@@ -385,8 +385,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const { user, features } = ctx;
 
     // Check BitDex mode â€” if active, always route through getAllImagesIndex.
-    // Skip BitDex for unsupported query types (collections, prioritized users).
-    const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length;
+    // Skip BitDex for unsupported query types (collections, prioritized
+    // users). Also skip for Model3D galleries: the Meilisearch metrics-images
+    // index isn't synced with Model3D-linked posts, so the DB path is the
+    // only one that returns results.
+    const skipBitdex =
+      !!input.collectionId || !!input.prioritizedUserIds?.length || !!input.model3dId;
     const bitdexMode = skipBitdex
       ? null
       : await getFliptVariant(
@@ -395,7 +399,11 @@ export const getImagesAsPostsInfiniteHandler = async ({
           buildFliptContext(user)
         );
     const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
-    const useIndex = useBitdex || features.imageIndexFeed;
+    // `features.imageIndexFeed` is currently a feature flag; for Model3D we
+    // override it to false (and ignore `input.useIndex === true` for the
+    // same reason — the index doesn't contain these images yet).
+    const useIndex =
+      !input.model3dId && input.useIndex !== false && (useBitdex || features.imageIndexFeed);
 
     const fetchFn = useIndex ? getAllImagesIndex : getAllImages;
     type ResultType = typeof features.imageIndexFeed extends true
@@ -480,6 +488,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
         actor,
       });
 
+      console.log({ input, items, itemsFetched: items.length, cursor, nextCursor });
+
       // Merge images by postId
       for (const image of items) {
         // Skip images that aren't part of a post or are pinned
@@ -519,25 +529,32 @@ export const getImagesAsPostsInfiniteHandler = async ({
       }
     }
 
-    // Get reviews from the users who created the posts
+    // Get reviews from the users who created the posts.
+    // Resource reviews are model-scoped; skip the fetch entirely when this is
+    // a non-model gallery (e.g. Model3D) so we don't run an unfiltered review
+    // query for unrelated models.
     const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id).filter(isDefined))];
-    const reviews = await dbRead.resourceReview.findMany({
-      where: {
-        userId: { in: userIds },
-        modelId: input.modelId,
-        modelVersionId: input.modelVersionId,
-      },
-      select: {
-        userId: true,
-        rating: true,
-        details: true,
-        id: true,
-        modelVersionId: true,
-        recommended: true,
-      },
-      orderBy: { rating: 'desc' },
-    });
+    const reviews =
+      input.modelId || input.modelVersionId
+        ? await dbRead.resourceReview.findMany({
+            where: {
+              userId: { in: userIds },
+              modelId: input.modelId,
+              modelVersionId: input.modelVersionId,
+            },
+            select: {
+              userId: true,
+              rating: true,
+              details: true,
+              id: true,
+              modelVersionId: true,
+              recommended: true,
+            },
+            orderBy: { rating: 'desc' },
+          })
+        : [];
 
+    console.log({ mergedPosts });
     // Prepare the results
     const results = mergedPosts.map((images) => {
       const [image] = images;

@@ -3,9 +3,19 @@ import produce from 'immer';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export const useGallerySettings = ({ modelId }: { modelId: number }) => {
+/**
+ * Read + mutate per-Model gallery moderation settings.
+ *
+ * `modelId` is optional: pass `undefined` from non-Model gallery contexts
+ * (e.g. Model3D) to disable the underlying query. Toggle/copy mutations are
+ * still wired but only meaningful from a Model gallery.
+ */
+export const useGallerySettings = ({ modelId }: { modelId?: number }) => {
   const queryUtils = trpc.useUtils();
-  const { data, isLoading } = trpc.model.getGallerySettings.useQuery({ id: modelId });
+  const { data, isLoading } = trpc.model.getGallerySettings.useQuery(
+    { id: modelId ?? 0 },
+    { enabled: !!modelId }
+  );
 
   const updateGallerySettingsMutation = trpc.model.updateGallerySettings.useMutation({
     onMutate: async (payload) => {

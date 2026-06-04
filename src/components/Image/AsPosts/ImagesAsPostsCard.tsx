@@ -62,10 +62,15 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
   const { data, height } = props;
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const { model, filters } = useImagesAsPostsInfiniteContext();
+  const { source, filters } = useImagesAsPostsInfiniteContext();
   const currentModelVersionId = filters.modelVersionId as number;
   const image = data.images[0];
-  const { gallerySettings } = useGallerySettings({ modelId: model.id });
+  // Pinned-post highlighting only exists on Model galleries (mods pin posts
+  // per Model version). Pass `undefined` to disable the query when this
+  // gallery is bound to a non-Model entity.
+  const { gallerySettings } = useGallerySettings({
+    modelId: source.kind === 'model' ? source.model.id : undefined,
+  });
   const pinned = gallerySettings
     ? gallerySettings.pinnedPosts?.[currentModelVersionId]?.includes(data.postId)
     : false;
@@ -142,7 +147,7 @@ function ImagesAsPostsCardHeader({
   data,
   cosmetic,
 }: ImagesAsPostsCardProps & { cosmetic?: ImagesAsPostModel['images'][number]['cosmetic'] }) {
-  const { modelVersions, model, filters } = useImagesAsPostsInfiniteContext();
+  const { modelVersions, source, filters } = useImagesAsPostsInfiniteContext();
   const targetModelVersion = modelVersions?.find((x) => x.id === data.modelVersionId);
   const currentModelVersionId = filters.modelVersionId as number;
   // Single pass: find both auto-resource and manual-resource matches
@@ -160,7 +165,12 @@ function ImagesAsPostsCardHeader({
     }
   }
   const isThumbsUp = !!data.review?.recommended;
-  const isOP = data.user.id === model?.user.id;
+  // The "OP" badge marks the post author as the entity's creator. Both
+  // Model and Model3D galleries surface this — the source union narrows
+  // to the right userId.
+  const creatorUserId =
+    source.kind === 'model' ? source.model.user.id : source.creatorUserId;
+  const isOP = data.user.id === creatorUserId;
 
   return (
     <Paper

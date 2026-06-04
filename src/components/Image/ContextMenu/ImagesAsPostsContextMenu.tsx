@@ -20,8 +20,12 @@ export function ImagesAsPostsContextMenu({ image }: { image: ImageContextMenuPro
 }
 
 function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
-  const { showModerationOptions, filters, model } = useImagesAsPostsInfiniteContext();
-  const { gallerySettings, toggle } = useGallerySettings({ modelId: model.id });
+  const { showModerationOptions, filters, source } = useImagesAsPostsInfiniteContext();
+  // Hidden-image / pinned-post tooling is Model-only; pass undefined on
+  // non-Model gallery sources (Model3D) so the gallery-settings query is
+  // disabled and the moderation block below renders nothing.
+  const model = source.kind === 'model' ? source.model : undefined;
+  const { gallerySettings, toggle } = useGallerySettings({ modelId: model?.id });
   const queryUtils = trpc.useUtils();
 
   const currentModelVersionId = filters.modelVersionId as number;

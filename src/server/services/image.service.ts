@@ -1143,6 +1143,7 @@ export const getAllImages = async (
     collectionId, // TODO - call this from separate method?
     modelId,
     modelVersionId,
+    model3dId,
     imageId, // used in public API
     username,
     period,
@@ -1366,6 +1367,17 @@ export const getAllImages = async (
     }
   }
 
+  // Model3D gallery: posts link to a Model3D via Post.model3dId (no
+  // ModelVersion / ImageResourceNew chain involved), so this is just a
+  // direct filter on the always-present Post join below. Mirrors the
+  // collection / model gallery cache shape — Model3D image uploads are
+  // captured by the same post.service bust hooks.
+  if (model3dId) {
+    AND.push(Prisma.sql`p."model3dId" = ${model3dId}`);
+    cacheTime = CacheTTL.md;
+    cacheTags.push(`images-model3d:${model3dId}`);
+  }
+
   // [x] TODO remove
   if (targetUserId) {
     // WITH.push(
@@ -1513,7 +1525,7 @@ export const getAllImages = async (
     AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
-  const isGallery = modelId || modelVersionId || reviewId || userId;
+  const isGallery = modelId || modelVersionId || model3dId || reviewId || userId;
   if (postId && !modelId) {
     // a post image query won't include modelId
     orderBy = `i."index"`;

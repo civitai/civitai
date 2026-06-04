@@ -2,11 +2,36 @@ import { createContext, useContext } from 'react';
 import type { ModelById } from '~/types/router';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
+
+/**
+ * What entity this gallery is bound to. Discriminated so consumers can narrow
+ * once instead of juggling parallel-but-nullable fields.
+ *  - `model`   — the regular Model gallery flow (versions, gallery
+ *                moderation settings, resource reviews, pinned posts, …)
+ *  - `model3d` — Model3D gallery (no versions, no gallery settings, posts
+ *                are pre-resolved server-side via Post.model3dId)
+ */
+export type ImagesAsPostsSource =
+  | { kind: 'model'; model: ModelById }
+  | {
+      kind: 'model3d';
+      id: number;
+      creatorUserId: number;
+      /**
+       * Opt out of the Meilisearch index for this gallery — the
+       * metrics-images index isn't synced with Model3D-linked posts yet,
+       * so it would return zero hits. Server-side override in the handler
+       * means this is defense-in-depth.
+       */
+      useIndex?: boolean;
+    };
+
 type ImagesAsPostsInfiniteState = {
-  model: ModelById;
+  source: ImagesAsPostsSource;
   modelVersions?: ModelVersionsProps[];
   filters: {
     modelId?: number;
+    model3dId?: number;
     username?: string;
     modelVersionId?: number;
   } & Record<string, unknown>;

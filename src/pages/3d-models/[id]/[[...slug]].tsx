@@ -48,7 +48,7 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
 import { GenerationDetails } from '~/components/Model3D/GenerationDetails/GenerationDetails';
-import { MakesUsesRail } from '~/components/Model3D/MakesUses/MakesUsesRail';
+import { Model3DGallery } from '~/components/Model3D/Gallery/Model3DGallery';
 import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -508,8 +508,13 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   </Card>
                 )}
 
-                {/* Makes & Uses */}
-                <MakesUsesRail model3dId={id} />
+                {/* Community gallery — posts linked to this Model3D, rendered
+                    via the same `ImagesAsPostsInfinite` used on the regular
+                    model page (multi-image carousels, NSFW gating, image
+                    metadata popovers). */}
+                <Model3DGallery
+                  model3d={{ id, userId: model3d.userId, minor: model3d.minor }}
+                />
 
                 <Divider />
 
