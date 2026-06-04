@@ -70,9 +70,10 @@ vi.mock('~/env/server', () => ({ env: { DISCORD_WEBHOOK_MOD_ALERTS: undefined } 
 
 // Import AFTER mocks
 import { runAbuseDetectionScan } from '~/server/jobs/new-order-jobs';
-import { constants } from '~/server/common/constants';
+import { constants, newOrderConfig } from '~/server/common/constants';
 
 const SYSTEM_USER_ID = constants.system.user.id;
+const AUTO_SMITE_SIZE = newOrderConfig.smiteSize * 50;
 
 const strictSuspect = (overrides: Partial<Record<string, number>> = {}) => ({
   userId: 100,
@@ -136,7 +137,7 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       playerId: 100,
       modId: SYSTEM_USER_ID,
       reason: expect.stringContaining('only 1 unique rating value'),
-      size: 1,
+      size: AUTO_SMITE_SIZE,
     });
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({

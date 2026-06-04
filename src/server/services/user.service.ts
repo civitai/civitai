@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
@@ -15,7 +16,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { searchClient } from '~/server/meilisearch/client';
+import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import {
   articleMetrics,
@@ -251,11 +252,35 @@ export async function getUsersWithSearch({
   if (ids?.length) filters.push(`id IN [${ids.join(',')}]`);
   if (!!excludedUserIds?.length) filters.push(`id NOT IN [${excludedUserIds.join(',')}]`);
 
-  const results = await searchClient.index(USERS_SEARCH_INDEX).search<UserSearchResult>(query, {
-    limit: Math.round(limit * 1.5),
-    filter: filters.join(' AND '),
-    attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture', 'image'],
-  });
+  let results;
+  try {
+    // Narrow withMeili wrap to the SDK call only — this is a user-facing tRPC
+    // path (user.getAll). Under Meilisearch brownout an unwrapped .search() can
+    // hang ~30s, the same failure mode that bled api-primary to kubelet SIGKILL
+    // on 2026-05-29. Follow-up to PR #2351, which wrapped the image-feed call
+    // sites but missed this one.
+    results = await withMeili('search', () =>
+      searchClient!.index(USERS_SEARCH_INDEX).search<UserSearchResult>(query, {
+        limit: Math.round(limit * 1.5),
+        filter: filters.join(' AND '),
+        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture', 'image'],
+      })
+    );
+  } catch (err) {
+    // Mirror image.getInfinite's handling: surface a fast 408 via TRPCError
+    // TIMEOUT so the client can retry instead of waiting on Traefik's 30s
+    // router timeout. tRPC v10 has no SERVICE_UNAVAILABLE / 503 code; TIMEOUT
+    // is the closest semantic match.
+    if (err instanceof MeiliCallTimeoutError) {
+      throw new TRPCError({
+        code: 'TIMEOUT',
+        message: 'User search is temporarily overloaded — please retry.',
+        cause: err,
+      });
+    }
+    throw err;
+  }
+
   return results.hits
     .filter((x) => !x.deletedAt)
     .map(({ deletedAt, profilePicture, image, ...user }) => ({
@@ -407,7 +432,6 @@ export async function setUserMuted({
     data: {
       muted,
       mutedAt: muted ? date : null,
-      muteConfirmedAt: muted ? date : null,
     },
     updateSource: muted ? 'retool:mute' : 'retool:unmute',
   });
@@ -538,6 +562,15 @@ export const updateUserById = async ({
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
+  }
+
+  if (
+    data.showNsfw !== undefined ||
+    data.blurNsfw !== undefined ||
+    data.browsingLevel !== undefined ||
+    data.autoplayGifs !== undefined
+  ) {
+    await userSettingsCache.bust([id]);
   }
 
   if (data.email && user.paddleCustomerId) {
@@ -2110,6 +2143,7 @@ export async function updateContentSettings({
       data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
     });
     userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
+    await userSettingsCache.bust([userId]);
   }
   if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
     const settings = await getUserSettings(userId);

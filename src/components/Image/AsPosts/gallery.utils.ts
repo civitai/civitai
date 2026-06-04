@@ -125,8 +125,8 @@ export const useGallerySettings = ({ modelId }: { modelId: number }) => {
     gallerySettings: data,
     loading: isLoading,
     toggle: handleToggleSettings,
-    updating: updateGallerySettingsMutation.isLoading,
+    updating: updateGallerySettingsMutation.isPending,
     copySettings: handleCopyGallerySettings,
-    copySettingsLoading: copyGallerySettingsMutations.isLoading,
+    copySettingsLoading: copyGallerySettingsMutations.isPending,
   };
 };

@@ -451,6 +451,129 @@ export async function focusedItemContent(item: ScanContentItem): Promise<ScanCon
   );
 }
 
+/** Window for deciding which labels are "currently produced" by a scanner.
+ * Tighter than DEFAULT_LOOKBACK_DAYS on purpose: a label retired weeks ago
+ * (e.g. `sexual`, dropped May 2026) is still inside the 30-day review window,
+ * so we'd keep showing it. At platform scan volume any live label — including
+ * derived ones like `csam`/`incest`, which are written to ClickHouse too —
+ * fires many times a week, so a 7-day window keeps the active set complete
+ * while letting a retirement fall off within ~a week. */
+const ACTIVE_LABEL_WINDOW_DAYS = 7;
+
+export type LabelReviewStat = {
+  label: string;
+  total: number;
+  reviewers: number;
+  truePositive: number;
+  falsePositive: number;
+  trueNegative: number;
+  falseNegative: number;
+  unsure: number;
+  lastReviewedAt: string | null;
+};
+
+/**
+ * The set of labels a scanner is currently producing, sourced from recent
+ * ClickHouse scan results rather than a hand-maintained list — so it tracks
+ * the orchestrator's XGuard registry and the in-repo derived-label rules
+ * automatically, and a retired label drops out on its own once it stops being
+ * scanned. Returns an empty set if the scanner has no recent results (cold
+ * start); callers treat empty as "don't filter".
+ */
+async function getActiveLabels(scanner: Scanner): Promise<Set<string>> {
+  const ch = ensureClickhouse();
+  const resp = await ch.query({
+    query: `
+      SELECT DISTINCT label
+      FROM scanner_label_results
+      WHERE scanner = {scanner:String}
+        AND lastSeenAt > now() - INTERVAL ${ACTIVE_LABEL_WINDOW_DAYS} DAY
+    `,
+    query_params: { scanner },
+    format: 'JSONEachRow',
+  });
+  const rows = (await resp.json()) as Array<{ label: string }>;
+  return new Set(rows.map((r) => r.label));
+}
+
+/**
+ * Per-label moderator-review coverage for one scanner. Powers the "review
+ * coverage" panel on the audit table — at a glance, how many verdicts each
+ * label has accumulated, by how many distinct mods, and the verdict split.
+ *
+ * Scanner scope comes from joining `ScannerLabelReview` to
+ * `ScannerContentSnapshot` (which carries the `scanner` column) on
+ * `contentHash`. The snapshot is written on the first verdict for a piece of
+ * content, so any reviewed item normally has one. The rare exception is a
+ * verdict committed while the content was unavailable (no snapshot body) —
+ * those reviews are absent from this count. It's a coverage indicator, not an
+ * audited total, so the small undercount is acceptable.
+ *
+ * Counts are all-time (not lookback-bounded): coverage accumulates and a mod
+ * wants the running total, whereas the queue itself is windowed to 30 days.
+ *
+ * Labels the scanner no longer produces are split out into `retired` rather
+ * than dropped, so the UI can hide them from the main table while still being
+ * transparent that historical reviews exist for them.
+ */
+export async function getLabelReviewStats(
+  input: { scanner: Scanner }
+): Promise<{ active: LabelReviewStat[]; retired: LabelReviewStat[] }> {
+  const [rows, activeLabels] = await Promise.all([
+    dbRead.$queryRaw<
+      Array<{
+        label: string;
+        total: bigint;
+        reviewers: bigint;
+        truePositive: bigint;
+        falsePositive: bigint;
+        trueNegative: bigint;
+        falseNegative: bigint;
+        unsure: bigint;
+        lastReviewedAt: Date | null;
+      }>
+    >`
+      SELECT
+        r."label" AS label,
+        COUNT(*) AS total,
+        COUNT(DISTINCT r."reviewedBy") AS reviewers,
+        COUNT(*) FILTER (WHERE r."verdict" = 'TruePositive') AS "truePositive",
+        COUNT(*) FILTER (WHERE r."verdict" = 'FalsePositive') AS "falsePositive",
+        COUNT(*) FILTER (WHERE r."verdict" = 'TrueNegative') AS "trueNegative",
+        COUNT(*) FILTER (WHERE r."verdict" = 'FalseNegative') AS "falseNegative",
+        COUNT(*) FILTER (WHERE r."verdict" = 'Unsure') AS unsure,
+        MAX(r."reviewedAt") AS "lastReviewedAt"
+      FROM "ScannerLabelReview" r
+      JOIN "ScannerContentSnapshot" s ON s."contentHash" = r."contentHash"
+      WHERE s."scanner" = ${input.scanner}
+      GROUP BY r."label"
+      ORDER BY COUNT(*) DESC
+    `,
+    getActiveLabels(input.scanner),
+  ]);
+
+  const stats: LabelReviewStat[] = rows.map((r) => ({
+    label: r.label,
+    total: Number(r.total),
+    reviewers: Number(r.reviewers),
+    truePositive: Number(r.truePositive),
+    falsePositive: Number(r.falsePositive),
+    trueNegative: Number(r.trueNegative),
+    falseNegative: Number(r.falseNegative),
+    unsure: Number(r.unsure),
+    lastReviewedAt: r.lastReviewedAt ? r.lastReviewedAt.toISOString() : null,
+  }));
+
+  // Empty active set means the scanner has no recent results to learn from —
+  // don't filter, or a cold scanner would show no coverage at all.
+  if (activeLabels.size === 0) return { active: stats, retired: [] };
+
+  const active: LabelReviewStat[] = [];
+  const retired: LabelReviewStat[] = [];
+  for (const s of stats) (activeLabels.has(s.label) ? active : retired).push(s);
+  return { active, retired };
+}
+
 export async function deleteLabelVerdict(input: {
   contentHash: string;
   version: string;

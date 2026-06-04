@@ -36,7 +36,7 @@ export function PostUpsertForm2({
 
   const { data, isInitialLoading } = trpc.post.getEdit.useQuery(
     { id: postId },
-    { enabled: postId > 0, keepPreviousData: false }
+    { enabled: postId > 0, placeholderData: undefined }
   );
   // #endregion
 

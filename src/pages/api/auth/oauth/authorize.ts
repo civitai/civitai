@@ -94,7 +94,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         .status(400)
         .json({ error: 'invalid_scope', error_description: 'Invalid scope value' });
     }
-    const requestedScope = rawScope;
+    // UserRead is a mandatory baseline on every grant — force it on so the
+    // stored consent and consent screen reflect what the issued token carries.
+    const requestedScope = rawScope | TokenScope.UserRead;
 
     // Check consent — approval MUST come via POST only (prevents CSRF/bypass via GET params)
     const isApproval = req.method === 'POST' && params.approved === 'true';

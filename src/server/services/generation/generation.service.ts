@@ -15,6 +15,7 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   CheckResourcesCoverageSchema,
   GenerationStatus,
+  GenerationStatusMode,
   GetGenerationDataSchema,
   GetGenerationResourcesInput,
   ResolveImageMetaInput,
@@ -29,6 +30,7 @@ import type { GenerationResourceDataModel } from '~/server/redis/resource-data.r
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { getFeaturedModels } from '~/server/services/model.service';
 import { getLinkedVaeIds } from '~/server/services/model-version.service';
+import type { GenerationAlias, ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import {
   handleLogError,
@@ -245,7 +247,11 @@ export async function getGenerationStatus() {
   return status as GenerationStatus;
 }
 
-export async function setGenerationStatus(input: { available: boolean; message?: string | null }) {
+export async function setGenerationStatus(input: {
+  mode: GenerationStatusMode;
+  message?: string | null;
+  updatedBy: { id: number; username: string };
+}) {
   // Read raw and throw on sysRedis error. We MUST NOT use the fail-open
   // getGenerationStatus() here: if its read failed open to '{}' and the
   // subsequent hSet succeeded, schema defaults (charge: true, limits:
@@ -254,17 +260,30 @@ export async function setGenerationStatus(input: { available: boolean; message?:
   // retries after sysRedis recovers.
   const raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
   const current = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
-  const next: GenerationStatus = {
-    ...current,
-    available: input.available,
-    message: input.message ?? null,
+  const stamp = {
+    id: input.updatedBy.id,
+    username: input.updatedBy.username,
+    at: new Date().toISOString(),
+  };
+  // Record the moderator when generation moves INTO a restricted mode
+  // (memberOnly/disabled). Returning to 'enabled' preserves the prior stamp —
+  // we don't care who re-enables.
+  const restricting = input.mode !== 'enabled' && input.mode !== current.mode;
+  const persisted = {
+    mode: input.mode,
+    // Persist the message independently of the mode: `undefined` (a mode-only
+    // save) keeps the stored message; `null`/string is an explicit edit.
+    message: input.message === undefined ? current.message : input.message,
+    updatedBy: restricting ? stamp : current.updatedBy,
+    limits: current.limits,
+    charge: current.charge,
   };
   await sysRedis.hSet(
     REDIS_SYS_KEYS.SYSTEM.FEATURES,
     REDIS_SYS_KEYS.GENERATION.STATUS,
-    JSON.stringify(next)
+    JSON.stringify(persisted)
   );
-  return next;
+  return generationStatusSchema.parse(persisted);
 }
 
 export type RemixOfProps = {
@@ -329,6 +348,41 @@ export const getGenerationData = async ({
   }
 };
 
+/**
+ * Swaps any "cover" resources (those carrying an `aliasId` from
+ * `meta.generationAlias`) for their target version's resource, preserving the
+ * cover's strength. Used by the remix path, where image resources can include a
+ * cover version that should redirect to its alias target before generation. A
+ * target that no longer resolves is dropped (fail-closed). Results are deduped
+ * by id in case the image already referenced the target directly.
+ */
+async function swapGenerationAliases(
+  resources: (GenerationResource & { air: string })[],
+  opts: {
+    user?: { id?: number; isModerator?: boolean };
+    generation?: boolean;
+    withPreview?: boolean;
+    sfwOnly?: boolean;
+  }
+): Promise<(GenerationResource & { air: string })[]> {
+  const aliasIds = [...new Set(resources.map((r) => r.aliasId).filter(isDefined))];
+  if (!aliasIds.length) return resources;
+
+  const targets = await getResourceData(aliasIds, opts);
+  const targetById = new Map(targets.map((t) => [t.id, t]));
+
+  const swapped = resources
+    .map((r) => {
+      if (r.aliasId == null) return r;
+      const target = targetById.get(r.aliasId);
+      if (!target) return null;
+      return { ...target, strength: r.strength };
+    })
+    .filter(isDefined);
+
+  return uniqBy(swapped, 'id');
+}
+
 async function getMediaGenerationData({
   id,
   user,
@@ -391,15 +445,19 @@ async function getMediaGenerationData({
     generation,
     withPreview,
     sfwOnly,
-  }).then((data) =>
-    data.map((item) => {
-      const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
-      return {
-        ...item,
-        strength: imageResource?.strength ?? item.strength,
-      };
-    })
-  );
+  })
+    .then((data) =>
+      data.map((item) => {
+        const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
+        return {
+          ...item,
+          strength: imageResource?.strength ?? item.strength,
+        };
+      })
+    )
+    // Redirect any cover resources to their alias target (carrying the image's
+    // recorded strength) before the data is used for the remix.
+    .then((data) => swapGenerationAliases(data, { user, generation, withPreview, sfwOnly }));
   const baseModel = getBaseModelFromResources(
     allResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
@@ -442,6 +500,73 @@ async function getMediaGenerationData({
   };
 }
 
+/**
+ * Reads the optional `meta.generationAlias` redirect for a set of model
+ * versions, returning a map of sourceVersionId -> alias. Self-references are
+ * ignored. Used by the generator-open path (to load the target instead of the
+ * cover version) and by `resolveCanGenerateForVersions` (to derive the cover
+ * version's coverage from its target — fail-closed).
+ */
+async function getGenerationAliasMap(versionIds: number[]): Promise<Map<number, GenerationAlias>> {
+  const ids = [...new Set(versionIds)];
+  if (!ids.length) return new Map();
+  const rows = await dbRead.modelVersion.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, meta: true },
+  });
+  const map = new Map<number, GenerationAlias>();
+  for (const row of rows) {
+    const alias = (row.meta as ModelVersionMeta | null)?.generationAlias;
+    if (alias?.versionId && alias.versionId !== row.id) map.set(row.id, alias);
+  }
+  return map;
+}
+
+/**
+ * Expands versions into the gate inputs used for canGenerate, with generation
+ * aliases resolved: an aliased cover version is replaced by its target's gate
+ * fields while the result key stays the cover id. A missing target (deleted)
+ * falls back to the cover's own (uncovered) fields, which fail closed.
+ */
+async function resolveAliasGateVersions(
+  versions: ResolveCanGenerateVersion[],
+  aliasMap: Map<number, GenerationAlias>
+): Promise<{ key: number; gate: ResolveCanGenerateVersion }[]> {
+  if (!aliasMap.size) return versions.map((v) => ({ key: v.id, gate: v }));
+
+  const targetIds = [...new Set([...aliasMap.values()].map((a) => a.versionId))];
+  const rows = await dbRead.modelVersion.findMany({
+    where: { id: { in: targetIds } },
+    select: {
+      id: true,
+      status: true,
+      availability: true,
+      usageControl: true,
+      baseModel: true,
+      generationCoverage: { select: { covered: true } },
+      model: { select: { userId: true, type: true } },
+    },
+  });
+  const targetById = new Map<number, ResolveCanGenerateVersion>(
+    rows.map(({ generationCoverage, model, usageControl, ...rest }) => [
+      rest.id,
+      {
+        ...rest,
+        usageControl: usageControl ?? undefined,
+        covered: generationCoverage?.covered ?? null,
+        modelUserId: model.userId,
+        modelType: model.type,
+      },
+    ])
+  );
+
+  return versions.map((v) => {
+    const alias = aliasMap.get(v.id);
+    const gate = alias ? targetById.get(alias.versionId) : undefined;
+    return { key: v.id, gate: gate ?? v };
+  });
+}
+
 const getModelVersionGenerationData = async ({
   versionIds,
   user,
@@ -456,12 +581,41 @@ const getModelVersionGenerationData = async ({
   sfwOnly?: boolean;
 }): Promise<GenerationData> => {
   if (!versionIds.length) throw new Error('missing version ids');
-  const resources = await getResourceData(versionIds, {
+
+  // Normalize to objects so alias redirects can drop the requested epoch — the
+  // alias points at a published target, not a training checkpoint of the cover.
+  const requested =
+    typeof versionIds[0] === 'number'
+      ? (versionIds as number[]).map((id) => ({ id }))
+      : (versionIds as { id: number; epoch?: number }[]);
+
+  // Generation alias: opening a cover version loads its target version's
+  // resource instead (1:1 redirect). Any per-alias strength is applied after
+  // fetch. The Create button is gated on the target's coverage upstream
+  // (resolveCanGenerateForVersions), so a dead target can't be reached here.
+  const aliasMap = await getGenerationAliasMap(requested.map((x) => x.id));
+  const aliasStrengthByTarget = new Map<number, number>();
+  const resolvedVersionIds = requested.map((x) => {
+    const alias = aliasMap.get(x.id);
+    if (!alias) return x;
+    if (alias.strength != null) aliasStrengthByTarget.set(alias.versionId, alias.strength);
+    return { id: alias.versionId };
+  });
+
+  const resources = await getResourceData(resolvedVersionIds, {
     user,
     generation,
     withPreview,
     sfwOnly,
   });
+
+  // Apply alias strength overrides to the redirected resources.
+  if (aliasStrengthByTarget.size) {
+    for (const resource of resources) {
+      const strength = aliasStrengthByTarget.get(resource.id);
+      if (strength != null) resource.strength = strength;
+    }
+  }
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
   // Resolve VAE from linked components instead of vaeId
   if (checkpoint) {
@@ -827,6 +981,12 @@ export type ResolveCanGenerateVersion = {
   covered: boolean | null | undefined;
   modelUserId: number;
   modelType: ModelType;
+  /**
+   * Generation alias from `meta.generationAlias`, supplied by the caller (which
+   * already has the version's meta). When set, this version's canGenerate is
+   * derived from the target version instead — fail-closed.
+   */
+  modelVersionAlias?: GenerationAlias | null;
 };
 
 export type ResolveCanGenerateContext = {
@@ -858,33 +1018,46 @@ export async function resolveCanGenerateForVersions(
         : Promise.resolve<GenerationEcosystemContext | null>(null),
     ]);
 
-  const result = new Map<number, VersionGenerationState>();
+  // Generation alias (Option B): evaluate a cover version using its target's
+  // gate fields while keeping the result keyed to the cover id, so the Create
+  // button fails closed when the target is deleted/unpublished/uncovered.
+  // Aliases come from `version.modelVersionAlias` (caller-supplied). One-level
+  // only — a target that is itself an alias is not followed.
+  const aliasMap = new Map<number, GenerationAlias>();
   for (const v of versions) {
-    if (v.modelType === 'Wildcards') {
+    const alias = v.modelVersionAlias;
+    if (alias?.versionId && alias.versionId !== v.id) aliasMap.set(v.id, alias);
+  }
+  const gateVersions = await resolveAliasGateVersions(versions, aliasMap);
+
+  const result = new Map<number, VersionGenerationState>();
+  for (const { key, gate } of gateVersions) {
+    if (gate.modelType === 'Wildcards') {
       // Wildcards baseModels aren't on the generation-supported list, so the
       // standard gate always returns false for them. A visible System-kind
       // set is the only way canGenerate can be true.
-      const wildcardSetId = visibleWildcardSetIdByVersionId.get(v.id);
-      result.set(v.id, { canGenerate: wildcardSetId != null, wildcardSetId });
+      const wildcardSetId = visibleWildcardSetIdByVersionId.get(gate.id);
+      result.set(key, { canGenerate: wildcardSetId != null, wildcardSetId });
     } else {
       const canGenerate =
         getResourceCanGenerate({
           resource: {
-            id: v.id,
-            status: v.status,
-            availability: v.availability,
-            usageControl: v.usageControl,
-            baseModel: v.baseModel,
-            covered: v.covered ?? null,
-            modelUserId: v.modelUserId,
+            id: gate.id,
+            status: gate.status,
+            availability: gate.availability,
+            usageControl: gate.usageControl,
+            baseModel: gate.baseModel,
+            covered: gate.covered ?? null,
+            modelUserId: gate.modelUserId,
           },
           user: ctx.user,
           unavailableResources,
           ecosystemConfig: ecosystemConfig as GenerationEcosystemContext,
-        }) && isBaseModelGenerationSupported(v.baseModel, v.modelType);
-      result.set(v.id, { canGenerate });
+        }) && isBaseModelGenerationSupported(gate.baseModel, gate.modelType);
+      result.set(key, { canGenerate });
     }
   }
+
   return result;
 }
 
@@ -1157,8 +1330,16 @@ export async function getResourceData(
   // here strips them out unless the caller is asking for unfiltered data
   // (e.g. the model detail page wants to render a Wildcards model's
   // "Generate" button enabled when the wildcard set is visible).
+  //
+  // Aliased "cover" resources are kept even when their own baseModel isn't
+  // gen-supported: their generatability is derived from the alias target, and
+  // consumers swap them for that (gen-supported) target via
+  // `swapGenerationAliases`. Filtering here would strip the cover before the
+  // swap could happen.
   const filtered = generation
-    ? resources.filter((resource) => hasGenerationSupport(resource.baseModel))
+    ? resources.filter(
+        (resource) => hasGenerationSupport(resource.baseModel) || resource.aliasId != null
+      )
     : resources;
 
   return filtered;

@@ -116,6 +116,7 @@ export function QueueItem({
 
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
+  const canceled = status === 'canceled';
 
   const cancellable = PENDING_PROCESSING_STATUSES.includes(status);
 
@@ -177,12 +178,13 @@ export function QueueItem({
   const { prompt, ...details } = params as { prompt: string };
 
   const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
-  const overwriteStatusLabel =
-    hasUnstableResources && status === 'failed'
-      ? `${status} - Potentially caused by unstable resources`
-      : status === 'failed'
-      ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
-      : status;
+  const overwriteStatusLabel = canceled
+    ? 'cancelled - This generation was cancelled. Any undelivered generations were refunded.'
+    : hasUnstableResources && status === 'failed'
+    ? `${status} - Potentially caused by unstable resources`
+    : status === 'failed'
+    ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
+    : status;
 
   const completedCount = request.completedCount;
   const processingCount = request.processingCount;
@@ -323,8 +325,8 @@ export function QueueItem({
               </div>
             )}
 
-            {stepDisplay === 'inline' && failureReason && (
-              <Alert color="red">{failureReason}</Alert>
+            {stepDisplay === 'inline' && (
+              <WorkflowStatusAlert status={status} failureReason={failureReason} />
             )}
 
             {stepDisplay === 'separate' ? (
@@ -462,7 +464,7 @@ function StepOutputs({
 
   return (
     <>
-      {stepFailure && <Alert color="red">{stepFailure}</Alert>}
+      {step && <WorkflowStatusAlert status={request.status} failureReason={stepFailure} />}
       <div
         className={clsx(classes.grid, {
           [classes.asSidebar]: !features.largerGenerationImages,
@@ -524,6 +526,28 @@ function StepOutputs({
   );
 }
 
+/**
+ * Status-specific alerts shown in place of the red failure alert. Statuses not in
+ * the map fall through to the `failureReason` red alert (see `WorkflowStatusAlert`).
+ */
+const workflowStatusAlertMap: Partial<Record<WorkflowStatus, { color: string; message: string }>> =
+  {
+    canceled: { color: 'gray', message: 'This generation was cancelled.' },
+  };
+
+function WorkflowStatusAlert({
+  status,
+  failureReason,
+}: {
+  status: WorkflowStatus;
+  failureReason?: string | null;
+}) {
+  const statusAlert = workflowStatusAlertMap[status];
+  if (statusAlert) return <Alert color={statusAlert.color}>{statusAlert.message}</Alert>;
+  if (failureReason) return <Alert color="red">{failureReason}</Alert>;
+  return null;
+}
+
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
   withArrow: true,
@@ -542,7 +566,7 @@ function CancelOrDeleteWorkflow({
   const [cancelling, setCancelling] = useState(false);
   const deleteMutation = useDeleteTextToImageRequest();
   const cancelMutation = useCancelTextToImageRequest();
-  const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading || cancelling;
+  const cancellingDeleting = deleteMutation.isPending || cancelMutation.isPending || cancelling;
 
   const handleDeleteQueueItem = () => {
     deleteMutation.mutate({ workflowId });
@@ -742,6 +766,12 @@ function EnableNsfwBlock() {
     }
   */
 
+// Friendly labels for the non-yellow Buzz types a user may have spent to generate.
+const refundableBuzzLabelMap: Partial<Record<TransactionInfo['accountType'], string>> = {
+  blue: 'Blue',
+  green: 'Green',
+};
+
 function CanUpgradeBlock({
   workflowId,
   transactions,
@@ -761,7 +791,18 @@ function CanUpgradeBlock({
     else return acc + transaction.amount;
   }, 0);
 
-  const { mutate, isLoading } = useUpdateWorkflow();
+  // Figure out which non-yellow Buzz type(s) were spent to generate this content, so we
+  // can tell the user that Buzz will be refunded once they unlock with yellow Buzz.
+  const refundedBuzzLabels = Array.from(
+    new Set(
+      transactions
+        .filter((t) => t.accountType !== 'yellow' && t.type === 'debit')
+        .map((t) => refundableBuzzLabelMap[t.accountType] ?? 'Buzz')
+    )
+  );
+  const refundedLabel = refundedBuzzLabels.length === 1 ? `${refundedBuzzLabels[0]} Buzz` : 'Buzz';
+
+  const { mutate, isPending: isLoading } = useUpdateWorkflow();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     accountTypes: ['yellow'],
@@ -798,6 +839,9 @@ function CanUpgradeBlock({
         onClick={handleClick}
         loading={isLoading}
       />
+      <Text align="center" size="xs" c="dimmed">
+        The {refundedLabel} you used to generate this content will be refunded.
+      </Text>
       {!isPaidMember && (
         <Text align="center" size="xs" c="dimmed">
           Or{' '}

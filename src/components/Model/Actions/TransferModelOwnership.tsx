@@ -45,9 +45,9 @@ export default function TransferModelOwnership({ modelId }: { modelId: number })
     <Modal
       {...dialog}
       title="Transfer Model Ownership"
-      closeOnClickOutside={!transferMutation.isLoading}
-      closeOnEscape={!transferMutation.isLoading}
-      withCloseButton={!transferMutation.isLoading}
+      closeOnClickOutside={!transferMutation.isPending}
+      closeOnEscape={!transferMutation.isPending}
+      withCloseButton={!transferMutation.isPending}
       withinPortal
     >
       <Stack gap="md">
@@ -62,7 +62,7 @@ export default function TransferModelOwnership({ modelId }: { modelId: number })
           min={1}
           value={targetUserId ?? ''}
           onChange={(val) => setTargetUserId(typeof val === 'number' ? val : undefined)}
-          disabled={transferMutation.isLoading}
+          disabled={transferMutation.isPending}
         />
 
         {validUserId && targetLoading && (
@@ -84,12 +84,12 @@ export default function TransferModelOwnership({ modelId }: { modelId: number })
         </Alert>
 
         <Group justify="flex-end">
-          <Button variant="default" onClick={dialog.onClose} disabled={transferMutation.isLoading}>
+          <Button variant="default" onClick={dialog.onClose} disabled={transferMutation.isPending}>
             Cancel
           </Button>
           <Button
             color="orange"
-            loading={transferMutation.isLoading}
+            loading={transferMutation.isPending}
             disabled={!targetUser}
             onClick={handleTransfer}
           >

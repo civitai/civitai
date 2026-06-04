@@ -29,7 +29,7 @@ export function ImageMetaModal({
   const dialog = useDialogContext();
   const [blockedFor, setBlockedFor] = useState(props.blockedFor);
 
-  const { mutate, isLoading } = trpc.post.updateImage.useMutation();
+  const { mutate, isPending: isLoading } = trpc.post.updateImage.useMutation();
   const form = useForm({ schema: baseImageMetaSchema, defaultValues: meta });
 
   const handleSubmit = async (data: z.infer<typeof baseImageMetaSchema>) => {

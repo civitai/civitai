@@ -19,7 +19,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { IconAlertTriangle, IconConfetti, IconCopy, IconPlus, IconX } from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
-import type { DefaultErrorShape } from '@trpc/server';
+import type { TRPCDefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { capitalize, isEqual } from 'lodash-es';
@@ -374,7 +374,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         setAwaitInvalidate(false);
       }
     } catch (e) {
-      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      const error = e as TRPCClientErrorBase<TRPCDefaultErrorShape>;
       showErrorNotification({
         title: `Failed to submit run #${idx + 1} for training`,
         error: new Error(error.message),
@@ -706,7 +706,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
             await doTrainingMut(fileModelVersionId, idx, run.id);
           } catch (e) {
-            const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+            const error = e as TRPCClientErrorBase<TRPCDefaultErrorShape>;
             const formatted = formatTrainingValidationError(error.message);
             showErrorNotification({
               error: formatted ?? new Error(error.message),
@@ -719,7 +719,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           }
         }
       } catch (e) {
-        const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+        const error = e as TRPCClientErrorBase<TRPCDefaultErrorShape>;
         const formatted = formatTrainingValidationError(error.message);
         showErrorNotification({
           error: formatted ?? new Error(error.message),

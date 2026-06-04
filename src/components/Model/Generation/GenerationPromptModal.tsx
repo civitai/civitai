@@ -73,7 +73,7 @@ export function GenerationPromptModal({
           <InputText name="id" type="hidden" clearable={false} hidden />
           <InputText name="modelId" type="hidden" clearable={false} hidden />
           <Group justify="flex-end">
-            <Button type="submit" loading={upsertPromptMutation.isLoading}>
+            <Button type="submit" loading={upsertPromptMutation.isPending}>
               {editing ? 'Save' : 'Add'}
             </Button>
           </Group>

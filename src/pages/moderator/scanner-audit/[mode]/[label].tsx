@@ -59,6 +59,10 @@ import {
   type ScannerAuditMode,
 } from '~/components/Moderator/ScannerAuditLayout';
 import { ScannerPolicySidebar } from '~/components/Moderator/ScannerPolicySidebar';
+import {
+  getLabelHighlightTerms,
+  type HighlightCategory,
+} from '~/shared/constants/scanner-label-highlight-terms';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import type { Scanner } from '~/server/schema/scanner-review.schema';
 import type { AggregatedScanRow } from '~/server/services/scanner-review.service';
@@ -321,7 +325,7 @@ function FocusedRun({
         </Container>
       </ScrollArea>
       <ActionFooter
-        disabled={upsertVerdict.isLoading}
+        disabled={upsertVerdict.isPending}
         onNo={() => submitAnswer(false)}
         onYes={() => submitAnswer(true)}
         onSkip={skip}
@@ -629,7 +633,9 @@ function ContentDisplay({
   if (item.scanner === 'xguard_text') {
     return (
       <Paper p="lg" withBorder>
-        <Text style={textStyle}>{renderHighlighted(content.text ?? '', item.matchedText)}</Text>
+        <Text style={textStyle}>
+          {renderHighlighted(content.text ?? '', item.matchedText, item.label)}
+        </Text>
       </Paper>
     );
   }
@@ -641,7 +647,7 @@ function ContentDisplay({
           Positive prompt
         </Text>
         <Text style={textStyle}>
-          {renderHighlighted(content.positivePrompt ?? '', item.matchedPositivePrompt)}
+          {renderHighlighted(content.positivePrompt ?? '', item.matchedPositivePrompt, item.label)}
         </Text>
       </Paper>
       {content.negativePrompt && (
@@ -650,7 +656,7 @@ function ContentDisplay({
             Negative prompt
           </Text>
           <Text style={textStyle}>
-            {renderHighlighted(content.negativePrompt, item.matchedNegativePrompt)}
+            {renderHighlighted(content.negativePrompt, item.matchedNegativePrompt, item.label)}
           </Text>
         </Paper>
       )}
@@ -802,34 +808,81 @@ function verdictFromAnswer(modelTriggered: boolean, modSaysShouldTrigger: boolea
   return modSaysShouldTrigger ? ReviewVerdict.FalseNegative : ReviewVerdict.TrueNegative;
 }
 
-function renderHighlighted(text: string, terms: string[]) {
-  if (!text) return null;
-  if (terms.length === 0) return text;
+// Background colors per highlight source. Picked for readability on both
+// the dark and light Mantine bodies; text color is forced to gray-900 so
+// the highlight stays legible regardless of theme.
+const HIGHLIGHT_STYLES: Record<HighlightCategory | 'model', { bg: string; weight: number }> = {
+  trigger: { bg: '#fca5a5', weight: 600 }, // red-300 — hard youth-trigger terms
+  soft: { bg: '#fde68a', weight: 500 }, // amber-200 — soft signals, evasion candidates
+  carveOut: { bg: '#bbf7d0', weight: 500 }, // green-200 — adult-anchor / carve-out terms
+  model: { bg: '#fbbf24', weight: 500 }, // amber-400 — what the model said it matched
+};
 
-  const sorted = [...new Set(terms)].sort((a, b) => b.length - a.length);
-  const escaped = sorted.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const regex = new RegExp(`(${escaped.join('|')})`, 'gi');
-  const termsLower = new Set(terms.map((t) => t.toLowerCase()));
+type HighlightSource = HighlightCategory | 'model';
+
+/**
+ * Highlight known policy terms (per-label, color-coded by category) AND the
+ * model's reasoning matches in the same pass. When a span appears in both
+ * sources, policy-category wins because that's the more authoritative
+ * signal — the model's reasoning is informational but can hallucinate.
+ *
+ * The mod's main feedback: even inaccurate highlights break up the
+ * textblock and make scanning much easier. We err on the side of marking
+ * more, knowing some marks will be slightly off.
+ */
+function renderHighlighted(text: string, modelTerms: string[], label: string) {
+  if (!text) return null;
+
+  // Build the term-to-source map. Policy categories come first; the model
+  // overrides only fill in terms that aren't already covered by policy.
+  const termSource = new Map<string, HighlightSource>();
+  for (const { term, category } of getLabelHighlightTerms(label)) {
+    termSource.set(term.toLowerCase(), category);
+  }
+  for (const t of modelTerms) {
+    const key = t.toLowerCase();
+    if (!termSource.has(key)) termSource.set(key, 'model');
+  }
+
+  if (termSource.size === 0) return text;
+
+  // Sort by length descending so multi-word phrases (e.g. 'cute face')
+  // match before their constituent single words ('cute').
+  const allTerms = [...termSource.keys()].sort((a, b) => b.length - a.length);
+  // ASCII word boundary, applied conditionally: only attach when the term's
+  // edge IS an ASCII alnum. CJK / Cyrillic / hyphen-edged terms get no
+  // boundary on that side. Prevents `boy` matching inside `cowboy` while
+  // still letting `少女` and `pre-teen` match anywhere.
+  const isAsciiAlnum = (c: string) => /[A-Za-z0-9]/.test(c);
+  const wrapped = allTerms.map((t) => {
+    const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const prefix = isAsciiAlnum(t[0]) ? '(?<![A-Za-z0-9])' : '';
+    const suffix = isAsciiAlnum(t[t.length - 1]) ? '(?![A-Za-z0-9])' : '';
+    return `${prefix}${escaped}${suffix}`;
+  });
+  const regex = new RegExp(`(${wrapped.join('|')})`, 'gi');
 
   const parts = text.split(regex);
-  return parts.map((part, i) =>
-    termsLower.has(part.toLowerCase()) ? (
+  return parts.map((part, i) => {
+    const source = termSource.get(part.toLowerCase());
+    if (!source) return part;
+    const style = HIGHLIGHT_STYLES[source];
+    return (
       <mark
         key={i}
         style={{
-          background: '#fbbf24', // amber-400 — readable on both dark and light bodies
-          color: '#111827', // gray-900 forces dark text regardless of theme
+          background: style.bg,
+          color: '#111827',
           padding: '1px 4px',
           borderRadius: 3,
-          fontWeight: 500,
+          fontWeight: style.weight,
         }}
+        title={source === 'model' ? 'Matched by model reasoning' : `Policy: ${source}`}
       >
         {part}
       </mark>
-    ) : (
-      part
-    )
-  );
+    );
+  });
 }
 
 export default Page(ScannerAuditFocusedPage, {

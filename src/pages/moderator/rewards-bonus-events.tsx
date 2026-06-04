@@ -160,7 +160,7 @@ export default function RewardsBonusEventsPage() {
                             onConfirm={() => deleteMutation.mutate({ id: event.id })}
                             withinPortal
                           >
-                            <LegacyActionIcon loading={deleteMutation.isLoading} color="red">
+                            <LegacyActionIcon loading={deleteMutation.isPending} color="red">
                               <IconTrash size={16} />
                             </LegacyActionIcon>
                           </PopConfirm>

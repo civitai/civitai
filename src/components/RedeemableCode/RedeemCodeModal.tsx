@@ -159,7 +159,7 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
               <Button
                 className={classes.submitButton}
                 type="submit"
-                loading={redeemCodeMutation.isLoading}
+                loading={redeemCodeMutation.isPending}
               >
                 Redeem
               </Button>

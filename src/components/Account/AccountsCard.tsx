@@ -31,7 +31,7 @@ export function AccountsCard() {
     if (!providers) getProviders().then((providers) => setProviders(providers));
   }, [providers]);
 
-  const { mutate: deleteAccount, isLoading: deletingAccount } = trpc.account.delete.useMutation({
+  const { mutate: deleteAccount, isPending: deletingAccount } = trpc.account.delete.useMutation({
     onSuccess: async () => {
       await utils.account.invalidate();
     },

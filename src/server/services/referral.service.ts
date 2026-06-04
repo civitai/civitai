@@ -1123,7 +1123,8 @@ export async function advanceReferralSubscriptions(now: Date = new Date()) {
       const [next, ...rest] = ordered;
       const product = await findReferralProductForTier(next.tier);
       if (!product || !product.defaultPriceId) {
-        await logToAxiom({
+        // fire-and-forget: external Axiom POST must not block the txn budget
+        logToAxiom({
           name: 'referral-advance-missing-product',
           type: 'error',
           subId: sub.id,

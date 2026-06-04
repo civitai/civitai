@@ -17,7 +17,7 @@ export const usePaddleBuzzTransaction = ({
 
   const getTransaction = useCallback(
     (captchaToken: string | null) => async () => {
-      if (isLoading || createTransactionMutation.isLoading) return;
+      if (isLoading || createTransactionMutation.isPending) return;
 
       setTransactionId(null);
       setError(null);

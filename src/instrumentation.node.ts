@@ -12,6 +12,12 @@ import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { PrismaInstrumentation } from '@prisma/instrumentation';
 import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis';
+import { registerCpuProfiler } from '~/server/cpu-profiler';
+
+// Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
+// overhead; only does work when signalled. Independent of OTEL so it is
+// always available for live incident capture. See src/server/cpu-profiler.ts.
+registerCpuProfiler();
 
 // Only enable OTEL if explicitly set AND endpoint is configured
 const OTEL_ENABLED = process.env.OTEL_ENABLED === 'true';

@@ -183,7 +183,7 @@ function ReviewImages({
 }) {
   const approve = trpc.moderator.trainingData.approve.useMutation({ onSuccess });
   const deny = trpc.moderator.trainingData.deny.useMutation({ onSuccess });
-  const disabled = approve.isLoading || deny.isLoading;
+  const disabled = approve.isPending || deny.isPending;
 
   function handleApprove() {
     approve.mutate({ id: versionId });

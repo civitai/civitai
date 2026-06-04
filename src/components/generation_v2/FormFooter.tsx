@@ -43,6 +43,8 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useMembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -791,6 +793,40 @@ function QuantityFieldInner({
 }
 
 // =============================================================================
+// BlueBuzzMatureReminder Component
+// =============================================================================
+
+/**
+ * Compact reminder shown below the priority alerts once a non-member on .red has
+ * acknowledged the Blue Buzz mature-content upsell (the full upsell alert in
+ * GenerationLayout only renders while it still needs acknowledgment). Keeps the
+ * limitation visible without re-blocking the submit footer.
+ */
+function BlueBuzzMatureReminder() {
+  const { variant, acknowledged } = useMembershipUpsell();
+  const serverDomains = useServerDomains();
+
+  if (variant !== 'blue-on-red' || !acknowledged) return null;
+
+  return (
+    <Text size="xs" c="dimmed">
+      Blue Buzz can&apos;t generate mature content without{' '}
+      <Text
+        span
+        c="blue.4"
+        className="cursor-pointer"
+        component="a"
+        href={syncAccount(`//${serverDomains.green}/pricing`)}
+        target="_blank"
+        rel="noreferrer nofollow"
+      >
+        a membership
+      </Text>
+    </Text>
+  );
+}
+
+// =============================================================================
 // FormFooter Component
 // =============================================================================
 
@@ -1139,12 +1175,14 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         onClearInsufficientBuzz={() => setInsufficientBuzzError(false)}
       />
 
+      <BlueBuzzMatureReminder />
+
       {!membershipUpsell.needsAcknowledgment && (
         <div className="flex h-[52px] items-stretch gap-2">
           <QuantityField />
           <Button.Group className="flex-1">
             <SubmitButton
-              isLoading={generateMutation.isLoading || isMinLoading}
+              isLoading={generateMutation.isPending || isMinLoading}
               onSubmit={handleSubmit}
             />
             {currentUser && <ConnectedBuzzTypeSelector />}

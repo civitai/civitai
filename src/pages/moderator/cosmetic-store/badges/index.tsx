@@ -539,7 +539,7 @@ function BadgeForm({
 
           {/* Actions */}
           <Group>
-            <Button onClick={handleSubmit} loading={upsertMutation.isLoading}>
+            <Button onClick={handleSubmit} loading={upsertMutation.isPending}>
               {mode === 'edit' ? 'Update Badge' : 'Create Badge'}
             </Button>
             <Button variant="subtle" color="gray" onClick={onCancel}>

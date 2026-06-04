@@ -5,6 +5,7 @@ import type {
   XGuardModerationStepTemplate,
 } from '@civitai/client';
 import { submitWorkflow } from '@civitai/client';
+import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -12,6 +13,7 @@ import { env } from '~/env/server';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
@@ -35,8 +37,13 @@ export async function createImageIngestionRequest({
 }) {
   const metadata = { imageId };
   const edgeUrl = getEdgeUrl(url, { type });
+  // Idempotency key: if a submit returns 500 but actually created the workflow
+  // server-side, re-submitting with the same `externalId` returns the existing
+  // workflow instead of duplicating it (orchestrator dedupes on (userId, externalId)).
+  const externalId = randomUUID();
 
   const body: WorkflowTemplate = {
+    externalId,
     metadata,
     arguments: {
       mediaUrl: edgeUrl,
@@ -65,7 +72,7 @@ export async function createImageIngestionRequest({
                 mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
                 engine: 'civitai',
                 includeAgeClassification: true,
-                includeAIRecognition: true,
+                includeAIRecognition: false,
                 includeFaceRecognition: true,
                 includeAnimeRecognition: true,
               },
@@ -138,7 +145,7 @@ export async function createImageIngestionRequest({
                     },
                     engine: 'civitai',
                     includeAgeClassification: true,
-                    includeAIRecognition: true,
+                    includeAIRecognition: false,
                     includeFaceRecognition: true,
                     includeAnimeRecognition: true,
                   },
@@ -161,13 +168,18 @@ export async function createImageIngestionRequest({
       : undefined,
   };
 
-  const { data, error, response } = await submitWorkflow({
+  // Re-submit transient infra failures (5xx / no-response), reusing the same
+  // `externalId` so a 500 that actually created the workflow isn't duplicated.
+  const result = await submitWorkflowWithRetry({
     client: internalOrchestratorClient,
     query: wait ? { wait } : undefined,
     body,
   });
+  const { data, response, attempts } = result;
+  // `error` isn't present on every member of the result union — narrow with `in`.
+  const error = 'error' in result ? result.error : undefined;
 
-  const serverTiming = response.headers.get('Server-Timing');
+  const serverTiming = response?.headers.get('Server-Timing') ?? null;
 
   if (!data) {
     logToAxiom({
@@ -175,13 +187,15 @@ export async function createImageIngestionRequest({
       name: 'image-ingestion',
       imageId,
       url,
-      responseStatus: response.status,
+      externalId,
+      attempts,
+      responseStatus: response?.status,
       serverTiming,
       error,
     });
   }
 
-  return { data, body, error, status: response.status };
+  return { data, body, error, status: response?.status };
 }
 
 type XGuardModerationArgs = {

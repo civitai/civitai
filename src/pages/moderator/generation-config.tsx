@@ -311,7 +311,7 @@ function EcosystemConfigSection() {
         <Button
           leftSection={<IconDeviceFloppy size={16} />}
           onClick={handleSave}
-          loading={setMutation.isLoading}
+          loading={setMutation.isPending}
         >
           Save ecosystem gates
         </Button>

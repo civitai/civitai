@@ -17,7 +17,7 @@ import {
   getUserBuzzAccount,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
-import { createEntityImages, updateEntityImages } from '~/server/services/image.service';
+import { createEntityImages, updateEntityImages, ingestImage } from '~/server/services/image.service';
 import { decreaseDate, startOfDay } from '~/utils/date-helpers';
 import type { NsfwLevel } from '../common/enums';
 import { BountySort, BountyStatus } from '../common/enums';
@@ -189,6 +189,8 @@ export const createBounty = async ({
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
+  let imagesToIngest: { id: number; url: string }[] = [];
+
   const bounty = await dbWrite.$transaction(
     async (tx) => {
       const bounty = await tx.bounty.create({
@@ -230,7 +232,7 @@ export const createBounty = async ({
       }
 
       if (images) {
-        await createEntityImages({
+        imagesToIngest = await createEntityImages({
           images,
           tx,
           userId,
@@ -246,6 +248,7 @@ export const createBounty = async ({
           }
 
           const prefix = getBountyTransactionPrefix(bounty.id, userId);
+          // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): Buzz charge inside the txn. Moving it out needs charge→tx→refund-on-failure compensation (a Postgres rollback can't undo an external Buzz charge); left for a domain-owner change.
           await createMultiAccountBuzzTransaction({
             fromAccountId: userId,
             fromAccountTypes: [buzzType],
@@ -280,6 +283,20 @@ export const createBounty = async ({
     { maxWait: 10000, timeout: 30000 }
   );
 
+  if (imagesToIngest.length > 0) {
+    for (const img of imagesToIngest) {
+      ingestImage({ image: img }).catch((error) => {
+        logToAxiom({
+          name: 'bounty-image-ingest',
+          type: 'error',
+          userId,
+          imageId: img.id,
+          message: error instanceof Error ? error.message : String(error),
+        }).catch(() => {});
+      });
+    }
+  }
+
   if (bounty.userId) {
     await userBountyCountCache.refresh(bounty.userId);
   }
@@ -303,6 +320,8 @@ export const updateBountyById = async ({
   // Convert dates to UTC for storing
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
+
+  let imagesToIngest: { id: number; url: string }[] = [];
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
@@ -377,7 +396,7 @@ export const updateBountyById = async ({
       }
 
       if (images) {
-        await updateEntityImages({
+        imagesToIngest = await updateEntityImages({
           images,
           tx,
           entityId: bounty.id,
@@ -390,6 +409,20 @@ export const updateBountyById = async ({
     },
     { maxWait: 10000, timeout: 30000 }
   );
+
+  if (imagesToIngest.length > 0) {
+    for (const img of imagesToIngest) {
+      ingestImage({ image: img }).catch((error) => {
+        logToAxiom({
+          name: 'bounty-image-ingest',
+          type: 'error',
+          userId,
+          imageId: img.id,
+          message: error instanceof Error ? error.message : String(error),
+        }).catch(() => {});
+      });
+    }
+  }
 
   if (bounty?.userId) {
     await userBountyCountCache.refresh(bounty?.userId);

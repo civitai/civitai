@@ -613,7 +613,7 @@ function FileCard({
   return (
     <Card
       style={{
-        opacity: deleteFileMutation.isLoading ? 0.2 : undefined,
+        opacity: deleteFileMutation.isPending ? 0.2 : undefined,
         borderColor: hasValidationError ? 'var(--mantine-color-red-6)' : undefined,
       }}
       withBorder
@@ -656,7 +656,7 @@ function FileCard({
               <LegacyActionIcon
                 color="red"
                 onClick={() => handleRemoveFile(versionFile.uuid)}
-                loading={deleteFileMutation.isLoading}
+                loading={deleteFileMutation.isPending}
                 style={{ marginTop: 18 }}
               >
                 <IconTrash size={16} />
@@ -668,7 +668,7 @@ function FileCard({
           <LegacyActionIcon
             color="red"
             onClick={() => handleRemoveFile(versionFile.uuid)}
-            loading={deleteFileMutation.isLoading}
+            loading={deleteFileMutation.isPending}
           >
             <IconTrash size={16} />
           </LegacyActionIcon>
@@ -849,7 +849,7 @@ function FileEditForm({
   const { errors, updateFile, validationCheck } = useFilesContext();
   const error = errors?.[index];
 
-  const { mutate, isLoading } = trpc.modelFile.update.useMutation({
+  const { mutate, isPending: isLoading } = trpc.modelFile.update.useMutation({
     onSuccess: () => {
       setInitialFile(versionFile);
     },

@@ -145,7 +145,7 @@ const AddOrRemoveItems = forwardRef<
         } blocklist`}
       />
       <div className="flex justify-end">
-        <Button type="submit" loading={upsert.isLoading || remove.isLoading}>
+        <Button type="submit" loading={upsert.isPending || remove.isPending}>
           Submit
         </Button>
       </div>

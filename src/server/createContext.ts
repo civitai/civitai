@@ -5,7 +5,7 @@ import { Tracker } from './clickhouse/client';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
-import { createCallerFactory } from '@trpc/server';
+import { createCallerFactory } from '~/server/trpc';
 import { appRouter } from '~/server/routers';
 import { getAllServerHosts, getRequestDomainColor } from '~/server/utils/server-domain';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -113,7 +113,7 @@ export const createContext = async ({
   };
 };
 
-const createCaller = createCallerFactory()(appRouter);
+const createCaller = createCallerFactory(appRouter);
 export const publicApiContext2 = async (req: NextApiRequest, res: NextApiResponse) => {
   const domain = getRequestDomainColor(req) ?? 'blue';
 

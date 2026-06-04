@@ -37,7 +37,7 @@ export const AwardBountyAction = ({
     ? null
     : bounty.benefactors.find((b) => b.user.id === currentUser.id);
 
-  const { isLoading: isAwardingBountyEntry, mutate: awardBountyEntryMutation } =
+  const { isPending: isAwardingBountyEntry, mutate: awardBountyEntryMutation } =
     trpc.bountyEntry.award.useMutation({
       onMutate: async ({ id }) => {
         if (!currentUser) {

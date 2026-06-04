@@ -153,11 +153,27 @@ export class StepData {
   }
 
   get params(): Partial<NormalizedWorkflowMetadata['params']> {
-    // Merge step params over workflow params: enhancement steps carry source
-    // generation context (prompt, seed, source workflow key) that should win
-    // over the workflow-level form input (e.g. the upscale form). Workflow
-    // params with no step-level conflict come through harmlessly.
-    return { ...this.#workflow.metadata?.params, ...this.metadata.params };
+    const stepParams = this.metadata.params;
+    const wfParams = this.#workflow.metadata?.params;
+
+    // The server flags whether `step.metadata.params` is a partial DELTA vs a complete snapshot,
+    // so this getter never has to *decide* — it just applies the directive:
+    //
+    // - `partialParams` set (wildcard/snippet variant): `params` is a small overlay (e.g. the
+    //   substituted prompt). Spread it over the workflow-level form snapshot to reconstruct the
+    //   variant's effective params. The server sends only the delta — we complete it here, which
+    //   keeps the API payload small (no full params duplicated per variant).
+    // - otherwise: either/or. A complete snapshot (enhancement steps store the *source*
+    //   generation here) is used verbatim; an absent one falls back to workflow params. We must
+    //   NOT spread in this case, or the enhancement form's fields (`images`, `upscaler`, the
+    //   `img2img:*` workflow key) would leak into a remix of the original.
+    //
+    // See docs/generation-metadata-architecture.md.
+    if (this.metadata.partialParams && stepParams && Object.keys(stepParams).length > 0) {
+      return { ...wfParams, ...stepParams };
+    }
+    if (stepParams && Object.keys(stepParams).length > 0) return stepParams;
+    return wfParams ?? {};
   }
   get resources(): NormalizedWorkflowMetadata['resources'] {
     if (this.metadata.resources?.length) return this.metadata.resources;

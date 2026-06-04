@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import {
   Anchor,
   Button,
@@ -115,7 +116,7 @@ export function ImagesAsPostsInfinite({
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         trpc: { context: { skipBatch: true } },
-        keepPreviousData: true,
+        placeholderData: keepPreviousData,
         enabled,
         // enabled: inView,
       }
