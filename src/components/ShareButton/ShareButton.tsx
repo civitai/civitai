@@ -9,6 +9,7 @@ import { SocialIconCopy } from '~/components/ShareButton/Icons/SocialIconCopy';
 import { SocialIconOther } from '~/components/ShareButton/Icons/SocialIconOther';
 import { SocialIconReddit } from '~/components/ShareButton/Icons/SocialIconReddit';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useChatEnabled } from '~/components/Chat/useChatEnabled';
 import type { CollectItemInput } from '~/server/schema/collection.schema';
 import { QS } from '~/utils/qs';
 import { useTrackEvent } from '../TrackView/track.utils';
@@ -35,6 +36,7 @@ export function ShareButton({
   const clipboard = useClipboard({ timeout: undefined });
   // const { requireLogin } = useLoginRedirect({ reason: 'add-to-collection' });
   const features = useFeatureFlags();
+  const chatEnabled = useChatEnabled();
   const { trackShare } = useTrackEvent();
 
   const url =
@@ -91,7 +93,7 @@ export function ShareButton({
     },
   ];
 
-  if (features.chat) {
+  if (chatEnabled) {
     shareLinks.unshift({
       type: 'Send Chat',
       onClick: (e: React.MouseEvent) =>
