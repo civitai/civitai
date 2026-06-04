@@ -640,9 +640,12 @@ function ChatInputBox({
         produce((old) => {
           if (!old) return old;
 
-          const lastPage = old.pages[old.pages.length - 1];
-
-          lastPage.items.push(data);
+          // The backend returns messages grouped in chunks (pages).
+          // `old.pages[0]` contains the newest chunk of messages, while older messages
+          // are appended to the end of the array during infinite scrolling.
+          // Therefore, newly sent messages must be appended to `pages[0]`.
+          const newestPage = old.pages[0];
+          newestPage.items.push(data);
         })
       );
 
