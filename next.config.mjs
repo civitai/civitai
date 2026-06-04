@@ -322,6 +322,10 @@ export default defineNextConfig(
         },
       ];
     },
+    outputFileTracingIncludes: {
+      '/safety': ['./src/static-content/**/*'],
+      '/content/[[...slug]]': ['./src/static-content/**/*'],
+    },
     output: 'standalone',
   })
 );
