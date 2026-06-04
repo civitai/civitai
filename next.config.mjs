@@ -104,14 +104,6 @@ export default defineNextConfig(
           }
         : {},
     transpilePackages: [],
-    sassOptions: {
-      // Next 15's sass-loader uses Dart Sass's modern API, which surfaces
-      // pre-existing deprecation warnings loudly (global darken()/abs() and
-      // slash division in CosmeticLights.module.scss). Scoped to the IDs that
-      // actually fire so genuinely new deprecations still show. Proper fix is to
-      // migrate that file to color.adjust()/math.div() (or run sass-migrator).
-      silenceDeprecations: ['color-functions', 'global-builtin', 'slash-div'],
-    },
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
       'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',

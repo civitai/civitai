@@ -1,3 +1,6 @@
+@use 'sass:color';
+@use 'sass:math';
+
 $padding-y: 15px;
 $offset: -2px;
 $width: 18px;
@@ -30,7 +33,7 @@ $blue: rgb(0, 200, 255);
       content: '';
       position: absolute;
       filter: blur(3px);
-      width: #{$width + abs($baseGlowOffset)};
+      width: #{$width + math.abs($baseGlowOffset)};
       height: #{$height * 1.5};
       top: 50%;
       transform: translateY(-50%);
@@ -59,7 +62,7 @@ $blue: rgb(0, 200, 255);
 
     @for $i from 1 through 12 {
       &:nth-child(#{$i}) {
-        top: calc(100% / 6 * #{($i - 1) / 2});
+        top: calc(100% / 6 * #{math.div($i - 1, 2)});
       }
     }
   }
@@ -67,7 +70,7 @@ $blue: rgb(0, 200, 255);
   &.red span {
     background: $red;
     &::before {
-      background: darken($red, 10%);
+      background: color.adjust($red, $lightness: -10%);
     }
   }
 
@@ -81,7 +84,7 @@ $blue: rgb(0, 200, 255);
   &.blue span {
     background: $blue;
     &::before {
-      background: darken($blue, 10%);
+      background: color.adjust($blue, $lightness: -10%);
     }
   }
 
@@ -106,16 +109,16 @@ $blue: rgb(0, 200, 255);
 
   &.brightness-50 span {
     &.yellow span {
-      background: darken($yellow, 5%);
+      background: color.adjust($yellow, $lightness: -5%);
     }
     &.red span {
-      background: darken($red, 5%);
+      background: color.adjust($red, $lightness: -5%);
     }
     &.green span {
-      background: darken($green, 5%);
+      background: color.adjust($green, $lightness: -5%);
     }
     &.blue span {
-      background: darken($blue, 5%);
+      background: color.adjust($blue, $lightness: -5%);
     }
     &::before {
       animation: flicker-50 1.5s ease infinite alternate;
@@ -124,16 +127,16 @@ $blue: rgb(0, 200, 255);
 
   &.brightness-25 {
     &.yellow span {
-      background: darken($yellow, 10%);
+      background: color.adjust($yellow, $lightness: -10%);
     }
     &.red span {
-      background: darken($red, 10%);
+      background: color.adjust($red, $lightness: -10%);
     }
     &.green span {
-      background: darken($green, 10%);
+      background: color.adjust($green, $lightness: -10%);
     }
     &.blue span {
-      background: darken($blue, 10%);
+      background: color.adjust($blue, $lightness: -10%);
     }
     span {
       &::before {
@@ -146,47 +149,47 @@ $blue: rgb(0, 200, 255);
 @keyframes flicker-100 {
   0% {
     opacity: 0.25;
-    width: #{$width + abs($baseGlowOffset * 1)};
+    width: #{$width + math.abs($baseGlowOffset * 1)};
   }
 
   100% {
     opacity: 0.6;
-    width: #{$width + abs($baseGlowOffset * 4)};
+    width: #{$width + math.abs($baseGlowOffset * 4)};
   }
 }
 
 @keyframes flicker-75 {
   0% {
     opacity: 0.15;
-    width: #{$width + abs($baseGlowOffset * 1)};
+    width: #{$width + math.abs($baseGlowOffset * 1)};
   }
 
   100% {
     opacity: 0.4;
-    width: #{$width + abs($baseGlowOffset * 3)};
+    width: #{$width + math.abs($baseGlowOffset * 3)};
   }
 }
 
 @keyframes flicker-50 {
   0% {
     opacity: 0.05;
-    width: #{$width + abs($baseGlowOffset * 1)};
+    width: #{$width + math.abs($baseGlowOffset * 1)};
   }
 
   100% {
     opacity: 0.3;
-    width: #{$width + abs($baseGlowOffset * 2.5)};
+    width: #{$width + math.abs($baseGlowOffset * 2.5)};
   }
 }
 
 @keyframes flicker-25 {
   0% {
     opacity: 0.05;
-    width: #{$width + abs($baseGlowOffset * 1)};
+    width: #{$width + math.abs($baseGlowOffset * 1)};
   }
 
   100% {
     opacity: 0.2;
-    width: #{$width + abs($baseGlowOffset * 2)};
+    width: #{$width + math.abs($baseGlowOffset * 2)};
   }
 }
