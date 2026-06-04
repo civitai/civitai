@@ -521,18 +521,28 @@ function scoreFromWorkflow(args: {
   }
   const steps = ((workflow as { steps?: unknown[] }).steps ?? []) as XGuardModerationStep[];
   const xguardStep = steps.find((s) => s.$type === 'xGuardModeration');
+  // Orchestrator shape: `output.results: [{ label, score, triggered, ... }]` —
+  // an array, not a label-keyed record. Match by label case-insensitively
+  // because the registry uses PascalCase but some pipelines / overrides have
+  // used lowercase historically.
   const output = xguardStep?.output as
-    | { labels?: Record<string, { score: number; triggered?: boolean }> }
+    | { results?: Array<{ label?: string; score?: number; triggered?: boolean }> }
     | undefined;
-  const labelOut = output?.labels?.[candidate.label];
+  const target = candidate.label.toLowerCase();
+  const labelOut = output?.results?.find(
+    (r) => typeof r.label === 'string' && r.label.toLowerCase() === target
+  );
   if (!labelOut) {
+    const seenLabels = output?.results?.map((r) => r.label).filter(Boolean) ?? [];
     return {
       ...base,
       score: null,
       triggered: null,
       correct: null,
       verdictCategory: 'error',
-      errorMessage: 'no label output in xGuardModeration step',
+      errorMessage: `no result for label "${candidate.label}" in xGuardModeration output (got: ${
+        seenLabels.length > 0 ? seenLabels.join(', ') : 'no results'
+      })`,
     };
   }
   const score = typeof labelOut.score === 'number' ? labelOut.score : null;
