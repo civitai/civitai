@@ -14,6 +14,7 @@ import { openConfirmModal } from '@mantine/modals';
 import {
   IconArchive,
   IconDotsVertical,
+  IconFlag,
   IconLock,
   IconLockOpen,
   IconPencil,
@@ -38,6 +39,8 @@ import type { NsfwLevel } from '~/server/common/enums';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { openReportModal } from '~/components/Dialog/triggers/report';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 
 type ToggleableFlag = 'tosViolation' | 'poi' | 'minor' | 'nsfw' | 'unlisted';
 
@@ -53,6 +56,21 @@ export type Model3DActionsMenuModel = {
   unlisted: boolean;
   nsfwLevel: number;
   lockedProperties: string[];
+  /** When null, the Publish action is disabled (matches the server-side gate). */
+  thumbnailImageId?: number | null;
+};
+
+export type Model3DActionsMenuProps = {
+  model3d: Model3DActionsMenuModel;
+  /**
+   * Show the "Report" item for logged-in non-owner non-moderator users.
+   * When true, the trigger also renders for those users (otherwise the menu
+   * is owner/mod-only — the detail page passes `false` because it already
+   * surfaces a dedicated Report button alongside this menu).
+   */
+  showReport?: boolean;
+  /** Mantine size for the trigger. Defaults to `'lg'` (detail-page sizing). */
+  triggerSize?: 'sm' | 'md' | 'lg';
 };
 
 /**
@@ -65,7 +83,11 @@ export type Model3DActionsMenuModel = {
  * moderator. Menu items inside are then gated by the same checks (mutations
  * are also server-guarded with protectedProcedure/moderatorProcedure).
  */
-export function Model3DActionsMenu({ model3d }: { model3d: Model3DActionsMenuModel }) {
+export function Model3DActionsMenu({
+  model3d,
+  showReport = false,
+  triggerSize = 'lg',
+}: Model3DActionsMenuProps) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const [nsfwModalOpen, setNsfwModalOpen] = useState(false);
@@ -78,15 +100,25 @@ export function Model3DActionsMenu({ model3d }: { model3d: Model3DActionsMenuMod
 
   const isOwner = !!currentUser && currentUser.id === model3d.userId;
   const isModerator = !!currentUser?.isModerator;
-  if (!isOwner && !isModerator) return null;
+  const canReport = showReport && !!currentUser && !isOwner && !isModerator;
+  // Render only when at least one section will have visible items. The card
+  // surface enables the Report path for any logged-in user; the detail page
+  // keeps the original owner/mod gate by leaving `showReport` false.
+  if (!isOwner && !isModerator && !canReport) return null;
 
   const isDeleted = model3d.status === Model3DStatus.Deleted;
   const isUnpublished = model3d.status === Model3DStatus.Unpublished;
   const isPublished = model3d.status === Model3DStatus.Published;
   const isDraft = model3d.status === Model3DStatus.Draft;
   const lockedSet = new Set(model3d.lockedProperties ?? []);
+  const canPublish = !!model3d.thumbnailImageId;
 
-  const invalidate = () => queryUtils.model3d.getById.invalidate({ id: model3d.id });
+  const invalidate = async () => {
+    await Promise.all([
+      queryUtils.model3d.getById.invalidate({ id: model3d.id }),
+      queryUtils.model3d.getInfinite.invalidate(),
+    ]);
+  };
 
   const onError = (action: string) => (error: { message: string }) => {
     showErrorNotification({
@@ -203,12 +235,27 @@ export function Model3DActionsMenu({ model3d }: { model3d: Model3DActionsMenuMod
       >
         <Menu.Target>
           {/* Canonical pattern from src/pages/models/[id]/[[...slug]].tsx
-              — variant="light" with no color prop. */}
-          <LegacyActionIcon variant="light" size="lg" aria-label="Model actions">
-            <IconDotsVertical size={20} />
+              — variant="light" with no color prop. The card surface uses
+              `triggerSize="sm"` and the wrapping span swallows the click so
+              the underlying card-as-link doesn't navigate. */}
+          <LegacyActionIcon
+            variant="light"
+            size={triggerSize}
+            aria-label="Model actions"
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              e.preventDefault();
+            }}
+          >
+            <IconDotsVertical size={triggerSize === 'sm' ? 14 : 20} />
           </LegacyActionIcon>
         </Menu.Target>
-        <Menu.Dropdown>
+        <Menu.Dropdown
+          onClick={(e: React.MouseEvent) => {
+            // Stop dropdown clicks from bubbling up to the card link wrapper.
+            e.stopPropagation();
+          }}
+        >
           {isOwner && (
             <>
               <Menu.Label>
@@ -231,7 +278,10 @@ export function Model3DActionsMenu({ model3d }: { model3d: Model3DActionsMenuMod
                   leftSection={<IconUpload size={14} stroke={1.5} />}
                   color="green"
                   onClick={confirmPublish}
-                  disabled={publishMutation.isLoading}
+                  disabled={publishMutation.isLoading || !canPublish}
+                  title={
+                    !canPublish ? 'A thumbnail image is required before publishing.' : undefined
+                  }
                 >
                   Publish
                 </Menu.Item>
@@ -352,6 +402,23 @@ export function Model3DActionsMenu({ model3d }: { model3d: Model3DActionsMenuMod
                   </Menu.Item>
                 );
               })}
+            </>
+          )}
+
+          {canReport && (
+            <>
+              <Menu.Item
+                leftSection={<IconFlag size={14} stroke={1.5} />}
+                color="red.6"
+                onClick={() =>
+                  openReportModal({
+                    entityType: ReportEntity.Model3D,
+                    entityId: model3d.id,
+                  })
+                }
+              >
+                Report
+              </Menu.Item>
             </>
           )}
         </Menu.Dropdown>

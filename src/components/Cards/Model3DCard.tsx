@@ -14,6 +14,7 @@ import dynamic from 'next/dynamic';
 import { memo, useState } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
+import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import type { inferRouterOutputs } from '@trpc/server';
@@ -44,7 +45,22 @@ type Model3DListItem = inferRouterOutputs<AppRouter>['model3d']['getInfinite']['
 type Props = { data: Model3DListItem };
 
 export const Model3DCard = memo(function Model3DCard({ data }: Props) {
-  const { id, name, thumbnailImage, user, nsfwLevel, metric } = data;
+  const {
+    id,
+    name,
+    thumbnailImage,
+    user,
+    nsfwLevel,
+    metric,
+    status,
+    nsfw,
+    tosViolation,
+    poi,
+    minor,
+    unlisted,
+    lockedProperties,
+    thumbnailImageId,
+  } = data;
 
   const [previewing, setPreviewing] = useState(false);
   const { data: filesData } = trpc.model3d.getFiles.useQuery(
@@ -96,26 +112,48 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
             >
               3D
             </Badge>
-            <Tooltip
-              label={previewing ? 'Close preview' : 'Preview in-line'}
-              withinPortal
-              position="left"
-            >
-              <ActionIcon
-                variant="filled"
-                color="dark"
-                radius="xl"
-                size="sm"
-                aria-label={previewing ? 'Close preview' : 'Preview 3D model'}
-                onClick={(e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  setPreviewing((v) => !v);
-                }}
+            <Group gap={4} wrap="nowrap">
+              <Tooltip
+                label={previewing ? 'Close preview' : 'Preview in-line'}
+                withinPortal
+                position="left"
               >
-                <IconEye size={14} stroke={2} />
-              </ActionIcon>
-            </Tooltip>
+                <ActionIcon
+                  variant="filled"
+                  color="dark"
+                  radius="xl"
+                  size="sm"
+                  aria-label={previewing ? 'Close preview' : 'Preview 3D model'}
+                  onClick={(e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    setPreviewing((v) => !v);
+                  }}
+                >
+                  <IconEye size={14} stroke={2} />
+                </ActionIcon>
+              </Tooltip>
+              {/* Actions dropdown — owner/mod get full controls, any logged-in
+                  user gets the Report action. Internally guards visibility, so
+                  signed-out users see nothing rendered. */}
+              <Model3DActionsMenu
+                showReport
+                triggerSize="sm"
+                model3d={{
+                  id,
+                  userId: user.id,
+                  status,
+                  nsfw,
+                  tosViolation,
+                  poi,
+                  minor,
+                  unlisted,
+                  nsfwLevel: nsfwLevel ?? 0,
+                  lockedProperties: lockedProperties ?? [],
+                  thumbnailImageId,
+                }}
+              />
+            </Group>
           </Group>
         }
         footer={
