@@ -7,14 +7,13 @@ WORKDIR /app
 # Enable corepack for pnpm
 RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
-# Copy Prisma schema for client generation (postinstall generates schema.prisma from this)
-COPY prisma/schema.full.prisma ./prisma/
-
-# Install dependencies — lockfile and scripts rarely change, so they go first.
-# package.json changes on every version bump but pnpm only needs it for the
-# workspace root name; the store cache mount lets pnpm reuse downloaded packages
-# even when this layer is invalidated.
-COPY pnpm-lock.yaml package.json ./
+# Install dependencies. Workspace manifests (root + pnpm-workspace.yaml + packages/*)
+# and the lockfile go first; the store cache mount lets pnpm reuse downloads even when
+# this layer is invalidated. `postinstall` runs db:generate, which needs the Prisma
+# schema (now in packages/civitai-db-schema) and the scripts. Copying all of packages/
+# also ensures --frozen-lockfile sees every workspace project.
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY packages ./packages
 COPY scripts ./scripts
 COPY patches ./patches
 
@@ -34,8 +33,9 @@ RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Restore generated schema.prisma from deps (COPY . . overwrites it with source which doesn't have it)
-COPY --from=deps /app/prisma/schema.prisma ./prisma/schema.prisma
+# Restore generated slim schema.prisma from deps (it's gitignored, so COPY . . above
+# brings the package dir without it)
+COPY --from=deps /app/packages/civitai-db-schema/prisma/schema.prisma ./packages/civitai-db-schema/prisma/schema.prisma
 
 ENV NEXT_TELEMETRY_DISABLED=1
 

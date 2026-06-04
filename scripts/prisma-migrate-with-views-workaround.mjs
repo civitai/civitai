@@ -1,5 +1,5 @@
-const SCHEMA = 'prisma/schema.prisma';
-const BACKUP = 'prisma/schema.prisma.backup';
+const SCHEMA = 'packages/civitai-db-schema/prisma/schema.prisma';
+const BACKUP = 'packages/civitai-db-schema/prisma/schema.prisma.backup';
 const ANNOTATION = '/// @view';
 
 import { readFile, writeFile, copyFile, rename, unlink } from 'fs/promises';
