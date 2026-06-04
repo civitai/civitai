@@ -57,6 +57,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useGenerationContextStore } from '~/components/ImageGeneration/GenerationProvider';
+import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGenerationFormStore } from '~/store/generation-form.store';
 import { showWarningNotification } from '~/utils/notifications';
 import { useTipStore } from '~/store/tip.store';
@@ -305,6 +306,82 @@ function ConnectedBuzzTypeSelector() {
 }
 
 // =============================================================================
+// Self-Hosted Blocked Alert
+// =============================================================================
+
+/**
+ * Detects whether the selected ecosystem is disabled for the current user by
+ * the self-hosted generation toggle. The per-user resolved list holds ecosystem
+ * keys, matching the graph's `ecosystem` value. Returns the blocked ecosystem
+ * key (or undefined) plus the mode — shared by `PriorityAlertSpace` (alert) and
+ * `FormFooter` (which hides the submit/reset controls when blocked).
+ */
+function useSelfHostedBlock() {
+  const { selfHostedMode, selfHostedDisabledEcosystems } = useGenerationConfig();
+  const graphValues = useGraphValues<GenerationGraphTypes>();
+  const selectedEcosystem = (graphValues as { ecosystem?: string }).ecosystem;
+  const blockedEcosystem =
+    selectedEcosystem && selfHostedDisabledEcosystems.includes(selectedEcosystem)
+      ? selectedEcosystem
+      : undefined;
+  return { blockedEcosystem, selfHostedMode };
+}
+
+/**
+ * Alert shown when the selected ecosystem can't be generated because the
+ * self-hosted toggle disabled it for this user. `memberOnly` → membership
+ * upsell; `disabled` → temporarily unavailable. Renders null when not blocked.
+ */
+function SelfHostedBlockedAlert() {
+  const { blockedEcosystem, selfHostedMode } = useSelfHostedBlock();
+  const serverDomains = useServerDomains();
+
+  if (!blockedEcosystem) return null;
+
+  const displayName = ecosystemByKey.get(blockedEcosystem)?.displayName ?? blockedEcosystem;
+
+  if (selfHostedMode === 'memberOnly') {
+    return (
+      <Notification
+        icon={<IconAlertTriangle size={18} />}
+        color="yellow"
+        className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
+        withCloseButton={false}
+      >
+        <Text size="sm">
+          {displayName} is available to members only.{' '}
+          <Text
+            span
+            c="blue.4"
+            component="a"
+            href={syncAccount(`//${serverDomains.green}/pricing`)}
+            target="_blank"
+            rel="noreferrer nofollow"
+          >
+            Become a member
+          </Text>{' '}
+          to generate with it, or choose a different base model.
+        </Text>
+      </Notification>
+    );
+  }
+
+  return (
+    <Notification
+      icon={<IconAlertTriangle size={18} />}
+      color="red"
+      className="whitespace-pre-wrap rounded-md bg-red-8/20"
+      withCloseButton={false}
+    >
+      <Text size="sm">
+        {displayName} can&apos;t be generated right now. Choose a different base model or try again
+        later.
+      </Text>
+    </Notification>
+  );
+}
+
+// =============================================================================
 // PriorityAlertSpace Component
 // =============================================================================
 
@@ -353,6 +430,10 @@ function PriorityAlertSpace({
   const featureFlags = useFeatureFlags();
   const graph = useGraph<GenerationGraphTypes>();
 
+  // Self-hosted toggle: when the selected ecosystem is disabled for this user,
+  // this is the highest-priority alert (and FormFooter hides the submit row).
+  const { blockedEcosystem: selfHostedBlockedEcosystem } = useSelfHostedBlock();
+
   // Check if user has insufficient buzz of the selected type
   // Don't show insufficient buzz until the buzz query has resolved
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
@@ -370,7 +451,12 @@ function PriorityAlertSpace({
 
   // Determine which priority alert to show
   let priorityAlert: ReactNode;
-  if (missingFieldMessage) {
+  if (selfHostedBlockedEcosystem) {
+    // Highest priority: the selected model can't be generated for this user
+    // because the self-hosted toggle disabled it. Nothing else matters until
+    // they switch models or (for members-only) upgrade.
+    priorityAlert = <SelfHostedBlockedAlert />;
+  } else if (missingFieldMessage) {
     // Show helper message for missing required fields (not an error, just guidance)
     priorityAlert = (
       <Notification
@@ -843,6 +929,11 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const { trackAction } = useTrackEvent();
   const generationContextStore = useGenerationContextStore();
 
+  // When the selected ecosystem is disabled by the self-hosted toggle, hide the
+  // submit/reset controls entirely (the PriorityAlertSpace alert explains why
+  // and points members-only users to upgrade). Switching models clears it.
+  const { blockedEcosystem: selfHostedBlocked } = useSelfHostedBlock();
+
   // Get validation state from whatIf context
   const { canEstimateCost, validationErrors } = useWhatIfContext();
 
@@ -1177,7 +1268,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
 
       <BlueBuzzMatureReminder />
 
-      {!membershipUpsell.needsAcknowledgment && (
+      {!membershipUpsell.needsAcknowledgment && !selfHostedBlocked && (
         <div className="flex h-[52px] items-stretch gap-2">
           <QuantityField />
           <Button.Group className="flex-1">

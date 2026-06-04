@@ -77,8 +77,7 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
     [status.message]
   );
 
-  const showFooterContent =
-    status.available && reviewed && !membershipUpsell.needsAcknowledgment;
+  const showFooterContent = status.available && reviewed && !membershipUpsell.needsAcknowledgment;
 
   return (
     <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">

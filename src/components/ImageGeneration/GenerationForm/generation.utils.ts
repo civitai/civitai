@@ -5,6 +5,7 @@ import {
   generationStatusDefaultMessage,
   generationStatusSchema,
 } from '~/server/schema/generation.schema';
+import type { GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
 import type { NormalizedWorkflowMetadata } from '~/server/services/orchestrator';
 import { showErrorNotification } from '~/utils/notifications';
@@ -66,6 +67,8 @@ const DEFAULT_GENERATION_CONFIG = {
   experimentalEcosystems: [] as string[],
   gatedEcosystems: [] as string[],
   gatedVersionIds: [] as number[],
+  selfHostedDisabledEcosystems: [] as string[],
+  selfHostedMode: 'enabled' as GenerationStatusMode,
 };
 
 /**
