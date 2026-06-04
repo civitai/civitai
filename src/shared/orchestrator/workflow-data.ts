@@ -7,6 +7,7 @@ import type {
   NormalizedImageOutput,
   NormalizedVideoOutput,
   NormalizedAudioOutput,
+  NormalizedModel3DOutput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
@@ -119,7 +120,7 @@ export class WorkflowData {
  * getters that fall back to workflow metadata when step metadata is empty.
  */
 export interface StepData extends NormalizedStep {
-  output: Array<ImageBlob | VideoBlob | AudioBlob>;
+  output: Array<ImageBlob | VideoBlob | AudioBlob | Model3DBlob>;
 }
 export class StepData {
   #workflow: WorkflowData;
@@ -137,7 +138,7 @@ export class StepData {
     if (blobOptions) {
       this.output = (this.output ?? ([] as any[])).map((item: any, index: number) =>
         item instanceof BlobData
-          ? (item as ImageBlob | VideoBlob | AudioBlob)
+          ? (item as ImageBlob | VideoBlob | AudioBlob | Model3DBlob)
           : BlobData.from(item, { step: this, index, ...blobOptions })
       );
     }
@@ -214,12 +215,12 @@ export class StepData {
   }
 
   /** Outputs that have landed, not blocked, and not hidden. */
-  get succeededOutput(): Array<ImageBlob | VideoBlob | AudioBlob> {
+  get succeededOutput(): Array<ImageBlob | VideoBlob | AudioBlob | Model3DBlob> {
     if (this.suppressOutput) return [];
     return this.output.filter((x) => x.available && !x.blockedReason && !x.hidden);
   }
   /** Outputs suitable for display — not hidden, not hard-blocked (upgradeable + errored items included). */
-  get displayOutput(): Array<ImageBlob | VideoBlob | AudioBlob> {
+  get displayOutput(): Array<ImageBlob | VideoBlob | AudioBlob | Model3DBlob | Model3DBlob> {
     if (this.suppressOutput) return [];
     return this.output.filter((x) => x.displayable);
   }
@@ -254,9 +255,10 @@ type BlobConstructorArgs = {
 
 /**
  * Abstract base for workflow output blobs. Concrete subclasses:
- * - ImageBlob  (type: 'image')
- * - VideoBlob  (type: 'video')
- * - AudioBlob  (type: 'audio')
+ * - ImageBlob   (type: 'image')
+ * - VideoBlob   (type: 'video')
+ * - AudioBlob   (type: 'audio')
+ * - Model3DBlob (type: 'model3d')
  *
  * Subclasses carry no normalization logic — everything is pre-shaped by
  * `formatStepOutputs` before the raw payload reaches here. The base handles:
@@ -265,7 +267,7 @@ type BlobConstructorArgs = {
  * - Parent-step ref and resolved metadata accessors (params/resources/remixOfId)
  */
 export abstract class BlobData {
-  abstract readonly type: 'image' | 'video' | 'audio';
+  abstract readonly type: 'image' | 'video' | 'audio' | 'model3d';
 
   url!: string;
   seed?: number | null;
@@ -315,7 +317,7 @@ export abstract class BlobData {
   static from(
     data: NormalizedWorkflowStepOutput,
     opts: Omit<BlobConstructorArgs, 'data'>
-  ): ImageBlob | VideoBlob | AudioBlob {
+  ): ImageBlob | VideoBlob | AudioBlob | Model3DBlob {
     const args = { data, ...opts } as BlobConstructorArgs;
     switch (data.type) {
       case 'image':
@@ -324,6 +326,8 @@ export abstract class BlobData {
         return new VideoBlob(args as BlobConstructorArgs & { data: NormalizedVideoOutput });
       case 'audio':
         return new AudioBlob(args as BlobConstructorArgs & { data: NormalizedAudioOutput });
+      case 'model3d':
+        return new Model3DBlob(args as BlobConstructorArgs & { data: NormalizedModel3DOutput });
       default: {
         const _exhaustive: never = data;
         void _exhaustive;
@@ -480,6 +484,35 @@ export class AudioBlob extends BlobData {
   readonly height = 512;
   duration?: number | null;
   constructor(args: BlobConstructorArgs & { data: NormalizedAudioOutput }) {
+    super(args);
+  }
+}
+
+/**
+ * 3D model output (PolyGen). `url` is the primary mesh (GLB); `variants`
+ * carries alternate-format exports (FBX, etc.); `thumbnailUrl` is the 2D
+ * preview shown on queue/grid cards. The 3D viewer itself only mounts on
+ * detail pages — see Model3DCard / Model3DQueueCardOutputs.
+ */
+export class Model3DBlob extends BlobData {
+  readonly type = 'model3d' as const;
+  /** Square placeholder dims so the card sizes consistently with image/video. */
+  readonly aspect = 1;
+  readonly width = 512;
+  readonly height = 512;
+  format!: string;
+  variants?: Array<{
+    id: string;
+    format: string;
+    url: string;
+    available: boolean;
+    urlExpiresAt?: string | null;
+  }>;
+  thumbnailId?: string | null;
+  thumbnailUrl?: string | null;
+  thumbnailUrlExpiresAt?: string | null;
+  thumbnailNsfwLevel?: NsfwLevel;
+  constructor(args: BlobConstructorArgs & { data: NormalizedModel3DOutput }) {
     super(args);
   }
 }

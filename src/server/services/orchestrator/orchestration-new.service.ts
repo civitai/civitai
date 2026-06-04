@@ -1445,6 +1445,7 @@ export async function whatIfFromGraph({
 import type {
   AudioBlob,
   ImageBlob,
+  Model3dBlob,
   NsfwLevel,
   TransactionInfo,
   VideoBlob,
@@ -1503,11 +1504,36 @@ export interface NormalizedAudioOutput extends NormalizedBlobBase {
   duration?: number | null;
 }
 
-/** Normalized output (image, video, or audio) from a workflow step. */
+/**
+ * Normalized 3D-model output (PolyGen). A single output represents one
+ * generated mesh; the primary URL points at the canonical format (GLB),
+ * `variants` carries alternate-format exports (e.g. FBX), and the
+ * thumbnail fields carry a 2D preview image suitable for queue/grid cards
+ * — the in-browser 3D viewer mounts only on detail pages to avoid
+ * spinning up N WebGL contexts in the feed.
+ */
+export interface NormalizedModel3DOutput extends NormalizedBlobBase {
+  type: 'model3d';
+  format: string;
+  variants?: Array<{
+    id: string;
+    format: string;
+    url: string;
+    available: boolean;
+    urlExpiresAt?: string | null;
+  }>;
+  thumbnailId?: string | null;
+  thumbnailUrl?: string | null;
+  thumbnailUrlExpiresAt?: string | null;
+  thumbnailNsfwLevel?: NsfwLevel;
+}
+
+/** Normalized output (image, video, audio, or 3D model) from a workflow step. */
 export type NormalizedWorkflowStepOutput =
   | NormalizedImageOutput
   | NormalizedVideoOutput
-  | NormalizedAudioOutput;
+  | NormalizedAudioOutput
+  | NormalizedModel3DOutput;
 
 /** Step metadata with mapped params and enriched resources */
 export interface NormalizedStepMetadata {
@@ -1735,13 +1761,31 @@ type StepWithOutput = WorkflowStep & {
     blobs?: ImageBlob[];
     // For aceStepAudio: blob.type is 'audio' (audio-only) or 'video' (audio + cover image).
     blob?: ImageBlob | VideoBlob | AudioBlob;
+    // PolyGen: composite output with a primary 3D model, optional alternate-
+    // format export, and a 2D preview thumbnail.
+    model?: Model3dBlob;
+    fbxModel?: Model3dBlob;
+    thumbnail?: ImageBlob;
     errors?: string[];
     externalTOSViolation?: boolean;
     message?: string;
   };
 };
 
-type NormalizedBlobItem = ImageBlob | VideoBlob | AudioBlob;
+/**
+ * Intermediate shape carried out of `normalizeStepOutput` — `formatStepOutputs`
+ * turns it into a `NormalizedWorkflowStepOutput`. The `model3d` variant bundles
+ * the primary model with its optional alternate-format export and thumbnail
+ * so a single PolyGen step produces a single output card (not three).
+ */
+type NormalizedBlobItem =
+  | ImageBlob
+  | VideoBlob
+  | AudioBlob
+  | (Model3dBlob & {
+      fbxModel?: Model3dBlob | null;
+      thumbnail?: ImageBlob | null;
+    });
 
 /**
  * Normalizes step output (images/videos/audio) to a common format
@@ -1777,6 +1821,19 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
       if (output.blob.type === 'video')
         return [{ ...(output.blob as VideoBlob), type: 'video' as const }];
       return [{ ...(output.blob as AudioBlob), type: 'audio' as const }];
+    case 'polyGen':
+      // Bundle the primary 3D model with its alternate-format sibling and
+      // preview thumbnail in a single item — the format step turns this into
+      // one NormalizedModel3DOutput with variants[] + thumbnail fields.
+      if (!output.model) return [];
+      return [
+        {
+          ...(output.model as Model3dBlob),
+          type: 'model3d' as const,
+          fbxModel: output.fbxModel ?? null,
+          thumbnail: output.thumbnail ?? null,
+        },
+      ];
     default:
       return [];
   }
@@ -1815,6 +1872,32 @@ export function formatStepOutputs(
         url: item.url as string,
         duration: item.duration,
       } satisfies NormalizedAudioOutput;
+    }
+
+    if (item.type === 'model3d') {
+      const fbx = item.fbxModel ?? undefined;
+      const thumb = item.thumbnail ?? undefined;
+      return {
+        ...base,
+        type: 'model3d' as const,
+        url: item.url as string,
+        format: item.format,
+        variants: fbx
+          ? [
+              {
+                id: fbx.id,
+                format: fbx.format,
+                url: fbx.url as string,
+                available: fbx.available,
+                urlExpiresAt: fbx.urlExpiresAt,
+              },
+            ]
+          : undefined,
+        thumbnailId: thumb?.id,
+        thumbnailUrl: thumb?.url,
+        thumbnailUrlExpiresAt: thumb?.urlExpiresAt,
+        thumbnailNsfwLevel: thumb?.nsfwLevel,
+      } satisfies NormalizedModel3DOutput;
     }
 
     // image / video: resolve width/height/aspect.
