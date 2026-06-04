@@ -8,6 +8,7 @@ import {
 } from '~/server/trpc';
 import {
   upsertModel3DSchema,
+  ensureModel3DFromWorkflowSchema,
   getModel3DByIdSchema,
   getModel3DByThumbnailImageIdSchema,
   getModel3DByWorkflowIdSchema,
@@ -29,6 +30,7 @@ import {
 } from '~/server/schema/model3d.schema';
 import {
   upsertModel3D,
+  ensureModel3DFromWorkflow,
   getModel3DById,
   getModel3DByThumbnailImageId,
   getModel3DByWorkflowId,
@@ -116,6 +118,16 @@ export const model3dRouter = router({
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DByWorkflowIdSchema)
     .query(({ input, ctx }) => getModel3DByWorkflowId({ input, user: ctx.user })),
+  // Lazy materialization for the "Post from Generation" CTA. The webhook
+  // that runs `handlePolyGenWorkflowResult` after a PolyGen workflow
+  // completes isn't wired up yet — this mutation closes that gap on
+  // demand and is idempotent on `Model3D.workflowId`.
+  ensureFromWorkflow: protectedProcedure
+    .use(isFlagProtected('model3dFeed'))
+    .input(ensureModel3DFromWorkflowSchema)
+    .mutation(({ input, ctx }) =>
+      ensureModel3DFromWorkflow({ input, user: ctx.user, ctx })
+    ),
   getInfinite: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DsInfiniteSchema)

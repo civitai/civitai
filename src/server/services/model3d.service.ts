@@ -21,6 +21,7 @@ import {
 } from '~/server/utils/errorHandling';
 import type {
   DeleteModel3DInput,
+  EnsureModel3DFromWorkflowInput,
   GetModel3DByIdInput,
   GetModel3DByThumbnailImageIdInput,
   GetModel3DByWorkflowIdInput,
@@ -35,6 +36,11 @@ import type {
   UnpublishModel3DInput,
   UpsertModel3DInput,
 } from '~/server/schema/model3d.schema';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/ecosystems/polyGen.handler';
+import type { PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
+import type { Context } from '~/server/createContext';
 
 type SessionUser = {
   id: number;
@@ -109,6 +115,12 @@ const model3dListSelect = {
   nsfw: true,
   nsfwLevel: true,
   unlisted: true,
+  // Flags + lockedProperties surfaced for the feed-card actions dropdown
+  // (Model3DActionsMenu reuses the same shape on the detail page and the card).
+  tosViolation: true,
+  poi: true,
+  minor: true,
+  lockedProperties: true,
   availability: true,
   publishedAt: true,
   createdAt: true,
@@ -190,6 +202,86 @@ export const getModel3DByWorkflowId = async ({
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
+};
+
+/**
+ * Lazily materialize the Model3D draft for a completed PolyGen workflow.
+ *
+ * `handlePolyGenWorkflowResult` (the result handler that copies blobs to S3
+ * and inserts the Model3D row) currently has no upstream caller — the
+ * webhook wiring isn't in place yet. This mutation closes that gap on
+ * demand: when the "Post from Generation" CTA fires, we look up the
+ * existing draft and, if missing, fetch the workflow from the orchestrator,
+ * extract the polyGen step output, and run the handler synchronously.
+ *
+ * Idempotent: re-running on the same workflowId returns the existing draft
+ * (the handler itself is idempotent on `Model3D.workflowId UNIQUE`).
+ */
+export const ensureModel3DFromWorkflow = async ({
+  input,
+  user,
+  ctx,
+}: {
+  input: EnsureModel3DFromWorkflowInput;
+  user: SessionUser;
+  ctx: Context;
+}) => {
+  // Fast path: draft already exists (handler ran earlier, or a prior
+  // ensureFromWorkflow call landed it).
+  const existing = await getModel3DByWorkflowId({ input, user });
+  if (existing) return existing;
+
+  try {
+    const token = await getOrchestratorToken(user.id, ctx);
+    const workflow: Workflow = await getWorkflow({
+      token,
+      path: { workflowId: input.workflowId },
+    });
+
+    // Confirm ownership; the orchestrator-side workflow has no userId so we
+    // trust the SessionUser + the result handler's uniqueness on workflowId.
+    if (!workflow.steps?.length) {
+      throw throwBadRequestError('Workflow has no steps to materialize');
+    }
+    const polyGenStep = workflow.steps.find(
+      (s: WorkflowStep) => s.$type === 'polyGen'
+    ) as PolyGenStep | undefined;
+    if (!polyGenStep?.output?.model) {
+      throw throwBadRequestError(
+        'Workflow has no PolyGen output to materialize a 3D model from'
+      );
+    }
+
+    const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
+    const generationParams = (meta.params ?? {}) as Record<string, unknown>;
+    const sourceImageId =
+      typeof meta.sourceImageId === 'number' ? (meta.sourceImageId as number) : undefined;
+
+    await handlePolyGenWorkflowResult({
+      workflowId: input.workflowId,
+      userId: user.id,
+      output: polyGenStep.output,
+      // generationParams is typed against the form-input shape upstream; the
+      // workflow metadata carries the same snapshot, so a structural pass is
+      // safe.
+      generationParams: generationParams as never,
+      sourceImageId,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+
+  const created = await getModel3DByWorkflowId({ input, user });
+  if (!created) {
+    // Handler succeeded but the row didn't land — surface a server error
+    // rather than silently leaving the CTA stuck.
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Failed to materialize Model3D draft from workflow',
+    });
+  }
+  return created;
 };
 
 export type Model3DGetInfinite = AsyncReturnType<typeof getModel3DsInfinite>;
@@ -275,6 +367,13 @@ export const upsertModel3D = async ({
 }) => {
   const isModerator = !!user.isModerator;
   const { id, tagIds, generationParams, meta, ...data } = input;
+
+  // Visibility changes (`status`) must go through the dedicated `publish` /
+  // `unpublish` / moderation endpoints — those gate on thumbnail presence,
+  // refresh the user-content cache, and emit the right notifications. We
+  // strip `status` here for non-mods so a benign-looking upsert payload
+  // can't quietly publish a draft.
+  if (!isModerator) delete (data as Record<string, unknown>).status;
 
   // Strip locked props on update for non-mods.
   let lockedProperties: string[] | undefined = data.lockedProperties;

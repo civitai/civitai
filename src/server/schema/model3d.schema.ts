@@ -50,6 +50,11 @@ export const getModel3DByWorkflowIdSchema = z.object({
   workflowId: z.string().min(1),
 });
 
+export type EnsureModel3DFromWorkflowInput = z.infer<typeof ensureModel3DFromWorkflowSchema>;
+export const ensureModel3DFromWorkflowSchema = z.object({
+  workflowId: z.string().min(1),
+});
+
 export type GetModel3DsInfiniteInput = z.infer<typeof getModel3DsInfiniteSchema>;
 export const getModel3DsInfiniteSchema = infiniteQuerySchema
   .extend({

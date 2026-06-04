@@ -12,8 +12,11 @@ import {
   Anchor,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
+import dynamic from 'next/dynamic';
 import {
   IconAlertTriangleFilled,
+  IconCube,
+  IconX,
   IconArrowsShuffle,
   IconBan,
   IconPlus,
@@ -73,7 +76,12 @@ import {
   GENERATION_HANDOFF_PARAM,
 } from '~/components/generation_v2/utils/generation-url-handoff';
 import { getGenerationSnapshotCache } from '~/components/generation_v2/utils/generation-snapshot-cache';
-import type { BlobData } from '~/shared/orchestrator/workflow-data';
+import type {
+  AudioBlob,
+  BlobData,
+  ImageBlob,
+  VideoBlob,
+} from '~/shared/orchestrator/workflow-data';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getModelUrl } from '~/utils/string-helpers';
 import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
@@ -473,7 +481,14 @@ function StepOutputs({
 }) {
   const images = step ? step.output : request.steps.flatMap((s) => s.output);
   const allDisplayImages = step ? step.displayOutput : request.displayOutput;
-  const displayImages = allDisplayImages.filter((img) => matchesMarkerTags(img, markerTags));
+  // PolyGen workflows render through `Model3DQueueCardOutputs` (the `isPolyGen`
+  // branch above), so model3d blobs never reach this grid — narrow them out
+  // here so `GeneratedOutput` keeps its image/video/audio-only contract.
+  const displayImages = allDisplayImages
+    .filter(
+      (img): img is ImageBlob | VideoBlob | AudioBlob => img.type !== 'model3d'
+    )
+    .filter((img) => matchesMarkerTags(img, markerTags));
   const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
 
   const stepFailure = step
@@ -858,17 +873,30 @@ function CanUpgradeBlock({
   );
 }
 
+// Lazy-mounted so the GLB loader bundle only ships for users who actually
+// toggle the inline preview on. Multiple cards in the feed can each open
+// their own viewer; the user controls the count via the toggle button.
+const Model3DViewerDynamic = dynamic(
+  () => import('~/components/Model3D/Viewer/Model3DViewer').then((m) => m.Model3DViewer),
+  { ssr: false }
+);
+
 /**
  * Queue card body for 3D Model (polyGen) workflows.
  *
  * Renders the generator-provided thumbnail (an `ImageBlob` carried on the
- * polyGen step's output). DO NOT mount a three.js viewer here — multiple
- * queued generations would create N WebGL contexts on the page. The full
- * viewer instantiates on the detail page (see workstream D).
+ * polyGen step's output) and, on opt-in, an inline three.js viewer mounted
+ * on the GLB URL. The viewer only mounts when the user toggles it on, so
+ * the feed doesn't spin up N WebGL contexts unprompted.
  *
- * "Post from Generation" creates a Post linked to the workflow's draft
- * Model3D (created server-side by the PolyGen result handler, keyed on
- * workflowId) and redirects to the post editor.
+ * "Save 3D Model" lazily materializes a `Model3D` Draft from the workflow:
+ * the server copies the orchestrator's expiring GLB / FBX blobs into our
+ * S3 under `3d/`, ingests the thumbnail through the standard image
+ * pipeline (NSFW / CSAM scan, real `Image` row), and writes the Draft +
+ * `Model3DFile` rows — the same final write the moderator seed page uses.
+ * After that we land the owner in `/3d-models/{id}/edit` to set name +
+ * description (WYSIWYG) before publishing. No Image Post is created here;
+ * that's a separate optional flow off the published 3D model page.
  */
 function Model3DQueueCardOutputs({
   request,
@@ -880,19 +908,23 @@ function Model3DQueueCardOutputs({
   processing: boolean;
 }) {
   const router = useRouter();
+  const [viewerOpen, setViewerOpen] = useState(false);
 
-  // PolyGen step outputs aren't currently passed through
-  // `formatStepOutputs` so `step.output` is empty. Read the raw thumbnail
-  // off the step output payload if the orchestrator has surfaced it; fall
-  // back to a placeholder card while pending/processing or if the
-  // workflow returned no thumbnail.
-  const thumbnail = request.steps
-    .map((s) => (s as unknown as { output?: { thumbnail?: { url?: string } } })?.output?.thumbnail)
-    .find((t): t is { url?: string } => !!t);
+  // PolyGen outputs flow through `formatStepOutputs` as `Model3DBlob`s —
+  // one per generated mesh, with the 2D preview carried on `thumbnailUrl`
+  // and the GLB at `url`. Take the first such blob across the workflow.
+  const model3dBlob = request.steps
+    .flatMap((s) => s.output)
+    .find((blob) => blob?.type === 'model3d');
+  const thumbnailUrl =
+    model3dBlob?.type === 'model3d' ? model3dBlob.thumbnailUrl ?? null : null;
+  const modelUrl = model3dBlob?.type === 'model3d' ? model3dBlob.url ?? null : null;
+  const modelFormat =
+    model3dBlob?.type === 'model3d' ? model3dBlob.format ?? 'glb' : 'glb';
 
   const showSpinner = pending || processing;
   // Terminal failure states — workflow won't produce a thumbnail. The
-  // orchestrator auto-refunds spend buzz on these, so surface that to the
+  // orchestrator auto-refunds spent buzz on these, so surface that to the
   // user instead of the ambiguous "No preview available yet".
   const isFailed =
     request.status === 'failed' ||
@@ -906,65 +938,88 @@ function Model3DQueueCardOutputs({
       : 'Generation failed';
   const isComplete = !pending && !processing && !isFailed;
 
-  // Resolve the Model3D draft for this workflow. The PolyGen result handler
-  // creates it server-side keyed on workflowId (idempotent), so we only need
-  // to look it up. Returns null until the handler has run; we surface a
-  // friendly disabled state in that window.
-  const { data: model3d, isLoading: model3dLoading } =
-    trpc.model3d.getByWorkflowId.useQuery(
-      { workflowId: request.id },
-      {
-        enabled: isComplete,
-        // Re-check briefly after the workflow completes in case the result
-        // handler is still landing the draft row.
-        refetchInterval: (data) => (isComplete && !data ? 3000 : false),
-      }
-    );
-
-  const createPost = trpc.post.create.useMutation({
+  // Materialize the Model3D draft on demand. The mutation is idempotent on
+  // workflowId: it copies the orchestrator blobs to our S3, ingests the
+  // thumbnail through the standard image pipeline, and writes the Draft +
+  // Model3DFile rows. After that we land the owner in the regular Model3D
+  // edit page where they set name + description (WYSIWYG) and publish.
+  // No Post is created here — Posts are a separate, optional thing the
+  // owner can do later from the Model3D detail page.
+  const ensureModel3D = trpc.model3d.ensureFromWorkflow.useMutation({
     onError: (error) => {
       showErrorNotification({
-        title: 'Failed to create post',
+        title: 'Could not save your 3D model',
         error: new Error(error.message),
       });
     },
   });
 
-  const handlePostFromGeneration = async () => {
-    if (!model3d) {
-      showErrorNotification({
-        title: 'Generation not ready',
-        error: new Error(
-          'The 3D model draft is still being created. Try again in a moment.'
-        ),
-      });
-      return;
-    }
+  const handleSaveToLibrary = async () => {
     try {
-      const post = await createPost.mutateAsync({ model3dId: model3d.id });
-      // Redirect to the post editor with the model3dId carried through so the
-      // edit page can also surface Model3D fields (name/description/tags).
-      await router.push(`/posts/${post.id}/edit?model3dId=${model3d.id}`);
+      const draft = await ensureModel3D.mutateAsync({ workflowId: request.id });
+      await router.push(`/3d-models/${draft.id}/edit`);
     } catch {
-      // showErrorNotification already fires via onError
+      // notification already fired via mutation onError
     }
   };
 
-  const ctaDisabled = !isComplete || model3dLoading || !model3d || createPost.isLoading;
+  // Enable once the workflow has succeeded and produced a Model3DBlob —
+  // the GLB URL is sufficient for the server-side ensure handler to do the
+  // rest. No more "waiting for a draft that never materializes" stuck state.
+  const ctaBusy = ensureModel3D.isLoading;
+  const ctaDisabled = !isComplete || !model3dBlob || ctaBusy;
 
   return (
     <div className="flex flex-col gap-2">
       <TwCard
-        className="flex aspect-square items-center justify-center border"
+        className="relative flex aspect-square items-center justify-center overflow-hidden border"
         style={{ minHeight: 240 }}
       >
-        {thumbnail?.url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={thumbnail.url}
-            alt="3D model thumbnail"
-            className="max-h-full max-w-full object-contain"
-          />
+        {viewerOpen && modelUrl ? (
+          <>
+            <Model3DViewerDynamic
+              url={modelUrl}
+              format={modelFormat}
+              className="size-full"
+            />
+            <Tooltip label="Close 3D preview" withinPortal position="left">
+              <LegacyActionIcon
+                variant="filled"
+                color="dark"
+                radius="xl"
+                size="sm"
+                aria-label="Close 3D preview"
+                onClick={() => setViewerOpen(false)}
+                style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
+              >
+                <IconX size={14} stroke={2} />
+              </LegacyActionIcon>
+            </Tooltip>
+          </>
+        ) : thumbnailUrl ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumbnailUrl}
+              alt="3D model thumbnail"
+              className="max-h-full max-w-full object-contain"
+            />
+            {modelUrl && (
+              <Tooltip label="View in 3D" withinPortal position="left">
+                <LegacyActionIcon
+                  variant="filled"
+                  color="dark"
+                  radius="xl"
+                  size="sm"
+                  aria-label="Open inline 3D viewer"
+                  onClick={() => setViewerOpen(true)}
+                  style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
+                >
+                  <IconCube size={14} stroke={2} />
+                </LegacyActionIcon>
+              </Tooltip>
+            )}
+          </>
         ) : showSpinner ? (
           <div className="flex flex-col items-center gap-2">
             <Loader size={24} />
@@ -991,14 +1046,14 @@ function Model3DQueueCardOutputs({
 
       <div className="flex gap-2">
         <Button
-          onClick={handlePostFromGeneration}
+          onClick={handleSaveToLibrary}
           variant="light"
           size="compact-sm"
           fullWidth
-          loading={createPost.isLoading}
+          loading={ctaBusy}
           disabled={ctaDisabled}
         >
-          Post from Generation
+          Save 3D Model
         </Button>
       </div>
     </div>
