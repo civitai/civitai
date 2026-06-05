@@ -497,7 +497,7 @@ export const getInfiniteMessagesHandler = async ({
       where: { chatId: input.chatId, ...dateLimit },
       take: input.limit + 1,
       cursor: input.cursor ? { id: input.cursor } : undefined,
-      orderBy: [{ id: input.direction }],
+      orderBy: [{ id: input.sortDirection }],
     });
 
     let nextCursor: number | undefined;
@@ -507,7 +507,7 @@ export const getInfiniteMessagesHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    if (input.direction === 'desc') {
+    if (input.sortDirection === 'desc') {
       items.reverse();
     }
 
