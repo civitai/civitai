@@ -107,6 +107,18 @@ export default defineNextConfig(
     experimental: {
       // scrollRestoration: true,
       cpus: 8,
+      // The content endpoints read markdown from src/static-content/*.md at runtime via
+      // fs (resolve('src/static-content/...')). Output-file-tracing can't see a dynamic fs
+      // read, so a Next 14.2.31 / nft change (lockfile bump in eaa5e7926) stopped copying
+      // those .md into .next/standalone -- every read hit ENOENT and returned a 404 in prod
+      // (ToS, Privacy, Safety, etc). Force-include the dir for every route that reads it so
+      // the standalone build ships it alongside server.js. (In standalone these merge into
+      // one shared tree, so any one key is sufficient; all three are listed for clarity.)
+      outputFileTracingIncludes: {
+        '/api/trpc/[trpc]': ['./src/static-content/**/*'], // content.get / checkTosUpdate
+        '/content/[[...slug]]': ['./src/static-content/**/*'], // /content/tos, /content/2257, ...
+        '/safety': ['./src/static-content/**/*'],
+      },
       serverSourceMaps: true,
       instrumentationHook: true, // Enable instrumentation.ts for OTEL
       largePageDataBytes: 512 * 100000,
