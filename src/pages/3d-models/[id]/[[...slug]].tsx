@@ -22,6 +22,8 @@ import {
   IconCube,
   IconDownload,
   IconFlag,
+  IconHeart,
+  IconMessageCircle2,
   IconShare3,
   IconStar,
 } from '@tabler/icons-react';
@@ -38,6 +40,7 @@ import {
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
@@ -53,6 +56,7 @@ import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -226,6 +230,27 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <Stack gap={4} style={{ flex: 1 }}>
               <Title order={1}>{model3d.name}</Title>
+              <Group gap="xs" wrap="wrap">
+                <IconBadge radius="sm" size="lg" icon={<IconStar size={18} />}>
+                  <Text size="sm">{abbreviateNumber(model3d.metric?.ratingCount ?? 0)}</Text>
+                </IconBadge>
+                <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
+                  <Text size="sm">{abbreviateNumber(model3d.metric?.downloadCount ?? 0)}</Text>
+                </IconBadge>
+                <IconBadge radius="sm" size="lg" icon={<IconHeart size={18} />}>
+                  <Text size="sm">{abbreviateNumber(model3d.metric?.reactionCount ?? 0)}</Text>
+                </IconBadge>
+                <IconBadge radius="sm" size="lg" icon={<IconMessageCircle2 size={18} />}>
+                  <Text size="sm">{abbreviateNumber(model3d.metric?.commentCount ?? 0)}</Text>
+                </IconBadge>
+                <IconBadge
+                  radius="sm"
+                  size="lg"
+                  icon={<IconBolt size={18} className="text-yellow-7" fill="currentColor" />}
+                >
+                  <Text size="sm">{abbreviateNumber(tippedAmountTotal)}</Text>
+                </IconBadge>
+              </Group>
               <Group gap="sm" wrap="wrap">
                 <UserAvatar user={model3d.user} withUsername linkToProfile />
                 <Divider orientation="vertical" />
@@ -265,6 +290,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     unlisted: model3d.unlisted,
                     nsfwLevel: model3d.nsfwLevel ?? 0,
                     lockedProperties: model3d.lockedProperties ?? [],
+                    thumbnailImageId: model3d.thumbnailImageId,
                   }}
                 />
               )}
@@ -501,9 +527,9 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   <Card withBorder radius="md" p="md">
                     <Stack gap="xs">
                       <Title order={3}>About this model</Title>
-                      <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                        {model3d.description}
-                      </Text>
+                      <ContentClamp maxHeight={460}>
+                        <RenderHtml html={model3d.description ?? ''} />
+                      </ContentClamp>
                     </Stack>
                   </Card>
                 )}
