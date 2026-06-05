@@ -114,21 +114,22 @@ if (!OTEL_ENABLED) {
       // (db/db-helpers.ts). So no dashboard depends on these spans. The custom
       // withSpan() instrumentation on specific hot calls is unaffected.
       instrumentations: [
-        // HttpInstrumentation narrowed to INBOUND-only. The app makes many
-        // outbound client requests per request (orchestrator, S3, meilisearch,
-        // clickhouse, …); each outgoing client span is another async_hooks
-        // context.with + span alloc on the hot path — the same structural cost
-        // head sampling can't remove. ignoreOutgoingRequestHook returning true
-        // for every outgoing request suppresses those client spans while keeping
-        // incoming server-request spans (the per-request root span) intact.
+        // HttpInstrumentation narrowed to INBOUND-only. It only ever patched Node
+        // core http/https, so the affected outbound spans are the core-http
+        // clients (S3 via @aws-sdk, ClickHouse, axios/signals) — NOT orchestrator
+        // or meilisearch, which use fetch/undici and were never auto-instrumented
+        // (their visibility comes from manual withSpan()). Each remaining outgoing
+        // client span is another async_hooks context.with + span alloc on the hot
+        // path — the structural cost head sampling can't remove.
+        // ignoreOutgoingRequestHook returning true for every outgoing request
+        // suppresses those client spans (and their traceparent injection) while
+        // keeping incoming server-request spans (the per-request root) intact.
         // (instrumentation-http@0.213.0 also exposes
         // disableOutgoingRequestInstrumentation, which skips patching outbound
-        // entirely; the ignore hook is used here to match the option named in the
-        // plan and keep the outbound code path patched for any future per-call
-        // allow-listing.) Tradeoff: we lose distributed-trace propagation to
-        // downstream services (no outbound traceparent spans). Accepted for the
-        // CPU win — an explicitly listed next lever. The custom withSpan()
-        // instrumentation on specific hot calls is unaffected.
+        // entirely; the ignore hook is used here to keep the path patched for
+        // future per-call allow-listing.) Tradeoff: lost cross-service trace
+        // linkage for S3/ClickHouse — observability-only; nothing in the app reads
+        // traceparent functionally. The custom withSpan() spans are unaffected.
         new HttpInstrumentation({ ignoreOutgoingRequestHook: () => true }),
       ],
     });
