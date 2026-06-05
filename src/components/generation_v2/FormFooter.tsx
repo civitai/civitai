@@ -313,10 +313,11 @@ function ConnectedBuzzTypeSelector() {
  * Detects whether the selected ecosystem is disabled for the current user by
  * the self-hosted generation toggle. The per-user resolved list holds ecosystem
  * keys, matching the graph's `ecosystem` value. Returns the blocked ecosystem
- * key (or undefined) plus the mode — shared by `PriorityAlertSpace` (alert) and
- * `FormFooter` (which hides the submit/reset controls when blocked).
+ * key (or undefined) plus the mode. Consumed by `GenerationLayoutFooter`, which
+ * renders `SelfHostedBlockedAlert` in the same slot as `MembershipUpsell` and
+ * hides the form controls while blocked.
  */
-function useSelfHostedBlock() {
+export function useSelfHostedBlock() {
   const { selfHostedMode, selfHostedDisabledEcosystems } = useGenerationConfig();
   const graphValues = useGraphValues<GenerationGraphTypes>();
   const selectedEcosystem = (graphValues as { ecosystem?: string }).ecosystem;
@@ -328,11 +329,13 @@ function useSelfHostedBlock() {
 }
 
 /**
- * Alert shown when the selected ecosystem can't be generated because the
- * self-hosted toggle disabled it for this user. `memberOnly` → membership
- * upsell; `disabled` → temporarily unavailable. Renders null when not blocked.
+ * Footer-spanning alert shown when the selected ecosystem can't be generated
+ * because the self-hosted toggle disabled it for this user. Styled like
+ * `MembershipUpsell` (edge-to-edge, bigger title, filled CTA). `memberOnly` →
+ * membership upsell with a "Become a member" button; `disabled` → temporarily
+ * unavailable. Renders null when not blocked.
  */
-function SelfHostedBlockedAlert() {
+export function SelfHostedBlockedAlert() {
   const { blockedEcosystem, selfHostedMode } = useSelfHostedBlock();
   const serverDomains = useServerDomains();
 
@@ -342,42 +345,52 @@ function SelfHostedBlockedAlert() {
 
   if (selfHostedMode === 'memberOnly') {
     return (
-      <Notification
-        icon={<IconAlertTriangle size={18} />}
-        color="yellow"
-        className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
-        withCloseButton={false}
-      >
-        <Text size="sm">
-          {displayName} is available to members only.{' '}
-          <Text
-            span
-            c="blue.4"
+      <Alert color="yellow" className="-m-2 rounded-none rounded-t-xl">
+        <Text
+          size="sm"
+          fw={700}
+          c="var(--mantine-color-yellow-light-color)"
+          className="flex items-center gap-1.5"
+        >
+          <IconAlertTriangle size={16} />
+          {displayName} is available to members only
+        </Text>
+        <Text size="xs" mt={4}>
+          {displayName} runs on Civitai-hosted hardware and is currently limited to members. Become
+          a member to generate with it, or choose a different base model.
+        </Text>
+        <div className="mt-3 flex items-center gap-3">
+          <Button
             component="a"
             href={syncAccount(`//${serverDomains.green}/pricing`)}
             target="_blank"
             rel="noreferrer nofollow"
+            variant="filled"
+            className="flex-1"
           >
             Become a member
-          </Text>{' '}
-          to generate with it, or choose a different base model.
-        </Text>
-      </Notification>
+          </Button>
+        </div>
+      </Alert>
     );
   }
 
   return (
-    <Notification
-      icon={<IconAlertTriangle size={18} />}
-      color="red"
-      className="whitespace-pre-wrap rounded-md bg-red-8/20"
-      withCloseButton={false}
-    >
-      <Text size="sm">
-        {displayName} can&apos;t be generated right now. Choose a different base model or try again
+    <Alert color="red" className="-m-2 rounded-none rounded-t-xl">
+      <Text
+        size="sm"
+        fw={700}
+        c="var(--mantine-color-red-light-color)"
+        className="flex items-center gap-1.5"
+      >
+        <IconAlertTriangle size={16} />
+        {displayName} is currently unavailable
+      </Text>
+      <Text size="xs" mt={4}>
+        {displayName} generation is temporarily disabled. Choose a different base model or try again
         later.
       </Text>
-    </Notification>
+    </Alert>
   );
 }
 
@@ -430,10 +443,6 @@ function PriorityAlertSpace({
   const featureFlags = useFeatureFlags();
   const graph = useGraph<GenerationGraphTypes>();
 
-  // Self-hosted toggle: when the selected ecosystem is disabled for this user,
-  // this is the highest-priority alert (and FormFooter hides the submit row).
-  const { blockedEcosystem: selfHostedBlockedEcosystem } = useSelfHostedBlock();
-
   // Check if user has insufficient buzz of the selected type
   // Don't show insufficient buzz until the buzz query has resolved
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
@@ -451,12 +460,7 @@ function PriorityAlertSpace({
 
   // Determine which priority alert to show
   let priorityAlert: ReactNode;
-  if (selfHostedBlockedEcosystem) {
-    // Highest priority: the selected model can't be generated for this user
-    // because the self-hosted toggle disabled it. Nothing else matters until
-    // they switch models or (for members-only) upgrade.
-    priorityAlert = <SelfHostedBlockedAlert />;
-  } else if (missingFieldMessage) {
+  if (missingFieldMessage) {
     // Show helper message for missing required fields (not an error, just guidance)
     priorityAlert = (
       <Notification
@@ -929,11 +933,6 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const { trackAction } = useTrackEvent();
   const generationContextStore = useGenerationContextStore();
 
-  // When the selected ecosystem is disabled by the self-hosted toggle, hide the
-  // submit/reset controls entirely (the PriorityAlertSpace alert explains why
-  // and points members-only users to upgrade). Switching models clears it.
-  const { blockedEcosystem: selfHostedBlocked } = useSelfHostedBlock();
-
   // Get validation state from whatIf context
   const { canEstimateCost, validationErrors } = useWhatIfContext();
 
@@ -1268,7 +1267,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
 
       <BlueBuzzMatureReminder />
 
-      {!membershipUpsell.needsAcknowledgment && !selfHostedBlocked && (
+      {!membershipUpsell.needsAcknowledgment && (
         <div className="flex h-[52px] items-stretch gap-2">
           <QuantityField />
           <Button.Group className="flex-1">
