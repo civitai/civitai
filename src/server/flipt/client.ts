@@ -72,12 +72,18 @@ const FLIPT_FAILURE_COOLDOWN_MS = 30_000;
 // kill-switches that must take effect ASAP are listed in BYPASS below. Tune via
 // FLIPT_EVAL_CACHE_TTL_MS (set to 0 to disable).
 const FLIPT_EVAL_CACHE_TTL_MS = (() => {
+  // parseInt is intentional (integer ms). Note a non-integer env like "0.5"
+  // parses to 0 → cache disabled, and "1e4" parses to 1 — both surprising, so
+  // the resolved value is logged below for operator visibility.
   const parsed = parseInt(process.env.FLIPT_EVAL_CACHE_TTL_MS ?? '', 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 10_000;
 })();
+console.log(`[flipt] eval cache TTL: ${FLIPT_EVAL_CACHE_TTL_MS}ms (0 = disabled)`);
 // Per-generation entry cap. entityId/context are per-user for some flags, so the
-// keyspace is unbounded; we rotate generations at this size (see TtlCache) which
-// bounds memory to ~2x this without the thrash of a full wipe.
+// keyspace is unbounded; we rotate generations at this size (see TtlCache).
+// Steady-state live entries are bounded to ~2x this; a burst of distinct
+// promoting reads with no intervening insert can transiently reach ~4x before
+// the next insert rotates — still bounded, and entries are tiny.
 const FLIPT_EVAL_CACHE_MAX = 10_000;
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
