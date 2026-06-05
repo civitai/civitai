@@ -171,6 +171,14 @@ type CheckKey =
   | 'redis'
   | 'sysRedis'
   | 'clickhouse';
+// Static disable list from env (HEALTHCHECK_DISABLED="searchMetrics,clickhouse").
+// Filtered to real check names so a typo can't silently swallow nothing-or-everything.
+// Applies in all environments; the sysRedis DISABLED_HEALTHCHECKS list (prod-only)
+// is layered on top at request time.
+const envDisabledChecks: CheckKey[] = (env.HEALTHCHECK_DISABLED ?? []).filter(
+  (name): name is CheckKey => name in checkFns
+);
+
 const counters = (() =>
   [...Object.keys(checkFns), 'overall'].reduce((agg, name) => {
     agg[name as CheckKey] = registerCounter({
@@ -267,7 +275,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     // drives a 500 rather than being falsely suppressed; the only cost of a
     // config-read stall is that we don't honor an operator's runtime
     // disable/non-critical override for this one request.
-    let disabledChecks: CheckKey[] = [];
+    let disabledChecks: CheckKey[] = [...envDisabledChecks];
     let nonCriticalChecks: CheckKey[] = [];
     if (isProd) {
       // Give the config-fetch leg its OWN bounded sub-budget so it can never
@@ -299,7 +307,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS, configReadTimeout),
         getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS, configReadTimeout),
       ]).then(([disabled, nonCritical]) => {
-        disabledChecks = disabled;
+        // Layer the runtime list on top of the static env list (union).
+        disabledChecks = [...envDisabledChecks, ...disabled];
         nonCriticalChecks = nonCritical;
       });
       await Promise.race([configPromise, deadlinePromise]);

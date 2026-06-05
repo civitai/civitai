@@ -118,6 +118,19 @@ export default defineNextConfig(
       '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
       '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
     ],
+    // Several entry points read markdown from src/static-content at runtime via fs
+    // (dynamic string paths that @vercel/nft can't trace). With output:'standalone'
+    // the build only ships traced files, so without these explicit includes the
+    // markdown is missing in the deployed image and every read hits ENOENT ->
+    // 500/404 (works locally because the full source tree is present). Top-level as
+    // of Next 15 (lived under `experimental` on Next 14). Keyed by each read site.
+    outputFileTracingIncludes: {
+      '/safety': ['./src/static-content/**/*'],
+      '/region-blocked': ['./src/static-content/**/*'],
+      '/content/[[...slug]]': ['./src/static-content/**/*'],
+      '/api/trpc/[trpc]': ['./src/static-content/**/*'],
+      '/api/v1/content/[[...slug]]': ['./src/static-content/**/*'],
+    },
     experimental: {
       // scrollRestoration: true,
       cpus: 8,

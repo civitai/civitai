@@ -36,6 +36,12 @@ export type EcosystemRecord = {
   parentEcosystemId?: number;
   familyId?: number; // For UI family grouping
   sortOrder: number; // For ordering in UI
+  /**
+   * True when this ecosystem's generation routes to Civitai-hosted GPUs/workers
+   * (vs external providers like FAL/Google/OpenAI). Drives the self-hosted
+   * generation toggle. Stamped from `SELF_HOSTED_ECOSYSTEM_KEYS` below.
+   */
+  selfHosted?: boolean;
 };
 
 export type EcosystemSupport = {
@@ -735,6 +741,69 @@ export const ecosystems: EcosystemRecord[] = [
 
 export const ecosystemById = new Map(ecosystems.map((e) => [e.id, e]));
 export const ecosystemByKey = new Map(ecosystems.map((e) => [e.key, e]));
+
+/**
+ * Ecosystem keys whose generation routes to Civitai-hosted GPUs/workers rather
+ * than an external provider. Single source of truth for the self-hosted
+ * generation toggle. Derived from the orchestrator ecosystem handlers
+ * (`src/server/services/orchestrator/ecosystems/`) — grouped by the
+ * `@civitai/client` input type each ecosystem produces:
+ *
+ *  - TextToImageInput    → SD1/2/XL, Pony, Illustrious, NoobAI, Flux1, FluxKrea,
+ *                          Chroma, HiDream, PonyV7
+ *  - ComfyImageGenInput  → Anima, Ernie, Lens, HiDream-O1
+ *  - SdCppImageGenInput  → ZImageTurbo, ZImageBase, Qwen
+ *  - Flux2KleinImageGen  → Flux2Klein_9B(_base), Flux2Klein_4B(_base)
+ *  - ComfyLtx*VideoGen   → LTXV2, LTXV23
+ *  - AceStepAudioInput   → Ace
+ *
+ * NOTE: lookalikes that are EXTERNAL and must NOT be listed — `Flux2` (≠ Klein),
+ * `Qwen2` (≠ Qwen), and all `Wan*` (currently FAL). Keep this in sync when an
+ * ecosystem's routing changes.
+ */
+export const SELF_HOSTED_ECOSYSTEM_KEYS = [
+  // TextToImageInput
+  'SD1',
+  'SD2',
+  'SDXL',
+  'Pony',
+  'Illustrious',
+  'NoobAI',
+  'Flux1',
+  'FluxKrea',
+  'Chroma',
+  'HiDream',
+  'PonyV7',
+  // ComfyImageGenInput
+  'Anima',
+  'Ernie',
+  'Lens',
+  'HiDream-O1',
+  // SdCppImageGenInput
+  'ZImageTurbo',
+  'ZImageBase',
+  'Qwen',
+  // Flux2KleinImageGenInput
+  'Flux2Klein_9B',
+  'Flux2Klein_9B_base',
+  'Flux2Klein_4B',
+  'Flux2Klein_4B_base',
+  // ComfyLtx2VideoGenInput / ComfyLtx23VideoGenInput
+  'LTXV2',
+  'LTXV23',
+  // AceStepAudioInput
+  'Ace',
+] as const;
+
+const selfHostedEcosystemKeySet = new Set<string>(SELF_HOSTED_ECOSYSTEM_KEYS);
+
+// Stamp the flag onto the records so it travels with the ecosystem data.
+for (const e of ecosystems) {
+  if (selfHostedEcosystemKeySet.has(e.key)) e.selfHosted = true;
+}
+
+export const isSelfHostedEcosystem = (key: string | null | undefined): boolean =>
+  !!key && selfHostedEcosystemKeySet.has(key);
 
 // =============================================================================
 // Ecosystem Support

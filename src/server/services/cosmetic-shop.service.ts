@@ -27,7 +27,11 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { createEntityImages, getAllImages, ingestImage } from '~/server/services/image.service';
+import {
+  createEntityImages,
+  getAllImages,
+  enqueueImageIngestion,
+} from '~/server/services/image.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
@@ -286,17 +290,11 @@ export const upsertCosmeticShopSection = async ({
       })
     : [];
 
-  if (imageRecord) {
-    ingestImage({ image: imageRecord }).catch((error) => {
-      logToAxiom({
-        name: 'cosmetic-shop-image-ingest',
-        type: 'error',
-        userId,
-        imageId: imageRecord.id,
-        message: error instanceof Error ? error.message : String(error),
-      }).catch(() => {});
-    });
-  }
+  enqueueImageIngestion({
+    images: imageRecord ? [imageRecord] : [],
+    name: 'cosmetic-shop-image-ingest',
+    userId,
+  });
 
   if (!image && !id) {
     throw new Error('Image is required to create a new section');
