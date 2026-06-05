@@ -41,6 +41,7 @@ import { resourceSchema, type ResourceData } from '~/shared/data-graph/generatio
 import {
   getGatedListsForUser,
   getResourceData,
+  getSelfHostedDisabledEcosystems,
 } from '~/server/services/generation/generation.service';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -259,6 +260,15 @@ export async function buildGenerationContext(
       flags,
       gatedEcosystems: gated.gatedEcosystems,
       gatedVersionIds: gated.gatedVersionIds,
+      // Server-side enforcement of the self-hosted toggle: the ecosystem node
+      // rejects these on submit, so a free user in `memberOnly` (or anyone in
+      // `disabled`) can't generate a self-hosted ecosystem even if they bypass
+      // the client. Mods get an empty list.
+      selfHostedDisabledEcosystems: getSelfHostedDisabledEcosystems({
+        selfHostedMode: status.selfHostedMode,
+        isMember: userTier !== 'free',
+        isModerator: user?.isModerator,
+      }),
     },
     status: {
       mode: status.mode,

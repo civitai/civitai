@@ -57,6 +57,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useGenerationContextStore } from '~/components/ImageGeneration/GenerationProvider';
+import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGenerationFormStore } from '~/store/generation-form.store';
 import { showWarningNotification } from '~/utils/notifications';
 import { useTipStore } from '~/store/tip.store';
@@ -301,6 +302,95 @@ function ConnectedBuzzTypeSelector() {
   const cost = useTotalGenerationCost();
   return (
     <BuzzTypeSelector cost={cost} loading={isLoading} error={isError} onRetry={() => refetch()} />
+  );
+}
+
+// =============================================================================
+// Self-Hosted Blocked Alert
+// =============================================================================
+
+/**
+ * Detects whether the selected ecosystem is disabled for the current user by
+ * the self-hosted generation toggle. The per-user resolved list holds ecosystem
+ * keys, matching the graph's `ecosystem` value. Returns the blocked ecosystem
+ * key (or undefined) plus the mode. Consumed by `GenerationLayoutFooter`, which
+ * renders `SelfHostedBlockedAlert` in the same slot as `MembershipUpsell` and
+ * hides the form controls while blocked.
+ */
+export function useSelfHostedBlock() {
+  const { selfHostedMode, selfHostedDisabledEcosystems } = useGenerationConfig();
+  const graphValues = useGraphValues<GenerationGraphTypes>();
+  const selectedEcosystem = (graphValues as { ecosystem?: string }).ecosystem;
+  const blockedEcosystem =
+    selectedEcosystem && selfHostedDisabledEcosystems.includes(selectedEcosystem)
+      ? selectedEcosystem
+      : undefined;
+  return { blockedEcosystem, selfHostedMode };
+}
+
+/**
+ * Footer-spanning alert shown when the selected ecosystem can't be generated
+ * because the self-hosted toggle disabled it for this user. Styled like
+ * `MembershipUpsell` (edge-to-edge, bigger title, filled CTA). `memberOnly` →
+ * membership upsell with a "Become a member" button; `disabled` → temporarily
+ * unavailable. Renders null when not blocked.
+ */
+export function SelfHostedBlockedAlert() {
+  const { blockedEcosystem, selfHostedMode } = useSelfHostedBlock();
+  const serverDomains = useServerDomains();
+
+  if (!blockedEcosystem) return null;
+
+  const displayName = ecosystemByKey.get(blockedEcosystem)?.displayName ?? blockedEcosystem;
+
+  if (selfHostedMode === 'memberOnly') {
+    return (
+      <Alert color="yellow" className="-m-2 rounded-none rounded-t-xl">
+        <Text
+          size="sm"
+          fw={700}
+          c="var(--mantine-color-yellow-light-color)"
+          className="flex items-center gap-1.5"
+        >
+          <IconAlertTriangle size={16} />
+          {displayName} is available to members only
+        </Text>
+        <Text size="xs" mt={4}>
+          {displayName} runs on Civitai-hosted hardware and is currently limited to members. Become
+          a member to generate with it, or choose a different base model.
+        </Text>
+        <div className="mt-3 flex items-center gap-3">
+          <Button
+            component="a"
+            href={syncAccount(`//${serverDomains.green}/pricing`)}
+            target="_blank"
+            rel="noreferrer nofollow"
+            variant="filled"
+            className="flex-1"
+          >
+            Become a member
+          </Button>
+        </div>
+      </Alert>
+    );
+  }
+
+  return (
+    <Alert color="red" className="-m-2 rounded-none rounded-t-xl">
+      <Text
+        size="sm"
+        fw={700}
+        c="var(--mantine-color-red-light-color)"
+        className="flex items-center gap-1.5"
+      >
+        <IconAlertTriangle size={16} />
+        {displayName} is currently unavailable
+      </Text>
+      <Text size="xs" mt={4}>
+        {displayName} generation is temporarily disabled. Choose a different base model or try again
+        later.
+      </Text>
+    </Alert>
   );
 }
 

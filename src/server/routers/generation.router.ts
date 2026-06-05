@@ -20,6 +20,7 @@ import {
   resolveImageMeta,
   setGenerationEcosystemConfig,
   setGenerationStatus,
+  setSelfHostedGenerationStatus,
   // textToImage,
   // textToImageTestRun,
   toggleUnavailableResource,
@@ -85,9 +86,16 @@ export const generationRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['generation-status'] }))
     .query(async () => {
-      // Don't expose the moderator-identity audit stamp on the public,
-      // edge-cached endpoint — it's moderator-only (getStatusModerator).
-      const { updatedBy, ...status } = await getGenerationStatus();
+      // Don't expose the moderator-identity audit stamps on the public,
+      // edge-cached endpoint — they're moderator-only (getStatusModerator).
+      const { updatedBy, selfHostedUpdatedBy, ...status } = await getGenerationStatus();
+
+      // Only surface the status message to clients while the gate is actually
+      // engaged. The message stays persisted in Redis (so operators don't have
+      // to re-enter it when toggling), but a stale/irrelevant message isn't
+      // returned while the mode is 'enabled'. getStatusModerator still returns
+      // the raw stored message so the mod UI can see/edit it.
+      if (status.mode === 'enabled') status.message = null;
       return status;
     }),
   getStatusModerator: moderatorProcedure.query(() => getGenerationStatus()),
@@ -106,9 +114,23 @@ export const generationRouter = router({
         updatedBy: { id: ctx.user.id, username: ctx.user.username ?? 'unknown' },
       })
     ),
+  setSelfHostedStatus: moderatorProcedure
+    .input(z.object({ mode: generationStatusModeSchema }))
+    .use(purgeOnSuccess(['generation-status']))
+    .mutation(({ input, ctx }) =>
+      setSelfHostedGenerationStatus({
+        mode: input.mode,
+        updatedBy: { id: ctx.user.id, username: ctx.user.username ?? 'unknown' },
+      })
+    ),
   getGenerationConfig: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
-    .query(({ ctx }) => getGenerationConfig(ctx.user ?? {}, { isGreen: ctx.features.isGreen })),
+    .query(({ ctx }) =>
+      getGenerationConfig(
+        { id: ctx.user?.id, isModerator: ctx.user?.isModerator, tier: ctx.user?.tier },
+        { isGreen: ctx.features.isGreen }
+      )
+    ),
   getEcosystemConfig: moderatorProcedure.query(async () => {
     // Strip the runtime-context fields (`hasTestingAccess`, `isGreen`) — the
     // moderator UI edits the raw operator-set config that gets persisted to Redis.

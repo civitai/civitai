@@ -26,7 +26,10 @@ import { IconDeviceFloppy, IconInfoCircle } from '@tabler/icons-react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { Page } from '~/components/AppLayout/Page';
-import { GenerationStatusCard } from '~/components/Moderation/GenerationStatusCard';
+import {
+  GenerationStatusCard,
+  SelfHostedGenerationStatusCard,
+} from '~/components/Moderation/GenerationStatusCard';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ecosystemByKey, ecosystems } from '~/shared/constants/basemodel.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -118,23 +121,20 @@ function EcosystemConfigSection() {
     []
   );
 
-  const renderEcosystemOption = useCallback(
-    ({ option }: { option: { value: string } }) => {
-      const eco = ecosystemByKey.get(option.value);
-      if (!eco) return option.value;
-      return (
-        <span>
-          <Text span fw={500}>
-            {eco.displayName}
-          </Text>{' '}
-          <Text span c="dimmed" size="xs">
-            ({option.value})
-          </Text>
-        </span>
-      );
-    },
-    []
-  );
+  const renderEcosystemOption = useCallback(({ option }: { option: { value: string } }) => {
+    const eco = ecosystemByKey.get(option.value);
+    if (!eco) return option.value;
+    return (
+      <span>
+        <Text span fw={500}>
+          {eco.displayName}
+        </Text>{' '}
+        <Text span c="dimmed" size="xs">
+          ({option.value})
+        </Text>
+      </span>
+    );
+  }, []);
 
   const setMutation = trpc.generation.setEcosystemConfig.useMutation({
     onSuccess: () => {
@@ -334,6 +334,10 @@ function GenerationConfigPage() {
           </Stack>
 
           <GenerationStatusCard />
+
+          <Divider />
+
+          <SelfHostedGenerationStatusCard />
 
           <Divider />
 

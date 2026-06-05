@@ -31,3 +31,14 @@ export function useGatedVersionIds(): number[] {
   const { gatedVersionIds = [] } = useGenerationConfig();
   return gatedVersionIds;
 }
+
+/**
+ * Returns self-hosted ecosystem keys disabled for the current user (resolved
+ * from the `selfHostedMode` toggle + membership). Unlike gated ecosystems,
+ * these are shown-but-disabled in the picker rather than hidden. Feeds the
+ * graph context so the ecosystem node can mark + reject them.
+ */
+export function useSelfHostedDisabledEcosystems(): string[] {
+  const { selfHostedDisabledEcosystems = [] } = useGenerationConfig();
+  return selfHostedDisabledEcosystems;
+}

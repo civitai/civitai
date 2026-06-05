@@ -61,6 +61,7 @@ import {
   baseModelByName,
   ecosystemById,
   isBaseModelGenerationSupported,
+  SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
 import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
 import type {
@@ -275,6 +276,48 @@ export async function setGenerationStatus(input: {
     // save) keeps the stored message; `null`/string is an explicit edit.
     message: input.message === undefined ? current.message : input.message,
     updatedBy: restricting ? stamp : current.updatedBy,
+    // The self-hosted toggle is independent — carry it over untouched so a
+    // global-mode write doesn't reset it (this object is persisted verbatim,
+    // there's no spread of `current`).
+    selfHostedMode: current.selfHostedMode,
+    selfHostedUpdatedBy: current.selfHostedUpdatedBy,
+    limits: current.limits,
+    charge: current.charge,
+  };
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    REDIS_SYS_KEYS.GENERATION.STATUS,
+    JSON.stringify(persisted)
+  );
+  return generationStatusSchema.parse(persisted);
+}
+
+/**
+ * Self-hosted-toggle sibling of `setGenerationStatus`. Updates only the
+ * `selfHostedMode` (+ audit stamp) and carries the global fields over
+ * untouched. Same fail-loud rationale as `setGenerationStatus` (no fail-open
+ * read). The self-hosted toggle has no message of its own.
+ */
+export async function setSelfHostedGenerationStatus(input: {
+  mode: GenerationStatusMode;
+  updatedBy: { id: number; username: string };
+}) {
+  const raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+  const current = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
+  const stamp = {
+    id: input.updatedBy.id,
+    username: input.updatedBy.username,
+    at: new Date().toISOString(),
+  };
+  const restricting = input.mode !== 'enabled' && input.mode !== current.selfHostedMode;
+  const persisted = {
+    // Preserve the global generation status untouched.
+    mode: current.mode,
+    message: current.message,
+    updatedBy: current.updatedBy,
+    // Update the self-hosted toggle.
+    selfHostedMode: input.mode,
+    selfHostedUpdatedBy: restricting ? stamp : current.selfHostedUpdatedBy,
     limits: current.limits,
     charge: current.charge,
   };
@@ -734,7 +777,43 @@ export type GenerationConfig = {
    * gate in `getResourceCanGenerate`.
    */
   gatedVersionIds: number[];
+  /**
+   * Self-hosted ecosystem keys disabled FOR THIS USER, resolved against the
+   * `selfHostedMode` toggle + the user's membership/mod status. Unlike
+   * `gatedEcosystems` (which are hidden), these are shown-but-disabled in the
+   * picker. Empty when self-hosted generation is enabled for the user.
+   */
+  selfHostedDisabledEcosystems: string[];
+  /**
+   * The raw self-hosted toggle state, surfaced so the client can pick the
+   * right badge/alert copy ('memberOnly' → upsell, 'disabled' → unavailable).
+   */
+  selfHostedMode: GenerationStatusMode;
 };
+
+/**
+ * Pure resolver for the self-hosted toggle. Returns the ecosystem keys the
+ * given user can't use right now. Shared by `getGenerationConfig` (client UI)
+ * and `buildGenerationContext` (server-side graph validation) so both agree.
+ *
+ *  - moderators always bypass → `[]`
+ *  - `disabled` → the full self-hosted set (off for everyone)
+ *  - `memberOnly` → the full set for non-members, `[]` for members
+ *  - `enabled` → `[]`
+ */
+export function getSelfHostedDisabledEcosystems({
+  selfHostedMode,
+  isMember,
+  isModerator,
+}: {
+  selfHostedMode: GenerationStatusMode;
+  isMember: boolean;
+  isModerator?: boolean;
+}): string[] {
+  if (isModerator) return [];
+  const blocked = selfHostedMode === 'disabled' || (selfHostedMode === 'memberOnly' && !isMember);
+  return blocked ? [...SELF_HOSTED_ECOSYSTEM_KEYS] : [];
+}
 
 /**
  * Resolves the operator-controlled gating to per-user lists. Folds in the
@@ -771,19 +850,27 @@ export async function getGatedListsForUser(
  * needs to filter the UI.
  */
 export async function getGenerationConfig(
-  user: { id?: number; isModerator?: boolean } = {},
+  user: { id?: number; isModerator?: boolean; tier?: string } = {},
   opts: { isGreen?: boolean } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, ecosystemConfig, gated] = await Promise.all([
+  const [unstableResources, ecosystemConfig, gated, status] = await Promise.all([
     getUnstableResources(),
     getGenerationEcosystemConfig(user, opts),
     getGatedListsForUser(user, opts),
+    getGenerationStatus(),
   ]);
+  const selfHostedMode = status.selfHostedMode;
   return {
     unstableResources,
     experimentalEcosystems: ecosystemConfig.experimentalEcosystems,
     gatedEcosystems: gated.gatedEcosystems,
     gatedVersionIds: gated.gatedVersionIds,
+    selfHostedMode,
+    selfHostedDisabledEcosystems: getSelfHostedDisabledEcosystems({
+      selfHostedMode,
+      isMember: (user.tier ?? 'free') !== 'free',
+      isModerator: user.isModerator,
+    }),
   };
 }
 

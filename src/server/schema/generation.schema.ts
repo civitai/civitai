@@ -234,6 +234,13 @@ export const generationStatusSchema = z.preprocess(
       // (memberOnly/disabled). Preserved when set back to 'enabled' — we don't
       // care who re-enables.
       updatedBy: generationStatusUpdatedBySchema.nullish(),
+      // Self-hosted generation toggle: gates ecosystems that run on Civitai's
+      // own GPUs/workers (vs external providers). Independent of the global
+      // `mode` above — e.g. global can be 'enabled' while self-hosted is
+      // 'memberOnly'. Same three-state semantics. No message of its own; the
+      // client surfaces fixed copy for the self-hosted block.
+      selfHostedMode: generationStatusModeSchema.default('enabled'),
+      selfHostedUpdatedBy: generationStatusUpdatedBySchema.nullish(),
       limits: generationLimitsField,
       charge: z.boolean().default(true),
       // checkResourceAvailability: z.boolean().default(false),

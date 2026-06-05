@@ -139,7 +139,10 @@ import {
   remixContentGenerationTour,
 } from '~/components/Tours/tours/content-gen.tour';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import {
+  useGenerationConfig,
+  useGenerationStatus,
+} from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useRemixStore } from '~/store/remix.store';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
@@ -155,6 +158,7 @@ export function GenerationForm() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const gatedEcosystems = useGatedEcosystems();
+  const { selfHostedMode } = useGenerationConfig();
   const isMember = !!currentUser && (currentUser.tier !== 'free' || !!currentUser.isModerator);
   // Access graph snapshot directly for workflow/ecosystem (they exist in discriminated branches)
   const snapshot = graph.getSnapshot() as {
@@ -469,6 +473,8 @@ export function GenerationForm() {
               }}
               compatibleEcosystems={meta?.compatibleEcosystems}
               excludeEcosystems={gatedEcosystems.length ? gatedEcosystems : undefined}
+              disabledEcosystems={meta?.disabledEcosystems}
+              disabledReason={selfHostedMode === 'memberOnly' ? 'memberOnly' : 'disabled'}
               isCompatible={compatibility.isEcosystemKeyCompatible}
               getTargetWorkflow={(key) => compatibility.getTargetWorkflowForEcosystem(key).label}
               outputType={compatibility.currentOutputType}
