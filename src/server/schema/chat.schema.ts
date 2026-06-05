@@ -41,7 +41,7 @@ export type GetInfiniteMessagesInput = z.infer<typeof getInfiniteMessagesInput>;
 export const getInfiniteMessagesInput = infiniteQuerySchema.merge(
   z.object({
     chatId: z.number(),
-    direction: z.enum(['asc', 'desc']).optional().default('desc'),
+    sortDirection: z.enum(['asc', 'desc']).optional().default('desc'),
     // this is high for now because of issues with scrolling
     limit: z.coerce.number().min(1).default(1000),
   })
