@@ -343,7 +343,10 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
 
 const hasFeature = (
   key: FeatureFlagKey,
-  { user, req, host = req?.headers.host }: FeatureAccessContext
+  { user, req, host = req?.headers.host }: FeatureAccessContext,
+  // Built once per getFeatureFlags call and threaded through — previously every
+  // flag rebuilt buildFliptContext(user) (N times/request).
+  fliptContext: Record<string, string>
 ) => {
   const feature = featureFlags[key];
   const { availability } = feature;
@@ -383,7 +386,7 @@ const hasFeature = (
     const fliptResult = _fliptModule.isFliptSync(
       feature.fliptKey,
       user ? String(user.id) : 'anonymous',
-      buildFliptContext(user)
+      fliptContext
     );
     if (fliptResult !== null) {
       if (isDev) {
@@ -429,13 +432,78 @@ const hasFeature = (
 // way against `false` and `undefined`. Removing a flag from the registry shrinks
 // `FeatureFlagKey`, which surfaces a type error at every consumer.
 export type FeatureAccess = Record<FeatureFlagKey, boolean>;
-export const getFeatureFlags = (ctx: FeatureAccessContext) => {
-  const keys = Object.keys(featureFlags) as FeatureFlagKey[];
 
+function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
+  // Build the Flipt context once and reuse for every flag (was rebuilt per flag).
+  const fliptContext = buildFliptContext(ctx.user);
+  const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureAccess>((acc, key) => {
-    if (hasFeature(key, ctx)) acc[key] = true;
+    if (hasFeature(key, ctx, fliptContext)) acc[key] = true;
     return acc;
   }, {} as FeatureAccess);
+}
+
+// getFeatureFlags is PURE given (user identity, host, region, live Flipt config):
+// same inputs => same FeatureAccess. It runs on every request that touches
+// ctx.features (the image feed does), evaluating ~all flags — each previously
+// rebuilding the Flipt context and calling isFliptSync. Memoize the whole result
+// with a short TTL so repeat requests from the same (user, host, region) — e.g.
+// one user scrolling the feed (many getInfinite calls) — skip the per-flag work.
+//
+// KEY COMPLETENESS IS A CORRECTNESS INVARIANT. The cache key must include EVERY
+// input hasFeature reads: user id/isModerator/tier/permissions, host (domain
+// gating), and the FULL region. Region gates compliance-sensitive
+// restricted-region features, so two different regions must NEVER share an entry
+// — the whole region object is serialized into the key to guarantee that. Live
+// Flipt config changes are bounded by the TTL (same staleness as the per-eval
+// cache in flipt/client.ts). Mutation-safety: the cached object is never handed
+// out — callers always get a shallow copy.
+const FEATURE_ACCESS_TTL_MS = 10_000;
+const FEATURE_ACCESS_MAX = 20_000;
+type FeatureAccessEntry = { value: FeatureAccess; expiresAt: number };
+let featureAccessCur = new Map<string, FeatureAccessEntry>();
+let featureAccessPrev = new Map<string, FeatureAccessEntry>();
+
+function featureAccessKey({ user, req, host = req?.headers.host }: FeatureAccessContext): string {
+  // In dev, checkRegionAccess bypasses region entirely, so it can't affect the
+  // result and is omitted from the key.
+  const region = isDev ? undefined : getRegion(req);
+  const u = user
+    ? `u:${user.id}:${user.isModerator ? 1 : 0}:${user.tier ?? 'free'}:${(user.permissions ?? [])
+        .slice()
+        .sort()
+        .join(',')}`
+    : 'anon';
+  return `${u}|h:${host ?? ''}|r:${region ? JSON.stringify(region) : ''}`;
+}
+
+export const getFeatureFlags = (ctx: FeatureAccessContext): FeatureAccess => {
+  const now = Date.now();
+  const key = featureAccessKey(ctx);
+
+  let entry = featureAccessCur.get(key);
+  if (entry) {
+    if (entry.expiresAt > now) return { ...entry.value };
+    featureAccessCur.delete(key);
+  }
+  entry = featureAccessPrev.get(key);
+  if (entry) {
+    if (entry.expiresAt > now) {
+      featureAccessPrev.delete(key);
+      featureAccessCur.set(key, entry); // promote so hot keys survive rotation
+      return { ...entry.value };
+    }
+    featureAccessPrev.delete(key);
+  }
+
+  const value = computeFeatureFlags(ctx);
+  // Generational rotation (bounds memory to ~2x MAX without a full-clear thrash).
+  if (featureAccessCur.size >= FEATURE_ACCESS_MAX) {
+    featureAccessPrev = featureAccessCur;
+    featureAccessCur = new Map();
+  }
+  featureAccessCur.set(key, { value, expiresAt: now + FEATURE_ACCESS_TTL_MS });
+  return { ...value };
 };
 
 export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
