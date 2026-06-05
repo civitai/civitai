@@ -15,7 +15,6 @@ import { logs } from '@opentelemetry/api-logs';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { PrismaInstrumentation } from '@prisma/instrumentation';
-import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis';
 import { registerCpuProfiler } from '~/server/cpu-profiler';
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
@@ -94,11 +93,17 @@ if (!OTEL_ENABLED) {
       resource,
       sampler,
       spanProcessor: new BatchSpanProcessor(traceExporter),
-      instrumentations: [
-        new HttpInstrumentation(),
-        new PrismaInstrumentation(),
-        new RedisInstrumentation(),
-      ],
+      // RedisInstrumentation intentionally omitted: at ~5,400 redis ops/s it was
+      // the highest-frequency span source (~4 spans/request) and the dominant
+      // async_hooks context-propagation cost a CPU pin profile attributed to OTEL
+      // — and head sampling can't remove that (the context manager runs for every
+      // span regardless of the sampling decision). Observability tradeoff: this
+      // removes the only PER-COMMAND redis timing the app had — there is NO redis
+      // command-latency prom metric (only cache hit/miss counters). Accepted for
+      // the CPU win; if per-command redis latency is needed later, add a
+      // low-cardinality prom histogram around sendCommand (cheaper than a span —
+      // no context.with / async_hooks propagation).
+      instrumentations: [new HttpInstrumentation(), new PrismaInstrumentation()],
     });
 
     sdk.start();
