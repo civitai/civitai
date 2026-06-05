@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Loader,
+  Menu,
   RingProgress,
   Text,
   Tooltip,
@@ -16,6 +17,7 @@ import dynamic from 'next/dynamic';
 import {
   IconAlertTriangleFilled,
   IconCube,
+  IconDownload,
   IconX,
   IconArrowsShuffle,
   IconBan,
@@ -178,14 +180,34 @@ export function QueueItem({
     // metadata for source-lineage cases.
     const replayParams = request.params;
     const isTxt2Img = replayParams?.workflow === 'txt2img';
+    // PolyGen (3D Models) has no model selector — pin the ecosystem so the
+    // form's discriminator activates the polyGen subgraph (auto-hiding the
+    // checkpoint picker via Controller's null return) and lands the user
+    // directly on the 3D Models segment with all params pre-filled.
+    const isPolyGenReplay = request.steps.some((s) => s.$type === 'polyGen');
+    const polyGenOverrides = isPolyGenReplay
+      ? {
+          ecosystem: 'PolyGen',
+          workflow:
+            (replayParams?.workflow as string | undefined) ??
+            (request.steps.some(
+              (s) => s.$type === 'polyGen' && (s.params as any)?.process === 'imageTo3D'
+            )
+              ? 'img2model3d'
+              : 'txt2model3d'),
+        }
+      : {};
     generationGraphStore.setData({
       params: {
         ...replayParams,
         seed: null,
         // Clear images for txt2img to avoid stale data
         ...(isTxt2Img ? { images: null } : {}),
+        ...polyGenOverrides,
       },
-      resources: request.resources,
+      // PolyGen has no checkpoint/LoRA resources — drop any inherited ones so
+      // the form provider doesn't push a `model` value onto the polyGen branch.
+      resources: isPolyGenReplay ? [] : request.resources,
       runType: 'replay',
       remixOfId: request.remixOfId,
     });
@@ -210,6 +232,23 @@ export function QueueItem({
     (!!params.engine && allImages.length > 0);
 
   const workflowDefinition = workflowConfigs[params.workflow as keyof typeof workflowConfigs];
+
+  // PolyGen workflows don't always carry `params.workflow` consistently
+  // (the orchestrator-side step is the source of truth), so derive the
+  // process label directly from the polyGen step input. Shown as its own
+  // chip in the card header so the user always sees "Image to 3D" /
+  // "Text to 3D" even when the workflowConfig lookup misses.
+  const polyGenStep = request.steps.find((s) => s.$type === 'polyGen');
+  const polyGenProcess = (polyGenStep?.params as { process?: string } | undefined)
+    ?.process;
+  const polyGenChipLabel =
+    polyGenProcess === 'imageTo3D'
+      ? 'Image to 3D'
+      : polyGenProcess === 'textTo3D'
+      ? 'Text to 3D'
+      : polyGenStep
+      ? '3D Model'
+      : null;
 
   const engine = params.engine as string | undefined;
   const version = params.version as string | undefined;
@@ -259,6 +298,16 @@ export function QueueItem({
                   classNames={{ label: 'overflow-hidden' }}
                 >
                   {workflowDefinition.label}
+                </Badge>
+              )}
+              {polyGenChipLabel && !workflowDefinition && (
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
+                  {polyGenChipLabel}
                 </Badge>
               )}
               {engine && (
@@ -1055,6 +1104,89 @@ function Model3DQueueCardOutputs({
         >
           Save 3D Model
         </Button>
+        {/* Download the orchestrator's presigned URLs directly. URLs are
+            short-lived, so this is "download now or never" — same constraint
+            as Save 3D Model (after which we copy them to our own S3). When
+            the polyGen output carries `variants` (FBX alongside the primary
+            GLB), expose every format as a menu item. */}
+        {(() => {
+          const variants =
+            model3dBlob?.type === 'model3d' ? model3dBlob.variants ?? [] : [];
+          const formats =
+            isComplete && modelUrl
+              ? [
+                  { format: modelFormat, url: modelUrl },
+                  ...variants
+                    .filter((v) => !!v.url)
+                    .map((v) => ({ format: v.format, url: v.url })),
+                ]
+              : [];
+
+          if (!formats.length) {
+            return (
+              <Button
+                variant="light"
+                size="compact-sm"
+                fullWidth
+                disabled
+                leftSection={<IconDownload size={14} stroke={2} />}
+              >
+                Download
+              </Button>
+            );
+          }
+
+          // One format — keep the simple anchor.
+          if (formats.length === 1) {
+            const f = formats[0];
+            return (
+              <Button
+                component="a"
+                href={f.url}
+                download={`civitai-3d-${request.id}.${f.format}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                variant="light"
+                size="compact-sm"
+                fullWidth
+                leftSection={<IconDownload size={14} stroke={2} />}
+              >
+                Download {f.format.toUpperCase()}
+              </Button>
+            );
+          }
+
+          // Two or more formats — menu with one item per format.
+          return (
+            <Menu position="bottom-end" withinPortal>
+              <Menu.Target>
+                <Button
+                  variant="light"
+                  size="compact-sm"
+                  fullWidth
+                  leftSection={<IconDownload size={14} stroke={2} />}
+                >
+                  Download
+                </Button>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {formats.map((f) => (
+                  <Menu.Item
+                    key={f.format}
+                    component="a"
+                    href={f.url}
+                    download={`civitai-3d-${request.id}.${f.format}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    leftSection={<IconDownload size={14} stroke={2} />}
+                  >
+                    {f.format.toUpperCase()}
+                  </Menu.Item>
+                ))}
+              </Menu.Dropdown>
+            </Menu>
+          );
+        })()}
       </div>
     </div>
   );
