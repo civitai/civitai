@@ -56,6 +56,11 @@ const featureFlags = createFeatureFlags({
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
+  // NOTE: image-training/video-training/image-training-results have no flag in
+  // Flipt today, so the eval throws→null→falls through to the static gate every
+  // request. Kept intentionally (unlike the other not-in-Flipt keys removed in
+  // this PR) so a real Flipt kill-switch can be created for them later — don't
+  // drop these fliptKeys to "fix" the throw; create the flags in flipt-state.
   imageTraining: { availability: ['user'], fliptKey: 'image-training' },
   videoTraining: { availability: ['public'], fliptKey: 'video-training' },
   aiToolkitSd15: { availability: ['mod'], fliptKey: 'ai-toolkit-sd15' },
