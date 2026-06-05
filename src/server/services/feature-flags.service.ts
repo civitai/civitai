@@ -466,8 +466,9 @@ let featureAccessPrev = new Map<string, FeatureAccessEntry>();
 
 function featureAccessKey({ user, req, host = req?.headers.host }: FeatureAccessContext): string {
   // In dev, checkRegionAccess bypasses region entirely, so it can't affect the
-  // result and is omitted from the key.
-  const region = isDev ? undefined : getRegion(req);
+  // result and is omitted from the key. Also guard a nullish req (parity with
+  // checkRegionAccess's `if (req)`) so key construction never throws.
+  const region = isDev || !req ? undefined : getRegion(req);
   const u = user
     ? `u:${user.id}:${user.isModerator ? 1 : 0}:${user.tier ?? 'free'}:${(user.permissions ?? [])
         .slice()
