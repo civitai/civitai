@@ -383,6 +383,14 @@ iframe {
   }
 }
 
+/* Used by an inline JS style in PanelCard.tsx (animation: 'pulse-outline ...'),
+   so it must be a global keyframes. Moved here from ProjectWorkspace.module.scss
+   because Turbopack does not support the `:global { @keyframes }` block form. */
+@keyframes pulse-outline {
+  0%, 100% { outline-color: var(--mantine-color-yellow-6); }
+  50% { outline-color: var(--mantine-color-yellow-3); }
+}
+
 @keyframes rotate {
   from {
     transform: rotate(0);

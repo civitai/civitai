@@ -1,6 +1,6 @@
 // src/pages/api/trpc/[trpc].ts
 import { createNextApiHandler } from '@trpc/server/adapters/next';
-import type { NextApiHandler } from 'next';
+import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { withAxiom } from '@civitai/next-axiom';
 import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
@@ -110,12 +110,12 @@ const trpcHandler = createNextApiHandler({
 // export API handler
 //
 // withAxiom is overloaded with `(param: NextConfig): NextConfig` declared first.
-// An arrow function structurally matches NextConfig (all props optional), so TS
-// resolves to that overload and infers the return as NextConfig. Next 15's
-// generated API-route type validator (.next/types) then rejects this file
-// because a route's default export must be `(req, res) => unknown`. At runtime
-// withAxiom correctly returns an API handler, so assert the handler type.
-export default withAxiom((req, res) => {
+// With an untyped arrow, TS can't cleanly resolve the API-handler overload
+// (Next 16's stricter route types turn the ambiguity into a hard error). Typing
+// the params explicitly forces the `AxiomApiHandler` overload, and the async
+// body gives an explicit `Promise<void>` return. The result is still asserted to
+// NextApiHandler for the generated route-type validator.
+export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
   restoreMethodOverride(req);
-  return trpcHandler(req, res);
+  await trpcHandler(req, res);
 }) as NextApiHandler;

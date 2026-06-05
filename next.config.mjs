@@ -61,6 +61,13 @@ export default defineNextConfig(
 
     //   return config;
     // },
+    // Turbopack is the default bundler as of Next 16. The OpenTelemetry packages
+    // that produced the `require-in-the-middle` webpack warnings are listed in
+    // `serverExternalPackages` below, so Turbopack externalizes them and never
+    // emits those warnings — an empty config just acknowledges we're on Turbopack
+    // and silences Next's "webpack config with no turbopack config" build error.
+    turbopack: {},
+    // Retained for the `next build --webpack` fallback path; ignored under Turbopack.
     webpack: (config) => {
       config.ignoreWarnings = [
         { module: /require-in-the-middle/ },
@@ -69,14 +76,15 @@ export default defineNextConfig(
       return config;
     },
     reactStrictMode: true,
+    // TEST: re-enabled to evaluate Turbopack source-map output (server + client).
+    // Safe now that the typed-scss-modules `*.module.scss.d.ts` files are removed
+    // (they previously crashed source-map generation). Note: Turbopack ignores
+    // `experimental.serverSourceMaps` (webpack-only); this is the only map lever it reads.
     productionBrowserSourceMaps: true,
     // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
     i18n: {
       locales: ['en'],
       defaultLocale: 'en',
-    },
-    eslint: {
-      ignoreDuringBuilds: true,
     },
     generateEtags: false,
     compress: false,
