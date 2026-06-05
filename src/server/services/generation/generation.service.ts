@@ -67,8 +67,11 @@ import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/gen
 import type {
   GenerationEcosystemConfig,
   GenerationEcosystemContext,
-} from '~/server/common/constants';
-import { DEFAULT_GENERATION_ECOSYSTEM_CONFIG } from '~/server/common/constants';
+} from '~/server/schema/generation.schema';
+import {
+  DEFAULT_GENERATION_ECOSYSTEM_CONFIG,
+  generationEcosystemConfigSchema,
+} from '~/server/schema/generation.schema';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   getBaseModelEngine,
@@ -720,12 +723,12 @@ export async function getGenerationEcosystemConfig(
     resolveTestingAccess(user),
   ]);
 
-  // Spread defaults so legacy Redis values without the new fields stay valid.
-  // `isGreen` is left undefined when omitted so the NSFW gate is skipped for
-  // callers that aren't surfacing resources through the user-facing generator.
+  // Parse fills any missing fields with their schema defaults, so legacy Redis
+  // values without newer keys stay valid; on a corrupt value fall back to the
+  // full default (fail-open). `isGreen` omitted → the NSFW gate is skipped.
+  const parsed = generationEcosystemConfigSchema.safeParse(cached ?? {});
   return {
-    ...DEFAULT_GENERATION_ECOSYSTEM_CONFIG,
-    ...(cached ?? {}),
+    ...(parsed.success ? parsed.data : DEFAULT_GENERATION_ECOSYSTEM_CONFIG),
     hasTestingAccess,
     isGreen: opts.isGreen,
   };

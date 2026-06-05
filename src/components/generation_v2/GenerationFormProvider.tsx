@@ -7,13 +7,10 @@
 
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import {
-  useGatedEcosystems,
-  useGatedVersionIds,
-  useSelfHostedDisabledEcosystems,
-  useDisabledWorkflows,
-} from '~/components/generation_v2/hooks/useGatedEcosystems';
+  useGenerationConfig,
+  useGenerationStatus,
+} from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { DataGraphProvider, useDataGraph } from '~/libs/data-graph/react';
@@ -258,10 +255,8 @@ function InnerProvider({
   const status = useGenerationStatus();
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
-  const gatedEcosystems = useGatedEcosystems();
-  const gatedVersionIds = useGatedVersionIds();
-  const selfHostedDisabledEcosystems = useSelfHostedDisabledEcosystems();
-  const disabledWorkflows = useDisabledWorkflows();
+  const { gatedEcosystems, gatedVersionIds, selfHostedDisabledEcosystems, disabledWorkflows } =
+    useGenerationConfig();
   const { registerResourceId, unregisterResourceId } = useResourceDataContext();
 
   const isModerator = !!currentUser?.isModerator;

@@ -23,10 +23,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
-import {
-  useDisabledWorkflows,
-  useGatedEcosystems,
-} from '~/components/generation_v2/hooks/useGatedEcosystems';
+import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import {
   filterWorkflowsByFeatureFlags,
   filterWorkflowsByGatedEcosystems,
@@ -291,7 +288,7 @@ function WorkflowListContent({
 }: WorkflowListContentProps) {
   // Operator-disabled workflow keys (graphKeys). Read here so both the desktop
   // popover and the dialogStore modal that share this renderer get them.
-  const disabledWorkflows = useDisabledWorkflows();
+  const { disabledWorkflows } = useGenerationConfig();
   const disabledSet = useMemo(() => new Set(disabledWorkflows), [disabledWorkflows]);
 
   // Flatten all workflows with compatibility + disabled info
@@ -473,7 +470,7 @@ export function WorkflowInput({
   // Get all workflows grouped by category, then drop any whose backing ecosystems
   // are all gated for this user (so e.g. the Audio segment disappears when the
   // only audio ecosystem is mod-only and the user is not a mod).
-  const gatedEcosystems = useGatedEcosystems();
+  const { gatedEcosystems } = useGenerationConfig();
   const features = useFeatureFlags();
   const options = useMemo(() => {
     const all = getAllWorkflowsGrouped();

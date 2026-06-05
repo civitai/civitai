@@ -36,6 +36,42 @@ export const getGenerationResourcesSchema = z.object({
   supported: z.boolean().optional(),
 });
 
+/**
+ * Operator-controlled gating config, persisted to Redis (hash field
+ * `generation:ecosystem-config`). SINGLE source of truth for the field list:
+ * the type (`z.infer`), the default (`parse({})`), and the moderator-write
+ * input validation all derive from this schema, so adding a gate is one line
+ * here. Read/written by `get/setGenerationEcosystemConfig`.
+ *
+ * Scopes: ecosystem keys + model-version IDs (ID rules override ecosystem
+ * rules). States: `disabled*` (off for everyone incl. mods), `modOnly*`
+ * (non-mods hidden), `testing*` (mods + `generation-testing` Flipt flag).
+ * `nsfwIds` hide on green (SFW) domains. `experimentalEcosystems` only flags
+ * the experimental alert. `disabledWorkflows` disables workflow keys for all.
+ */
+export const generationEcosystemConfigSchema = z.object({
+  modOnlyEcosystems: z.array(z.string()).default([]),
+  disabledEcosystems: z.array(z.string()).default([]),
+  testingEcosystems: z.array(z.string()).default([]),
+  experimentalEcosystems: z.array(z.string()).default([]),
+  modOnlyIds: z.array(z.number().int().positive()).default([]),
+  disabledIds: z.array(z.number().int().positive()).default([]),
+  testingIds: z.array(z.number().int().positive()).default([]),
+  nsfwIds: z.array(z.number().int().positive()).default([]),
+  disabledWorkflows: z.array(z.string()).default([]),
+});
+export type GenerationEcosystemConfig = z.infer<typeof generationEcosystemConfigSchema>;
+export const DEFAULT_GENERATION_ECOSYSTEM_CONFIG: GenerationEcosystemConfig =
+  generationEcosystemConfigSchema.parse({});
+
+/** Runtime config: the Redis lists + the per-user `generation-testing` Flipt result. */
+export type GenerationEcosystemContext = GenerationEcosystemConfig & {
+  /** Whether the current user passes the `generation-testing` Flipt flag (mods always do). */
+  hasTestingAccess: boolean;
+  /** Green (SFW-only) domain — drives the `nsfwIds` gate; omitted skips it. */
+  isGreen?: boolean;
+};
+
 export type GetGenerationRequestsInput = z.input<typeof getGenerationRequestsSchema>;
 export type GetGenerationRequestsOutput = z.output<typeof getGenerationRequestsSchema>;
 export const getGenerationRequestsSchema = z.object({

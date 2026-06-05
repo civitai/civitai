@@ -1,6 +1,7 @@
 import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,
+  generationEcosystemConfigSchema,
   generationStatusModeSchema,
   getGenerationDataSchema,
   getGenerationResourcesSchema,
@@ -35,18 +36,6 @@ import {
 import * as z from 'zod';
 import { getGenerationEngines } from '~/server/services/generation/engines';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-
-const ecosystemConfigInputSchema = z.object({
-  modOnlyEcosystems: z.array(z.string()),
-  disabledEcosystems: z.array(z.string()),
-  testingEcosystems: z.array(z.string()),
-  experimentalEcosystems: z.array(z.string()),
-  modOnlyIds: z.array(z.number().int().positive()),
-  disabledIds: z.array(z.number().int().positive()),
-  testingIds: z.array(z.number().int().positive()),
-  nsfwIds: z.array(z.number().int().positive()),
-  disabledWorkflows: z.array(z.string()),
-});
 
 export const generationRouter = router({
   getGenerationEngines: publicProcedure
@@ -143,7 +132,7 @@ export const generationRouter = router({
     return config;
   }),
   setEcosystemConfig: moderatorProcedure
-    .input(ecosystemConfigInputSchema)
+    .input(generationEcosystemConfigSchema)
     .mutation(({ input }) => setGenerationEcosystemConfig(input)),
   getUnavailableResources: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
