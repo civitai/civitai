@@ -341,47 +341,45 @@ const generatorSubmitSchema = z.object({
   // and may be omitted depending on form/path. The submit-schema's job is
   // to enforce the entry-action discriminator, not to dictate which
   // optional context fields each emitter chooses to populate.
-  details: z
-    .object({
-      // Checkpoint version that will run the job. May be undefined for
-      // multi-resource workflows where the checkpoint isn't picked yet.
-      modelVersionId: z.number().nullish(),
-      // Discriminator for joining back to the entry-point click event.
-      // Reflects the most-recent intentful entry, not session history — each
-      // open-with-input call (remix click, model-stat click, replay) overwrites
-      // the previous value; close() resets to 'direct'; navbar Create resets
-      // to 'direct' via the no-input branch. So a user who remixes then
-      // pivots to the navbar will see fromAction='direct' on the next submit,
-      // not 'remix'.
-      //
-      // 'remix'  — opened from an image/video (generationGraphPanel runType=remix)
-      // 'create' — opened from a model/modelVersion page or model card
-      // 'replay' — re-run from the queue / previous output
-      // 'direct' — opened from /generate or with no input (panel default)
-      fromAction: z.enum(['create', 'remix', 'replay', 'direct']),
-      // True when remixOfId is being sent on the request — gated by the
-      // 0.75 prompt-similarity threshold in BOTH legacy and v2 forms (v2
-      // via the `useRemixOfId()` hook). Absent on video-form emits — the
-      // video path has no similarity hook yet. See the doc-block above
-      // for the hasRemixOfId roll-up caveat.
-      hasRemixOfId: z.boolean().optional(),
-      // 'legacy' (GenerationForm2) | 'new' (generation_v2/FormFooter) |
-      // 'video' (Generation/Video/VideoGenerationForm)
-      formVersion: z.enum(['legacy', 'new', 'video']).optional(),
-      // False when the submit attempt failed validation (react-hook-form
-      // onError path or graph.validate() early return). The data team can
-      // split valid-vs-invalid attempts to spot UX traps where users click
-      // Generate but the form blocks them. Default true (omitted on success
-      // path is treated as valid by downstream).
-      isValid: z.boolean().optional(),
-      // True when the submit short-circuits because the user is at their
-      // concurrent-request limit (snapshot.canGenerate === false). Capacity-
-      // bounded clicks show up as a distinct funnel stage and aren't
-      // conflated with RHF validation failures (missing prompt, etc.).
-      // isValid on these rows is path-dependent (legacy/video: false,
-      // v2: true) — see the doc-block above for the dashboard caveat.
-      isRateLimited: z.boolean().optional(),
-    }),
+  details: z.object({
+    // Checkpoint version that will run the job. May be undefined for
+    // multi-resource workflows where the checkpoint isn't picked yet.
+    modelVersionId: z.number().nullish(),
+    // Discriminator for joining back to the entry-point click event.
+    // Reflects the most-recent intentful entry, not session history — each
+    // open-with-input call (remix click, model-stat click, replay) overwrites
+    // the previous value; close() resets to 'direct'; navbar Create resets
+    // to 'direct' via the no-input branch. So a user who remixes then
+    // pivots to the navbar will see fromAction='direct' on the next submit,
+    // not 'remix'.
+    //
+    // 'remix'  — opened from an image/video (generationGraphPanel runType=remix)
+    // 'create' — opened from a model/modelVersion page or model card
+    // 'replay' — re-run from the queue / previous output
+    // 'direct' — opened from /generate or with no input (panel default)
+    fromAction: z.enum(['create', 'remix', 'replay', 'direct']),
+    // True when remixOfId is being sent on the request — gated by the
+    // 0.75 prompt-similarity threshold via the `useRemixOfId()` hook in the
+    // v2 form. See the doc-block above for the hasRemixOfId roll-up caveat.
+    hasRemixOfId: z.boolean().optional(),
+    // 'new' (generation_v2/FormFooter) is emitted by the current form.
+    // 'legacy'/'video' are retained for backward-compatibility with
+    // historical events from the removed legacy generation form.
+    formVersion: z.enum(['legacy', 'new', 'video']).optional(),
+    // False when the submit attempt failed validation (react-hook-form
+    // onError path or graph.validate() early return). The data team can
+    // split valid-vs-invalid attempts to spot UX traps where users click
+    // Generate but the form blocks them. Default true (omitted on success
+    // path is treated as valid by downstream).
+    isValid: z.boolean().optional(),
+    // True when the submit short-circuits because the user is at their
+    // concurrent-request limit (snapshot.canGenerate === false). Capacity-
+    // bounded clicks show up as a distinct funnel stage and aren't
+    // conflated with RHF validation failures (missing prompt, etc.).
+    // isValid on these rows is path-dependent (legacy/video: false,
+    // v2: true) — see the doc-block above for the dashboard caveat.
+    isRateLimited: z.boolean().optional(),
+  }),
 });
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
