@@ -4,7 +4,6 @@ import { isEqual } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
-import { logToAxiom } from '~/server/logging/client';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead } from '~/server/db/pgDb';
 import type { GetByIdInput } from '~/server/schema/base.schema';

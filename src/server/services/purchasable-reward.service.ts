@@ -19,7 +19,6 @@ import {
   purchasableRewardDetailsModerator,
 } from '~/server/selectors/purchasableReward.selector';
 import { createMultiAccountBuzzTransaction } from '~/server/services/buzz.service';
-import { logToAxiom } from '~/server/logging/client';
 import { createEntityImages, enqueueImageIngestion } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';

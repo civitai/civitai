@@ -7,7 +7,6 @@ import type {
 } from '~/server/schema/club.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
-import { logToAxiom } from '~/server/logging/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   createEntityImages,
