@@ -14,7 +14,6 @@ import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs
 import { logs } from '@opentelemetry/api-logs';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { PrismaInstrumentation } from '@prisma/instrumentation';
 import { registerCpuProfiler } from '~/server/cpu-profiler';
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
@@ -103,7 +102,18 @@ if (!OTEL_ENABLED) {
       // the CPU win; if per-command redis latency is needed later, add a
       // low-cardinality prom histogram around sendCommand (cheaper than a span —
       // no context.with / async_hooks propagation).
-      instrumentations: [new HttpInstrumentation(), new PrismaInstrumentation()],
+      //
+      // PrismaInstrumentation intentionally omitted for the same structural reason:
+      // it wraps every query on the hot DB path, and each query span pays the
+      // async_hooks context-propagation cost (context.with + span alloc) that head
+      // sampling can't remove — the context manager runs for every span regardless
+      // of the sampling decision. Observability tradeoff: this removes Prisma query
+      // spans, but the app's RED/latency dashboards are prom-client based
+      // (src/server/prom/client.ts), NOT OTEL spanmetrics (which aren't scraped into
+      // Prometheus), and DB pool metrics are separate labeled gauges
+      // (db/db-helpers.ts). So no dashboard depends on these spans. The custom
+      // withSpan() instrumentation on specific hot calls is unaffected.
+      instrumentations: [new HttpInstrumentation()],
     });
 
     sdk.start();
