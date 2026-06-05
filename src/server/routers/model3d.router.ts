@@ -31,6 +31,7 @@ import {
 import {
   upsertModel3D,
   ensureModel3DFromWorkflow,
+  getModel3DLicenses,
   getModel3DById,
   getModel3DByThumbnailImageId,
   getModel3DByWorkflowId,
@@ -128,6 +129,9 @@ export const model3dRouter = router({
     .mutation(({ input, ctx }) =>
       ensureModel3DFromWorkflow({ input, user: ctx.user, ctx })
     ),
+  getLicenses: publicProcedure
+    .use(isFlagProtected('model3dFeed'))
+    .query(() => getModel3DLicenses()),
   getInfinite: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DsInfiniteSchema)

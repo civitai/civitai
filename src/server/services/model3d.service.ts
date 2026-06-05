@@ -316,15 +316,33 @@ export const getModel3DsInfinite = async ({
 
     const AND: Prisma.Model3DWhereInput[] = [{ deletedAt: null }];
 
-    // Status filter — public + non-owner can only see Published.
+    // Status filter — drafts/published are MUTUALLY EXCLUSIVE tabs on the
+    // profile page. The legacy `!allowDrafts` shape only suppressed the
+    // Published filter without pushing a Draft filter, so the drafts tab
+    // returned every status (including published). The ownership check
+    // also required `userId === user.id`, but the profile page sends
+    // `username` (not `userId`), so self-view never qualified for drafts.
     if (statuses?.length) {
       AND.push({ status: { in: statuses } });
     } else if (status) {
       AND.push({ status });
-    } else if (!isModerator) {
-      // Non-mods: published only, unless they're the owner and asked for drafts.
-      const allowDrafts = !!user && (includeDrafts ?? false) && userId === user.id;
-      if (!allowDrafts) AND.push({ status: Model3DStatus.Published });
+    } else {
+      const isOwner =
+        !!user &&
+        ((!!userId && userId === user.id) ||
+          (!!username && !!user.username && username === user.username));
+      const wantDrafts = includeDrafts ?? false;
+      const canSeeDrafts = isModerator || isOwner;
+
+      if (wantDrafts && canSeeDrafts) {
+        AND.push({ status: { in: [Model3DStatus.Draft, Model3DStatus.Unpublished] } });
+      } else {
+        // Default: Published only for EVERYONE — even mods. The main /3d-models
+        // feed should never leak drafts; mods inspect drafts via their own
+        // tools by passing explicit `statuses` (e.g. the profile page does
+        // exactly this for mod-viewing-someone-else's drafts).
+        AND.push({ status: Model3DStatus.Published });
+      }
     }
 
     if (userId) AND.push({ userId });
@@ -348,6 +366,27 @@ export const getModel3DsInfinite = async ({
     }
 
     return { items, nextCursor };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+/** Licenses available to assign to a Model3D. Seeded via migration. */
+export const getModel3DLicenses = async () => {
+  try {
+    return await dbRead.model3DLicense.findMany({
+      orderBy: [{ isCustom: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        allowCommercialUse: true,
+        allowDerivatives: true,
+        allowRedistribution: true,
+        requireAttribution: true,
+      },
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
