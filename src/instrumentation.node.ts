@@ -113,7 +113,24 @@ if (!OTEL_ENABLED) {
       // Prometheus), and DB pool metrics are separate labeled gauges
       // (db/db-helpers.ts). So no dashboard depends on these spans. The custom
       // withSpan() instrumentation on specific hot calls is unaffected.
-      instrumentations: [new HttpInstrumentation()],
+      instrumentations: [
+        // HttpInstrumentation narrowed to INBOUND-only. The app makes many
+        // outbound client requests per request (orchestrator, S3, meilisearch,
+        // clickhouse, …); each outgoing client span is another async_hooks
+        // context.with + span alloc on the hot path — the same structural cost
+        // head sampling can't remove. ignoreOutgoingRequestHook returning true
+        // for every outgoing request suppresses those client spans while keeping
+        // incoming server-request spans (the per-request root span) intact.
+        // (instrumentation-http@0.213.0 also exposes
+        // disableOutgoingRequestInstrumentation, which skips patching outbound
+        // entirely; the ignore hook is used here to match the option named in the
+        // plan and keep the outbound code path patched for any future per-call
+        // allow-listing.) Tradeoff: we lose distributed-trace propagation to
+        // downstream services (no outbound traceparent spans). Accepted for the
+        // CPU win — an explicitly listed next lever. The custom withSpan()
+        // instrumentation on specific hot calls is unaffected.
+        new HttpInstrumentation({ ignoreOutgoingRequestHook: () => true }),
+      ],
     });
 
     sdk.start();
