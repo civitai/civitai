@@ -789,6 +789,12 @@ export type GenerationConfig = {
    * right badge/alert copy ('memberOnly' → upsell, 'disabled' → unavailable).
    */
   selfHostedMode: GenerationStatusMode;
+  /**
+   * Workflow keys disabled by the operator — same list for everyone (no
+   * per-user resolution). The workflow picker shows a "Disabled" badge on
+   * these and the graph rejects them on submit.
+   */
+  disabledWorkflows: string[];
 };
 
 /**
@@ -824,7 +830,7 @@ export function getSelfHostedDisabledEcosystems({
 export async function getGatedListsForUser(
   user: { id?: number; isModerator?: boolean } = {},
   opts: { isGreen?: boolean } = {}
-): Promise<{ gatedEcosystems: string[]; gatedVersionIds: number[] }> {
+): Promise<{ gatedEcosystems: string[]; gatedVersionIds: number[]; disabledWorkflows: string[] }> {
   const config = await getGenerationEcosystemConfig(user, opts);
   const isModerator = !!user.isModerator;
 
@@ -839,7 +845,10 @@ export async function getGatedListsForUser(
   // means "not in a green-domain UI context" — leave nsfwIds available.
   if (config.isGreen === true) gatedVersionIds.push(...config.nsfwIds);
 
-  return { gatedEcosystems, gatedVersionIds };
+  // disabledWorkflows is a global operator list (not per-user resolved); passed
+  // through here so `buildGenerationContext` and `getGenerationConfig` share one
+  // Redis read.
+  return { gatedEcosystems, gatedVersionIds, disabledWorkflows: config.disabledWorkflows };
 }
 
 /**
@@ -871,6 +880,7 @@ export async function getGenerationConfig(
       isMember: (user.tier ?? 'free') !== 'free',
       isModerator: user.isModerator,
     }),
+    disabledWorkflows: gated.disabledWorkflows,
   };
 }
 

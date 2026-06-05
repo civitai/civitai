@@ -69,6 +69,7 @@ const DEFAULT_GENERATION_CONFIG = {
   gatedVersionIds: [] as number[],
   selfHostedDisabledEcosystems: [] as string[],
   selfHostedMode: 'enabled' as GenerationStatusMode,
+  disabledWorkflows: [] as string[],
 };
 
 /**

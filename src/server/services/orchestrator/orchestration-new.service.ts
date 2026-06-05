@@ -269,6 +269,10 @@ export async function buildGenerationContext(
         isMember: userTier !== 'free',
         isModerator: user?.isModerator,
       }),
+      // Server-side enforcement of disabled workflows: the workflow node rejects
+      // these in its output refine, so a disabled workflow can't be submitted
+      // even if a stale/crafted request bypasses the client picker.
+      disabledWorkflows: gated.disabledWorkflows,
     },
     status: {
       mode: status.mode,

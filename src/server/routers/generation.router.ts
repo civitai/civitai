@@ -45,6 +45,7 @@ const ecosystemConfigInputSchema = z.object({
   disabledIds: z.array(z.number().int().positive()),
   testingIds: z.array(z.number().int().positive()),
   nsfwIds: z.array(z.number().int().positive()),
+  disabledWorkflows: z.array(z.string()),
 });
 
 export const generationRouter = router({

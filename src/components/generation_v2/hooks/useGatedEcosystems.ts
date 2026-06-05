@@ -42,3 +42,13 @@ export function useSelfHostedDisabledEcosystems(): string[] {
   const { selfHostedDisabledEcosystems = [] } = useGenerationConfig();
   return selfHostedDisabledEcosystems;
 }
+
+/**
+ * Returns workflow keys disabled by the operator. Unlike the gated lists this
+ * is NOT per-user resolved — the same list applies to everyone. The workflow
+ * picker badges these disabled and the graph rejects them on submit.
+ */
+export function useDisabledWorkflows(): string[] {
+  const { disabledWorkflows = [] } = useGenerationConfig();
+  return disabledWorkflows;
+}

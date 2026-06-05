@@ -42,4 +42,10 @@ export type GenerationCtx = {
    * `buildGenerationContext` and surfaced as disabled options client-side.
    */
   selfHostedDisabledEcosystems?: string[];
+  /**
+   * Workflow keys disabled by the operator (same list for everyone). The
+   * `workflow` node rejects these in its `output` refine so a disabled workflow
+   * can't be submitted; the picker badges them disabled separately.
+   */
+  disabledWorkflows?: string[];
 };

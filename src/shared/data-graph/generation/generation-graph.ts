@@ -123,14 +123,27 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
   // Workflow values are workflow keys (e.g., 'txt2img', 'txt2img:draft', 'txt2vid')
   .node(
     'workflow',
-    () => ({
-      input: z.string().optional().transform(migrateWorkflowKey),
-      output: z.string(),
-      defaultValue: 'txt2img',
-      meta: {
-        // All workflows are shown - compatibility is handled by baseModel filtering
-      },
-    }),
+    (_ctx, ext) => {
+      // Operator-disabled workflow keys (global). Reject them on submit so a
+      // stale stored value or crafted request can't generate a disabled
+      // workflow. Server enforces via buildGenerationContext; the picker badges
+      // them separately. NOTE: this node has no deps, so the factory only runs
+      // at init — the client refine is best-effort (picker blocks selection),
+      // the authoritative gate is the server-side safeParse with fresh ext.
+      const disabledWorkflows = ext.disabledWorkflows;
+      return {
+        input: z.string().optional().transform(migrateWorkflowKey),
+        output: disabledWorkflows?.length
+          ? z.string().refine((v) => !disabledWorkflows.includes(v), {
+              message: 'Workflow is currently unavailable',
+            })
+          : z.string(),
+        defaultValue: 'txt2img',
+        meta: {
+          // All workflows are shown - compatibility is handled by baseModel filtering
+        },
+      };
+    },
     []
   )
   // Output is computed from workflow

@@ -12,6 +12,7 @@ import {
   useGatedEcosystems,
   useGatedVersionIds,
   useSelfHostedDisabledEcosystems,
+  useDisabledWorkflows,
 } from '~/components/generation_v2/hooks/useGatedEcosystems';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -260,6 +261,7 @@ function InnerProvider({
   const gatedEcosystems = useGatedEcosystems();
   const gatedVersionIds = useGatedVersionIds();
   const selfHostedDisabledEcosystems = useSelfHostedDisabledEcosystems();
+  const disabledWorkflows = useDisabledWorkflows();
   const { registerResourceId, unregisterResourceId } = useResourceDataContext();
 
   const isModerator = !!currentUser?.isModerator;
@@ -280,6 +282,7 @@ function InnerProvider({
       gatedEcosystems,
       gatedVersionIds,
       selfHostedDisabledEcosystems,
+      disabledWorkflows,
     }),
     [
       status.limits.quantity,
@@ -290,6 +293,7 @@ function InnerProvider({
       gatedEcosystems,
       gatedVersionIds,
       selfHostedDisabledEcosystems,
+      disabledWorkflows,
     ]
   );
 
