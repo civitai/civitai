@@ -393,9 +393,10 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
   const { trackAction } = useTrackEvent();
 
-  const { data: entries, isLoading: loadingEntries } = trpc.bounty.getEntries.useInfiniteQuery({
-    id: bounty.id,
-  });
+  const { data: entries, isLoading: loadingEntries } = trpc.bounty.getEntries.useInfiniteQuery(
+    { id: bounty.id },
+    { getNextPageParam: (lastPage) => lastPage.nextCursor }
+  );
   const flatEntries = useMemo(() => entries?.pages.flatMap((p) => p.items) ?? [], [entries]);
 
   const addToBountyEnabled =
