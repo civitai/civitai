@@ -92,6 +92,15 @@ const FLIPT_EVAL_CACHE_MAX = 10_000;
 //   It's only evaluated on the no-arg fallback path of getDbWithoutLag (RAW
 //   reads without per-id flagging — db-lag-helpers.ts:42,94), not the hot
 //   per-id path, so the CPU saved by caching it is modest. Correctness wins.
+//
+// NOT bypassed (deliberate): IMAGE_RESOURCE_USE_WRITE is also a global
+// replica/primary read-routing switch, but its intended flip is OFF-once-
+// backfill-complete — non-urgent and in the safe direction. It's evaluated on
+// hot image read paths (image.service.ts) with a single global key, so caching
+// gives the largest CPU win of any flag here; bypassing would re-add a
+// per-request wasm eval on the hot path. If its propagation latency ever
+// matters during an incident, lower FLIPT_EVAL_CACHE_TTL_MS globally rather
+// than bypassing this one flag.
 const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
   FLIPT_FEATURE_FLAGS.HIGH_REPLICATION_LAG_MODE,
