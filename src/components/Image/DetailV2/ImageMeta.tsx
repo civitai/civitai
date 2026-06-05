@@ -6,52 +6,41 @@ import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { useMetadataCopy } from '~/hooks/useMetadataCopy';
 import { trpc } from '~/utils/trpc';
-import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
-import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
-
-const simpleMetaProps = {
-  comfy: 'Workflow',
-  cfgScale: 'Guidance',
-  steps: 'Steps',
-  sampler: 'Sampler',
-  seed: 'Seed',
-  clipSkip: 'Clip skip',
-} as const;
 
 export function ImageMeta({ imageId }: { imageId: number }) {
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });
   const { meta, onSite, process } = data ?? {};
   const { copy: copyAll, copied: copiedAll } = useMetadataCopy(meta);
-  // const baseModel = getBaseModelFromResources(resources);
 
   const simpleMeta = useMemo(() => {
     if (!data) return null;
 
     const meta: Record<string, any> = data.meta ?? {};
-    const resources = data.resources ?? [];
-
     if (!meta) return null;
     const { prompt, negativePrompt, ...restMeta } = meta;
-    const baseModel = getBaseModelFromResources(resources);
 
-    const keys: string[] = [];
-    if (data.type === 'image') {
-      const metaRemoved = baseModel ? removeUnrelated(baseModel, restMeta) : restMeta;
-      const filteredKeys = Object.keys(simpleMetaProps).filter((key) => metaRemoved[key]);
+    // On-site generations: the server resolves which keys are real generator
+    // inputs via the generation graph (`displayKeys`). Off-site/foreign
+    // metadata has no graph mapping, so show all of it.
+    const candidateKeys =
+      data.onSite && data.displayKeys ? data.displayKeys : Object.keys(restMeta);
 
-      for (const key of filteredKeys) {
-        if (meta[key]) keys.push(key);
-      }
-    } else if (data.type === 'video') {
-      const config = getVideoGenerationConfig((meta as any).engine);
-      if (config) {
-        for (const key of config.metadataDisplayProps) {
-          if (meta[key]) keys.push(key);
-        }
-      }
-    }
+    // The comfy workflow chip is display-only (not a graph input node) — always
+    // surface it when present.
+    const keySet = new Set(candidateKeys.filter((key) => key !== 'comfy'));
+    if (restMeta.comfy) keySet.add('comfy');
+
+    const keys = [...keySet].filter(
+      (key) =>
+        // prompt/negativePrompt render in their own sections, not as badges
+        key !== 'prompt' &&
+        key !== 'negativePrompt' &&
+        // drop capitalized external-tool fields (A1111-style: Size, Model,
+        // Schedule type, Unprompted, etc.)
+        !/^[A-Z]/.test(key) &&
+        meta[key] != null
+    );
 
     function getSimpleMetaContent(key: string) {
       if (!meta) return null;
@@ -77,13 +66,16 @@ export function ImageMeta({ imageId }: { imageId: number }) {
           ) : null;
         default: {
           const content = meta[key];
-          if (!content || typeof content === 'object') return null;
+          // omit boolean values from badges
+          if (!content || typeof content === 'object' || typeof content === 'boolean') return null;
           return <span>{content}</span>;
         }
       }
     }
 
-    return keys.map((key) => ({ label: key, content: getSimpleMetaContent(key) }));
+    return keys
+      .map((key) => ({ label: key, content: getSimpleMetaContent(key) }))
+      .filter(({ content }) => content !== null);
   }, [data]);
 
   if (!meta || !simpleMeta) return null;
@@ -172,24 +164,4 @@ export function ImageMeta({ imageId }: { imageId: number }) {
       )}
     </>
   );
-}
-
-function removeUnrelated<T extends Record<string, unknown>>(baseModel: BaseModelGroup, data: T) {
-  let keys: string[] = [];
-  switch (baseModel) {
-    case 'Flux1':
-      keys = ['clipSkip', 'sampler'];
-      break;
-    default:
-      break;
-  }
-
-  if (keys.length) {
-    return Object.entries(data).reduce<T>((acc, [key, val]) => {
-      if (!keys.includes(key)) return { ...acc, [key]: val };
-      return acc;
-    }, {} as T);
-  }
-
-  return data;
 }

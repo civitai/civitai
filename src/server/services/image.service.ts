@@ -237,6 +237,7 @@ import type {
 import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
 import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
 
 const {
   cacheHitRequestsTotal,
@@ -7378,11 +7379,28 @@ export async function getImageGenerationData({ id }: { id: number }) {
     }
   }
 
+  // On-site generations: let the generation graph decide which meta keys are
+  // real generator inputs (drops computed/derived nodes + unrelated legacy
+  // junk). Off-site/foreign metadata has no graph mapping, so leave undefined
+  // and the client shows all keys.
+  let displayKeys: string[] | undefined;
+  if (onSite && meta) {
+    const graphResources = resources.map((r) => ({
+      id: r.modelVersionId,
+      baseModel: r.baseModel,
+      model: { type: r.modelType },
+      strength: r.strength,
+    }));
+    displayKeys =
+      getGenerationDisplayKeys(meta as Record<string, unknown>, graphResources) ?? undefined;
+  }
+
   return {
     type: image.type,
     onSite,
     process,
     meta,
+    displayKeys,
     resources: resources.map((resource) => ({
       ...resource,
       strength:
