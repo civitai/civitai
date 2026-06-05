@@ -103,7 +103,9 @@ export default defineNextConfig(
             // removeConsole: true,
           }
         : {},
-    transpilePackages: [],
+    // devalue is ESM-only (the tRPC data transformer); transpile so the CJS
+    // server build can require it without ERR_REQUIRE_ESM.
+    transpilePackages: ['devalue'],
     experimental: {
       // scrollRestoration: true,
       cpus: 8,

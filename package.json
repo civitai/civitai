@@ -172,6 +172,7 @@
     "cookies-next": "^2.1.1",
     "dayjs": "^1.11.12",
     "decimal.js": "^10.5.0",
+    "devalue": "^5.8.1",
     "discord-api-types": "^0.38.37",
     "discord.js": "^14.7.1",
     "dotenv": "^16.4.5",

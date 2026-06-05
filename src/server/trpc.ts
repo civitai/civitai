@@ -1,8 +1,8 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { NextApiRequest } from 'next';
 import semver from 'semver';
-import superjson from 'superjson';
 import { OnboardingSteps } from '~/server/common/enums';
+import { trpcTransformer } from '~/shared/utils/trpc-transformer';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -36,8 +36,8 @@ const t = initTRPC
   .create({
     transformer: {
       serialize: (data: any) =>
-        withSpan('trpc:serialize:superjson', () => superjson.serialize(data)),
-      deserialize: superjson.deserialize.bind(superjson),
+        withSpan('trpc:serialize:devalue', () => trpcTransformer.serialize(data)),
+      deserialize: trpcTransformer.deserialize,
     },
     errorFormatter({ shape }) {
       return shape;
