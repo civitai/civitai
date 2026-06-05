@@ -23,6 +23,7 @@ import {
 import { MAX_SEED, samplers } from '~/shared/constants/generation.constants';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
+import { rulesToStates } from './gates';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { isWorkflowAvailable, getWorkflowsForEcosystem, workflowConfigByKey } from './config';
@@ -951,12 +952,14 @@ export function createCheckpointGraph(
         const modelVersionId = defaultModelId ?? ecosystemDefaults?.model?.id;
         const modelLocked = options?.modelLocked ?? ecosystemDefaults?.modelLocked ?? false;
 
-        // Drop gated version IDs (operator-controlled disabled/mod-only/testing)
-        // from the version selector so users never see versions they can't use.
-        // Server enforces the same gate in `getResourceCanGenerate`.
+        // Drop any version targeted by a gate rule from the version selector so
+        // users never see versions they can't use. Version pickers have no
+        // shown-but-disabled affordance, so every gated state hides. Server
+        // enforces the same gate in `getResourceCanGenerate` (hidden only).
+        const ruleVersionIds = [...rulesToStates(ext.gateRules ?? []).modelVersionIds.keys()];
         const visibleVersions =
-          versions && ext.gatedVersionIds?.length
-            ? filterVersionGroup(versions, ext.gatedVersionIds)
+          versions && ruleVersionIds.length
+            ? filterVersionGroup(versions, ruleVersionIds)
             : versions;
 
         const validVersionIds = visibleVersions ? getAllVersionIds(visibleVersions) : undefined;

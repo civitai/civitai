@@ -39,10 +39,12 @@ import {
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import { resourceSchema, type ResourceData } from '~/shared/data-graph/generation/common';
 import {
-  getGatedListsForUser,
+  getGateRules,
+  getGenerationEcosystemConfig,
   getResourceData,
   getSelfHostedDisabledEcosystems,
 } from '~/server/services/generation/generation.service';
+import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -240,9 +242,10 @@ export async function buildGenerationContext(
   flags?: Partial<FeatureAccess>,
   user?: { id?: number; isModerator?: boolean }
 ): Promise<GenerationContextResult> {
-  const [status, gated] = await Promise.all([
+  const [status, ecosystemConfig, gateRules] = await Promise.all([
     getGenerationStatus(),
-    getGatedListsForUser(user ?? {}, { isGreen: flags?.isGreen }),
+    getGenerationEcosystemConfig(user ?? {}),
+    getGateRules(),
   ]);
   const limits = status.limits[userTier];
 
@@ -258,8 +261,6 @@ export async function buildGenerationContext(
         tier: userTier,
       },
       flags,
-      gatedEcosystems: gated.gatedEcosystems,
-      gatedVersionIds: gated.gatedVersionIds,
       // Server-side enforcement of the self-hosted toggle: the ecosystem node
       // rejects these on submit, so a free user in `memberOnly` (or anyone in
       // `disabled`) can't generate a self-hosted ecosystem even if they bypass
@@ -269,10 +270,14 @@ export async function buildGenerationContext(
         isMember: userTier !== 'free',
         isModerator: user?.isModerator,
       }),
-      // Server-side enforcement of disabled workflows: the workflow node rejects
-      // these in its output refine, so a disabled workflow can't be submitted
-      // even if a stale/crafted request bypasses the client picker.
-      disabledWorkflows: gated.disabledWorkflows,
+      selfHostedMode: status.selfHostedMode,
+      // Server-side enforcement of gate rules: the same applicable rules the
+      // client got, so the graph nodes reject hidden/disabled targets on submit.
+      gateRules: applicableRulesFor(gateRules, {
+        isModerator: !!user?.isModerator,
+        isMember: userTier !== 'free',
+        hasTestingAccess: ecosystemConfig.hasTestingAccess,
+      }),
     },
     status: {
       mode: status.mode,

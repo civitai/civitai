@@ -6,6 +6,7 @@ import {
   generationStatusSchema,
 } from '~/server/schema/generation.schema';
 import type { GenerationStatusMode } from '~/server/schema/generation.schema';
+import type { GateRule } from '~/shared/data-graph/generation/gates';
 import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
 import type { NormalizedWorkflowMetadata } from '~/server/services/orchestrator';
 import { showErrorNotification } from '~/utils/notifications';
@@ -65,11 +66,9 @@ export const useGenerationStatus = () => {
 const DEFAULT_GENERATION_CONFIG = {
   unstableResources: [] as number[],
   experimentalEcosystems: [] as string[],
-  gatedEcosystems: [] as string[],
-  gatedVersionIds: [] as number[],
   selfHostedDisabledEcosystems: [] as string[],
   selfHostedMode: 'enabled' as GenerationStatusMode,
-  disabledWorkflows: [] as string[],
+  gateRules: [] as GateRule[],
 };
 
 /**
@@ -79,10 +78,9 @@ const DEFAULT_GENERATION_CONFIG = {
  * - `experimentalEcosystems`: ecosystem keys that should show the
  *   "experimental build" alert in the generator UI (unioned with the
  *   static `isEcosystemExperimental` check)
- * - `gatedEcosystems`: ecosystem keys hidden for the current user
- *   (server folds in mod-only / testing rules + Flipt evaluation)
- * - `gatedVersionIds`: model version IDs hidden for the current user
- *   (same per-user resolution as `gatedEcosystems`, ID-level overrides)
+ * - `selfHostedDisabledEcosystems` / `selfHostedMode`: the self-hosted toggle
+ * - `gateRules`: the gate rules that apply to this user (audience-filtered
+ *   server-side), resolved per-item by the graph nodes
  *
  * Single tRPC query — every generator component that needs any of these
  * fields should call this hook so React Query dedupes the request.

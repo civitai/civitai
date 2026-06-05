@@ -1,3 +1,4 @@
+import { gateRuleSchema } from '~/shared/data-graph/generation/gates';
 import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,
@@ -15,10 +16,12 @@ import {
   getGenerationEcosystemConfig,
   getGenerationResources,
   getGenerationStatus,
+  getGateRules,
   getGenerationConfig,
   getResourceData,
   getUnavailableResources,
   resolveImageMeta,
+  setGateRules,
   setGenerationEcosystemConfig,
   setGenerationStatus,
   setSelfHostedGenerationStatus,
@@ -116,24 +119,25 @@ export const generationRouter = router({
   getGenerationConfig: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(({ ctx }) =>
-      getGenerationConfig(
-        { id: ctx.user?.id, isModerator: ctx.user?.isModerator, tier: ctx.user?.tier },
-        { isGreen: ctx.features.isGreen }
-      )
+      getGenerationConfig({
+        id: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+        tier: ctx.user?.tier,
+      })
     ),
   getEcosystemConfig: moderatorProcedure.query(async () => {
-    // Strip the runtime-context fields (`hasTestingAccess`, `isGreen`) — the
-    // moderator UI edits the raw operator-set config that gets persisted to Redis.
-    const {
-      hasTestingAccess: _hasTestingAccess,
-      isGreen: _isGreen,
-      ...config
-    } = await getGenerationEcosystemConfig();
+    // Strip the runtime-only `hasTestingAccess` — the moderator UI edits the raw
+    // operator-set config (just `experimentalEcosystems`) persisted to Redis.
+    const { hasTestingAccess: _hasTestingAccess, ...config } = await getGenerationEcosystemConfig();
     return config;
   }),
   setEcosystemConfig: moderatorProcedure
     .input(generationEcosystemConfigSchema)
     .mutation(({ input }) => setGenerationEcosystemConfig(input)),
+  getGateRules: moderatorProcedure.query(() => getGateRules()),
+  setGateRules: moderatorProcedure
+    .input(z.array(gateRuleSchema))
+    .mutation(({ input }) => setGateRules(input)),
   getUnavailableResources: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(() => getUnavailableResources()),

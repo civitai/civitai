@@ -255,8 +255,7 @@ function InnerProvider({
   const status = useGenerationStatus();
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
-  const { gatedEcosystems, gatedVersionIds, selfHostedDisabledEcosystems, disabledWorkflows } =
-    useGenerationConfig();
+  const { selfHostedDisabledEcosystems, selfHostedMode, gateRules } = useGenerationConfig();
   const { registerResourceId, unregisterResourceId } = useResourceDataContext();
 
   const isModerator = !!currentUser?.isModerator;
@@ -274,10 +273,9 @@ function InnerProvider({
         tier: status.tier,
       },
       flags: featureFlags,
-      gatedEcosystems,
-      gatedVersionIds,
       selfHostedDisabledEcosystems,
-      disabledWorkflows,
+      selfHostedMode,
+      gateRules,
     }),
     [
       status.limits.quantity,
@@ -285,10 +283,9 @@ function InnerProvider({
       status.tier,
       isModerator,
       featureFlags,
-      gatedEcosystems,
-      gatedVersionIds,
       selfHostedDisabledEcosystems,
-      disabledWorkflows,
+      selfHostedMode,
+      gateRules,
     ]
   );
 
