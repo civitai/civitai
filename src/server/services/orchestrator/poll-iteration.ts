@@ -6,6 +6,7 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
+import { sanitizeProviderError } from '~/server/services/orchestrator/orchestration-new.service';
 
 /**
  * Translate the orchestrator's string nsfwLevel ("pg", "pg13", "r", ...)
@@ -43,8 +44,7 @@ async function downloadAndUploadImage(
 ): Promise<{ s3Key: string; imageId: number } | null> {
   try {
     const imageResponse = await fetch(imageUrl);
-    if (!imageResponse.ok)
-      throw new Error(`Failed to download: ${imageResponse.status}`);
+    if (!imageResponse.ok) throw new Error(`Failed to download: ${imageResponse.status}`);
     const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
 
     const s3Key = randomUUID();
@@ -166,6 +166,47 @@ export async function pollIterationWorkflow({
     };
   }
 
+  // Extract and sanitize worker errors if any
+  const errors: string[] = [];
+  if (firstStep) {
+    if (firstStep.output) {
+      if (Array.isArray(firstStep.output.errors)) {
+        errors.push(...firstStep.output.errors.map(String));
+      }
+      if (typeof firstStep.output.message === 'string') {
+        errors.push(firstStep.output.message);
+      }
+    }
+    if (firstStep.jobs) {
+      for (const job of firstStep.jobs) {
+        if (job.status === 'failed') {
+          const reason = job.reason || job.error || job.message;
+          if (reason && typeof reason === 'string' && !errors.includes(reason)) {
+            errors.push(reason);
+          }
+        }
+      }
+    }
+    if (firstStep.metadata) {
+      const metaError = firstStep.metadata.error || firstStep.metadata.errors;
+      if (typeof metaError === 'string' && !errors.includes(metaError)) {
+        errors.push(metaError);
+      } else if (Array.isArray(metaError)) {
+        for (const err of metaError) {
+          const errStr = String(err);
+          if (errStr && !errors.includes(errStr)) {
+            errors.push(errStr);
+          }
+        }
+      }
+    }
+  }
+
+  const engine = (firstStep?.metadata?.params as any)?.engine ?? (firstStep?.input as any)?.engine;
+
+  const sanitizedErrors = errors.map((msg) => sanitizeProviderError(msg, engine));
+  const extractedErrorMessage = sanitizedErrors.length > 0 ? sanitizedErrors.join('\n') : undefined;
+
   // Hard failure: workflow itself terminated without success.
   if (
     workflowStatus === 'failed' ||
@@ -176,7 +217,7 @@ export async function pollIterationWorkflow({
       status: 'failed' as const,
       imageUrl: null,
       images: [],
-      errorMessage: blockedReasonToMessage(blockedReason),
+      errorMessage: blockedReasonToMessage(blockedReason) ?? extractedErrorMessage,
     };
   }
 
@@ -189,7 +230,7 @@ export async function pollIterationWorkflow({
       status: 'failed' as const,
       imageUrl: null,
       images: [],
-      errorMessage: blockedReasonToMessage(blockedReason),
+      errorMessage: blockedReasonToMessage(blockedReason) ?? extractedErrorMessage,
     };
   }
 

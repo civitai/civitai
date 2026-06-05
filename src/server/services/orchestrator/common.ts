@@ -76,7 +76,10 @@ import type {
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  formatGenerationResponse2,
+  sanitizeProviderError,
+} from '~/server/services/orchestrator/orchestration-new.service';
 
 type WorkflowStepAggregate =
   | ComfyStep
@@ -794,9 +797,7 @@ function normalizeOutput(
     case 'videoGen': {
       // LTX 2.3 batches multiple videos in a single job — primary in `video`,
       // remainder in `additionalVideos` (each slot uses Seed + slotIndex).
-      const primary = step.output?.video
-        ? [{ ...step.output.video, type: 'video' as const }]
-        : [];
+      const primary = step.output?.video ? [{ ...step.output.video, type: 'video' as const }] : [];
       const additional =
         step.output?.additionalVideos?.map((v) => ({ ...v, type: 'video' as const })) ?? [];
       const all = [...primary, ...additional];
@@ -942,17 +943,48 @@ function formatWorkflowStepOutput({
       duration: 'duration' in item ? (item as AudioBlob).duration : undefined,
     };
   });
-  const errors: string[] = [];
+  const rawErrors: string[] = [];
   if (step.output) {
-    if ('errors' in step.output && step.output.errors) errors.push(...step.output.errors);
+    if ('errors' in step.output && Array.isArray(step.output.errors)) {
+      rawErrors.push(...step.output.errors.map(String));
+    }
     if (
       'externalTOSViolation' in step.output &&
       'message' in step.output &&
       typeof step.output.message === 'string'
-    )
-      errors.push(step.output.message);
+    ) {
+      rawErrors.push(step.output.message);
+    }
   }
-  // const errors = step.output && 'errors' in step.output ? step.output.errors : undefined;
+
+  if (step.jobs) {
+    for (const job of step.jobs) {
+      if (job.status === 'failed') {
+        const reason = (job as any).reason || (job as any).error || (job as any).message;
+        if (reason && typeof reason === 'string' && !rawErrors.includes(reason)) {
+          rawErrors.push(reason);
+        }
+      }
+    }
+  }
+
+  if (step.metadata) {
+    const metaError = (step.metadata as any).error || (step.metadata as any).errors;
+    if (typeof metaError === 'string' && !rawErrors.includes(metaError)) {
+      rawErrors.push(metaError);
+    } else if (Array.isArray(metaError)) {
+      for (const err of metaError) {
+        const errStr = String(err);
+        if (errStr && !rawErrors.includes(errStr)) {
+          rawErrors.push(errStr);
+        }
+      }
+    }
+  }
+
+  const engine = (step.metadata?.params as any)?.engine ?? (step.input as any)?.engine;
+
+  const errors = rawErrors.map((msg) => sanitizeProviderError(msg, engine));
 
   return {
     images,

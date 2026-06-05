@@ -61,8 +61,9 @@ vi.mock('@civitai/client', () => ({
 const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   TIER_METADATA_KEY: 'tier',
   BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
-  LOGGING: '',
+  LOGGING: [],
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
+  DATABASE_REPLICA_URL: 'postgres://user:pass@localhost:5432/db',
   NOTIFICATION_DB_URL: 'postgres://user:pass@localhost:5432/notif',
   DATABASE_SSL: false,
   DATABASE_POOL_MAX: 10,
@@ -84,12 +85,14 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   S3_UPLOAD_SECRET: 'test-secret',
   S3_IMAGE_UPLOAD_KEY: 'test-key',
   S3_IMAGE_UPLOAD_SECRET: 'test-secret',
+  MEILI_CALL_CONCURRENCY: 10,
 };
 
 vi.mock('~/env/server', () => ({
   env: new Proxy(TEST_ENV_DEFAULTS, {
     get(target, prop: string) {
       if (prop in target) return target[prop];
+      if (prop.endsWith('_CONCURRENCY')) return 10;
       // Anything else: return undefined (matches missing optional env vars).
       return undefined;
     },
@@ -100,6 +103,10 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/prom/client', () => ({
   registerCounter: vi.fn(() => ({ inc: vi.fn() })),
   registerCounterWithLabels: vi.fn(() => ({ inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) })),
+  registerGauge: vi.fn(() => ({ set: vi.fn() })),
+  registerGaugeWithLabels: vi.fn(() => ({ set: vi.fn(), labels: vi.fn(() => ({ set: vi.fn() })) })),
+  registerHistogram: vi.fn(() => ({ observe: vi.fn() })),
+  registerHistogramWithLabels: vi.fn(() => ({ observe: vi.fn(), labels: vi.fn(() => ({ observe: vi.fn() })) })),
   missingSignedAtCounter: { inc: vi.fn() },
   newUserCounter: { inc: vi.fn() },
   loginCounter: { inc: vi.fn() },
