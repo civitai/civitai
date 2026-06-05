@@ -1,8 +1,8 @@
-// middleware.ts
+// proxy.ts (Next 16 renamed the `middleware` file convention to `proxy`)
 import type { NextRequest } from 'next/server';
 import { runMiddlewares } from '~/server/middleware';
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   return runMiddlewares(request);
 }
 
