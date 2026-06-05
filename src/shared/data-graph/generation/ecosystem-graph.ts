@@ -30,6 +30,13 @@ import {
 } from './config';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
+import {
+  pickStrongerGate,
+  rulesToStates,
+  type GateItemState,
+  type GateResolution,
+  type GateState,
+} from './gates';
 import { quantityNode, enhancedCompatibilityNode } from './common';
 import { fluxGraph } from './flux-graph';
 import { stableDiffusionGraph } from './stable-diffusion-graph';
@@ -111,26 +118,54 @@ function getValidEcosystemForWorkflow(workflowId: string, currentValue?: string)
 // Ecosystem Graph
 // =============================================================================
 
+type EcosystemGateExt = Pick<
+  GenerationCtx,
+  'selfHostedDisabledEcosystems' | 'selfHostedMode' | 'gateRules'
+>;
+
 /**
- * Workflow-compatible ecosystem keys, split into the visible list and the
- * self-hosted-disabled subset (still visible, shown-but-disabled). Shared by
- * the ecosystem node factory (schemas/defaultValue) and its `meta` function so
- * they never diverge. Reads gating from `ext`, which is populated async by
+ * Resolve the unified gate state for the workflow's ecosystems. Folds the gate
+ * sources — the self-hosted toggle (disable / memberOnly) and the rules model
+ * (`gateRules`, which can also hide) — into one per-ecosystem `GateState` via
+ * `pickStrongerGate`, then splits by what the picker needs:
+ *   - `compatibleEcosystems` — workflow-compatible, minus hidden.
+ *   - `hiddenEcosystems` — every hidden key, so the "All" search can drop them
+ *     too (not just the compatible list).
+ *   - `ecosystemStates` — compatible keys that are shown-but-disabled, each with
+ *     its state (`disabled`/`memberOnly`) + optional message.
+ *
+ * Shared by the node factory (schemas/defaultValue) and its `meta` function so
+ * they never diverge. Reads gating from `ext`, populated async by
  * `getGenerationConfig` — hence `meta` must call this on every `setExt`.
  */
-function getEcosystemLists(
+function getEcosystemStates(
   workflow: string,
-  ext: Pick<GenerationCtx, 'gatedEcosystems' | 'selfHostedDisabledEcosystems'>
-): { compatibleEcosystems: string[]; disabledEcosystems: string[] } {
-  const gated = ext.gatedEcosystems;
-  const selfHostedDisabled = ext.selfHostedDisabledEcosystems;
+  ext: EcosystemGateExt
+): {
+  compatibleEcosystems: string[];
+  hiddenEcosystems: string[];
+  ecosystemStates: GateItemState[];
+} {
+  const states = new Map<string, GateResolution>();
+  const selfHostedState: GateState =
+    ext.selfHostedMode === 'memberOnly' ? 'memberOnly' : 'disabled';
+  for (const key of ext.selfHostedDisabledEcosystems ?? [])
+    states.set(key, pickStrongerGate(states.get(key), { state: selfHostedState }));
+  for (const [key, res] of rulesToStates(ext.gateRules ?? []).ecosystems)
+    states.set(key, pickStrongerGate(states.get(key), res));
+
+  const hiddenEcosystems = [...states].filter(([, r]) => r.state === 'hidden').map(([key]) => key);
+  const hiddenSet = new Set(hiddenEcosystems);
   const compatibleEcosystems = getEcosystemsForWorkflow(workflow)
     .map((id) => ecosystemById.get(id)?.key)
-    .filter((key): key is string => !!key && !gated?.includes(key));
-  const disabledEcosystems = selfHostedDisabled?.length
-    ? compatibleEcosystems.filter((key) => selfHostedDisabled.includes(key))
-    : [];
-  return { compatibleEcosystems, disabledEcosystems };
+    .filter((key): key is string => !!key && !hiddenSet.has(key));
+  const compatibleSet = new Set(compatibleEcosystems);
+
+  const ecosystemStates = [...states]
+    .filter(([key, r]) => r.state !== 'hidden' && compatibleSet.has(key))
+    .map(([key, r]) => ({ key, state: r.state as 'disabled' | 'memberOnly', message: r.message }));
+
+  return { compatibleEcosystems, hiddenEcosystems, ecosystemStates };
 }
 
 export const ecosystemGraph = new DataGraph<
@@ -141,26 +176,30 @@ export const ecosystemGraph = new DataGraph<
   .node(
     'ecosystem',
     (ctx, ext) => {
-      // Get ecosystems compatible with the selected workflow (as IDs, convert to keys),
-      // then drop any keys gated for the current user. Server enforces the same
-      // gate via getResourceCanGenerate, but filtering here keeps the UI honest
-      // and prevents validated submissions from referencing a gated ecosystem.
+      // Resolve the unified gate state for the workflow's ecosystems (legacy
+      // gated + self-hosted toggle + rules model, merged). Server enforces the
+      // same gate via `buildGenerationContext`, but resolving here keeps the UI
+      // honest and prevents validated submissions referencing a gated ecosystem.
       // Compute against the factory-time ext for the input/output schemas and
       // default value. NOTE: the node factory only re-runs on its deps
       // (`workflow`/`output`), not on async `ext` changes — so `meta` below is
       // a FUNCTION, which `_updateAllMeta` re-invokes with the live ext whenever
       // `setExt` fires (e.g. when `getGenerationConfig` resolves). Keep the
-      // disabled/gated derivation in a shared helper so both stay in sync.
-      const { compatibleEcosystems, disabledEcosystems } = getEcosystemLists(ctx.workflow, ext);
-      const gated = ext.gatedEcosystems;
-      // Default ecosystem by output type — prefer the type-default, but skip
-      // gated (already filtered out) and self-hosted-disabled ecosystems so a
-      // fresh form doesn't land on an unusable selection. Fall through to the
-      // first usable, then any compatible, then SDXL.
+      // derivation in a shared helper so both stay in sync.
+      const { compatibleEcosystems, hiddenEcosystems, ecosystemStates } = getEcosystemStates(
+        ctx.workflow,
+        ext
+      );
+      const hiddenSet = new Set(hiddenEcosystems);
+      const disabledSet = new Set(ecosystemStates.map((e) => e.key));
+      // Default ecosystem by output type — prefer the type-default, but skip any
+      // gated ecosystem (hidden already filtered out, plus disabled/memberOnly)
+      // so a fresh form doesn't land on an unusable selection. Fall through to
+      // the first usable, then any compatible, then SDXL.
       const outputDefault =
         ctx.output === 'audio' ? 'Ace' : ctx.output === 'video' ? 'Kling' : 'ZImageTurbo';
-      const usableEcosystems = disabledEcosystems.length
-        ? compatibleEcosystems.filter((key) => !disabledEcosystems.includes(key))
+      const usableEcosystems = disabledSet.size
+        ? compatibleEcosystems.filter((key) => !disabledSet.has(key))
         : compatibleEcosystems;
       const defaultValue = usableEcosystems.includes(outputDefault)
         ? outputDefault
@@ -172,26 +211,27 @@ export const ecosystemGraph = new DataGraph<
           .optional()
           .transform((v) => {
             if (!v) return undefined;
-            // Drop gated values at the input boundary so a stale stored ecosystem
+            // Drop hidden values at the input boundary so a stale stored ecosystem
             // (e.g. localStorage from before it was gated) falls back to default.
-            // Self-hosted-disabled values are intentionally kept so the picker can
+            // Disabled/memberOnly values are intentionally kept so the picker can
             // show them disabled and the alert can explain why.
-            if (gated?.includes(v)) return undefined;
+            if (hiddenSet.has(v)) return undefined;
             return v;
           }),
         output:
-          gated?.length || disabledEcosystems.length
-            ? z.string().refine((v) => !gated?.includes(v) && !disabledEcosystems.includes(v), {
+          hiddenSet.size || disabledSet.size
+            ? z.string().refine((v) => !hiddenSet.has(v) && !disabledSet.has(v), {
                 message: 'Ecosystem is currently unavailable',
               })
             : z.string(),
         defaultValue,
         // Function form so meta tracks live `ext` (async config) — see note above.
         meta: (metaCtx, metaExt) => {
-          const lists = getEcosystemLists(metaCtx.workflow, metaExt);
+          const lists = getEcosystemStates(metaCtx.workflow, metaExt);
           return {
             compatibleEcosystems: lists.compatibleEcosystems,
-            disabledEcosystems: lists.disabledEcosystems,
+            hiddenEcosystems: lists.hiddenEcosystems,
+            ecosystemStates: lists.ecosystemStates,
             mediaType: metaCtx.output, // 'image' or 'video'
           };
         },

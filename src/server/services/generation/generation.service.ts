@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
+import { z } from 'zod';
 import type { SessionUser } from 'next-auth';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
@@ -49,6 +50,12 @@ import {
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import type { GenerationResource } from '~/shared/types/generation.types';
 
+import {
+  applicableRulesFor,
+  gateRuleSchema,
+  rulesToStates,
+  type GateRule,
+} from '~/shared/data-graph/generation/gates';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
@@ -67,8 +74,11 @@ import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/gen
 import type {
   GenerationEcosystemConfig,
   GenerationEcosystemContext,
-} from '~/server/common/constants';
-import { DEFAULT_GENERATION_ECOSYSTEM_CONFIG } from '~/server/common/constants';
+} from '~/server/schema/generation.schema';
+import {
+  DEFAULT_GENERATION_ECOSYSTEM_CONFIG,
+  generationEcosystemConfigSchema,
+} from '~/server/schema/generation.schema';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   getBaseModelEngine,
@@ -700,17 +710,17 @@ export async function getUnstableResources() {
 }
 
 /**
- * Loads the operator-set ecosystem gating config from Redis and resolves
- * the `generation-testing` Flipt flag for the given user in parallel,
- * returning the combined context that gets passed to `getResourceCanGenerate`.
+ * Loads the operator-set ecosystem config (now just `experimentalEcosystems` —
+ * an alert flag, not a gate) from Redis and resolves the `generation-testing`
+ * Flipt flag for the given user in parallel. `hasTestingAccess` is still needed
+ * to resolve the `testers` tier of the gate rules.
  *
  * Mods are always treated as having testing access. Pass an empty user
  * object for unauthenticated/anonymous calls — `hasTestingAccess` will be
  * `false`.
  */
 export async function getGenerationEcosystemConfig(
-  user: { id?: number; isModerator?: boolean } = {},
-  opts: { isGreen?: boolean } = {}
+  user: { id?: number; isModerator?: boolean } = {}
 ): Promise<GenerationEcosystemContext> {
   const [cached, hasTestingAccess] = await Promise.all([
     sysRedis
@@ -720,14 +730,12 @@ export async function getGenerationEcosystemConfig(
     resolveTestingAccess(user),
   ]);
 
-  // Spread defaults so legacy Redis values without the new fields stay valid.
-  // `isGreen` is left undefined when omitted so the NSFW gate is skipped for
-  // callers that aren't surfacing resources through the user-facing generator.
+  // Parse fills any missing fields with their schema defaults; on a corrupt
+  // value fall back to the default (fail-open).
+  const parsed = generationEcosystemConfigSchema.safeParse(cached ?? {});
   return {
-    ...DEFAULT_GENERATION_ECOSYSTEM_CONFIG,
-    ...(cached ?? {}),
+    ...(parsed.success ? parsed.data : DEFAULT_GENERATION_ECOSYSTEM_CONFIG),
     hasTestingAccess,
-    isGreen: opts.isGreen,
   };
 }
 
@@ -754,6 +762,30 @@ export async function setGenerationEcosystemConfig(input: GenerationEcosystemCon
   return input;
 }
 
+const gateRulesArraySchema = z.array(gateRuleSchema);
+
+/**
+ * The operator-authored gate rules (the normalized "rules" model). Stored as a
+ * single JSON array under `generation:gate-rules`; starts empty and coexists
+ * with the legacy `generation:ecosystem-config` lists + self-hosted toggle.
+ * Fail-open to `[]` so a bad/missing value never blocks generation.
+ */
+export async function getGateRules(): Promise<GateRule[]> {
+  const cached = await sysRedis
+    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules')
+    .then((data) => (data ? fromJson<GateRule[]>(data) : null))
+    .catch(() => null);
+  const parsed = gateRulesArraySchema.safeParse(cached ?? []);
+  return parsed.success ? parsed.data : [];
+}
+
+/** Persists the full gate-rules array. The mod UI is the single source of truth. */
+export async function setGateRules(rules: GateRule[]): Promise<GateRule[]> {
+  const parsed = gateRulesArraySchema.parse(rules);
+  await sysRedis.hSet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules', toJson(parsed));
+  return parsed;
+}
+
 export type GenerationConfig = {
   unstableResources: number[];
   /**
@@ -763,25 +795,9 @@ export type GenerationConfig = {
    */
   experimentalEcosystems: string[];
   /**
-   * Ecosystem keys hidden from the current user — already filtered to what
-   * this user shouldn't see (`disabledEcosystems` for everyone, plus
-   * `modOnlyEcosystems` for non-mods and `testingEcosystems` for users
-   * without testing access). Server-resolved so the granular lists and the
-   * Flipt evaluation never leave the server.
-   */
-  gatedEcosystems: string[];
-  /**
-   * Model version IDs hidden from the current user — same per-user
-   * resolution as `gatedEcosystems`, but for ID-level overrides which take
-   * precedence over ecosystem-level rules. Server still enforces the same
-   * gate in `getResourceCanGenerate`.
-   */
-  gatedVersionIds: number[];
-  /**
    * Self-hosted ecosystem keys disabled FOR THIS USER, resolved against the
-   * `selfHostedMode` toggle + the user's membership/mod status. Unlike
-   * `gatedEcosystems` (which are hidden), these are shown-but-disabled in the
-   * picker. Empty when self-hosted generation is enabled for the user.
+   * `selfHostedMode` toggle + the user's membership/mod status. Shown-but-disabled
+   * in the picker. Empty when self-hosted generation is enabled for the user.
    */
   selfHostedDisabledEcosystems: string[];
   /**
@@ -790,11 +806,12 @@ export type GenerationConfig = {
    */
   selfHostedMode: GenerationStatusMode;
   /**
-   * Workflow keys disabled by the operator — same list for everyone (no
-   * per-user resolution). The workflow picker shows a "Disabled" badge on
-   * these and the graph rejects them on submit.
+   * The gate rules that apply to THIS user (already audience-filtered server
+   * side). Ride into `GenerationCtx` so the graph nodes resolve them to per-item
+   * `hidden`/`disabled`/`memberOnly` states — the audience logic never leaves
+   * the server.
    */
-  disabledWorkflows: string[];
+  gateRules: GateRule[];
 };
 
 /**
@@ -822,65 +839,36 @@ export function getSelfHostedDisabledEcosystems({
 }
 
 /**
- * Resolves the operator-controlled gating to per-user lists. Folds in the
- * `hasTestingAccess` Flipt evaluation so callers (the public API endpoint
- * and `buildGenerationContext`) get a single source of truth and clients
- * never see the granular `modOnly*` / `testing*` lists.
- */
-export async function getGatedListsForUser(
-  user: { id?: number; isModerator?: boolean } = {},
-  opts: { isGreen?: boolean } = {}
-): Promise<{ gatedEcosystems: string[]; gatedVersionIds: number[]; disabledWorkflows: string[] }> {
-  const config = await getGenerationEcosystemConfig(user, opts);
-  const isModerator = !!user.isModerator;
-
-  const gatedEcosystems = [...config.disabledEcosystems];
-  if (!isModerator) gatedEcosystems.push(...config.modOnlyEcosystems);
-  if (!config.hasTestingAccess) gatedEcosystems.push(...config.testingEcosystems);
-
-  const gatedVersionIds = [...config.disabledIds];
-  if (!isModerator) gatedVersionIds.push(...config.modOnlyIds);
-  if (!config.hasTestingAccess) gatedVersionIds.push(...config.testingIds);
-  // Only gate NSFW IDs when the caller explicitly signaled isGreen. Omitted
-  // means "not in a green-domain UI context" — leave nsfwIds available.
-  if (config.isGreen === true) gatedVersionIds.push(...config.nsfwIds);
-
-  // disabledWorkflows is a global operator list (not per-user resolved); passed
-  // through here so `buildGenerationContext` and `getGenerationConfig` share one
-  // Redis read.
-  return { gatedEcosystems, gatedVersionIds, disabledWorkflows: config.disabledWorkflows };
-}
-
-/**
- * Composed config returned to clients in a single round-trip. Bundles
- * unstable resources (set programmatically by the
- * `resource-gen-availability` cron) with the per-user resolved gating
- * lists, so the generator only needs one query to get everything it
- * needs to filter the UI.
+ * Composed config returned to clients in a single round-trip. Bundles unstable
+ * resources (set by the `resource-gen-availability` cron), the experimental-
+ * ecosystem alert list, the self-hosted toggle state, and the user's applicable
+ * gate rules — everything the generator UI needs in one query.
  */
 export async function getGenerationConfig(
-  user: { id?: number; isModerator?: boolean; tier?: string } = {},
-  opts: { isGreen?: boolean } = {}
+  user: { id?: number; isModerator?: boolean; tier?: string } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, ecosystemConfig, gated, status] = await Promise.all([
+  const [unstableResources, ecosystemConfig, status, gateRules] = await Promise.all([
     getUnstableResources(),
-    getGenerationEcosystemConfig(user, opts),
-    getGatedListsForUser(user, opts),
+    getGenerationEcosystemConfig(user),
     getGenerationStatus(),
+    getGateRules(),
   ]);
   const selfHostedMode = status.selfHostedMode;
+  const isMember = (user.tier ?? 'free') !== 'free';
   return {
     unstableResources,
     experimentalEcosystems: ecosystemConfig.experimentalEcosystems,
-    gatedEcosystems: gated.gatedEcosystems,
-    gatedVersionIds: gated.gatedVersionIds,
     selfHostedMode,
     selfHostedDisabledEcosystems: getSelfHostedDisabledEcosystems({
       selfHostedMode,
-      isMember: (user.tier ?? 'free') !== 'free',
+      isMember,
       isModerator: user.isModerator,
     }),
-    disabledWorkflows: gated.disabledWorkflows,
+    gateRules: applicableRulesFor(gateRules, {
+      isModerator: !!user.isModerator,
+      isMember,
+      hasTestingAccess: ecosystemConfig.hasTestingAccess,
+    }),
   };
 }
 
@@ -952,36 +940,34 @@ export async function getShouldChargeForResources(
 const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
+/** The `hidden` gate targets for the site-wide `canGenerate` check. */
+export type CanGenerateHiddenGates = { ecosystems: Set<string>; versionIds: Set<number> };
+
 /**
- * Resolves the gating state for a resource: `disabled`, `modOnly`,
- * `testing`, or `enabled`. Model version ID rules override ecosystem-level
- * rules so a single version can be flipped without changing the ecosystem.
- *
- * Returned `enabled` does not necessarily mean the user can generate — the
- * caller still applies coverage / status / private checks separately.
+ * Resolve the ecosystems / version IDs the gate rules HIDE for this user — the
+ * only state that hard-blocks `canGenerate` (disabled / members-only are
+ * generator-UI affordances, not a site-wide block). Membership is intentionally
+ * ignored here (no tier lookup): `isMember: true` drops member-restricted rules,
+ * leaving the moderator / tester / kill-switch / hidden rules, which need only
+ * the (already-resolved) testing-access flag + mod status.
  */
-function getResourceGatingState({
-  resourceId,
-  ecosystemKey,
-  ecosystemConfig,
-}: {
-  resourceId: number;
-  ecosystemKey: string | undefined;
-  ecosystemConfig: GenerationEcosystemConfig;
-}): 'disabled' | 'modOnly' | 'testing' | 'nsfw' | 'enabled' {
-  // ID-level rules override ecosystem-level rules.
-  if (ecosystemConfig.disabledIds.includes(resourceId)) return 'disabled';
-  if (ecosystemConfig.modOnlyIds.includes(resourceId)) return 'modOnly';
-  if (ecosystemConfig.testingIds.includes(resourceId)) return 'testing';
-  if (ecosystemConfig.nsfwIds.includes(resourceId)) return 'nsfw';
-
-  if (ecosystemKey) {
-    if (ecosystemConfig.disabledEcosystems.includes(ecosystemKey)) return 'disabled';
-    if (ecosystemConfig.modOnlyEcosystems.includes(ecosystemKey)) return 'modOnly';
-    if (ecosystemConfig.testingEcosystems.includes(ecosystemKey)) return 'testing';
-  }
-
-  return 'enabled';
+export async function getCanGenerateHiddenGates(user: {
+  id?: number;
+  isModerator?: boolean;
+}): Promise<CanGenerateHiddenGates> {
+  const [rules, hasTestingAccess] = await Promise.all([getGateRules(), resolveTestingAccess(user)]);
+  const states = rulesToStates(
+    applicableRulesFor(rules, {
+      isModerator: !!user.isModerator,
+      isMember: true,
+      hasTestingAccess,
+    })
+  );
+  const ecosystems = new Set<string>();
+  for (const [key, r] of states.ecosystems) if (r.state === 'hidden') ecosystems.add(key);
+  const versionIds = new Set<number>();
+  for (const [id, r] of states.modelVersionIds) if (r.state === 'hidden') versionIds.add(id);
+  return { ecosystems, versionIds };
 }
 
 /**
@@ -993,7 +979,7 @@ export function getResourceCanGenerate({
   resource,
   user,
   unavailableResources,
-  ecosystemConfig,
+  hiddenGates,
 }: {
   resource: {
     id: number;
@@ -1006,7 +992,7 @@ export function getResourceCanGenerate({
   };
   user: { id?: number; isModerator?: boolean };
   unavailableResources: number[];
-  ecosystemConfig: GenerationEcosystemContext;
+  hiddenGates: CanGenerateHiddenGates;
 }): boolean {
   const isUnavailable = unavailableResources.includes(resource.id);
   const isOwnedByUser = !!user.id && user.id === resource.modelUserId;
@@ -1031,19 +1017,10 @@ export function getResourceCanGenerate({
   if (canGenerate) {
     const baseModel = baseModelByName.get(resource.baseModel);
     const ecosystemKey = baseModel ? ecosystemById.get(baseModel.ecosystemId)?.key : undefined;
-    const state = getResourceGatingState({
-      resourceId: resource.id,
-      ecosystemKey,
-      ecosystemConfig,
-    });
-
-    if (state === 'disabled') {
-      canGenerate = false;
-    } else if (state === 'modOnly' && !user.isModerator) {
-      canGenerate = false;
-    } else if (state === 'testing' && !ecosystemConfig.hasTestingAccess) {
-      canGenerate = false;
-    } else if (state === 'nsfw' && ecosystemConfig.isGreen === true) {
+    if (
+      hiddenGates.versionIds.has(resource.id) ||
+      (ecosystemKey && hiddenGates.ecosystems.has(ecosystemKey))
+    ) {
       canGenerate = false;
     }
   }
@@ -1106,14 +1083,13 @@ export async function resolveCanGenerateForVersions(
     : [];
 
   const needsStandardGate = versions.some((v) => v.modelType !== 'Wildcards');
-  const [visibleWildcardSetIdByVersionId, unavailableResources, ecosystemConfig] =
-    await Promise.all([
-      getVisibleSystemWildcardSetIdsByVersionId(wildcardVersionIds, { sfwOnly: ctx.sfwOnly }),
-      needsStandardGate ? getUnavailableResources() : Promise.resolve<number[]>([]),
-      needsStandardGate
-        ? getGenerationEcosystemConfig(ctx.user, { isGreen: ctx.sfwOnly })
-        : Promise.resolve<GenerationEcosystemContext | null>(null),
-    ]);
+  const [visibleWildcardSetIdByVersionId, unavailableResources, hiddenGates] = await Promise.all([
+    getVisibleSystemWildcardSetIdsByVersionId(wildcardVersionIds, { sfwOnly: ctx.sfwOnly }),
+    needsStandardGate ? getUnavailableResources() : Promise.resolve<number[]>([]),
+    needsStandardGate
+      ? getCanGenerateHiddenGates(ctx.user)
+      : Promise.resolve<CanGenerateHiddenGates>({ ecosystems: new Set(), versionIds: new Set() }),
+  ]);
 
   // Generation alias (Option B): evaluate a cover version using its target's
   // gate fields while keeping the result keyed to the cover id, so the Create
@@ -1149,7 +1125,7 @@ export async function resolveCanGenerateForVersions(
           },
           user: ctx.user,
           unavailableResources,
-          ecosystemConfig: ecosystemConfig as GenerationEcosystemContext,
+          hiddenGates,
         }) && isBaseModelGenerationSupported(gate.baseModel, gate.modelType);
       result.set(key, { canGenerate });
     }
@@ -1179,9 +1155,7 @@ export async function getResourceData(
 
   const unavailableResources = await getUnavailableResources();
   const featuredModels = await getFeaturedModels();
-  // sfwOnly is set upstream from ctx.features.isGreen, so reuse it as the
-  // isGreen signal for the nsfwIds gate inside getResourceCanGenerate.
-  const ecosystemConfig = await getGenerationEcosystemConfig(user, { isGreen: sfwOnly });
+  const hiddenGates = await getCanGenerateHiddenGates(user);
 
   function transformGenerationData(
     { settings, ...item }: GenerationResourceDataModel,
@@ -1204,7 +1178,7 @@ export async function getResourceData(
       },
       user,
       unavailableResources,
-      ecosystemConfig,
+      hiddenGates,
     });
 
     if (!canGenerate) {

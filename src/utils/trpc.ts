@@ -127,7 +127,11 @@ const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
   return ({ next, op }) => {
     const isAuthed = typeof window !== 'undefined' ? window.isAuthed : false;
     const authed = removeEmpty({ authed: isAuthed || undefined });
-    const input = { ...(op.input as any), ...authed };
+    // Spreading into an ARRAY input would turn `[x]` into `{ 0: x, authed: true }`
+    // and corrupt it (e.g. a mutation typed `z.array(...)`), so array inputs pass
+    // through untouched — they just don't get the authed cache-key (fine:
+    // mutations aren't cached). Object/undefined inputs keep the existing merge.
+    const input = Array.isArray(op.input) ? op.input : { ...(op.input as any), ...authed };
 
     return next({ ...op, input });
   };
