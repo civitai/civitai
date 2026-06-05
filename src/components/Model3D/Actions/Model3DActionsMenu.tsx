@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Badge,
   Button,
   Checkbox,
@@ -15,8 +16,6 @@ import {
   IconArchive,
   IconDotsVertical,
   IconFlag,
-  IconLock,
-  IconLockOpen,
   IconPencil,
   IconPhotoShield,
   IconRestore,
@@ -41,8 +40,6 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-
-type ToggleableFlag = 'tosViolation' | 'poi' | 'minor' | 'nsfw' | 'unlisted';
 
 export type Model3DActionsMenuModel = {
   id: number;
@@ -156,13 +153,6 @@ export function Model3DActionsMenu({
     },
     onError: onError('restore'),
   });
-  const toggleFlagMutation = trpc.model3d.moderation.toggleFlag.useMutation({
-    onSuccess: async (_data, vars) => {
-      showSuccessNotification({ message: `Toggled "${vars.field}"` });
-      await invalidate();
-    },
-    onError: onError('toggle flag'),
-  });
   const setNsfwLevelMutation = trpc.model3d.moderation.setNsfwLevel.useMutation({
     onSuccess: async () => {
       showSuccessNotification({ message: 'NSFW level updated' });
@@ -218,14 +208,6 @@ export function Model3DActionsMenu({
       onConfirm: () => deleteMutation.mutate({ id: model3d.id }),
     });
 
-  const flagRows: Array<{ field: ToggleableFlag; label: string; value: boolean }> = [
-    { field: 'nsfw', label: 'NSFW', value: model3d.nsfw },
-    { field: 'tosViolation', label: 'TOS Violation', value: model3d.tosViolation },
-    { field: 'poi', label: 'POI', value: model3d.poi },
-    { field: 'minor', label: 'Minor', value: model3d.minor },
-    { field: 'unlisted', label: 'Unlisted', value: model3d.unlisted },
-  ];
-
   return (
     <>
       <Menu
@@ -234,21 +216,43 @@ export function Model3DActionsMenu({
         withinPortal
       >
         <Menu.Target>
-          {/* Canonical pattern from src/pages/models/[id]/[[...slug]].tsx
-              — variant="light" with no color prop. The card surface uses
-              `triggerSize="sm"` and the wrapping span swallows the click so
-              the underlying card-as-link doesn't navigate. */}
-          <LegacyActionIcon
-            variant="light"
-            size={triggerSize}
-            aria-label="Model actions"
-            onClick={(e: React.MouseEvent) => {
-              e.stopPropagation();
-              e.preventDefault();
-            }}
-          >
-            <IconDotsVertical size={triggerSize === 'sm' ? 14 : 20} />
-          </LegacyActionIcon>
+          {/* Two trigger variants:
+              - `sm` (card surface) mirrors the card's preview-eye button
+                (`ActionIcon variant="filled" color="dark" radius="xl"`) so
+                the row of icon buttons in the card header reads as a single
+                visual group.
+              - `md`/`lg` (detail page header) keep the canonical
+                `LegacyActionIcon variant="light"` to match the Model detail
+                page dropdown (src/pages/models/[id]/[[...slug]].tsx).
+              In both cases we stop click propagation so the underlying
+              card-as-link doesn't navigate. */}
+          {triggerSize === 'sm' ? (
+            <ActionIcon
+              variant="filled"
+              color="dark"
+              radius="xl"
+              size="sm"
+              aria-label="Model actions"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+              }}
+            >
+              <IconDotsVertical size={14} stroke={2} />
+            </ActionIcon>
+          ) : (
+            <LegacyActionIcon
+              variant="light"
+              size={triggerSize}
+              aria-label="Model actions"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+              }}
+            >
+              <IconDotsVertical size={20} />
+            </LegacyActionIcon>
+          )}
         </Menu.Target>
         <Menu.Dropdown
           onClick={(e: React.MouseEvent) => {
@@ -368,40 +372,6 @@ export function Model3DActionsMenu({
               >
                 Set NSFW Level…
               </Menu.Item>
-
-              <Menu.Divider />
-
-              <Menu.Label>Toggle flags</Menu.Label>
-              {flagRows.map((row) => {
-                const locked = lockedSet.has(row.field);
-                return (
-                  <Menu.Item
-                    key={row.field}
-                    leftSection={
-                      locked ? (
-                        <IconLock size={14} stroke={1.5} />
-                      ) : (
-                        <IconLockOpen size={14} stroke={1.5} />
-                      )
-                    }
-                    rightSection={
-                      <Badge
-                        size="xs"
-                        color={row.value ? 'red' : 'gray'}
-                        variant={row.value ? 'filled' : 'light'}
-                      >
-                        {row.value ? 'on' : 'off'}
-                      </Badge>
-                    }
-                    onClick={() =>
-                      toggleFlagMutation.mutate({ id: model3d.id, field: row.field })
-                    }
-                    disabled={toggleFlagMutation.isLoading}
-                  >
-                    {row.label}
-                  </Menu.Item>
-                );
-              })}
             </>
           )}
 
