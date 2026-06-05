@@ -1,7 +1,7 @@
 // src/utils/trpc.ts
 import { QueryClient, type QueryClientConfig } from '@tanstack/react-query';
-import type { CreateTRPCProxyClient, TRPCLink } from '@trpc/client';
-import { createTRPCProxyClient, httpLink, loggerLink } from '@trpc/client';
+import type { CreateTRPCClient, TRPCLink } from '@trpc/client';
+import { createTRPCClient, httpLink, loggerLink, splitLink } from '@trpc/client';
 import type { CreateTRPCNext } from '@trpc/next';
 import { createTRPCNext } from '@trpc/next';
 import type { NextPageContext } from 'next';
@@ -21,44 +21,48 @@ type RequestHeaders = {
 const url = '/api/trpc';
 
 /**
- * Max URL length before we convert a GET query to POST.
- * Keeps total header size (URL + cookies) under typical proxy limits (~8KB).
+ * Approximate input-size threshold (serialized chars) above which a query is
+ * sent as POST instead of GET. Mirrors the old ~4000-char GET URL budget: the
+ * percent-encoded URL runs ~1.4x the raw input JSON, so ~2500 chars of input
+ * lands around the 4000-char URL limit where proxies / HTTP header limits start
+ * rejecting (HTTP 431).
  */
-const MAX_GET_URL_LENGTH = 4000;
+const MAX_QUERY_INPUT_LENGTH = 2500;
 
 /**
- * Custom fetch that converts large GET requests to POST with a method override
- * header. This prevents HTTP 431 (Request Header Fields Too Large) when query
- * inputs are large (e.g. whatIfFromGraph with many resources and long prompts).
- *
- * The server-side handler in `[trpc].ts` reads `x-trpc-method-override` and
- * translates the request back to GET so tRPC resolves it as a query — preserving
- * the full query cache on the client.
+ * Whether a query's input is large enough that carrying it in the URL as a GET
+ * would risk HTTP 431 (Request Header Fields Too Large) / proxy URL limits.
+ * Such queries are routed through tRPC's native `methodOverride: 'POST'`, which
+ * moves the input into the request body. Requires `allowMethodOverride: true`
+ * on the server adapter — see `src/pages/api/trpc/[trpc].ts`.
  */
-const largeFetch: typeof fetch = (input, init) => {
-  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : '';
-  if (init?.method === 'GET' && url.length > MAX_GET_URL_LENGTH) {
-    const [base, query] = url.split('?', 2);
-    const params = new URLSearchParams(query);
-    const body = params.get('input');
-    // Strip input from URL, keep other params (like batch=1)
-    params.delete('input');
-    const remaining = params.toString();
-    const newUrl = remaining ? `${base}?${remaining}` : base;
-
-    return fetch(newUrl, {
-      ...init,
-      method: 'POST',
-      body,
-      headers: {
-        ...(init?.headers as Record<string, string>),
-        'content-type': 'application/json',
-        'x-trpc-method-override': 'GET',
-      },
-    });
+function isLargeQuery(op: { type: string; input: unknown }) {
+  if (op.type !== 'query' || op.input == null) return false;
+  try {
+    return JSON.stringify(op.input).length > MAX_QUERY_INPUT_LENGTH;
+  } catch {
+    return false;
   }
-  return fetch(input, init);
-};
+}
+
+/**
+ * Terminating link: large queries go out as POST (body-carried input, not
+ * edge-cacheable), everything else stays a normal GET so the `responseMeta`
+ * Cache-Control headers in `[trpc].ts` can still edge-cache them.
+ */
+function httpLinkWithLargeQuerySupport({
+  url,
+  headers,
+}: {
+  url: string;
+  headers: ReturnType<typeof getHeaders>;
+}): TRPCLink<AppRouter> {
+  return splitLink({
+    condition: isLargeQuery,
+    true: httpLink({ transformer: superjson, url, methodOverride: 'POST', headers }),
+    false: httpLink({ transformer: superjson, url, headers }),
+  });
+}
 const headers: RequestHeaders = {
   'x-client-version': process.env.version,
   'x-client-date': Date.now().toString(),
@@ -139,8 +143,7 @@ function getHeaders(ctx?: NextPageContext) {
   };
 }
 
-export const trpcVanilla: CreateTRPCProxyClient<AppRouter> = createTRPCProxyClient<AppRouter>({
-  transformer: superjson,
+export const trpcVanilla: CreateTRPCClient<AppRouter> = createTRPCClient<AppRouter>({
   links: [
     authedCacheBypassLink,
     loggerLink({
@@ -148,15 +151,11 @@ export const trpcVanilla: CreateTRPCProxyClient<AppRouter> = createTRPCProxyClie
         (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
         (opts.direction === 'down' && opts.result instanceof Error),
     }),
-    httpLink({
-      url,
-      fetch: largeFetch,
-      headers: getHeaders(),
-    }),
+    httpLinkWithLargeQuerySupport({ url, headers: getHeaders() }),
   ],
 });
 
-export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPCNext<AppRouter>({
+export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<AppRouter>({
   config(opts) {
     const { ctx } = opts;
     const isClient = typeof window !== 'undefined';
@@ -172,7 +171,6 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPC
       // module-scope singleton accumulated 11,962 `Query` objects per pod
       // (heap snapshot, civitai-dp-prod, 2026-05-14).
       ...(isClient ? { queryClient: getBrowserQueryClient() } : { queryClientConfig }),
-      transformer: superjson,
       links: [
         authedCacheBypassLink,
         loggerLink({
@@ -180,9 +178,8 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPC
             (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
-        httpLink({
+        httpLinkWithLargeQuerySupport({
           url: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,
-          fetch: isClient ? largeFetch : undefined,
           headers: getHeaders(ctx),
         }),
         // splitLink({
@@ -197,6 +194,10 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPC
       ],
     };
   },
+  // v11: `createTRPCNext` requires the transformer at the top level of its options
+  // (WithTRPCOptions intersects TransformerOptions). The link carries it too for the
+  // actual wire (de)serialization.
+  transformer: superjson,
   ssr: false,
 });
 

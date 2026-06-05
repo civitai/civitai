@@ -3,10 +3,8 @@ import { IconInbox } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
-import {
-  matchesMarkerTags,
-  useGetTextToImageRequestsImages,
-} from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useGeneratedRequestsContext } from '~/components/ImageGeneration/GeneratedRequestsProvider';
+import { matchesMarkerTags } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { generationGraphPanel } from '~/store/generation-graph.store';
@@ -16,8 +14,15 @@ import classes from './Feed.module.scss';
 export function Feed() {
   const filters = useFiltersContext((state) => state.generation);
 
-  const { requests, markerTags, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
-    useGetTextToImageRequestsImages();
+  const {
+    data: requests,
+    markerTags,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isRefetching,
+    isError,
+  } = useGeneratedRequestsContext();
 
   const images = useMemo(
     () =>

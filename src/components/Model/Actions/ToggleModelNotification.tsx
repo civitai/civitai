@@ -62,7 +62,7 @@ export function ToggleModelNotification({
                 type: isOn ? ModelEngagementType.Mute : undefined,
               })
             }
-            loading={toggleNotifyModelMutation.isLoading}
+            loading={toggleNotifyModelMutation.isPending}
           >
             {isOn ? <IconBellCheck size={20} /> : <IconBellPlus size={20} />}
           </LegacyActionIcon>

@@ -122,6 +122,30 @@ export default defineNextConfig(
         '@tabler/icons-react',
         '@headlessui/react',
       ],
+      // Several entry points read markdown from src/static-content at runtime via
+      // fs (dynamic string paths that @vercel/nft can't trace). With
+      // output: 'standalone' the build only ships traced files, so without these
+      // explicit includes the markdown is missing in the deployed image and every
+      // read hits ENOENT -> 500/404 (works locally because the full source tree is
+      // present). Keyed by every entry point that performs the read:
+      //   /safety, /region-blocked          - direct fs read in getServerSideProps
+      //   /content/[[...slug]]               - content.get via SSG prefetch (SSR)
+      //   /api/trpc/[trpc]                   - content.get + checkTosUpdate (the
+      //                                        TOS check runs for every logged-in
+      //                                        user on every page)
+      //   /api/v1/content/[[...slug]]        - content.get via REST apiCaller
+      // In standalone mode the includes are unioned into the shared .next/standalone
+      // root, so any one key would suffice, but we list each read site explicitly so
+      // the fix survives a future move off standalone (per-function tracing).
+      // NOTE: on Next 14 this key lives under `experimental` (moved to top-level in
+      // Next 15) - placing it at the top level here is a silent no-op.
+      outputFileTracingIncludes: {
+        '/safety': ['./src/static-content/**/*'],
+        '/region-blocked': ['./src/static-content/**/*'],
+        '/content/[[...slug]]': ['./src/static-content/**/*'],
+        '/api/trpc/[trpc]': ['./src/static-content/**/*'],
+        '/api/v1/content/[[...slug]]': ['./src/static-content/**/*'],
+      },
     },
     headers: async () => {
       // Add X-Robots-Tag header to all pages matching /sitemap.xml and /sitemap-models.xml /sitemap-articles.xml, etc

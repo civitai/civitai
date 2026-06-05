@@ -101,7 +101,7 @@ function ModelCategoryCardContent({
   const { data: { Recommended: reviewedModels = [] } = { Recommended: [], Hide: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
-      cacheTime: Infinity,
+      gcTime: Infinity,
       staleTime: Infinity,
     });
   const hasReview = reviewedModels.includes(id);

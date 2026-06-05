@@ -24,7 +24,7 @@ import {
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import type { ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
+import type { ImageMetaProps, ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
@@ -47,7 +47,7 @@ import {
   deleteImagesForModelVersionCache,
   getImagesForPosts,
   imagesForModelVersionsCache,
-  ingestImage,
+  enqueueImageIngestion,
   invalidateManyImageExistence,
   purgeImageGenerationDataCache,
   purgeResizeCache,
@@ -1210,7 +1210,11 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
 
   if (shouldIngest) {
     // Ensures a proper rescan of this image.
-    await ingestImage({ image: result });
+    enqueueImageIngestion({
+      images: [result as IngestImageInput],
+      name: 'post-image-ingest',
+      userId: result.userId,
+    });
   }
 
   purgeImageGenerationDataCache(image.id);

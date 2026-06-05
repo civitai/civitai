@@ -6,7 +6,7 @@
  * Uses Popover on desktop and dialogStore modal on mobile.
  */
 
-import { Badge, Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
+import { Badge, Group, Modal, Popover, Text, Tooltip, UnstyledButton, Stack } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
   IconArrowLeft,
@@ -24,7 +24,10 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
-import { useGatedEcosystems } from '~/components/generation_v2/hooks/useGatedEcosystems';
+import {
+  useDisabledWorkflows,
+  useGatedEcosystems,
+} from '~/components/generation_v2/hooks/useGatedEcosystems';
 import {
   filterWorkflowsByFeatureFlags,
   filterWorkflowsByGatedEcosystems,
@@ -122,6 +125,8 @@ interface WorkflowMenuItemProps {
   isCompatible?: boolean;
   /** Whether the current user is a member */
   isMember?: boolean;
+  /** Operator-disabled (via the generation config) — shown but not selectable */
+  isDisabled?: boolean;
 }
 
 function WorkflowMenuItem({
@@ -130,7 +135,37 @@ function WorkflowMenuItem({
   onSelect,
   isCompatible = true,
   isMember = false,
+  isDisabled = false,
 }: WorkflowMenuItemProps) {
+  // Operator-disabled takes priority over the member-only gate: greyed,
+  // non-selectable, "Disabled" badge + tooltip (mirrors BaseModelInput).
+  if (isDisabled) {
+    return (
+      <Tooltip
+        label="This workflow is currently unavailable"
+        position="right"
+        withArrow
+        openDelay={300}
+      >
+        <div className="w-full cursor-not-allowed rounded-md px-3 py-2.5 opacity-50">
+          <Group gap="sm" wrap="nowrap" justify="space-between">
+            <div className="min-w-0 flex-1">
+              <Text size="sm">{workflow.label}</Text>
+              {workflow.description && (
+                <Text size="xs" c="dimmed" className="mt-0.5">
+                  {workflow.description}
+                </Text>
+              )}
+            </div>
+            <Badge size="xs" color="gray" variant="light">
+              Disabled
+            </Badge>
+          </Group>
+        </div>
+      </Tooltip>
+    );
+  }
+
   const disabled = workflow.memberOnly && !isMember;
 
   if (disabled) {
@@ -255,23 +290,33 @@ function WorkflowListContent({
   isCompatible,
   isMember = false,
 }: WorkflowListContentProps) {
-  // Flatten all workflows with compatibility info
+  // Operator-disabled workflow keys (graphKeys). Read here so both the desktop
+  // popover and the dialogStore modal that share this renderer get them.
+  const disabledWorkflows = useDisabledWorkflows();
+  const disabledSet = useMemo(() => new Set(disabledWorkflows), [disabledWorkflows]);
+
+  // Flatten all workflows with compatibility + disabled info
   const allWorkflows = useMemo(() => {
-    const workflows: Array<{ workflow: WorkflowOption; compatible: boolean }> = [];
+    const workflows: Array<{ workflow: WorkflowOption; compatible: boolean; isDisabled: boolean }> =
+      [];
 
     for (const category of categories) {
       for (const workflow of category.workflows) {
         const compatible = isCompatible?.(workflow.id) ?? true;
-        workflows.push({ workflow, compatible });
+        // The disabled list holds graphKeys; resolve the option's graphKey
+        // (an alias's graphKey points to its parent) before checking.
+        const graphKey = workflowOptionById.get(workflow.id)?.graphKey ?? workflow.id;
+        const isDisabled = disabledSet.has(graphKey);
+        workflows.push({ workflow, compatible, isDisabled });
       }
     }
 
     return workflows;
-  }, [categories, isCompatible]);
+  }, [categories, isCompatible, disabledSet]);
 
   return (
     <Stack gap={2}>
-      {allWorkflows.map(({ workflow, compatible }) => (
+      {allWorkflows.map(({ workflow, compatible, isDisabled }) => (
         <WorkflowMenuItem
           key={workflow.id}
           workflow={workflow}
@@ -282,6 +327,7 @@ function WorkflowListContent({
           }}
           isCompatible={compatible}
           isMember={isMember}
+          isDisabled={isDisabled}
         />
       ))}
     </Stack>

@@ -68,7 +68,7 @@ export function NotificationToggle({
 
   return children({
     onToggle,
-    isLoading: updateNotificationSettingMutation.isLoading,
+    isLoading: updateNotificationSettingMutation.isPending,
     displayName: notification.displayName,
     isEnabled,
   });

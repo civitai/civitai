@@ -161,7 +161,7 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
   if (!isOwner && !isModerator) return <NotFound />;
 
   const trimmedName = name.trim();
-  const canSave = trimmedName.length > 0 && !mutate.isLoading;
+  const canSave = trimmedName.length > 0 && !mutate.isPending;
 
   // RichTextEditor returns HTML. Empty content commonly serializes to `<p></p>`
   // — strip tags and treat as null so the DB doesn't see noisy "empty" markup.
@@ -369,9 +369,9 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
                 <Button
                   onClick={() => handleSave()}
                   loading={
-                    mutate.isLoading &&
-                    !publishMutation.isLoading &&
-                    !unpublishMutation.isLoading
+                    mutate.isPending &&
+                    !publishMutation.isPending &&
+                    !unpublishMutation.isPending
                   }
                   disabled={!canSave}
                   variant="default"
@@ -388,7 +388,7 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
                   >
                     <Button
                       onClick={() => handleSave('publish')}
-                      loading={publishMutation.isLoading}
+                      loading={publishMutation.isPending}
                       disabled={!canSave || !model3d.thumbnailImageId}
                       color="green"
                       leftSection={<IconUpload size={14} />}
@@ -403,7 +403,7 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
                 {model3d.status === Model3DStatus.Published && (
                   <Button
                     onClick={() => handleSave('unpublish')}
-                    loading={unpublishMutation.isLoading}
+                    loading={unpublishMutation.isPending}
                     disabled={!canSave}
                     color="yellow"
                     leftSection={<IconArchive size={14} />}

@@ -97,8 +97,8 @@ export const useMutateEvent = () => {
   return {
     activateCosmetic: handleActivateCosmetic,
     donate: handleDonate,
-    equipping: activateCosmeticMutation.isLoading,
-    donating: donateMutation.isLoading,
+    equipping: activateCosmeticMutation.isPending,
+    donating: donateMutation.isPending,
   };
 };
 

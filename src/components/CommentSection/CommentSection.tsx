@@ -128,7 +128,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                   name="content"
                   placeholder="Type your comment..."
                   includeControls={['formatting', 'link', 'mentions']}
-                  disabled={saveCommentMutation.isLoading}
+                  disabled={saveCommentMutation.isPending}
                   onFocus={() => setShowCommentActions(true)}
                   defaultSuggestions={suggestedMentions}
                   autoFocus={showCommentActions}
@@ -150,7 +150,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                   >
                     Cancel
                   </Button>
-                  <Button type="submit" loading={saveCommentMutation.isLoading}>
+                  <Button type="submit" loading={saveCommentMutation.isPending}>
                     Comment
                   </Button>
                 </Group>

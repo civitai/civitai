@@ -44,7 +44,7 @@ const t = initTRPC
     },
   });
 
-export const { router, middleware } = t;
+export const { router, middleware, createCallerFactory } = t;
 /**
  * Unprotected procedure
  **/
@@ -56,6 +56,24 @@ const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next
     });
   return next({ ctx: { user, acceptableOrigin } });
 });
+
+// The CLIENT hash is a single global key (forced-client-update version/date
+// gating), identical for every user and procedure. needsUpdate runs on EVERY
+// web-client tRPC procedure, and tRPC batches multiple procedures per HTTP
+// request, so an uncached hGetAll here is ~1 sysRedis round-trip PER PROCEDURE
+// across all web traffic. Cache it in-process with a short TTL: gating a
+// "refresh your browser" banner tolerates a few seconds of staleness trivially,
+// and this collapses thousands of reads/s into ~1 read / TTL / pod. Only
+// successful reads are cached, so the fail-open behavior below is preserved.
+const CLIENT_CONFIG_TTL_MS = 5_000;
+let clientConfigCache: { value: Record<string, string>; expiresAt: number } | null = null;
+async function getClientConfigCached(): Promise<Record<string, string>> {
+  const now = Date.now();
+  if (clientConfigCache && clientConfigCache.expiresAt > now) return clientConfigCache.value;
+  const client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
+  clientConfigCache = { value: client, expiresAt: now + CLIENT_CONFIG_TTL_MS };
+  return client;
+}
 
 // TODO - figure out a better way to do this
 async function needsUpdate(req?: NextApiRequest) {
@@ -69,7 +87,7 @@ async function needsUpdate(req?: NextApiRequest) {
   // would 500 every authenticated request during a sysRedis incident.
   let client: Record<string, string>;
   try {
-    client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
+    client = await getClientConfigCached();
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'needsUpdate', err);
     return false;
@@ -101,9 +119,10 @@ const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
   return result;
 });
 
-const applyDomainFeature = t.middleware((options) => {
+const applyDomainFeature = t.middleware(async (options) => {
   const { next, ctx } = options;
-  const input = (options.rawInput ?? {}) as { browsingLevel?: number };
+  // v11: `rawInput` became the async `getRawInput()`.
+  const input = ((await options.getRawInput()) ?? {}) as { browsingLevel?: number };
 
   // Verified search-engine crawlers (set by botDetectionMiddleware) are
   // treated as authorized only on mature-allowed domains. On the SFW site

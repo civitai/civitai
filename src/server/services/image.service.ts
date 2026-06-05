@@ -194,7 +194,7 @@ import { getImageS3Client } from '~/utils/s3-client';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import FliptSingleton, { FLIPT_FEATURE_FLAGS, getFliptVariant, isFlipt } from '../flipt/client';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import { queryBitdex } from '~/server/bitdex/client';
 import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
@@ -237,6 +237,7 @@ import type {
 import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
 import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
 
 const {
   cacheHitRequestsTotal,
@@ -1004,6 +1005,35 @@ export const ingestImageBulk = async ({
 
   return false;
 };
+
+export function enqueueImageIngestion({
+  images,
+  name,
+  userId,
+  lowPriority,
+}: {
+  images: IngestImageInput[];
+  name: string;
+  userId?: number;
+  lowPriority?: boolean;
+}) {
+  if (!images.length) return;
+
+  const tasks = images.map(
+    (img) => () =>
+      ingestImage({ image: img, lowPriority, userId }).catch((error) => {
+        logToAxiom({
+          name,
+          type: 'error',
+          userId,
+          imageId: img.id,
+          message: error instanceof Error ? error.message : String(error),
+        }).catch(() => undefined);
+      })
+  );
+
+  limitConcurrency(tasks, 5).catch(() => undefined);
+}
 
 // #region [new service methods]
 // export function applyUserPreferencesSql(
@@ -2142,21 +2172,25 @@ export const getAllImagesIndex = async (
     tagIdsVar,
   ] = await withSpan('image:getAllImagesIndex:parallelFetch', async () =>
     Promise.all([
-      // NOTE: original code uses `await` on each element below, which causes
-      // sequential evaluation. Preserving that behavior to keep this PR
-      // observability-only — see follow-up to actually parallelize.
-      await getBasicDataForUsers(userIds),
-      include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
-      include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+      // These enrichment fetches are independent (each takes pre-computed
+      // userIds/imageIds/videoIds/searchResults) and are issued WITHOUT awaiting
+      // each element so Promise.all runs them concurrently — node-redis pipelines
+      // the cache GETs queued in the same tick, collapsing ~9 sequential Redis
+      // round-trips into ~1 round-trip-time. The prior version awaited each
+      // element, forcing sequential evaluation (the span name was aspirational).
+      // Mirrors the concurrent block in getAllImages.
+      getBasicDataForUsers(userIds),
+      include?.includes('profilePictures') ? getProfilePicturesForUsers(userIds) : undefined,
+      include?.includes('cosmetics') ? getCosmeticsForUsers(userIds) : undefined,
       include?.includes('cosmetics')
-        ? await getCosmeticsForEntity({
+        ? getCosmeticsForEntity({
             ids: imageIds,
             entity: 'Image',
           })
         : undefined,
-      include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
-      await getMetadataForImages(videoIds), // Only need this for videos
-      await getThumbnailsForImages(videoIds), // Only need this for videos
+      include?.includes('metaSelect') ? getMetaForImages(imageIds) : undefined,
+      getMetadataForImages(videoIds), // Only need this for videos
+      getThumbnailsForImages(videoIds), // Only need this for videos
       getImageMetricsObject(searchResults),
       // Fetch tagIds from cache so client-side hidden-tag filtering works.
       // Search results from BitDex don't include tagIds (too expensive to store),
@@ -2530,36 +2564,21 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
 export async function getImagesFromSearch(input: ImageSearchInput) {
   let searchFn = getImagesFromSearchPreFilter;
   // Wrap Flipt feature-flag evaluation so the trace shows whether per-request
-  // flag fetch is contributing to the parent span's latency. Includes the
-  // FliptSingleton.getInstance() handshake plus the three evaluateBoolean
-  // calls (FEED_POST_FILTER, MEILI_CACHE_OPS, MEILI_USER_OWN_PASS).
+  // flag fetch is contributing to the parent span's latency. Routes through
+  // getFliptBoolean instead of direct per-request wasm evaluateBoolean calls on
+  // this hot feed path — once the Flipt eval cache (PR #2394) lands these become
+  // memoized; today it's a behavior-preserving refactor. getFliptBoolean returns
+  // false on a missing/uninitialized client, matching the prior null-client
+  // fallthrough (flags default off → pre-filter).
   input = await withSpan('image:flipt:eval', async () => {
-    const fliptClient = await FliptSingleton.getInstance();
-    if (!fliptClient) return input;
-
-    const flag = fliptClient.evaluateBoolean({
-      flagKey: FLIPT_FEATURE_FLAGS.FEED_POST_FILTER,
-      entityId: input.currentUserId?.toString() || 'anonymous',
-      context: {},
-    });
-    if (flag.enabled) searchFn = getImagesFromSearchPostFilter;
-
-    // Evaluate Meili cache flags once; thread through input for builders to gate on.
-    const cacheOpsFlag = fliptClient.evaluateBoolean({
-      flagKey: FLIPT_FEATURE_FLAGS.MEILI_CACHE_OPS,
-      entityId: input.currentUserId?.toString() || 'anonymous',
-      context: {},
-    });
-    const userOwnPassFlag = fliptClient.evaluateBoolean({
-      flagKey: FLIPT_FEATURE_FLAGS.MEILI_USER_OWN_PASS,
-      entityId: input.currentUserId?.toString() || 'anonymous',
-      context: {},
-    });
-    return {
-      ...input,
-      meiliCacheOps: cacheOpsFlag.enabled,
-      meiliUserOwnPass: userOwnPassFlag.enabled,
-    };
+    const entityId = input.currentUserId?.toString() || 'anonymous';
+    const [postFilter, meiliCacheOps, meiliUserOwnPass] = await Promise.all([
+      getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId),
+      getFliptBoolean(FLIPT_FEATURE_FLAGS.MEILI_CACHE_OPS, entityId),
+      getFliptBoolean(FLIPT_FEATURE_FLAGS.MEILI_USER_OWN_PASS, entityId),
+    ]);
+    if (postFilter) searchFn = getImagesFromSearchPostFilter;
+    return { ...input, meiliCacheOps, meiliUserOwnPass };
   });
 
   // Check BitDex mode (off / shadow / primary)
@@ -2648,21 +2667,14 @@ export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
   try {
-    // Evaluate feature flags before creating feed
-    let enableExistenceCheck = false;
-    const fliptClient = await FliptSingleton.getInstance();
-    if (fliptClient) {
-      try {
-        const flag = fliptClient.evaluateBoolean({
-          flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-          entityId: input.currentUserId?.toString() || 'anonymous',
-          context: {},
-        });
-        enableExistenceCheck = flag.enabled;
-      } catch (err) {
-        console.log('[getImagesFromFeedSearch] Flipt evaluation failed:', err);
-      }
-    }
+    // Evaluate feature flags before creating feed. Routed through getFliptBoolean
+    // (memoized once PR #2394's eval cache lands) instead of a direct per-request
+    // wasm eval; it swallows errors and returns false on a missing/uninitialized
+    // client, preserving the prior fail-safe default (existence check off).
+    const enableExistenceCheck = await getFliptBoolean(
+      FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+      input.currentUserId?.toString() || 'anonymous'
+    );
 
     const feed = new ImagesFeed(
       ({ apiKey, host }: { apiKey: string; host: string }) => {
@@ -3446,17 +3458,13 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const searchImageIds = filteredHits.map((hit) => hit.id);
     const filteredHitIds = [...new Set(searchImageIds)];
 
-    let cacheExistenceEnabled = false;
-
-    const fliptClient = await FliptSingleton.getInstance();
-    if (fliptClient) {
-      const flag = fliptClient.evaluateBoolean({
-        flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-        entityId: currentUserId?.toString() || 'anonymous',
-        context: {},
-      });
-      cacheExistenceEnabled = flag.enabled;
-    }
+    // Routed through getFliptBoolean (memoized once PR #2394's eval cache lands)
+    // instead of a direct per-request wasm eval; returns false on a missing/
+    // uninitialized client (existence check off), matching the prior default.
+    const cacheExistenceEnabled = await getFliptBoolean(
+      FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+      currentUserId?.toString() || 'anonymous'
+    );
     ffRequestsTotal.inc({ route, enabled: String(cacheExistenceEnabled) });
 
     if (!cacheExistenceEnabled) {
@@ -4481,17 +4489,13 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const searchImageIds = limitedHits.map((hit) => hit.id);
     const filteredHitIds = [...new Set(searchImageIds)];
 
-    let cacheExistenceEnabled = false;
-
-    const fliptClient = await FliptSingleton.getInstance();
-    if (fliptClient) {
-      const flag = fliptClient.evaluateBoolean({
-        flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-        entityId: currentUserId?.toString() || 'anonymous',
-        context: {},
-      });
-      cacheExistenceEnabled = flag.enabled;
-    }
+    // Routed through getFliptBoolean (memoized once PR #2394's eval cache lands)
+    // instead of a direct per-request wasm eval; returns false on a missing/
+    // uninitialized client (existence check off), matching the prior default.
+    const cacheExistenceEnabled = await getFliptBoolean(
+      FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+      currentUserId?.toString() || 'anonymous'
+    );
     ffRequestsTotal.inc({ route, enabled: String(cacheExistenceEnabled) });
 
     if (!cacheExistenceEnabled) {
@@ -7386,11 +7390,28 @@ export async function getImageGenerationData({ id }: { id: number }) {
     }
   }
 
+  // On-site generations: let the generation graph decide which meta keys are
+  // real generator inputs (drops computed/derived nodes + unrelated legacy
+  // junk). Off-site/foreign metadata has no graph mapping, so leave undefined
+  // and the client shows all keys.
+  let displayKeys: string[] | undefined;
+  if (onSite && meta) {
+    const graphResources = resources.map((r) => ({
+      id: r.modelVersionId,
+      baseModel: r.baseModel,
+      model: { type: r.modelType },
+      strength: r.strength,
+    }));
+    displayKeys =
+      getGenerationDisplayKeys(meta as Record<string, unknown>, graphResources) ?? undefined;
+  }
+
   return {
     type: image.type,
     onSite,
     process,
     meta,
+    displayKeys,
     resources: resources.map((resource) => ({
       ...resource,
       strength:

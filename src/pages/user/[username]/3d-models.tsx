@@ -1,4 +1,5 @@
 import { Box, Center, Group, Loader, LoadingOverlay, Stack } from '@mantine/core';
+import { keepPreviousData } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -96,7 +97,7 @@ function UserModel3DsPage() {
     },
     {
       getNextPageParam: (last) => last.nextCursor,
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
     }
   );
 

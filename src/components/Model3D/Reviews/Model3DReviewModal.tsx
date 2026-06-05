@@ -74,7 +74,7 @@ export default function Model3DReviewModal({
     },
   });
 
-  const isLoading = upsertReview.isLoading || createPost.isLoading;
+  const isLoading = upsertReview.isPending || createPost.isPending;
 
   const validate = () => {
     if (!rating || rating < 1 || rating > 5) {

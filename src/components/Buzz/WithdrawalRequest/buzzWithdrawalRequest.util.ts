@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { GetByIdStringInput } from '~/server/schema/base.schema';
@@ -23,7 +24,7 @@ export const useQueryOwnedBuzzWithdrawalRequests = (
     },
     {
       enabled: !!currentUser && !!userPaymentConfiguration,
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 
@@ -95,11 +96,11 @@ export const useMutateBuzzWithdrawalRequest = () => {
 
   return {
     createBuzzWithdrawalRequest: handleCreateBuzzWithdrawalRequest,
-    creatingBuzzWithdrawalRequest: createBuzzWithdrawalRequestMutation.isLoading,
+    creatingBuzzWithdrawalRequest: createBuzzWithdrawalRequestMutation.isPending,
     cancelBuzzWithdrawalRequest: handleCancelBuzzWithdrawalRequest,
-    cancelingBuzzWithdrawalRequest: cancelBuzzWithdrawalRequestMutation.isLoading,
+    cancelingBuzzWithdrawalRequest: cancelBuzzWithdrawalRequestMutation.isPending,
     updateBuzzWithdrawalRequest: handleUpdateBuzzWithdrawalRequest,
-    updatingBuzzWithdrawalRequest: updateBuzzWithdrawalRequestMutation.isLoading,
+    updatingBuzzWithdrawalRequest: updateBuzzWithdrawalRequestMutation.isPending,
   };
 };
 
@@ -114,7 +115,7 @@ export const useQueryBuzzWithdrawalRequests = (
     },
     {
       enabled: !!currentUser,
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 

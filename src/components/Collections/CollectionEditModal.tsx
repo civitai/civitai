@@ -415,7 +415,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
             <Divider label="Extras" />
             <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
             <Group justify="flex-end">
-              <Button type="submit" loading={upsertCollectionMutation.isLoading}>
+              <Button type="submit" loading={upsertCollectionMutation.isPending}>
                 Save
               </Button>
             </Group>

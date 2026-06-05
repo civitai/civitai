@@ -11,6 +11,8 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import {
   useGatedEcosystems,
   useGatedVersionIds,
+  useSelfHostedDisabledEcosystems,
+  useDisabledWorkflows,
 } from '~/components/generation_v2/hooks/useGatedEcosystems';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -258,6 +260,8 @@ function InnerProvider({
   const featureFlags = useFeatureFlags();
   const gatedEcosystems = useGatedEcosystems();
   const gatedVersionIds = useGatedVersionIds();
+  const selfHostedDisabledEcosystems = useSelfHostedDisabledEcosystems();
+  const disabledWorkflows = useDisabledWorkflows();
   const { registerResourceId, unregisterResourceId } = useResourceDataContext();
 
   const isModerator = !!currentUser?.isModerator;
@@ -277,6 +281,8 @@ function InnerProvider({
       flags: featureFlags,
       gatedEcosystems,
       gatedVersionIds,
+      selfHostedDisabledEcosystems,
+      disabledWorkflows,
     }),
     [
       status.limits.quantity,
@@ -286,6 +292,8 @@ function InnerProvider({
       featureFlags,
       gatedEcosystems,
       gatedVersionIds,
+      selfHostedDisabledEcosystems,
+      disabledWorkflows,
     ]
   );
 

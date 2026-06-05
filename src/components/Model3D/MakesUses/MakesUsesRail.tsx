@@ -1,4 +1,5 @@
 import { Button, Card, Center, Group, Loader, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { keepPreviousData } from '@tanstack/react-query';
 import { IconPlus, IconUsers } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -32,7 +33,7 @@ export function MakesUsesRail({ model3dId }: MakesUsesRailProps) {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.model3d.getRelatedPosts.useQuery(
     { model3dId, limit: 12 },
-    { keepPreviousData: true }
+    { placeholderData: keepPreviousData }
   );
 
   const items = data?.items ?? [];

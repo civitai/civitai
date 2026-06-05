@@ -350,7 +350,7 @@ export function CashManagementPage() {
             </Button>
             <Button
               color={direction === 'grant' ? 'green' : 'red'}
-              loading={adjustMutation.isLoading}
+              loading={adjustMutation.isPending}
               onClick={handleSubmit}
             >
               Confirm {direction === 'grant' ? 'Grant' : 'Deduction'}
@@ -382,7 +382,7 @@ export function CashManagementPage() {
               <Button variant="default" onClick={() => setRefundTarget(null)}>
                 Cancel
               </Button>
-              <Button color="orange" loading={refundMutation.isLoading} onClick={handleRefund}>
+              <Button color="orange" loading={refundMutation.isPending} onClick={handleRefund}>
                 Confirm Refund
               </Button>
             </Group>

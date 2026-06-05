@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import type { MantineColor } from '@mantine/core';
 import {
   ActionIcon,
@@ -8,6 +9,7 @@ import {
   Collapse,
   Divider,
   Group,
+  HoverCard,
   Loader,
   LoadingOverlay,
   Paper,
@@ -83,7 +85,7 @@ const BugReportButton = ({
     defaultValue: 0,
     getInitialValueInEffect: false,
   });
-  const { mutate, isLoading } = trpc.bug.report.useMutation({
+  const { mutate, isPending: isLoading } = trpc.bug.report.useMutation({
     onSuccess: (data) => {
       onReported(data.reportCount);
       setReportedAt(Date.now());
@@ -99,27 +101,38 @@ const BugReportButton = ({
   const recentlyReported = reportedAt && Date.now() - reportedAt < 1000 * 60 * 60 * 24;
 
   return (
-    <Tooltip
-      label={recentlyReported ? 'Thanks — you told us in the last day' : "I'm experiencing this"}
-      color="dark"
-      withArrow
-      withinPortal
-    >
-      <Button
-        size="compact-sm"
-        leftSection={<IconUserExclamation size={14} />}
-        variant={recentlyReported ? 'light' : 'filled'}
-        color={recentlyReported ? 'gray' : 'red'}
-        loading={isLoading}
-        disabled={!!recentlyReported}
-        onClick={() => mutate({ bugId: bug.id })}
-      >
-        {recentlyReported ? 'Reported' : "I'm experiencing this"}{' '}
-        <Badge ml={6} size="xs" variant="filled" color="dark">
-          {bug.reportCount}
-        </Badge>
-      </Button>
-    </Tooltip>
+    <HoverCard width={260} withArrow withinPortal shadow="md" openDelay={200}>
+      <HoverCard.Target>
+        {/* span wrapper keeps the hover working even while the button is disabled */}
+        <span className="inline-flex">
+          <Button
+            size="compact-sm"
+            leftSection={<IconUserExclamation size={14} />}
+            variant={recentlyReported ? 'light' : 'filled'}
+            color={recentlyReported ? 'gray' : 'red'}
+            loading={isLoading}
+            disabled={!!recentlyReported}
+            onClick={() => mutate({ bugId: bug.id })}
+          >
+            {recentlyReported ? 'Reported' : "I'm experiencing this"}{' '}
+            <Badge ml={6} size="xs" variant="filled" color="dark">
+              {bug.reportCount}
+            </Badge>
+          </Button>
+        </span>
+      </HoverCard.Target>
+      <HoverCard.Dropdown>
+        <Text size="sm">
+          <Text span fw={600}>
+            {bug.reportCount}
+          </Text>{' '}
+          {bug.reportCount === 1 ? 'person has' : 'people have'} run into this in the last 24 hours.
+          {recentlyReported
+            ? " Thanks for letting us know - you're counted."
+            : " Hit the button if you're seeing it too so we know how many are affected."}
+        </Text>
+      </HoverCard.Dropdown>
+    </HoverCard>
   );
 };
 
@@ -381,8 +394,8 @@ const CreateBug = ({
   setOpened: React.Dispatch<React.SetStateAction<boolean>>;
 }) => {
   const queryUtils = trpc.useUtils();
-  const { mutate, isLoading } = trpc.bug.create.useMutation();
-  const { mutate: update, isLoading: isLoadingUpdate } = trpc.bug.update.useMutation();
+  const { mutate, isPending: isLoading } = trpc.bug.create.useMutation();
+  const { mutate: update, isPending: isLoadingUpdate } = trpc.bug.update.useMutation();
 
   const form = useForm({
     schema,
@@ -564,7 +577,7 @@ export function Bugs() {
       { ...debouncedFilters },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
-        keepPreviousData: true,
+        placeholderData: keepPreviousData,
       }
     );
 
@@ -575,7 +588,7 @@ export function Bugs() {
   const bugIds = useMemo(() => (flatData ?? []).slice(0, 200).map((b) => b.id), [flatData]);
   const { data: reportStats } = trpc.bug.getReportStats.useQuery(
     { bugIds },
-    { enabled: canEdit && bugIds.length > 0, keepPreviousData: true, staleTime: 60_000 }
+    { enabled: canEdit && bugIds.length > 0, placeholderData: keepPreviousData, staleTime: 60_000 }
   );
 
   useEffect(() => {

@@ -80,7 +80,7 @@ export function Model3DModAction({ imageId }: { imageId: number }) {
           variant="light"
           color="red"
           fullWidth
-          loading={unpublishMutation.isLoading}
+          loading={unpublishMutation.isPending}
           disabled={alreadyUnpublished}
         >
           {alreadyUnpublished ? 'Parent already unpublished' : 'Also unpublish parent Model3D'}

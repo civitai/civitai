@@ -168,7 +168,7 @@ export function Model3DActionsMenu({
       children: 'Publish this 3D model so others can discover and download it?',
       centered: true,
       labels: { confirm: 'Publish', cancel: 'Cancel' },
-      confirmProps: { color: 'green', loading: publishMutation.isLoading },
+      confirmProps: { color: 'green', loading: publishMutation.isPending },
       onConfirm: () => publishMutation.mutate({ id: model3d.id }),
     });
 
@@ -180,7 +180,7 @@ export function Model3DActionsMenu({
         : 'Unpublish this 3D model? Owner can republish later.',
       centered: true,
       labels: { confirm: 'Unpublish', cancel: 'Cancel' },
-      confirmProps: { color: 'yellow', loading: unpublishMutation.isLoading },
+      confirmProps: { color: 'yellow', loading: unpublishMutation.isPending },
       onConfirm: () => unpublishMutation.mutate({ id: model3d.id }),
     });
 
@@ -192,7 +192,7 @@ export function Model3DActionsMenu({
         : 'Restore this 3D model to Published?',
       centered: true,
       labels: { confirm: 'Restore', cancel: 'Cancel' },
-      confirmProps: { color: 'blue', loading: restoreMutation.isLoading },
+      confirmProps: { color: 'blue', loading: restoreMutation.isPending },
       onConfirm: () => restoreMutation.mutate({ id: model3d.id }),
     });
 
@@ -204,7 +204,7 @@ export function Model3DActionsMenu({
         : 'Soft-delete this 3D model? It can be restored later from the moderator tools.',
       centered: true,
       labels: { confirm: 'Delete', cancel: 'Cancel' },
-      confirmProps: { color: 'red', loading: deleteMutation.isLoading },
+      confirmProps: { color: 'red', loading: deleteMutation.isPending },
       onConfirm: () => deleteMutation.mutate({ id: model3d.id }),
     });
 
@@ -282,7 +282,7 @@ export function Model3DActionsMenu({
                   leftSection={<IconUpload size={14} stroke={1.5} />}
                   color="green"
                   onClick={confirmPublish}
-                  disabled={publishMutation.isLoading || !canPublish}
+                  disabled={publishMutation.isPending || !canPublish}
                   title={
                     !canPublish ? 'A thumbnail image is required before publishing.' : undefined
                   }
@@ -295,7 +295,7 @@ export function Model3DActionsMenu({
                   leftSection={<IconArchive size={14} stroke={1.5} />}
                   color="yellow"
                   onClick={confirmUnpublish}
-                  disabled={unpublishMutation.isLoading}
+                  disabled={unpublishMutation.isPending}
                 >
                   Unpublish
                 </Menu.Item>
@@ -305,7 +305,7 @@ export function Model3DActionsMenu({
                   leftSection={<IconTrash size={14} stroke={1.5} />}
                   color="red.6"
                   onClick={confirmDelete}
-                  disabled={deleteMutation.isLoading}
+                  disabled={deleteMutation.isPending}
                 >
                   Delete
                 </Menu.Item>
@@ -441,7 +441,7 @@ export function Model3DActionsMenu({
                   lock: lockNsfwLevel,
                 })
               }
-              loading={setNsfwLevelMutation.isLoading}
+              loading={setNsfwLevelMutation.isPending}
             >
               Apply
             </Button>

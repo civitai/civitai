@@ -129,7 +129,7 @@ function CodeRow({ item, onInvalidate }: CodeRowProps) {
             <Button
               size="compact-xs"
               leftSection={<IconGift size={14} stroke={1.5} />}
-              loading={redeemMutation.isLoading}
+              loading={redeemMutation.isPending}
               onClick={() => redeemMutation.mutate({ code: item.code })}
             >
               Redeem

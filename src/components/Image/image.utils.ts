@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { isEqual } from 'lodash-es';
@@ -160,7 +161,7 @@ export const useQueryImages = (
       // every attempt. Otherwise the user sees nothing for the first failure,
       // then the banner appears belatedly.
       retry: 0,
-      ...queryOptions,
+      ...withPlaceholderData(queryOptions),
     }
   );
 
@@ -285,7 +286,7 @@ export function useReportCsamImages(
       children: `Are you sure you want to report this as CSAM?`,
       centered: true,
       labels: { confirm: 'Yes', cancel: 'Cancel' },
-      confirmProps: { color: 'red', loading: reportCsamImage.isLoading },
+      confirmProps: { color: 'red', loading: reportCsamImage.isPending },
       closeOnConfirm: false,
       onConfirm: () => reportCsamImage.mutate(args),
     });

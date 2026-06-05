@@ -96,7 +96,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
       ),
       centered: true,
       labels: { confirm: 'Delete Comment', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red', loading: deleteMutation.isLoading },
+      confirmProps: { color: 'red', loading: deleteMutation.isPending },
       onConfirm: () => {
         deleteMutation.mutate({ id });
       },
@@ -182,7 +182,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
             ) : (
               <RichTextEditor
                 value={editComment.content}
-                disabled={saveCommentMutation.isLoading}
+                disabled={saveCommentMutation.isPending}
                 includeControls={['formatting', 'link', 'mentions']}
                 onChange={(value) =>
                   setEditComment((state) => (state ? { ...state, content: value } : state))
@@ -220,7 +220,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
               <Button
                 onClick={() => saveCommentMutation.mutate({ ...comment, ...editComment, modelId })}
                 size="xs"
-                loading={editComment && saveCommentMutation.isLoading}
+                loading={editComment && saveCommentMutation.isPending}
               >
                 Comment
               </Button>

@@ -2,7 +2,6 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { NsfwLevel } from '~/server/common/enums';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -40,8 +39,7 @@ import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
   createImage,
   deleteImageById,
-  ingestImage,
-  ingestImageBulk,
+  enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -1693,19 +1691,12 @@ export async function linkArticleContentImages({
 
   if (imagesToIngest.length > 0) {
     // TODO.articleImageScan: remove the lowPriority flag
-    const tasks = imagesToIngest.map((img) => () =>
-      ingestImage({ image: img, lowPriority: true, userId }).catch((error) => {
-        logToAxiom({
-          name: 'article-image-ingest',
-          type: 'error',
-          articleId,
-          userId,
-          imageId: img.id,
-          message: error instanceof Error ? error.message : String(error),
-        }).catch(() => {});
-      })
-    );
-    limitConcurrency(tasks, 5).catch(() => {});
+    enqueueImageIngestion({
+      images: imagesToIngest,
+      name: 'article-image-ingest',
+      userId,
+      lowPriority: true,
+    });
   }
 
   return { orphanedImageIds };
@@ -2191,17 +2182,19 @@ export async function rescanArticle({
   // --- Re-queue already-processed images for rescan ---
   const connections = await dbRead.imageConnection.findMany({
     where: { entityId: id, entityType: ImageConnectionType.Article },
-    include: { image: { select: { id: true, url: true, ingestion: true } } },
+    include: { image: { select: { id: true, url: true, ingestion: true, type: true } } },
   });
 
-  for (const conn of connections) {
-    if (conn.image.ingestion === ImageIngestionStatus.Pending) continue;
-    await ingestImage({ image: conn.image, lowPriority: true, userId: article.userId }).catch(
-      (err) => {
-        handleLogError(err, 'article-rescan-image', { articleId: id, imageId: conn.image.id });
-      }
-    );
-  }
+  const imagesToIngest = connections
+    .filter((conn) => conn.image.ingestion !== ImageIngestionStatus.Pending)
+    .map((conn) => conn.image);
+
+  enqueueImageIngestion({
+    images: imagesToIngest,
+    name: 'article-rescan-image',
+    userId: article.userId,
+    lowPriority: true,
+  });
 
   // --- Force a fresh text moderation scan ---
   // `forceRescan: true` bypasses the contentHash dedup in

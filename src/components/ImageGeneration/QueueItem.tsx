@@ -135,6 +135,7 @@ export function QueueItem({
 
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
+  const canceled = status === 'canceled';
 
   const cancellable = PENDING_PROCESSING_STATUSES.includes(status);
 
@@ -216,12 +217,13 @@ export function QueueItem({
   const { prompt, ...details } = params as { prompt: string };
 
   const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
-  const overwriteStatusLabel =
-    hasUnstableResources && status === 'failed'
-      ? `${status} - Potentially caused by unstable resources`
-      : status === 'failed'
-      ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
-      : status;
+  const overwriteStatusLabel = canceled
+    ? 'cancelled - This generation was cancelled. Any undelivered generations were refunded.'
+    : hasUnstableResources && status === 'failed'
+    ? `${status} - Potentially caused by unstable resources`
+    : status === 'failed'
+    ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
+    : status;
 
   const completedCount = request.completedCount;
   const processingCount = request.processingCount;
@@ -401,8 +403,8 @@ export function QueueItem({
               </div>
             )}
 
-            {stepDisplay === 'inline' && failureReason && (
-              <Alert color="red">{failureReason}</Alert>
+            {stepDisplay === 'inline' && (
+              <WorkflowStatusAlert status={status} failureReason={failureReason} />
             )}
 
             {stepDisplay === 'separate' ? (
@@ -547,7 +549,7 @@ function StepOutputs({
 
   return (
     <>
-      {stepFailure && <Alert color="red">{stepFailure}</Alert>}
+      {step && <WorkflowStatusAlert status={request.status} failureReason={stepFailure} />}
       <div
         className={clsx(classes.grid, {
           [classes.asSidebar]: !features.largerGenerationImages,
@@ -609,6 +611,28 @@ function StepOutputs({
   );
 }
 
+/**
+ * Status-specific alerts shown in place of the red failure alert. Statuses not in
+ * the map fall through to the `failureReason` red alert (see `WorkflowStatusAlert`).
+ */
+const workflowStatusAlertMap: Partial<Record<WorkflowStatus, { color: string; message: string }>> =
+  {
+    canceled: { color: 'gray', message: 'This generation was cancelled.' },
+  };
+
+function WorkflowStatusAlert({
+  status,
+  failureReason,
+}: {
+  status: WorkflowStatus;
+  failureReason?: string | null;
+}) {
+  const statusAlert = workflowStatusAlertMap[status];
+  if (statusAlert) return <Alert color={statusAlert.color}>{statusAlert.message}</Alert>;
+  if (failureReason) return <Alert color="red">{failureReason}</Alert>;
+  return null;
+}
+
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
   withArrow: true,
@@ -627,7 +651,7 @@ function CancelOrDeleteWorkflow({
   const [cancelling, setCancelling] = useState(false);
   const deleteMutation = useDeleteTextToImageRequest();
   const cancelMutation = useCancelTextToImageRequest();
-  const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading || cancelling;
+  const cancellingDeleting = deleteMutation.isPending || cancelMutation.isPending || cancelling;
 
   const handleDeleteQueueItem = () => {
     deleteMutation.mutate({ workflowId });
@@ -863,7 +887,7 @@ function CanUpgradeBlock({
   );
   const refundedLabel = refundedBuzzLabels.length === 1 ? `${refundedBuzzLabels[0]} Buzz` : 'Buzz';
 
-  const { mutate, isLoading } = useUpdateWorkflow();
+  const { mutate, isPending: isLoading } = useUpdateWorkflow();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     accountTypes: ['yellow'],
@@ -1015,7 +1039,7 @@ function Model3DQueueCardOutputs({
   // Enable once the workflow has succeeded and produced a Model3DBlob —
   // the GLB URL is sufficient for the server-side ensure handler to do the
   // rest. No more "waiting for a draft that never materializes" stuck state.
-  const ctaBusy = ensureModel3D.isLoading;
+  const ctaBusy = ensureModel3D.isPending;
   const ctaDisabled = !isComplete || !model3dBlob || ctaBusy;
 
   return (

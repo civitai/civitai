@@ -41,12 +41,13 @@ import { resourceSchema, type ResourceData } from '~/shared/data-graph/generatio
 import {
   getGatedListsForUser,
   getResourceData,
+  getSelfHostedDisabledEcosystems,
 } from '~/server/services/generation/generation.service';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
-import type { GenerationStatus } from '~/server/schema/generation.schema';
+import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
@@ -206,7 +207,7 @@ export type GenerationHandlerCtx = {
 export type GenerationContextResult = {
   externalCtx: GenerationCtx;
   status: {
-    available: boolean;
+    mode: GenerationStatusMode;
     message?: string;
   };
 };
@@ -259,9 +260,22 @@ export async function buildGenerationContext(
       flags,
       gatedEcosystems: gated.gatedEcosystems,
       gatedVersionIds: gated.gatedVersionIds,
+      // Server-side enforcement of the self-hosted toggle: the ecosystem node
+      // rejects these on submit, so a free user in `memberOnly` (or anyone in
+      // `disabled`) can't generate a self-hosted ecosystem even if they bypass
+      // the client. Mods get an empty list.
+      selfHostedDisabledEcosystems: getSelfHostedDisabledEcosystems({
+        selfHostedMode: status.selfHostedMode,
+        isMember: userTier !== 'free',
+        isModerator: user?.isModerator,
+      }),
+      // Server-side enforcement of disabled workflows: the workflow node rejects
+      // these in its output refine, so a disabled workflow can't be submitted
+      // even if a stale/crafted request bypasses the client picker.
+      disabledWorkflows: gated.disabledWorkflows,
     },
     status: {
-      available: status.available,
+      mode: status.mode,
       message: status.message ?? undefined,
     },
   };

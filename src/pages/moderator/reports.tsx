@@ -17,7 +17,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient , keepPreviousData} from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { upperFirst } from 'lodash-es';
@@ -95,7 +95,7 @@ export default function Reports() {
       sort: sorting,
     },
     {
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
     }
   );
   const reports = useMemo(
@@ -363,7 +363,7 @@ function ReportDrawer({
                 autosize
               />
               <Group justify="flex-end">
-                <Button type="submit" disabled={!isDirty} loading={updateReportMutation.isLoading}>
+                <Button type="submit" disabled={!isDirty} loading={updateReportMutation.isPending}>
                   Save
                 </Button>
               </Group>
@@ -471,7 +471,7 @@ function ToggleReportStatus({ id, status, size }: SetReportStatusInput & { size?
   // but doing this hotfix for now
   const queryUtils = trpc.useUtils();
 
-  const { mutate, isLoading } = trpc.report.setStatus.useMutation({
+  const { mutate, isPending: isLoading } = trpc.report.setStatus.useMutation({
     onSuccess(_, request) {
       const queryKey = getQueryKey(trpc.report.getAll);
       queryClient.setQueriesData(

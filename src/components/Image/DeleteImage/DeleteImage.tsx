@@ -23,7 +23,7 @@ export function DeleteImage({
   closeOnConfirm?: boolean;
   onDelete?: (imageId: number) => void;
 }) {
-  const { mutate, isLoading } = trpc.image.delete.useMutation({
+  const { mutate, isPending: isLoading } = trpc.image.delete.useMutation({
     async onSuccess(_, { id }) {
       await onSuccess?.(id);
       closeModal('delete-confirm');

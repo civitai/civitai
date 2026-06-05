@@ -9,7 +9,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 
 export function OnboardingContentExperience() {
   const { next } = useOnboardingContext();
-  const { mutate, isLoading } = useOnboardingStepCompleteMutation();
+  const { mutate, isPending: isLoading } = useOnboardingStepCompleteMutation();
 
   const handleStepComplete = () => {
     mutate({ step: OnboardingSteps.BrowsingLevels }, { onSuccess: () => next() });

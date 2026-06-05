@@ -1667,6 +1667,13 @@ export type GenerationEcosystemConfig = {
    * Applied in addition to the ecosystem-level / mod / testing gates.
    */
   nsfwIds: number[];
+  /**
+   * Workflow keys (e.g. `txt2img`, `img2img:edit`) disabled for generation.
+   * Unlike the ecosystem/ID lists this is NOT per-user resolved — disabled for
+   * everyone. Surfaced to the client via `getGenerationConfig.disabledWorkflows`
+   * so the workflow picker badges them and the graph rejects them on submit.
+   */
+  disabledWorkflows: string[];
 };
 
 export const DEFAULT_GENERATION_ECOSYSTEM_CONFIG: GenerationEcosystemConfig = {
@@ -1678,6 +1685,7 @@ export const DEFAULT_GENERATION_ECOSYSTEM_CONFIG: GenerationEcosystemConfig = {
   disabledIds: [],
   testingIds: [],
   nsfwIds: [],
+  disabledWorkflows: [],
 };
 
 /**

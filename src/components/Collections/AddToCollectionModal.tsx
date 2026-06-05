@@ -408,7 +408,7 @@ function CollectionListForm({
         <Group justify="flex-end">
           <Button
             disabled={!features.canWrite}
-            loading={addCollectionItemMutation.isLoading}
+            loading={addCollectionItemMutation.isPending}
             onClick={handleSubmit}
           >
             Save
@@ -573,7 +573,7 @@ function NewCollectionForm({
           <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
         </Stack>
         <Group justify="flex-end">
-          <Button type="submit" loading={upsertCollectionMutation.isLoading}>
+          <Button type="submit" loading={upsertCollectionMutation.isPending}>
             Create
           </Button>
         </Group>
@@ -621,7 +621,7 @@ function ConfirmSetShowcaseCollection({
       <Text>Would you like to set this collection as this model&apos;s showcase collection?</Text>
       <div className="flex justify-end gap-2">
         <Button variant="default">No</Button>
-        <Button onClick={handleSetShowcase} loading={setShowcaseCollectionMutation.isLoading}>
+        <Button onClick={handleSetShowcase} loading={setShowcaseCollectionMutation.isPending}>
           Yes
         </Button>
       </div>

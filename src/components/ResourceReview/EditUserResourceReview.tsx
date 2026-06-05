@@ -145,7 +145,7 @@ export function EditUserResourceReview({
                         size="xs"
                         type="submit"
                         variant={form.formState.isDirty ? undefined : 'outline'}
-                        loading={updateMutation.isLoading}
+                        loading={updateMutation.isPending}
                       >
                         Save
                       </Button>
@@ -289,7 +289,7 @@ export function EditUserResourceReviewV2({
                 size="xs"
                 type="submit"
                 disabled={!isDirty}
-                loading={updateMutation.isLoading || loadingUserReview}
+                loading={updateMutation.isPending || loadingUserReview}
               >
                 Post
               </Button>
@@ -361,7 +361,7 @@ export function EditUserResourceReviewLight({
           <LegacyActionIcon
             size="lg"
             variant="light"
-            disabled={updateMutation.isLoading}
+            disabled={updateMutation.isPending}
             onClick={handleImageUploadClick}
           >
             <IconPhotoPlus size={16} />
@@ -372,7 +372,7 @@ export function EditUserResourceReviewLight({
             color="blue"
             type="submit"
             disabled={!isDirty}
-            loading={updateMutation.isLoading || loadingUserReview}
+            loading={updateMutation.isPending || loadingUserReview}
           >
             <IconSend size={16} />
           </LegacyActionIcon>

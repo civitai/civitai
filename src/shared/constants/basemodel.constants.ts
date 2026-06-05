@@ -36,6 +36,12 @@ export type EcosystemRecord = {
   parentEcosystemId?: number;
   familyId?: number; // For UI family grouping
   sortOrder: number; // For ordering in UI
+  /**
+   * True when this ecosystem's generation routes to Civitai-hosted GPUs/workers
+   * (vs external providers like FAL/Google/OpenAI). Drives the self-hosted
+   * generation toggle. Stamped from `SELF_HOSTED_ECOSYSTEM_KEYS` below.
+   */
+  selfHosted?: boolean;
 };
 
 export type EcosystemSupport = {
@@ -192,6 +198,9 @@ export const ECO = {
 
   // Krea AI
   Krea2: 70,
+
+  // Microsoft
+  MAI: 71,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -593,6 +602,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 150,
   },
 
+  // Microsoft Family (familyId: 21)
+  {
+    id: ECO.MAI,
+    key: 'MAI',
+    displayName: 'MAI',
+    familyId: 21,
+    sortOrder: 160,
+  },
+
   // HiDream Family (familyId: 19)
   {
     id: ECO.HiDream,
@@ -735,6 +753,69 @@ export const ecosystems: EcosystemRecord[] = [
 export const ecosystemById = new Map(ecosystems.map((e) => [e.id, e]));
 export const ecosystemByKey = new Map(ecosystems.map((e) => [e.key, e]));
 
+/**
+ * Ecosystem keys whose generation routes to Civitai-hosted GPUs/workers rather
+ * than an external provider. Single source of truth for the self-hosted
+ * generation toggle. Derived from the orchestrator ecosystem handlers
+ * (`src/server/services/orchestrator/ecosystems/`) — grouped by the
+ * `@civitai/client` input type each ecosystem produces:
+ *
+ *  - TextToImageInput    → SD1/2/XL, Pony, Illustrious, NoobAI, Flux1, FluxKrea,
+ *                          Chroma, HiDream, PonyV7
+ *  - ComfyImageGenInput  → Anima, Ernie, Lens, HiDream-O1
+ *  - SdCppImageGenInput  → ZImageTurbo, ZImageBase, Qwen
+ *  - Flux2KleinImageGen  → Flux2Klein_9B(_base), Flux2Klein_4B(_base)
+ *  - ComfyLtx*VideoGen   → LTXV2, LTXV23
+ *  - AceStepAudioInput   → Ace
+ *
+ * NOTE: lookalikes that are EXTERNAL and must NOT be listed — `Flux2` (≠ Klein),
+ * `Qwen2` (≠ Qwen), and all `Wan*` (currently FAL). Keep this in sync when an
+ * ecosystem's routing changes.
+ */
+export const SELF_HOSTED_ECOSYSTEM_KEYS = [
+  // TextToImageInput
+  'SD1',
+  'SD2',
+  'SDXL',
+  'Pony',
+  'Illustrious',
+  'NoobAI',
+  'Flux1',
+  'FluxKrea',
+  'Chroma',
+  'HiDream',
+  'PonyV7',
+  // ComfyImageGenInput
+  'Anima',
+  'Ernie',
+  'Lens',
+  'HiDream-O1',
+  // SdCppImageGenInput
+  'ZImageTurbo',
+  'ZImageBase',
+  'Qwen',
+  // Flux2KleinImageGenInput
+  'Flux2Klein_9B',
+  'Flux2Klein_9B_base',
+  'Flux2Klein_4B',
+  'Flux2Klein_4B_base',
+  // ComfyLtx2VideoGenInput / ComfyLtx23VideoGenInput
+  'LTXV2',
+  'LTXV23',
+  // AceStepAudioInput
+  'Ace',
+] as const;
+
+const selfHostedEcosystemKeySet = new Set<string>(SELF_HOSTED_ECOSYSTEM_KEYS);
+
+// Stamp the flag onto the records so it travels with the ecosystem data.
+for (const e of ecosystems) {
+  if (selfHostedEcosystemKeySet.has(e.key)) e.selfHosted = true;
+}
+
+export const isSelfHostedEcosystem = (key: string | null | undefined): boolean =>
+  !!key && selfHostedEcosystemKeySet.has(key);
+
 // =============================================================================
 // Ecosystem Support
 // =============================================================================
@@ -871,6 +952,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Krea 2 - checkpoint only (locked, no LoRA support)
   { ecosystemId: ECO.Krea2, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
+  { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1034,6 +1118,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Krea2,
     defaults: {
       model: { id: 2983022 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.MAI,
+    defaults: {
+      model: { id: 3002140 },
       modelLocked: true,
     },
   },
@@ -1793,7 +1884,9 @@ export const BM = {
   HappyHorse: 85,
   Lens: 88,
   Krea2: 89,
-  PolyGen: 90,
+  MAI: 90,
+  // Originally 90 on the hackaton branch; bumped to 91 to keep MAI's main-line id.
+  PolyGen: 91,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2035,6 +2128,11 @@ export const licenses: LicenseRecord[] = [
     name: 'LTX-2 Community License Agreement',
     url: 'https://huggingface.co/Lightricks/LTX-2.3/blob/main/LICENSE',
   },
+  {
+    id: 36,
+    name: 'Microsoft AI Terms of Use',
+    url: 'https://www.microsoft.com/en-us/servicesagreement',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2143,6 +2241,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 20,
     name: 'Krea AI',
     description: "Krea AI's in-house image generation models",
+  },
+  {
+    id: 21,
+    name: 'Microsoft',
+    description: "Microsoft AI's MAI family of image generation and editing models",
   },
 ];
 
@@ -2420,6 +2523,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Lumina,
     licenseId: 13,
+  },
+
+  // MAI
+  {
+    id: BM.MAI,
+    name: 'MAI',
+    description: "Microsoft's photorealistic text-to-image and image-editing model",
+    type: 'image',
+    ecosystemId: ECO.MAI,
+    licenseId: 36,
   },
 
   // Mochi

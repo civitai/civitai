@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import type { MRT_ColumnDef, MRT_PaginationState } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
 import { useRouter } from 'next/router';
@@ -27,7 +28,7 @@ export default function CsamReports() {
       limit: pagination.pageSize,
     },
     {
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
     }
   );
 

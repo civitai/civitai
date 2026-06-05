@@ -102,7 +102,7 @@ export function CodeGiftsPage() {
                       withinPortal
                       message="Are you sure you want to delete this gift notice?"
                     >
-                      <LegacyActionIcon loading={deleteMutation.isLoading} color="red">
+                      <LegacyActionIcon loading={deleteMutation.isPending} color="red">
                         <IconTrash />
                       </LegacyActionIcon>
                     </PopConfirm>

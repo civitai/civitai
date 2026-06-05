@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import {
   Alert,
   Badge,
@@ -97,7 +98,7 @@ export default function ModelReviews() {
     data: resourceReviews,
     isLoading: loadingResourceReviews,
     isRefetching: refetchingResourceReviews,
-  } = trpc.resourceReview.getPaged.useQuery(queryParams, { keepPreviousData: true });
+  } = trpc.resourceReview.getPaged.useQuery(queryParams, { placeholderData: keepPreviousData });
   const { data: ratingTotals } = trpc.resourceReview.getRatingTotals.useQuery({
     modelId,
     modelVersionId,

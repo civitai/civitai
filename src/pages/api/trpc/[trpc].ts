@@ -14,30 +14,14 @@ export const config = {
   },
 };
 
-/**
- * Middleware: translate POST-with-override back to GET for tRPC query resolution.
- * The client sends large queries as POST with `x-trpc-method-override: GET` to
- * avoid HTTP 431. We restore the original method and move the body to `req.query`
- * so tRPC resolves it as a query with full cache support on the client.
- */
-function restoreMethodOverride(req: import('next').NextApiRequest) {
-  if (req.method === 'POST' && req.headers['x-trpc-method-override'] === 'GET') {
-    req.method = 'GET';
-    if (req.body != null) {
-      const input = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-      // req.query already has `trpc` (the path); add `input` so tRPC reads it
-      (req.query as Record<string, string>).input = input;
-      req.body = undefined;
-    }
-    // Clean up override headers so they don't confuse downstream handlers
-    delete req.headers['x-trpc-method-override'];
-    delete req.headers['content-type'];
-  }
-}
-
 const trpcHandler = createNextApiHandler({
   router: appRouter,
   createContext,
+  // Let large queries arrive as POST (input in the body instead of the URL) to
+  // avoid HTTP 431 on long inputs. The client opts in per-query via tRPC's native
+  // `methodOverride: 'POST'` (see `src/utils/trpc.ts`); small queries stay GET so
+  // the `responseMeta` Cache-Control headers below can still edge-cache them.
+  allowMethodOverride: true,
   responseMeta: ({ ctx, type, errors }) => {
     const headers: Record<string, string> = {};
     const willEdgeCache = ctx?.cache && !!ctx?.cache.edgeTTL && ctx?.cache.edgeTTL > 0;
@@ -107,7 +91,4 @@ const trpcHandler = createNextApiHandler({
 });
 
 // export API handler
-export default withAxiom((req, res) => {
-  restoreMethodOverride(req);
-  return trpcHandler(req, res);
-});
+export default withAxiom(trpcHandler);

@@ -747,7 +747,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
         </ContainerGrid2.Col>
       </ContainerGrid2>
       {typeof children === 'function'
-        ? children({ loading: upsertModelMutation.isLoading })
+        ? children({ loading: upsertModelMutation.isPending })
         : children}
     </Form>
   );
@@ -821,7 +821,7 @@ export const PrivateModelAutomaticSetup = ({
           <Button
             onClick={handleClose}
             color="gray"
-            disabled={privateModelFromTrainingMutation.isLoading}
+            disabled={privateModelFromTrainingMutation.isPending}
           >
             Cancel
           </Button>
@@ -829,8 +829,8 @@ export const PrivateModelAutomaticSetup = ({
             onClick={() => {
               handleConfirm();
             }}
-            disabled={privateModelFromTrainingMutation.isLoading}
-            loading={privateModelFromTrainingMutation.isLoading}
+            disabled={privateModelFromTrainingMutation.isPending}
+            loading={privateModelFromTrainingMutation.isPending}
           >
             Make Private
           </Button>

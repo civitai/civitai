@@ -36,7 +36,7 @@ export function UserGenerationsDrawer({
         tags: [WORKFLOW_TAGS.GENERATION],
       },
       {
-        getNextPageParam: (lastPage) => (lastPage ? lastPage.nextCursor : 0),
+        getNextPageParam: (lastPage) => (lastPage ? lastPage.nextCursor : undefined),
         enabled: opened,
       }
     );

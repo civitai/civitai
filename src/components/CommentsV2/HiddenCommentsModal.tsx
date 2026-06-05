@@ -60,7 +60,7 @@ function HiddenModelCommentsContent({ modelId }: { modelId: number }) {
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage } =
     trpc.comment.getAll.useInfiniteQuery(
       { modelId, limit: 20, sort: ReviewSort.Newest, hidden: true },
-      { getNextPageParam: (lastPage) => lastPage.nextCursor, keepPreviousData: false }
+      { getNextPageParam: (lastPage) => lastPage.nextCursor, placeholderData: undefined }
     );
 
   const comments = useMemo(() => data?.pages.flatMap((x) => x.comments) ?? [], [data?.pages]);

@@ -15,6 +15,7 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   CheckResourcesCoverageSchema,
   GenerationStatus,
+  GenerationStatusMode,
   GetGenerationDataSchema,
   GetGenerationResourcesInput,
   ResolveImageMetaInput,
@@ -60,6 +61,7 @@ import {
   baseModelByName,
   ecosystemById,
   isBaseModelGenerationSupported,
+  SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
 import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
 import type {
@@ -246,7 +248,11 @@ export async function getGenerationStatus() {
   return status as GenerationStatus;
 }
 
-export async function setGenerationStatus(input: { available: boolean; message?: string | null }) {
+export async function setGenerationStatus(input: {
+  mode: GenerationStatusMode;
+  message?: string | null;
+  updatedBy: { id: number; username: string };
+}) {
   // Read raw and throw on sysRedis error. We MUST NOT use the fail-open
   // getGenerationStatus() here: if its read failed open to '{}' and the
   // subsequent hSet succeeded, schema defaults (charge: true, limits:
@@ -255,17 +261,72 @@ export async function setGenerationStatus(input: { available: boolean; message?:
   // retries after sysRedis recovers.
   const raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
   const current = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
-  const next: GenerationStatus = {
-    ...current,
-    available: input.available,
-    message: input.message ?? null,
+  const stamp = {
+    id: input.updatedBy.id,
+    username: input.updatedBy.username,
+    at: new Date().toISOString(),
+  };
+  // Record the moderator when generation moves INTO a restricted mode
+  // (memberOnly/disabled). Returning to 'enabled' preserves the prior stamp —
+  // we don't care who re-enables.
+  const restricting = input.mode !== 'enabled' && input.mode !== current.mode;
+  const persisted = {
+    mode: input.mode,
+    // Persist the message independently of the mode: `undefined` (a mode-only
+    // save) keeps the stored message; `null`/string is an explicit edit.
+    message: input.message === undefined ? current.message : input.message,
+    updatedBy: restricting ? stamp : current.updatedBy,
+    // The self-hosted toggle is independent — carry it over untouched so a
+    // global-mode write doesn't reset it (this object is persisted verbatim,
+    // there's no spread of `current`).
+    selfHostedMode: current.selfHostedMode,
+    selfHostedUpdatedBy: current.selfHostedUpdatedBy,
+    limits: current.limits,
+    charge: current.charge,
   };
   await sysRedis.hSet(
     REDIS_SYS_KEYS.SYSTEM.FEATURES,
     REDIS_SYS_KEYS.GENERATION.STATUS,
-    JSON.stringify(next)
+    JSON.stringify(persisted)
   );
-  return next;
+  return generationStatusSchema.parse(persisted);
+}
+
+/**
+ * Self-hosted-toggle sibling of `setGenerationStatus`. Updates only the
+ * `selfHostedMode` (+ audit stamp) and carries the global fields over
+ * untouched. Same fail-loud rationale as `setGenerationStatus` (no fail-open
+ * read). The self-hosted toggle has no message of its own.
+ */
+export async function setSelfHostedGenerationStatus(input: {
+  mode: GenerationStatusMode;
+  updatedBy: { id: number; username: string };
+}) {
+  const raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+  const current = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
+  const stamp = {
+    id: input.updatedBy.id,
+    username: input.updatedBy.username,
+    at: new Date().toISOString(),
+  };
+  const restricting = input.mode !== 'enabled' && input.mode !== current.selfHostedMode;
+  const persisted = {
+    // Preserve the global generation status untouched.
+    mode: current.mode,
+    message: current.message,
+    updatedBy: current.updatedBy,
+    // Update the self-hosted toggle.
+    selfHostedMode: input.mode,
+    selfHostedUpdatedBy: restricting ? stamp : current.selfHostedUpdatedBy,
+    limits: current.limits,
+    charge: current.charge,
+  };
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    REDIS_SYS_KEYS.GENERATION.STATUS,
+    JSON.stringify(persisted)
+  );
+  return generationStatusSchema.parse(persisted);
 }
 
 export type RemixOfProps = {
@@ -716,7 +777,49 @@ export type GenerationConfig = {
    * gate in `getResourceCanGenerate`.
    */
   gatedVersionIds: number[];
+  /**
+   * Self-hosted ecosystem keys disabled FOR THIS USER, resolved against the
+   * `selfHostedMode` toggle + the user's membership/mod status. Unlike
+   * `gatedEcosystems` (which are hidden), these are shown-but-disabled in the
+   * picker. Empty when self-hosted generation is enabled for the user.
+   */
+  selfHostedDisabledEcosystems: string[];
+  /**
+   * The raw self-hosted toggle state, surfaced so the client can pick the
+   * right badge/alert copy ('memberOnly' → upsell, 'disabled' → unavailable).
+   */
+  selfHostedMode: GenerationStatusMode;
+  /**
+   * Workflow keys disabled by the operator — same list for everyone (no
+   * per-user resolution). The workflow picker shows a "Disabled" badge on
+   * these and the graph rejects them on submit.
+   */
+  disabledWorkflows: string[];
 };
+
+/**
+ * Pure resolver for the self-hosted toggle. Returns the ecosystem keys the
+ * given user can't use right now. Shared by `getGenerationConfig` (client UI)
+ * and `buildGenerationContext` (server-side graph validation) so both agree.
+ *
+ *  - moderators always bypass → `[]`
+ *  - `disabled` → the full self-hosted set (off for everyone)
+ *  - `memberOnly` → the full set for non-members, `[]` for members
+ *  - `enabled` → `[]`
+ */
+export function getSelfHostedDisabledEcosystems({
+  selfHostedMode,
+  isMember,
+  isModerator,
+}: {
+  selfHostedMode: GenerationStatusMode;
+  isMember: boolean;
+  isModerator?: boolean;
+}): string[] {
+  if (isModerator) return [];
+  const blocked = selfHostedMode === 'disabled' || (selfHostedMode === 'memberOnly' && !isMember);
+  return blocked ? [...SELF_HOSTED_ECOSYSTEM_KEYS] : [];
+}
 
 /**
  * Resolves the operator-controlled gating to per-user lists. Folds in the
@@ -727,7 +830,7 @@ export type GenerationConfig = {
 export async function getGatedListsForUser(
   user: { id?: number; isModerator?: boolean } = {},
   opts: { isGreen?: boolean } = {}
-): Promise<{ gatedEcosystems: string[]; gatedVersionIds: number[] }> {
+): Promise<{ gatedEcosystems: string[]; gatedVersionIds: number[]; disabledWorkflows: string[] }> {
   const config = await getGenerationEcosystemConfig(user, opts);
   const isModerator = !!user.isModerator;
 
@@ -742,7 +845,10 @@ export async function getGatedListsForUser(
   // means "not in a green-domain UI context" — leave nsfwIds available.
   if (config.isGreen === true) gatedVersionIds.push(...config.nsfwIds);
 
-  return { gatedEcosystems, gatedVersionIds };
+  // disabledWorkflows is a global operator list (not per-user resolved); passed
+  // through here so `buildGenerationContext` and `getGenerationConfig` share one
+  // Redis read.
+  return { gatedEcosystems, gatedVersionIds, disabledWorkflows: config.disabledWorkflows };
 }
 
 /**
@@ -753,19 +859,28 @@ export async function getGatedListsForUser(
  * needs to filter the UI.
  */
 export async function getGenerationConfig(
-  user: { id?: number; isModerator?: boolean } = {},
+  user: { id?: number; isModerator?: boolean; tier?: string } = {},
   opts: { isGreen?: boolean } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, ecosystemConfig, gated] = await Promise.all([
+  const [unstableResources, ecosystemConfig, gated, status] = await Promise.all([
     getUnstableResources(),
     getGenerationEcosystemConfig(user, opts),
     getGatedListsForUser(user, opts),
+    getGenerationStatus(),
   ]);
+  const selfHostedMode = status.selfHostedMode;
   return {
     unstableResources,
     experimentalEcosystems: ecosystemConfig.experimentalEcosystems,
     gatedEcosystems: gated.gatedEcosystems,
     gatedVersionIds: gated.gatedVersionIds,
+    selfHostedMode,
+    selfHostedDisabledEcosystems: getSelfHostedDisabledEcosystems({
+      selfHostedMode,
+      isMember: (user.tier ?? 'free') !== 'free',
+      isModerator: user.isModerator,
+    }),
+    disabledWorkflows: gated.disabledWorkflows,
   };
 }
 

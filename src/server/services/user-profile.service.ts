@@ -11,8 +11,7 @@ import type {
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { ingestImage } from '~/server/services/image.service';
-import { logToAxiom } from '~/server/logging/client';
+import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import {
@@ -332,17 +331,11 @@ export const updateUserProfile = async ({
   // `ingest-images` sweeper drains, so the cover image still gets scanned even
   // if this inline enqueue fails.
   if (updatedCoverImage && updatedCoverImage.ingestion === ImageIngestionStatus.Pending) {
-    ingestImage({ image: updatedCoverImage }).catch((error) =>
-      // Trailing .catch swallows Axiom-side rejections so a logging outage
-      // can't surface as an unhandledRejection (matches fail-open-log.ts).
-      logToAxiom({
-        name: 'user-profile-cover-ingest',
-        type: 'error',
-        userId,
-        imageId: updatedCoverImage.id,
-        message: error instanceof Error ? error.message : String(error),
-      }).catch(() => {})
-    );
+    enqueueImageIngestion({
+      images: [updatedCoverImage],
+      name: 'user-profile-cover-ingest',
+      userId,
+    });
   }
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);

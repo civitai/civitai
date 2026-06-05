@@ -17,6 +17,7 @@ import {
   Divider,
   Group,
   Loader,
+  MultiSelect,
   Stack,
   TagsInput,
   Text,
@@ -26,9 +27,13 @@ import { IconDeviceFloppy, IconInfoCircle } from '@tabler/icons-react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { Page } from '~/components/AppLayout/Page';
-import { GenerationStatusCard } from '~/components/Moderation/GenerationStatusCard';
+import {
+  GenerationStatusCard,
+  SelfHostedGenerationStatusCard,
+} from '~/components/Moderation/GenerationStatusCard';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ecosystemByKey, ecosystems } from '~/shared/constants/basemodel.constants';
+import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -50,6 +55,7 @@ type EcosystemConfigForm = {
   disabledIds: string[];
   testingIds: string[];
   nsfwIds: string[];
+  disabledWorkflows: string[];
 };
 
 const EMPTY_FORM: EcosystemConfigForm = {
@@ -61,6 +67,7 @@ const EMPTY_FORM: EcosystemConfigForm = {
   disabledIds: [],
   testingIds: [],
   nsfwIds: [],
+  disabledWorkflows: [],
 };
 
 /** Parse a TagsInput value (strings) into positive integers; returns the bad entries separately. */
@@ -104,6 +111,7 @@ function EcosystemConfigSection() {
       disabledIds: (data.disabledIds ?? []).map(String),
       testingIds: (data.testingIds ?? []).map(String),
       nsfwIds: (data.nsfwIds ?? []).map(String),
+      disabledWorkflows: data.disabledWorkflows ?? [],
     });
   }, [data]);
 
@@ -118,23 +126,49 @@ function EcosystemConfigSection() {
     []
   );
 
-  const renderEcosystemOption = useCallback(
-    ({ option }: { option: { value: string } }) => {
-      const eco = ecosystemByKey.get(option.value);
-      if (!eco) return option.value;
-      return (
-        <span>
-          <Text span fw={500}>
-            {eco.displayName}
-          </Text>{' '}
-          <Text span c="dimmed" size="xs">
-            ({option.value})
-          </Text>
-        </span>
-      );
-    },
-    []
-  );
+  // Options for the disabled-workflows MultiSelect. The stored/saved value is
+  // always the workflow key (graphKey like `txt2img`, `img2img:edit`), but the
+  // option `label` shows the human-readable workflow name so the picker lists
+  // names rather than keys. Any key already stored in Redis that's no longer in
+  // the config is still included (label falls back to the key) so it remains
+  // visible/removable instead of silently disappearing.
+  const workflowOptions = useMemo(() => {
+    const labelByKey = new Map<string, string>();
+    for (const [key, config] of workflowConfigByKey) labelByKey.set(key, config.label ?? key);
+    for (const key of form.disabledWorkflows) if (!labelByKey.has(key)) labelByKey.set(key, key);
+    return [...labelByKey.entries()]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [form.disabledWorkflows]);
+
+  const renderWorkflowOption = useCallback(({ option }: { option: { value: string } }) => {
+    const label = workflowConfigByKey.get(option.value)?.label;
+    return (
+      <span>
+        <Text span fw={500}>
+          {label ?? option.value}
+        </Text>{' '}
+        <Text span c="dimmed" size="xs">
+          ({option.value})
+        </Text>
+      </span>
+    );
+  }, []);
+
+  const renderEcosystemOption = useCallback(({ option }: { option: { value: string } }) => {
+    const eco = ecosystemByKey.get(option.value);
+    if (!eco) return option.value;
+    return (
+      <span>
+        <Text span fw={500}>
+          {eco.displayName}
+        </Text>{' '}
+        <Text span c="dimmed" size="xs">
+          ({option.value})
+        </Text>
+      </span>
+    );
+  }, []);
 
   const setMutation = trpc.generation.setEcosystemConfig.useMutation({
     onSuccess: () => {
@@ -178,6 +212,7 @@ function EcosystemConfigSection() {
       disabledIds: disabledParsed.ids,
       testingIds: testingParsed.ids,
       nsfwIds: nsfwParsed.ids,
+      disabledWorkflows: normalizeKeys(form.disabledWorkflows),
     });
   };
 
@@ -307,11 +342,32 @@ function EcosystemConfigSection() {
         />
       </Stack>
 
+      <Stack gap="md">
+        <Title order={5}>Workflows</Title>
+        <Text c="dimmed" size="xs">
+          Disable specific generation workflows for everyone. Pick a workflow by name — the dropdown
+          shows the underlying key (e.g. <code>txt2img</code>, <code>img2img:edit</code>) and that key
+          is what&apos;s saved. The workflow picker shows a &ldquo;Disabled&rdquo; badge on these and
+          they can&apos;t be submitted.
+        </Text>
+        <MultiSelect
+          label="Disabled workflows"
+          description="Off for everyone — listed by name, stored by workflow key."
+          placeholder="Pick a workflow…"
+          data={workflowOptions}
+          renderOption={renderWorkflowOption}
+          value={form.disabledWorkflows}
+          onChange={(v) => setForm((f) => ({ ...f, disabledWorkflows: v }))}
+          searchable
+          clearable
+        />
+      </Stack>
+
       <Group justify="flex-end">
         <Button
           leftSection={<IconDeviceFloppy size={16} />}
           onClick={handleSave}
-          loading={setMutation.isLoading}
+          loading={setMutation.isPending}
         >
           Save ecosystem gates
         </Button>
@@ -334,6 +390,10 @@ function GenerationConfigPage() {
           </Stack>
 
           <GenerationStatusCard />
+
+          <Divider />
+
+          <SelfHostedGenerationStatusCard />
 
           <Divider />
 

@@ -31,3 +31,24 @@ export function useGatedVersionIds(): number[] {
   const { gatedVersionIds = [] } = useGenerationConfig();
   return gatedVersionIds;
 }
+
+/**
+ * Returns self-hosted ecosystem keys disabled for the current user (resolved
+ * from the `selfHostedMode` toggle + membership). Unlike gated ecosystems,
+ * these are shown-but-disabled in the picker rather than hidden. Feeds the
+ * graph context so the ecosystem node can mark + reject them.
+ */
+export function useSelfHostedDisabledEcosystems(): string[] {
+  const { selfHostedDisabledEcosystems = [] } = useGenerationConfig();
+  return selfHostedDisabledEcosystems;
+}
+
+/**
+ * Returns workflow keys disabled by the operator. Unlike the gated lists this
+ * is NOT per-user resolved — the same list applies to everyone. The workflow
+ * picker badges these disabled and the graph rejects them on submit.
+ */
+export function useDisabledWorkflows(): string[] {
+  const { disabledWorkflows = [] } = useGenerationConfig();
+  return disabledWorkflows;
+}

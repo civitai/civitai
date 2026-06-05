@@ -4,7 +4,7 @@ import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-ki
 import { Button, Card, Center, Group, Loader, Modal, Stack, Text, Title } from '@mantine/core';
 import { IconGripVertical } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import type { ModelGetVersions } from '~/types/router';
@@ -19,11 +19,12 @@ export function ReorderVersionsModal({ modelId, opened, onClose }: Props) {
 
   const { data, isLoading } = trpc.model.getVersions.useQuery(
     { id: modelId },
-    {
-      enabled: opened,
-      onSuccess: (result) => setVersions(result),
-    }
+    { enabled: opened }
   );
+  // v5: query onSuccess removed — sync local state when versions load.
+  useEffect(() => {
+    if (data) setVersions(data);
+  }, [data]);
 
   const reorderMutation = trpc.model.reorderVersions.useMutation({
     async onMutate(payload) {
@@ -120,7 +121,7 @@ export function ReorderVersionsModal({ modelId, opened, onClose }: Props) {
         <Button variant="default" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={handleSave} disabled={isLoading} loading={reorderMutation.isLoading}>
+        <Button onClick={handleSave} disabled={isLoading} loading={reorderMutation.isPending}>
           Save
         </Button>
       </Group>

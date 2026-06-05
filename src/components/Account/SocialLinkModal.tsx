@@ -28,7 +28,7 @@ export function SocialLinkModal({
 
   const form = useForm({ schema, defaultValues: selected });
 
-  const { mutate, isLoading } = trpc.userLink.upsert.useMutation({
+  const { mutate, isPending: isLoading } = trpc.userLink.upsert.useMutation({
     onSuccess: () => {
       utils.userLink.invalidate();
       onClose();

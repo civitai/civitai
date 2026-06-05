@@ -34,4 +34,18 @@ export type GenerationCtx = {
    * version selectors.
    */
   gatedVersionIds?: number[];
+  /**
+   * Self-hosted ecosystem keys disabled for the current user (resolved from
+   * the `selfHostedMode` toggle + membership). Unlike `gatedEcosystems`, the
+   * ecosystem node keeps these in `compatibleEcosystems` (shown-but-disabled)
+   * and rejects them on submit — so the same gate is enforced server-side via
+   * `buildGenerationContext` and surfaced as disabled options client-side.
+   */
+  selfHostedDisabledEcosystems?: string[];
+  /**
+   * Workflow keys disabled by the operator (same list for everyone). The
+   * `workflow` node rejects these in its `output` refine so a disabled workflow
+   * can't be submitted; the picker badges them disabled separately.
+   */
+  disabledWorkflows?: string[];
 };

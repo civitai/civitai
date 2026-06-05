@@ -1,7 +1,11 @@
 import type React from 'react';
 import { useCallback, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { generationStatusSchema } from '~/server/schema/generation.schema';
+import {
+  generationStatusDefaultMessage,
+  generationStatusSchema,
+} from '~/server/schema/generation.schema';
+import type { GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
 import type { NormalizedWorkflowMetadata } from '~/server/services/orchestrator';
 import { showErrorNotification } from '~/utils/notifications';
@@ -20,10 +24,12 @@ import type {
 //   persist(() => ({}), { name: 'generation-form-2', version: 0 })
 // );
 
-const defaultServiceStatus = generationStatusSchema.parse({});
+// Mirror the public getStatus shape: it strips the moderator-only `updatedBy`
+// stamp, so the placeholder must match that stripped shape.
+const { updatedBy, ...defaultServiceStatus } = generationStatusSchema.parse({});
 export function useGetGenerationStatus() {
   return trpc.generation.getStatus.useQuery(undefined, {
-    cacheTime: 60,
+    gcTime: 60,
     placeholderData: defaultServiceStatus,
     trpc: { context: { skipBatch: true } },
   });
@@ -33,10 +39,26 @@ export const useGenerationStatus = () => {
   const { data = defaultServiceStatus, isLoading } = useGetGenerationStatus();
 
   return useMemo(() => {
-    if (currentUser?.isModerator) data.available = true; // Always have generation available for mods
     const tier = currentUser?.tier ?? 'free';
+    const isModerator = currentUser?.isModerator ?? false;
+    // Resolve the mode to an effective available/message for THIS user.
+    // Moderators always bypass.
+    let available = true;
+    let message = data.message;
+    // `data.available === false` is the legacy fallback: during a rolling deploy
+    // an older server may return the boolean-only shape with no `mode`, in which
+    // case the mode checks below all miss — honor `available` so we don't fail
+    // open and show generation as available when an admin had it disabled.
+    const blocked =
+      data.mode === 'disabled' ||
+      (data.mode === 'memberOnly' && tier === 'free') ||
+      (!data.mode && data.available === false);
+    if (!isModerator && blocked) {
+      available = false;
+      message = data.message ?? generationStatusDefaultMessage;
+    }
     const limits = data.limits[tier];
-    return { ...data, tier, limits, isLoading };
+    return { ...data, available, message, tier, limits, isLoading };
   }, [data, currentUser, isLoading]);
 };
 
@@ -45,6 +67,9 @@ const DEFAULT_GENERATION_CONFIG = {
   experimentalEcosystems: [] as string[],
   gatedEcosystems: [] as string[],
   gatedVersionIds: [] as number[],
+  selfHostedDisabledEcosystems: [] as string[],
+  selfHostedMode: 'enabled' as GenerationStatusMode,
+  disabledWorkflows: [] as string[],
 };
 
 /**
@@ -66,7 +91,7 @@ export const useGenerationConfig = () => {
   const { data = DEFAULT_GENERATION_CONFIG } = trpc.generation.getGenerationConfig.useQuery(
     undefined,
     {
-      cacheTime: Infinity,
+      gcTime: Infinity,
       staleTime: Infinity,
       trpc: { context: { skipBatch: true } },
     }
@@ -81,7 +106,7 @@ export const useUnsupportedResources = () => {
   const { data: unavailableResources = [] } = trpc.generation.getUnavailableResources.useQuery(
     undefined,
     {
-      cacheTime: Infinity,
+      gcTime: Infinity,
       staleTime: Infinity,
       trpc: { context: { skipBatch: true } },
     }
@@ -108,7 +133,7 @@ export const useUnsupportedResources = () => {
   return {
     unavailableResources,
     toggleUnavailableResource: handleToggleUnavailableResource,
-    toggling: toggleUnavailableResourceMutation.isLoading,
+    toggling: toggleUnavailableResourceMutation.isPending,
   };
 };
 

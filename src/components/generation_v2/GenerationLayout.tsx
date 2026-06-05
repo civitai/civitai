@@ -31,6 +31,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import createSlots from '~/libs/slots/create-slots';
 import { hashify } from '~/utils/string-helpers';
+import { useSelfHostedBlock, SelfHostedBlockedAlert } from './FormFooter';
 
 // =============================================================================
 // Slots
@@ -67,6 +68,11 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
   const { running, helpers } = useTourContext();
   const dailyBoost = useDailyBoostReward();
   const membershipUpsell = useMembershipUpsell();
+  // When the selected ecosystem is disabled by the self-hosted toggle, take over
+  // the footer with the blocked alert and hide the form controls — same slot /
+  // treatment as MembershipUpsell. The model picker (above the footer) stays
+  // usable, so switching models clears the block.
+  const { blockedEcosystem: selfHostedBlocked } = useSelfHostedBlock();
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
@@ -78,7 +84,7 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
   );
 
   const showFooterContent =
-    status.available && reviewed && !membershipUpsell.needsAcknowledgment;
+    status.available && reviewed && !membershipUpsell.needsAcknowledgment && !selfHostedBlocked;
 
   return (
     <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
@@ -91,6 +97,8 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
         >
           {status.message}
         </AlertWithIcon>
+      ) : selfHostedBlocked ? (
+        <SelfHostedBlockedAlert />
       ) : !reviewed ? (
         <Alert
           color="yellow"

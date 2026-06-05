@@ -742,7 +742,7 @@ export default function UserTrainingModels() {
                   size="md"
                   radius="xl"
                   loading={
-                    recheckTrainingStatusMutation.isLoading &&
+                    recheckTrainingStatusMutation.isPending &&
                     recheckTrainingStatusMutation.variables?.id === mv.id
                   }
                   onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
@@ -790,7 +790,7 @@ export default function UserTrainingModels() {
         },
       },
     ],
-    [recheckTrainingStatusMutation.isLoading, recheckTrainingStatusMutation.variables?.id, open]
+    [recheckTrainingStatusMutation.isPending, recheckTrainingStatusMutation.variables?.id, open]
   );
 
   return (

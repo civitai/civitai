@@ -92,10 +92,10 @@ export const useEntityCollaboratorsMutate = () => {
 
   return {
     upsertEntityCollaborator: handleUpsertEntityCollaborator,
-    upsertingEntityCollaborator: upsertEntityCollaboratorMutation.isLoading,
+    upsertingEntityCollaborator: upsertEntityCollaboratorMutation.isPending,
     removeEntityCollaborator: handleRemoveEntityCollaborator,
-    removingEntityCollaborator: removeEntityCollaboratorMutation.isLoading,
+    removingEntityCollaborator: removeEntityCollaboratorMutation.isPending,
     actionEntityCollaborator: handleActionRemoveEntityCollaborator,
-    actioningEntityCollaborator: actionEntityCollaboratorMutation.isLoading,
+    actioningEntityCollaborator: actionEntityCollaboratorMutation.isPending,
   };
 };

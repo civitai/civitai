@@ -1,5 +1,6 @@
 import { Center, Group, Loader, LoadingOverlay, Stack, Title } from '@mantine/core';
 import { IconCube } from '@tabler/icons-react';
+import { keepPreviousData } from '@tanstack/react-query';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { Model3DCard } from '~/components/Cards/Model3DCard';
@@ -44,7 +45,7 @@ function Model3DsPage() {
     { limit: 50 },
     {
       getNextPageParam: (last) => last.nextCursor,
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
     }
   );
 

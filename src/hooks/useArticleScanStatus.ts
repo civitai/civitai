@@ -24,9 +24,10 @@ export function useArticleScanStatus({
     { id: articleId },
     {
       enabled: enabled && !!features.articleImageScanning,
-      refetchInterval: (data) => {
+      // v5: refetchInterval receives the Query; read data off query.state.data.
+      refetchInterval: (query) => {
         // Stop polling when all images are complete
-        if (data?.allComplete) return false;
+        if (query.state.data?.allComplete) return false;
         return refetchInterval;
       },
       refetchOnWindowFocus: false,

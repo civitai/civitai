@@ -15,6 +15,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconPencil, IconStar, IconThumbUp } from '@tabler/icons-react';
+import { keepPreviousData } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
 import type { InferGetServerSidePropsType } from 'next';
 import { useMemo, useState } from 'react';
@@ -85,7 +86,7 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
     isFetching,
   } = trpc.model3d.reviews.getInfinite.useQuery(
     { model3dId: id, limit: PAGE_SIZE, page },
-    { enabled: features.model3dFeed, keepPreviousData: true }
+    { enabled: features.model3dFeed, placeholderData: keepPreviousData }
   );
 
   const reviews = reviewsData?.items ?? [];
