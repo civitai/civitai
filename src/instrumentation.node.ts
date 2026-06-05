@@ -97,8 +97,12 @@ if (!OTEL_ENABLED) {
       // the highest-frequency span source (~4 spans/request) and the dominant
       // async_hooks context-propagation cost a CPU pin profile attributed to OTEL
       // — and head sampling can't remove that (the context manager runs for every
-      // span regardless of the sampling decision). Redis latency is already
-      // covered by prom-client metrics, so the observability loss is minimal.
+      // span regardless of the sampling decision). Observability tradeoff: this
+      // removes the only PER-COMMAND redis timing the app had — there is NO redis
+      // command-latency prom metric (only cache hit/miss counters). Accepted for
+      // the CPU win; if per-command redis latency is needed later, add a
+      // low-cardinality prom histogram around sendCommand (cheaper than a span —
+      // no context.with / async_hooks propagation).
       instrumentations: [new HttpInstrumentation(), new PrismaInstrumentation()],
     });
 
