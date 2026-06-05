@@ -151,7 +151,13 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           limit,
           skip,
           cursor,
-          include: ['metaSelect', 'tagIds', 'profilePictures'],
+          // Only fetch the (large, ~2.8KB/key) meta blob when the caller asks
+          // for it via withMeta. Previously metaSelect was hardcoded, so every
+          // request paid the imageMetaCache fetch + JSON serialization even when
+          // withMeta=false (the default) and the meta was discarded client-side.
+          include: withMeta
+            ? ['metaSelect', 'tagIds', 'profilePictures']
+            : ['tagIds', 'profilePictures'],
           periodMode: 'published',
           headers: { src: '/api/v1/images' },
           browsingLevel: _browsingLevel,
@@ -169,7 +175,13 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           limit,
           skip,
           cursor,
-          include: ['metaSelect', 'tagIds', 'profilePictures'],
+          // Only fetch the (large, ~2.8KB/key) meta blob when the caller asks
+          // for it via withMeta. Previously metaSelect was hardcoded, so every
+          // request paid the imageMetaCache fetch + JSON serialization even when
+          // withMeta=false (the default) and the meta was discarded client-side.
+          include: withMeta
+            ? ['metaSelect', 'tagIds', 'profilePictures']
+            : ['tagIds', 'profilePictures'],
           periodMode: 'published',
           browsingLevel: _browsingLevel,
           withMeta,
@@ -187,7 +199,13 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           limit,
           skip,
           cursor,
-          include: ['metaSelect', 'tagIds', 'profilePictures'],
+          // Only fetch the (large, ~2.8KB/key) meta blob when the caller asks
+          // for it via withMeta. Previously metaSelect was hardcoded, so every
+          // request paid the imageMetaCache fetch + JSON serialization even when
+          // withMeta=false (the default) and the meta was discarded client-side.
+          include: withMeta
+            ? ['metaSelect', 'tagIds', 'profilePictures']
+            : ['tagIds', 'profilePictures'],
           periodMode: 'published',
           browsingLevel: _browsingLevel,
           withMeta,
@@ -233,7 +251,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
             heartCount: image.stats?.heartCountAllTime ?? 0,
             commentCount: image.stats?.commentCountAllTime ?? 0,
           },
-          meta: image.meta,
+          meta: image.meta ?? null,
           username: image.user.username,
           baseModel: image.baseModel,
           modelVersionIds: image.modelVersionIds,
