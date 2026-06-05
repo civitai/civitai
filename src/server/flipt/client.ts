@@ -53,8 +53,6 @@ export enum FLIPT_FEATURE_FLAGS {
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
   LICENSING_FEE = 'licensing-fee',
   WILDCARDS = 'wildcards',
-  MEILI_CACHE_OPS = 'meili-cache-ops',
-  MEILI_USER_OWN_PASS = 'meili-user-own-pass',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;

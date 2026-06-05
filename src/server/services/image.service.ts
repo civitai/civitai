@@ -2312,20 +2312,6 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   // When provided, getImagesFromSearch skips its own Flipt evaluation.
   bitdexMode?: string | null;
   actor?: string;
-  /**
-   * When true, apply cache-friendly Meilisearch ops:
-   * - skip per-user excludedTagIds / excludedUserIds filters
-   * - gate NSFW license compound behind includesNsfwContent
-   */
-  meiliCacheOps?: boolean;
-  /**
-   * When true, drop the inline `OR userId=currentUserId` clauses from the
-   * nsfw and publish filters (main filter stays strict + cacheable) and
-   * fetch user-own excluded content from a parallel second-pass Meili query.
-   * Hits from both queries are merged + re-sorted before filter/enrich.
-   * Runs only on the first page (no cursor/entry/offset).
-   */
-  meiliUserOwnPass?: boolean;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -2560,13 +2546,9 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   // fallthrough (flags default off → pre-filter).
   input = await withSpan('image:flipt:eval', async () => {
     const entityId = input.currentUserId?.toString() || 'anonymous';
-    const [postFilter, meiliCacheOps, meiliUserOwnPass] = await Promise.all([
-      getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId),
-      getFliptBoolean(FLIPT_FEATURE_FLAGS.MEILI_CACHE_OPS, entityId),
-      getFliptBoolean(FLIPT_FEATURE_FLAGS.MEILI_USER_OWN_PASS, entityId),
-    ]);
+    const postFilter = await getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId);
     if (postFilter) searchFn = getImagesFromSearchPostFilter;
-    return { ...input, meiliCacheOps, meiliUserOwnPass };
+    return input;
   });
 
   // Check BitDex mode (off / shadow / primary)
@@ -2793,219 +2775,6 @@ export async function getImagesFromFeedSearch(
   }
 }
 
-/**
- * Second-pass Meili query returning the current user's own excluded content:
- * images the strict main query would have filtered out (unscanned, unpublished,
- * scheduled, private, blocked, or POI when disablePoi is on).
- *
- * Intentionally UNSCOPED — the cache key collapses to roughly
- * `userId × sort × disablePoi`, so the same response is reused across every
- * page/view the user visits (model galleries, feed, profiles, etc). Content
- * scoping (modelVersionId, postId, tags, etc) is applied in the caller via
- * `contentScopeUserOwnHits` after the results come back. Mirrors the BitDex
- * cacheability trick (image.service.ts:fetchBitdexPrimary).
- *
- * Returns [] when there's no currentUserId, when viewing another user's
- * profile (userId !== currentUserId), or when metricsSearchClient is down.
- */
-async function fetchMeiliUserOwnPass(
-  input: ImageSearchInput,
-  nsfwLevelField: MetricsImageFilterableAttribute,
-  resolvedUserId?: number
-): Promise<ImageMetricsSearchIndexRecord[]> {
-  const { currentUserId, disablePoi, sort } = input;
-  if (!currentUserId || !metricsSearchClient) return [];
-  // Skip when viewing another user's profile — second pass is current-user
-  // scoped, so unscoped results would leak my excluded content into their view.
-  // `resolvedUserId` is the userId after username -> id lookup; fall back to raw input.
-  const targetUserId = resolvedUserId ?? input.userId;
-  if (targetUserId != null && targetUserId !== currentUserId) return [];
-
-  const filters: string[] = [];
-  filters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
-  filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
-
-  // Excluded set = anything the strict main query would have removed for a
-  // non-owner: unscanned, unpublished, scheduled, private, blocked, or POI
-  // (when disablePoi is on). Mirrors the BitDex second-pass excluded OR.
-  // Snap to 60s so the cache key reuses across nearby requests — matches the
-  // pattern used by Pre/PostFilter publish filters.
-  const now = snapToInterval(Date.now());
-  const blockedReasonList = [
-    BlockedReason.TOS,
-    BlockedReason.Moderated,
-    BlockedReason.CSAM,
-    BlockedReason.AiNotVerified,
-  ]
-    .map((r) => `'${r}'`)
-    .join(',');
-  const excludedOr: string[] = [
-    makeMeiliImageSearchFilter(nsfwLevelField, `= 0`) as string,
-    makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS') as string,
-    `availability = ${Availability.Private}`,
-    `blockedFor IN [${blockedReasonList}]`,
-  ];
-  // Own scheduled content is included in the second-pass only when the caller
-  // opted in via the `scheduled` flag. Without opt-in, owners no longer see
-  // their own scheduled images pinned to feeds.
-  if (input.scheduled) {
-    excludedOr.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${now}`) as string);
-  }
-  if (disablePoi) excludedOr.push('poi = true');
-  filters.push(`(${excludedOr.join(' OR ')})`);
-
-  // Match the main query's sort so the merge produces stable ordering
-  let userSort: MeiliImageSort;
-  if (sort === ImageSort.MostComments) userSort = makeMeiliImageSearchSort('commentCount', 'desc');
-  else if (sort === ImageSort.MostReactions)
-    userSort = makeMeiliImageSearchSort('reactionCount', 'desc');
-  else if (sort === ImageSort.MostCollected)
-    userSort = makeMeiliImageSearchSort('collectedCount', 'desc');
-  else if (sort === ImageSort.Oldest) userSort = makeMeiliImageSearchSort('sortAt', 'asc');
-  else userSort = makeMeiliImageSearchSort('sortAt', 'desc');
-
-  const request: SearchParams = {
-    filter: filters.join(' AND '),
-    sort: [userSort],
-    limit: 500, // user's own excluded content is usually small (< 100)
-  };
-
-  try {
-    // Narrow withMeili wrap to the SDK call only — this runs on the same hot
-    // path as the main pre-filter query and shares the same brownout risk.
-    const { results } = await withMeili('metricsSearch', () =>
-      metricsSearchClient!
-        .index(METRICS_SEARCH_INDEX)
-        .getDocuments<ImageMetricsSearchIndexRecord>(request)
-    );
-    return results;
-  } catch (err) {
-    // MeiliCallTimeoutError bubbles up so the parent prefilter call's outer
-    // try/catch can attribute it correctly and surface a 408. fetchMeili
-    // UserOwnPass is "best-effort enrichment" — if it times out independently
-    // (not part of the main race), we'd rather fail the whole request than
-    // silently lose the user's own private content.
-    if (err instanceof MeiliCallTimeoutError) throw err;
-    console.error('fetchMeiliUserOwnPass error:', err);
-    return [];
-  }
-}
-
-/**
- * Narrow unscoped second-pass user-own hits down to the current view. Run
- * client-side after fetchMeiliUserOwnPass so the query itself stays cacheable.
- * Mirrors fetchBitdexPrimary's post-fetch content-scope step.
- */
-function contentScopeUserOwnHits(
-  hits: ImageMetricsSearchIndexRecord[],
-  input: ImageSearchInput
-): ImageMetricsSearchIndexRecord[] {
-  if (!hits.length) return hits;
-  const {
-    modelVersionId,
-    postId,
-    postIds,
-    types,
-    tags,
-    tools,
-    techniques,
-    baseModels,
-    remixOfId,
-    withMeta,
-    fromPlatform,
-    hideAutoResources,
-    hideManualResources,
-  } = input;
-
-  let scoped = hits;
-  if (modelVersionId) {
-    scoped = scoped.filter((h) => {
-      if (h.postedToId === modelVersionId) return true;
-      if (!hideAutoResources && h.modelVersionIds?.includes(modelVersionId)) return true;
-      if (!hideManualResources && h.modelVersionIdsManual?.includes(modelVersionId)) return true;
-      return false;
-    });
-  }
-  const effectivePostIds = postId != null ? [...(postIds ?? []), postId] : postIds ?? [];
-  if (effectivePostIds.length) {
-    const set = new Set(effectivePostIds);
-    scoped = scoped.filter((h) => h.postId != null && set.has(h.postId));
-  }
-  if (types?.length) {
-    const set = new Set<string>(types as unknown as string[]);
-    scoped = scoped.filter((h) => set.has(h.type));
-  }
-  if (tags?.length) {
-    const set = new Set(tags);
-    scoped = scoped.filter((h) => h.tagIds?.some((t) => set.has(t)));
-  }
-  if (tools?.length) {
-    const set = new Set(tools);
-    scoped = scoped.filter((h) => h.toolIds?.some((t) => set.has(t)));
-  }
-  if (techniques?.length) {
-    const set = new Set(techniques);
-    scoped = scoped.filter((h) => h.techniqueIds?.some((t) => set.has(t)));
-  }
-  if (baseModels?.length) {
-    const set = new Set<string>(baseModels);
-    scoped = scoped.filter((h) => set.has(h.baseModel));
-  }
-  if (remixOfId) scoped = scoped.filter((h) => h.remixOfId === remixOfId);
-  if (withMeta) scoped = scoped.filter((h) => h.hasMeta === true);
-  if (fromPlatform) scoped = scoped.filter((h) => h.onSite === true);
-  // Defense-in-depth: drop own scheduled/unpublished hits when the caller did
-  // not opt in via `scheduled` or `notPublished`. Belt-and-suspenders against
-  // a stale second-pass query forgetting to gate the publish clause.
-  // `publishedAtUnix` is stored in ms (`publishedAt.getTime()`) to match the
-  // rest of the publish filter logic which compares against `snappedNow` in ms.
-  if (!input.scheduled && !input.notPublished) {
-    const nowMs = Date.now();
-    scoped = scoped.filter((h) => h.publishedAtUnix != null && h.publishedAtUnix <= nowMs);
-  }
-  return scoped;
-}
-
-/**
- * Sort key extractor — mirrors each ImageSort option's underlying field.
- * Used to merge-sort two hit sets returned from parallel Meili queries.
- */
-function meiliHitSortKey(hit: ImageMetricsSearchIndexRecord, sort: ImageSort | undefined): number {
-  if (sort === ImageSort.MostComments) return hit.commentCount ?? 0;
-  if (sort === ImageSort.MostReactions) return hit.reactionCount ?? 0;
-  if (sort === ImageSort.MostCollected) return hit.collectedCount ?? 0;
-  // Oldest / Newest both use sortAtUnix
-  return hit.sortAtUnix ?? 0;
-}
-
-function mergeMeiliHitsBySort(
-  main: ImageMetricsSearchIndexRecord[],
-  userOwn: ImageMetricsSearchIndexRecord[],
-  sort: ImageSort | undefined
-): ImageMetricsSearchIndexRecord[] {
-  const seen = new Set<number>();
-  const merged: ImageMetricsSearchIndexRecord[] = [];
-  for (const hit of main) {
-    if (!seen.has(hit.id)) {
-      seen.add(hit.id);
-      merged.push(hit);
-    }
-  }
-  for (const hit of userOwn) {
-    if (!seen.has(hit.id)) {
-      seen.add(hit.id);
-      merged.push(hit);
-    }
-  }
-  const asc = sort === ImageSort.Oldest;
-  merged.sort((a, b) => {
-    const av = meiliHitSortKey(a, sort);
-    const bv = meiliHitSortKey(b, sort);
-    return asc ? av - bv : bv - av;
-  });
-  return merged;
-}
-
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
@@ -3059,11 +2828,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   // Only show images that belong to a post
   filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
 
-  // User-own-pass mode drops the inline `OR userId=currentUserId` carve-outs
-  // (availability, blockedFor, poi) so the main filter stays strict + cacheable.
-  // User's own private/blocked/poi content comes from fetchMeiliUserOwnPass.
-  const ownCarveOut =
-    !input.meiliUserOwnPass && currentUserId ? ` OR "userId" = ${currentUserId}` : '';
+  const ownCarveOut = currentUserId ? ` OR "userId" = ${currentUserId}` : '';
   if (!isModerator) {
     filters.push(
       // Avoids exposing private resources to the public
@@ -3162,24 +2927,15 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const nsfwFilters = [
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
-  // User-own-pass mode: drop the inline `(nsfwLevel=0 AND userId=currentUserId)`
-  // OR branch. The user's unscanned content comes from fetchMeiliUserOwnPass and
-  // gets merged at the hit level. Keeps the main filter cacheable.
-  if (!input.meiliUserOwnPass) {
-    const nsfwUserFilters = [makeMeiliImageSearchFilter(nsfwLevelField, `= 0`)];
-    if (currentUserId)
-      nsfwUserFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
-
-    nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
-  }
+  const nsfwUserFilters = [makeMeiliImageSearchFilter(nsfwLevelField, `= 0`)];
+  if (currentUserId)
+    nsfwUserFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+  nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
   filters.push(`(${nsfwFilters.join(' OR ')})`);
 
   // NSFW License Restrictions Filter
   // Filter out images with R/X/XXX NSFW levels that use restricted base models.
-  // Cache-ops mode: gate behind includesNsfwContent. The outer nsfwLevel IN filter
-  // already excludes [4,8,16,32] on SFW queries, so this compound is a no-op but
-  // still costs per-query. Mirrors the BitDex fix.
-  if (nsfwRestrictedBaseModels.length > 0 && (!input.meiliCacheOps || includesNsfwContent)) {
+  if (nsfwRestrictedBaseModels.length > 0) {
     const restrictedBaseModelsQuoted = nsfwRestrictedBaseModels.map((bm) => `'${bm}'`);
 
     // Exclude images that have BOTH restricted NSFW levels AND restricted base models
@@ -3217,10 +2973,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
   }
 
-  // Cache-ops mode: skip per-user excludedTagIds. Injected by tRPC middleware from
-  // the user's hidden tags — unique per user, destroys cache. Frontend already
-  // filters via useApplyHiddenPreferences.
-  if (!input.meiliCacheOps && excludedTagIds?.length) {
+  if (excludedTagIds?.length) {
     // Needed support for this in order to properly support multiple domains.
     filters.push(makeMeiliImageSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
   }
@@ -3251,9 +3004,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   }
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
-  // User-own-pass mode: drop the inline `OR userId=currentUserId` branch. User's
-  // unpublished/scheduled content comes from fetchMeiliUserOwnPass and gets merged
-  // at the hit level.
   const snappedNow = snapToInterval(Math.round(Date.now()));
   if (isModerator) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
@@ -3261,7 +3011,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-      if (!input.meiliUserOwnPass && currentUserId) {
+      if (currentUserId) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
       filters.push(`(${publishedFilters.join(' OR ')})`);
@@ -3272,7 +3022,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // flag is opt-in: when set, OR-in the owner carve-out so the user-own
     // second pass surfaces own scheduled hits.
     const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-    if (!input.meiliUserOwnPass && currentUserId && scheduled) {
+    if (currentUserId && scheduled) {
       publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
@@ -3294,10 +3044,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   //   filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
   // }
 
-  // Cache-ops mode: skip per-user excludedUserIds NOT IN. Middleware injects the
-  // user's hidden users; destroys cache. Frontend filters via useApplyHiddenPreferences.
   if (userId) filters.push(makeMeiliImageSearchFilter('userId', `= ${userId}`));
-  else if (!input.meiliCacheOps && excludedUserIds)
+  else if (excludedUserIds)
     filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
 
   // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
@@ -3377,10 +3125,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   try {
     const actor = input.actor;
 
-    // User-own-pass mode: run main query + user-own query in parallel, then merge.
-    // Only runs on the first page (no cursor/entry/offset) to keep merge simple.
-    const runUserOwnPass = !!input.meiliUserOwnPass && !!currentUserId && !entry && !offset;
-
     // Always use the abortable raw fetch path. Two reasons:
     //   1. Client disconnect: a caller-supplied `input.signal` still cancels
     //      the underlying request as before.
@@ -3397,19 +3141,14 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // (image.getInfinite → getInfiniteImagesHandler → getAllImagesIndex →
     //  this prefilter). Verification on 2026-05-29 showed this is where the
     // 374-error/15min Meili bleed lives, NOT in getImagesFromFeedSearch.
-    const [mainResult, userOwnHits] = await Promise.all([
-      withSpan('image:meili:getDocuments', () =>
-        fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(METRICS_SEARCH_INDEX, request, {
-          host: env.METRICS_SEARCH_HOST as string,
-          apiKey: env.METRICS_SEARCH_API_KEY,
-          signal: input.signal,
-          actor,
-        })
-      ),
-      runUserOwnPass
-        ? fetchMeiliUserOwnPass(input, nsfwLevelField, userId)
-        : Promise.resolve([] as ImageMetricsSearchIndexRecord[]),
-    ]);
+    const mainResult = await withSpan('image:meili:getDocuments', () =>
+      fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(METRICS_SEARCH_INDEX, request, {
+        host: env.METRICS_SEARCH_HOST as string,
+        apiKey: env.METRICS_SEARCH_API_KEY,
+        signal: input.signal,
+        actor,
+      })
+    );
     let results = mainResult.results;
 
     let nextCursor: number | undefined;
@@ -3418,16 +3157,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       // - if we have no entrypoint, it's the first request, and set one for the future
       //   else keep it the same
       nextCursor = !entry ? results[0]?.sortAtUnix : entry;
-    }
-
-    // Merge user-own hits with the main results, dedupe, re-sort, and re-trim.
-    // Second pass is fetched unscoped so its cache key stays small — apply
-    // view-specific content scoping here, before the merge.
-    if (userOwnHits.length) {
-      const scopedOwn = contentScopeUserOwnHits(userOwnHits, input);
-      if (scopedOwn.length) {
-        results = mergeMeiliHitsBySort(results, scopedOwn, sort).slice(0, limit);
-      }
     }
 
     const filteredHits = results.filter((hit) => {
@@ -4053,16 +3782,13 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
   // Allow users to see their own unscanned content on their user page.
-  // User-own-pass mode: dropped — handled by fetchMeiliUserOwnPass merge.
-  if (!input.meiliUserOwnPass && currentUserId && userId === currentUserId)
+  if (currentUserId && userId === currentUserId)
     nsfwFilters.push(makeMeiliImageSearchFilter(nsfwLevelField, `= 0`));
 
   filters.push(`(${nsfwFilters.join(' OR ')})`);
 
-  // NSFW License Restrictions Filter — gate behind includesNsfwContent in cache-ops
-  // mode. On SFW queries the outer nsfwLevel filter already excludes restricted levels,
-  // so this compound is a no-op but still costs per-query.
-  if (nsfwRestrictedBaseModels.length > 0 && (!input.meiliCacheOps || includesNsfwContent)) {
+  // NSFW License Restrictions Filter
+  if (nsfwRestrictedBaseModels.length > 0) {
     const restrictedBaseModelsQuoted = nsfwRestrictedBaseModels.map((bm) => `'${bm}'`);
 
     // Exclude images that have BOTH restricted NSFW levels AND restricted base models
@@ -4100,10 +3826,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
   }
 
-  // Cache-ops mode: skip per-user excludedTagIds. Injected by tRPC middleware from
-  // the user's hidden tags — unique per user, destroys cache. Frontend already
-  // filters via useApplyHiddenPreferences.
-  if (!input.meiliCacheOps && excludedTagIds?.length) {
+  if (excludedTagIds?.length) {
     // Needed support for this in order to properly support multiple domains.
     filters.push(makeMeiliImageSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
   }
@@ -4134,7 +3857,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   }
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
-  // Publish Date Filtering. User-own-pass mode drops the inline user-own branches.
+  // Publish Date Filtering.
   const snappedNow = snapToInterval(Date.now());
   if (isModerator) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
@@ -4142,7 +3865,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
       const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-      if (!input.meiliUserOwnPass && currentUserId) {
+      if (currentUserId) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
       filters.push(`(${publishedFilters.join(' OR ')})`);
@@ -4152,7 +3875,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     // For own user's profile view, only surface own scheduled content when the
     // caller explicitly opted in via the `scheduled` flag. Without opt-in, the
     // strict published filter applies even to own profile.
-    if (!input.meiliUserOwnPass && currentUserId && userId === currentUserId && scheduled) {
+    if (currentUserId && userId === currentUserId && scheduled) {
       publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
@@ -4161,7 +3884,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     // When `scheduled` is opt-in, OR-in the owner carve-out so own scheduled
     // hits surface in the main feed.
     const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-    if (!input.meiliUserOwnPass && currentUserId && scheduled) {
+    if (currentUserId && scheduled) {
       publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
@@ -4183,10 +3906,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   //   filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
   // }
 
-  // Cache-ops mode: skip per-user excludedUserIds NOT IN. Middleware injects the
-  // user's hidden users; destroys cache. Frontend filters via useApplyHiddenPreferences.
   if (userId) filters.push(makeMeiliImageSearchFilter('userId', `= ${userId}`));
-  else if (!input.meiliCacheOps && excludedUserIds)
+  else if (excludedUserIds)
     filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
 
   // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
@@ -4268,13 +3989,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   // (No actorClient pinning needed here: the iteration loop now runs through
   // fetchDocumentsAbortable, which propagates `actor` via the X-Search-Actor
   // header on every request directly.)
-
-  // User-own-pass mode: kick off the parallel user-scoped query up front. Only
-  // on the first page (no offset) to keep the merge simple.
-  const runUserOwnPass = !!input.meiliUserOwnPass && !!currentUserId && !offset;
-  const userOwnHitsPromise: Promise<ImageMetricsSearchIndexRecord[]> = runUserOwnPass
-    ? fetchMeiliUserOwnPass(input, nsfwLevelField, userId)
-    : Promise.resolve([]);
 
   try {
     while (accumulatedHits.length < limit + 1 && iteration < MAX_ITERATIONS) {
@@ -4451,14 +4165,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     postFilterDocsProcessed.inc({ route }, totalProcessed);
     postFilterFilterRatio.observe({ route }, overallFilterRatio);
 
-    // Merge user-own hits from the second-pass into the accumulated results.
-    // Second pass is unscoped (cacheable) — narrow it to the current view here,
-    // then dedupe and re-sort by the active sort field. Runs on first page only.
-    const userOwnHits = await userOwnHitsPromise;
-    const scopedOwn = userOwnHits.length ? contentScopeUserOwnHits(userOwnHits, input) : [];
-    const mergedHits = scopedOwn.length
-      ? mergeMeiliHitsBySort(accumulatedHits, scopedOwn, sort)
-      : accumulatedHits;
+    const mergedHits = accumulatedHits;
 
     // Update nextCursor based on whether we have more results than requested
     if (mergedHits.length > limit) {
