@@ -56,18 +56,19 @@ export const openaiConfig = ImageGenConfig({
     | OpenAiGpt2EditImageInput => {
     const checkpoint = resources.find((resource) => openaiModelVersionToModelMap.get(resource.id));
     const model = checkpoint ? openaiModelVersionToModelMap.get(checkpoint.id)?.model : undefined;
-    
+
     if (model === 'gpt-image-2') {
       const baseData = {
         engine: params.engine,
         model: 'gpt-image-2' as const,
         prompt: params.prompt,
         quantity: params.quantity,
-        quality: params.quality,
+        // gpt-image-2's quality enum has no 'auto' (gpt-image-1 does); clamp it.
+        quality: params.quality === 'auto' ? 'high' : params.quality,
         width: params.width,
         height: params.height,
       };
-      
+
       if (!params.images?.length) {
         return {
           ...baseData,

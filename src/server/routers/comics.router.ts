@@ -170,9 +170,11 @@ const COMIC_MODEL_CONFIG: Record<
   },
   OpenAI2: {
     // gpt-image-2 — different API shape than v1/v1.5 (width/height, no
-    // background/seed). The ecosystem handler at
-    // `src/server/services/orchestrator/ecosystems/openai.handler.ts`
-    // resolves to that shape based on the resource versionId.
+    // background/seed). This iterate path runs through `createImageGen` →
+    // the legacy `imageGenConfig` ('openai' → openai.config.ts), NOT the
+    // ecosystem handler. The gpt-image-2 shape is resolved in
+    // `src/shared/orchestrator/ImageGen/openai.config.ts` based on the
+    // resource versionId.
     engine: 'openai',
     baseModel: 'OpenAI',
     versionId: 2880272,
