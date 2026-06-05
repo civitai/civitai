@@ -73,62 +73,8 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 // Ecosystem handlers - unified router
 import { createEcosystemStepInput } from './ecosystems';
 import { createComfyInput, resourcesToImageMetadataResources } from './ecosystems/comfy-input';
+import { sanitizeProviderError, extractRawStepErrors } from './common';
 import { removeEmpty } from '~/utils/object-helpers';
-
-export const providerNameMap: Record<string, string> = {
-  grok: 'xAI (Grok)',
-  haiper: 'Haiper',
-  mochi: 'Mochi',
-  luma: 'Luma',
-  minimax: 'Minimax',
-  kling: 'Kling',
-  runway: 'Runway',
-  openai: 'OpenAI',
-  google: 'Google',
-  gemini: 'Google Gemini',
-  fal: 'Fal.ai',
-  flux2: 'Fal.ai (Flux)',
-  'flux2-klein': 'Fal.ai (Flux Klein)',
-  'flux1-kontext': 'Fal.ai (Flux Kontext)',
-  seedream: 'Fal.ai (SeeDream)',
-  zimage: 'Fal.ai (zImage)',
-};
-
-export function sanitizeProviderError(message: string, engine?: string): string {
-  const provider =
-    engine && providerNameMap[engine.toLowerCase()]
-      ? providerNameMap[engine.toLowerCase()]
-      : 'external provider';
-
-  const lower = message.toLowerCase();
-
-  const hasSensitiveKeywords =
-    lower.includes('db') ||
-    lower.includes('sql') ||
-    lower.includes('prisma') ||
-    lower.includes('econnrefused') ||
-    lower.includes('connection refused') ||
-    lower.includes('api key') ||
-    lower.includes('token') ||
-    lower.includes('bearer') ||
-    lower.includes('stack trace') ||
-    lower.includes('error:') ||
-    lower.includes('at ') ||
-    lower.includes('node_modules') ||
-    lower.includes('http') ||
-    lower.includes('/') ||
-    lower.includes('internal server error');
-
-  if (hasSensitiveKeywords) {
-    return `The generation provider ${provider} experienced a system error. Please try again.`;
-  }
-
-  if (!lower.includes(provider.toLowerCase())) {
-    return `${provider} Error: ${message}`;
-  }
-
-  return message;
-}
 
 // =============================================================================
 // Types
@@ -2016,47 +1962,7 @@ export function formatStepOutputs(
     } satisfies NormalizedImageOutput;
   });
 
-  // Collect errors
-  const rawErrors: string[] = [];
-  const stepOutput = step.output;
-  if (stepOutput) {
-    if ('errors' in stepOutput && Array.isArray(stepOutput.errors)) {
-      rawErrors.push(...stepOutput.errors.map(String));
-    }
-    if (
-      'externalTOSViolation' in stepOutput &&
-      'message' in stepOutput &&
-      typeof stepOutput.message === 'string'
-    ) {
-      rawErrors.push(stepOutput.message);
-    }
-  }
-
-  if (step.jobs) {
-    for (const job of step.jobs) {
-      if (job.status === 'failed') {
-        const reason = (job as any).reason || (job as any).error || (job as any).message;
-        if (reason && typeof reason === 'string' && !rawErrors.includes(reason)) {
-          rawErrors.push(reason);
-        }
-      }
-    }
-  }
-
-  if (step.metadata) {
-    const metaError = (step.metadata as any).error || (step.metadata as any).errors;
-    if (typeof metaError === 'string' && !rawErrors.includes(metaError)) {
-      rawErrors.push(metaError);
-    } else if (Array.isArray(metaError)) {
-      for (const err of metaError) {
-        const errStr = String(err);
-        if (errStr && !rawErrors.includes(errStr)) {
-          rawErrors.push(errStr);
-        }
-      }
-    }
-  }
-
+  const rawErrors = extractRawStepErrors(step);
   const engine =
     (params.engine as string | undefined) ??
     (step.input as any)?.engine ??

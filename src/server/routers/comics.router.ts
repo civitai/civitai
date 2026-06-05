@@ -3921,9 +3921,8 @@ export const comicsRouter = router({
         if (workflow.status === 'failed' || workflow.status === 'canceled') {
           const stepErrors = (firstStep as any)?.errors as string[] | undefined;
           const stepError = stepErrors && stepErrors.length > 0 ? stepErrors.join('\n') : undefined;
-          const errorMessage = stepError
-            ? `${stepError} (Generation ${workflow.status} — buzz has been refunded)`
-            : `Generation ${workflow.status} — buzz has been refunded`;
+          const suffix = `(Generation ${workflow.status} — buzz has been refunded)`;
+          const errorMessage = stepError ? `${stepError}\n${suffix}` : suffix;
 
           const updated = await dbWrite.comicPanel.update({
             where: { id: panel.id },

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeProviderError } from '../orchestration-new.service';
+import { sanitizeProviderError } from '../common';
 
 describe('sanitizeProviderError', () => {
   it('passes simple safe messages through unmodified when provider is in the message', () => {
@@ -45,5 +45,14 @@ describe('sanitizeProviderError', () => {
         'grok'
       )
     ).toBe('The generation provider xAI (Grok) experienced a system error. Please try again.');
+  });
+
+  it('handles undefined or unrecognized engine gracefully', () => {
+    expect(sanitizeProviderError('GPU out of memory')).toBe(
+      'external provider Error: GPU out of memory'
+    );
+    expect(sanitizeProviderError('PrismaClientInitializationError: Can\'t reach database server')).toBe(
+      'The generation provider external provider experienced a system error. Please try again.'
+    );
   });
 });
