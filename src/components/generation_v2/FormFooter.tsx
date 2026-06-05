@@ -353,11 +353,23 @@ export function SelfHostedBlockedAlert() {
           className="flex items-center gap-1.5"
         >
           <IconAlertTriangle size={16} />
-          {displayName} is available to members only
+          {displayName} is temporarily members-only
         </Text>
         <Text size="xs" mt={4}>
-          {displayName} runs on Civitai-hosted hardware and is currently limited to members. Become
-          a member to generate with it, or choose a different base model.
+          We&apos;re in the middle of a GPU crunch, so {displayName} is limited to members at the
+          moment. Become a member to generate with it now, or pick a different base model.{' '}
+          <Text
+            span
+            c="var(--mantine-color-yellow-light-color)"
+            td="underline"
+            className="cursor-pointer"
+            component="a"
+            href="/articles/30980/a-gpu-crunch-and-bumpy-days-ahead"
+            target="_blank"
+            rel="noreferrer nofollow"
+          >
+            Read what&apos;s going on
+          </Text>
         </Text>
         <div className="mt-3 flex items-center gap-3">
           <Button
