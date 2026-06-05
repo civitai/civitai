@@ -63,6 +63,11 @@ import { getCollectionById, getCollectionItemCount } from '~/server/services/col
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import {
+  buildLicensingFeeLookup,
+  bustBaseModelLicensingFeeCache,
+  getBaseModelLicensingFeeRules,
+} from '~/server/services/base-model-licensing-fee.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
 import {
   copyGallerySettingsToAllModelsByUser,
@@ -283,6 +288,9 @@ export const getModelHandler = async ({
         });
     }
 
+    const licensingFeeRules = await getBaseModelLicensingFeeRules();
+    const lookupInheritedFee = buildLicensingFeeLookup(licensingFeeRules);
+
     const mappedVersions = filteredVersions.map((version) => {
       let earlyAccessDeadline = features.earlyAccessModel ? version.earlyAccessEndsAt : undefined;
       if (earlyAccessDeadline && new Date() > earlyAccessDeadline) earlyAccessDeadline = undefined;
@@ -333,9 +341,12 @@ export const getModelHandler = async ({
 
       const versionMetrics = version.metrics[0];
 
+      const inheritedLicensingFee = lookupInheritedFee(version.baseModel, model.type, version.id);
+
       return {
         ...version,
         metrics: undefined,
+        inheritedLicensingFee,
         rank: {
           generationCountAllTime: versionMetrics?.generationCount ?? 0,
           downloadCountAllTime: versionMetrics?.downloadCount ?? 0,
@@ -726,6 +737,14 @@ export const deleteModelHandler = async ({
     const { id, permanently } = input;
     if (permanently && !ctx.user.isModerator) throw throwAuthorizationError();
 
+    // Soft-delete sets ModelVersion.deletedAt, which is filtered out by the
+    // rule cache query. Permanent delete cascades into BaseModelLicensingFee.
+    // Either way, bust if any of this model's versions was a recipient.
+    const wasRecipient = !!(await dbRead.baseModelLicensingFee.findFirst({
+      where: { modelVersion: { modelId: id } },
+      select: { baseModel: true },
+    }));
+
     const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
     const model = await deleteModel({ id, userId: ctx.user.id, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
@@ -737,6 +756,7 @@ export const deleteModelHandler = async ({
     });
 
     await dataForModelsCache.refresh(id);
+    if (wasRecipient) await bustBaseModelLicensingFeeCache();
 
     return model;
   } catch (error) {

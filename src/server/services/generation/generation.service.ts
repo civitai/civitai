@@ -28,6 +28,11 @@ import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import {
+  buildLicensingFeeLookup,
+  getBaseModelLicensingFeeRules,
+  type LicensingFeeLookup,
+} from '~/server/services/base-model-licensing-fee.service';
 import { getFeaturedModels } from '~/server/services/model.service';
 import { getLinkedVaeIds } from '~/server/services/model-version.service';
 import type { GenerationAlias, ModelVersionMeta } from '~/server/schema/model-version.schema';
@@ -1179,6 +1184,8 @@ export async function getResourceData(
 
   const unavailableResources = await getUnavailableResources();
   const featuredModels = await getFeaturedModels();
+  const licensingFeeRules = await getBaseModelLicensingFeeRules();
+  const lookupInheritedFee: LicensingFeeLookup = buildLicensingFeeLookup(licensingFeeRules);
   // sfwOnly is set upstream from ctx.features.isGreen, so reuse it as the
   // isGreen signal for the nsfwIds gate inside getResourceCanGenerate.
   const ecosystemConfig = await getGenerationEcosystemConfig(user, { isGreen: sfwOnly });
@@ -1213,6 +1220,8 @@ export async function getResourceData(
       delete item.model.minor;
     }
 
+    const inheritedLicensingFee = lookupInheritedFee(item.baseModel, item.model.type, item.id);
+
     return {
       ...item,
       minStrength: settings?.minStrength ?? -1,
@@ -1223,6 +1232,7 @@ export async function getResourceData(
       epochNumber,
       isOwnedByUser,
       isPrivate,
+      inheritedLicensingFee,
     };
   }
 
