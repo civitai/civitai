@@ -8,13 +8,13 @@ import {
   Container,
   Divider,
   Group,
-  Loader,
+  Select,
   Stack,
   Text,
   TextInput,
   Title,
+  Tooltip,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconArchive,
   IconArrowLeft,
@@ -94,9 +94,11 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
   const utils = trpc.useUtils();
 
   const { data: model3d, isLoading } = trpc.model3d.getById.useQuery({ id });
+  const { data: licenses } = trpc.model3d.getLicenses.useQuery();
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [licenseId, setLicenseId] = useState<number | null>(null);
   // Seed local state once the query lands. We don't reset on subsequent
   // refetches so an in-progress edit isn't clobbered by a background refresh.
   const [seeded, setSeeded] = useState(false);
@@ -104,6 +106,7 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
     if (!seeded && model3d) {
       setName(model3d.name);
       setDescription(model3d.description ?? '');
+      setLicenseId(model3d.licenseId);
       setSeeded(true);
     }
   }, [seeded, model3d]);
@@ -167,16 +170,22 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
     return stripped.length === 0 ? null : html.trim();
   };
 
-  const handleSave = () => {
+  const handleSave = (chainedAction?: 'publish' | 'unpublish') => {
     if (!canSave) return;
-    mutate.mutate({
-      id: model3d.id,
-      name: trimmedName,
-      description: normalizeDescription(description),
-      // Pass through existing licenseId — the upsert schema requires it but
-      // editing name/description here shouldn't change licensing.
-      licenseId: model3d.licenseId,
-    });
+    mutate.mutate(
+      {
+        id: model3d.id,
+        name: trimmedName,
+        description: normalizeDescription(description),
+        licenseId: licenseId ?? model3d.licenseId,
+      },
+      {
+        onSuccess: () => {
+          if (chainedAction === 'publish') publishMutation.mutate({ id: model3d.id });
+          if (chainedAction === 'unpublish') unpublishMutation.mutate({ id: model3d.id });
+        },
+      }
+    );
   };
 
   return (
@@ -311,13 +320,7 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
           <Card withBorder p="lg">
             <Stack gap="md">
               <Title order={4}>Details</Title>
-              <Text size="xs" c="dimmed">
-                Set the name and description others will see. Saving here only updates
-                these fields — it never changes visibility. Use the Publish action
-                below when you&apos;re ready to release.
-              </Text>
               <Divider />
-
 
               <TextInput
                 label="Name"
@@ -346,145 +349,73 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
                 stickyToolbar
               />
 
+              <Select
+                label="License"
+                description="The license governs how others can use this 3D model."
+                data={
+                  licenses?.map((l) => ({ value: String(l.id), label: l.name })) ?? []
+                }
+                value={licenseId != null ? String(licenseId) : null}
+                onChange={(v) => setLicenseId(v ? Number(v) : null)}
+                searchable
+                allowDeselect={false}
+                disabled={!licenses}
+                placeholder={licenses ? undefined : 'Loading…'}
+              />
+
+              {/* Single action row. Publish never happens silently from a Save click —
+                  it's always an explicit "Save & Publish" choice. */}
               <Group justify="flex-end" gap="sm">
                 <Button
+                  onClick={() => handleSave()}
+                  loading={
+                    mutate.isLoading &&
+                    !publishMutation.isLoading &&
+                    !unpublishMutation.isLoading
+                  }
+                  disabled={!canSave}
                   variant="default"
-                  component={Link}
-                  href={`/3d-models/${id}`}
-                  disabled={mutate.isLoading}
                 >
-                  Done
+                  Save
                 </Button>
-                <Button onClick={handleSave} loading={mutate.isLoading} disabled={!canSave}>
-                  Save details
-                </Button>
-              </Group>
 
-              {mutate.isLoading && (
-                <Group gap="xs" justify="center">
-                  <Loader size="xs" />
-                  <Text size="xs" c="dimmed">
-                    Saving…
-                  </Text>
-                </Group>
-              )}
-            </Stack>
-          </Card>
-
-          {/* Visibility — Publish / Unpublish are the *only* actions that
-              change `Model3D.status`. Saving above never touches it. */}
-          <Card withBorder p="lg">
-            <Stack gap="md">
-              <Group justify="space-between" align="center">
-                <Title order={4}>Visibility</Title>
-                <Badge
-                  color={STATUS_COLOR[model3d.status] ?? 'gray'}
-                  variant="light"
-                  radius="sm"
-                >
-                  {model3d.status}
-                </Badge>
-              </Group>
-
-              {model3d.status === Model3DStatus.Draft && (
-                <>
-                  <Text size="sm" c="dimmed">
-                    This model is a Draft — only you (and moderators) can see it.
-                    Publish to make it discoverable in the 3D Models feed.
-                    {!model3d.thumbnailImageId && (
-                      <>
-                        {' '}
-                        <Text component="span" c="red">
-                          A thumbnail image is required before publishing.
-                        </Text>
-                      </>
-                    )}
-                  </Text>
-                  <Group justify="flex-end">
+                {(model3d.status === Model3DStatus.Draft ||
+                  model3d.status === Model3DStatus.Unpublished) && (
+                  <Tooltip
+                    label="A thumbnail image is required before publishing."
+                    withinPortal
+                    disabled={!!model3d.thumbnailImageId}
+                  >
                     <Button
-                      onClick={() =>
-                        openConfirmModal({
-                          title: 'Publish 3D Model',
-                          children:
-                            'Publish this 3D model? It will appear in the 3D Models feed and be downloadable by others.',
-                          centered: true,
-                          labels: { confirm: 'Publish', cancel: 'Cancel' },
-                          confirmProps: { color: 'green' },
-                          onConfirm: () => publishMutation.mutate({ id: model3d.id }),
-                        })
-                      }
+                      onClick={() => handleSave('publish')}
+                      loading={publishMutation.isLoading}
+                      disabled={!canSave || !model3d.thumbnailImageId}
                       color="green"
                       leftSection={<IconUpload size={14} />}
-                      loading={publishMutation.isLoading}
-                      disabled={!model3d.thumbnailImageId || trimmedName.length === 0}
                     >
-                      Publish
+                      {model3d.status === Model3DStatus.Unpublished
+                        ? 'Save & Republish'
+                        : 'Save & Publish'}
                     </Button>
-                  </Group>
-                </>
-              )}
+                  </Tooltip>
+                )}
 
-              {model3d.status === Model3DStatus.Published && (
-                <>
-                  <Text size="sm" c="dimmed">
-                    This model is live in the 3D Models feed. Unpublish to take it
-                    back to Draft (it will no longer be visible to others).
-                  </Text>
-                  <Group justify="flex-end">
-                    <Button
-                      onClick={() =>
-                        openConfirmModal({
-                          title: 'Unpublish 3D Model',
-                          children:
-                            'Unpublish this 3D model? It will move back to Draft and be hidden from others until you republish.',
-                          centered: true,
-                          labels: { confirm: 'Unpublish', cancel: 'Cancel' },
-                          confirmProps: { color: 'yellow' },
-                          onConfirm: () => unpublishMutation.mutate({ id: model3d.id }),
-                        })
-                      }
-                      color="yellow"
-                      leftSection={<IconArchive size={14} />}
-                      loading={unpublishMutation.isLoading}
-                    >
-                      Unpublish
-                    </Button>
-                  </Group>
-                </>
-              )}
-
-              {model3d.status === Model3DStatus.Unpublished && (
-                <>
-                  <Text size="sm" c="dimmed">
-                    This model was unpublished. You can republish it at any time.
-                  </Text>
-                  <Group justify="flex-end">
-                    <Button
-                      onClick={() =>
-                        openConfirmModal({
-                          title: 'Republish 3D Model',
-                          children:
-                            'Republish this 3D model? It will appear in the 3D Models feed again.',
-                          centered: true,
-                          labels: { confirm: 'Republish', cancel: 'Cancel' },
-                          confirmProps: { color: 'green' },
-                          onConfirm: () => publishMutation.mutate({ id: model3d.id }),
-                        })
-                      }
-                      color="green"
-                      leftSection={<IconUpload size={14} />}
-                      loading={publishMutation.isLoading}
-                      disabled={!model3d.thumbnailImageId || trimmedName.length === 0}
-                    >
-                      Republish
-                    </Button>
-                  </Group>
-                </>
-              )}
+                {model3d.status === Model3DStatus.Published && (
+                  <Button
+                    onClick={() => handleSave('unpublish')}
+                    loading={unpublishMutation.isLoading}
+                    disabled={!canSave}
+                    color="yellow"
+                    leftSection={<IconArchive size={14} />}
+                  >
+                    Save & Unpublish
+                  </Button>
+                )}
+              </Group>
 
               {model3d.status === Model3DStatus.Deleted && (
-                <Text size="sm" c="dimmed">
-                  This model is deleted. Restore it from the moderator tools to manage
+                <Text size="xs" c="dimmed">
+                  This model is deleted. Restore from the moderator tools to manage
                   visibility again.
                 </Text>
               )}
