@@ -50,7 +50,8 @@ import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { getAllImages, ingestImage } from '~/server/services/image.service';
+import type { IngestImageInput } from '~/server/schema/image.schema';
+import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
 import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
 import {
   bustFeaturedModelsCache,
@@ -954,7 +955,11 @@ export const upsertCollection = async ({
 
     // Start image ingestion only if it's ingestion status is pending
     if (updated.image && updated.image.ingestion === ImageIngestionStatus.Pending) {
-      await ingestImage({ image: updated.image });
+      enqueueImageIngestion({
+        images: [updated.image as IngestImageInput],
+        name: 'collection-image-ingest',
+        userId,
+      });
     }
 
     await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
