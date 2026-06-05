@@ -47,19 +47,6 @@ import { isDefined } from '~/utils/type-guards';
 //   return result;
 // }
 
-export function decodeUTF32LE(buffer: Uint8Array): string {
-  let result = '';
-  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-
-  for (let i = 0; i + 3 < buffer.byteLength; i += 4) {
-    const codePoint = view.getUint32(i, true); // little-endian
-    if (codePoint === 0) continue; // skip nulls/padding
-    result += String.fromCodePoint(codePoint);
-  }
-
-  return result;
-}
-
 export function decodeUserComment(buffer: Uint8Array): string {
   if (buffer.length < 8) return '';
 
@@ -69,8 +56,8 @@ export function decodeUserComment(buffer: Uint8Array): string {
   if (header.startsWith('ASCII')) return new TextDecoder('ascii').decode(content);
   if (header.startsWith('UTF8')) return new TextDecoder('utf-8').decode(content);
 
-  // For UNICODE header (old and new images), decode as UTF-32LE
-  return decodeUTF32LE(content);
+  // For UNICODE header (old and new images), decode as UTF-16LE
+  return new TextDecoder('utf-16le').decode(content).replace(/\0/g, '');
 }
 
 const prefix = [0x55, 0x4e, 0x49, 0x43, 0x4f, 0x44, 0x45, 0x00]; // UNICODE\0
