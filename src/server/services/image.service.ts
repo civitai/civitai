@@ -194,7 +194,7 @@ import { getImageS3Client } from '~/utils/s3-client';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import FliptSingleton, { FLIPT_FEATURE_FLAGS, getFliptVariant, isFlipt } from '../flipt/client';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import { queryBitdex } from '~/server/bitdex/client';
 import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
@@ -2518,36 +2518,21 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
 export async function getImagesFromSearch(input: ImageSearchInput) {
   let searchFn = getImagesFromSearchPreFilter;
   // Wrap Flipt feature-flag evaluation so the trace shows whether per-request
-  // flag fetch is contributing to the parent span's latency. Includes the
-  // FliptSingleton.getInstance() handshake plus the three evaluateBoolean
-  // calls (FEED_POST_FILTER, MEILI_CACHE_OPS, MEILI_USER_OWN_PASS).
+  // flag fetch is contributing to the parent span's latency. Routes through
+  // getFliptBoolean instead of direct per-request wasm evaluateBoolean calls on
+  // this hot feed path — once the Flipt eval cache (PR #2394) lands these become
+  // memoized; today it's a behavior-preserving refactor. getFliptBoolean returns
+  // false on a missing/uninitialized client, matching the prior null-client
+  // fallthrough (flags default off → pre-filter).
   input = await withSpan('image:flipt:eval', async () => {
-    const fliptClient = await FliptSingleton.getInstance();
-    if (!fliptClient) return input;
-
-    const flag = fliptClient.evaluateBoolean({
-      flagKey: FLIPT_FEATURE_FLAGS.FEED_POST_FILTER,
-      entityId: input.currentUserId?.toString() || 'anonymous',
-      context: {},
-    });
-    if (flag.enabled) searchFn = getImagesFromSearchPostFilter;
-
-    // Evaluate Meili cache flags once; thread through input for builders to gate on.
-    const cacheOpsFlag = fliptClient.evaluateBoolean({
-      flagKey: FLIPT_FEATURE_FLAGS.MEILI_CACHE_OPS,
-      entityId: input.currentUserId?.toString() || 'anonymous',
-      context: {},
-    });
-    const userOwnPassFlag = fliptClient.evaluateBoolean({
-      flagKey: FLIPT_FEATURE_FLAGS.MEILI_USER_OWN_PASS,
-      entityId: input.currentUserId?.toString() || 'anonymous',
-      context: {},
-    });
-    return {
-      ...input,
-      meiliCacheOps: cacheOpsFlag.enabled,
-      meiliUserOwnPass: userOwnPassFlag.enabled,
-    };
+    const entityId = input.currentUserId?.toString() || 'anonymous';
+    const [postFilter, meiliCacheOps, meiliUserOwnPass] = await Promise.all([
+      getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId),
+      getFliptBoolean(FLIPT_FEATURE_FLAGS.MEILI_CACHE_OPS, entityId),
+      getFliptBoolean(FLIPT_FEATURE_FLAGS.MEILI_USER_OWN_PASS, entityId),
+    ]);
+    if (postFilter) searchFn = getImagesFromSearchPostFilter;
+    return { ...input, meiliCacheOps, meiliUserOwnPass };
   });
 
   // Check BitDex mode (off / shadow / primary)
@@ -2636,21 +2621,14 @@ export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
   try {
-    // Evaluate feature flags before creating feed
-    let enableExistenceCheck = false;
-    const fliptClient = await FliptSingleton.getInstance();
-    if (fliptClient) {
-      try {
-        const flag = fliptClient.evaluateBoolean({
-          flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-          entityId: input.currentUserId?.toString() || 'anonymous',
-          context: {},
-        });
-        enableExistenceCheck = flag.enabled;
-      } catch (err) {
-        console.log('[getImagesFromFeedSearch] Flipt evaluation failed:', err);
-      }
-    }
+    // Evaluate feature flags before creating feed. Routed through getFliptBoolean
+    // (memoized once PR #2394's eval cache lands) instead of a direct per-request
+    // wasm eval; it swallows errors and returns false on a missing/uninitialized
+    // client, preserving the prior fail-safe default (existence check off).
+    const enableExistenceCheck = await getFliptBoolean(
+      FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+      input.currentUserId?.toString() || 'anonymous'
+    );
 
     const feed = new ImagesFeed(
       ({ apiKey, host }: { apiKey: string; host: string }) => {
@@ -3434,17 +3412,13 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const searchImageIds = filteredHits.map((hit) => hit.id);
     const filteredHitIds = [...new Set(searchImageIds)];
 
-    let cacheExistenceEnabled = false;
-
-    const fliptClient = await FliptSingleton.getInstance();
-    if (fliptClient) {
-      const flag = fliptClient.evaluateBoolean({
-        flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-        entityId: currentUserId?.toString() || 'anonymous',
-        context: {},
-      });
-      cacheExistenceEnabled = flag.enabled;
-    }
+    // Routed through getFliptBoolean (memoized once PR #2394's eval cache lands)
+    // instead of a direct per-request wasm eval; returns false on a missing/
+    // uninitialized client (existence check off), matching the prior default.
+    const cacheExistenceEnabled = await getFliptBoolean(
+      FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+      currentUserId?.toString() || 'anonymous'
+    );
     ffRequestsTotal.inc({ route, enabled: String(cacheExistenceEnabled) });
 
     if (!cacheExistenceEnabled) {
@@ -4469,17 +4443,13 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const searchImageIds = limitedHits.map((hit) => hit.id);
     const filteredHitIds = [...new Set(searchImageIds)];
 
-    let cacheExistenceEnabled = false;
-
-    const fliptClient = await FliptSingleton.getInstance();
-    if (fliptClient) {
-      const flag = fliptClient.evaluateBoolean({
-        flagKey: FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-        entityId: currentUserId?.toString() || 'anonymous',
-        context: {},
-      });
-      cacheExistenceEnabled = flag.enabled;
-    }
+    // Routed through getFliptBoolean (memoized once PR #2394's eval cache lands)
+    // instead of a direct per-request wasm eval; returns false on a missing/
+    // uninitialized client (existence check off), matching the prior default.
+    const cacheExistenceEnabled = await getFliptBoolean(
+      FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
+      currentUserId?.toString() || 'anonymous'
+    );
     ffRequestsTotal.inc({ route, enabled: String(cacheExistenceEnabled) });
 
     if (!cacheExistenceEnabled) {
