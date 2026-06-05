@@ -787,7 +787,11 @@ export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => 
 
     return true;
   } catch (e) {
-    return new Error('Failed to cancel subscription');
+    // Throw (not return) the Error: callers use .catch()/try-catch and expect a
+    // rejection on failure, and returning an Error instance as success data is a
+    // latent bug — it serialized to `{}` under superjson and THROWS under devalue
+    // (the tRPC transformer can't serialize a non-POJO class instance).
+    throw new Error('Failed to cancel subscription');
   }
 };
 
