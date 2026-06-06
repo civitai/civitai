@@ -128,6 +128,19 @@ function parseDetailsLine(line: string | undefined): Record<string, any> {
 
   return result;
 }
+
+export function normalizeGenerationDetails(details: string): string {
+  if (!details) return '';
+  let clean = details.replace(/^Parameters\s*:\s*/, '');
+
+  // Ensure "Negative prompt:" starts on its own line if it's currently on the same line.
+  clean = clean.replace(/(?<!\n)[ \t\r]*(?:,[ \t\r]*|\.[ \t\r]*)*Negative prompt:/gi, '\nNegative prompt:');
+
+  // Ensure "Steps:" starts on its own line if it's currently on the same line.
+  clean = clean.replace(/(?<!\n)[ \t\r]*(?:,[ \t\r]*|\.[ \t\r]*)*Steps:(?=\s*\d+)/gi, '\nSteps:');
+
+  return clean;
+}
 // #endregion
 
 export const automaticMetadataProcessor = createMetadataProcessor({
@@ -140,7 +153,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     }
 
     if (generationDetails?.includes('Steps: ')) {
-      exif.generationDetails = generationDetails;
+      exif.generationDetails = normalizeGenerationDetails(generationDetails);
       return true;
     }
 
@@ -151,7 +164,8 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     const generationDetails = exif.generationDetails as string;
 
     if (!generationDetails) return metadata;
-    const metaLines = generationDetails.split('\n').filter((line) => line.trim() !== '');
+    const normalizedDetails = normalizeGenerationDetails(generationDetails);
+    const metaLines = normalizedDetails.split('\n').filter((line) => line.trim() !== '');
 
     // Remove templates
     for (const key of templateKeys) {

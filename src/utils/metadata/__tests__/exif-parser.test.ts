@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ExifParser } from '~/utils/metadata';
 import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata';
+import { decodeUserComment } from '~/utils/encoding-helpers';
 
 // TODO - create a suite of tests that uses images from civitai to test the different metadata parsers
 
@@ -80,5 +81,125 @@ describe('automaticMetadataProcessor - Civitai metadata with nested JSON', () =>
     expect(result['Size']).toBeUndefined();
     // Civitai metadata should be fully removed from details line, not leaking into other fields
     expect(result['Civitai metadata']).toBeUndefined();
+  });
+});
+
+describe('decodeUserComment - endianness and encoding', () => {
+  const prefix = [0x55, 0x4e, 0x49, 0x43, 0x4f, 0x44, 0x45, 0x00]; // "UNICODE\0"
+  const testString = 'Steps: 4, Sampler: Euler, Character: 中';
+
+  it('decodes UTF-16BE correctly (standard EXIF format)', () => {
+    // Encode testString in UTF-16BE
+    const content = [];
+    for (let i = 0; i < testString.length; i++) {
+      const code = testString.charCodeAt(i);
+      content.push((code >> 8) & 0xff);
+      content.push(code & 0xff);
+    }
+    const buffer = new Uint8Array(prefix.concat(content));
+    const result = decodeUserComment(buffer);
+    expect(result).toBe(testString);
+  });
+
+  it('decodes UTF-16LE correctly', () => {
+    // Encode testString in UTF-16LE
+    const content = [];
+    for (let i = 0; i < testString.length; i++) {
+      const code = testString.charCodeAt(i);
+      content.push(code & 0xff);
+      content.push((code >> 8) & 0xff);
+    }
+    const buffer = new Uint8Array(prefix.concat(content));
+    const result = decodeUserComment(buffer);
+    expect(result).toBe(testString);
+  });
+
+  it('decodes UTF-16BE with BOM correctly', () => {
+    // BOM: 0xFE, 0xFF
+    const content = [0xfe, 0xff];
+    for (let i = 0; i < testString.length; i++) {
+      const code = testString.charCodeAt(i);
+      content.push((code >> 8) & 0xff);
+      content.push(code & 0xff);
+    }
+    const buffer = new Uint8Array(prefix.concat(content));
+    const result = decodeUserComment(buffer);
+    expect(result).toBe(testString);
+  });
+
+  it('decodes UTF-16LE with BOM correctly', () => {
+    // BOM: 0xFF, 0xFE
+    const content = [0xff, 0xfe];
+    for (let i = 0; i < testString.length; i++) {
+      const code = testString.charCodeAt(i);
+      content.push(code & 0xff);
+      content.push((code >> 8) & 0xff);
+    }
+    const buffer = new Uint8Array(prefix.concat(content));
+    const result = decodeUserComment(buffer);
+    expect(result).toBe(testString);
+  });
+});
+
+describe('automaticMetadataProcessor - single-line and delimited metadata parsing', () => {
+  it('parses metadata with dot before Negative prompt and Steps', () => {
+    const rawMetadata = `Parameters                      : <lora:generic_lora_a:1> generic prompt text <lora:generic_lora_b:1> more prompt text.Negative prompt: negative prompt text, low quality.Steps: 24, Sampler: Euler a, Schedule type: Automatic, CFG scale: 4, Seed: 2366756367, Size: 640x980, Model hash: 23d793a158, Model: GenericModel, Wildcard prompt: "  <lora:generic_lora_a:1> generic prompt text <lora:generic_lora_b:1> more prompt text", Lora hashes: "generic_lora_a: bed61886a493", Version: v1.9.3`;
+    const exif = { generationDetails: rawMetadata, parameters: rawMetadata };
+
+    expect(automaticMetadataProcessor.canParse(exif)).toBe(true);
+
+    const result = automaticMetadataProcessor.parse(exif);
+    expect(result.prompt).toBe('<lora:generic_lora_a:1> generic prompt text <lora:generic_lora_b:1> more prompt text');
+    expect(result.negativePrompt).toBe('negative prompt text, low quality');
+    expect(result.steps).toBe('24');
+    expect(result.sampler).toBe('Euler a');
+    expect(result.cfgScale).toBe('4');
+    expect(result.seed).toBe('2366756367');
+    expect(result.width).toBe(640);
+    expect(result.height).toBe(980);
+    expect(result.Model).toBe('GenericModel');
+  });
+
+  it('parses metadata with comma-dot before Negative prompt and dot before Steps', () => {
+    const rawMetadata = `Parameters                      : A generic prompt text.,.Negative prompt: .Steps: 4, Sampler: Euler, CFG scale: 1.0, Seed: 1099633777240739, Size: 1088x1920, Model: generic_model_v1, Version: ComfyUI, Civitai resources: [{"modelName":"Generic Model","versionName":"v1","air":"urn:air:zimageturbo:checkpoint:civitai:12345@67890"}]`;
+    const exif = { generationDetails: rawMetadata, parameters: rawMetadata };
+
+    expect(automaticMetadataProcessor.canParse(exif)).toBe(true);
+
+    const result = automaticMetadataProcessor.parse(exif);
+    expect(result.prompt).toBe('A generic prompt text');
+    expect(result.negativePrompt).toBe('');
+    expect(result.steps).toBe('4');
+    expect(result.sampler).toBe('Euler');
+    expect(result.cfgScale).toBe('1.0');
+    expect(result.seed).toBe('1099633777240739');
+    expect(result.width).toBe(1088);
+    expect(result.height).toBe(1920);
+    expect(result.Model).toBe('generic_model_v1');
+    expect(result.civitaiResources).toEqual([
+      { modelVersionId: 0, type: 'model' }
+    ]);
+  });
+
+  it('parses metadata with triple-dot before Negative prompt and dot before Steps', () => {
+    const rawMetadata = `Parameters                      : A generic prompt text...Negative prompt: .Steps: 4, Sampler: Euler, CFG scale: 1.0, Seed: 521842852, Size: 1024x1024, Tool: ComfyUI, Technique: txt2img, Model: generic_model_v2, Version: ComfyUI, Civitai resources: [{"modelName":"Generic Model","versionName":"v2","air":"urn:air:flux2:checkpoint:civitai:12345@67890"},{"modelName":"Generic Lora","versionName":"v1.0","weight":1.0,"air":"urn:air:flux2:lora:civitai:11111@22222"}]`;
+    const exif = { generationDetails: rawMetadata, parameters: rawMetadata };
+
+    expect(automaticMetadataProcessor.canParse(exif)).toBe(true);
+
+    const result = automaticMetadataProcessor.parse(exif);
+    expect(result.prompt).toBe('A generic prompt text');
+    expect(result.negativePrompt).toBe('');
+    expect(result.steps).toBe('4');
+    expect(result.sampler).toBe('Euler');
+    expect(result.cfgScale).toBe('1.0');
+    expect(result.seed).toBe('521842852');
+    expect(result.width).toBe(1024);
+    expect(result.height).toBe(1024);
+    expect(result.Model).toBe('generic_model_v2');
+    expect(result.civitaiResources).toEqual([
+      { modelVersionId: 0, type: 'model' },
+      { modelVersionId: 0, type: 'model', weight: 1.0 }
+    ]);
   });
 });
