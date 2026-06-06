@@ -15,6 +15,7 @@ import {
   getAllImagesIndex,
   getImagesFromFeedSearch,
 } from '~/server/services/image.service';
+import { imageMetaCache } from '~/server/redis/caches';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
@@ -80,6 +81,7 @@ const imagesEndpointSchema = z.object({
   baseModels: commaDelimitedEnumArray([...baseModels]).optional(),
   withMeta: booleanString().default(false),
   requiringMeta: booleanString().optional(),
+  flatMeta: booleanString().optional(),
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -90,7 +92,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const session = await getServerAuthSession({ req, res });
 
     // Handle pagination
-    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, ...data } = reqParams.data;
+    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, ...data } = reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
     if (usingPaging) {
@@ -151,17 +153,13 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           limit,
           skip,
           cursor,
-          // Only fetch the (large, ~2.8KB/key) meta blob when the caller asks
-          // for it via withMeta. Previously metaSelect was hardcoded, so every
-          // request paid the imageMetaCache fetch + JSON serialization even when
-          // withMeta=false (the default) and the meta was discarded client-side.
-          include: withMeta
-            ? ['metaSelect', 'tagIds', 'profilePictures']
-            : ['tagIds', 'profilePictures'],
+          // Only fetch tagIds and profilePictures here; metaSelect is fetched
+          // on-demand in the controller below to avoid query filtering.
+          include: ['tagIds', 'profilePictures'],
           periodMode: 'published',
           headers: { src: '/api/v1/images' },
           browsingLevel: _browsingLevel,
-          withMeta,
+          withMeta: false,
           user: session?.user,
           disableMinor: true,
           disablePoi: true,
@@ -175,16 +173,10 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           limit,
           skip,
           cursor,
-          // Only fetch the (large, ~2.8KB/key) meta blob when the caller asks
-          // for it via withMeta. Previously metaSelect was hardcoded, so every
-          // request paid the imageMetaCache fetch + JSON serialization even when
-          // withMeta=false (the default) and the meta was discarded client-side.
-          include: withMeta
-            ? ['metaSelect', 'tagIds', 'profilePictures']
-            : ['tagIds', 'profilePictures'],
+          include: ['tagIds', 'profilePictures'],
           periodMode: 'published',
           browsingLevel: _browsingLevel,
-          withMeta,
+          withMeta: false,
           user: session?.user,
           useCombinedNsfwLevel: !features.canViewNsfw,
           disableMinor: true,
@@ -199,16 +191,10 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           limit,
           skip,
           cursor,
-          // Only fetch the (large, ~2.8KB/key) meta blob when the caller asks
-          // for it via withMeta. Previously metaSelect was hardcoded, so every
-          // request paid the imageMetaCache fetch + JSON serialization even when
-          // withMeta=false (the default) and the meta was discarded client-side.
-          include: withMeta
-            ? ['metaSelect', 'tagIds', 'profilePictures']
-            : ['tagIds', 'profilePictures'],
+          include: ['tagIds', 'profilePictures'],
           periodMode: 'published',
           browsingLevel: _browsingLevel,
-          withMeta,
+          withMeta: false,
           currentUserId: session?.user?.id,
           isModerator: session?.user?.isModerator,
           useCombinedNsfwLevel: !features.canViewNsfw,
@@ -216,6 +202,11 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           disablePoi: true,
           actor,
         });
+
+    let imageMetas: Record<number, { id: number; meta?: any }> = {};
+    if (withMeta && items.length > 0) {
+      imageMetas = await imageMetaCache.fetch(items.map((img) => img.id));
+    }
 
     const metadata: Metadata = {
       nextCursor,
@@ -251,7 +242,12 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
             heartCount: image.stats?.heartCountAllTime ?? 0,
             commentCount: image.stats?.commentCountAllTime ?? 0,
           },
-          meta: image.meta ?? null,
+          meta: (() => {
+            if (!withMeta) return null;
+            const imageMeta = imageMetas[image.id]?.meta ?? null;
+            const useFlat = flatMeta !== undefined ? flatMeta : !useLegacyMethod;
+            return useFlat ? imageMeta : { id: image.id, meta: imageMeta };
+          })(),
           username: image.user.username,
           baseModel: image.baseModel,
           modelVersionIds: image.modelVersionIds,
