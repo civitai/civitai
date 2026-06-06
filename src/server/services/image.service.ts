@@ -3374,6 +3374,20 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 function mapBitdexDoc(doc: Record<string, unknown>) {
   const sortAtUnix = (doc.sortAt as number) * 1000; // u32 seconds → epoch ms
   const publishedAtRaw = doc.publishedAt as number | null;
+  // Emit sortAt as an ISO string instead of a `new Date(...)`, matching the wire
+  // shape the Meili path already produces. Meili documents are read via
+  // `res.json()`, so the stored `sortAt` Date comes back as an ISO string at
+  // runtime even though the index record type declares `Date`. Making BitDex
+  // identical means both index sources serialize the same way — a plain string
+  // rather than a JS Date — which (a) drops a per-record Date allocation (GC
+  // pressure on the feed hot path) and (b) removes the field from superjson's
+  // Date-walking/encoding entirely. The declared `Date` contract is preserved
+  // via the same cast the Meili path implicitly relies on; downstream feed
+  // consumers read these fields through dayjs/DaysFromNow or `new Date(...)`,
+  // both of which accept strings. Server-side BitDex consumers (sorts,
+  // postFilterBitdexDocs) only read the numeric `sortAtUnix`/`publishedAtUnix`,
+  // never this field, so behavior is unchanged.
+  const sortAtIso = new Date(sortAtUnix).toISOString() as unknown as Date;
   return {
     id: doc.id as number,
     url: doc.url as string,
@@ -3396,7 +3410,7 @@ function mapBitdexDoc(doc: Record<string, unknown>) {
     reactionCount: (doc.reactionCount as number) ?? 0,
     commentCount: (doc.commentCount as number) ?? 0,
     collectedCount: (doc.collectedCount as number) ?? 0,
-    sortAt: new Date(sortAtUnix),
+    sortAt: sortAtIso,
     sortAtUnix,
     publishedAtUnix: publishedAtRaw ? publishedAtRaw * 1000 : null,
     tagIds: [] as number[], // tagIds not stored in BitDex docs (expensive); fetched from tagIdsForImagesCache downstream
