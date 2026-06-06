@@ -1068,7 +1068,11 @@ export const getAdjustmentsInfinite = async ({
   }
 
   return {
-    items: data,
+    // Paddle SDK returns `Adjustment` class instances (with nested AdjustmentItem/
+    // TotalAdjustments/PayoutTotalsAdjustment instances). The devalue tRPC
+    // transformer is strict and throws on class instances → 500. Coerce to plain
+    // objects; faithful since the SDK stores all data on public enumerable fields.
+    items: JSON.parse(JSON.stringify(data)) as Adjustment[],
     nextCursor: nextItem?.id,
   };
 };
