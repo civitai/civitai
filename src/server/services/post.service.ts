@@ -40,7 +40,6 @@ import {
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getGenerationStatus } from '~/server/services/generation/generation.service';
 import {
   createImage,
   createImageResources,
