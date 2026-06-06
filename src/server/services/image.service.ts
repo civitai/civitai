@@ -1725,7 +1725,6 @@ export const getAllImages = async (
       i.height,
       i.hash,
       -- i.meta,
-      i."hideMeta",
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -1744,24 +1743,19 @@ export const getAllImages = async (
       i."meta"->'extra'->'remixOfId' as "remixOfId",
       i."createdAt",
       GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
-      i."mimeType",
       i.type,
       i.metadata,
       i.ingestion,
       i."blockedFor",
-      i."scannedAt",
       i."needsReview",
       i."userId",
       i."postId",
-      p."title" "postTitle",
       i."index",
       p."publishedAt",
       p.metadata->>'unpublishedAt' "unpublishedAt",
       p."modelVersionId",
-      p."availability",
       i.minor,
       i.poi,
-      i."acceptableMinor",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote"' : '')}
       ${queryFrom}
@@ -1930,17 +1924,18 @@ export const getAllImages = async (
     });
 
     const result: Array<
-      Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
+      // Trimmed from the feed response (zero client/v1 consumers): mimeType,
+      // scannedAt, postTitle (from ImageV2Model), plus hideMeta, availability,
+      // acceptableMinor (dropped from the SQL select above). See PR notes.
+      Omit<ImageV2Model, 'nsfwLevel' | 'metadata' | 'mimeType' | 'scannedAt' | 'postTitle'> & {
         // meta: ImageMetaProps | null; // TODO - don't fetch meta
         meta?: ImageMetaProps | null; // deprecated. Only used in v1 api endpoint
-        hideMeta: boolean; // TODO - remove references to this. Instead, use `hasMeta`
         hasMeta: boolean;
         tags?: VotableTagModel[] | undefined;
         tagIds?: number[];
         publishedAt?: Date | null;
         modelVersionId?: number | null;
         baseModel?: string | null; // TODO - remove
-        availability?: Availability;
         nsfwLevel: NsfwLevel;
         cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
         metadata: ImageMetadata | VideoMetadata | null;
@@ -2188,7 +2183,28 @@ export const getAllImagesIndex = async (
   );
 
   const mergedData = withSpan('image:getAllImagesIndex:transform', () =>
-    searchResults.map(({ publishedAtUnix, ...sr }) => {
+    searchResults.map((searchResult) => {
+      // Strip fields trimmed from the feed response so the index path stays
+      // byte-for-byte identical to the PG path (getAllImages). These have zero
+      // client/v1 consumers; acceptableMinor/availability are moderation flags
+      // that should never have been on the wire. See PR notes.
+      const {
+        publishedAtUnix,
+        hideMeta: _hideMeta,
+        acceptableMinor: _acceptableMinor,
+        availability: _availability,
+        mimeType: _mimeType,
+        scannedAt: _scannedAt,
+        postTitle: _postTitle,
+        ...sr
+      } = searchResult as typeof searchResult & {
+        hideMeta?: unknown;
+        acceptableMinor?: unknown;
+        availability?: unknown;
+        mimeType?: unknown;
+        scannedAt?: unknown;
+        postTitle?: unknown;
+      };
       const thisUser = userDatas[sr.userId] ?? {};
       const reactions =
         userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ??
@@ -2233,18 +2249,14 @@ export const getAllImagesIndex = async (
         reactions,
         cosmetic: imageCosmetics?.[sr.id] ?? null,
         // TODO fix below
-        availability: Availability.Public,
         tags: [], // needed?
         name: null, // leave
-        scannedAt: null, // remove
-        mimeType: null, // need?
         ingestion:
           nsfwLevel === NsfwLevel.Blocked
             ? ImageIngestionStatus.Blocked
             : nsfwLevel === 0
             ? ImageIngestionStatus.NotFound
             : ImageIngestionStatus.Scanned, // add? maybe remove
-        postTitle: null, // remove
         meta,
         nsfwLevel,
         thumbnailUrl: thumbnail?.url,
