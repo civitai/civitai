@@ -190,10 +190,11 @@ export const userUpdateCounter = registerCounterWithLabels({
   labelNames: ['location'] as const,
 });
 
-// CDC replication lag fallback metrics
+// dbRead → dbWrite fallback metrics. Covers both read-after-write CDC replication
+// lag fallbacks AND read-replica connection-unavailable fallbacks (see readWithReplicaFallback).
 export const dbReadFallbackCounter = registerCounterWithLabels({
   name: 'dbread_fallback_total',
-  help: 'Number of times a dbRead query fell back to dbWrite due to CDC replication lag',
+  help: 'Number of times a dbRead query fell back to dbWrite (CDC replication lag or read-replica connection unavailable)',
   labelNames: ['entity', 'caller'] as const,
 });
 

@@ -1,4 +1,5 @@
 import type { ResourceInfo } from '@civitai/client';
+import type { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import type { BaseModelType } from '~/server/common/constants';
@@ -6,7 +7,7 @@ import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
+import { getDbWithoutLagBatch, readWithReplicaFallback } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -240,10 +241,9 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
     const goodIds = ids.filter(isDefined);
     if (!goodIds.length) return {};
 
-    const db = fromWrite ? dbWrite : dbRead;
     // Get the highest tier subscription for each user
     // Tier priority: founder > gold > silver > bronze > free
-    const multipliers = await db.$queryRaw<CachedUserMultiplier[]>`
+    const runQuery = (db: PrismaClient) => db.$queryRaw<CachedUserMultiplier[]>`
       WITH ranked_subscriptions AS (
         SELECT
           cs."userId",
@@ -292,6 +292,19 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
       LEFT JOIN ranked_subscriptions rs ON u.id = rs."userId" AND rs.rn = 1
       WHERE u.id IN (${Prisma.join(goodIds)});
     `;
+
+    // This read fires on essentially every authenticated request (it backs
+    // getMultipliersForUser → buzz.getBuzzAccount). When read-after-write
+    // consistency is required we go straight to the primary; otherwise we read
+    // from the replica but transparently fall back to the primary if the
+    // read-replica connection itself is unavailable (the 2026-06-06 buzz-db-ro
+    // outage), instead of throwing a 500.
+    const multipliers = fromWrite
+      ? await runQuery(dbWrite)
+      : await readWithReplicaFallback(runQuery, {
+          entity: 'userMultiplier',
+          caller: 'userMultipliersCache',
+        });
 
     const records: Record<number, CachedUserMultiplier> = Object.fromEntries(
       multipliers.map((m) => [m.userId, m])
