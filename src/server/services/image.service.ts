@@ -1019,6 +1019,14 @@ export function enqueueImageIngestion({
 }) {
   if (!images.length) return;
 
+  logToAxiom({
+    name: `${name}:enqueue`,
+    type: 'info',
+    userId,
+    message: `Enqueuing ${images.length} images for ingestion`,
+    imageIds: images.map(img => img.id),
+  }).catch(() => undefined);
+
   const tasks = images.map(
     (img) => () =>
       ingestImage({ image: img, lowPriority, userId }).catch((error) => {
@@ -2706,7 +2714,7 @@ export async function getImagesFromFeedSearch(
 
     // Transform PopulatedImage to match getAllImagesIndex return type
     // Remove extra fields that PopulatedImage has but getAllImagesIndex doesn't
-    const transformedItems: ImagesInfiniteModel[] = feedResult.items.map((img) => {
+    const transformedItems: ImagesInfiniteModel[] = feedResult.items.map((img: any) => {
       // Destructure to remove all extra fields from PopulatedImage/ImageDocument
       // that aren't in ImagesInfiniteModel
       const {
@@ -2740,7 +2748,7 @@ export async function getImagesFromFeedSearch(
       // Note: tag.type and tag.nsfwLevel need casting because PopulatedImage uses
       // its own type definitions from event-engine-common, while VotableTagModel
       // uses types from ~/server/common/enums
-      const transformedTags: VotableTagModel[] = tags.map((tag) => ({
+      const transformedTags: VotableTagModel[] = tags.map((tag: any) => ({
         id: tag.id,
         name: tag.name,
         type: tag.type as unknown as TagType,
@@ -2751,7 +2759,7 @@ export async function getImagesFromFeedSearch(
       }));
 
       // Transform reactions to use ReviewReactions enum
-      const transformedReactions = reactions.map((r) => ({
+      const transformedReactions = reactions.map((r: any) => ({
         userId: r.userId,
         reaction: r.reaction as ReviewReactions,
       }));

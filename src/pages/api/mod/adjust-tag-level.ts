@@ -7,6 +7,8 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
+import { tagCache, tagCacheByName } from '~/server/redis/caches';
+
 const schema = z.object({
   tags: commaDelimitedStringArray(),
   nsfwLevel: z.coerce.number().refine((v) => Object.values(NsfwLevel).includes(v)),
@@ -26,6 +28,14 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     RETURNING id;
   `);
   const tagIds = updateResult.rows.map((r) => r.id);
+
+  if (tagIds.length > 0) {
+    await Promise.all([
+      ...tags.map((tag) => tagCacheByName.bust(tag)),
+      ...tagIds.map((id) => tagCache.bust(id)),
+    ]);
+  }
+
   if (!tagIds.length) return res.status(200).json({ tagIds, nsfwLevel, noUpdates: true, tags });
 
   // Return the response early to avoid timeouts

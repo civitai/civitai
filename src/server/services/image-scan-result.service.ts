@@ -27,7 +27,6 @@ import {
 } from '~/utils/metadata/audit';
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
-import { TtlCache } from '~/server/utils/ttl-cache';
 import { Prisma } from '@prisma/client';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { isDefined } from '~/utils/type-guards';
@@ -38,7 +37,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { tagIdsForImagesCache, tagCacheByName } from '~/server/redis/caches';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
@@ -114,8 +113,6 @@ type ProcessedTag = {
   type: TagType;
 };
 
-const tagCache = new TtlCache<TagWithId>({});
-
 export async function processImageScanResult(req: NextApiRequest) {
   const event: WorkflowEvent = req.body;
 
@@ -172,6 +169,19 @@ export async function processImageScanWorkflow({
   startedAt?: Date | string | null;
   completedAt?: Date | string | null;
 }) {
+  logToAxiom(
+    {
+      name: 'image-scan-workflow-received',
+      type: 'info',
+      message: 'Processing image scan workflow',
+      source: 'image-scan-result.service',
+      imageId,
+      workflowId,
+      status,
+    },
+    'webhooks'
+  ).catch(() => null);
+
   if (status !== 'succeeded') {
     const retryCount = await markImageScanError({ workflowId, imageId });
     // This branch is otherwise silent: it flips the image to `Error` and burns a
@@ -569,14 +579,14 @@ async function processTags({
   }
   const deduped: NormalizedTag[] = Object.values(tagMap);
 
-  const { found, missing } = tagCache.getMany(deduped.map((x) => x.name));
+  const { found, missing } = await tagCacheByName.fetch(deduped.map((x) => x.name));
   let queriedTags: TagWithId[] = [];
   if (missing.length > 0) {
     queriedTags = await dbWrite.tag.findMany({
       where: { name: { in: missing } },
       select: { id: true, name: true, nsfwLevel: true, type: true },
     });
-    tagCache.setMany(queriedTags.map((data) => ({ key: data.name, data })));
+    await tagCacheByName.setMany(queriedTags.map((data) => ({ key: data.name, data })));
   }
   const queriedNames = new Set(queriedTags.map((t) => t.name));
   const tagsToCreate = missing.filter((name) => !queriedNames.has(name));
@@ -593,14 +603,19 @@ async function processTags({
       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
       RETURNING id, name, "nsfwLevel", type
     `;
-    tagCache.setMany(createdTags.map((data) => ({ key: data.name, data })));
+    await tagCacheByName.setMany(createdTags.map((data) => ({ key: data.name, data })));
   }
 
   const allTags = [...found.values(), ...queriedTags, ...createdTags]
     .map((tag) => {
       const match = normalized.find((x) => x.name === tag.name);
       if (!match) return null;
-      return { ...tag, source: match.source, confidence: match.confidence };
+      return {
+        ...tag,
+        name: tag.name as string,
+        source: match.source,
+        confidence: match.confidence,
+      };
     })
     .filter(isDefined);
 
