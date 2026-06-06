@@ -242,13 +242,12 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
             heartCount: image.stats?.heartCountAllTime ?? 0,
             commentCount: image.stats?.commentCountAllTime ?? 0,
           },
-          meta: withMeta
-            ? (imageMetas[image.id]?.meta
-              ? (flatMeta !== undefined
-                ? (flatMeta ? imageMetas[image.id].meta : { id: image.id, meta: imageMetas[image.id].meta })
-                : (useLegacyMethod ? { id: image.id, meta: imageMetas[image.id].meta } : imageMetas[image.id].meta))
-              : null)
-            : null,
+          meta: (() => {
+            if (!withMeta) return null;
+            const imageMeta = imageMetas[image.id]?.meta ?? null;
+            const useFlat = flatMeta !== undefined ? flatMeta : !useLegacyMethod;
+            return useFlat ? imageMeta : { id: image.id, meta: imageMeta };
+          })(),
           username: image.user.username,
           baseModel: image.baseModel,
           modelVersionIds: image.modelVersionIds,
