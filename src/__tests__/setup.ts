@@ -61,8 +61,9 @@ vi.mock('@civitai/client', () => ({
 const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   TIER_METADATA_KEY: 'tier',
   BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
-  LOGGING: '',
+  LOGGING: [],
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
+  DATABASE_REPLICA_URL: 'postgres://user:pass@localhost:5432/db',
   NOTIFICATION_DB_URL: 'postgres://user:pass@localhost:5432/notif',
   DATABASE_SSL: false,
   DATABASE_POOL_MAX: 10,
@@ -84,6 +85,17 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   S3_UPLOAD_SECRET: 'test-secret',
   S3_IMAGE_UPLOAD_KEY: 'test-key',
   S3_IMAGE_UPLOAD_SECRET: 'test-secret',
+  MEILI_CALL_CONCURRENCY: 10,
+  MEILI_FETCH_TIMEOUT_MS: 5000,
+  MEILI_CALL_TIMEOUT_MS: 2500,
+  MEILI_CIRCUIT_WINDOW_SECONDS: 10,
+  MEILI_CIRCUIT_COOLDOWN_SECONDS: 10,
+  MEILI_CIRCUIT_TRIP_THRESHOLD: 5,
+  SIGNALS_CALL_CONCURRENCY: 30,
+  SIGNALS_CALL_TIMEOUT_MS: 5000,
+  SIGNALS_CIRCUIT_WINDOW_SECONDS: 60,
+  SIGNALS_CIRCUIT_TRIP_THRESHOLD: 10,
+  SIGNALS_CIRCUIT_COOLDOWN_SECONDS: 30,
 };
 
 vi.mock('~/env/server', () => ({
@@ -100,6 +112,8 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/prom/client', () => ({
   registerCounter: vi.fn(() => ({ inc: vi.fn() })),
   registerCounterWithLabels: vi.fn(() => ({ inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) })),
+  registerGaugeWithLabels: vi.fn(() => ({ set: vi.fn() })),
+  registerHistogram: vi.fn(() => ({ startTimer: vi.fn(() => vi.fn()) })),
   missingSignedAtCounter: { inc: vi.fn() },
   newUserCounter: { inc: vi.fn() },
   loginCounter: { inc: vi.fn() },
