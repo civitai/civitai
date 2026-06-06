@@ -14,5 +14,12 @@ import { parse, stringify } from 'devalue';
 // this can ship. This is the migration's main risk — see PR notes.
 export const trpcTransformer = {
   serialize: (object: unknown) => stringify(object),
-  deserialize: (object: string) => parse(object),
+  // devalue.parse() requires a string (it JSON.parses internally). tRPC hands
+  // deserialize a non-string when there's no serialized input to decode — e.g.
+  // a GET to a mutation with no `?input=`, or a no-input procedure — passing an
+  // empty object `{}`, which would become JSON.parse("[object Object]") → a
+  // bogus BAD_REQUEST. superjson tolerated this; devalue is strict. Only parse
+  // real (string) payloads; pass non-strings through so downstream zod handles
+  // absent/empty input normally.
+  deserialize: (object: unknown) => (typeof object === 'string' ? parse(object) : object),
 };
