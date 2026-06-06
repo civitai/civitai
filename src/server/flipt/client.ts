@@ -10,7 +10,6 @@ export enum FLIPT_FEATURE_FLAGS {
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
-  GIFT_CARD_VENDOR_ROYAL_CD_KEYS = 'gift-card-vendor-royal-cd-keys',
   GIFT_CARD_VENDOR_CRYPTO = 'gift-card-vendor-crypto',
   IMAGE_TRAINING = 'image-training',
   VIDEO_TRAINING = 'video-training',
@@ -32,8 +31,6 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
   B2_UPLOAD_DEFAULT = 'b2-upload-default',
-  B2_IMAGE_UPLOAD = 'b2-image-upload',
-  B2_TRAINING_UPLOAD = 'b2-training-upload',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',
