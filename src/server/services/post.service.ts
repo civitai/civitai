@@ -4,6 +4,7 @@ import type { SessionUser } from 'next-auth';
 import * as z from 'zod';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';
+import { POST_IMAGE_RESOURCE_LIMIT } from '~/server/common/constants';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -1251,44 +1252,10 @@ export const addResourceToPostImage = async ({
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
-  const simpleResourceLimit = 8;
-  const baseAxiom = {
-    type: 'warning',
-    name: 'fetch-generation-status',
-    path: 'post.addResourceToImage',
-  };
-
-  let resourceLimit = simpleResourceLimit;
-  try {
-    const genStatus = await getGenerationStatus();
-    if (genStatus) {
-      const tier = user?.tier ?? 'free';
-      if (isDefined(genStatus.limits?.[tier]?.resources)) {
-        resourceLimit = genStatus.limits[tier].resources ?? simpleResourceLimit;
-      } else {
-        logToAxiom({
-          ...baseAxiom,
-          message: 'no resource limit found',
-        }).catch();
-      }
-    } else {
-      logToAxiom({
-        ...baseAxiom,
-        message: 'no gen status',
-      }).catch();
-    }
-  } catch (e: unknown) {
-    const error = e as Error;
-    logToAxiom({
-      ...baseAxiom,
-      message: error?.message,
-    }).catch();
-  }
-
   images.forEach((img) => {
     const numExistingResources = img.resourceHelper.length;
-    if (numExistingResources >= resourceLimit) {
-      throw throwBadRequestError(`Maximum resources reached (${resourceLimit})`);
+    if (numExistingResources >= POST_IMAGE_RESOURCE_LIMIT) {
+      throw throwBadRequestError(`Maximum resources reached (${POST_IMAGE_RESOURCE_LIMIT})`);
     }
   });
 
