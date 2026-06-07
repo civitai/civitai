@@ -340,7 +340,7 @@ export async function patchWorkflowTags({
   );
 }
 
-async function refreshBlobUrlsInBody(body: any, client: any) {
+export async function refreshBlobUrlsInBody(body: any, client: any) {
   const blobUrls = findBlobUrls(body);
   if (blobUrls.length === 0) return;
 
@@ -358,7 +358,7 @@ async function refreshBlobUrlsInBody(body: any, client: any) {
   );
 }
 
-function findBlobUrls(obj: any): { path: string[]; blobId: string }[] {
+export function findBlobUrls(obj: any): { path: string[]; blobId: string }[] {
   const results: { path: string[]; blobId: string }[] = [];
 
   function traverse(current: any, path: string[]) {
@@ -385,7 +385,7 @@ function findBlobUrls(obj: any): { path: string[]; blobId: string }[] {
   return results;
 }
 
-function shouldRefreshBlobUrl(url: string): boolean {
+export function shouldRefreshBlobUrl(url: string): boolean {
   try {
     if (!url.includes('/consumer/blobs/')) return false;
     const urlObj = new URL(url, 'https://orchestration.civitai.com');
