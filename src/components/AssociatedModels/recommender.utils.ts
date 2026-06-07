@@ -10,9 +10,9 @@ import { trpc } from '~/utils/trpc';
 
 export function useQueryRecommendedResources(
   payload: Omit<GetAssociatedResourcesInput, 'browsingLevel'> &
-    Pick<RecommendationRequest, 'modelVersionId'>
+    Pick<RecommendationRequest, 'modelVersionId'> & { allowAIRecommendations?: boolean }
 ) {
-  const { fromId, modelVersionId, type } = payload;
+  const { fromId, modelVersionId, type, allowAIRecommendations } = payload;
   const browsingLevel = useBrowsingLevelDebounced();
   const features = useFeatureFlags();
 
@@ -31,7 +31,12 @@ export function useQueryRecommendedResources(
     isRefetching: refetchingRecommended,
   } = trpc.recommenders.getResourceRecommendations.useQuery(
     { modelVersionId, browsingLevel },
-    { enabled: !!modelVersionId && features.recommenders }
+    // Mirror the server's own early-return (it returns [] when the version's
+    // meta.allowAIRecommendations is off) so we never make the round-trip for the
+    // majority of versions that have it disabled. recommenders.getResourceRecommendations
+    // was ~58% of all tRPC volume; this removes that load (+ its middleware/Flipt
+    // cost) from the main pool for the disabled case with no behavior change.
+    { enabled: !!modelVersionId && features.recommenders && allowAIRecommendations === true }
   );
 
   // Memoize combined data to prevent unnecessary re-renders

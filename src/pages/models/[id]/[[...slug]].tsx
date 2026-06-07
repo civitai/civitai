@@ -1313,6 +1313,7 @@ export default function ModelDetailsV2({
                   type="Suggested"
                   versionId={selectedVersion.id}
                   ownerId={model.user.id}
+                  allowAIRecommendations={selectedVersion.meta?.allowAIRecommendations ?? false}
                   label={
                     <Group gap={8} wrap="nowrap">
                       Suggested Resources{' '}
