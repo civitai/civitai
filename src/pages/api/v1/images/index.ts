@@ -134,7 +134,10 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     // so a backlog can't pin the single JS thread → probe timeout → Error/137.
     // Acquired AFTER param validation + the paging guard so cheap 400/429 rejects
     // don't consume a heavy slot. no-store so an edge layer can't cache the 503
-    // and turn a momentary shed into a multi-minute outage. Released on response close.
+    // and turn a momentary shed into a multi-minute outage. Released in the finally
+    // below — NOT on res 'close', which can lag the actual heavy work by the
+    // keep-alive teardown and would hold the slot (and shed) long after the JS
+    // thread is free. Symmetric with the tRPC heavyProcedure's finally release.
     try {
       releaseSlot = acquireBulkheadSlot('heavy-image', HEAVY_REQUEST_CONCURRENCY);
     } catch (e) {
@@ -145,7 +148,6 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       }
       throw e;
     }
-    res.on('close', () => releaseSlot?.());
 
     // Timed only for admitted requests (bulkhead 503 returns above, before this).
     endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
@@ -309,6 +311,9 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     });
   } finally {
     endTimer?.();
+    // Release the heavy slot as soon as the handler resolves (synchronous
+    // serialization — the actual pin cost — is done by now), not on socket close.
+    releaseSlot?.();
   }
 });
 
