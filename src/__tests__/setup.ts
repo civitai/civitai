@@ -61,9 +61,11 @@ vi.mock('@civitai/client', () => ({
 const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   TIER_METADATA_KEY: 'tier',
   BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
-  LOGGING: '',
+  LOGGING: [],
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
+  DATABASE_REPLICA_URL: 'postgres://user:pass@localhost:5432/db',
   NOTIFICATION_DB_URL: 'postgres://user:pass@localhost:5432/notif',
+  MEILI_CALL_CONCURRENCY: 10,
   DATABASE_SSL: false,
   DATABASE_POOL_MAX: 10,
   DATABASE_POOL_IDLE_TIMEOUT: 30000,
@@ -96,30 +98,56 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-// Prevent prom/client from initializing real DB pools at module load.
-vi.mock('~/server/prom/client', () => ({
-  registerCounter: vi.fn(() => ({ inc: vi.fn() })),
-  registerCounterWithLabels: vi.fn(() => ({ inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) })),
-  missingSignedAtCounter: { inc: vi.fn() },
-  newUserCounter: { inc: vi.fn() },
-  loginCounter: { inc: vi.fn() },
-  onboardingCompletedCounter: { inc: vi.fn() },
-  onboardingErrorCounter: { inc: vi.fn() },
-  leakingContentCounter: { inc: vi.fn() },
-  vaultItemProcessedCounter: { inc: vi.fn() },
-  vaultItemFailedCounter: { inc: vi.fn() },
-  rewardGivenCounter: { inc: vi.fn() },
-  rewardFailedCounter: { inc: vi.fn() },
-  clavataCounter: { inc: vi.fn() },
-  cacheHitCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  cacheMissCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  cacheRevalidateCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  imagesFeedWithoutIndexCounter: { inc: vi.fn() },
-  creatorCompCreatorsPaidCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  creatorCompAmountPaidCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  userUpdateCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  dbReadFallbackCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-}));
+vi.mock('~/server/prom/client', () => {
+  const mockBase: Record<string, any> = {
+    registerCounter: vi.fn(() => ({ inc: vi.fn() })),
+    registerCounterWithLabels: vi.fn(() => ({ inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) })),
+    registerGauge: vi.fn(() => ({ set: vi.fn(), inc: vi.fn(), dec: vi.fn() })),
+    registerGaugeWithLabels: vi.fn(() => ({
+      set: vi.fn(),
+      inc: vi.fn(),
+      dec: vi.fn(),
+      labels: vi.fn(() => ({ set: vi.fn(), inc: vi.fn(), dec: vi.fn() })),
+    })),
+    missingSignedAtCounter: { inc: vi.fn() },
+    newUserCounter: { inc: vi.fn() },
+    loginCounter: { inc: vi.fn() },
+    onboardingCompletedCounter: { inc: vi.fn() },
+    onboardingErrorCounter: { inc: vi.fn() },
+    leakingContentCounter: { inc: vi.fn() },
+    vaultItemProcessedCounter: { inc: vi.fn() },
+    vaultItemFailedCounter: { inc: vi.fn() },
+    rewardGivenCounter: { inc: vi.fn() },
+    rewardFailedCounter: { inc: vi.fn() },
+    clavataCounter: { inc: vi.fn() },
+    cacheHitCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+    cacheMissCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+    cacheRevalidateCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+    imagesFeedWithoutIndexCounter: { inc: vi.fn() },
+    creatorCompCreatorsPaidCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+    creatorCompAmountPaidCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+    userUpdateCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+    dbReadFallbackCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+  };
+
+  return new Proxy(mockBase, {
+    get(target, prop: string) {
+      if (prop in target) return target[prop];
+      return vi.fn(() => ({
+        inc: vi.fn(),
+        dec: vi.fn(),
+        set: vi.fn(),
+        observe: vi.fn(),
+        labels: vi.fn(() => ({
+          inc: vi.fn(),
+          dec: vi.fn(),
+          set: vi.fn(),
+          observe: vi.fn(),
+        })),
+      }));
+    },
+  });
+});
 
 // Mock logging
 vi.mock('~/server/logging/client', () => ({

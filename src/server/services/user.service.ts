@@ -1746,11 +1746,17 @@ const collectionEntityProps = {
   [CollectionType.Image]: 'imageId',
   [CollectionType.Post]: 'postId',
 };
-const collectionEntityMetrics = {
-  [CollectionType.Article]: articleMetrics,
-  [CollectionType.Model]: modelMetrics,
-  [CollectionType.Image]: imageMetrics,
-  [CollectionType.Post]: postMetrics,
+let collectionEntityMetrics: Record<CollectionType, any> | null = null;
+const getCollectionEntityMetrics = (type: CollectionType) => {
+  if (!collectionEntityMetrics) {
+    collectionEntityMetrics = {
+      [CollectionType.Article]: articleMetrics,
+      [CollectionType.Model]: modelMetrics,
+      [CollectionType.Image]: imageMetrics,
+      [CollectionType.Post]: postMetrics,
+    };
+  }
+  return collectionEntityMetrics[type];
 };
 export const toggleBookmarked = async ({
   entityId,
@@ -1795,7 +1801,7 @@ export const toggleBookmarked = async ({
         id: collectionItem.id,
       },
     });
-    const metricsEngine = collectionEntityMetrics[type];
+    const metricsEngine = getCollectionEntityMetrics(type);
     metricsEngine.queueUpdate(entityId);
   } else if (!exists && setTo !== false) {
     await dbWrite.collectionItem.create({
