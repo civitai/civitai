@@ -106,21 +106,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   // never timed.) Ended in finally; `?.` because early returns leave it unstarted.
   let endTimer: (() => void) | undefined;
 
-  // Per-pod concurrency cap (shared with the tRPC feed via the 'heavy-image' key):
-  // fast-fail with 503 when this pod is already saturated with heavy image work,
-  // so a backlog can't pin the single JS thread → probe timeout → Error/137.
   let releaseSlot: (() => void) | undefined;
-  try {
-    releaseSlot = acquireBulkheadSlot('heavy-image', HEAVY_REQUEST_CONCURRENCY);
-  } catch (e) {
-    if (e instanceof BulkheadFullError) {
-      res.setHeader('Retry-After', '2');
-      return res.status(503).json({ error: 'Server busy, please retry shortly.' });
-    }
-    throw e;
-  }
-  res.on('close', () => releaseSlot?.());
-
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
@@ -143,6 +129,25 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       ({ skip } = getPagination(limit, page));
     }
 
+    // Per-pod concurrency cap (shared with the tRPC feed via the 'heavy-image' key):
+    // fast-fail with 503 when this pod is already saturated with heavy image work,
+    // so a backlog can't pin the single JS thread → probe timeout → Error/137.
+    // Acquired AFTER param validation + the paging guard so cheap 400/429 rejects
+    // don't consume a heavy slot. no-store so an edge layer can't cache the 503
+    // and turn a momentary shed into a multi-minute outage. Released on response close.
+    try {
+      releaseSlot = acquireBulkheadSlot('heavy-image', HEAVY_REQUEST_CONCURRENCY);
+    } catch (e) {
+      if (e instanceof BulkheadFullError) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '2');
+        return res.status(503).json({ error: 'Server busy, please retry shortly.' });
+      }
+      throw e;
+    }
+    res.on('close', () => releaseSlot?.());
+
+    // Timed only for admitted requests (bulkhead 503 returns above, before this).
     endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
 
     // Check if request is from restricted region and override browsing level

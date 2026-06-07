@@ -60,7 +60,11 @@ export function acquireBulkheadSlot(key: string, limit: number): () => void {
 }
 
 /** Run `fn` inside a bulkhead slot; throws BulkheadFullError when full. */
-export async function withBulkheadSlot<T>(key: string, limit: number, fn: () => Promise<T>): Promise<T> {
+export async function withBulkheadSlot<T>(
+  key: string,
+  limit: number,
+  fn: () => Promise<T>
+): Promise<T> {
   const release = acquireBulkheadSlot(key, limit);
   try {
     return await fn();
@@ -78,3 +82,11 @@ export const HEAVY_REQUEST_CONCURRENCY = (() => {
   const n = parseInt(process.env.HEAVY_REQUEST_CONCURRENCY ?? '', 10);
   return Number.isFinite(n) && n > 0 ? n : 20; // safety-valve default; tune down if pins persist
 })();
+
+// Log the resolved limit once at init so the deployed value is visible — a typo
+// like `=2` (intending 20) would silently shed hard, with no signal except the
+// reject gauge. Server-only (this module is imported by trpc.ts / the REST handler).
+if (typeof window === 'undefined') {
+  // eslint-disable-next-line no-console
+  console.log(`[bulkhead] HEAVY_REQUEST_CONCURRENCY=${HEAVY_REQUEST_CONCURRENCY}`);
+}
