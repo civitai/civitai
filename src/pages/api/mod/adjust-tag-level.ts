@@ -20,13 +20,14 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   if (!nsfwLevel) return res.status(400).json({ error: 'No nsfwLevel provided' });
 
   const tagType = nsfwLevel === NsfwLevel.PG ? TagType.Label : TagType.Moderation;
-  const updateResult = await pgDbWrite.query<{ id: number }>(`
-    UPDATE "Tag"
-    SET "nsfwLevel" = ${nsfwLevel}, type = '${tagType}'::"TagType"
-    WHERE name IN (${tags.map((tag) => `'${tag}'`)})
-      AND "nsfwLevel" != ${nsfwLevel}
-    RETURNING id;
-  `);
+  const updateResult = await pgDbWrite.query<{ id: number }>(
+    `UPDATE "Tag"
+    SET "nsfwLevel" = $1, type = $2::"TagType"
+    WHERE name = ANY($3::text[])
+      AND "nsfwLevel" != $1
+    RETURNING id;`,
+    [nsfwLevel, tagType, tags]
+  );
   const tagIds = updateResult.rows.map((r) => r.id);
 
   if (tagIds.length > 0) {

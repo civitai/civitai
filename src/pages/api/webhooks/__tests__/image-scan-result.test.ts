@@ -127,14 +127,12 @@ vi.mock('~/libs/tags', async (importOriginal) => {
   };
 });
 
-vi.mock('~/server/services/image.service', async (importOriginal) => {
-  const actual = await importOriginal<any>();
-  return {
-    ...actual,
-    getImagesModRules: vi.fn().mockResolvedValue([]),
-    queueImageSearchIndexUpdate: vi.fn().mockResolvedValue(undefined),
-  };
-});
+vi.mock('~/server/services/image.service', () => ({
+  getImagesModRules: vi.fn().mockResolvedValue([]),
+  queueImageSearchIndexUpdate: vi.fn().mockResolvedValue(undefined),
+  enqueueImageIngestion: vi.fn().mockResolvedValue(undefined),
+  imageScanTypes: [3, 9], // ImageScanType.WD14, ImageScanType.SpineRating
+}));
 
 describe('image-scan-result webhook - pipeline tests', () => {
   const imageDbState = new Map<number, any>();

@@ -376,7 +376,7 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
 
 type TagLookup = {
   id: number;
-  name: string | null;
+  name: string;
   type: TagType;
   nsfwLevel: NsfwLevel;
   unlisted?: true;

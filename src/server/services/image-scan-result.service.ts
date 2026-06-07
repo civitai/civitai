@@ -612,7 +612,6 @@ async function processTags({
       if (!match) return null;
       return {
         ...tag,
-        name: tag.name as string,
         source: match.source,
         confidence: match.confidence,
       };
