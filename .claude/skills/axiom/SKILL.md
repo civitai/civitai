@@ -8,6 +8,8 @@ allowed-tools: Bash, Read
 
 Query Axiom datasets using APL (Axiom Processing Language). Supports log search, aggregation, field analysis, and time-based filtering.
 
+> ⚠️ **2026-06-07:** the currently-configured token is **ingest-only** — `datasets` works but every `query` returns `403 "token does not have access to resource: query with action: read"`. To use this skill you must provision a **read/query**-scoped token. Also note `civitai-next` 403s entirely (token is civitai-prod-scoped). Until then, per-route/per-procedure latency can't be pulled from Axiom — Prometheus only has per-*service* Traefik latency, and the app's `civitai_app_images_search_request_duration_seconds` histogram isn't landing on the scraped registry (see the CPU handoff doc).
+
 ## Setup
 
 Create `.env` in this skill directory:
