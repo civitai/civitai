@@ -14,6 +14,7 @@ import {
   submitWorkflow as clientSubmitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
   handleError,
+  refreshBlob,
 } from '@civitai/client';
 import type * as z from 'zod';
 import { isDev, isProd } from '~/env/other';
@@ -102,6 +103,13 @@ export async function submitWorkflow({
 }: Options<SubmitWorkflowData> & { token: string }) {
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
+
+  // Refresh any expired or unsigned consumer blob URLs in the workflow steps
+  try {
+    await refreshBlobUrlsInBody(body, client);
+  } catch (error) {
+    console.error('Failed to refresh blob URLs in workflow body:', error);
+  }
 
   // const steps = body.steps;
   // if (steps.length > 0) {
@@ -330,4 +338,73 @@ export async function patchWorkflowTags({
       if (op === 'remove') await removeWorkflowTag({ client, path: { workflowId, tag } });
     })
   );
+}
+
+async function refreshBlobUrlsInBody(body: any, client: any) {
+  const blobUrls = findBlobUrls(body);
+  if (blobUrls.length === 0) return;
+
+  await Promise.all(
+    blobUrls.map(async ({ path, blobId }) => {
+      try {
+        const { data } = await refreshBlob({ client, path: { blobId } });
+        if (data?.url) {
+          setValueAtPath(body, path, data.url);
+        }
+      } catch (error) {
+        console.error(`Failed to refresh blob ${blobId}:`, error);
+      }
+    })
+  );
+}
+
+function findBlobUrls(obj: any): { path: string[]; blobId: string }[] {
+  const results: { path: string[]; blobId: string }[] = [];
+
+  function traverse(current: any, path: string[]) {
+    if (!current) return;
+    if (typeof current === 'string') {
+      if (shouldRefreshBlobUrl(current)) {
+        const match = current.match(/\/v\d\/consumer\/blobs\/(?<blobId>[a-zA-Z0-9]+)/);
+        if (match && match.groups?.blobId) {
+          results.push({ path, blobId: match.groups.blobId });
+        }
+      }
+    } else if (Array.isArray(current)) {
+      for (let i = 0; i < current.length; i++) {
+        traverse(current[i], [...path, String(i)]);
+      }
+    } else if (typeof current === 'object') {
+      for (const key of Object.keys(current)) {
+        traverse(current[key], [...path, key]);
+      }
+    }
+  }
+
+  traverse(obj, []);
+  return results;
+}
+
+function shouldRefreshBlobUrl(url: string): boolean {
+  try {
+    if (!url.includes('/consumer/blobs/')) return false;
+    const urlObj = new URL(url, 'https://orchestration.civitai.com');
+    const sig = urlObj.searchParams.get('sig');
+    const exp = urlObj.searchParams.get('exp');
+    if (!sig || !exp) return true;
+
+    const expiryDate = new Date(exp);
+    const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
+    return expiryDate.getTime() - Date.now() < bufferTime;
+  } catch {
+    return false;
+  }
+}
+
+function setValueAtPath(obj: any, path: string[], value: any) {
+  let current = obj;
+  for (let i = 0; i < path.length - 1; i++) {
+    current = current[path[i]];
+  }
+  current[path[path.length - 1]] = value;
 }
