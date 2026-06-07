@@ -20,6 +20,11 @@ import {
 import { imageMetaCache } from '~/server/redis/caches';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import {
+  acquireBulkheadSlot,
+  BulkheadFullError,
+  HEAVY_REQUEST_CONCURRENCY,
+} from '~/server/utils/request-bulkhead';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -100,6 +105,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   // the #2428 acquire goes immediately above this, so a 503-rejected request is
   // never timed.) Ended in finally; `?.` because early returns leave it unstarted.
   let endTimer: (() => void) | undefined;
+
+  let releaseSlot: (() => void) | undefined;
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
@@ -122,6 +129,27 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       ({ skip } = getPagination(limit, page));
     }
 
+    // Per-pod concurrency cap (shared with the tRPC feed via the 'heavy-image' key):
+    // fast-fail with 503 when this pod is already saturated with heavy image work,
+    // so a backlog can't pin the single JS thread → probe timeout → Error/137.
+    // Acquired AFTER param validation + the paging guard so cheap 400/429 rejects
+    // don't consume a heavy slot. no-store so an edge layer can't cache the 503
+    // and turn a momentary shed into a multi-minute outage. Released in the finally
+    // below — NOT on res 'close', which can lag the actual heavy work by the
+    // keep-alive teardown and would hold the slot (and shed) long after the JS
+    // thread is free. Symmetric with the tRPC heavyProcedure's finally release.
+    try {
+      releaseSlot = acquireBulkheadSlot('heavy-image', HEAVY_REQUEST_CONCURRENCY);
+    } catch (e) {
+      if (e instanceof BulkheadFullError) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '2');
+        return res.status(503).json({ error: 'Server busy, please retry shortly.' });
+      }
+      throw e;
+    }
+
+    // Timed only for admitted requests (bulkhead 503 returns above, before this).
     endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
 
     // Check if request is from restricted region and override browsing level
@@ -283,6 +311,9 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     });
   } finally {
     endTimer?.();
+    // Release the heavy slot as soon as the handler resolves (synchronous
+    // serialization — the actual pin cost — is done by now), not on socket close.
+    releaseSlot?.();
   }
 });
 
