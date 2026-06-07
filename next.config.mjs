@@ -103,7 +103,7 @@ export default defineNextConfig(
             // removeConsole: true,
           }
         : {},
-    transpilePackages: [],
+    transpilePackages: ['superjson'],
     experimental: {
       // scrollRestoration: true,
       cpus: 8,
