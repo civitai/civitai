@@ -8,7 +8,9 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
+import client from 'prom-client';
 import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
+import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import {
   getAllImages,
@@ -84,7 +86,15 @@ const imagesEndpointSchema = z.object({
   flatMeta: booleanString().optional(),
 });
 
+// Reuse the shared images-search metrics bundle (idempotent registration on the
+// default registry that /api/metrics scrapes). This times the FULL REST handler
+// — including enrichment + JSON serialization, the actual pin cost — which the
+// inner getImagesFromSearch timer doesn't capture. route label keeps it queryable
+// alongside the search-fn timing without extra cardinality.
+const { requestDurationSeconds } = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
+
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
@@ -92,7 +102,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const session = await getServerAuthSession({ req, res });
 
     // Handle pagination
-    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, ...data } = reqParams.data;
+    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, ...data } =
+      reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
     if (usingPaging) {
@@ -263,6 +274,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       error: trpcError.message,
       code: trpcError.code,
     });
+  } finally {
+    endTimer();
   }
 });
 
