@@ -3,6 +3,7 @@ import type {
   Options,
   SubmitWorkflowData,
   UpdateWorkflowRequest,
+  WorkflowTemplate,
 } from '@civitai/client';
 import {
   addWorkflowTag,
@@ -105,11 +106,7 @@ export async function submitWorkflow({
   if (!body) throw throwBadRequestError();
 
   // Refresh any expired or unsigned consumer blob URLs in the workflow steps
-  try {
-    await refreshBlobUrlsInBody(body, client);
-  } catch (error) {
-    console.error('Failed to refresh blob URLs in workflow body:', error);
-  }
+  await refreshBlobUrlsInBody(body, client);
 
   // const steps = body.steps;
   // if (steps.length > 0) {
@@ -340,7 +337,10 @@ export async function patchWorkflowTags({
   );
 }
 
-export async function refreshBlobUrlsInBody(body: any, client: any) {
+export async function refreshBlobUrlsInBody(
+  body: WorkflowTemplate,
+  client: ReturnType<typeof createOrchestratorClient>
+) {
   const blobUrls = findBlobUrls(body);
   if (blobUrls.length === 0) return;
 
@@ -350,33 +350,40 @@ export async function refreshBlobUrlsInBody(body: any, client: any) {
         const { data } = await refreshBlob({ client, path: { blobId } });
         if (data?.url) {
           setValueAtPath(body, path, data.url);
+        } else {
+          throw new Error('Refresh endpoint returned no URL data');
         }
       } catch (error) {
-        console.error(`Failed to refresh blob ${blobId}:`, error);
+        throw throwBadRequestError(
+          `Failed to refresh image URL for blob: ${blobId}. Please try uploading the image again.`
+        );
       }
     })
   );
 }
 
-export function findBlobUrls(obj: any): { path: string[]; blobId: string }[] {
+export function findBlobUrls(obj: unknown): { path: string[]; blobId: string }[] {
   const results: { path: string[]; blobId: string }[] = [];
 
-  function traverse(current: any, path: string[]) {
+  function traverse(current: unknown, path: string[], depth = 0) {
+    if (depth > 20) return; // Prevent stack overflow on pathological/circular structures
     if (!current) return;
+
     if (typeof current === 'string') {
       if (shouldRefreshBlobUrl(current)) {
-        const match = current.match(/\/v\d\/consumer\/blobs\/(?<blobId>[a-zA-Z0-9]+)/);
+        const match = current.match(/\/v\d\/consumer\/blobs\/(?<blobId>[a-zA-Z0-9_.-]+)/);
         if (match && match.groups?.blobId) {
           results.push({ path, blobId: match.groups.blobId });
         }
       }
     } else if (Array.isArray(current)) {
       for (let i = 0; i < current.length; i++) {
-        traverse(current[i], [...path, String(i)]);
+        traverse(current[i], [...path, String(i)], depth + 1);
       }
     } else if (typeof current === 'object') {
-      for (const key of Object.keys(current)) {
-        traverse(current[key], [...path, key]);
+      const keys = Object.keys(current);
+      for (const key of keys) {
+        traverse((current as Record<string, unknown>)[key], [...path, key], depth + 1);
       }
     }
   }
@@ -401,10 +408,13 @@ export function shouldRefreshBlobUrl(url: string): boolean {
   }
 }
 
-function setValueAtPath(obj: any, path: string[], value: any) {
-  let current = obj;
+function setValueAtPath(obj: unknown, path: string[], value: unknown) {
+  let current = obj as any;
   for (let i = 0; i < path.length - 1; i++) {
+    if (!current || typeof current !== 'object') return;
     current = current[path[i]];
   }
-  current[path[path.length - 1]] = value;
+  if (current && typeof current === 'object') {
+    current[path[path.length - 1]] = value;
+  }
 }
