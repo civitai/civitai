@@ -94,7 +94,12 @@ const imagesEndpointSchema = z.object({
 const { requestDurationSeconds } = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
+  // Started AFTER param validation + the paging guard so cheap 400/429 rejects
+  // aren't recorded as ~0ms heavy requests, which would dilute the heavy-tail P99
+  // this metric exists to measure. (Also the correct slot for the bulkhead merge:
+  // the #2428 acquire goes immediately above this, so a 503-rejected request is
+  // never timed.) Ended in finally; `?.` because early returns leave it unstarted.
+  let endTimer: (() => void) | undefined;
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
@@ -116,6 +121,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
       ({ skip } = getPagination(limit, page));
     }
+
+    endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
 
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);
@@ -275,7 +282,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       code: trpcError.code,
     });
   } finally {
-    endTimer();
+    endTimer?.();
   }
 });
 
