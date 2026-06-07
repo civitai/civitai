@@ -17,6 +17,16 @@ function getHiddenCacheExpiry() {
 }
 // const log = createLogger('user-preferences', 'green');
 
+// All of a user's hidden-preference caches are stored as FIELDS of ONE per-user
+// hash (`packed:user:<id>:hidden-prefs`), so getAllHiddenForUsersCached can read
+// them in a single HGETALL instead of N individual GETs — the largest Redis
+// contributor on the feed path. The hash field name is the per-pref `key`, so
+// the individual consumers (getCached/refreshCache, used across ~10 services)
+// keep working — they just operate on their field via HGET/HDEL.
+const HIDDEN_PREFS_HASH = 'hidden-prefs';
+const getUserPrefsHashKey = (userId = -1) =>
+  `${REDIS_KEYS.USER.CACHE}:${userId}:${HIDDEN_PREFS_HASH}` as RedisKeyTemplateCache;
+
 function createUserCache<T, TArgs extends { userId?: number }>({
   key,
   callback,
@@ -24,43 +34,46 @@ function createUserCache<T, TArgs extends { userId?: number }>({
   key: string;
   callback: (args: TArgs) => Promise<T>;
 }) {
-  const getKey = ({ userId = -1 }: { userId?: number }) =>
-    `${REDIS_KEYS.USER.CACHE}:${userId}:${key}` as RedisKeyTemplateCache;
+  const field = key;
+  // Fetch from source (DB) and write the field into the per-user hash. The TTL
+  // is set with `NX` (only when the hash has none), so the whole hash ages out
+  // ~maxExpiry after its FIRST population rather than having its expiry bumped
+  // on every field write. This preserves the self-healing backstop the old
+  // per-key TTLs gave: if an invalidation is ever missed, the field can't go
+  // stale indefinitely — the hash expires and is rebuilt. (Jitter on first
+  // population still staggers expiry across users to avoid a herd.)
+  const get = async ({ userId = -1, ...rest }: TArgs) => {
+    const data = await callback({ userId, ...rest } as TArgs);
+    const hashKey = getUserPrefsHashKey(userId);
+    await redis.packed.hSet(hashKey, field, data);
+    await redis.expire(hashKey, getHiddenCacheExpiry(), 'NX');
+    return data;
+  };
 
   const getCached = async ({
     userId = -1, // Default to civitai account
     refreshCache,
     ...rest
   }: TArgs & { refreshCache?: boolean }) => {
-    const cachedTags = await redis.packed.get<T>(getKey({ userId }));
-    if (cachedTags && !refreshCache) return cachedTags;
-    if (refreshCache) await redis.del(getKey({ userId }));
-
+    if (refreshCache) {
+      await refresh({ userId });
+      return await get({ userId, ...rest } as TArgs);
+    }
+    const cached = await redis.packed.hGet<T>(getUserPrefsHashKey(userId), field);
+    if (cached != null) return cached;
     return await get({ userId, ...rest } as TArgs);
   };
 
-  const get = async ({ userId = -1, ...rest }: TArgs) => {
-    // console.time(key);
-    const data = await callback({ userId, ...rest } as TArgs);
-    // console.timeEnd(key);
-
-    await redis.packed.set(getKey({ userId }), data, {
-      EX: getHiddenCacheExpiry(),
-    });
-
-    return data;
-  };
-
-  const refreshCache = async ({ userId }: { userId: number }) => {
-    // log(`refreshing ${logLabel} for user`, userId);
-    await redis.del(getKey({ userId }));
+  // Invalidate: drop the hash field so the next read repopulates from source.
+  const refresh = async ({ userId = -1 }: { userId?: number }) => {
+    await redis.hDel(getUserPrefsHashKey(userId), field);
   };
 
   return {
     get,
     getCached,
-    getKey,
-    refreshCache,
+    field,
+    refreshCache: refresh,
   };
 }
 
@@ -263,63 +276,40 @@ const getAllHiddenForUsersCached = async ({
 }: {
   userId?: number;
 }) => {
-  // Batch the 8 cache reads through the documented `packed.mGet` API instead
-  // of 8 individual `redis.packed.get()` calls in `Promise.all`, and wrap in
-  // a span so spanmetrics can attribute the actual fan-out latency vs.
-  // post-processing / cache-miss DB fallbacks.
-  //
-  // Why mGet (not pipeline / cluster MULTI):
-  //   This is a Redis CLUSTER. The 7 user-preference keys do NOT share a hash
-  //   tag, and the 8th (SYSTEM.MODERATED_TAGS) is on a different shard, so a
-  //   real Redis MGET or cluster MULTI(routing) across them would CROSSSLOT
-  //   or require cross-shard coordination. `redis.packed.mGet` is the
-  //   cluster-safe wrapper (see redis/client.ts): it issues per-key GETs
-  //   internally and benefits from node-redis' per-shard cork/uncork TCP
-  //   pipelining. Functionally equivalent to the prior Promise.all, but
-  //   centralises future per-shard slot-grouping optimizations on one path.
-  const cacheKeys: RedisKeyTemplateCache[] = [
-    REDIS_KEYS.SYSTEM.MODERATED_TAGS,
-    HiddenTags.getKey({ userId }),
-    HiddenImages.getKey({ userId }),
-    HiddenModels.getKey({ userId }),
-    HiddenUsers.getKey({ userId }),
-    ImplicitHiddenImages.getKey({ userId }),
-    BlockedUsers.getKey({ userId }),
-    BlockedByUsers.getKey({ userId }),
-  ];
-  const [
-    cachedSystemHiddenTags,
-    cachedHiddenTags,
-    cachedHiddenImages,
-    cachedHiddenModels,
-    cachedHiddenUsers,
-    cachedImplicitHiddenImages,
-    cachedBlockedUsers,
-    cachedBlockedByUsers,
-  ] = await withSpan(
+  // ONE HGETALL pulls every hidden-preference field for this user (previously
+  // 7 individual GETs via packed.mGet's per-key fan-out — the largest Redis
+  // contributor on the feed path), alongside the global moderated-tags blob.
+  // Absent fields fall back per-pref to the DB via each cache's get() (see
+  // createUserCache).
+  const [hashFields, cachedModeratedTags] = await withSpan(
     'user-preferences:getAllHidden:redisFetch',
-    { keyCount: cacheKeys.length },
-    () => redis.packed.mGet(cacheKeys)
+    () =>
+      Promise.all([
+        redis.packed.hGetAll<unknown>(getUserPrefsHashKey(userId)),
+        redis.packed.get<AsyncReturnType<typeof getModeratedTags>>(
+          REDIS_KEYS.SYSTEM.MODERATED_TAGS
+        ),
+      ])
   );
 
   const getModerationTags = async () =>
-    (cachedSystemHiddenTags as AsyncReturnType<typeof getModeratedTags>) ??
+    (cachedModeratedTags as AsyncReturnType<typeof getModeratedTags>) ??
     (await getModeratedTags());
 
   const getHiddenTags = async ({ userId }: { userId: number }) =>
-    (cachedHiddenTags as AsyncReturnType<typeof HiddenTags.get>) ??
+    (hashFields[HiddenTags.field] as AsyncReturnType<typeof HiddenTags.get>) ??
     (await HiddenTags.get({ userId }));
 
   const getHiddenImages = async ({ userId }: { userId: number }) =>
-    (cachedHiddenImages as AsyncReturnType<typeof HiddenImages.get>) ??
+    (hashFields[HiddenImages.field] as AsyncReturnType<typeof HiddenImages.get>) ??
     (await HiddenImages.get({ userId }));
 
   const getHiddenModels = async ({ userId }: { userId: number }) =>
-    (cachedHiddenModels as AsyncReturnType<typeof HiddenModels.get>) ??
+    (hashFields[HiddenModels.field] as AsyncReturnType<typeof HiddenModels.get>) ??
     (await HiddenModels.get({ userId }));
 
   const getHiddenUsers = async ({ userId }: { userId: number }) =>
-    (cachedHiddenUsers as AsyncReturnType<typeof HiddenUsers.get>) ??
+    (hashFields[HiddenUsers.field] as AsyncReturnType<typeof HiddenUsers.get>) ??
     (await HiddenUsers.get({ userId }));
 
   const getHiddenImplicitImages = async ({
@@ -331,15 +321,15 @@ const getAllHiddenForUsersCached = async ({
     hiddenTagIds: number[];
     moderatedTagIds: number[];
   }) =>
-    (cachedImplicitHiddenImages as AsyncReturnType<typeof ImplicitHiddenImages.get>) ??
+    (hashFields[ImplicitHiddenImages.field] as AsyncReturnType<typeof ImplicitHiddenImages.get>) ??
     (await ImplicitHiddenImages.get({ userId, hiddenTagIds, moderatedTagIds }));
 
   const getBlockedUsers = async ({ userId }: { userId: number }) =>
-    (cachedBlockedUsers as AsyncReturnType<typeof BlockedUsers.get>) ??
+    (hashFields[BlockedUsers.field] as AsyncReturnType<typeof BlockedUsers.get>) ??
     (await BlockedUsers.get({ userId }));
 
   const getBlockedByUsers = async ({ userId }: { userId: number }) =>
-    (cachedBlockedByUsers as AsyncReturnType<typeof BlockedByUsers.get>) ??
+    (hashFields[BlockedByUsers.field] as AsyncReturnType<typeof BlockedByUsers.get>) ??
     (await BlockedByUsers.get({ userId }));
 
   // Resolve the 7 base preferences — each is a no-op if cached, otherwise

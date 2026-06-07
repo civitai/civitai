@@ -36,6 +36,26 @@ export const getGenerationResourcesSchema = z.object({
   supported: z.boolean().optional(),
 });
 
+/**
+ * Operator-controlled generator config, persisted to Redis (hash field
+ * `generation:ecosystem-config`). All GATING now lives in the gate-rules model
+ * (`generation:gate-rules`); the only field left here is `experimentalEcosystems`
+ * — an alert flag, not a gate (it shows the "experimental build" banner in the
+ * generator UI). Read/written by `get/setGenerationEcosystemConfig`.
+ */
+export const generationEcosystemConfigSchema = z.object({
+  experimentalEcosystems: z.array(z.string()).default([]),
+});
+export type GenerationEcosystemConfig = z.infer<typeof generationEcosystemConfigSchema>;
+export const DEFAULT_GENERATION_ECOSYSTEM_CONFIG: GenerationEcosystemConfig =
+  generationEcosystemConfigSchema.parse({});
+
+/** Runtime config: the Redis list + the per-user `generation-testing` Flipt result. */
+export type GenerationEcosystemContext = GenerationEcosystemConfig & {
+  /** Whether the current user passes the `generation-testing` Flipt flag (mods always do). */
+  hasTestingAccess: boolean;
+};
+
 export type GetGenerationRequestsInput = z.input<typeof getGenerationRequestsSchema>;
 export type GetGenerationRequestsOutput = z.output<typeof getGenerationRequestsSchema>;
 export const getGenerationRequestsSchema = z.object({
@@ -171,17 +191,17 @@ export const defaultsByTier: Record<UserTier, GenerationLimits> = {
     quantity: 4,
     queue: 4,
     steps: 50,
-    resources: 9,
+    resources: 3,
   },
   founder: {
     quantity: 8,
     queue: 8,
     steps: 50,
-    resources: 9,
+    resources: 3,
   },
-  bronze: { quantity: 8, queue: 8, steps: 50, resources: 12 },
-  silver: { quantity: 10, queue: 10, steps: 60, resources: 12 },
-  gold: { quantity: 12, queue: 10, steps: 60, resources: 12 },
+  bronze: { quantity: 8, queue: 8, steps: 50, resources: 8 },
+  silver: { quantity: 10, queue: 10, steps: 60, resources: 8 },
+  gold: { quantity: 12, queue: 10, steps: 60, resources: 8 },
 };
 
 const generationStatusUpdatedBySchema = z.object({
@@ -234,6 +254,13 @@ export const generationStatusSchema = z.preprocess(
       // (memberOnly/disabled). Preserved when set back to 'enabled' — we don't
       // care who re-enables.
       updatedBy: generationStatusUpdatedBySchema.nullish(),
+      // Self-hosted generation toggle: gates ecosystems that run on Civitai's
+      // own GPUs/workers (vs external providers). Independent of the global
+      // `mode` above — e.g. global can be 'enabled' while self-hosted is
+      // 'memberOnly'. Same three-state semantics. No message of its own; the
+      // client surfaces fixed copy for the self-hosted block.
+      selfHostedMode: generationStatusModeSchema.default('enabled'),
+      selfHostedUpdatedBy: generationStatusUpdatedBySchema.nullish(),
       limits: generationLimitsField,
       charge: z.boolean().default(true),
       // checkResourceAvailability: z.boolean().default(false),

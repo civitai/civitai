@@ -20,6 +20,7 @@
 import { z } from 'zod';
 import { DataGraph, type InferDataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
+import { mergeGateStates, rulesToStates } from './gates';
 import { videoInterpolationGraph } from './video-interpolation-graph';
 import { videoUpscaleGraph } from './video-upscale-graph';
 import { imageUpscaleGraph } from './image-upscale-graph';
@@ -123,14 +124,38 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
   // Workflow values are workflow keys (e.g., 'txt2img', 'txt2img:draft', 'txt2vid')
   .node(
     'workflow',
-    () => ({
-      input: z.string().optional().transform(migrateWorkflowKey),
-      output: z.string(),
-      defaultValue: 'txt2img',
-      meta: {
-        // All workflows are shown - compatibility is handled by baseModel filtering
-      },
-    }),
+    (_ctx, ext) => {
+      // Gated workflow keys, resolved from the gate rules into one state map,
+      // then rejects any gated key (hidden or shown-but-disabled) on submit so a
+      // stale value or crafted request can't generate it. Server enforces via
+      // buildGenerationContext; the picker badges them separately. NOTE: this
+      // node has no deps, so the factory only runs at init — the client refine
+      // is best-effort (picker blocks selection), the authoritative gate is the
+      // server-side safeParse with fresh ext. `meta` is a FUNCTION so the picker
+      // tracks live `ext`.
+      const { hidden, states } = mergeGateStates(
+        undefined,
+        rulesToStates(ext.gateRules ?? []).workflows
+      );
+      const gated = new Set([...hidden, ...states.map((s) => s.key)]);
+      return {
+        input: z.string().optional().transform(migrateWorkflowKey),
+        output: gated.size
+          ? z.string().refine((v) => !gated.has(v), {
+              message: 'Workflow is currently unavailable',
+            })
+          : z.string(),
+        defaultValue: 'txt2img',
+        meta: (_metaCtx, metaExt) => {
+          const merged = mergeGateStates(
+            undefined,
+            rulesToStates(metaExt.gateRules ?? []).workflows
+          );
+          // hiddenWorkflows removed from the picker; workflowStates badged.
+          return { hiddenWorkflows: merged.hidden, workflowStates: merged.states };
+        },
+      };
+    },
     []
   )
   // Output is computed from workflow

@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1784",
+  "version": "5.0.1795",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {
@@ -258,7 +258,7 @@
     "stacktrace-parser": "^0.1.10",
     "stream-to-blob": "^2.0.1",
     "stripe": "^11.6.0",
-    "superjson": "1.9.1",
+    "superjson": "^2.2.6",
     "trie-memoize": "^1.2.0",
     "unfurl.js": "^6.4.0",
     "unified": "^11.0.5",

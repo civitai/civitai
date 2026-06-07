@@ -9,6 +9,7 @@ import {
   Collapse,
   Divider,
   Group,
+  HoverCard,
   Loader,
   LoadingOverlay,
   Paper,
@@ -100,27 +101,38 @@ const BugReportButton = ({
   const recentlyReported = reportedAt && Date.now() - reportedAt < 1000 * 60 * 60 * 24;
 
   return (
-    <Tooltip
-      label={recentlyReported ? 'Thanks — you told us in the last day' : "I'm experiencing this"}
-      color="dark"
-      withArrow
-      withinPortal
-    >
-      <Button
-        size="compact-sm"
-        leftSection={<IconUserExclamation size={14} />}
-        variant={recentlyReported ? 'light' : 'filled'}
-        color={recentlyReported ? 'gray' : 'red'}
-        loading={isLoading}
-        disabled={!!recentlyReported}
-        onClick={() => mutate({ bugId: bug.id })}
-      >
-        {recentlyReported ? 'Reported' : "I'm experiencing this"}{' '}
-        <Badge ml={6} size="xs" variant="filled" color="dark">
-          {bug.reportCount}
-        </Badge>
-      </Button>
-    </Tooltip>
+    <HoverCard width={260} withArrow withinPortal shadow="md" openDelay={200}>
+      <HoverCard.Target>
+        {/* span wrapper keeps the hover working even while the button is disabled */}
+        <span className="inline-flex">
+          <Button
+            size="compact-sm"
+            leftSection={<IconUserExclamation size={14} />}
+            variant={recentlyReported ? 'light' : 'filled'}
+            color={recentlyReported ? 'gray' : 'red'}
+            loading={isLoading}
+            disabled={!!recentlyReported}
+            onClick={() => mutate({ bugId: bug.id })}
+          >
+            {recentlyReported ? 'Reported' : "I'm experiencing this"}{' '}
+            <Badge ml={6} size="xs" variant="filled" color="dark">
+              {bug.reportCount}
+            </Badge>
+          </Button>
+        </span>
+      </HoverCard.Target>
+      <HoverCard.Dropdown>
+        <Text size="sm">
+          <Text span fw={600}>
+            {bug.reportCount}
+          </Text>{' '}
+          {bug.reportCount === 1 ? 'person has' : 'people have'} run into this in the last 24 hours.
+          {recentlyReported
+            ? " Thanks for letting us know - you're counted."
+            : " Hit the button if you're seeing it too so we know how many are affected."}
+        </Text>
+      </HoverCard.Dropdown>
+    </HoverCard>
   );
 };
 

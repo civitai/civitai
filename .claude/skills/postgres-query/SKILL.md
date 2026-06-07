@@ -23,6 +23,7 @@ node .claude/skills/postgres-query/query.mjs "SELECT * FROM \"User\" LIMIT 5"
 | `--writable` | Use primary database instead of read replica (requires user permission) |
 | `--data-packet` | Use the DataPacket replica (`DATABASE_DATA_PACKET_URL`) — read-only |
 | `--notifications` | Query the notifications-db (DataPacket) — read-only via SSH bastion (see setup below) |
+| `--dev` | Query the dev cnpg database (`DEV_DATABASE_URL`) via SSH bastion (see setup below) |
 | `--timeout <s>`, `-t` | Query timeout in seconds (default: 30) |
 | `--file`, `-f` | Read query from a file |
 | `--json` | Output results as JSON |
@@ -58,6 +59,46 @@ node .claude/skills/postgres-query/query.mjs --json "SELECT id, username FROM \"
 | `--writable` | `DATABASE_URL` | Writes against primary; needs user permission |
 | `--data-packet` | `DATABASE_DATA_PACKET_URL` | Querying the DataPacket replica (read-only) |
 | `--notifications` | `NOTIFICATION_DB_REPLICA_URL` | Querying notifications-db (read-only); requires SSH tunnel |
+| `--dev` | `DEV_DATABASE_URL` | Querying the dev cnpg database; requires SSH tunnel |
+
+## Querying the dev database (cnpg)
+
+The dev database lives in the `cnpg-database-dev` namespace and is reached through the `civitai` SSH bastion, which forwards local port `15432` to the in-cluster pgbouncer pooler.
+
+### Setup
+
+1. Make sure your `~/.ssh/config` has the `civitai` host with this forward (already configured):
+
+   ```
+   # dev db (cnpg pgbouncer pooler)
+   LocalForward 15432 pgbouncer-pooler-dev.cnpg-database-dev.svc.cluster.local:5432
+   ```
+
+2. Open the tunnel in a terminal (stays open):
+
+   ```bash
+   ssh civitai -N
+   ```
+
+3. Make sure `DEV_DATABASE_URL` is set in `.claude/skills/postgres-query/.env`:
+
+   ```
+   DEV_DATABASE_URL=postgresql://postgres:<password>@localhost:15432/civitai?sslmode=no-verify&schema=public
+   ```
+
+   Use `sslmode=no-verify` (not `require`) — the cnpg pooler presents a
+   self-signed cert, and the connection is already encrypted inside the
+   SSH tunnel.
+
+### Running dev queries
+
+```bash
+# Read-only (default — writes are blocked client-side)
+node .claude/skills/postgres-query/query.mjs --dev "SELECT count(*) FROM \"User\""
+
+# Writable (the dev postgres role is a superuser; needs user permission)
+node .claude/skills/postgres-query/query.mjs --dev --writable "UPDATE ..."
+```
 
 ## Querying the notifications-db (DataPacket)
 

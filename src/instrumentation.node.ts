@@ -5,13 +5,15 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
-import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
+import {
+  BatchSpanProcessor,
+  ParentBasedSampler,
+  TraceIdRatioBasedSampler,
+} from '@opentelemetry/sdk-trace-node';
 import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { logs } from '@opentelemetry/api-logs';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { PrismaInstrumentation } from '@prisma/instrumentation';
-import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis';
 import { registerCpuProfiler } from '~/server/cpu-profiler';
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
@@ -46,6 +48,28 @@ if (!OTEL_ENABLED) {
       [ATTR_SERVICE_NAME]: serviceName,
     });
 
+    // Head trace sampling. Previously unset, so NodeSDK defaulted to AlwaysOn
+    // (100% of requests recorded + exported). At ~1500 req/s on a single JS
+    // thread that recording/attribute/export work is a measurable slice of
+    // main-thread CPU. Sample a fraction of root traces instead; child spans
+    // follow their parent's decision so each trace is all-or-nothing.
+    // Tune without a redeploy via OTEL_TRACES_SAMPLE_RATIO (0..1).
+    const parsedRatio = parseFloat(process.env.OTEL_TRACES_SAMPLE_RATIO ?? '');
+    const sampleRatio =
+      Number.isFinite(parsedRatio) && parsedRatio >= 0 && parsedRatio <= 1 ? parsedRatio : 0.1;
+    const ratioSampler = new TraceIdRatioBasedSampler(sampleRatio);
+    const sampler = new ParentBasedSampler({
+      root: ratioSampler,
+      // This is a PUBLIC API with no traceparent stripping at the edge, so an
+      // untrusted client could send `traceparent: ...-01` to force a sampled
+      // decision. ParentBased's default `remoteParentSampled` is AlwaysOn, which
+      // would let any client defeat the sampling cap and re-saturate CPU — the
+      // exact failure this change prevents. Apply the ratio to remote parents
+      // too. Local parents still inherit, so intra-process traces stay coherent.
+      remoteParentSampled: ratioSampler,
+    });
+    console.log(`[instrumentation.node] OTEL trace sampling ratio: ${sampleRatio}`);
+
     // Trace exporter
     const traceExporter = new OTLPTraceExporter({
       url: `${OTEL_ENDPOINT}/v1/traces`,
@@ -66,11 +90,47 @@ if (!OTEL_ENABLED) {
     // Create SDK with trace processor and auto-instrumentations
     const sdk = new NodeSDK({
       resource,
+      sampler,
       spanProcessor: new BatchSpanProcessor(traceExporter),
+      // RedisInstrumentation intentionally omitted: at ~5,400 redis ops/s it was
+      // the highest-frequency span source (~4 spans/request) and the dominant
+      // async_hooks context-propagation cost a CPU pin profile attributed to OTEL
+      // — and head sampling can't remove that (the context manager runs for every
+      // span regardless of the sampling decision). Observability tradeoff: this
+      // removes the only PER-COMMAND redis timing the app had — there is NO redis
+      // command-latency prom metric (only cache hit/miss counters). Accepted for
+      // the CPU win; if per-command redis latency is needed later, add a
+      // low-cardinality prom histogram around sendCommand (cheaper than a span —
+      // no context.with / async_hooks propagation).
+      //
+      // PrismaInstrumentation intentionally omitted for the same structural reason:
+      // it wraps every query on the hot DB path, and each query span pays the
+      // async_hooks context-propagation cost (context.with + span alloc) that head
+      // sampling can't remove — the context manager runs for every span regardless
+      // of the sampling decision. Observability tradeoff: this removes Prisma query
+      // spans, but the app's RED/latency dashboards are prom-client based
+      // (src/server/prom/client.ts), NOT OTEL spanmetrics (which aren't scraped into
+      // Prometheus), and DB pool metrics are separate labeled gauges
+      // (db/db-helpers.ts). So no dashboard depends on these spans. The custom
+      // withSpan() instrumentation on specific hot calls is unaffected.
       instrumentations: [
-        new HttpInstrumentation(),
-        new PrismaInstrumentation(),
-        new RedisInstrumentation(),
+        // HttpInstrumentation narrowed to INBOUND-only. It only ever patched Node
+        // core http/https, so the affected outbound spans are the core-http
+        // clients (S3 via @aws-sdk, ClickHouse, axios/signals) — NOT orchestrator
+        // or meilisearch, which use fetch/undici and were never auto-instrumented
+        // (their visibility comes from manual withSpan()). Each remaining outgoing
+        // client span is another async_hooks context.with + span alloc on the hot
+        // path — the structural cost head sampling can't remove.
+        // ignoreOutgoingRequestHook returning true for every outgoing request
+        // suppresses those client spans (and their traceparent injection) while
+        // keeping incoming server-request spans (the per-request root) intact.
+        // (instrumentation-http@0.213.0 also exposes
+        // disableOutgoingRequestInstrumentation, which skips patching outbound
+        // entirely; the ignore hook is used here to keep the path patched for
+        // future per-call allow-listing.) Tradeoff: lost cross-service trace
+        // linkage for S3/ClickHouse — observability-only; nothing in the app reads
+        // traceparent functionally. The custom withSpan() spans are unaffected.
+        new HttpInstrumentation({ ignoreOutgoingRequestHook: () => true }),
       ],
     });
 

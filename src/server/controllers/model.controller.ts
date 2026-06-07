@@ -137,7 +137,6 @@ import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
-  getGenerationEcosystemConfig,
   getResourceData,
   getUnavailableResources,
   resolveCanGenerateForVersions,
@@ -210,9 +209,6 @@ export const getModelHandler = async ({
 
     const modelCategories = await getCategoryTags('model');
     const unavailableGenResources = await getUnavailableResources();
-    const ecosystemConfig = await getGenerationEcosystemConfig(ctx.user ?? {}, {
-      isGreen: features.isGreen,
-    });
 
     const sfwOnly = !!features.isGreen;
     const versionGenStates = await resolveCanGenerateForVersions(
@@ -1503,9 +1499,6 @@ export const getAssociatedResourcesCardDataHandler = async ({
       : [];
 
     const unavailableGenResources = await getUnavailableResources();
-    const ecosystemConfig = await getGenerationEcosystemConfig(user ?? {}, {
-      isGreen: ctx.features.isGreen,
-    });
 
     const associatedSfwOnly = !!ctx.features.isGreen;
     // `modelVersionAlias` is omitted here: these versions come from

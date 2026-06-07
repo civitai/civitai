@@ -10,6 +10,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
+import { getUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
 import { getChatHash } from '~/server/utils/chat';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
@@ -52,6 +53,29 @@ export const upsertChat = async ({
   ]);
   const blockedUserIds = [...new Set(blockedUsers.flat().map((u) => u.id))];
   userIds = userIds.filter((u) => !blockedUserIds.includes(u));
+
+  // filter out recipients who have disabled chat in their settings (mods bypass).
+  // Like blocked users, these are silently dropped from the member list so a
+  // disabled account never receives an unsolicited chat request.
+  if (!isModerator) {
+    const recipientIds = userIds.filter((u) => u !== userId);
+    if (recipientIds.length) {
+      const recipientSettings = await Promise.all(recipientIds.map((id) => getUserSettings(id)));
+      const chatDisabledIds = new Set(
+        recipientIds.filter((_, i) => recipientSettings[i]?.features?.chat === false)
+      );
+      if (chatDisabledIds.size) userIds = userIds.filter((u) => !chatDisabledIds.has(u));
+    }
+  }
+
+  // `userIds` includes the creator; everyone else is a recipient. If every
+  // requested recipient was filtered out (blocked or chat-disabled), there is
+  // no one to talk to — surface a friendly error instead of silently creating
+  // a chat that only contains the creator.
+  const remainingRecipients = userIds.filter((u) => u !== userId);
+  if (remainingRecipients.length === 0) {
+    throw throwBadRequestError('This user is not accepting chat requests');
+  }
 
   const existing = await dbWrite.chat.findFirst({
     where: { hash },

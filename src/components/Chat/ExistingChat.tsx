@@ -112,21 +112,29 @@ export function ExistingChat() {
   const [replyId, setReplyId] = useState<number | undefined>(undefined);
 
   // TODO there is a bug here. upon rejoining, you won't get a signal for the messages in the timespan between leaving and rejoining
-  const { data, fetchNextPage, isLoading, isRefetching, hasNextPage } =
+  const { data, fetchNextPage, isLoading, isRefetching, hasNextPage, isError, error } =
     trpc.chat.getInfiniteMessages.useInfiniteQuery(
       {
         chatId: existingChatId!,
       },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
-        select: (data) => ({
-          pages: [...data.pages].reverse(),
-          pageParams: [...data.pageParams].reverse(),
-        }),
       }
     );
 
   const { data: allChatData, isLoading: allChatLoading } = trpc.chat.getAllByUser.useQuery();
+
+  // Reversal is intentionally here in useMemo, not in useInfiniteQuery's select.
+  // Mutating pages + pageParams simultaneously inside select breaks RQ v5 cursor
+  // tracking and causes the hook to return empty data.
+  // Note: We reverse the `pages` array (chunks) instead of the flattened array
+  // because the backend returns chunks in newest-to-oldest order, but the items 
+  // *inside* the chunks are correctly ordered chronologically. Reversing the 
+  // flattened array would break the internal chronological order of the messages.
+  const messagesChronological = useMemo(() => {
+    if (!data?.pages) return [];
+    return [...data.pages].reverse().flatMap((x) => x.items ?? []);
+  }, [data]);
 
   const thisChat = useMemo(
     () => allChatData?.find((c) => c.id === existingChatId),
@@ -254,12 +262,11 @@ export function ExistingChat() {
     });
   };
 
-  const allChats = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   useEffect(() => {
     // - on a new message or initial load, scroll to the bottom. on load more, don't scroll
 
-    if (!allChats.length) return;
+    if (!messagesChronological.length) return;
 
     // if (data.pages.length !== oldPagesLength.current) return;
     //
@@ -271,13 +278,13 @@ export function ExistingChat() {
     );
 
     if (!myMember) return;
-    const newestMessageId = allChats[allChats.length - 1].id;
+    const newestMessageId = messagesChronological[messagesChronological.length - 1].id;
     if ((myMember.lastViewedMessageId ?? 0) >= newestMessageId) return;
     changeLastViewed({
       chatMemberId: myMember.id,
       lastViewedMessageId: newestMessageId,
     }).catch();
-  }, [allChats, changeLastViewed, myMember]);
+  }, [messagesChronological, changeLastViewed, myMember]);
 
   useEffect(() => {
     setTypingStatus({});
@@ -446,7 +453,11 @@ export function ExistingChat() {
               <Center h="100%">
                 <Loader />
               </Center>
-            ) : allChats.length > 0 ? (
+            ) : isError ? (
+              <Center h="100%">
+                <Text color="red">Error: {error?.message}</Text>
+              </Center>
+            ) : messagesChronological.length > 0 ? (
               <Stack style={{ overflowWrap: 'break-word' }} gap={12}>
                 {hasNextPage && (
                   <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
@@ -455,7 +466,7 @@ export function ExistingChat() {
                     </Center>
                   </InViewLoader>
                 )}
-                <DisplayMessages chats={allChats} setReplyId={setReplyId} />
+                <DisplayMessages chats={messagesChronological} setReplyId={setReplyId} />
               </Stack>
             ) : (
               <Center h="100%">
@@ -477,7 +488,7 @@ export function ExistingChat() {
                   <Group p="xs" wrap="nowrap">
                     <Text size="xs">Replying:</Text>
                     <Box style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>
-                      {allChats.find((ac) => ac.id === replyId)?.content ?? ''}
+                      {messagesChronological.find((ac) => ac.id === replyId)?.content ?? ''}
                     </Box>
                     <LegacyActionIcon onClick={() => setReplyId(undefined)} ml="auto">
                       <IconX size={14} />
@@ -523,11 +534,11 @@ export function ExistingChat() {
             <Alert color="yellow" icon={<IconAlertTriangle size={20} />} p="xs" mx="sm">
               <ScamWarningContent chatId={existingChatId!} />
             </Alert>
-            {allChats.length > 0 && (
-              <Text mb="md" p="sm" size="xs" italic align="center">{`"${allChats[0].content.slice(
+            {messagesChronological.length > 0 && (
+              <Text mb="md" p="sm" size="xs" italic align="center">{`"${messagesChronological[0].content.slice(
                 0,
                 70
-              )}${allChats[0].content.length > 70 ? '...' : ''}"`}</Text>
+              )}${messagesChronological[0].content.length > 70 ? '...' : ''}"`}</Text>
             )}
             <Text align="center">Join the chat?</Text>
             <Group p="sm" justify="center">
@@ -629,9 +640,12 @@ function ChatInputBox({
         produce((old) => {
           if (!old) return old;
 
-          const lastPage = old.pages[old.pages.length - 1];
-
-          lastPage.items.push(data);
+          // The backend returns messages grouped in chunks (pages).
+          // `old.pages[0]` contains the newest chunk of messages, while older messages
+          // are appended to the end of the array during infinite scrolling.
+          // Therefore, newly sent messages must be appended to `pages[0]`.
+          const newestPage = old.pages[0];
+          newestPage.items.push(data);
         })
       );
 
