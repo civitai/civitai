@@ -4,6 +4,11 @@ import semver from 'semver';
 import superjson from 'superjson';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
+import {
+  acquireBulkheadSlot,
+  BulkheadFullError,
+  HEAVY_REQUEST_CONCURRENCY,
+} from '~/server/utils/request-bulkhead';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -197,6 +202,35 @@ export const publicProcedure = t.procedure
   .use(enforceClientVersion)
   .use(applyDomainFeature)
   .use(enforceTokenScope);
+
+// Per-pod concurrency cap for CPU-heavy procedures (see request-bulkhead.ts).
+// Fast-fails with 429 when a pod already has HEAVY_REQUEST_CONCURRENCY heavy
+// requests in flight, so a backlog can't pin the single JS thread → probe
+// timeout → Error/137. Keyed so the tRPC feed procedures and the REST
+// /api/v1/images handler share one per-pod budget (they hit the same heavy path).
+const withBulkhead = (key: string) =>
+  t.middleware(async ({ next }) => {
+    let release: () => void;
+    try {
+      release = acquireBulkheadSlot(key, HEAVY_REQUEST_CONCURRENCY);
+    } catch (e) {
+      if (e instanceof BulkheadFullError)
+        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Server busy — please retry.' });
+      throw e;
+    }
+    try {
+      return await next();
+    } finally {
+      release();
+    }
+  });
+
+/**
+ * Public procedure for CPU-heavy endpoints (e.g. the image feed). Adds a per-pod
+ * concurrency cap that fast-fails (429) under overload so a request backlog can't
+ * pin the single JS thread and take the pod down.
+ */
+export const heavyProcedure = publicProcedure.use(withBulkhead('heavy-image'));
 
 /**
  * Reusable middleware to ensure

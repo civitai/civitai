@@ -20,6 +20,11 @@ import {
 import { imageMetaCache } from '~/server/redis/caches';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import {
+  acquireBulkheadSlot,
+  BulkheadFullError,
+  HEAVY_REQUEST_CONCURRENCY,
+} from '~/server/utils/request-bulkhead';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -100,6 +105,22 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   // the #2428 acquire goes immediately above this, so a 503-rejected request is
   // never timed.) Ended in finally; `?.` because early returns leave it unstarted.
   let endTimer: (() => void) | undefined;
+
+  // Per-pod concurrency cap (shared with the tRPC feed via the 'heavy-image' key):
+  // fast-fail with 503 when this pod is already saturated with heavy image work,
+  // so a backlog can't pin the single JS thread → probe timeout → Error/137.
+  let releaseSlot: (() => void) | undefined;
+  try {
+    releaseSlot = acquireBulkheadSlot('heavy-image', HEAVY_REQUEST_CONCURRENCY);
+  } catch (e) {
+    if (e instanceof BulkheadFullError) {
+      res.setHeader('Retry-After', '2');
+      return res.status(503).json({ error: 'Server busy, please retry shortly.' });
+    }
+    throw e;
+  }
+  res.on('close', () => releaseSlot?.());
+
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
