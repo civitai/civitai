@@ -3,6 +3,8 @@ import client from 'prom-client';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
+// request-bulkhead is a pure leaf module (no imports), so this edge cannot form a cycle.
+import { bulkheadSnapshot } from '~/server/utils/request-bulkhead';
 
 const PROM_PREFIX = 'civitai_app_';
 export function registerCounter({ name, help }: { name: string; help: string }) {
@@ -205,6 +207,31 @@ export const dbReadFallbackCounter = registerCounterWithLabels({
 declare global {
   // eslint-disable-next-line no-var
   var pgGaugeInitialized: boolean;
+  // eslint-disable-next-line no-var
+  var heavyBulkheadGaugeInitialized: boolean;
+}
+
+// Heavy-route bulkhead observability (per pod). collect()-based so it reflects the
+// live in-process state on each scrape with no per-request work. This is the signal
+// for tuning HEAVY_REQUEST_CONCURRENCY: rejects climbing means the pod is shedding.
+if (!global.heavyBulkheadGaugeInitialized) {
+  new client.Gauge({
+    name: PROM_PREFIX + 'heavy_bulkhead_active',
+    help: 'In-flight heavy-route bulkhead slots per key (per pod)',
+    labelNames: ['key'],
+    collect() {
+      for (const { key, active } of bulkheadSnapshot()) this.set({ key }, active);
+    },
+  });
+  new client.Gauge({
+    name: PROM_PREFIX + 'heavy_bulkhead_rejects',
+    help: 'Cumulative heavy-route bulkhead fast-fail rejects per key (per pod); monotonic, use rate()',
+    labelNames: ['key'],
+    collect() {
+      for (const { key, rejects } of bulkheadSnapshot()) this.set({ key }, rejects);
+    },
+  });
+  global.heavyBulkheadGaugeInitialized = true;
 }
 
 if (!global.pgGaugeInitialized) {
