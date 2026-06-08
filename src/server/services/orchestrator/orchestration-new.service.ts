@@ -39,12 +39,16 @@ import {
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import { resourceSchema, type ResourceData } from '~/shared/data-graph/generation/common';
 import {
-  getGatedListsForUser,
+  getGateRules,
+  getGenerationEcosystemConfig,
   getResourceData,
   getSelfHostedDisabledEcosystems,
 } from '~/server/services/generation/generation.service';
+import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/generation.schema';
@@ -240,9 +244,10 @@ export async function buildGenerationContext(
   flags?: Partial<FeatureAccess>,
   user?: { id?: number; isModerator?: boolean }
 ): Promise<GenerationContextResult> {
-  const [status, gated] = await Promise.all([
+  const [status, ecosystemConfig, gateRules] = await Promise.all([
     getGenerationStatus(),
-    getGatedListsForUser(user ?? {}, { isGreen: flags?.isGreen }),
+    getGenerationEcosystemConfig(user ?? {}),
+    getGateRules(),
   ]);
   const limits = status.limits[userTier];
 
@@ -258,8 +263,6 @@ export async function buildGenerationContext(
         tier: userTier,
       },
       flags,
-      gatedEcosystems: gated.gatedEcosystems,
-      gatedVersionIds: gated.gatedVersionIds,
       // Server-side enforcement of the self-hosted toggle: the ecosystem node
       // rejects these on submit, so a free user in `memberOnly` (or anyone in
       // `disabled`) can't generate a self-hosted ecosystem even if they bypass
@@ -269,10 +272,14 @@ export async function buildGenerationContext(
         isMember: userTier !== 'free',
         isModerator: user?.isModerator,
       }),
-      // Server-side enforcement of disabled workflows: the workflow node rejects
-      // these in its output refine, so a disabled workflow can't be submitted
-      // even if a stale/crafted request bypasses the client picker.
-      disabledWorkflows: gated.disabledWorkflows,
+      selfHostedMode: status.selfHostedMode,
+      // Server-side enforcement of gate rules: the same applicable rules the
+      // client got, so the graph nodes reject hidden/disabled targets on submit.
+      gateRules: applicableRulesFor(gateRules, {
+        isModerator: !!user?.isModerator,
+        isMember: userTier !== 'free',
+        hasTestingAccess: ecosystemConfig.hasTestingAccess,
+      }),
     },
     status: {
       mode: status.mode,
@@ -2340,20 +2347,185 @@ export type GeneratedImageWorkflowModel = NormalizedWorkflow;
  * Simplified queryGeneratedImageWorkflows.
  * Replaces the version in common.ts.
  */
+// Short-TTL cache in front of the user's generated-images feed. On every
+// SignalR reconnect the client invalidates `orchestrator.queryGeneratedImages`
+// for every tab at once (see SignalsProvider.onStateChange), so a single user
+// flapping their connection — or many users reconnecting on the same wave —
+// produces a burst of identical first-page queries within milliseconds. Each
+// uncached call hits the orchestrator over HTTP and then runs the CPU-heavy
+// `formatGenerationResponse2` (resource enrichment + per-workflow mapping),
+// which is part of the aggregate per-request load that pins the API pods.
+//
+// The TTL is intentionally tiny. Live generation progress does NOT flow through
+// this route: status updates arrive via SignalR `TextToImageUpdate` ->
+// `orchestrator.statusUpdate` (a separate per-workflow endpoint) and are patched
+// into the client's query cache in place (see useGenerationSignalUpdate.ts), with
+// a 60s poll fallback. So a 3s cache on the *list* query collapses the reconnect
+// storm without delaying any live status the user actually sees. The user's own
+// new generations / deletes are applied optimistically client-side via
+// setQueryData in generationRequestHooks.ts, so they too are unaffected by this
+// server cache; the short TTL is the freshness net for anything else.
+const QUERIED_WORKFLOWS_CACHE_TTL = 3; // seconds
+
+// Builds a stable redis key per (userId, fully-resolved query params). The key
+// MUST include every param that changes the response (cursor, take, the
+// green-injected tags, sort direction, date range, excludeFailed,
+// hideMatureContent) so different pages/filters never collide. `token` is
+// deliberately excluded: it is per-session, but the response is identical for a
+// given user regardless of which session token made the request, and including
+// it would prevent a user's concurrent tabs from sharing a cache entry — the
+// exact case this cache exists to collapse. Anonymous callers (no user id) are
+// not cached.
+function getQueriedWorkflowsCacheKey({
+  userId,
+  take,
+  cursor,
+  tags,
+  ascending,
+  fromDate,
+  toDate,
+  excludeFailed,
+  hideMatureContent,
+}: {
+  userId: number;
+  take: number;
+  cursor?: string;
+  tags: string[];
+  ascending?: boolean;
+  fromDate?: Date;
+  toDate?: Date;
+  excludeFailed?: boolean;
+  hideMatureContent: boolean;
+}) {
+  const variant = JSON.stringify({
+    t: take,
+    c: cursor ?? null,
+    // sort tags so [a,b] and [b,a] map to the same entry
+    tags: [...tags].sort(),
+    a: ascending ?? null,
+    f: fromDate?.toISOString() ?? null,
+    to: toDate?.toISOString() ?? null,
+    ef: excludeFailed ?? null,
+    hmc: hideMatureContent,
+  });
+  return `${REDIS_KEYS.GENERATION.QUERIED_WORKFLOWS}:${userId}:${variant}` as RedisKeyTemplateCache;
+}
+
+// Per-user index set holding every cached feed-variant key for a user. Lets the
+// bust enumerate exactly this user's keys (SMEMBERS) instead of SCANning the
+// whole main cache cluster for a pattern — the latter's cost scales with total
+// keyspace, not matched keys, which is a recurring load on the very cluster this
+// cache exists to protect (the bust now fires on every submit AND every
+// delete/cancel/patch).
+function getQueriedWorkflowsIndexKey(userId: number): RedisKeyTemplateCache {
+  return `${REDIS_KEYS.GENERATION.QUERIED_WORKFLOWS}:idx:${userId}` as RedisKeyTemplateCache;
+}
+
+// The index set must outlive the cache entries it points at, otherwise a bust
+// could miss a still-live entry. fetchThroughCache writes its data key with
+// EX = ttl * 2, so the index TTL has to be at least that; we use a comfortable
+// multiple to absorb clock skew and TTL refresh races. Stale members (entries
+// that already expired) are harmless — DEL of a missing key is a no-op.
+const QUERIED_WORKFLOWS_INDEX_TTL = QUERIED_WORKFLOWS_CACHE_TTL * 4; // seconds
+
+// Records a cache-variant key in the user's index set and refreshes the set's
+// TTL. Called ONLY on a real cache miss (from inside the fetcher passed to
+// fetchThroughCache), never on a hit — a hit's hot path is a single
+// redis.packed.get and must stay that way. SADD of an existing member is a
+// no-op, and re-EXPIRE keeps the index alive as long as the user keeps missing
+// and re-fetching. Best-effort — a failure here only means a later bust may miss
+// this key, which then falls back to the short TTL. Errors are swallowed.
+async function indexQueriedWorkflowsKey(userId: number, key: RedisKeyTemplateCache) {
+  try {
+    const indexKey = getQueriedWorkflowsIndexKey(userId);
+    await redis.sAdd(indexKey, key);
+    await redis.expire(indexKey, QUERIED_WORKFLOWS_INDEX_TTL);
+  } catch {
+    // ignore — index is an optimization for the bust, not a correctness store
+  }
+}
+
+// Busts every cached feed variant for a user. Called when the user submits a new
+// generation OR mutates their workflows (delete / cancel / patch / update) so a
+// concurrent tab / immediate reconnect refetch sees the change without waiting
+// out the short TTL. Uses the per-user index set (SMEMBERS -> DEL the members ->
+// DEL the index) so there is no full-keyspace SCAN per bust. Stale members are
+// harmless: DEL of an already-expired key is a no-op. Best-effort: a bust
+// failure only means the user's other surfaces fall back to the short TTL, so
+// errors are swallowed.
+export async function bustQueriedWorkflowsCache(userId?: number) {
+  if (!userId) return;
+  try {
+    const indexKey = getQueriedWorkflowsIndexKey(userId);
+    const keys = await redis.sMembers<RedisKeyTemplateCache>(indexKey);
+    if (keys.length) await redis.del(keys);
+    await redis.del(indexKey);
+  } catch {
+    // ignore — see jsdoc above
+  }
+}
+
 export async function queryGeneratedImageWorkflows2({
   user,
+  cache,
   ...props
 }: z.output<typeof workflowQuerySchema> & {
   token: string;
   user?: SessionUser;
   hideMatureContent: boolean;
+  // Opt-in short-TTL cache. ONLY safe when `token` belongs to `user` — i.e. the
+  // self-serve feed. The moderator path (queryUserGeneratedImages) passes the
+  // *target* user's token but the *moderator's* `user`, so the data identity is
+  // the token, not user.id; caching there would key the target's feed under the
+  // moderator's id and collide across different targets. That path leaves this
+  // off and is not part of the reconnect storm anyway.
+  cache?: boolean;
 }) {
-  const { nextCursor, items } = await queryWorkflows(props);
-
-  return {
-    items: await formatGenerationResponse2(items as Workflow[], user),
-    nextCursor,
+  const fetchAndFormat = async () => {
+    const { nextCursor, items } = await queryWorkflows(props);
+    return {
+      items: await formatGenerationResponse2(items as Workflow[], user),
+      nextCursor,
+    };
   };
+
+  // Only cache the self-serve feed of a logged-in user, AND only the first page
+  // (no cursor). The infinite feed gives every later page a distinct cursor, so
+  // caching them would bloat the per-user index set with entries no one refetches
+  // — the reconnect storm only refetches page 1. Deep pages fall straight through
+  // to the uncached fetch, exactly like the !cache / anonymous bypass below.
+  // fetchThroughCache does not cache thrown errors (the fetchFn rejection
+  // propagates without writing redis), and it single-flights concurrent misses
+  // behind a lock, so a reconnect burst that arrives before the first fetch
+  // resolves is coalesced rather than fanned out.
+  if (!cache || !user?.id || props.cursor != null) return fetchAndFormat();
+
+  const userId = user.id;
+  const cacheKey = getQueriedWorkflowsCacheKey({
+    userId,
+    take: props.take,
+    cursor: props.cursor,
+    tags: props.tags,
+    ascending: props.ascending,
+    fromDate: props.fromDate,
+    toDate: props.toDate,
+    excludeFailed: props.excludeFailed,
+    hideMatureContent: props.hideMatureContent,
+  });
+
+  // Index the key from INSIDE the fetcher so it runs only on a real miss (the
+  // single-flight leader), never on a hit. A hit's hot path — the path this
+  // cache exists to make single-op — then does zero index ops; it is just the
+  // redis.packed.get inside fetchThroughCache. Fire-and-forget so the miss
+  // itself never blocks on the index write. (A key whose miss-time SADD failed
+  // simply won't be re-added on later hits — same best-effort semantics as
+  // before; a missed bust just falls back to the short TTL.)
+  const fetchIndexAndFormat = async () => {
+    indexQueriedWorkflowsKey(userId, cacheKey).catch(() => null);
+    return fetchAndFormat();
+  };
+
+  return fetchThroughCache(cacheKey, fetchIndexAndFormat, { ttl: QUERIED_WORKFLOWS_CACHE_TTL });
 }
 
 // =============================================================================

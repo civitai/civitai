@@ -56,8 +56,10 @@ export function decodeUserComment(buffer: Uint8Array): string {
   if (header.startsWith('ASCII')) return new TextDecoder('ascii').decode(content);
   if (header.startsWith('UTF8')) return new TextDecoder('utf-8').decode(content);
 
-  // For UNICODE header (old and new images), decode as UTF-16LE
-  return new TextDecoder('utf-16le').decode(content).replace(/\0/g, '');
+  // For UNICODE header (old and new images), decode as UTF-16BE.
+  // The EXIF spec stores UNICODE UserComment as UCS-2/UTF-16 big-endian, which
+  // is also what our own encoder (encodeUserCommentUTF16BE) writes.
+  return new TextDecoder('utf-16be').decode(content).replace(/\0/g, '');
 }
 
 const prefix = [0x55, 0x4e, 0x49, 0x43, 0x4f, 0x44, 0x45, 0x00]; // UNICODE\0

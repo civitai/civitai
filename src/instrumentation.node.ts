@@ -14,7 +14,6 @@ import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs
 import { logs } from '@opentelemetry/api-logs';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { PrismaInstrumentation } from '@prisma/instrumentation';
 import { registerCpuProfiler } from '~/server/cpu-profiler';
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
@@ -103,7 +102,36 @@ if (!OTEL_ENABLED) {
       // the CPU win; if per-command redis latency is needed later, add a
       // low-cardinality prom histogram around sendCommand (cheaper than a span —
       // no context.with / async_hooks propagation).
-      instrumentations: [new HttpInstrumentation(), new PrismaInstrumentation()],
+      //
+      // PrismaInstrumentation intentionally omitted for the same structural reason:
+      // it wraps every query on the hot DB path, and each query span pays the
+      // async_hooks context-propagation cost (context.with + span alloc) that head
+      // sampling can't remove — the context manager runs for every span regardless
+      // of the sampling decision. Observability tradeoff: this removes Prisma query
+      // spans, but the app's RED/latency dashboards are prom-client based
+      // (src/server/prom/client.ts), NOT OTEL spanmetrics (which aren't scraped into
+      // Prometheus), and DB pool metrics are separate labeled gauges
+      // (db/db-helpers.ts). So no dashboard depends on these spans. The custom
+      // withSpan() instrumentation on specific hot calls is unaffected.
+      instrumentations: [
+        // HttpInstrumentation narrowed to INBOUND-only. It only ever patched Node
+        // core http/https, so the affected outbound spans are the core-http
+        // clients (S3 via @aws-sdk, ClickHouse, axios/signals) — NOT orchestrator
+        // or meilisearch, which use fetch/undici and were never auto-instrumented
+        // (their visibility comes from manual withSpan()). Each remaining outgoing
+        // client span is another async_hooks context.with + span alloc on the hot
+        // path — the structural cost head sampling can't remove.
+        // ignoreOutgoingRequestHook returning true for every outgoing request
+        // suppresses those client spans (and their traceparent injection) while
+        // keeping incoming server-request spans (the per-request root) intact.
+        // (instrumentation-http@0.213.0 also exposes
+        // disableOutgoingRequestInstrumentation, which skips patching outbound
+        // entirely; the ignore hook is used here to keep the path patched for
+        // future per-call allow-listing.) Tradeoff: lost cross-service trace
+        // linkage for S3/ClickHouse — observability-only; nothing in the app reads
+        // traceparent functionally. The custom withSpan() spans are unaffected.
+        new HttpInstrumentation({ ignoreOutgoingRequestHook: () => true }),
+      ],
     });
 
     sdk.start();
