@@ -101,6 +101,13 @@ const featureFlags = createFeatureFlags({
     description: `Images displayed in the generator will be larger on small screens`,
     availability: ['public'],
   },
+  postsNavItem: {
+    toggleable: true,
+    default: false,
+    displayName: 'Posts in Navigation',
+    description: `Show the Posts item in the main site navigation.`,
+    availability: ['public'],
+  },
   alternateHome: ['public'],
   collections: ['public'],
   air: {
