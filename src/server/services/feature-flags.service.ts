@@ -207,7 +207,10 @@ const featureFlags = createFeatureFlags({
   // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
-  appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
+  // THROWAWAY PREVIEW ONLY (zach/app-blocks-anon-preview): relaxed to public +
+  // fliptKey dropped so anon/everyone gets appBlocks on this preview for the
+  // anonymous-conversion validation. DO NOT MERGE. Prod stays mod-only.
+  appBlocks: { availability: ['public'] },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
