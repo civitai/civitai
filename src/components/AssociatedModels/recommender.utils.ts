@@ -116,9 +116,20 @@ export function useToggleResourceRecommendationMutation() {
       // `model` so its now-current meta.allowAIRecommendations flips the client-side
       // recommenders gate on, making recs appear without a page reload.
       await queryUtils.model.getById.invalidate({ id: result.modelId });
-      await queryUtils.recommenders.getResourceRecommendations.invalidate({
-        modelVersionId: result.id,
-      });
+      if (result.meta.allowAIRecommendations) {
+        // Turning ON: mark stale so the now-enabled query refetches fresh recs.
+        await queryUtils.recommenders.getResourceRecommendations.invalidate({
+          modelVersionId: result.id,
+        });
+      } else {
+        // Turning OFF: the gate disables the query, and a disabled query is not
+        // "active", so invalidate() would NOT refetch — the previously-fetched
+        // recs would linger on screen until reload. reset() clears the cached
+        // data so they disappear live.
+        await queryUtils.recommenders.getResourceRecommendations.reset({
+          modelVersionId: result.id,
+        });
+      }
     },
     onError: (error) => {
       showErrorNotification({ title: 'Failed to save', error: new Error(error.message) });
