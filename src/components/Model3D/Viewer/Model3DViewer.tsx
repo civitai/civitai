@@ -1,10 +1,21 @@
-import { Alert, Box, Button, Group, Stack, Text } from '@mantine/core';
-import { IconAlertTriangle, IconCubeOff, IconDownload, IconRefresh } from '@tabler/icons-react';
+import { Alert, Box, Button, Group, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core';
+import {
+  IconAlertTriangle,
+  IconCubeOff,
+  IconDownload,
+  IconRefresh,
+  IconWand,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { env } from '~/env/client';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { generationGraphStore } from '~/store/generation-graph.store';
+import { showErrorNotification } from '~/utils/notifications';
 
 /**
  * Model3DViewer
@@ -32,8 +43,102 @@ export type Model3DViewerProps = {
 const LARGE_FILE_KB = 100_000; // 100 MB
 const SUPPORTED_PREVIEW_FORMATS = ['glb', 'gltf'];
 
+// -----------------------------------------------------------------------------
+// Background presets
+// -----------------------------------------------------------------------------
+// `transparent` is special: we still set a solid scene.background so the user
+// gets a visible backdrop while orbiting, but the snapshot path swaps to a
+// fully transparent clear before grabbing the frame so the resulting PNG has
+// alpha (which is what we want as a generator reference image).
+
+type BackgroundOption = 'plain' | 'studio' | 'light' | 'transparent';
+
+const BACKGROUND_OPTIONS: { value: BackgroundOption; label: string }[] = [
+  { value: 'plain', label: 'Plain' },
+  { value: 'studio', label: 'Studio' },
+  { value: 'light', label: 'Light' },
+  { value: 'transparent', label: 'Transparent' },
+];
+
+const PLAIN_COLOR = 0x1a1a1a;
+const LIGHT_COLOR = 0xf1f3f5;
+
+function makeStudioTexture(): THREE.Texture {
+  // Simple vertical gradient drawn into a canvas, used as scene.background.
+  // Studio look: brighter at the top, falling off to a deep grey at the bottom.
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = 2;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const gradient = ctx.createLinearGradient(0, 0, 0, size);
+    gradient.addColorStop(0, '#3a3f47');
+    gradient.addColorStop(1, '#0f1115');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 2, size);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+/**
+ * Apply a background option to the live three.js scene/renderer.
+ * Splits "what the user sees" (scene.background + clearAlpha) from snapshot
+ * concerns — when grabbing a still we temporarily force 'transparent' regardless
+ * of the current selection.
+ */
+function applyBackground(
+  scene: THREE.Scene,
+  renderer: THREE.WebGLRenderer,
+  option: BackgroundOption,
+  studioTexture: THREE.Texture
+) {
+  switch (option) {
+    case 'plain':
+      scene.background = new THREE.Color(PLAIN_COLOR);
+      renderer.setClearAlpha(1);
+      break;
+    case 'light':
+      scene.background = new THREE.Color(LIGHT_COLOR);
+      renderer.setClearAlpha(1);
+      break;
+    case 'studio':
+      scene.background = studioTexture;
+      renderer.setClearAlpha(1);
+      break;
+    case 'transparent':
+      scene.background = null;
+      renderer.setClearAlpha(0);
+      break;
+  }
+}
+
 function isPreviewable(format: string) {
   return SUPPORTED_PREVIEW_FORMATS.includes(format.toLowerCase());
+}
+
+/** Convert a `data:image/png;base64,...` URL into a `File` for upload. */
+function dataUrlToFile(dataUrl: string, filename: string): File {
+  const [meta, b64] = dataUrl.split(',');
+  const mimeMatch = meta.match(/data:([^;]+)/);
+  const mime = mimeMatch?.[1] ?? 'image/png';
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], filename, { type: mime });
+}
+
+/**
+ * Build the public delivery URL for a freshly-uploaded CF image id. Mirrors
+ * what `getEdgeUrl` returns for `original=true` but without the optional
+ * width-snap path — we always want the full-res capture as the generator
+ * reference. Schema (`sourceImageSchema`) accepts any `image.civitai.*` host.
+ */
+function buildEdgeUrlForId(id: string, filename: string): string {
+  const base = env.NEXT_PUBLIC_IMAGE_LOCATION;
+  return [base, id, 'original=true', filename].filter(Boolean).join('/');
 }
 
 export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerProps) {
@@ -47,10 +152,17 @@ export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerP
     initialTarget: THREE.Vector3;
     animationId: number;
     resizeObserver: ResizeObserver;
+    studioTexture: THREE.Texture;
   } | null>(null);
 
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Background preference is session-scoped — no zustand/localStorage needed.
+  const [background, setBackground] = useState<BackgroundOption>('plain');
+  const [snapshotting, setSnapshotting] = useState(false);
+
+  const currentUser = useCurrentUser();
+  const { uploadToCF } = useCFImageUpload();
 
   const previewable = isPreviewable(format);
   const isLarge = sizeKB !== undefined && sizeKB > LARGE_FILE_KB;
@@ -71,16 +183,29 @@ export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerP
     const height = container.clientHeight || 1;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a1a);
 
     const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
     camera.position.set(2, 2, 3);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // `preserveDrawingBuffer: true` is what makes `canvas.toDataURL()` reliable
+    // for the snapshot CTA — without it, the drawing buffer is cleared after
+    // present on most browsers and the capture comes back blank. There is a
+    // perf cost (an extra GPU copy per frame) but the viewer renders a single
+    // static model so it's acceptable. Re-rendering synchronously right before
+    // `toDataURL` is also done as belt-and-suspenders, but the flag is the real
+    // fix.
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+      preserveDrawingBuffer: true,
+    });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(width, height);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(renderer.domElement);
+
+    const studioTexture = makeStudioTexture();
+    applyBackground(scene, renderer, 'plain', studioTexture);
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambient);
@@ -165,6 +290,7 @@ export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerP
       initialTarget,
       animationId,
       resizeObserver,
+      studioTexture,
     };
 
     return () => {
@@ -172,6 +298,7 @@ export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerP
       cancelAnimationFrame(animationId);
       resizeObserver.disconnect();
       controls.dispose();
+      studioTexture.dispose();
       // Dispose of every geometry / material / texture in the scene
       scene.traverse((object) => {
         if ((object as THREE.Mesh).isMesh) {
@@ -197,12 +324,100 @@ export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerP
     };
   }, [url, format, previewable]);
 
+  // Apply background changes whenever the user toggles a different option.
+  // Kept separate from the mount effect so we don't tear down the scene on
+  // every selection change.
+  useEffect(() => {
+    const state = sceneStateRef.current;
+    if (!state) return;
+    applyBackground(state.scene, state.renderer, background, state.studioTexture);
+  }, [background]);
+
   const handleReset = () => {
     const state = sceneStateRef.current;
     if (!state) return;
     state.camera.position.copy(state.initialCameraPos);
     state.controls.target.copy(state.initialTarget);
     state.controls.update();
+  };
+
+  const handleGenerateFromSnapshot = async () => {
+    const state = sceneStateRef.current;
+    if (!state) return;
+    if (!currentUser) {
+      showErrorNotification({
+        title: 'Login required',
+        error: new Error('Please log in to send this image to the generator.'),
+      });
+      return;
+    }
+    setSnapshotting(true);
+    try {
+      // Force transparent for the capture so the model lands on a clean alpha
+      // background — much better as an i2i reference than whatever backdrop the
+      // user picked. Restore the user's choice immediately after.
+      applyBackground(state.scene, state.renderer, 'transparent', state.studioTexture);
+      // Render once synchronously so the drawing buffer holds the frame we
+      // want before reading it out.
+      state.renderer.render(state.scene, state.camera);
+
+      const canvas = state.renderer.domElement;
+      const dataUrl = canvas.toDataURL('image/png');
+      const captureWidth = canvas.width;
+      const captureHeight = canvas.height;
+
+      // Restore user-selected background before we hand off — even if upload
+      // fails, the viewer should look unchanged when control returns.
+      applyBackground(state.scene, state.renderer, background, state.studioTexture);
+
+      const filename = `model3d-snapshot-${Date.now()}.png`;
+      const file = dataUrlToFile(dataUrl, filename);
+
+      const upload = await uploadToCF(file);
+      if (!upload?.id) {
+        throw new Error('Image upload did not return an id.');
+      }
+
+      const imageUrl = buildEdgeUrlForId(upload.id, filename);
+
+      // Seed the v2 generator with `img2img:edit` (the canonical "Image to
+      // Image" workflow used by the modern ecosystems — Qwen, Flux Kontext,
+      // etc.) plus the captured frame as the source. The plain `img2img` key
+      // is the legacy "Image Variations" path on SD-family models — not what
+      // we want here. We deliberately omit `ecosystem`/`model` — the user
+      // picks those in the form. Empty resources avoids dragging in stale
+      // checkpoint selections.
+      //
+      // No `router.push('/generate')`: `generationGraphStore.setData` already
+      // opens the generator side panel automatically, and pushing the user
+      // off the 3D model page is unnecessary friction.
+      generationGraphStore.setData({
+        params: {
+          workflow: 'img2img:edit',
+          images: [{ url: imageUrl, width: captureWidth, height: captureHeight }],
+        },
+        resources: [],
+        runType: 'run',
+      });
+    } catch (e) {
+      // Best effort: also restore in the error path in case we threw between
+      // the capture and the restore above.
+      const restoreState = sceneStateRef.current;
+      if (restoreState) {
+        applyBackground(
+          restoreState.scene,
+          restoreState.renderer,
+          background,
+          restoreState.studioTexture
+        );
+      }
+      showErrorNotification({
+        title: 'Snapshot failed',
+        error: e instanceof Error ? e : new Error('Failed to capture viewer snapshot.'),
+      });
+    } finally {
+      setSnapshotting(false);
+    }
   };
 
   return (
@@ -246,13 +461,77 @@ export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerP
         </Box>
       ) : (
         <Box className="relative">
+          {/* `group` lets the overlays fade in on hover without intercepting
+              orbit gestures — controls themselves stay pointer-interactive. */}
           <div
             ref={containerRef}
             className={clsx(
-              'relative min-h-[480px] w-full overflow-hidden rounded-md bg-dark-7',
+              'group relative min-h-[480px] w-full overflow-hidden rounded-md bg-dark-7',
               loadState === 'loading' && 'opacity-50'
             )}
-          />
+          >
+            {loadState === 'ready' && (
+              <>
+                {/* Background picker — top-right, fades in on hover/focus. */}
+                <div
+                  className={clsx(
+                    'pointer-events-auto absolute right-2 top-2 z-10',
+                    'opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
+                  )}
+                  // OrbitControls listen on the canvas; stopping propagation
+                  // here keeps clicks on the picker from being misread as
+                  // orbit drags. Pointer events (used by OrbitControls) bubble
+                  // through React's onMouseDown too, so we cover both.
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onWheel={(e) => e.stopPropagation()}
+                >
+                  <SegmentedControl
+                    size="xs"
+                    value={background}
+                    onChange={(v) => setBackground(v as BackgroundOption)}
+                    data={BACKGROUND_OPTIONS}
+                    styles={{
+                      root: {
+                        backgroundColor: 'rgba(20, 20, 20, 0.75)',
+                        backdropFilter: 'blur(4px)',
+                      },
+                    }}
+                  />
+                </div>
+
+                {/* Generate-with-this-image CTA — bottom-right. Same hover/focus
+                    fade as the picker so it doesn't crowd the scene by default. */}
+                <div
+                  className={clsx(
+                    'pointer-events-auto absolute bottom-2 right-2 z-10',
+                    'opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
+                  )}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onWheel={(e) => e.stopPropagation()}
+                >
+                  <Tooltip
+                    label="Capture the current view and send it to the generator as an img2img reference."
+                    multiline
+                    w={240}
+                    withArrow
+                  >
+                    <Button
+                      size="xs"
+                      variant="filled"
+                      color="blue"
+                      leftSection={<IconWand size={14} />}
+                      onClick={handleGenerateFromSnapshot}
+                      loading={snapshotting}
+                    >
+                      Generate with this image
+                    </Button>
+                  </Tooltip>
+                </div>
+              </>
+            )}
+          </div>
           {loadState === 'loading' && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <Text size="sm" c="dimmed">
