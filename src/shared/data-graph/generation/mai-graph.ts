@@ -9,8 +9,11 @@
  *
  * No negative prompt, no cfgScale, no steps. A seed control is exposed for form
  * consistency, but the orchestrator input type does not currently accept a seed,
- * so it is not forwarded by the handler. img2img editing is not yet in the
- * client type.
+ * so it is not forwarded by the handler.
+ *
+ * Supports two workflows:
+ * - txt2img: text-to-image (MaiImageCreateFalImageGenInput)
+ * - img2img:edit: reference-image editing (MaiImageEditFalImageGenInput)
  */
 
 import { DataGraph } from '~/libs/data-graph/data-graph';
@@ -18,6 +21,7 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
+  imagesNode,
   promptGraph,
   seedNode,
   snippetsGraph,
@@ -79,5 +83,14 @@ export const maiGraph = new DataGraph<{ ecosystem: string; workflow: string }, G
       defaultValue: '1:1',
       priorityOptions: maiPriorityRatios,
     })
+  )
+  // Reference images — shown only for img2img:edit, hidden for txt2img.
+  .node(
+    'images',
+    (ctx) => ({
+      ...imagesNode({ max: 4 }),
+      when: !ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
   )
   .node('seed', seedNode());

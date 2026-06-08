@@ -63,6 +63,7 @@ const EDIT_IMG_IDS = [
   ECO.Grok,
   ECO.WanImage27,
   ECO.HiDreamO1,
+  ECO.MAI,
 ];
 
 /** Image ecosystems that support image:create */
