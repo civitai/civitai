@@ -10,9 +10,9 @@ import { trpc } from '~/utils/trpc';
 
 export function useQueryRecommendedResources(
   payload: Omit<GetAssociatedResourcesInput, 'browsingLevel'> &
-    Pick<RecommendationRequest, 'modelVersionId'>
+    Pick<RecommendationRequest, 'modelVersionId'> & { allowAIRecommendations?: boolean }
 ) {
-  const { fromId, modelVersionId, type } = payload;
+  const { fromId, modelVersionId, type, allowAIRecommendations } = payload;
   const browsingLevel = useBrowsingLevelDebounced();
   const features = useFeatureFlags();
 
@@ -31,7 +31,12 @@ export function useQueryRecommendedResources(
     isRefetching: refetchingRecommended,
   } = trpc.recommenders.getResourceRecommendations.useQuery(
     { modelVersionId, browsingLevel },
-    { enabled: !!modelVersionId && features.recommenders }
+    // Mirror the server's own early-return (it returns [] when the version's
+    // meta.allowAIRecommendations is off) so we never make the round-trip for the
+    // majority of versions that have it disabled. recommenders.getResourceRecommendations
+    // was ~58% of all tRPC volume; this removes that load (+ its middleware/Flipt
+    // cost) from the main pool for the disabled case with no behavior change.
+    { enabled: !!modelVersionId && features.recommenders && !!allowAIRecommendations }
   );
 
   // Memoize combined data to prevent unnecessary re-renders
@@ -105,9 +110,26 @@ export function useToggleResourceRecommendationMutation() {
           affectedVersion.meta.allowAIRecommendations = result.meta.allowAIRecommendations;
         })
       );
-      await queryUtils.recommenders.getResourceRecommendations.invalidate({
-        modelVersionId: result.id,
-      });
+      // Invalidate getById by { id } (partial match → also covers the model page's
+      // { id, excludeTrainingData: true } cache key, which the setData above does
+      // NOT, since React Query matches keys exactly). This refetches the page's
+      // `model` so its now-current meta.allowAIRecommendations flips the client-side
+      // recommenders gate on, making recs appear without a page reload.
+      await queryUtils.model.getById.invalidate({ id: result.modelId });
+      if (result.meta.allowAIRecommendations) {
+        // Turning ON: mark stale so the now-enabled query refetches fresh recs.
+        await queryUtils.recommenders.getResourceRecommendations.invalidate({
+          modelVersionId: result.id,
+        });
+      } else {
+        // Turning OFF: the gate disables the query, and a disabled query is not
+        // "active", so invalidate() would NOT refetch — the previously-fetched
+        // recs would linger on screen until reload. reset() clears the cached
+        // data so they disappear live.
+        await queryUtils.recommenders.getResourceRecommendations.reset({
+          modelVersionId: result.id,
+        });
+      }
     },
     onError: (error) => {
       showErrorNotification({ title: 'Failed to save', error: new Error(error.message) });
