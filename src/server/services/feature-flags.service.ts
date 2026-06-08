@@ -445,7 +445,15 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
   const fliptContext = buildFliptContext(ctx.user);
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureAccess>((acc, key) => {
-    if (hasFeature(key, ctx, fliptContext)) acc[key] = true;
+    if (!hasFeature(key, ctx, fliptContext)) return acc;
+    const feature = featureFlags[key];
+    // Toggleable flags resolve to their default at the base layer. Logged-in
+    // users get their stored choice merged on top client-side (via
+    // user.getFeatureFlags), but anonymous users have no override — so a
+    // default-off toggleable (e.g. postsNavItem) must stay off for them rather
+    // than leak through on bare access.
+    if (feature.toggleable && feature.default === false) return acc;
+    acc[key] = true;
     return acc;
   }, {} as FeatureAccess);
 }
