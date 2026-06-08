@@ -20,7 +20,7 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   createMultiAccountBuzzTransaction,
-  getUserBuzzAccount,
+  getUserBuzzAccountByAccountTypesUncached,
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
@@ -427,8 +427,7 @@ export const createBid = async ({
     if (mv.availability === Availability.Private)
       throw throwBadRequestError('Invalid model version.');
 
-    if (mv.status !== ModelStatus.Published)
-      throw throwBadRequestError('Invalid model version.');
+    if (mv.status !== ModelStatus.Published) throw throwBadRequestError('Invalid model version.');
 
     if (mv.model.status !== ModelStatus.Published)
       throw throwBadRequestError('Invalid model version.');
@@ -458,8 +457,12 @@ export const createBid = async ({
   }
 
   // - Go
-  const balanceData = await getUserBuzzAccount({ accountId: userId, accountTypes });
-  const balance = balanceData.reduce((acc, b) => acc + (b.balance ?? 0), 0);
+  // Spend-authorization gate: read UNCACHED. `createMultiAccountBuzzTransaction`
+  // has no in-app balance gate, so this pre-check is the only in-app guard. A
+  // cached (potentially ~6s-stale) balance must never authorize a spend, so this
+  // bypasses the cached `getUserBuzzAccount({ accountTypes })` read/display path.
+  const balanceData = await getUserBuzzAccountByAccountTypesUncached(userId, accountTypes);
+  const balance = Object.values(balanceData).reduce((acc, b) => acc + (b ?? 0), 0);
   if ((balance ?? 0) < amount) {
     throw throwInsufficientFundsError();
   }

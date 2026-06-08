@@ -186,6 +186,18 @@ export async function getUserBuzzAccounts({ userId }: { userId: number }) {
   return await getUserBuzzAccountByAccountTypes(userId, buzzSpendTypes);
 }
 
+// UNCACHED multi-type balance read for spend-authorization gates. Mirrors the
+// byId/byType uncached reads used by `createBuzzTransaction`'s gate: a spend must
+// never be authorized off a (potentially ~6s-stale) cached balance. Use this
+// instead of `getUserBuzzAccountByAccountTypes` / `getUserBuzzAccount({ accountTypes })`
+// when the read decides whether a spend is allowed (e.g. auction bid pre-check).
+export async function getUserBuzzAccountByAccountTypesUncached<T extends BuzzAccountType>(
+  accountId: number,
+  accountTypes: T[]
+): Promise<BuzzAccountsResponse<T>> {
+  return fetchUserBuzzAccountByAccountTypes(accountId, accountTypes);
+}
+
 async function fetchUserBuzzAccounts({
   accountId,
   accountType,
