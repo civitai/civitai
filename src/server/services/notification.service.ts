@@ -55,7 +55,7 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
     // where another writer inserts the same key between our UPDATE and INSERT.
     const updateResp = await notifDbWrite.cancellableQuery<{ id: number }>(Prisma.sql`
       UPDATE "PendingNotification"
-      SET "users" = ${'{' + targets.join(',') + '}'}::int[],
+      SET "users" = ARRAY(SELECT DISTINCT unnest("users" || ${'{' + targets.join(',') + '}'}::int[])),
           "lastTriggered" = NOW()
       WHERE "key" = ${data.key}
       RETURNING id
@@ -74,7 +74,7 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
           ${data.debounceSeconds}
         )
         ON CONFLICT (key)
-        DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
+        DO UPDATE SET "users" = ARRAY(SELECT DISTINCT unnest("PendingNotification"."users" || excluded."users")), "lastTriggered" = NOW()
       `);
       await insertResp.result();
     }
