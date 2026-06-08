@@ -1078,6 +1078,11 @@ export class DataGraph<
     Prettify<CtxValues & { [P in K]: InferOutput<T> }>
   >;
 
+  // `deps` entries are ctx keys by default. To re-run a node when an external
+  // context key changes, list it prefixed with `ext:` (e.g. `['ecosystem',
+  // 'ext:limits']`). `setExt` seeds `ext:<key>` tokens for changed top-level
+  // ext keys, which match here via the same dep-changed check used for ctx keys.
+  // The `ext:` prefix is collision-safe since ctx keys are plain identifiers.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   node(key: string, arg1: any, deps?: readonly string[]) {
     const isFactory = typeof arg1 === 'function';
@@ -1395,8 +1400,24 @@ export class DataGraph<
 
   setExt(values: Partial<ExternalCtx>): Ctx {
     if (!this._initialized) throw new Error('Pipeline not initialized. Call init() first.');
+    // Diff per top-level ext key so we only re-run nodes whose ext dep actually
+    // changed. Callers (e.g. the React provider) typically push the entire
+    // external context object on every change, so without this diff every
+    // `ext:`-dep node would re-evaluate on every push. Nodes opt into ext
+    // reactivity by listing `ext:<key>` in their `deps` array.
+    const changedExtKeys: string[] = [];
+    for (const key of Object.keys(values)) {
+      if (
+        !isEqual(
+          (this._ext as Record<string, unknown>)[key],
+          (values as Record<string, unknown>)[key]
+        )
+      ) {
+        changedExtKeys.push(`ext:${key}`);
+      }
+    }
     Object.assign(this._ext, values);
-    const changed = this._evaluate({});
+    const changed = this._evaluate({}, changedExtKeys);
     this._updateAllMeta();
     this._notifyChanges(changed);
     return this._ctx;
@@ -1795,11 +1816,21 @@ export class DataGraph<
   // Evaluation Loop
   // ===========================================================================
 
-  /** Evaluate the graph and return the set of keys that changed. */
-  private _evaluate(inputValues: Partial<Ctx> = {}): Set<string> {
+  /**
+   * Evaluate the graph and return the set of keys that changed.
+   *
+   * @param inputValues - Node values being set this pass (ctx keys)
+   * @param additionalChangedKeys - Extra keys to seed into `changed` so nodes
+   *   that list them in `deps` re-run. Used by `setExt` to inject `ext:<key>`
+   *   tokens for changed external-context keys (see the `ext:` dep convention).
+   */
+  private _evaluate(
+    inputValues: Partial<Ctx> = {},
+    additionalChangedKeys: readonly string[] = []
+  ): Set<string> {
     const log = this._debug ? console.log.bind(console) : () => undefined;
 
-    const changed = new Set<string>(Object.keys(inputValues));
+    const changed = new Set<string>([...Object.keys(inputValues), ...additionalChangedKeys]);
 
     let iterations = 0;
     let currentIndex = 0;

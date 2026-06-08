@@ -1078,7 +1078,6 @@ export const REDIS_KEYS = {
     POTENTIAL_POOL: 'buzz:potential-pool',
     POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value',
     EARNED: 'buzz:earned',
-    ACCOUNT: 'buzz:account',
   },
   CREATOR_PROGRAM: {
     CAPS: 'packed:caches:creator-program:caps',
