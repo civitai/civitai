@@ -59,7 +59,17 @@ const trpcHandler = createNextApiHandler({
       // (isAcceptableOrigin, isAuthed, enforceTokenScope, isFlagProtected).
       // Other tRPC errors (Meili timeouts, DB errors, etc.) keep full
       // observability.
-      if (error.code === 'FORBIDDEN' || error.code === 'UNAUTHORIZED') {
+      //
+      // TOO_MANY_REQUESTS is the heavy-route bulkhead fast-fail (heavyProcedure).
+      // It trips precisely during a pile-up, and per-reject stack-capture +
+      // stringify + Axiom ingest would add event-loop pressure during the exact
+      // storm the bulkhead exists to relieve. The `civitai_app_heavy_bulkhead_rejects`
+      // gauge already carries the signal, so skip the ingest here too.
+      if (
+        error.code === 'FORBIDDEN' ||
+        error.code === 'UNAUTHORIZED' ||
+        error.code === 'TOO_MANY_REQUESTS'
+      ) {
         return error;
       }
 

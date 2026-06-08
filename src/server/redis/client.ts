@@ -947,6 +947,7 @@ export const REDIS_KEYS = {
     TOKENS: 'generation:tokens',
     COUNT: 'generation:count',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
+    QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
   },
   OAUTH: {
     AUTHORIZATION_CODES: 'packed:oauth:authorization-codes',
@@ -1077,6 +1078,7 @@ export const REDIS_KEYS = {
     POTENTIAL_POOL: 'buzz:potential-pool',
     POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value',
     EARNED: 'buzz:earned',
+    ACCOUNT: 'buzz:account',
   },
   CREATOR_PROGRAM: {
     CAPS: 'packed:caches:creator-program:caps',

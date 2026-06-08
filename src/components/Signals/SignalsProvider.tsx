@@ -119,15 +119,72 @@ export const useSignalTopic = (topic: TopicString | undefined, notify?: boolean)
   }, [topic, notify, registerTopic, releaseTopic]);
 };
 
-const SIGNAL_DATA_REFRESH_DEBOUNCE = 10;
+// On a signal-hub disruption, ALL connected clients drop and reconnect within
+// the same few seconds (the worker's `withAutomaticReconnect` backoff schedule
+// starts at 0). Previously each reconnect invalidated `buzz.getBuzzAccount` and
+// `orchestrator.queryGeneratedImages` after only an ~8-15s debounce, so a
+// fleet-wide reconnect produced tens of thousands of synchronized refetches in
+// a single ~10s window — saturating the API's single Node thread (CPU-pin /
+// 504 / Error-137 waves). To flatten that spike below the pin threshold we:
+//   1. Spread the post-reconnect refetch across a jittered per-client delay
+//      window instead of a tight ~10s window.
+//   2. Skip the heavy `orchestrator.queryGeneratedImages` refetch for short
+//      blips — it self-heals via a 60s poll, so a sub-threshold disconnect
+//      cannot have lost durable state. `buzz.getBuzzAccount` is exempt from
+//      that gate (it has no polling fallback — a lost `BuzzUpdate` would stick
+//      forever) and is always invalidated on reconnect, but still rides the
+//      jittered debounce so it stays cheap.
+//
+// Jitter window for the reconnect-driven invalidate. A uniform random delay in
+// [MIN, MAX] per client turns a synchronized fleet spike into refetches spread
+// over a full minute. The lower bound stays well above zero so even clients that
+// land on the same delay bucket don't all fire at t≈0. We keep the band as
+// narrow as the spike-flattening allows so post-outage staleness (worst case ≈
+// MAX) stays low — 30-90s smears the fleet across a 60s window while capping
+// staleness at ~90s rather than ~3 minutes.
+const RECONNECT_INVALIDATE_DELAY_MIN_MS = 30_000;
+const RECONNECT_INVALIDATE_DELAY_MAX_MS = 90_000;
+
+// Minimum disconnect duration before a reconnect is allowed to invalidate.
+// Live balance/generation deltas are pushed continuously via signal and applied
+// with `setData` while connected, so a brief disconnect can't have dropped
+// meaningful state. The worker reconnects with backoff [0,2,10,18,...]s and the
+// hub keeps group memberships briefly; a disconnect shorter than this almost
+// certainly missed no pushes, so refetching would be pure wasted load. We pick
+// 10s as a conservative floor: long enough to skip the common instant/near-
+// instant reconnects that drive the storm, short enough that any disconnect
+// where pushes could realistically have been missed still triggers a refetch
+// (which is then spread by the jitter above). When in doubt we still invalidate.
+const RECONNECT_INVALIDATE_MIN_DISCONNECT_MS = 10_000;
+
 export function SignalProvider({ children }: { children: React.ReactNode }) {
   const queryUtils = trpc.useUtils();
-  const prevStatusRef = useRef<SignalStatus | null>(null);
+  // Previous connection state, tracked INSIDE `onStateChange` (not at render
+  // time). A render-committed ref lags the event stream — two `connection:state`
+  // messages in one tick would both read the same stale value, corrupting the
+  // disconnect-gap measurement and potentially leaving `disconnectedAtRef`
+  // stale. Updating it as the last line of the handler keeps the gate logic
+  // independent of React's render-commit ordering.
+  const prevStateRef = useRef<SignalStatus | null>(null);
   const hasConnectedAtLeastOnceRef = useRef(false);
-  const debounce = useDebouncer((SIGNAL_DATA_REFRESH_DEBOUNCE + getRandomInt(-2, 5)) * 1000);
+  // Timestamp of when we last LEFT the 'connected' state (transitioned to
+  // 'reconnecting' or 'closed'). Used to compute how long the client was
+  // actually disconnected when it returns to 'connected'.
+  const disconnectedAtRef = useRef<number | null>(null);
+  // Pick a single random delay per client, stable across renders. Spreading the
+  // delay across clients (not re-rolling it per render) is what flattens the
+  // fleet-wide refetch spike; a stable value also keeps `useDebouncer`'s
+  // memoized callback/cleanup from churning on every render.
+  const reconnectInvalidateDelayRef = useRef<number>();
+  if (reconnectInvalidateDelayRef.current === undefined) {
+    reconnectInvalidateDelayRef.current = getRandomInt(
+      RECONNECT_INVALIDATE_DELAY_MIN_MS,
+      RECONNECT_INVALIDATE_DELAY_MAX_MS
+    );
+  }
+  const debounce = useDebouncer(reconnectInvalidateDelayRef.current);
 
   const [status, setStatus] = useState<SignalStatus | null>(null);
-  prevStatusRef.current = status ?? null;
   // Refcount of active `useSignalTopic` subscribers per topic. Only the
   // 0→1 transition calls `worker.topicRegister`; only the 1→0 transition
   // unsubscribes — so duplicate subscribers don't cause one another to lose
@@ -149,17 +206,51 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
 
   const worker = useSignalsWorker({
     onStateChange: ({ state }) => {
-      const prevStatus = prevStatusRef.current;
+      const prevState = prevStateRef.current;
       const hasConnectedAtLeastOnce = hasConnectedAtLeastOnceRef.current;
-      if (prevStatus !== state && state === 'connected' && hasConnectedAtLeastOnce) {
+
+      // Record when we leave 'connected' so we can measure the disconnect gap
+      // on the next reconnect. Only set on the first transition away from
+      // 'connected' (don't overwrite on reconnecting → closed) so the gap
+      // reflects the full outage, not just the last leg of it.
+      if (prevState === 'connected' && state !== 'connected') {
+        disconnectedAtRef.current = Date.now();
+      }
+
+      if (prevState !== state && state === 'connected' && hasConnectedAtLeastOnce) {
+        const disconnectedAt = disconnectedAtRef.current;
+        const disconnectedMs = disconnectedAt !== null ? Date.now() - disconnectedAt : Infinity;
+        const longDisconnect = disconnectedMs >= RECONNECT_INVALIDATE_MIN_DISCONNECT_MS;
+
+        // Buzz balance has NO polling fallback (staleTime: Infinity,
+        // refetchOnWindowFocus: false — see useBuzz.ts); its only live source is
+        // the `BuzzUpdate` signal applied via `setData`. A push lost during even
+        // a sub-10s blip would leave the balance silently wrong forever, so we
+        // ALWAYS invalidate buzz on a genuine reconnect regardless of disconnect
+        // duration. This stays cheap: the query is cached (PR #2434) and the
+        // invalidate still rides the widened+jittered debounce below, so the
+        // fleet spike stays flattened.
+        //
+        // `orchestrator.queryGeneratedImages` self-heals via a 60s poll (see
+        // useGenerationSignalUpdate.ts), so it keeps the 10s disconnect-duration
+        // gate — skip the heavier refetch for short blips. Fail-safe: an
+        // unknown/null disconnect duration (Infinity) still invalidates.
         debounce(() => {
           queryUtils.buzz.getBuzzAccount.invalidate();
-          queryUtils.orchestrator.queryGeneratedImages.invalidate();
+          if (longDisconnect) {
+            queryUtils.orchestrator.queryGeneratedImages.invalidate();
+          }
         });
+
+        disconnectedAtRef.current = null;
       }
 
       if (state === 'connected') hasConnectedAtLeastOnceRef.current = true;
       setStatus(state);
+      // Track previous state in-handler as the LAST step so the gate above never
+      // depends on render-commit ordering. Set on every transition so it can't
+      // go stale across rapid flaps.
+      prevStateRef.current = state;
     },
   });
 
