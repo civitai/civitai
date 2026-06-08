@@ -1,6 +1,9 @@
 // src/pages/_app.tsx
 
 import dynamic from 'next/dynamic';
+// Side-effect import: globally disables next/link route prefetching. Must run
+// before any <Link> mounts — see the file for rationale.
+import '~/utils/disable-router-prefetch';
 import { getCookie, getCookies, deleteCookie } from 'cookies-next';
 import type { Session } from 'next-auth';
 import { SessionProvider } from 'next-auth/react';
