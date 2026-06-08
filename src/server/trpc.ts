@@ -9,6 +9,7 @@ import {
   BulkheadFullError,
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
+import { trpcProcedureDuration } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -197,7 +198,31 @@ const enforceTokenScope = t.middleware(({ ctx, meta, next }) => {
   return next();
 });
 
+// Time every procedure by path (full chain + resolver) so heavy-pool isolation
+// candidates can be ranked by P99 x rate — the criterion behind the image-feed
+// cutover. Placed first in the chain so it spans all downstream middleware + the
+// resolver. All exported procedures derive from publicProcedure, so this covers
+// every tRPC call. `path` is the fixed dotted procedure name.
+//
+// OPT-IN via TRPC_PROCEDURE_METRICS=true. This is a HIGH-cardinality metric:
+// ~870 procedures x (buckets + sum + count) PER POD. Enabling it everywhere
+// (api-primary 90-100 + heavy + SSR via createCaller + jobs ≈ 200 pods) would
+// add hundreds of thousands of Prometheus active series. Enable it only on the
+// pools whose isolation we're deciding (api-primary, api-heavy) and leave it off
+// on SSR/jobs/canary to bound the series count and keep an instant off-switch.
+const TRPC_PROCEDURE_METRICS = process.env.TRPC_PROCEDURE_METRICS === 'true';
+const recordProcedureDuration = t.middleware(async ({ path, next }) => {
+  if (!TRPC_PROCEDURE_METRICS) return next();
+  const end = trpcProcedureDuration.startTimer({ path });
+  try {
+    return await next();
+  } finally {
+    end();
+  }
+});
+
 export const publicProcedure = t.procedure
+  .use(recordProcedureDuration)
   .use(isAcceptableOrigin)
   .use(enforceClientVersion)
   .use(applyDomainFeature)
