@@ -761,6 +761,9 @@ importers:
       postcss:
         specifier: ^8.5.3
         version: 8.5.6
+      postcss-assign-layer:
+        specifier: ^0.4.0
+        version: 0.4.0(postcss@8.5.6)
       postcss-preset-mantine:
         specifier: ^1.17.0
         version: 1.18.0(postcss@8.5.6)
@@ -3058,6 +3061,10 @@ packages:
 
   '@rolldown/pluginutils@1.0.0-beta.27':
     resolution: {integrity: sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA==}
+
+  '@rollup/pluginutils@4.2.1':
+    resolution: {integrity: sha512-iKnFXr7NkdZAIHiIWE+BX5ULi/ucVFYWD6TbAV+rZctiRTY2PL6tsIKhoIOaoskiWAkgu+VsbXgUVDNLHf+InQ==}
+    engines: {node: '>= 8.0.0'}
 
   '@rollup/rollup-android-arm-eabi@4.56.0':
     resolution: {integrity: sha512-LNKIPA5k8PF1+jAFomGe3qN3bbIgJe/IlpDBwuVjrDKrJhVWywgnJvflMt/zkbVNLFtF1+94SljYQS6e99klnw==}
@@ -6040,6 +6047,9 @@ packages:
   estree-util-visit@2.0.0:
     resolution: {integrity: sha512-m5KgiH85xAhhW8Wta0vShLcUvOsh3LLPI2YVwcbio1l7E09NTLL1EyMZFM1OyWowoH0skScNbhOPl4kcBgzTww==}
 
+  estree-walker@2.0.2:
+    resolution: {integrity: sha512-Rfkk/Mp/DL7JVje3u18FxFujQlTNR2q6QfMSMB7AvCBx91NGj/ba3kCfza0f6dVDbw7YlRf/nDrn7pQrCCyQ/w==}
+
   estree-walker@3.0.3:
     resolution: {integrity: sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==}
 
@@ -8179,6 +8189,12 @@ packages:
   possible-typed-array-names@1.1.0:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
     engines: {node: '>= 0.4'}
+
+  postcss-assign-layer@0.4.0:
+    resolution: {integrity: sha512-ART9ENWnvEyW3yyfJe83nz5j/IsbQHBgSMsUNFmC/+6zy0uC9YTriHKV6TEjOOHXRzXS2yNPj0ksvYkEwwkv5w==}
+    engines: {node: '>=12.0.0'}
+    peerDependencies:
+      postcss: ^8.3.0
 
   postcss-calc@10.1.1:
     resolution: {integrity: sha512-NYEsLHh8DgG/PRH2+G9BTuUdtf9ViS+vdoQ0YA5OQdGsfN4ztiwtDWNtBl9EKeqNMFnIu8IKZ0cLxEQ5r5KVMw==}
@@ -13255,6 +13271,11 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.0-beta.27': {}
 
+  '@rollup/pluginutils@4.2.1':
+    dependencies:
+      estree-walker: 2.0.2
+      picomatch: 2.3.1
+
   '@rollup/rollup-android-arm-eabi@4.56.0':
     optional: true
 
@@ -16702,6 +16723,8 @@ snapshots:
       '@types/estree-jsx': 1.0.5
       '@types/unist': 3.0.3
 
+  estree-walker@2.0.2: {}
+
   estree-walker@3.0.3:
     dependencies:
       '@types/estree': 1.0.8
@@ -19365,6 +19388,11 @@ snapshots:
   popper.js@1.16.1: {}
 
   possible-typed-array-names@1.1.0: {}
+
+  postcss-assign-layer@0.4.0(postcss@8.5.6):
+    dependencies:
+      '@rollup/pluginutils': 4.2.1
+      postcss: 8.5.6
 
   postcss-calc@10.1.1(postcss@8.5.6):
     dependencies:

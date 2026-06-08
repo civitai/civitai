@@ -326,6 +326,7 @@
     "pg-format": "^1.0.4",
     "playwright": "^1.57.0",
     "postcss": "^8.5.3",
+    "postcss-assign-layer": "^0.4.0",
     "postcss-preset-mantine": "^1.17.0",
     "postcss-simple-vars": "^7.0.1",
     "prettier": "^2.8.8",
