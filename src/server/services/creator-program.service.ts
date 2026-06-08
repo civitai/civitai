@@ -590,7 +590,7 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
         SUM(amount)::INT as amount
       FROM "CashWithdrawal" cw
       WHERE "userId" IN (${ids.join(',')})
-        AND status NOT IN ('Rejected', 'Canceled', 'FailedFee')
+        AND status NOT IN ('Rejected', 'Canceled', 'FailedFee', 'Reclaimed')
       GROUP BY "userId";
     `);
 
@@ -1105,7 +1105,7 @@ export async function modAdjustCashBalance({
           userId,
           amount,
           fee: 0,
-          status: CashWithdrawalStatus.Paid,
+          status: CashWithdrawalStatus.Reclaimed,
           method: CashWithdrawalMethod.Custom,
           transactionId,
           note: `[Mod adjustment] ${note}`,

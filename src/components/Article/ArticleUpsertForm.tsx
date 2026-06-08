@@ -359,13 +359,13 @@ export function ArticleUpsertForm({ article }: Props) {
               article={article}
               currentContent={content as string}
               saveButtonProps={{
-                loading: upsertArticleMutation.isLoading && !publishing,
-                disabled: upsertArticleMutation.isLoading || !features.canWrite,
+                loading: upsertArticleMutation.isPending && !publishing,
+                disabled: upsertArticleMutation.isPending || !features.canWrite,
                 onClick: () => setPublishing(false),
               }}
               publishButtonProps={{
-                loading: upsertArticleMutation.isLoading && publishing,
-                disabled: upsertArticleMutation.isLoading || !features.canWrite,
+                loading: upsertArticleMutation.isPending && publishing,
+                disabled: upsertArticleMutation.isPending || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
               className="hidden @sm:flex"
@@ -567,13 +567,13 @@ export function ArticleUpsertForm({ article }: Props) {
               article={article}
               currentContent={content as string}
               saveButtonProps={{
-                loading: upsertArticleMutation.isLoading && !publishing,
-                disabled: upsertArticleMutation.isLoading || !features.canWrite,
+                loading: upsertArticleMutation.isPending && !publishing,
+                disabled: upsertArticleMutation.isPending || !features.canWrite,
                 onClick: () => setPublishing(false),
               }}
               publishButtonProps={{
-                loading: upsertArticleMutation.isLoading && publishing,
-                disabled: upsertArticleMutation.isLoading || !features.canWrite,
+                loading: upsertArticleMutation.isPending && publishing,
+                disabled: upsertArticleMutation.isPending || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
               className="@sm:hidden"

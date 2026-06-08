@@ -19,7 +19,7 @@ import {
   purchasableRewardDetailsModerator,
 } from '~/server/selectors/purchasableReward.selector';
 import { createMultiAccountBuzzTransaction } from '~/server/services/buzz.service';
-import { createEntityImages } from '~/server/services/image.service';
+import { createEntityImages, enqueueImageIngestion } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
@@ -156,6 +156,12 @@ export const purchasableRewardUpsert = async ({
       })
     : [];
 
+  enqueueImageIngestion({
+    images: imageRecord ? [imageRecord] : [],
+    name: 'purchasable-reward-image-ingest',
+    userId,
+  });
+
   if (!input.id) {
     // Create:
     // Check that it has codes:
@@ -197,7 +203,10 @@ export const purchasableRewardUpsert = async ({
     const purchasableReward = await dbRead.purchasableReward
       .findUniqueOrThrow(purchasableRewardFindArgs)
       .catch(() => {
-        dbReadFallbackCounter.inc({ entity: 'purchasableReward', caller: 'upsertPurchasableReward' });
+        dbReadFallbackCounter.inc({
+          entity: 'purchasableReward',
+          caller: 'upsertPurchasableReward',
+        });
         return dbWrite.purchasableReward.findUniqueOrThrow(purchasableRewardFindArgs);
       });
 
@@ -346,12 +355,10 @@ export const getPurchasableReward = async ({ id }: GetByIdInput) => {
       codes: true,
     },
   } as const;
-  const data = await dbRead.purchasableReward
-    .findUniqueOrThrow(rewardDetailFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'purchasableReward', caller: 'getPurchasableReward' });
-      return dbWrite.purchasableReward.findUniqueOrThrow(rewardDetailFindArgs);
-    });
+  const data = await dbRead.purchasableReward.findUniqueOrThrow(rewardDetailFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'purchasableReward', caller: 'getPurchasableReward' });
+    return dbWrite.purchasableReward.findUniqueOrThrow(rewardDetailFindArgs);
+  });
 
   return {
     ...data,

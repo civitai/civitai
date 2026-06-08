@@ -99,7 +99,7 @@ export default function TosModal({
                 <Title order={2}>{data?.title}</Title>
                 {data.lastmod ? (
                   <Text size="sm" c="dimmed">
-                    Last modifie: {formatDate(data.lastmod, undefined, true)}
+                    Last modified: {formatDate(data.lastmod, undefined, true)}
                   </Text>
                 ) : null}
               </Stack>
@@ -128,14 +128,14 @@ export default function TosModal({
             />
             <Group ml="auto">
               {showBackButton && (
-                <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isLoading}>
+                <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isPending}>
                   Go back
                 </Button>
               )}
               <Button
                 onClick={handleConfirm}
                 disabled={!acceptedCoC}
-                loading={updateUserSettings.isLoading || loading}
+                loading={updateUserSettings.isPending || loading}
               >
                 Accept
               </Button>

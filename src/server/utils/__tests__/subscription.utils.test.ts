@@ -2,6 +2,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { PrepaidToken, SubscriptionMetadata } from '~/server/schema/subscriptions.schema';
 import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
 
+// setup.ts mocks ~/server/utils/subscription.utils globally so callers can
+// assert "we tried to bust caches". For tests that exercise the real
+// implementation, opt out and mock its leaf dependencies instead.
+vi.unmock('~/server/utils/subscription.utils');
+vi.mock('~/server/services/buzz.service', () => ({
+  getMultipliersForUser: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('~/server/services/creator-program.service', () => ({
+  getUserCapCache: vi.fn(() => ({ bust: vi.fn().mockResolvedValue(undefined) })),
+}));
+vi.mock('~/server/services/orchestrator/civitai', () => ({
+  invalidateCivitaiUser: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('~/server/services/vault.service', () => ({
+  setVaultFromSubscription: vi.fn().mockResolvedValue(undefined),
+}));
+
 describe('getPrepaidTokens', () => {
   describe('null/empty metadata', () => {
     it('returns empty array for null metadata', () => {
@@ -292,5 +309,79 @@ describe('getNextTokenUnlockDate', () => {
 
     // Next drop is Apr 23 01:00 UTC (PT renders as Apr 22 evening)
     expect(result.toISOString()).toBe('2026-04-23T01:15:00.000Z');
+  });
+});
+
+describe('invalidateSubscriptionCaches', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('logs the failing step to Axiom when refreshSession rejects', async () => {
+    const { refreshSession } = await import('~/server/auth/session-invalidation');
+    const { logToAxiom } = await import('~/server/logging/client');
+    const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+
+    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('sysRedis down'));
+
+    await invalidateSubscriptionCaches(42);
+
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'invalidate-subscription-caches-step-failed',
+        type: 'error',
+        userId: 42,
+        step: 'refreshSession',
+        error: 'sysRedis down',
+      }),
+      'webhooks'
+    );
+  });
+
+  it('logs the failing step to Axiom when getMultipliersForUser rejects', async () => {
+    const { getMultipliersForUser } = await import('~/server/services/buzz.service');
+    const { logToAxiom } = await import('~/server/logging/client');
+    const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+
+    vi.mocked(getMultipliersForUser).mockRejectedValueOnce(new Error('db unreachable'));
+
+    await invalidateSubscriptionCaches(99);
+
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 99,
+        step: 'getMultipliersForUser',
+        error: 'db unreachable',
+      }),
+      'webhooks'
+    );
+  });
+
+  it('does not log when every step resolves', async () => {
+    const { logToAxiom } = await import('~/server/logging/client');
+    const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+
+    await invalidateSubscriptionCaches(1);
+
+    expect(logToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('logs every rejection independently — partial failures are not swallowed', async () => {
+    const { refreshSession } = await import('~/server/auth/session-invalidation');
+    const { setVaultFromSubscription } = await import('~/server/services/vault.service');
+    const { logToAxiom } = await import('~/server/logging/client');
+    const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+
+    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('a'));
+    vi.mocked(setVaultFromSubscription).mockRejectedValueOnce(new Error('b'));
+
+    await invalidateSubscriptionCaches(7);
+
+    const steps = vi
+      .mocked(logToAxiom)
+      .mock.calls.map((call) => (call[0] as { step: string }).step);
+    expect(steps).toContain('refreshSession');
+    expect(steps).toContain('setVaultFromSubscription');
+    expect(steps).toHaveLength(2);
   });
 });

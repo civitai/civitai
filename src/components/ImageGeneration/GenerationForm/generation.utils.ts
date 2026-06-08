@@ -1,7 +1,12 @@
 import type React from 'react';
 import { useCallback, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { generationStatusSchema } from '~/server/schema/generation.schema';
+import {
+  generationStatusDefaultMessage,
+  generationStatusSchema,
+} from '~/server/schema/generation.schema';
+import type { GenerationStatusMode } from '~/server/schema/generation.schema';
+import type { GateRule } from '~/shared/data-graph/generation/gates';
 import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
 import type { NormalizedWorkflowMetadata } from '~/server/services/orchestrator';
 import { showErrorNotification } from '~/utils/notifications';
@@ -20,10 +25,12 @@ import type {
 //   persist(() => ({}), { name: 'generation-form-2', version: 0 })
 // );
 
-const defaultServiceStatus = generationStatusSchema.parse({});
+// Mirror the public getStatus shape: it strips the moderator-only `updatedBy`
+// stamp, so the placeholder must match that stripped shape.
+const { updatedBy, ...defaultServiceStatus } = generationStatusSchema.parse({});
 export function useGetGenerationStatus() {
   return trpc.generation.getStatus.useQuery(undefined, {
-    cacheTime: 60,
+    gcTime: 60,
     placeholderData: defaultServiceStatus,
     trpc: { context: { skipBatch: true } },
   });
@@ -33,18 +40,35 @@ export const useGenerationStatus = () => {
   const { data = defaultServiceStatus, isLoading } = useGetGenerationStatus();
 
   return useMemo(() => {
-    if (currentUser?.isModerator) data.available = true; // Always have generation available for mods
     const tier = currentUser?.tier ?? 'free';
+    const isModerator = currentUser?.isModerator ?? false;
+    // Resolve the mode to an effective available/message for THIS user.
+    // Moderators always bypass.
+    let available = true;
+    let message = data.message;
+    // `data.available === false` is the legacy fallback: during a rolling deploy
+    // an older server may return the boolean-only shape with no `mode`, in which
+    // case the mode checks below all miss — honor `available` so we don't fail
+    // open and show generation as available when an admin had it disabled.
+    const blocked =
+      data.mode === 'disabled' ||
+      (data.mode === 'memberOnly' && tier === 'free') ||
+      (!data.mode && data.available === false);
+    if (!isModerator && blocked) {
+      available = false;
+      message = data.message ?? generationStatusDefaultMessage;
+    }
     const limits = data.limits[tier];
-    return { ...data, tier, limits, isLoading };
+    return { ...data, available, message, tier, limits, isLoading };
   }, [data, currentUser, isLoading]);
 };
 
 const DEFAULT_GENERATION_CONFIG = {
   unstableResources: [] as number[],
   experimentalEcosystems: [] as string[],
-  gatedEcosystems: [] as string[],
-  gatedVersionIds: [] as number[],
+  selfHostedDisabledEcosystems: [] as string[],
+  selfHostedMode: 'enabled' as GenerationStatusMode,
+  gateRules: [] as GateRule[],
 };
 
 /**
@@ -54,25 +78,24 @@ const DEFAULT_GENERATION_CONFIG = {
  * - `experimentalEcosystems`: ecosystem keys that should show the
  *   "experimental build" alert in the generator UI (unioned with the
  *   static `isEcosystemExperimental` check)
- * - `gatedEcosystems`: ecosystem keys hidden for the current user
- *   (server folds in mod-only / testing rules + Flipt evaluation)
- * - `gatedVersionIds`: model version IDs hidden for the current user
- *   (same per-user resolution as `gatedEcosystems`, ID-level overrides)
+ * - `selfHostedDisabledEcosystems` / `selfHostedMode`: the self-hosted toggle
+ * - `gateRules`: the gate rules that apply to this user (audience-filtered
+ *   server-side), resolved per-item by the graph nodes
  *
  * Single tRPC query — every generator component that needs any of these
  * fields should call this hook so React Query dedupes the request.
  */
 export const useGenerationConfig = () => {
-  const { data = DEFAULT_GENERATION_CONFIG } = trpc.generation.getGenerationConfig.useQuery(
-    undefined,
-    {
-      cacheTime: Infinity,
-      staleTime: Infinity,
-      trpc: { context: { skipBatch: true } },
-    }
-  );
+  const { data } = trpc.generation.getGenerationConfig.useQuery(undefined, {
+    gcTime: Infinity,
+    staleTime: Infinity,
+    trpc: { context: { skipBatch: true } },
+  });
 
-  return data;
+  // Merge defaults so every field is always present (also guards stale caches
+  // from before a field existed). Callers read `useGenerationConfig().<field>`
+  // directly — no per-field hooks needed.
+  return useMemo(() => ({ ...DEFAULT_GENERATION_CONFIG, ...data }), [data]);
 };
 
 export const useUnsupportedResources = () => {
@@ -81,7 +104,7 @@ export const useUnsupportedResources = () => {
   const { data: unavailableResources = [] } = trpc.generation.getUnavailableResources.useQuery(
     undefined,
     {
-      cacheTime: Infinity,
+      gcTime: Infinity,
       staleTime: Infinity,
       trpc: { context: { skipBatch: true } },
     }
@@ -108,7 +131,7 @@ export const useUnsupportedResources = () => {
   return {
     unavailableResources,
     toggleUnavailableResource: handleToggleUnavailableResource,
-    toggling: toggleUnavailableResourceMutation.isLoading,
+    toggling: toggleUnavailableResourceMutation.isPending,
   };
 };
 

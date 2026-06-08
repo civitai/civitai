@@ -1,3 +1,5 @@
+// The custom `no-io-in-transaction` rule lives in ./eslint-local-rules.js and
+// is loaded via the `eslint-plugin-local-rules` devDependency.
 module.exports = {
   root: true,
   parser: '@typescript-eslint/parser',
@@ -5,7 +7,7 @@ module.exports = {
     ecmaVersion: 'latest',
     sourceType: 'module',
   },
-  plugins: ['@typescript-eslint', 'prettier'],
+  plugins: ['@typescript-eslint', 'prettier', 'local-rules'],
   extends: [
     'next/core-web-vitals',
     'plugin:@typescript-eslint/recommended', // lightweight rules (no type info)
@@ -22,6 +24,13 @@ module.exports = {
   //   },
   // },
   rules: {
+    // Flags awaited external I/O inside a Prisma interactive $transaction
+    // callback (blows the txn timeout budget). See eslint-local-rules.js.
+    // 'warn' (not 'error') — surfaces in the editor / `next lint` as a guardrail
+    // without failing lint or the build; escalate to 'error' once the team is
+    // ready to gate on it.
+    'local-rules/no-io-in-transaction': 'warn',
+
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
 

@@ -50,7 +50,8 @@ import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { getAllImages, ingestImage } from '~/server/services/image.service';
+import type { IngestImageInput } from '~/server/schema/image.schema';
+import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
 import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
 import {
   bustFeaturedModelsCache,
@@ -892,10 +893,12 @@ export const upsertCollection = async ({
 
       // No need to set randomId when changing to Contest mode - hash-based ordering is computed on-the-fly
 
-      await userCollectionCountCache.refresh(updated.userId);
-
       return updated;
     });
+
+    // Count-cache refresh hits Redis — run it after the txn commits so it can't
+    // add network latency to the interactive transaction's timeout budget.
+    await userCollectionCountCache.refresh(updated.userId);
 
     if (
       input.read === CollectionReadConfiguration.Public &&
@@ -952,7 +955,11 @@ export const upsertCollection = async ({
 
     // Start image ingestion only if it's ingestion status is pending
     if (updated.image && updated.image.ingestion === ImageIngestionStatus.Pending) {
-      await ingestImage({ image: updated.image });
+      enqueueImageIngestion({
+        images: [updated.image as IngestImageInput],
+        name: 'collection-image-ingest',
+        userId,
+      });
     }
 
     await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);

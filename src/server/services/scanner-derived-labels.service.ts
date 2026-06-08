@@ -51,7 +51,7 @@ type DerivationRule = {
   /** All labels in this list must have triggered for the rule to fire. */
   requires: string[];
   /** At least one label in this list must have triggered. (Used for
-   * AND-of-ORs derivations like csam = young AND (sexual OR explicit). */
+   * AND-of-ORs derivations like csam = young AND (suggestive OR explicit). */
   requiresAnyOf?: string[];
 };
 
@@ -71,7 +71,16 @@ const PROMPT_RULES: RuleSet = {
     {
       emit: 'csam',
       requires: ['young'],
-      requiresAnyOf: ['sexual', 'suggestive', 'explicit'],
+      requiresAnyOf: ['suggestive', 'explicit'],
+    },
+    {
+      // Incest is now derived: the `familial` atomic label detects a family
+      // relation between people, and we require sexual content (suggestive
+      // or explicit) to co-fire. The old standalone `incest` XGuard label
+      // over-fired on any prompt containing a family-relation word.
+      emit: 'incest',
+      requires: ['familial'],
+      requiresAnyOf: ['suggestive', 'explicit'],
     },
   ],
 };
@@ -86,7 +95,7 @@ const TEXT_RULES: RuleSet = {
       // signal — derivation accepts it alongside suggestive/explicit so
       // legacy text-mode content scanned before the Suggestive/Explicit
       // labels landed still gets a synthetic csam if nsfw co-fires.
-      requiresAnyOf: ['nsfw', 'sexual', 'suggestive', 'explicit'],
+      requiresAnyOf: ['nsfw', 'suggestive', 'explicit'],
     },
   ],
 };

@@ -43,6 +43,8 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useMembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -54,7 +56,10 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { useGenerationContextStore } from '~/components/ImageGeneration/GenerationProvider';
+import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGenerationFormStore } from '~/store/generation-form.store';
+import { showWarningNotification } from '~/utils/notifications';
 import { useTipStore } from '~/store/tip.store';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -75,6 +80,11 @@ import {
 } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
+  pickStrongerGate,
+  rulesToStates,
+  type GateResolution,
+} from '~/shared/data-graph/generation/gates';
+import {
   LTXV23_MAX_QUANTITY,
   SDCPP_EXCLUDED_MODEL_IDS,
   SDCPP_SUPPORTED_ECOSYSTEMS,
@@ -90,8 +100,13 @@ import { useRemixOfId } from './hooks/useRemixOfId';
 import { remixStore } from '~/store/remix.store';
 import { useMetadataExtractionStore } from '~/store/metadata-extraction.store';
 import { useGeneratedItemWorkflows } from './hooks/useGeneratedItemWorkflows';
-import { generationGraphStore, REMIX_WORKFLOW_OVERRIDES } from '~/store/generation-graph.store';
+import {
+  generationGraphStore,
+  REMIX_WORKFLOW_OVERRIDES,
+  useGenerationGraphStore,
+} from '~/store/generation-graph.store';
 import { clearStorageForOutput } from './GenerationFormProvider';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 
 // =============================================================================
 // Helper Functions
@@ -292,6 +307,131 @@ function ConnectedBuzzTypeSelector() {
   const cost = useTotalGenerationCost();
   return (
     <BuzzTypeSelector cost={cost} loading={isLoading} error={isError} onRetry={() => refetch()} />
+  );
+}
+
+// =============================================================================
+// Self-Hosted Blocked Alert
+// =============================================================================
+
+/**
+ * Detects whether the SELECTED ecosystem is shown-but-disabled for the current
+ * user, merging every gate source — the self-hosted toggle and the rules model
+ * — into one resolution (the picker already filtered out hidden ones, so a
+ * selected value is at worst `disabled`/`memberOnly`). Returns the blocked
+ * ecosystem key (or undefined) plus its state + optional rule message. Consumed
+ * by `GenerationLayout`, which renders `SelfHostedBlockedAlert` in the same slot
+ * as `MembershipUpsell` and hides the form controls while blocked.
+ */
+export function useSelfHostedBlock() {
+  const { selfHostedMode, selfHostedDisabledEcosystems, gateRules } = useGenerationConfig();
+  const graphValues = useGraphValues<GenerationGraphTypes>();
+  const selectedEcosystem = (graphValues as { ecosystem?: string }).ecosystem;
+  if (!selectedEcosystem)
+    return { blockedEcosystem: undefined, state: undefined, message: undefined };
+
+  let resolution: GateResolution | undefined;
+  if (selfHostedDisabledEcosystems.includes(selectedEcosystem))
+    resolution = pickStrongerGate(resolution, {
+      state: selfHostedMode === 'memberOnly' ? 'memberOnly' : 'disabled',
+    });
+  const ruleRes = rulesToStates(gateRules).ecosystems.get(selectedEcosystem);
+  if (ruleRes) resolution = pickStrongerGate(resolution, ruleRes);
+
+  // A selected ecosystem is never 'hidden' (filtered from the picker); fold any
+  // stray hidden into the disabled alert defensively.
+  const state = resolution
+    ? resolution.state === 'memberOnly'
+      ? 'memberOnly'
+      : 'disabled'
+    : undefined;
+  return {
+    blockedEcosystem: resolution ? selectedEcosystem : undefined,
+    state,
+    message: resolution?.message,
+  };
+}
+
+/**
+ * Footer-spanning alert shown when the selected ecosystem can't be generated
+ * (self-hosted toggle or a gate rule). Styled like `MembershipUpsell`
+ * (edge-to-edge, bigger title, filled CTA). `memberOnly` → membership upsell
+ * with a "Become a member" button; `disabled` → temporarily unavailable. A
+ * rule's `message` overrides only the body copy, layered on the same
+ * badge/title/CTA. Renders null when not blocked.
+ */
+export function SelfHostedBlockedAlert() {
+  const { blockedEcosystem, state, message } = useSelfHostedBlock();
+  const serverDomains = useServerDomains();
+
+  if (!blockedEcosystem) return null;
+
+  const displayName = ecosystemByKey.get(blockedEcosystem)?.displayName ?? blockedEcosystem;
+
+  if (state === 'memberOnly') {
+    return (
+      <Alert color="yellow" className="-m-2 rounded-none rounded-t-xl">
+        <Text
+          size="sm"
+          fw={700}
+          c="var(--mantine-color-yellow-light-color)"
+          className="flex items-center gap-1.5"
+        >
+          <IconAlertTriangle size={16} />
+          {displayName} is temporarily members-only
+        </Text>
+        <Text size="xs" mt={4}>
+          {message ?? (
+            <>
+              We&apos;re in the middle of a GPU crunch, so {displayName} is limited to members at
+              the moment. Become a member to generate with it now, or pick a different base model.{' '}
+              <Text
+                span
+                c="var(--mantine-color-yellow-light-color)"
+                td="underline"
+                className="cursor-pointer"
+                component="a"
+                href="/articles/30980/a-gpu-crunch-and-bumpy-days-ahead"
+                target="_blank"
+                rel="noreferrer nofollow"
+              >
+                Read what&apos;s going on
+              </Text>
+            </>
+          )}
+        </Text>
+        <div className="mt-3 flex items-center gap-3">
+          <Button
+            component="a"
+            href={syncAccount(`//${serverDomains.green}/pricing`)}
+            target="_blank"
+            rel="noreferrer nofollow"
+            variant="filled"
+            className="flex-1"
+          >
+            Become a member
+          </Button>
+        </div>
+      </Alert>
+    );
+  }
+
+  return (
+    <Alert color="red" className="-m-2 rounded-none rounded-t-xl">
+      <Text
+        size="sm"
+        fw={700}
+        c="var(--mantine-color-red-light-color)"
+        className="flex items-center gap-1.5"
+      >
+        <IconAlertTriangle size={16} />
+        {displayName} is currently unavailable
+      </Text>
+      <Text size="xs" mt={4}>
+        {message ??
+          `${displayName} generation is temporarily disabled. Choose a different base model or try again later.`}
+      </Text>
+    </Alert>
   );
 }
 
@@ -784,6 +924,40 @@ function QuantityFieldInner({
 }
 
 // =============================================================================
+// BlueBuzzMatureReminder Component
+// =============================================================================
+
+/**
+ * Compact reminder shown below the priority alerts once a non-member on .red has
+ * acknowledged the Blue Buzz mature-content upsell (the full upsell alert in
+ * GenerationLayout only renders while it still needs acknowledgment). Keeps the
+ * limitation visible without re-blocking the submit footer.
+ */
+function BlueBuzzMatureReminder() {
+  const { variant, acknowledged } = useMembershipUpsell();
+  const serverDomains = useServerDomains();
+
+  if (variant !== 'blue-on-red' || !acknowledged) return null;
+
+  return (
+    <Text size="xs" c="dimmed">
+      Blue Buzz can&apos;t generate mature content without{' '}
+      <Text
+        span
+        c="blue.4"
+        className="cursor-pointer"
+        component="a"
+        href={syncAccount(`//${serverDomains.green}/pricing`)}
+        target="_blank"
+        rel="noreferrer nofollow"
+      >
+        a membership
+      </Text>
+    </Text>
+  );
+}
+
+// =============================================================================
 // FormFooter Component
 // =============================================================================
 
@@ -797,6 +971,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const { resources: resourceData } = useResourceDataContext();
   const invalidateWhatIf = useInvalidateWhatIf();
   const membershipUpsell = useMembershipUpsell();
+  const { trackAction } = useTrackEvent();
+  const generationContextStore = useGenerationContextStore();
 
   // Get validation state from whatIf context
   const { canEstimateCost, validationErrors } = useWhatIfContext();
@@ -849,11 +1025,104 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const clearWarning = () => setPromptWarning(null);
 
   const handleSubmit = async () => {
+    // Generation funnel telemetry — ordering matches legacy GenForm semantics.
+    //
+    // Legacy: RHF's `onError` fires BEFORE GenForm's `canGenerate` short-
+    // circuit, so a rate-limited+invalid submit collapses to isValid:false
+    // (never reaches the rate-limited branch). If v2 checked canGenerate
+    // first, the same case would collapse to isRateLimited:true — making
+    // `isRateLimited:true AND formVersion='new'` a strict superset of
+    // legacy. Run graph.validate() FIRST so the two paths agree on which
+    // signal wins in the overlap case.
+    //
+    // The v2 form's SubmitButton wires `onClick` directly (not through
+    // GenForm), so the GenForm canGenerate short-circuit never runs here —
+    // we mirror it inline below after validation passes.
+    //
+    // Exactly ONE Generator_Submit event is emitted per click:
+    //   - validation fails           → emit { isValid: false } and return
+    //   - validation passes + rate-limited → emit { isValid: true, isRateLimited: true } and return
+    //   - validation passes + not rate-limited → emit { isValid: true } and proceed
     const result = graph.validate();
+    const fromAction = useGenerationGraphStore.getState().lastEntryAction;
 
+    // Validation-fail branch. Pairs with the `isValid:true` emit below so the
+    // data team has a complete attempt funnel. We deliberately do NOT also
+    // check canGenerate here — matching legacy collapse where the validation
+    // failure is the only signal emitted.
     if (!result.success) {
+      try {
+        const submitSnapshot = graph.getSnapshot() as ResourceSnapshot;
+        trackAction({
+          type: 'Generator_Submit',
+          details: {
+            // modelVersionId: snapshot.model is the Checkpoint resource node;
+            // .id on a resource node IS ModelVersion.id, not the parent
+            // Model.id. The graph snapshot field is named `model` for
+            // historical reasons.
+            modelVersionId: submitSnapshot.model?.id,
+            fromAction,
+            hasRemixOfId: !!remixOfId,
+            formVersion: 'new',
+            isValid: false,
+          },
+        }).catch(() => undefined);
+      } catch {
+        // Telemetry must never block a submission.
+      }
       console.log('Validation failed:', result.errors);
       return;
+    }
+
+    // Rate-limited branch. Only reached when validation already passed
+    // (legacy parity: RHF rejects before GenForm checks canGenerate, so
+    // invalid+rate-limited collapses to isValid:false for both paths).
+    // Emits isValid:true + isRateLimited:true because the submit would
+    // have been valid; only the concurrent-request cap stopped it.
+    // `formVersion: 'new'` keeps this discriminable from the legacy /
+    // video rate-limit emits (which still emit isValid:false — they
+    // pre-date this ordering pass).
+    const contextSnapshot = generationContextStore.getState();
+    if (!contextSnapshot.canGenerate) {
+      try {
+        trackAction({
+          type: 'Generator_Submit',
+          details: {
+            fromAction,
+            formVersion: 'new',
+            isValid: true,
+            isRateLimited: true,
+          },
+        }).catch(() => undefined);
+      } catch {
+        // Telemetry must never block UI.
+      }
+      showWarningNotification({
+        message:
+          contextSnapshot.requestsRemaining === 0
+            ? `You are already generating at your limit: ${contextSnapshot.queued.length}`
+            : 'Request queued. Your generation request will begin shortly.',
+      });
+      return;
+    }
+
+    // Happy path — validation + rate-limit both clear. Emit Generator_Submit
+    // BEFORE the buzz-transaction prompt so click-and-abandon (cancel at
+    // confirm / insufficient-buzz) is still captured.
+    try {
+      const submitSnapshot = graph.getSnapshot() as ResourceSnapshot;
+      trackAction({
+        type: 'Generator_Submit',
+        details: {
+          modelVersionId: submitSnapshot.model?.id,
+          fromAction,
+          hasRemixOfId: !!remixOfId,
+          formVersion: 'new',
+          isValid: true,
+        },
+      }).catch(() => undefined);
+    } catch {
+      // Telemetry must never block a submission.
     }
 
     setSubmitError(undefined);
@@ -1037,12 +1306,14 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         onClearInsufficientBuzz={() => setInsufficientBuzzError(false)}
       />
 
+      <BlueBuzzMatureReminder />
+
       {!membershipUpsell.needsAcknowledgment && (
         <div className="flex h-[52px] items-stretch gap-2">
           <QuantityField />
           <Button.Group className="flex-1">
             <SubmitButton
-              isLoading={generateMutation.isLoading || isMinLoading}
+              isLoading={generateMutation.isPending || isMinLoading}
               onSubmit={handleSubmit}
             />
             {currentUser && <ConnectedBuzzTypeSelector />}

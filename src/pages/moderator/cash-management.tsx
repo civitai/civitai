@@ -24,7 +24,13 @@ import { trpc } from '~/utils/trpc';
 type AccountType = 'cashPending' | 'cashSettled';
 type Direction = 'grant' | 'deduct';
 
-const refundableStatuses = new Set(['Paid', 'Scheduled', 'Submitted', 'InternalValue']);
+const refundableStatuses = new Set([
+  'Paid',
+  'Scheduled',
+  'Submitted',
+  'InternalValue',
+  'Reclaimed',
+]);
 
 function centsToDollars(cents: number) {
   return (cents / 100).toFixed(2);
@@ -283,6 +289,8 @@ export function CashManagementPage() {
                                 ? 'green'
                                 : w.status === 'Rejected' || w.status === 'Canceled'
                                 ? 'red'
+                                : w.status === 'Reclaimed'
+                                ? 'gray'
                                 : 'yellow'
                             }
                             variant="light"
@@ -342,7 +350,7 @@ export function CashManagementPage() {
             </Button>
             <Button
               color={direction === 'grant' ? 'green' : 'red'}
-              loading={adjustMutation.isLoading}
+              loading={adjustMutation.isPending}
               onClick={handleSubmit}
             >
               Confirm {direction === 'grant' ? 'Grant' : 'Deduction'}
@@ -374,7 +382,7 @@ export function CashManagementPage() {
               <Button variant="default" onClick={() => setRefundTarget(null)}>
                 Cancel
               </Button>
-              <Button color="orange" loading={refundMutation.isLoading} onClick={handleRefund}>
+              <Button color="orange" loading={refundMutation.isPending} onClick={handleRefund}>
                 Confirm Refund
               </Button>
             </Group>

@@ -8,15 +8,23 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
+import client from 'prom-client';
 import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
+import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import {
   getAllImages,
   getAllImagesIndex,
   getImagesFromFeedSearch,
 } from '~/server/services/image.service';
+import { imageMetaCache } from '~/server/redis/caches';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import {
+  acquireBulkheadSlot,
+  BulkheadFullError,
+  HEAVY_REQUEST_CONCURRENCY,
+} from '~/server/utils/request-bulkhead';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -80,9 +88,25 @@ const imagesEndpointSchema = z.object({
   baseModels: commaDelimitedEnumArray([...baseModels]).optional(),
   withMeta: booleanString().default(false),
   requiringMeta: booleanString().optional(),
+  flatMeta: booleanString().optional(),
 });
 
+// Reuse the shared images-search metrics bundle (idempotent registration on the
+// default registry that /api/metrics scrapes). This times the FULL REST handler
+// — including enrichment + JSON serialization, the actual pin cost — which the
+// inner getImagesFromSearch timer doesn't capture. route label keeps it queryable
+// alongside the search-fn timing without extra cardinality.
+const { requestDurationSeconds } = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
+
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Started AFTER param validation + the paging guard so cheap 400/429 rejects
+  // aren't recorded as ~0ms heavy requests, which would dilute the heavy-tail P99
+  // this metric exists to measure. (Also the correct slot for the bulkhead merge:
+  // the #2428 acquire goes immediately above this, so a 503-rejected request is
+  // never timed.) Ended in finally; `?.` because early returns leave it unstarted.
+  let endTimer: (() => void) | undefined;
+
+  let releaseSlot: (() => void) | undefined;
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
@@ -90,7 +114,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const session = await getServerAuthSession({ req, res });
 
     // Handle pagination
-    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, ...data } = reqParams.data;
+    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, ...data } =
+      reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
     if (usingPaging) {
@@ -103,6 +128,29 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
       ({ skip } = getPagination(limit, page));
     }
+
+    // Per-pod concurrency cap (shared with the tRPC feed via the 'heavy-image' key):
+    // fast-fail with 503 when this pod is already saturated with heavy image work,
+    // so a backlog can't pin the single JS thread → probe timeout → Error/137.
+    // Acquired AFTER param validation + the paging guard so cheap 400/429 rejects
+    // don't consume a heavy slot. no-store so an edge layer can't cache the 503
+    // and turn a momentary shed into a multi-minute outage. Released in the finally
+    // below — NOT on res 'close', which can lag the actual heavy work by the
+    // keep-alive teardown and would hold the slot (and shed) long after the JS
+    // thread is free. Symmetric with the tRPC heavyProcedure's finally release.
+    try {
+      releaseSlot = acquireBulkheadSlot('heavy-image', HEAVY_REQUEST_CONCURRENCY);
+    } catch (e) {
+      if (e instanceof BulkheadFullError) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '2');
+        return res.status(503).json({ error: 'Server busy, please retry shortly.' });
+      }
+      throw e;
+    }
+
+    // Timed only for admitted requests (bulkhead 503 returns above, before this).
+    endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
 
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);
@@ -151,11 +199,13 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           limit,
           skip,
           cursor,
-          include: ['metaSelect', 'tagIds', 'profilePictures'],
+          // Only fetch tagIds and profilePictures here; metaSelect is fetched
+          // on-demand in the controller below to avoid query filtering.
+          include: ['tagIds', 'profilePictures'],
           periodMode: 'published',
           headers: { src: '/api/v1/images' },
           browsingLevel: _browsingLevel,
-          withMeta,
+          withMeta: false,
           user: session?.user,
           disableMinor: true,
           disablePoi: true,
@@ -169,10 +219,10 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           limit,
           skip,
           cursor,
-          include: ['metaSelect', 'tagIds', 'profilePictures'],
+          include: ['tagIds', 'profilePictures'],
           periodMode: 'published',
           browsingLevel: _browsingLevel,
-          withMeta,
+          withMeta: false,
           user: session?.user,
           useCombinedNsfwLevel: !features.canViewNsfw,
           disableMinor: true,
@@ -187,10 +237,10 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           limit,
           skip,
           cursor,
-          include: ['metaSelect', 'tagIds', 'profilePictures'],
+          include: ['tagIds', 'profilePictures'],
           periodMode: 'published',
           browsingLevel: _browsingLevel,
-          withMeta,
+          withMeta: false,
           currentUserId: session?.user?.id,
           isModerator: session?.user?.isModerator,
           useCombinedNsfwLevel: !features.canViewNsfw,
@@ -198,6 +248,11 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           disablePoi: true,
           actor,
         });
+
+    let imageMetas: Record<number, { id: number; meta?: any }> = {};
+    if (withMeta && items.length > 0) {
+      imageMetas = await imageMetaCache.fetch(items.map((img) => img.id));
+    }
 
     const metadata: Metadata = {
       nextCursor,
@@ -233,7 +288,12 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
             heartCount: image.stats?.heartCountAllTime ?? 0,
             commentCount: image.stats?.commentCountAllTime ?? 0,
           },
-          meta: image.meta,
+          meta: (() => {
+            if (!withMeta) return null;
+            const imageMeta = imageMetas[image.id]?.meta ?? null;
+            const useFlat = flatMeta !== undefined ? flatMeta : !useLegacyMethod;
+            return useFlat ? imageMeta : { id: image.id, meta: imageMeta };
+          })(),
           username: image.user.username,
           baseModel: image.baseModel,
           modelVersionIds: image.modelVersionIds,
@@ -249,6 +309,11 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       error: trpcError.message,
       code: trpcError.code,
     });
+  } finally {
+    endTimer?.();
+    // Release the heavy slot as soon as the handler resolves (synchronous
+    // serialization — the actual pin cost — is done by now), not on socket close.
+    releaseSlot?.();
   }
 });
 

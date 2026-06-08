@@ -23,7 +23,7 @@ export const FavoriteBadge = ({
   const theme = useMantineTheme();
   const [hasReacted, setHasReacted] = useState(!!userReacted);
   const [count, setCount] = useState(hasReacted && !initialCount ? 1 : initialCount ?? 0);
-  const { mutate, isLoading } = trpc.reaction.toggle.useMutation();
+  const { mutate, isPending: isLoading } = trpc.reaction.toggle.useMutation();
 
   const toggleReaction = () => {
     setCount((c) => (hasReacted ? c - 1 : c + 1));

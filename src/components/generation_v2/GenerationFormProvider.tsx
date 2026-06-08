@@ -7,11 +7,10 @@
 
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import {
-  useGatedEcosystems,
-  useGatedVersionIds,
-} from '~/components/generation_v2/hooks/useGatedEcosystems';
+  useGenerationConfig,
+  useGenerationStatus,
+} from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { DataGraphProvider, useDataGraph } from '~/libs/data-graph/react';
@@ -152,6 +151,17 @@ export function getLastUsedCheckpointIdForEcosystem(ecosystemKey: string): numbe
 // Storage Adapter
 // =============================================================================
 
+/**
+ * Ecosystem keys whose cfgScale/steps should be scoped per model version.
+ * Only ecosystems that ship a turbo/distilled variant with meaningfully
+ * different slider ranges than their base variant — switching between
+ * variants would otherwise clamp values one-way (e.g. base cfg=10 → turbo
+ * cfg=2 → switch back keeps cfg=2).
+ *
+ * Add new ecosystems here when introducing a turbo/distilled variant.
+ */
+const TURBO_VARIANT_ECOSYSTEMS = new Set<string>(['Lens', 'Ernie', 'ZImageTurbo', 'ZImageBase']);
+
 const storageAdapter = createLocalStorageAdapter({
   prefix: STORAGE_KEY,
   groups: [
@@ -188,6 +198,25 @@ const storageAdapter = createLocalStorageAdapter({
         return group.ecosystemIds.includes(eco.id);
       },
     })),
+    // cfgScale + steps are scoped per model version for ecosystems that ship
+    // a turbo (or otherwise distilled) variant alongside a base variant, where
+    // the two have meaningfully different slider ranges. Without this, turbo's
+    // tight ranges and base's wide ones trample each other on switch.
+    //   - Lens normal (cfg 1-20, steps 1-50) vs turbo (cfg 1-2, steps 1-12)
+    //   - Ernie base/turbo (same ranges, but different defaults)
+    //   - ZImageBase (cfg 1-10, steps 1-50) vs ZImageTurbo (cfg 1-2, steps 1-15)
+    // Conditional + non-wildcard so it joins the pre-claim phase and prevents
+    // upstream wildcards from also writing duplicate copies to their storage.
+    {
+      name: 'ecosystem',
+      keys: ['cfgScale', 'steps'],
+      scope: ['ecosystem', 'model.id'],
+      condition: (ctx) => {
+        const model = ctx.model as { id?: number } | undefined;
+        if (model?.id == null) return false;
+        return TURBO_VARIANT_ECOSYSTEMS.has(ctx.ecosystem as string);
+      },
+    },
     // Model-family specific settings scoped to individual ecosystem (for standalone ecosystems)
     // Values for inactive nodes are automatically retained in storage
     // (e.g., cfgScale/steps when switching to Ultra mode which doesn't have them)
@@ -226,8 +255,7 @@ function InnerProvider({
   const status = useGenerationStatus();
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
-  const gatedEcosystems = useGatedEcosystems();
-  const gatedVersionIds = useGatedVersionIds();
+  const { selfHostedDisabledEcosystems, selfHostedMode, gateRules } = useGenerationConfig();
   const { registerResourceId, unregisterResourceId } = useResourceDataContext();
 
   const isModerator = !!currentUser?.isModerator;
@@ -245,8 +273,9 @@ function InnerProvider({
         tier: status.tier,
       },
       flags: featureFlags,
-      gatedEcosystems,
-      gatedVersionIds,
+      selfHostedDisabledEcosystems,
+      selfHostedMode,
+      gateRules,
     }),
     [
       status.limits.quantity,
@@ -254,8 +283,9 @@ function InnerProvider({
       status.tier,
       isModerator,
       featureFlags,
-      gatedEcosystems,
-      gatedVersionIds,
+      selfHostedDisabledEcosystems,
+      selfHostedMode,
+      gateRules,
     ]
   );
 

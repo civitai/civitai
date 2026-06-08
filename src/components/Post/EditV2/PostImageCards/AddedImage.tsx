@@ -231,7 +231,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
           title: 'Delete image',
           message: 'Are you sure you want to delete this image?',
           labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          confirmProps: { color: 'red', loading: deleteImageMutation.isLoading },
+          confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
           onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.id }),
         },
       });
@@ -305,9 +305,9 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         isMinor,
         onDelete: handleDelete,
         onEditMetaClick: handleEditMetaClick,
-        isDeleting: deleteImageMutation.isLoading,
-        isUpdating: updateImageMutation.isLoading,
-        isAddingResource: addResourceMutation.isLoading,
+        isDeleting: deleteImageMutation.isPending,
+        isUpdating: updateImageMutation.isPending,
+        isAddingResource: addResourceMutation.isPending,
         toggleHidePrompt,
         addResource,
         isPendingManualAssignment,
@@ -564,7 +564,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
             color="violet"
             size="sm"
             onClick={handleCopyResource}
-            loading={copyResourceMutation.isLoading}
+            loading={copyResourceMutation.isPending}
           >
             <IconCopyPlus size={16} />
           </LegacyActionIcon>
@@ -578,7 +578,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
             color="red"
             size="sm"
             onClick={handleRemoveResource}
-            loading={removeResourceMutation.isLoading}
+            loading={removeResourceMutation.isPending}
           >
             <IconTrash size={16} />
           </LegacyActionIcon>

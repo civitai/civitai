@@ -24,7 +24,7 @@ import {
   IconPackage,
   IconPuzzle,
 } from '@tabler/icons-react';
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import type { LinkedComponent } from '~/server/schema/model-file.schema';
@@ -96,45 +96,36 @@ export function RequiredComponentsSection({
 
   const [downloading, setDownloading] = useState(false);
 
-  // Track selected file for each component type
-  const [selectedFiles, setSelectedFiles] = useState<
-    Partial<Record<ModelFileComponentType, FileType>>
+  // Track user-selected file id per component type. Storing the id (not the
+  // FileType object) lets us derive the active file from the current files
+  // list, so stale selections from a prior version are auto-ignored.
+  const [selectedFileIds, setSelectedFileIds] = useState<
+    Partial<Record<ModelFileComponentType, number>>
   >({});
 
-  // Initialize selected files with best matches (only for types not yet selected)
-  useEffect(() => {
-    setSelectedFiles((prev) => {
-      const updated = { ...prev };
-      let changed = false;
-      for (const component of requiredComponents) {
-        if (!prev[component.type]) {
-          const bestMatch = getPrimaryFile(component.files, { metadata: userPreferences });
-          if (bestMatch) {
-            updated[component.type] = bestMatch;
-            changed = true;
-          }
-        }
-      }
-      return changed ? updated : prev;
+  // Resolve the active file per component: explicit selection -> best match -> first.
+  // Recomputes when versionId/files change because requiredComponents is derived from groupedFiles.
+  const resolvedComponents = useMemo(() => {
+    return requiredComponents.map((component) => {
+      const selectedId = selectedFileIds[component.type];
+      const fromSelection =
+        selectedId != null ? component.files.find((f) => f.id === selectedId) : undefined;
+      const bestMatch = getPrimaryFile(component.files, { metadata: userPreferences });
+      return { ...component, activeFile: fromSelection ?? bestMatch ?? component.files[0] };
     });
-  }, [requiredComponents, userPreferences]);
+  }, [requiredComponents, selectedFileIds, userPreferences]);
 
   // Calculate total size of selected components
   const totalSize = useMemo(() => {
     let total = 0;
-    for (const component of requiredComponents) {
-      const selectedFile = selectedFiles[component.type] || component.files[0];
-      if (selectedFile) {
-        total += selectedFile.sizeKB;
-      }
+    for (const component of resolvedComponents) {
+      if (component.activeFile) total += component.activeFile.sizeKB;
     }
     for (const lc of linkedComponents) {
-      if (lc.sizeKB) {
-        total += lc.sizeKB;
-      }
+      if (lc.sizeKB) total += lc.sizeKB;
     }
     return total;
-  }, [requiredComponents, selectedFiles, linkedComponents]);
+  }, [resolvedComponents, linkedComponents]);
 
   const needsPurchase = !canDownload && !!downloadPrice;
 
@@ -151,10 +142,11 @@ export function RequiredComponentsSection({
     setDownloading(true);
 
     const downloadUrls: string[] = [];
-    for (const component of requiredComponents) {
-      const selectedFile = selectedFiles[component.type] || component.files[0];
-      if (selectedFile) {
-        downloadUrls.push(createModelFileDownloadUrl({ versionId, fileId: selectedFile.id }));
+    for (const component of resolvedComponents) {
+      if (component.activeFile) {
+        downloadUrls.push(
+          createModelFileDownloadUrl({ versionId, fileId: component.activeFile.id })
+        );
       }
     }
     for (const lc of linkedComponents) {
@@ -215,7 +207,7 @@ export function RequiredComponentsSection({
           </Box>
 
           {/* Component list */}
-          {requiredComponents.map((component) => (
+          {resolvedComponents.map((component) => (
             <ComponentGroup
               key={component.type}
               files={component.files}
@@ -226,9 +218,9 @@ export function RequiredComponentsSection({
               isLoadingAccess={isLoadingAccess}
               archived={archived}
               onPurchase={onPurchase}
-              selectedFile={selectedFiles[component.type]}
+              selectedFile={component.activeFile}
               onSelectFile={(file) =>
-                setSelectedFiles((prev) => ({ ...prev, [component.type]: file }))
+                setSelectedFileIds((prev) => ({ ...prev, [component.type]: file.id }))
               }
             />
           ))}

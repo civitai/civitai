@@ -1,8 +1,10 @@
-import type { Counter, Histogram } from 'prom-client';
+import type { Counter, Gauge, Histogram } from 'prom-client';
 import client from 'prom-client';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
+// request-bulkhead is a pure leaf module (no imports), so this edge cannot form a cycle.
+import { bulkheadSnapshot } from '~/server/utils/request-bulkhead';
 
 const PROM_PREFIX = 'civitai_app_';
 export function registerCounter({ name, help }: { name: string; help: string }) {
@@ -28,6 +30,23 @@ export function registerCounterWithLabels<T extends string>({
     return new client.Counter({ name: PROM_PREFIX + name, help, labelNames });
   } catch (e) {
     return client.register.getSingleMetric(PROM_PREFIX + name) as Counter<T>;
+  }
+}
+
+export function registerGaugeWithLabels<T extends string>({
+  name,
+  help,
+  labelNames,
+}: {
+  name: string;
+  help: string;
+  labelNames: readonly T[];
+}) {
+  // Do this to deal with HMR in nextjs
+  try {
+    return new client.Gauge({ name: PROM_PREFIX + name, help, labelNames });
+  } catch (e) {
+    return client.register.getSingleMetric(PROM_PREFIX + name) as Gauge<T>;
   }
 }
 
@@ -134,6 +153,22 @@ export const cacheRevalidateCounter = registerCounterWithLabels({
   labelNames: ['cache_name', 'cache_type'] as const,
 });
 
+// tRPC per-procedure latency — wall-clock duration of the full middleware chain +
+// resolver, labeled by procedure path. Used to rank heavy-pool isolation
+// candidates by P99 x rate (the criterion behind the image-feed cutover). Bucket
+// layout (to 30s) keeps the long tail visible like images_search.
+//
+// ⚠️ HIGH CARDINALITY: `path` is a fixed enum of ~870 procedure names (NOT ~93 —
+// that's the router count), so this emits ~870 x (buckets+sum+count) series PER
+// POD. It is gated OPT-IN behind TRPC_PROCEDURE_METRICS (see trpc.ts) so only the
+// pools we point it at (api-primary, api-heavy) pay the cost. Buckets kept lean.
+export const trpcProcedureDuration = registerHistogram({
+  name: 'trpc_procedure_duration_seconds',
+  help: 'tRPC procedure wall-clock duration (full chain + resolver) by path',
+  labelNames: ['path'] as const,
+  buckets: [0.05, 0.25, 1, 2, 5, 10, 30],
+});
+
 // Image feed metrics
 export const imagesFeedWithoutIndexCounter = registerCounter({
   name: 'images_feed_without_index_total',
@@ -188,6 +223,31 @@ export const dbReadFallbackCounter = registerCounterWithLabels({
 declare global {
   // eslint-disable-next-line no-var
   var pgGaugeInitialized: boolean;
+  // eslint-disable-next-line no-var
+  var heavyBulkheadGaugeInitialized: boolean;
+}
+
+// Heavy-route bulkhead observability (per pod). collect()-based so it reflects the
+// live in-process state on each scrape with no per-request work. This is the signal
+// for tuning HEAVY_REQUEST_CONCURRENCY: rejects climbing means the pod is shedding.
+if (!global.heavyBulkheadGaugeInitialized) {
+  new client.Gauge({
+    name: PROM_PREFIX + 'heavy_bulkhead_active',
+    help: 'In-flight heavy-route bulkhead slots per key (per pod)',
+    labelNames: ['key'],
+    collect() {
+      for (const { key, active } of bulkheadSnapshot()) this.set({ key }, active);
+    },
+  });
+  new client.Gauge({
+    name: PROM_PREFIX + 'heavy_bulkhead_rejects',
+    help: 'Cumulative heavy-route bulkhead fast-fail rejects per key (per pod); monotonic, use rate()',
+    labelNames: ['key'],
+    collect() {
+      for (const { key, rejects } of bulkheadSnapshot()) this.set({ key }, rejects);
+    },
+  });
+  global.heavyBulkheadGaugeInitialized = true;
 }
 
 if (!global.pgGaugeInitialized) {

@@ -28,7 +28,7 @@ export async function ExifParser(file: File | string) {
 
   if (exif.UserComment) {
     // @ts-ignore - this is a hack to not have to rework our downstream code
-    exif.userComment = Int32Array.from(exif.UserComment);
+    exif.userComment = Uint8Array.from(exif.UserComment);
   }
 
   // Clone exif before each canParse to prevent cross-parser mutation

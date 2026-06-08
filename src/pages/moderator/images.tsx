@@ -632,9 +632,44 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 Removed for: {getDisplayName(image.tosReason)}
               </Badge>
             ) : null}
-            <ContentClamp maxHeight={150}>
-              {image.appeal?.reason ? <Text size="sm">{image.appeal.reason}</Text> : null}
-            </ContentClamp>
+            {!!image.reports?.length && (
+              <Stack gap={6}>
+                <Text size="xs" c="dimmed" inline>
+                  Reported for
+                </Text>
+                {image.reports.map((report) => (
+                  <Stack gap={2} key={report.id}>
+                    <Badge size="sm" color="orange" style={{ width: 'fit-content' }}>
+                      {splitUppercase(report.reason ?? '')}
+                    </Badge>
+                    {report.details && Object.keys(report.details).length > 0 ? (
+                      <ul className="m-0 list-disc pl-4">
+                        {Object.entries(report.details).map(([key, value]) => (
+                          <li key={key}>
+                            <Text size="xs">
+                              <Text fw="bold" span className="capitalize">
+                                {splitUppercase(key)}:
+                              </Text>{' '}
+                              {value}
+                            </Text>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </Stack>
+                ))}
+              </Stack>
+            )}
+            {image.appeal?.reason ? (
+              <Stack gap={2}>
+                <Text size="xs" c="dimmed" inline>
+                  Appeal
+                </Text>
+                <ContentClamp maxHeight={150}>
+                  <Text size="sm">{image.appeal.reason}</Text>
+                </ContentClamp>
+              </Stack>
+            ) : null}
           </Stack>
         </Card.Section>
       )}

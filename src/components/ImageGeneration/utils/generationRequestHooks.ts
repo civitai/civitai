@@ -126,7 +126,7 @@ export function useGetTextToImageRequests(
       excludeFailed: filters.excludeFailed,
     },
     {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : undefined),
       enabled: !!currentUser && options?.enabled,
     }
   );
@@ -276,7 +276,7 @@ export type UpdateImageStepMetadataArgs = {
 
 export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void }) {
   const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation({
+  const { mutate, isPending: isLoading } = trpc.orchestrator.patch.useMutation({
     onError: async (error) => {
       // Rollback optimistic update by refetching from server
       await queryClient.invalidateQueries({ queryKey, exact: false });
@@ -500,7 +500,7 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
 }
 
 export function usePatchTags() {
-  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation();
+  const { mutate, isPending: isLoading } = trpc.orchestrator.patch.useMutation();
   function patchTags(tags: TagsPatchSchema[]) {
     mutate({ tags });
   }

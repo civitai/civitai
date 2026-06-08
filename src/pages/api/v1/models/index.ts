@@ -1,5 +1,6 @@
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { CollectionType, ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
+import type { SearchResponse } from 'meilisearch';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
 import * as z from 'zod';
@@ -23,7 +24,7 @@ import { getUserBookmarkCollections } from '~/server/services/user.service';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { Flags } from '~/shared/utils/flags';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
-import { searchClient } from '~/server/meilisearch/client';
+import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { isDefined } from '~/utils/type-guards';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
@@ -107,18 +108,45 @@ export default MixedAuthEndpoint(async function handler(
   let meiliNextCursor: string | undefined;
   if (query) {
     const browsingLevelValues = Flags.instanceToArray(browsingLevel);
-    // Fetch IDs from Meilisearch
-    const meiliResult = await searchClient
-      ?.index(MODELS_SEARCH_INDEX)
-      .search<{ id: number }>(query, {
-        limit: limit ? limit + 1 : undefined,
-        filter: [
-          cursor ? `id < ${String(cursor)}` : undefined,
-          `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
-        ].filter(isDefined),
-        attributesToRetrieve: ['id'],
-        sort: ['id:desc'],
-      });
+    // Fetch IDs from Meilisearch.
+    // Wrap the SDK call under withMeili('search', ...) so a backend brownout
+    // is bounded by MEILI_CALL_TIMEOUT_MS instead of bleeding the event loop
+    // until Traefik's 30s router timeout — same pattern as PR #2351 and the
+    // service-layer wrap in model.service.ts:getModelsRaw.
+    //
+    // The MeiliCallTimeoutError is caught HERE (not re-thrown as TRPCError)
+    // because handleEndpointError() does JSON.parse(apiError.message) on
+    // every TRPCError, which would crash on our plain-text timeout message.
+    // Returning res.status(408) directly avoids that landmine entirely.
+    let meiliResult: SearchResponse<{ id: number }> | undefined;
+    try {
+      const client = searchClient;
+      meiliResult = client
+        ? await withMeili('search', () =>
+            client.index(MODELS_SEARCH_INDEX).search<{ id: number }>(query, {
+              limit: limit ? limit + 1 : undefined,
+              filter: [
+                cursor ? `id < ${String(cursor)}` : undefined,
+                `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
+              ].filter(isDefined),
+              attributesToRetrieve: ['id'],
+              sort: ['id:desc'],
+            })
+          )
+        : undefined;
+    } catch (e) {
+      if (e instanceof MeiliCallTimeoutError) {
+        // Override the public cache headers set by MixedAuthEndpoint —
+        // without this Cloudflare caches the 408 and turns a transient
+        // Meili brownout into a sticky 408 wall for every other
+        // unauthenticated caller with the same query.
+        res.setHeader('Cache-Control', 'no-store');
+        return res
+          .status(408)
+          .json({ error: 'Model search is temporarily overloaded — please retry.' });
+      }
+      throw e;
+    }
 
     meiliNextCursor = meiliResult?.hits.pop()?.id.toString();
     searchIds = meiliResult?.hits?.map((hit: { id: number }) => hit.id) ?? [];

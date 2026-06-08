@@ -176,23 +176,46 @@ export function Files() {
 
   const primaryAccept = { 'mime/type': primary.extensions };
   const additionalAccept = { 'mime/type': additional.extensions };
-  const handleReject = (rejectedFiles: FileRejection[]) => {
-    const errors = removeDuplicates(
-      rejectedFiles.flatMap((file) => file.errors),
-      'code'
-    )
-      .map((error) => error.message)
-      .join('\n');
-    const supportedTypes = [...new Set([...primary.extensions, ...additional.extensions])].join(
-      ', '
-    );
-    showErrorNotification({
-      title: 'File not accepted',
-      error: new Error(
-        `${errors}\n\nSupported file types: ${supportedTypes}. If uploading a variant of the same model, ensure the file format matches.`
-      ),
-    });
-  };
+  const makeRejectHandler =
+    (section: 'primary' | 'additional') => (rejectedFiles: FileRejection[]) => {
+      const sectionConfig = section === 'primary' ? primary : additional;
+      const otherConfig = section === 'primary' ? additional : primary;
+      const otherLabel = section === 'primary' ? 'Additional Components' : 'Model Files';
+
+      const otherErrors = removeDuplicates(
+        rejectedFiles.flatMap((file) => file.errors),
+        'code'
+      )
+        .filter((error) => error.code !== 'file-invalid-type')
+        .map((error) => error.message)
+        .join('\n');
+
+      const misplaced = [
+        ...new Set(
+          rejectedFiles
+            .map((f) => `.${getFileExtension(f.file.name).toLowerCase()}`)
+            .filter(
+              (ext) =>
+                !sectionConfig.extensions.includes(ext) && otherConfig.extensions.includes(ext)
+            )
+        ),
+      ];
+
+      const hint = misplaced.length
+        ? `\n\nTry the "${otherLabel}" section below for: ${misplaced.join(', ')}.`
+        : '';
+
+      const prefix = otherErrors ? `${otherErrors}\n\n` : '';
+
+      showErrorNotification({
+        title: 'File not accepted',
+        error: new Error(
+          `${prefix}This section accepts: ${sectionConfig.extensions.join(', ')}.${hint}`
+        ),
+      });
+    };
+  const handleRejectPrimary = makeRejectHandler('primary');
+  const handleRejectAdditional = makeRejectHandler('additional');
 
   const handleLinkResource = (resource: GenerationResource) => {
     const componentType = modelTypeToComponentType(resource.model.type);
@@ -288,7 +311,7 @@ export function Files() {
                 }
                 accept={primaryAccept}
                 maxFiles={primary.maxFiles}
-                onReject={handleReject}
+                onReject={handleRejectPrimary}
               />
             </>
           ) : (
@@ -301,7 +324,7 @@ export function Files() {
                 onDrop(droppedFiles, defaultType);
               }}
               maxFiles={primary.maxFiles}
-              onReject={handleReject}
+              onReject={handleRejectPrimary}
               className={classes.dropzoneReject}
               useFsAccessApi={!isAndroidDevice()}
               styles={{
@@ -396,7 +419,7 @@ export function Files() {
             }
             accept={additionalAccept}
             maxFiles={additional.maxFiles}
-            onReject={handleReject}
+            onReject={handleRejectAdditional}
           />
           <Text size="xs" c="dimmed" ta="center">
             or
@@ -590,7 +613,7 @@ function FileCard({
   return (
     <Card
       style={{
-        opacity: deleteFileMutation.isLoading ? 0.2 : undefined,
+        opacity: deleteFileMutation.isPending ? 0.2 : undefined,
         borderColor: hasValidationError ? 'var(--mantine-color-red-6)' : undefined,
       }}
       withBorder
@@ -633,7 +656,7 @@ function FileCard({
               <LegacyActionIcon
                 color="red"
                 onClick={() => handleRemoveFile(versionFile.uuid)}
-                loading={deleteFileMutation.isLoading}
+                loading={deleteFileMutation.isPending}
                 style={{ marginTop: 18 }}
               >
                 <IconTrash size={16} />
@@ -645,7 +668,7 @@ function FileCard({
           <LegacyActionIcon
             color="red"
             onClick={() => handleRemoveFile(versionFile.uuid)}
-            loading={deleteFileMutation.isLoading}
+            loading={deleteFileMutation.isPending}
           >
             <IconTrash size={16} />
           </LegacyActionIcon>
@@ -826,7 +849,7 @@ function FileEditForm({
   const { errors, updateFile, validationCheck } = useFilesContext();
   const error = errors?.[index];
 
-  const { mutate, isLoading } = trpc.modelFile.update.useMutation({
+  const { mutate, isPending: isLoading } = trpc.modelFile.update.useMutation({
     onSuccess: () => {
       setInitialFile(versionFile);
     },

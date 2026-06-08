@@ -222,7 +222,7 @@ export const StripeCancelMembershipButton = ({
   onClose: () => void;
   hasUsedVaultStorage: boolean;
 }) => {
-  const { mutate, isLoading: connectingToStripe } =
+  const { mutate, isPending: connectingToStripe } =
     trpc.stripe.cancelSubscriptionWithFallback.useMutation({
       async onSuccess(data) {
         if (data.type === 'redirect') {
@@ -485,7 +485,7 @@ export const MembershipUpgradeModal = ({
 
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { mutate: upgrade, isLoading: upgrading } =
+  const { mutate: upgrade, isPending: upgrading } =
     trpc.stripe.createSubscriptionSession.useMutation({
       async onSuccess({ sessionId, url }) {
         await currentUser?.refresh();

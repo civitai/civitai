@@ -21,6 +21,7 @@ import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
+import { withSignals } from '~/server/signals/wrapper';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -228,7 +229,16 @@ export const addUsersHandler = async ({
 
     const dedupedUserIds = uniq(input.userIds);
     const existingChatMemberIds = existing.chatMembers.map((cm) => cm.userId);
-    const usersToAdd = dedupedUserIds.filter((uid) => !existingChatMemberIds.includes(uid));
+    let usersToAdd = dedupedUserIds.filter((uid) => !existingChatMemberIds.includes(uid));
+
+    // don't pull users who have disabled chat into a chat (mods bypass)
+    if (!ctx.user.isModerator && usersToAdd.length) {
+      const settings = await Promise.all(usersToAdd.map((id) => getUserSettings(id)));
+      usersToAdd = usersToAdd.filter((_, i) => settings[i]?.features?.chat !== false);
+      if (!usersToAdd.length) {
+        throw throwBadRequestError('The requested users are not accepting chat requests');
+      }
+    }
 
     const mergedUsers = [...existingChatMemberIds, ...usersToAdd];
     if (mergedUsers.length >= maxUsersPerChat) {
@@ -268,11 +278,13 @@ export const addUsersHandler = async ({
     });
 
     for (const cmId of usersToAdd) {
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(insertedChat as ChatCreateChat),
-      }).catch();
+      withSignals(() =>
+        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(insertedChat as ChatCreateChat),
+        })
+      ).catch(() => undefined);
     }
 
     // TODO return data?
@@ -379,11 +391,13 @@ export const modifyUserHandler = async ({
 
     if (!!status && status !== ChatMemberStatus.Invited) {
       // we want to await here to avoid race conditions
-      await fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
-        method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(`chat:${existing.chat.id}`), // * for all
-      });
+      await withSignals(() =>
+        fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+          method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(`chat:${existing.chat.id}`), // * for all
+        })
+      );
 
       if (status !== ChatMemberStatus.Ignored) {
         await createMessage({
@@ -483,7 +497,7 @@ export const getInfiniteMessagesHandler = async ({
       where: { chatId: input.chatId, ...dateLimit },
       take: input.limit + 1,
       cursor: input.cursor ? { id: input.cursor } : undefined,
-      orderBy: [{ id: input.direction }],
+      orderBy: [{ id: input.sortDirection }],
     });
 
     let nextCursor: number | undefined;
@@ -493,7 +507,7 @@ export const getInfiniteMessagesHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    if (input.direction === 'desc') {
+    if (input.sortDirection === 'desc') {
       items.reverse();
     }
 
@@ -673,19 +687,21 @@ export const isTypingHandler = async ({
       }
     }
 
-    fetch(
-      `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatTypingStatus}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chatId,
-          userId,
-          isTyping,
-          username: existingUser.user.username,
-        } as isTypingOutput),
-      }
-    ).catch();
+    withSignals(() =>
+      fetch(
+        `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatTypingStatus}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chatId,
+            userId,
+            isTyping,
+            username: existingUser.user.username,
+          } as isTypingOutput),
+        }
+      )
+    ).catch(() => undefined);
   } catch {
     // explicitly not reporting errors here, as it's just a transient signal
   }

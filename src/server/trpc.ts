@@ -4,6 +4,12 @@ import semver from 'semver';
 import superjson from 'superjson';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
+import {
+  acquireBulkheadSlot,
+  BulkheadFullError,
+  HEAVY_REQUEST_CONCURRENCY,
+} from '~/server/utils/request-bulkhead';
+import { trpcProcedureDuration } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -44,7 +50,7 @@ const t = initTRPC
     },
   });
 
-export const { router, middleware } = t;
+export const { router, middleware, createCallerFactory } = t;
 /**
  * Unprotected procedure
  **/
@@ -56,6 +62,24 @@ const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next
     });
   return next({ ctx: { user, acceptableOrigin } });
 });
+
+// The CLIENT hash is a single global key (forced-client-update version/date
+// gating), identical for every user and procedure. needsUpdate runs on EVERY
+// web-client tRPC procedure, and tRPC batches multiple procedures per HTTP
+// request, so an uncached hGetAll here is ~1 sysRedis round-trip PER PROCEDURE
+// across all web traffic. Cache it in-process with a short TTL: gating a
+// "refresh your browser" banner tolerates a few seconds of staleness trivially,
+// and this collapses thousands of reads/s into ~1 read / TTL / pod. Only
+// successful reads are cached, so the fail-open behavior below is preserved.
+const CLIENT_CONFIG_TTL_MS = 5_000;
+let clientConfigCache: { value: Record<string, string>; expiresAt: number } | null = null;
+async function getClientConfigCached(): Promise<Record<string, string>> {
+  const now = Date.now();
+  if (clientConfigCache && clientConfigCache.expiresAt > now) return clientConfigCache.value;
+  const client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
+  clientConfigCache = { value: client, expiresAt: now + CLIENT_CONFIG_TTL_MS };
+  return client;
+}
 
 // TODO - figure out a better way to do this
 async function needsUpdate(req?: NextApiRequest) {
@@ -69,7 +93,7 @@ async function needsUpdate(req?: NextApiRequest) {
   // would 500 every authenticated request during a sysRedis incident.
   let client: Record<string, string>;
   try {
-    client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
+    client = await getClientConfigCached();
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'needsUpdate', err);
     return false;
@@ -101,9 +125,10 @@ const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
   return result;
 });
 
-const applyDomainFeature = t.middleware((options) => {
+const applyDomainFeature = t.middleware(async (options) => {
   const { next, ctx } = options;
-  const input = (options.rawInput ?? {}) as { browsingLevel?: number };
+  // v11: `rawInput` became the async `getRawInput()`.
+  const input = ((await options.getRawInput()) ?? {}) as { browsingLevel?: number };
 
   // Verified search-engine crawlers (set by botDetectionMiddleware) are
   // treated as authorized only on mature-allowed domains. On the SFW site
@@ -173,11 +198,64 @@ const enforceTokenScope = t.middleware(({ ctx, meta, next }) => {
   return next();
 });
 
+// Time every procedure by path (full chain + resolver) so heavy-pool isolation
+// candidates can be ranked by P99 x rate — the criterion behind the image-feed
+// cutover. Placed first in the chain so it spans all downstream middleware + the
+// resolver. All exported procedures derive from publicProcedure, so this covers
+// every tRPC call. `path` is the fixed dotted procedure name.
+//
+// OPT-IN via TRPC_PROCEDURE_METRICS=true. This is a HIGH-cardinality metric:
+// ~870 procedures x (buckets + sum + count) PER POD. Enabling it everywhere
+// (api-primary 90-100 + heavy + SSR via createCaller + jobs ≈ 200 pods) would
+// add hundreds of thousands of Prometheus active series. Enable it only on the
+// pools whose isolation we're deciding (api-primary, api-heavy) and leave it off
+// on SSR/jobs/canary to bound the series count and keep an instant off-switch.
+const TRPC_PROCEDURE_METRICS = process.env.TRPC_PROCEDURE_METRICS === 'true';
+const recordProcedureDuration = t.middleware(async ({ path, next }) => {
+  if (!TRPC_PROCEDURE_METRICS) return next();
+  const end = trpcProcedureDuration.startTimer({ path });
+  try {
+    return await next();
+  } finally {
+    end();
+  }
+});
+
 export const publicProcedure = t.procedure
+  .use(recordProcedureDuration)
   .use(isAcceptableOrigin)
   .use(enforceClientVersion)
   .use(applyDomainFeature)
   .use(enforceTokenScope);
+
+// Per-pod concurrency cap for CPU-heavy procedures (see request-bulkhead.ts).
+// Fast-fails with 429 when a pod already has HEAVY_REQUEST_CONCURRENCY heavy
+// requests in flight, so a backlog can't pin the single JS thread → probe
+// timeout → Error/137. Keyed so the tRPC feed procedures and the REST
+// /api/v1/images handler share one per-pod budget (they hit the same heavy path).
+const withBulkhead = (key: string) =>
+  t.middleware(async ({ next }) => {
+    let release: () => void;
+    try {
+      release = acquireBulkheadSlot(key, HEAVY_REQUEST_CONCURRENCY);
+    } catch (e) {
+      if (e instanceof BulkheadFullError)
+        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Server busy — please retry.' });
+      throw e;
+    }
+    try {
+      return await next();
+    } finally {
+      release();
+    }
+  });
+
+/**
+ * Public procedure for CPU-heavy endpoints (e.g. the image feed). Adds a per-pod
+ * concurrency cap that fast-fails (429) under overload so a request backlog can't
+ * pin the single JS thread and take the pod down.
+ */
+export const heavyProcedure = publicProcedure.use(withBulkhead('heavy-image'));
 
 /**
  * Reusable middleware to ensure

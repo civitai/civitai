@@ -13,7 +13,7 @@ export function PostEditLayout({ children }: { children: React.ReactNode }) {
 
   const { data, isInitialLoading } = trpc.post.getEdit.useQuery(
     { id: postId },
-    { enabled: postId > 0, keepPreviousData: false }
+    { enabled: postId > 0, placeholderData: undefined }
   );
 
   const isCreatePage = !postId;

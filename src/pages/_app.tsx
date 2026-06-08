@@ -45,6 +45,7 @@ import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
+import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsentProvider';
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
@@ -73,10 +74,7 @@ import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
-import {
-  parseVerifiedBotHeader,
-  VERIFIED_BOT_HEADER,
-} from '~/server/utils/bot-detection/header';
+import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
 applyNodeOverrides();
@@ -172,71 +170,77 @@ function MyApp(props: CustomAppProps) {
         <title>Civitai | Share your models</title>
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
-        {/* <ErrorBoundary> */}
-        <SessionProvider
-          session={session ? session : !hasAuthCookie ? null : undefined}
-          refetchOnWindowFocus={false}
-          refetchWhenOffline={false}
+        <ThirdPartyConsentProvider
+          region={region}
+          initialConsent={cookies.consent}
+          loggedIn={!!session || hasAuthCookie}
         >
-          <UpdateRequiredWatcher>
-            <IsClientProvider>
-              <ClientHistoryStore />
-              <RegisterCatchNavigation />
-              <RouterTransition />
-              {/* <ChadGPT isAuthed={!!session} /> */}
-              <FeatureFlagsProvider flags={flags}>
-                <GoogleAnalytics />
-                <AccountProvider>
-                  <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
-                    <ErrorBoundary>
-                      <BrowserSettingsProvider>
-                        <BrowsingLevelProvider>
-                          <BrowsingSettingsAddonsProvider>
-                            <SignalsProviderStack>
-                              <ActivityReportingProvider>
-                                <ReferralsProvider {...cookies.referrals}>
-                                  <FiltersProvider>
-                                    <AdsProvider>
-                                      <HiddenPreferencesProvider>
-                                        <CivitaiLinkProvider>
-                                          <BrowserRouterProvider>
-                                            <IntersectionObserverProvider>
-                                              <ToursProvider>
-                                                <AuctionContextProvider>
-                                                  <BaseLayout>
-                                                    {isProd && <TrackPageView />}
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      {/* <StripeSetupSuccessProvider /> */}
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </BaseLayout>
-                                                </AuctionContextProvider>
-                                              </ToursProvider>
-                                            </IntersectionObserverProvider>
-                                          </BrowserRouterProvider>
-                                        </CivitaiLinkProvider>
-                                      </HiddenPreferencesProvider>
-                                    </AdsProvider>
-                                  </FiltersProvider>
-                                </ReferralsProvider>
-                              </ActivityReportingProvider>
-                            </SignalsProviderStack>
-                          </BrowsingSettingsAddonsProvider>
-                        </BrowsingLevelProvider>
-                      </BrowserSettingsProvider>
-                    </ErrorBoundary>
-                  </CivitaiSessionProvider>
-                </AccountProvider>
-              </FeatureFlagsProvider>
-            </IsClientProvider>
-          </UpdateRequiredWatcher>
-        </SessionProvider>
-        {/* </ErrorBoundary> */}
+          {/* <ErrorBoundary> */}
+          <SessionProvider
+            session={session ? session : !hasAuthCookie ? null : undefined}
+            refetchOnWindowFocus={false}
+            refetchWhenOffline={false}
+          >
+            <UpdateRequiredWatcher>
+              <IsClientProvider>
+                <ClientHistoryStore />
+                <RegisterCatchNavigation />
+                <RouterTransition />
+                {/* <ChadGPT isAuthed={!!session} /> */}
+                <FeatureFlagsProvider flags={flags}>
+                  <GoogleAnalytics />
+                  <AccountProvider>
+                    <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
+                      <ErrorBoundary>
+                        <BrowserSettingsProvider>
+                          <BrowsingLevelProvider>
+                            <BrowsingSettingsAddonsProvider>
+                              <SignalsProviderStack>
+                                <ActivityReportingProvider>
+                                  <ReferralsProvider {...cookies.referrals}>
+                                    <FiltersProvider>
+                                      <AdsProvider>
+                                        <HiddenPreferencesProvider>
+                                          <CivitaiLinkProvider>
+                                            <BrowserRouterProvider>
+                                              <IntersectionObserverProvider>
+                                                <ToursProvider>
+                                                  <AuctionContextProvider>
+                                                    <BaseLayout>
+                                                      {isProd && <TrackPageView />}
+                                                      <CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        {/* <StripeSetupSuccessProvider /> */}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </CustomModalsProvider>
+                                                    </BaseLayout>
+                                                  </AuctionContextProvider>
+                                                </ToursProvider>
+                                              </IntersectionObserverProvider>
+                                            </BrowserRouterProvider>
+                                          </CivitaiLinkProvider>
+                                        </HiddenPreferencesProvider>
+                                      </AdsProvider>
+                                    </FiltersProvider>
+                                  </ReferralsProvider>
+                                </ActivityReportingProvider>
+                              </SignalsProviderStack>
+                            </BrowsingSettingsAddonsProvider>
+                          </BrowsingLevelProvider>
+                        </BrowserSettingsProvider>
+                      </ErrorBoundary>
+                    </CivitaiSessionProvider>
+                  </AccountProvider>
+                </FeatureFlagsProvider>
+              </IsClientProvider>
+            </UpdateRequiredWatcher>
+          </SessionProvider>
+          {/* </ErrorBoundary> */}
+        </ThirdPartyConsentProvider>
       </ThemeProvider>
 
-      {isDev && <ReactQueryDevtools position="bottom-right" />}
+      {isDev && <ReactQueryDevtools buttonPosition="bottom-right" />}
     </AppProvider>
   );
 }

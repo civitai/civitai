@@ -176,8 +176,8 @@ export function PresetControl() {
                   variant="subtle"
                   size="sm"
                   color="blue"
-                  disabled={updatePreset.isLoading}
-                  loading={updatePreset.isLoading}
+                  disabled={updatePreset.isPending}
+                  loading={updatePreset.isPending}
                 >
                   <IconDeviceFloppy size={16} />
                 </ActionIcon>

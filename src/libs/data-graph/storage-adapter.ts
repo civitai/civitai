@@ -368,6 +368,22 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
     // When a scope key changes, dependent keys will be re-evaluated
     this.registerScopeDependencies();
 
+    // Is `key` claimed by any explicit (non-wildcard) group that is currently
+    // "active" — i.e. unconditional, or conditional with a matching condition.
+    // Used to gate wildcard lookups: an explicit group whose condition does
+    // NOT match must not block the wildcard from reading the key, otherwise
+    // values fall into a black hole on load (save uses the same condition-
+    // aware logic via `conditionalClaimedKeys`).
+    const isActivelyClaimed = (k: string, ctx: Record<string, unknown>): boolean => {
+      for (const g of this.options.groups) {
+        if (g.keys === '*') continue;
+        if (!g.keys.includes(k)) continue;
+        if (g.condition && !g.condition(ctx)) continue;
+        return true;
+      }
+      return false;
+    };
+
     this.graph.setValueProvider((key, ctx) => {
       // First, check conditional scoped groups (highest priority when condition matches)
       for (const group of this.options.groups) {
@@ -401,7 +417,7 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
         if (!group.scope || group.condition) continue;
 
         if (group.keys === '*') {
-          if (explicitKeys.has(key)) continue;
+          if (isActivelyClaimed(key, ctx)) continue;
         } else {
           if (!group.keys.includes(key)) continue;
         }
@@ -427,7 +443,7 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
         if (group.scope) continue; // Only check unscoped groups
 
         if (group.keys === '*') {
-          if (explicitKeys.has(key)) continue;
+          if (isActivelyClaimed(key, ctx)) continue;
         } else {
           if (!group.keys.includes(key)) continue;
         }

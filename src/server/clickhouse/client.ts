@@ -136,6 +136,7 @@ export type UserActivityType =
   | 'Registration'
   | 'Login'
   | 'Account closure'
+  | 'Account restoration'
   | 'Subscribe'
   | 'Cancel'
   | 'Donate'
@@ -223,6 +224,11 @@ export const ActionType = [
   'CSAM_Help_Triggered',
   'ProfanitySearch',
   'BuzzLimit_Set',
+  // Generation funnel telemetry — top-of-funnel clicks + form submission.
+  // Joined to orchestration.jobs / images_created downstream by userId + ts.
+  'Model_Create_Click',
+  'Image_Remix_Click',
+  'Generator_Submit',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 

@@ -3,7 +3,7 @@ import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import dynamic from 'next/dynamic';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -224,17 +224,24 @@ export const useJoinKnightsNewOrder = () => {
     },
   });
 
-  const { data: playerData, isInitialLoading } = trpc.games.newOrder.getPlayer.useQuery(undefined, {
+  const {
+    data: playerData,
+    isInitialLoading,
+    error: playerError,
+  } = trpc.games.newOrder.getPlayer.useQuery(undefined, {
     enabled: joined,
     retry: 1,
-    onError: (error) => {
+  });
+  // v5: query onError removed — react to load failures via effect.
+  useEffect(() => {
+    if (playerError) {
       setJoined(false);
       showErrorNotification({
         title: 'Failed to load player data',
-        error: new Error(error.message),
+        error: new Error(playerError.message),
       });
-    },
-  });
+    }
+  }, [playerError]);
 
   const resetCareerMutation = trpc.games.newOrder.resetCareer.useMutation({
     onSuccess: async () => {
@@ -251,7 +258,7 @@ export const useJoinKnightsNewOrder = () => {
     join: joinKnightsNewOrderMutation.mutateAsync,
     resetCareer: resetCareerMutation.mutateAsync,
     isLoading: isInitialLoading || !!joining,
-    resetting: resetCareerMutation.isLoading,
+    resetting: resetCareerMutation.isPending,
     joined,
     viewedRatingGuide,
     setViewedRatingGuide,
@@ -327,11 +334,19 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
       return { prevQueue, prevPlayerData };
     },
     onError: (error, _variables, context) => {
-      showErrorNotification({ title: 'Failed to send rating', error: new Error(error.message) });
       if (context) {
-        // We are not going to revert the image queue to allow the user to keep rating
+        // Revert player optimistic update. Image queue is intentionally not reverted
+        // so the user can keep rating.
         queryUtils.games.newOrder.getPlayer.setData(undefined, context.prevPlayerData);
       }
+
+      // Rate-limit hit: refetch player so the server-computed cooldownUntil surfaces
+      // in the UI (banner + disabled buttons via useVotingCooldown).
+      if (error.data?.code === 'TOO_MANY_REQUESTS') {
+        queryUtils.games.newOrder.getPlayer.invalidate();
+      }
+
+      showErrorNotification({ title: 'Failed to send rating', error: new Error(error.message) });
     },
   });
 
@@ -350,9 +365,43 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
 
   return {
     addRating: handleAddRating,
-    isLoading: addRatingMutation.isLoading,
+    isLoading: addRatingMutation.isPending,
     skipRating: handleSkipImage,
   };
+};
+
+/**
+ * Tracks the active voting cooldown from `getPlayer` and exposes a live
+ * countdown. When the cooldown expires, invalidates `getPlayer` so any
+ * server-side state changes (e.g. another cooldown trip in a different tab)
+ * are reflected immediately.
+ */
+export const useVotingCooldown = () => {
+  const queryUtils = trpc.useUtils();
+  const { playerData } = useJoinKnightsNewOrder();
+  const cooldownUntil = playerData?.cooldownUntil ?? null;
+
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!cooldownUntil || cooldownUntil <= Date.now()) return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [cooldownUntil]);
+
+  const secondsRemaining = cooldownUntil
+    ? Math.max(0, Math.ceil((cooldownUntil - now) / 1000))
+    : 0;
+  const isLocked = secondsRemaining > 0;
+
+  // Once the timer hits zero, refetch player so any other state churn lands.
+  useEffect(() => {
+    if (cooldownUntil && secondsRemaining === 0) {
+      queryUtils.games.newOrder.getPlayer.invalidate();
+    }
+  }, [cooldownUntil, secondsRemaining, queryUtils]);
+
+  return { isLocked, secondsRemaining, cooldownUntil };
 };
 
 export const ratingOptions = [...browsingLevels, NsfwLevel.Blocked];
@@ -454,10 +503,10 @@ export const useInquisitorTools = () => {
     smitePayload: smitePlayerMutation.variables,
     cleanseSmite: cleanseSmiteMutation.mutate,
     cleansePayload: cleanseSmiteMutation.variables,
-    applyingSmite: smitePlayerMutation.isLoading,
-    cleansingSmite: cleanseSmiteMutation.isLoading,
+    applyingSmite: smitePlayerMutation.isPending,
+    cleansingSmite: cleanseSmiteMutation.isPending,
     resetPlayer: resetPlayerMutation.mutate,
-    resettingPlayer: resetPlayerMutation.isLoading,
+    resettingPlayer: resetPlayerMutation.isPending,
     resetPayload: resetPlayerMutation.variables,
   };
 };

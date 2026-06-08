@@ -45,6 +45,13 @@ export type GenerationResourceBase = {
    * §"Wildcards models vs generation resources".
    */
   wildcardSetId?: number;
+  /**
+   * Target version id from this version's `meta.generationAlias`, surfaced by
+   * `getResourceData`. When present, this resource is a "cover" that should be
+   * swapped for the target version before generation (e.g. image remix). See
+   * `swapGenerationAliases`.
+   */
+  aliasId?: number | null;
 };
 
 export type GenerationResource = GenerationResourceBase & {

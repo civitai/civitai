@@ -5,6 +5,7 @@ import type {
   XGuardModerationStepTemplate,
 } from '@civitai/client';
 import { submitWorkflow } from '@civitai/client';
+import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -12,6 +13,7 @@ import { env } from '~/env/server';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
@@ -35,8 +37,13 @@ export async function createImageIngestionRequest({
 }) {
   const metadata = { imageId };
   const edgeUrl = getEdgeUrl(url, { type });
+  // Idempotency key: if a submit returns 500 but actually created the workflow
+  // server-side, re-submitting with the same `externalId` returns the existing
+  // workflow instead of duplicating it (orchestrator dedupes on (userId, externalId)).
+  const externalId = randomUUID();
 
   const body: WorkflowTemplate = {
+    externalId,
     metadata,
     arguments: {
       mediaUrl: edgeUrl,
@@ -65,7 +72,7 @@ export async function createImageIngestionRequest({
                 mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
                 engine: 'civitai',
                 includeAgeClassification: true,
-                includeAIRecognition: true,
+                includeAIRecognition: false,
                 includeFaceRecognition: true,
                 includeAnimeRecognition: true,
               },
@@ -138,7 +145,7 @@ export async function createImageIngestionRequest({
                     },
                     engine: 'civitai',
                     includeAgeClassification: true,
-                    includeAIRecognition: true,
+                    includeAIRecognition: false,
                     includeFaceRecognition: true,
                     includeAnimeRecognition: true,
                   },
@@ -161,13 +168,18 @@ export async function createImageIngestionRequest({
       : undefined,
   };
 
-  const { data, error, response } = await submitWorkflow({
+  // Re-submit transient infra failures (5xx / no-response), reusing the same
+  // `externalId` so a 500 that actually created the workflow isn't duplicated.
+  const result = await submitWorkflowWithRetry({
     client: internalOrchestratorClient,
     query: wait ? { wait } : undefined,
     body,
   });
+  const { data, response, attempts } = result;
+  // `error` isn't present on every member of the result union — narrow with `in`.
+  const error = 'error' in result ? result.error : undefined;
 
-  const serverTiming = response.headers.get('Server-Timing');
+  const serverTiming = response?.headers.get('Server-Timing') ?? null;
 
   if (!data) {
     logToAxiom({
@@ -175,13 +187,15 @@ export async function createImageIngestionRequest({
       name: 'image-ingestion',
       imageId,
       url,
-      responseStatus: response.status,
+      externalId,
+      attempts,
+      responseStatus: response?.status,
       serverTiming,
       error,
     });
   }
 
-  return { data, body, error, status: response.status };
+  return { data, body, error, status: response?.status };
 }
 
 type XGuardModerationArgs = {
@@ -198,6 +212,16 @@ type XGuardModerationArgs = {
    * metadata only — not stored in the ClickHouse audit table. */
   userId?: number;
   labels?: string[];
+  /** Per-label policy/threshold/action overrides for this single request.
+   * Merges with the orchestrator's default registry. Useful for debug /
+   * policy-tuning paths (e.g. `/api/testing/xguard-test`) where we want to
+   * evaluate a candidate policy without modifying the live registry. */
+  labelOverrides?: Array<{
+    label: string;
+    action: string;
+    threshold: number;
+    policy: string;
+  }>;
   /** Override the default audit-result callback URL. Omit to use the standard
    * `/api/webhooks/text-moderation-result` endpoint (which is what makes audit
    * rows land in `scanner_label_results`). Pass `null` to suppress the
@@ -237,6 +261,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
     entityId,
     userId,
     labels,
+    labelOverrides,
     callbackUrl,
     wait,
     priority = 'normal',
@@ -303,7 +328,8 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
           mode: 'text' as const,
           text: args.content,
           labels,
-          storeFullResponse: true,
+          labelOverrides,
+          storeFullResponse: false,
         }
       : {
           mode: 'prompt' as const,
@@ -311,7 +337,8 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
           negativePrompt: args.negativePrompt ?? null,
           instructions: args.instructions ?? null,
           labels,
-          storeFullResponse: true,
+          labelOverrides,
+          storeFullResponse: false,
         };
 
   // The orchestrator submit can either return `{ data: null, error }` for a

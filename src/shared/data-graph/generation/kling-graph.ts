@@ -54,10 +54,14 @@ import {
   enumNode,
   imagesNode,
   createCheckpointGraph,
-  imageValueSchema,
-  videoValueSchema,
   type ResourceData,
 } from './common';
+// Import these leaf schemas directly from media-schemas (a zod-only leaf module)
+// rather than through common's re-export. common.ts participates in a
+// kling-graph <-> config/workflows import cycle, so reaching them via common
+// risks them being `undefined` at module-eval time depending on cycle order.
+import { imageValueSchema, videoValueSchema } from './media-schemas';
+import { klingVersionIds } from './version-ids';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isWorkflowOrVariant } from './config/workflows';
 
@@ -66,12 +70,6 @@ import { isWorkflowOrVariant } from './config/workflows';
 // =============================================================================
 
 /** Kling model version IDs */
-const klingVersionIds = {
-  v1_6: 2623815,
-  v2: 2623817,
-  v2_5_turbo: 2623821,
-  v3: 2698632,
-} as const;
 
 /** Options for Kling model selector */
 const klingVersionOptions = [

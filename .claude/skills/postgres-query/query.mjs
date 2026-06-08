@@ -75,6 +75,7 @@ let explain = false;
 let writable = false;
 let dataPacket = false;
 let notifications = false;
+let dev = false;
 let jsonOutput = false;
 let quiet = false;
 let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
@@ -89,6 +90,8 @@ for (let i = 0; i < args.length; i++) {
     dataPacket = true;
   } else if (arg === '--notifications') {
     notifications = true;
+  } else if (arg === '--dev') {
+    dev = true;
   } else if (arg === '--json') {
     jsonOutput = true;
   } else if (arg === '--quiet' || arg === '-q') {
@@ -137,6 +140,10 @@ if (notifications) {
   // notifications-db on DataPacket (read-only via SSH bastion tunnel).
   // Set NOTIFICATION_DB_REPLICA_URL in .env after starting the tunnel.
   connectionString = process.env.NOTIFICATION_DB_REPLICA_URL;
+} else if (dev) {
+  // Dev cnpg cluster via SSH bastion tunnel (port 15432).
+  // Writes still require --writable (the postgres superuser can write).
+  connectionString = process.env.DEV_DATABASE_URL;
 } else if (dataPacket) {
   connectionString = process.env.DATABASE_DATA_PACKET_URL;
 } else if (writable) {
@@ -148,6 +155,8 @@ if (notifications) {
 if (!connectionString) {
   if (notifications) {
     console.error('Error: NOTIFICATION_DB_REPLICA_URL is not set. Start the SSH tunnel and add it to .env (see SKILL.md).');
+  } else if (dev) {
+    console.error('Error: DEV_DATABASE_URL is not set. Start the SSH tunnel (ssh civitai -N) and add it to .env (see SKILL.md).');
   } else {
     console.error('Error: No database connection string found in environment');
   }
@@ -186,11 +195,13 @@ async function main() {
     if (!quiet) {
       const dbType = notifications
         ? 'NOTIFICATIONS-DB REPLICA via bastion (read-only)'
-        : dataPacket
-          ? 'DATA-PACKET REPLICA (read-only)'
-          : writable
-            ? 'PRIMARY (writable)'
-            : 'REPLICA (read-only)';
+        : dev
+          ? `DEV via bastion (${writable ? 'writable' : 'read-only'})`
+          : dataPacket
+            ? 'DATA-PACKET REPLICA (read-only)'
+            : writable
+              ? 'PRIMARY (writable)'
+              : 'REPLICA (read-only)';
       console.error(`Connected to ${dbType} (timeout: ${timeoutSeconds}s)\n`);
     }
 

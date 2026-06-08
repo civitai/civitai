@@ -92,7 +92,7 @@ export function RewardsBonusEventEditModal({
     [event?.id]
   );
 
-  const { mutate, isLoading } = trpc.rewardsBonusEvent.upsert.useMutation({
+  const { mutate, isPending: isLoading } = trpc.rewardsBonusEvent.upsert.useMutation({
     onSuccess: () => {
       queryUtils.rewardsBonusEvent.getPaged.invalidate();
       queryUtils.buzz.getUserMultipliers.invalidate();

@@ -46,8 +46,7 @@ import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
   createImage,
   deleteImageById,
-  ingestImage,
-  ingestImageBulk,
+  enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -907,10 +906,11 @@ export const upsertArticle = async ({
           });
         }
 
-        await userArticleCountCache.refresh(article.userId);
-
         return article;
       });
+
+      // Count-cache refresh hits Redis — run after commit, off the txn budget.
+      await userArticleCountCache.refresh(result.userId);
 
       await preventReplicationLag('article', result.id);
       await preventReplicationLag('userArticles', userId);
@@ -1121,12 +1121,13 @@ export const upsertArticle = async ({
         });
       }
 
-      await userArticleCountCache.refresh(updated.userId);
-
       return updated;
     });
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
+
+    // Count-cache refresh hits Redis — run after commit, off the txn budget.
+    await userArticleCountCache.refresh(result.userId);
 
     await preventReplicationLag('article', result.id);
     await preventReplicationLag('userArticles', result.userId);
@@ -1586,11 +1587,12 @@ export async function linkArticleContentImages({
 }): Promise<{ orphanedImageIds: number[] }> {
   const contentImages = getContentMedia(content);
 
-  const orphanedImageIds = await dbWrite.$transaction(async (tx) => {
+  const { orphanedImageIds, imagesToIngest } = await dbWrite.$transaction(async (tx) => {
     const imageUrls = contentImages.map((img) => img.url);
 
     // Track content image IDs for orphan detection
     let contentImageIds: number[] = [];
+    let imagesToIngest: { id: number; url: string; ingestion?: ImageIngestionStatus }[] = [];
 
     if (!cleanupOnly) {
       // Batch query: Get all existing images in one query
@@ -1653,18 +1655,7 @@ export async function linkArticleContentImages({
       const pendingExistingImages = existingImages.filter(
         (img) => img.ingestion === ImageIngestionStatus.Pending
       );
-      const imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
-      if (imagesToIngest.length > 0) {
-        // TODO.articleImageScan: remove the lowPriority flag
-        for (const img of imagesToIngest) {
-          await ingestImage({ image: img, lowPriority: true, userId, tx }).catch((error) => {
-            handleLogError(error, 'article-image-ingestion', {
-              articleId,
-              imageIds: newlyCreatedImages.map((i) => i.id),
-            });
-          });
-        }
-      }
+      imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
     } else {
       // In cleanupOnly mode, we still need to know which images are in the current content
       // so we can detect orphans. Query by URL to get their IDs.
@@ -1705,6 +1696,7 @@ export async function linkArticleContentImages({
     }
 
     // Find truly orphaned images (no connections to ANY entity)
+    let trulyOrphanedIds: number[] = [];
     if (orphanedIds.length > 0) {
       const trulyOrphaned = await tx.image.findMany({
         where: {
@@ -1713,11 +1705,21 @@ export async function linkArticleContentImages({
         },
         select: { id: true },
       });
-      return trulyOrphaned.map((img) => img.id);
+      trulyOrphanedIds = trulyOrphaned.map((img) => img.id);
     }
 
-    return [];
+    return { orphanedImageIds: trulyOrphanedIds, imagesToIngest };
   });
+
+  if (imagesToIngest.length > 0) {
+    // TODO.articleImageScan: remove the lowPriority flag
+    enqueueImageIngestion({
+      images: imagesToIngest,
+      name: 'article-image-ingest',
+      userId,
+      lowPriority: true,
+    });
+  }
 
   return { orphanedImageIds };
 }
@@ -2207,17 +2209,19 @@ export async function rescanArticle({
   // --- Re-queue already-processed images for rescan ---
   const connections = await dbRead.imageConnection.findMany({
     where: { entityId: id, entityType: ImageConnectionType.Article },
-    include: { image: { select: { id: true, url: true, ingestion: true } } },
+    include: { image: { select: { id: true, url: true, ingestion: true, type: true } } },
   });
 
-  for (const conn of connections) {
-    if (conn.image.ingestion === ImageIngestionStatus.Pending) continue;
-    await ingestImage({ image: conn.image, lowPriority: true, userId: article.userId }).catch(
-      (err) => {
-        handleLogError(err, 'article-rescan-image', { articleId: id, imageId: conn.image.id });
-      }
-    );
-  }
+  const imagesToIngest = connections
+    .filter((conn) => conn.image.ingestion !== ImageIngestionStatus.Pending)
+    .map((conn) => conn.image);
+
+  enqueueImageIngestion({
+    images: imagesToIngest,
+    name: 'article-rescan-image',
+    userId: article.userId,
+    lowPriority: true,
+  });
 
   // --- Force a fresh text moderation scan ---
   // `forceRescan: true` bypasses the contentHash dedup in

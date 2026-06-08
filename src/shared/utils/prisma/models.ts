@@ -10,7 +10,7 @@ export type BuzzWithdrawalRequestStatus = "Requested" | "Canceled" | "Rejected" 
 
 export type UserPaymentConfigurationProvider = "Stripe" | "Tipalti";
 
-export type CashWithdrawalStatus = "Paid" | "Rejected" | "Scheduled" | "Submitted" | "Deferred" | "DeferredInternal" | "Canceled" | "Cleared" | "FraudReview" | "PendingPayerFunds" | "InternalValue" | "FailedFee";
+export type CashWithdrawalStatus = "Paid" | "Rejected" | "Scheduled" | "Submitted" | "Deferred" | "DeferredInternal" | "Canceled" | "Cleared" | "FraudReview" | "PendingPayerFunds" | "InternalValue" | "FailedFee" | "Reclaimed";
 
 export type CashWithdrawalMethod = "NoPM" | "WireTransfer" | "Payoneer" | "PayPal" | "ACH" | "Check" | "eCheck" | "HoldMyPayments" | "Custom" | "Intercash" | "Card" | "TipaltiInternalValue";
 
@@ -463,7 +463,6 @@ export interface User {
   subscriptions?: CustomerSubscription[];
   mutedAt: Date | null;
   muted: boolean;
-  muteConfirmedAt: Date | null;
   muteExpiresAt: Date | null;
   bannedAt: Date | null;
   autoplayGifs: boolean | null;

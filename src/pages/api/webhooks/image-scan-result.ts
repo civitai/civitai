@@ -109,7 +109,7 @@ function shouldIgnore(tag: string, source: TagSource) {
   return tagsToIgnore[source]?.includes(tag) ?? false;
 }
 
-const KONO_NSFW_SAMPLING_RATE = 0.2; // 20%
+const KONO_NSFW_SAMPLING_RATE = 0.3; // 30%
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.method === 'GET' && req.query.imageId) {
@@ -271,11 +271,10 @@ async function updateImage(
           rankType: NewOrderRankType.Knight,
         };
 
-        // Sampling logic: Only include 20% of NSFW images to reduce queue congestion
+        // Sampling logic: Only include a fraction of NSFW images to reduce queue congestion
         let shouldAddToQueue = true;
         if (flags.nsfw) {
           queueDetails.priority = 2;
-          // Use random sampling for 20% inclusion rate
           shouldAddToQueue = Math.random() < KONO_NSFW_SAMPLING_RATE;
         }
 

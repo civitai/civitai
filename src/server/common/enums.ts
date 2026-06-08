@@ -152,6 +152,7 @@ export enum SignalMessages {
   ReferralTierGranted = 'referral:tier-granted',
   ReferralClawback = 'referral:clawback',
   ReferralTokenExpiringSoon = 'referral:token-expiring-soon',
+  ScannerPolicyTestProgress = 'scanner-policy:test-progress',
 }
 
 export enum BountySort {

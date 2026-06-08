@@ -195,9 +195,20 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
   if (e instanceof TRPCError) {
     const apiError = e as TRPCError;
     const status = getHTTPStatusCodeFromError(apiError);
-    const parsedError = JSON.parse(apiError.message);
-
-    return res.status(status).json(parsedError);
+    // Older Zod-validation TRPCErrors stuff a JSON-encoded issue array into
+    // `message`; many newer call sites (incl. `withMeili`'s
+    // MeiliCallTimeoutError → TRPCError mapping) pass a plain string. Falling
+    // through to JSON.parse on a plain string throws SyntaxError, escapes
+    // uncaught, and turns a transient 408/503 into a Next.js default 500 —
+    // the opposite of fail-fast. Try the parse, fall back to a one-shot
+    // { message } envelope on failure.
+    let body: unknown;
+    try {
+      body = JSON.parse(apiError.message);
+    } catch {
+      body = { message: apiError.message };
+    }
+    return res.status(status).json(body);
   } else {
     const error = e as Error;
     return res.status(500).json({ message: 'An unexpected error occurred', error: error.message });

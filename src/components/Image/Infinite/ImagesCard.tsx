@@ -29,6 +29,7 @@ import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import clsx from 'clsx';
 import classes from './ImagesCard.module.scss';
 
@@ -48,6 +49,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
   const currentUser = useCurrentUser();
+  const { trackAction } = useTrackEvent();
 
   const image = useImageStore(data);
 
@@ -74,6 +76,20 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
       e.preventDefault();
       e.stopPropagation();
 
+      // Top-of-funnel telemetry — joined to orchestration.jobs.remixOfId
+      // downstream to compute remix-conversion. The source modelVersionId
+      // for the remix is resolved server-side by getGenerationData, so it's
+      // not available on the card; leave null and join via remixStore /
+      // orchestration.jobs at funnel-analysis time.
+      trackAction({
+        type: 'Image_Remix_Click',
+        details: {
+          imageId: image.id,
+          imageType: image.type,
+          source: 'remix:image-card',
+        },
+      }).catch(() => undefined);
+
       generationGraphPanel.open({
         type: image.type,
         id: image.id,
@@ -82,7 +98,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
       // Go to next step in tour when clicking
       if (running) helpers?.next();
     },
-    [image.type, image.id, running, helpers]
+    [image.type, image.id, running, helpers, trackAction]
   );
 
   const twCardStyle = useMemo(() => {

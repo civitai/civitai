@@ -18,11 +18,15 @@ import {
   allJudgmentsCounter,
   blessedBuzzCounter,
   checkVotingRateLimit,
+  computePoolTargets,
   correctJudgmentsCounter,
+  DEFAULT_POOL_QUOTAS,
   expCounter,
   fervorCounter,
   getActiveSlot,
   getImageRatingsCounter,
+  getVotingCooldownUntil,
+  getVotingRateLimitConfig,
   pendingBuzzCounter,
   recentlyGrantedBuzzCounter,
   poolCounters,
@@ -53,6 +57,7 @@ import {
   throwBadRequestError,
   throwInternalServerError,
   throwNotFoundError,
+  throwRateLimitError,
 } from '~/server/utils/errorHandling';
 import { getLevelProgression } from '~/server/utils/game-helpers';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -109,9 +114,12 @@ export async function joinGame({ userId }: { userId: number }) {
 
   if (user.playerInfo) {
     // User is already in game
-    const stats = await getPlayerStats({ playerId: userId });
+    const [stats, cooldownUntil] = await Promise.all([
+      getPlayerStats({ playerId: userId }),
+      getVotingCooldownUntil(userId),
+    ]);
     const { user: userInfo, ...playerData } = user.playerInfo;
-    return { ...userInfo, ...playerData, stats };
+    return { ...userInfo, ...playerData, stats, cooldownUntil };
   }
 
   const player = await dbWrite.newOrderPlayer.create({
@@ -138,6 +146,7 @@ export async function joinGame({ userId }: { userId: number }) {
       recentlyGrantedBuzz: 0,
       nextGrantDate: dayjs().add(1, 'day').startOf('day').toDate(),
     },
+    cooldownUntil: null,
   };
 }
 
@@ -149,9 +158,12 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
   if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
 
   const { user, ...playerData } = player;
-  const stats = await getPlayerStats({ playerId });
+  const [stats, cooldownUntil] = await Promise.all([
+    getPlayerStats({ playerId }),
+    getVotingCooldownUntil(playerId),
+  ]);
 
-  return { ...playerData, ...user, stats };
+  return { ...playerData, ...user, stats, cooldownUntil };
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {
@@ -364,31 +376,6 @@ async function processImageRating({
       checkVotingRateLimit(playerId)
     );
 
-    // If abuse threshold exceeded, reset player career
-    if (rateLimitResult.isAbuse) {
-      logToAxiom({
-        type: 'warning',
-        name: 'new-order-abuse-detection',
-        details: {
-          playerId,
-          imageId,
-          action: 'career-reset',
-          reason: 'excessive-voting',
-        },
-        message: `Player ${playerId} exceeded abuse threshold and was reset`,
-      }).catch(() => null);
-
-      await resetPlayer({
-        playerId,
-        withNotification: true,
-        reason:
-          'Your account has been reset due to suspicious voting patterns. Please vote at a reasonable pace to avoid this in the future.',
-      });
-
-      throw throwBadRequestError('Account has been reset due to suspicious voting patterns.');
-    }
-
-    // Standard rate limiting
     if (!rateLimitResult.allowed) {
       if (Math.random() < 0.1) {
         logToAxiom({
@@ -396,19 +383,16 @@ async function processImageRating({
           name: 'new-order-rate-limit',
           details: {
             playerId,
-            remaining: rateLimitResult.remaining,
-            resetTime: rateLimitResult.resetTime,
+            cooldownUntil: rateLimitResult.cooldownUntil,
           },
-          message: `Player ${playerId} hit rate limit`,
+          message: `Player ${playerId} hit rate limit cooldown`,
         }).catch(() => null);
       }
 
-      const waitSeconds = rateLimitResult.resetTime
-        ? Math.max(1, Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000))
+      const waitSeconds = rateLimitResult.cooldownUntil
+        ? Math.max(1, Math.ceil((rateLimitResult.cooldownUntil - Date.now()) / 1000))
         : 60;
-      throw throwBadRequestError(
-        `Rate limit exceeded. Please wait ${waitSeconds} seconds before voting again.`
-      );
+      throw throwRateLimitError(`Voting cooldown active. Try again in ${waitSeconds}s.`);
     }
   }
 
@@ -1573,35 +1557,66 @@ export async function getImagesQueue({
 
   const overflowLimit = imageCount * 2;
 
-  for (const pool of rankPools) {
-    let offset = 0;
+  // Per-rank pool weights drive a stratified fetch instead of the legacy
+  // strict-sequential drain. Knight1/Knight2/Knight3 are content-tier
+  // buckets in practice (see image-scan-result.ts), so reading Knight1
+  // until full starved Knight2 (NSFW) entirely. Resolve weights from
+  // Redis (ops-tunable) with a built-in fallback; missing rank → legacy.
+  const rateLimitConfig = await getVotingRateLimitConfig();
+  // `sysRedis.packed.get` returns untrusted runtime data: if the Redis blob
+  // is hand-edited or corrupted, `poolQuotas[rank]` could be a string, an
+  // object, or `null` — passing that through to `computePoolTargets` would
+  // produce `NaN` targets or throw. Validate the shape (array of finite
+  // numbers) and fall back to the in-code default (or sequential drain) when
+  // it's wrong, instead of trusting the cast on `VotingRateLimitConfig`.
+  const isValidWeights = (w: unknown): w is number[] =>
+    Array.isArray(w) && w.every((v) => typeof v === 'number' && Number.isFinite(v));
+  const redisWeights = rateLimitConfig?.poolQuotas?.[effectiveRankType];
+  const poolWeights = isValidWeights(redisWeights)
+    ? redisWeights
+    : DEFAULT_POOL_QUOTAS[effectiveRankType] ?? null;
 
-    while (validatedImages.length < overflowLimit) {
-      // Fetch images with offset to ensure we get enough images in case some are already rated.
+  const poolOffsets = rankPools.map(() => 0);
+  const poolExhausted = rankPools.map(() => false);
+
+  // Pull up to `target` images from `rankPools[poolIdx]`, appending to
+  // `validatedImages` and updating shared state. Returns the count actually
+  // added so callers can compute deficits for redistribution.
+  const fetchFromPool = async (poolIdx: number, target: number): Promise<number> => {
+    if (target <= 0 || poolExhausted[poolIdx]) return 0;
+    const pool = rankPools[poolIdx];
+    if (!pool) return 0;
+
+    const before = validatedImages.length;
+    const goal = before + target;
+    // Read 2× target per batch to absorb already-rated / already-seen misses,
+    // but cap at `overflowLimit` so the legacy sequential-drain path (target
+    // = overflowLimit) doesn't double the Redis payload vs the original
+    // implementation. Floor at 20 so very small per-pool quotas still pull
+    // enough headroom to skip past already-rated images.
+    const step = Math.min(Math.max(target * 2, 20), overflowLimit);
+
+    while (validatedImages.length < goal) {
       const poolImages = await pool.getAll({
-        limit: overflowLimit,
-        offset,
+        limit: step,
+        offset: poolOffsets[poolIdx],
         withCount: true,
       });
-      if (poolImages.length === 0) break;
+      if (poolImages.length === 0) {
+        poolExhausted[poolIdx] = true;
+        break;
+      }
+      poolOffsets[poolIdx] += step;
 
       const imageIds = poolImages
         .filter(({ score }) => (isKnight ? score < newOrderConfig.limits.knightVotes : true))
         .map(({ value }) => Number(value));
 
-      // Filter out images already seen in this request
       const unseenImageIds = imageIds.filter((id) => !seenImageIds.has(id));
-      if (unseenImageIds.length === 0) {
-        offset += overflowLimit;
-        continue;
-      }
+      if (unseenImageIds.length === 0) continue;
 
-      // Filter out already rated images using SMISMEMBER (O(N) where N = candidates, single command)
       const unratedImageIds = await filterUnratedImages(ratedKey, unseenImageIds);
-      if (unratedImageIds.length === 0) {
-        offset += overflowLimit;
-        continue;
-      }
+      if (unratedImageIds.length === 0) continue;
 
       const images = await dbRead.image.findMany({
         where: {
@@ -1615,24 +1630,81 @@ export async function getImagesQueue({
         select: { id: true, url: true, nsfwLevel: true, metadata: true },
       });
 
-      // Add new image IDs to the seen set (for dedup within this request)
-      images.forEach((image) => seenImageIds.add(image.id));
+      // Don't overshoot the target — pass 2 redistribution relies on
+      // per-pool quotas being respected during pass 1. We mark `seenImageIds`
+      // AFTER slicing so the discarded tail stays eligible for the same
+      // pool's pass-2 redistribution call. Marking before the slice would
+      // permanently poison the IDs we never served.
+      const needed = goal - validatedImages.length;
+      const sliced = needed >= images.length ? images : images.slice(0, needed);
+
+      sliced.forEach((image) => seenImageIds.add(image.id));
 
       validatedImages.push(
-        ...images.map(({ nsfwLevel, ...image }) => ({
+        ...sliced.map(({ nsfwLevel, ...image }) => ({
           ...image,
           nsfwLevel:
             effectiveRankType === NewOrderRankType.Acolyte || isModerator ? nsfwLevel : undefined,
           metadata: image.metadata as ImageMetadata,
         }))
       );
-
-      if (validatedImages.length >= overflowLimit) break;
-
-      offset += overflowLimit; // Increment offset for the next batch
     }
 
-    if (validatedImages.length >= overflowLimit) break;
+    return validatedImages.length - before;
+  };
+
+  const sequentialDrain = async () => {
+    for (let i = 0; i < rankPools.length; i++) {
+      if (validatedImages.length >= overflowLimit) break;
+      await fetchFromPool(i, overflowLimit - validatedImages.length);
+    }
+  };
+
+  if (!poolWeights) {
+    await sequentialDrain();
+  } else {
+    // Probe pool sizes (ZCARD) only for pools with non-zero weight so an
+    // empty Knight3 can be skipped without wasting reads.
+    const poolSizes = await Promise.all(
+      rankPools.map(async (pool, idx) => {
+        const w = poolWeights[idx] ?? 0;
+        if (w <= 0) return 0;
+        try {
+          return await sysRedis.zCard(pool.key);
+        } catch {
+          return 0;
+        }
+      })
+    );
+
+    const { targets, activeIdxs } = computePoolTargets({
+      weights: poolWeights,
+      poolSizes,
+      overflowLimit,
+    });
+
+    if (activeIdxs.length === 0) {
+      // Weights point at empty pools only → fall back to sequential drain
+      // so the request still gets *something* instead of returning empty.
+      await sequentialDrain();
+    } else {
+      // Pass 1: quota fill.
+      for (const idx of activeIdxs) {
+        await fetchFromPool(idx, targets[idx]);
+      }
+
+      // Pass 2: redistribute deficit from exhausted pools to survivors.
+      // Single pass — survivors that exhaust during redistribution just stop.
+      let deficit = overflowLimit - validatedImages.length;
+      if (deficit > 0) {
+        const survivors = activeIdxs.filter((idx) => !poolExhausted[idx]);
+        for (const idx of survivors) {
+          if (deficit <= 0) break;
+          const added = await fetchFromPool(idx, deficit);
+          deficit -= added;
+        }
+      }
+    }
   }
 
   // Shuffle and slice to requested count
@@ -1806,8 +1878,8 @@ export async function getPlayerHistory({
     `userId = ${playerId}`,
     `createdAt >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
   ];
-  // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-  if (cursor) AND.push(`createdAt < '${cursor}'`);
+  // cursor is now guaranteed to be a Date (schema coerces); safe to ISO-format.
+  if (cursor) AND.push(`createdAt < '${cursor.toISOString()}'`);
 
   const HAVING = [];
   if (status?.length) HAVING.push(`status IN ('${status.join("','")}')`);
@@ -2000,506 +2072,5 @@ export async function manageSanityChecks({ add, remove }: { add?: number[]; remo
     const error = e as Error;
     handleLogError(error, 'new-order-sanity-check-manage');
     throw throwInternalServerError(error);
-  }
-}
-
-/**
- * Admin testing function for simulating votes in the Knights of New Order system.
- * Allows moderators to test consensus mechanics by submitting votes as different users.
- *
- * Key features:
- * - Vote as any user (auto-joins if needed)
- * - Auto-adds image to queue if not present
- * - Uses real voting logic for authentic testing
- * - Returns detailed consensus and queue state
- *
- * @param imageId - The image to vote on
- * @param rating - The NSFW level rating to submit
- * @param userId - Optional: The user to vote as (defaults to moderator's ID)
- * @param damnedReason - Optional: Reason for blocking content
- * @param moderatorId - The moderator performing the test
- */
-export async function submitTestVote({
-  imageId,
-  rating,
-  userId,
-  damnedReason,
-  moderatorId,
-  level,
-  smites,
-}: {
-  imageId: number;
-  rating: NsfwLevel;
-  userId?: number;
-  damnedReason?: NewOrderDamnedReason;
-  moderatorId: number;
-  level?: number;
-  smites?: number;
-}) {
-  try {
-    // Determine which user to vote as
-    const votingUserId = userId ?? moderatorId;
-
-    // Get or create player for the voting user
-    let player = await dbRead.newOrderPlayer.findUnique({
-      where: { userId: votingUserId },
-      select: playerInfoSelect,
-    });
-
-    if (!player) {
-      // Auto-join the user if they're not in the game yet
-      await joinGame({ userId: votingUserId });
-      player = await dbRead.newOrderPlayer.findUnique({
-        where: { userId: votingUserId },
-        select: playerInfoSelect,
-      });
-      if (!player) throw throwInternalServerError('Failed to create player');
-    }
-
-    const { user, ...playerData } = player;
-    const stats = await getPlayerStats({ playerId: votingUserId });
-    const fullPlayer = { ...playerData, ...user, stats };
-
-    // Get image details
-    const image = await dbRead.image.findUnique({
-      where: { id: imageId },
-      select: { id: true, nsfwLevel: true, url: true },
-    });
-
-    if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
-
-    // Check which queue the image is in
-    const valueInQueue = await isImageInQueue({
-      imageId,
-      rankType: [NewOrderRankType.Knight],
-    });
-
-    let currentQueue: NewOrderRankType | null = null;
-    let currentVoteCount = 0;
-
-    if (valueInQueue) {
-      currentQueue = valueInQueue.rank as NewOrderRankType;
-      currentVoteCount = valueInQueue.value;
-    } else {
-      // If not in queue, add it to Knight queue for testing
-      await addImageToQueue({
-        imageIds: imageId,
-        rankType: NewOrderRankType.Knight,
-        priority: 1,
-      });
-      currentQueue = NewOrderRankType.Knight;
-      currentVoteCount = 0;
-    }
-
-    // If custom level/smites provided, use manual vote processing with custom weights
-    // Otherwise use the standard processImageRating flow
-    if (level !== undefined || smites !== undefined) {
-      // Manual vote processing with custom vote weight
-      const customLevel = level ?? getLevelProgression(fullPlayer.stats.exp).level;
-      const customSmites = smites ?? fullPlayer.stats.smites;
-      const customVoteWeight = Math.round(
-        calculateVoteWeight({ level: customLevel, smites: customSmites }) * 100
-      );
-
-      // Increment vote count in queue
-      const newVoteCount = await valueInQueue!.pool.increment({ id: imageId });
-
-      // Increment vote weight for this rating
-      await getImageRatingsCounter(imageId).increment({
-        id: `${fullPlayer.rankType}-${rating}`,
-        value: customVoteWeight,
-      });
-
-      // Record test vote in ClickHouse for audit trail
-      if (clickhouse) {
-        await clickhouse.$exec`
-          INSERT INTO knights_new_order_image_rating (
-            userId, imageId, rating, status, rank, grantedExp, multiplier, createdAt
-          ) VALUES (
-            ${votingUserId},
-            ${imageId},
-            ${rating},
-            '${NewOrderImageRatingStatus.Pending}',
-            '${fullPlayer.rankType}',
-            100,
-            1,
-            now()
-          )
-        `;
-      }
-
-      // Check for blocked votes (≥200 weighted score)
-      const blockedVotes = await getImageRatingsCounter(imageId).getCount(
-        `${fullPlayer.rankType}-${NsfwLevel.Blocked}`
-      );
-      if (blockedVotes >= 200) {
-        // Remove from queue (note: CSAM report should be created via regular flow, not test votes)
-        console.log(
-          `Test vote triggered block threshold for image ${imageId} with ${blockedVotes} weighted votes (removed from queue)`
-        );
-        await valueInQueue!.pool.reset({ id: imageId });
-        await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
-      }
-
-      // Check for consensus
-      const consensus = await checkWeightedConsensus({ imageId, voteCount: newVoteCount });
-      if (consensus !== undefined) {
-        const isExcessiveDownRating =
-          consensus < image.nsfwLevel && Flags.distance(image.nsfwLevel, consensus) > 1;
-
-        if (isExcessiveDownRating) {
-          // Excessive down-rating: escalate to Inquisitor queue instead of applying
-          await valueInQueue!.pool.reset({ id: imageId });
-          await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
-          await addImageToQueue({
-            imageIds: imageId,
-            rankType: 'Inquisitor' as NewOrderHighRankType,
-            priority: 1,
-          });
-        } else {
-          // Same level, up-rating, or down-rating by 1 level: apply consensus
-          await updateImageNsfwLevel({
-            id: imageId,
-            nsfwLevel: consensus,
-            userId: votingUserId,
-            isModerator: false,
-            status: 'Actioned',
-          });
-          await updatePendingImageRatings({ imageId, rating: consensus });
-          await valueInQueue!.pool.reset({ id: imageId });
-          await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
-        }
-      } else if (newVoteCount >= newOrderConfig.limits.knightVotes) {
-        // Max votes reached without consensus - remove from queue
-        await valueInQueue!.pool.reset({ id: imageId });
-        await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
-      }
-    } else {
-      // Use standard vote processing (no custom weights)
-      await processImageRating({
-        playerId: votingUserId,
-        imageId,
-        rating,
-        damnedReason,
-        isModerator: false, // Process as regular vote to test consensus mechanics
-      });
-    }
-
-    // Get updated vote counts and consensus state
-    const updatedValueInQueue = await isImageInQueue({
-      imageId,
-      rankType: [NewOrderRankType.Knight],
-    });
-
-    const stillInQueue = updatedValueInQueue !== null;
-    const newVoteCount = updatedValueInQueue?.value ?? currentVoteCount + 1;
-
-    // Get current vote distribution (weighted)
-    const voteDistribution = await getImageRatingsCounter(imageId).getAll({ withCount: true });
-
-    // Check if consensus was reached (simplified API)
-    let consensusData = null;
-    if (currentQueue === NewOrderRankType.Knight) {
-      if (!stillInQueue) {
-        // Image removed from queue - consensus was reached or max votes hit
-        const finalImage = await dbRead.image.findUnique({
-          where: { id: imageId },
-          select: { nsfwLevel: true },
-        });
-
-        consensusData = {
-          reached: true,
-          finalRating: finalImage?.nsfwLevel,
-          method: newVoteCount >= newOrderConfig.limits.knightVotes ? 'consensus' : 'max_votes',
-        };
-      } else {
-        // Check current consensus status (using simplified API)
-        const consensus = await checkWeightedConsensus({ imageId, voteCount: newVoteCount });
-
-        // Calculate total weighted votes
-        const totalWeightedVotes = voteDistribution.reduce((sum, v) => sum + v.score, 0);
-
-        consensusData = {
-          reached: consensus !== undefined,
-          currentLeader: consensus,
-          totalWeightedVotes,
-          votesRequired: newOrderConfig.limits.knightVotes,
-          maxVotes: newOrderConfig.limits.maxKnightVotes,
-          threshold: '60% of weighted votes',
-        };
-      }
-    }
-
-    // Calculate player vote weight for display (use custom values if provided)
-    const displayLevel = level ?? getLevelProgression(fullPlayer.stats.exp).level;
-    const displaySmites = smites ?? fullPlayer.stats.smites;
-    const voteWeight = calculateVoteWeight({
-      level: displayLevel,
-      smites: displaySmites,
-    });
-
-    return {
-      ok: true,
-      vote: {
-        votingUserId,
-        votingUserRank: fullPlayer.rankType,
-        votingUserLevel: displayLevel,
-        votingUserSmites: displaySmites,
-        voteWeight: voteWeight,
-        imageId,
-        rating,
-        imageCurrentNsfwLevel: image.nsfwLevel,
-        customWeightUsed: level !== undefined || smites !== undefined,
-      },
-      queue: {
-        queueType: currentQueue,
-        wasInQueue: valueInQueue !== null,
-        stillInQueue,
-        voteCount: newVoteCount,
-        voteLimit:
-          currentQueue === NewOrderRankType.Knight
-            ? newOrderConfig.limits.knightVotes
-            : newOrderConfig.limits.templarVotes,
-      },
-      consensus: consensusData,
-      voteDistribution: voteDistribution.map(({ value, score }) => {
-        const [rank, rating] = value.split('-');
-        return {
-          rank,
-          rating: Number(rating),
-          weightedScore: score,
-          // Convert weighted score back to approximate vote count
-          approximateVotes: Math.round(score / 100),
-        };
-      }),
-      playerStats: {
-        stats: fullPlayer.stats,
-      },
-    };
-  } catch (e) {
-    const error = e as Error;
-    handleLogError(error, 'new-order-test-vote');
-    throw error;
-  }
-}
-
-/**
- * Helper function to get detailed queue state for testing and debugging.
- * Shows which images are in which queues and their current vote counts.
- */
-export async function getQueueStateForTesting(imageId?: number) {
-  try {
-    const state: {
-      knight: { imageId: number; voteCount: number; priority: number; slot: 'a' | 'b' }[];
-      templar: { imageId: number; voteCount: number; priority: number; slot: 'a' | 'b' }[];
-      totalImages: number;
-    } = {
-      knight: [],
-      templar: [],
-      totalImages: 0,
-    };
-
-    if (imageId) {
-      // Check specific image across all queues and both slots
-      for (const rankType of [NewOrderRankType.Knight]) {
-        for (const slot of ['a', 'b'] as const) {
-          for (let priority = 1; priority <= 3; priority++) {
-            const pool = poolCounters[rankType][slot][priority - 1];
-            const count = await pool.getCount(imageId);
-            if (count !== null) {
-              const queueData = { imageId, voteCount: count, priority, slot };
-
-              if (rankType === NewOrderRankType.Knight) {
-                state.knight.push(queueData);
-              } else {
-                state.templar.push(queueData);
-              }
-            }
-          }
-        }
-      }
-    } else {
-      // Get all images from all queues and both slots
-      for (const rankType of [NewOrderRankType.Knight]) {
-        for (const slot of ['a', 'b'] as const) {
-          for (let priority = 1; priority <= 3; priority++) {
-            const pool = poolCounters[rankType][slot][priority - 1];
-            const allValues = await pool.getAll({ withCount: true });
-
-            const images = allValues.map(({ value, score }: { value: string; score: number }) => ({
-              imageId: Number(value),
-              voteCount: score,
-              priority,
-              slot,
-            }));
-
-            if (rankType === NewOrderRankType.Knight) {
-              state.knight.push(...images);
-            } else {
-              state.templar.push(...images);
-            }
-          }
-        }
-      }
-    }
-
-    state.totalImages = state.knight.length + state.templar.length;
-
-    return {
-      ok: true,
-      state,
-      imageId: imageId ?? null,
-    };
-  } catch (e) {
-    const error = e as Error;
-    handleLogError(error, 'new-order-get-queue-state');
-    throw error;
-  }
-}
-
-/**
- * Helper function to get vote details for a specific image.
- * Shows all votes, weighted distribution, and consensus status.
- */
-export async function getVoteDetailsForTesting(imageId: number) {
-  try {
-    // Get image details
-    const image = await dbRead.image.findUnique({
-      where: { id: imageId },
-      select: { id: true, nsfwLevel: true, url: true },
-    });
-
-    if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
-
-    // Get all ratings from ClickHouse
-    let allRatings: {
-      userId: number;
-      rating: NsfwLevel;
-      status: string;
-      rank: string;
-      createdAt: Date;
-    }[] = [];
-
-    if (clickhouse) {
-      allRatings = await clickhouse.$query<{
-        userId: number;
-        rating: NsfwLevel;
-        status: string;
-        rank: string;
-        createdAt: Date;
-      }>`
-        SELECT 
-          userId,
-          rating,
-          status,
-          rank,
-          createdAt
-        FROM knights_new_order_image_rating
-        WHERE imageId = ${imageId}
-        ORDER BY createdAt ASC
-      `;
-    }
-
-    // Get weighted vote distribution from Redis
-    const voteDistribution = await getImageRatingsCounter(imageId).getAll({ withCount: true });
-
-    // Check consensus if in Knight queue
-    let consensusData = null;
-    const valueInQueue = await isImageInQueue({
-      imageId,
-      rankType: NewOrderRankType.Knight,
-    });
-
-    if (valueInQueue) {
-      const voteCount = valueInQueue.value;
-      const consensus = await checkWeightedConsensus({ imageId, voteCount });
-
-      // Calculate total and percentage for winning rating
-      const totalWeightedVotes = voteDistribution.reduce((sum, v) => sum + v.score, 0);
-      const winningVoteData = consensus
-        ? voteDistribution.find((v) => v.value === `Knight-${consensus}`)
-        : null;
-
-      consensusData = {
-        hasConsensus: consensus !== undefined,
-        winningRating: consensus,
-        winningPercentage: winningVoteData
-          ? Math.round((winningVoteData.score / totalWeightedVotes) * 100)
-          : 0,
-        totalWeightedVotes,
-        currentVotes: voteCount,
-        voteLimit: newOrderConfig.limits.knightVotes,
-        maxVotes: newOrderConfig.limits.maxKnightVotes,
-        threshold: `${voteCount * 0.6 * 100} weighted votes (60%)`,
-      };
-    }
-
-    return {
-      ok: true,
-      image: {
-        id: image.id,
-        currentNsfwLevel: image.nsfwLevel,
-        url: image.url,
-      },
-      votes: {
-        total: allRatings.length,
-        details: allRatings,
-      },
-      distribution: voteDistribution.map(({ value, score }) => {
-        const [rank, rating] = value.split('-');
-        return {
-          rank,
-          rating: Number(rating),
-          weightedScore: score,
-          approximateVotes: Math.round(score / 100),
-        };
-      }),
-      consensus: consensusData,
-    };
-  } catch (e) {
-    const error = e as Error;
-    handleLogError(error, 'new-order-get-vote-details');
-    throw error;
-  }
-}
-
-/**
- * Helper function to reset a specific image's vote state.
- * Useful for cleaning up test data and restarting test scenarios.
- */
-export async function resetImageVotesForTesting(imageId: number) {
-  try {
-    // Remove from all queues and both slots
-    for (const rankType of [NewOrderRankType.Knight]) {
-      for (const slot of ['a', 'b'] as const) {
-        for (let priority = 1; priority <= 3; priority++) {
-          await poolCounters[rankType][slot][priority - 1].reset({ id: imageId });
-        }
-      }
-    }
-
-    // Clear weighted vote distribution counter
-    const counter = getImageRatingsCounter(imageId);
-    // Redis counters don't have a clear-all method, so we need to get all keys first
-    const allVotes = await counter.getAll({ withCount: true });
-
-    // Reset each vote type to 0
-    for (const vote of allVotes) {
-      await counter.decrement({ id: vote.value, value: vote.score });
-    }
-
-    // Note: We don't delete ClickHouse records as they're append-only
-    // They serve as historical record of test votes
-
-    return {
-      ok: true,
-      imageId,
-      message: 'Image vote state reset (removed from queues and cleared Redis counters)',
-      clearedVoteTypes: allVotes.length,
-    };
-  } catch (e) {
-    const error = e as Error;
-    handleLogError(error, 'new-order-reset-image-votes');
-    throw error;
   }
 }

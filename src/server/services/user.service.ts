@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
@@ -10,12 +11,13 @@ import {
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { searchClient } from '~/server/meilisearch/client';
+import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import {
   articleMetrics,
@@ -43,6 +45,7 @@ import type {
   GetByUsernameSchema,
   GetUserCosmeticsSchema,
   GetUserListSchema,
+  RestoreUserInput,
   ToggleBanUser,
   ToggleUserBountyEngagementsInput,
   UpdateContentSettingsInput,
@@ -251,11 +254,35 @@ export async function getUsersWithSearch({
   if (ids?.length) filters.push(`id IN [${ids.join(',')}]`);
   if (!!excludedUserIds?.length) filters.push(`id NOT IN [${excludedUserIds.join(',')}]`);
 
-  const results = await searchClient.index(USERS_SEARCH_INDEX).search<UserSearchResult>(query, {
-    limit: Math.round(limit * 1.5),
-    filter: filters.join(' AND '),
-    attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture', 'image'],
-  });
+  let results;
+  try {
+    // Narrow withMeili wrap to the SDK call only — this is a user-facing tRPC
+    // path (user.getAll). Under Meilisearch brownout an unwrapped .search() can
+    // hang ~30s, the same failure mode that bled api-primary to kubelet SIGKILL
+    // on 2026-05-29. Follow-up to PR #2351, which wrapped the image-feed call
+    // sites but missed this one.
+    results = await withMeili('search', () =>
+      searchClient!.index(USERS_SEARCH_INDEX).search<UserSearchResult>(query, {
+        limit: Math.round(limit * 1.5),
+        filter: filters.join(' AND '),
+        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture', 'image'],
+      })
+    );
+  } catch (err) {
+    // Mirror image.getInfinite's handling: surface a fast 408 via TRPCError
+    // TIMEOUT so the client can retry instead of waiting on Traefik's 30s
+    // router timeout. tRPC v10 has no SERVICE_UNAVAILABLE / 503 code; TIMEOUT
+    // is the closest semantic match.
+    if (err instanceof MeiliCallTimeoutError) {
+      throw new TRPCError({
+        code: 'TIMEOUT',
+        message: 'User search is temporarily overloaded — please retry.',
+        cause: err,
+      });
+    }
+    throw err;
+  }
+
   return results.hits
     .filter((x) => !x.deletedAt)
     .map(({ deletedAt, profilePicture, image, ...user }) => ({
@@ -407,7 +434,6 @@ export async function setUserMuted({
     data: {
       muted,
       mutedAt: muted ? date : null,
-      muteConfirmedAt: muted ? date : null,
     },
     updateSource: muted ? 'retool:mute' : 'retool:unmute',
   });
@@ -538,6 +564,15 @@ export const updateUserById = async ({
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
+  }
+
+  if (
+    data.showNsfw !== undefined ||
+    data.blurNsfw !== undefined ||
+    data.browsingLevel !== undefined ||
+    data.autoplayGifs !== undefined
+  ) {
+    await userSettingsCache.bust([id]);
   }
 
   if (data.email && user.paddleCustomerId) {
@@ -917,6 +952,99 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
   `);
   userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
 }
+
+/**
+ * Restore a soft-deleted user account (the inverse of deleteUser).
+ *
+ * deleteUser scrubs username, email, paddleCustomerId, image, profilePictureId from the User row
+ * and sets deletedAt. It also hard-deletes Account / Session / UserEngagement rows and reassigns
+ * the user's Models to userId = -1. We can only restore what survives the deletion: the User row's
+ * scrubbed fields (caller supplies them) and the orphaned Model ownership (via ClickHouse audit).
+ *
+ * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
+ * (email magic-link or OAuth) which creates new rows.
+ */
+export const restoreUser = async ({
+  id,
+  username,
+  email,
+  restoreModels,
+}: RestoreUserInput) => {
+  const user = await dbWrite.user.findFirst({
+    where: { id },
+    select: { id: true, deletedAt: true },
+  });
+  if (!user) throw throwNotFoundError(`No user with id ${id}`);
+  if (!user.deletedAt) throw throwBadRequestError(`User ${id} is not deleted; nothing to restore`);
+
+  // Make sure the username and email aren't claimed by some other user since the closure.
+  const conflict = await dbWrite.user.findFirst({
+    where: { id: { not: id }, OR: [{ username }, { email }] },
+    select: { id: true, username: true, email: true },
+  });
+  if (conflict) {
+    throw throwBadRequestError(
+      `Cannot restore: username or email is already in use by user ${conflict.id}`
+    );
+  }
+
+  // Look up the audited model ownership up front (ClickHouse lives outside Postgres).
+  let auditIds: number[] = [];
+  if (restoreModels) {
+    // `modelEvents.userId` is the actor of each event; for a model that's the original owner.
+    // The deletion path (removeModels:false) sets Model.userId = -1 without touching
+    // status/deletedAt, so we reclaim only those orphans. Models deleted via removeModels:true
+    // keep their userId and get status='Deleted' instead — they are intentionally NOT restored
+    // here, and a model with no tracked event won't appear, so reclaim is best-effort.
+    const auditRows =
+      (await clickhouse?.$query<{ modelId: number }>(`
+        SELECT DISTINCT modelId
+        FROM modelEvents
+        WHERE userId = ${id}
+      `)) ?? [];
+    auditIds = auditRows.map((r) => r.modelId);
+  }
+
+  // Reclaim orphaned models BEFORE flipping deletedAt. We deliberately avoid wrapping the user and
+  // model writes in one transaction: a user can own thousands of models, and an interactive
+  // transaction would hold a connection + row locks open across the whole set (and risk Prisma's
+  // 5s timeout). The model reclaim is a single atomic UPDATE, so it doesn't need one. Doing it
+  // first also keeps the operation re-runnable — if it fails, deletedAt is still set, so a retry
+  // passes the guard above instead of being locked out.
+  let modelsRestored = 0;
+  let restoredModelIds: number[] = [];
+  if (restoreModels && auditIds.length > 0) {
+    // Capture the exact orphaned rows we're about to reclaim so the returned ids reflect what
+    // actually changed (rather than every audited model, some of which may not be orphaned).
+    const orphans = await dbWrite.model.findMany({
+      where: { id: { in: auditIds }, userId: -1 },
+      select: { id: true },
+    });
+    restoredModelIds = orphans.map((m) => m.id);
+
+    if (restoredModelIds.length > 0) {
+      const updated = await dbWrite.model.updateMany({
+        where: { id: { in: restoredModelIds }, userId: -1 },
+        data: { userId: id },
+      });
+      modelsRestored = updated.count;
+    }
+  }
+
+  await dbWrite.user.update({
+    where: { id },
+    data: { deletedAt: null, username, email },
+  });
+
+  userUpdateCounter?.inc({ location: 'user.service:restoreUser' });
+  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  // deleteUser refreshes userBasicCache (username/deletedAt/image, 1-day TTL) after scrubbing the
+  // row; mirror that here so the restored identity is visible immediately instead of serving the
+  // stale "deleted" values until the cache expires.
+  await deleteBasicDataForUser(id);
+
+  return { id, username, email, modelsRestored, modelIds: restoredModelIds };
+};
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
 export async function softDeleteUser({ id, userId }: { id: number; userId: number }) {
@@ -2110,6 +2238,7 @@ export async function updateContentSettings({
       data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
     });
     userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
+    await userSettingsCache.bust([userId]);
   }
   if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
     const settings = await getUserSettings(userId);

@@ -72,7 +72,7 @@ export default function Confirm() {
               if (!email) return;
               confirmMutation.mutate({ email });
             }}
-            loading={confirmMutation.isLoading}
+            loading={confirmMutation.isPending}
           >
             Confirm Email
           </Button>

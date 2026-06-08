@@ -10,6 +10,8 @@ import { logToAxiom } from '~/server/logging/client';
 import type { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
+import { getUserSettings } from '~/server/services/user.service';
+import { withSignals } from '~/server/signals/wrapper';
 import { getChatHash } from '~/server/utils/chat';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -51,6 +53,29 @@ export const upsertChat = async ({
   ]);
   const blockedUserIds = [...new Set(blockedUsers.flat().map((u) => u.id))];
   userIds = userIds.filter((u) => !blockedUserIds.includes(u));
+
+  // filter out recipients who have disabled chat in their settings (mods bypass).
+  // Like blocked users, these are silently dropped from the member list so a
+  // disabled account never receives an unsolicited chat request.
+  if (!isModerator) {
+    const recipientIds = userIds.filter((u) => u !== userId);
+    if (recipientIds.length) {
+      const recipientSettings = await Promise.all(recipientIds.map((id) => getUserSettings(id)));
+      const chatDisabledIds = new Set(
+        recipientIds.filter((_, i) => recipientSettings[i]?.features?.chat === false)
+      );
+      if (chatDisabledIds.size) userIds = userIds.filter((u) => !chatDisabledIds.has(u));
+    }
+  }
+
+  // `userIds` includes the creator; everyone else is a recipient. If every
+  // requested recipient was filtered out (blocked or chat-disabled), there is
+  // no one to talk to — surface a friendly error instead of silently creating
+  // a chat that only contains the creator.
+  const remainingRecipients = userIds.filter((u) => u !== userId);
+  if (remainingRecipients.length === 0) {
+    throw throwBadRequestError('This user is not accepting chat requests');
+  }
 
   const existing = await dbWrite.chat.findFirst({
     where: { hash },
@@ -116,19 +141,23 @@ export const upsertChat = async ({
 
   if (isModerator) {
     for (const cmId of userIds) {
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(`chat:${createdChat.id}`),
-      }).catch();
+      withSignals(() =>
+        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(`chat:${createdChat.id}`),
+        })
+      ).catch(() => undefined);
     }
   } else {
     // - add self to group
-    fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(`chat:${createdChat.id}`),
-    }).catch();
+    withSignals(() =>
+      fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(`chat:${createdChat.id}`),
+      })
+    ).catch(() => undefined);
   }
 
   // I don't like the idea of querying after an insert, but it's just easier than merging all the data together
@@ -146,22 +175,26 @@ export const upsertChat = async ({
   }
 
   if (isModerator) {
-    fetch(
-      `${env.SIGNALS_ENDPOINT}/groups/chat:${insertedChat.id}/signals/${SignalMessages.ChatNewRoom}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(insertedChat as ChatCreateChat),
-      }
-    ).catch();
+    withSignals(() =>
+      fetch(
+        `${env.SIGNALS_ENDPOINT}/groups/chat:${insertedChat.id}/signals/${SignalMessages.ChatNewRoom}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(insertedChat as ChatCreateChat),
+        }
+      )
+    ).catch(() => undefined);
   } else {
     // - sending new chat room signal without being part of the group
     for (const cmId of userIds) {
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(insertedChat as ChatCreateChat),
-      }).catch();
+      withSignals(() =>
+        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(insertedChat as ChatCreateChat),
+        })
+      ).catch(() => undefined);
     }
   }
 
@@ -272,11 +305,13 @@ export const createMessage = async ({
     data: { chatId, contentType, content, referenceMessageId, userId },
   });
 
-  fetch(`${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(resp as ChatAllMessages[number]),
-  }).catch();
+  withSignals(() =>
+    fetch(`${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(resp as ChatAllMessages[number]),
+    })
+  ).catch(() => undefined);
 
   if (userId !== -1) {
     const links = findLinks(content, linkifyOptions);
@@ -301,14 +336,16 @@ export const createMessage = async ({
               },
             })
             .then((embedResp) => {
-              fetch(
-                `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(embedResp as ChatAllMessages[number]),
-                }
-              ).catch();
+              withSignals(() =>
+                fetch(
+                  `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
+                  {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(embedResp as ChatAllMessages[number]),
+                  }
+                )
+              ).catch(() => undefined);
             });
         } else {
           unfurl(href)
@@ -331,14 +368,16 @@ export const createMessage = async ({
                 },
               });
 
-              fetch(
-                `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(embedResp as ChatAllMessages[number]),
-                }
-              ).catch();
+              withSignals(() =>
+                fetch(
+                  `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
+                  {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(embedResp as ChatAllMessages[number]),
+                  }
+                )
+              ).catch(() => undefined);
             })
             .catch();
         }

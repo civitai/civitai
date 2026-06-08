@@ -137,7 +137,6 @@ import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
-  getGenerationEcosystemConfig,
   getResourceData,
   getUnavailableResources,
   resolveCanGenerateForVersions,
@@ -210,9 +209,6 @@ export const getModelHandler = async ({
 
     const modelCategories = await getCategoryTags('model');
     const unavailableGenResources = await getUnavailableResources();
-    const ecosystemConfig = await getGenerationEcosystemConfig(ctx.user ?? {}, {
-      isGreen: features.isGreen,
-    });
 
     const sfwOnly = !!features.isGreen;
     const versionGenStates = await resolveCanGenerateForVersions(
@@ -225,6 +221,7 @@ export const getModelHandler = async ({
         covered: v.generationCoverage?.covered ?? false,
         modelUserId: model.user.id,
         modelType: model.type,
+        modelVersionAlias: (v.meta as ModelVersionMeta | null)?.generationAlias,
       })),
       {
         user: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
@@ -1502,11 +1499,12 @@ export const getAssociatedResourcesCardDataHandler = async ({
       : [];
 
     const unavailableGenResources = await getUnavailableResources();
-    const ecosystemConfig = await getGenerationEcosystemConfig(user ?? {}, {
-      isGreen: ctx.features.isGreen,
-    });
 
     const associatedSfwOnly = !!ctx.features.isGreen;
+    // `modelVersionAlias` is omitted here: these versions come from
+    // `dataForModelsCache`, which doesn't carry `meta`. An aliased cover version
+    // surfaced as an associated resource therefore fails closed (no Create
+    // button) rather than inflating the shared cache to resolve its alias.
     const associatedGenStates = await resolveCanGenerateForVersions(
       models.flatMap((m) => {
         const v = m.modelVersions[0];

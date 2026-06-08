@@ -146,7 +146,7 @@ export function SendTipModal({
     conditionalPerformTransaction(amountToSend, performTransaction);
   };
 
-  const sending = loading || tipUserMutation.isLoading;
+  const sending = loading || tipUserMutation.isPending;
   const [amount, description, customAmount] = form.watch(['amount', 'description', 'customAmount']);
   const amountToSend = Number(amount) === -1 ? customAmount : Number(amount);
 

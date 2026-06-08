@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import {
   ActionIcon,
   Button,
@@ -80,7 +81,7 @@ const useStore = create<StoreState>()(
 
 export default function RaterSanity() {
   const { data: images, isLoading } = trpc.research.raterGetSanityImages.useQuery(undefined, {
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
   });
   const [nsfwLevel, setNsfwLevel] = useState<NsfwLevel>(NsfwLevel.PG);
 

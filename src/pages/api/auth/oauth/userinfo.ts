@@ -40,10 +40,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const user = session.user;
 
+  // Standard OIDC UserInfo claims (OIDC Core §5.1). `email`/`email_verified`
+  // are released under the same UserRead scope checked above — the consent
+  // screen's "Read profile & settings" permission covers profile + email.
+  // Only emit claims we actually have so clients can distinguish absent
+  // values from empty ones.
   return res.status(200).json({
     sub: user.id.toString(),
     id: user.id,
     username: user.username,
+    // OIDC standard profile claims. `name` intentionally mirrors the username
+    // rather than `user.name`: the display name is only ever populated by our
+    // own OAuth ingestion from upstream providers (Google, etc.), is not
+    // user-settable, and we don't want to hand that PII to third-party apps.
+    preferred_username: user.username ?? undefined,
+    name: user.username ?? undefined,
+    picture: user.image ?? undefined,
     image: user.image,
+    ...(user.email ? { email: user.email, email_verified: !!user.emailVerified } : {}),
   });
 }

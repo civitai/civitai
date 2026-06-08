@@ -267,7 +267,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     <Menu position="left-start" withinPortal>
       <Menu.Target>
         <LegacyActionIcon
-          loading={removeContentMutation.isLoading}
+          loading={removeContentMutation.isPending}
           size={30}
           radius="xl"
           color="gray"
@@ -359,14 +359,14 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                   <Menu.Item
                     leftSection={<IconCoin size={14} stroke={1.5} />}
                     onClick={handleEnableTipalti}
-                    disabled={tipaltiStatus?.enabled || enableTipaltiMutation.isLoading}
+                    disabled={tipaltiStatus?.enabled || enableTipaltiMutation.isPending}
                   >
                     {tipaltiStatus?.enabled ? 'Tipalti Enabled' : 'Enable Tipalti'}
                   </Menu.Item>
                   <Menu.Item
                     leftSection={<IconRefresh size={14} stroke={1.5} />}
                     onClick={handleResetSubscriptionCaches}
-                    disabled={resetSubscriptionCachesMutation.isLoading}
+                    disabled={resetSubscriptionCachesMutation.isPending}
                   >
                     Clear Membership Cache
                   </Menu.Item>

@@ -6,6 +6,7 @@ import React from 'react';
 import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta';
 import { useMetadataCopy } from '~/hooks/useMetadataCopy';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { trpc } from '~/utils/trpc';
 
 // export default function ImageMetaPopoverLazy({ imageId }: ImageMetaPopoverProps) {
@@ -43,6 +44,7 @@ export default function ImageMetaPopoverLazy({ imageId }: { imageId: number }) {
   const { data, isLoading } = trpc.image.getGenerationData.useQuery({ id: imageId });
   const { meta, canRemix, type = 'image' } = data ?? {};
   const { copy, copied } = useMetadataCopy(meta);
+  const { trackAction } = useTrackEvent();
 
   return (
     <Card withBorder className="flex w-96 max-w-full flex-col gap-3 rounded-xl">
@@ -82,7 +84,20 @@ export default function ImageMetaPopoverLazy({ imageId }: { imageId: number }) {
                 data-activity="remix:image-meta"
                 // @ts-ignore eslint-disable-next-line
                 onClick={() => {
-                  generationGraphPanel.open({ type, id: imageId ?? 0 });
+                  // Only act when we actually have an imageId — `imageId ?? 0`
+                  // would pollute the funnel with imageId=0 events AND fail
+                  // server-side at getGenerationData. Both calls share the
+                  // same guard so a falsy imageId is a complete no-op.
+                  if (!imageId) return;
+                  trackAction({
+                    type: 'Image_Remix_Click',
+                    details: {
+                      imageId,
+                      imageType: type,
+                      source: 'remix:image-meta',
+                    },
+                  }).catch(() => undefined);
+                  generationGraphPanel.open({ type, id: imageId });
                 }}
                 className="flex-1"
               >

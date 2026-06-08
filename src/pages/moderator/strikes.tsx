@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import type { ComboboxItem } from '@mantine/core';
 import {
   Alert,
@@ -124,7 +125,7 @@ function StrikesContent() {
       sort,
       sortOrder: activeSortDir,
     },
-    { keepPreviousData: true }
+    { placeholderData: keepPreviousData }
   );
 
   const handleOpenIssueModal = (defaultUserId?: number) => {

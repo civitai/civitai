@@ -19,9 +19,14 @@ import {
   getEcosystemSupport,
 } from '~/shared/constants/basemodel.constants';
 import type { OutputType } from './types';
-import { klingVersionIds } from '~/shared/data-graph/generation/kling-graph';
-import { nanoBananaVersionIds } from '~/shared/data-graph/generation/nano-banana-graph';
-import { viduVersionIds } from '~/shared/data-graph/generation/vidu-graph';
+// Import version-id constants from the leaf module, NOT the *-graph files. The
+// graphs import helpers from this file, so importing them back here would form a
+// graph <-> config/workflows cycle (the cause of "X is undefined" at module-eval).
+import {
+  klingVersionIds,
+  nanoBananaVersionIds,
+  viduVersionIds,
+} from '~/shared/data-graph/generation/version-ids';
 import {
   type WorkflowCategory,
   type WorkflowConfig,
@@ -94,6 +99,9 @@ const TXT2IMG_IDS = [
   ECO.Grok,
   ECO.WanImage27,
   ECO.Ernie,
+  ECO.Lens,
+  ECO.Krea2,
+  ECO.MAI,
 ];
 
 /** Video ecosystems that support video:create */
@@ -738,7 +746,10 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       ecoId === ECO.Qwen2 ||
       ecoId === ECO.WanImage27 ||
       ecoId === ECO.Ernie ||
-      ecoId === ECO.HiDreamO1,
+      ecoId === ECO.HiDreamO1 ||
+      ecoId === ECO.Lens ||
+      ecoId === ECO.Krea2 ||
+      ecoId === ECO.MAI,
   ],
   [
     'img2img:edit',

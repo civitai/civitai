@@ -7,9 +7,11 @@ import type {
   CreateBugInput,
   DeleteBugInput,
   GetBugByIdInput,
+  GetBugReportStatsInput,
   GetBugsInput,
   UpdateBugInput,
 } from '~/server/schema/bug.schema';
+import dayjs from '~/shared/utils/dayjs';
 import { cachedCounter } from '~/server/utils/cache-helpers';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { DomainColor } from '~/shared/utils/prisma/enums';
@@ -34,12 +36,17 @@ const bugSelect = Prisma.validator<Prisma.BugSelect>()({
 type BugRow = Prisma.BugGetPayload<{ select: typeof bugSelect }>;
 export type Bug = BugRow & { reportCount: number };
 
+// Button counter: distinct reporters in the last 24h (rolling). The 1h TTL trims
+// the trailing edge as reports age out; incrementBy keeps it live between refreshes.
+// (The mod-only chart in getBugReportStats stays all-time.)
 export const bugReportCounter = cachedCounter<number>(
   REDIS_KEYS.COUNTERS.BUG_REPORTS,
   async (bugId) => {
     if (!clickhouse) return 0;
     const rows = await clickhouse.$query<{ total: number }>`
-      SELECT count() AS total FROM bugReports WHERE bugId = ${bugId}
+      SELECT uniqExact(userId) AS total
+      FROM bugReports
+      WHERE bugId = ${bugId} AND createdAt >= now() - INTERVAL 24 HOUR
     `;
     return rows?.[0]?.total ?? 0;
   },
@@ -192,6 +199,77 @@ export const getLatestBugUpdate = async (input?: { domain?: DomainColor }) => {
 export const getBugStatusForReport = async (bugId: number) => {
   const bug = await dbRead.bug.findUnique({ where: { id: bugId }, select: { status: true } });
   return bug?.status ?? 'Unknown';
+};
+
+const BUG_REPORT_BUCKET_HOURS = 12;
+const CH_BUCKET_FORMAT = 'YYYY-MM-DD HH:mm:ss';
+
+export type BugReportPoint = { date: string; users: number };
+
+// Floor a UTC dayjs to the same 12h boundaries ClickHouse's toStartOfInterval(..., 'UTC') uses.
+const floorToBucket = (date: Date | string) => {
+  const d = dayjs.utc(date);
+  const hour = Math.floor(d.hour() / BUG_REPORT_BUCKET_HOURS) * BUG_REPORT_BUCKET_HOURS;
+  return d.hour(hour).minute(0).second(0).millisecond(0);
+};
+
+// Distinct reporters bucketed every 12h, from each bug's firstSeenAt to now.
+// Mod-only: surfaces whether reports are tapering off or still climbing.
+export const getBugReportStats = async ({
+  bugIds,
+}: GetBugReportStatsInput): Promise<Record<number, BugReportPoint[]>> => {
+  if (!clickhouse || bugIds.length === 0) return {};
+
+  const bugs = await dbRead.bug.findMany({
+    where: { id: { in: bugIds } },
+    select: { id: true, firstSeenAt: true },
+  });
+  if (!bugs.length) return {};
+
+  // Bound the scan to the earliest bucket we'll render so ClickHouse can prune partitions.
+  const earliest = bugs.reduce(
+    (min, b) => (b.firstSeenAt < min ? b.firstSeenAt : min),
+    bugs[0].firstSeenAt
+  );
+  const since = floorToBucket(earliest).toDate();
+
+  const ids = bugs.map((b) => b.id);
+  const rows = await clickhouse.$query<{ bugId: number; bucket: string; users: string }>`
+    SELECT
+      bugId,
+      toStartOfInterval(createdAt, INTERVAL ${BUG_REPORT_BUCKET_HOURS} HOUR, 'UTC') AS bucket,
+      uniqExact(userId) AS users
+    FROM bugReports
+    WHERE bugId IN (${ids}) AND createdAt >= ${since}
+    GROUP BY bugId, bucket
+  `;
+
+  // bugId -> CH bucket string -> distinct users
+  const counts = new Map<number, Map<string, number>>();
+  for (const row of rows) {
+    const bugId = Number(row.bugId);
+    if (!counts.has(bugId)) counts.set(bugId, new Map());
+    counts.get(bugId)!.set(row.bucket, Number(row.users));
+  }
+
+  const now = dayjs.utc();
+  const result: Record<number, BugReportPoint[]> = {};
+
+  for (const bug of bugs) {
+    const bugCounts = counts.get(bug.id) ?? new Map<string, number>();
+    let cursor = floorToBucket(bug.firstSeenAt);
+
+    const points: BugReportPoint[] = [];
+    while (cursor.isBefore(now) || cursor.isSame(now)) {
+      const key = cursor.format(CH_BUCKET_FORMAT);
+      points.push({ date: cursor.toISOString(), users: bugCounts.get(key) ?? 0 });
+      cursor = cursor.add(BUG_REPORT_BUCKET_HOURS, 'hour');
+    }
+
+    result[bug.id] = points;
+  }
+
+  return result;
 };
 
 export { BUG_CLOSED_STATUSES };

@@ -77,7 +77,7 @@ Based on research, pick the right shape:
 - **Single model, simple**: one `sliderNode` per parameter, one aspect ratio set. Seedance is a good reference.
 - **Multiple versions with same controls but different defaults**: use `createCheckpointGraph` with `versions.options`. Parameter defaults can vary via `ctx.model?.id` checks. Seedream is a reference.
 - **Multiple versions with different capability sets**: use a computed `<name>Variant` discriminator and branch into separate subgraphs. Ernie is a reference — base has LoRAs, turbo doesn't.
-- **Model-dependent defaults on the same node key**: if both variants have `cfgScale` but different defaults, add an effect on the parent graph that resets values when the variant changes. The discriminator alone won't override the form's persisted value because it's still valid in the new branch's range.
+- **Model-dependent defaults on the same node key**: if both variants have `cfgScale` but different defaults, just declare each subgraph with its own `sliderNode` defaults. **Do NOT add a `.effect()` that calls `set('cfgScale', ...)` on variant change** — see "Don't use `.effect()` to reset slider values across variants" below.
 
 ### 4. Confirm the plan with the user
 
@@ -319,6 +319,64 @@ Use this to avoid combinatorial rule duplication, but **be aware**: adding a rul
 4. If children share a root and ALL children should support the same cross rule, target the root to avoid duplication. Otherwise list each child.
 5. If the ecosystem has `parentEcosystemId` purely for identity (not compat — like Flux2Klein variants), add explicit cross rules (if any) only for the pairs that truly work — **do not rely on the parent chain**.
 
+## Gotchas
+
+### Don't use `.effect()` to reset slider values across variants
+
+Tempting pattern (DO NOT use):
+
+```ts
+// ❌ WRONG — clobbers user values
+.effect(
+  (ctx, _ext, set) => {
+    const isTurbo = ctx.variant === 'turbo';
+    set('cfgScale', isTurbo ? 1 : 5);
+    set('steps', isTurbo ? 4 : 20);
+  },
+  ['variant']
+)
+```
+
+Why it's wrong:
+
+1. **It overwrites localStorage values.** The user's tuned cfg/steps for the variant they actually use get wiped on every graph evaluation.
+2. **It runs server-side too.** When the submission is validated through the graph on the server, the effect fires and overwrites whatever the user just submitted — they get the defaults instead of their input.
+3. **It's unnecessary.** `sliderNode` already clamps via `snapToStep(val, step, min, max)` in its zod transform ([common.ts](src/shared/data-graph/generation/common.ts)), so an out-of-range value persisted from one variant gets auto-corrected to the new variant's range on the next pass. No effect needed.
+
+Correct pattern: declare the defaults on each subgraph's `sliderNode` and let zod handle clamping.
+
+```ts
+// ✅ CORRECT — defaults live on the sliderNode itself
+const normalGraph = new DataGraph<...>()
+  .node('cfgScale', sliderNode({ min: 1, max: 20, defaultValue: 5, step: 0.5 }))
+  .node('steps', sliderNode({ min: 1, max: 50, defaultValue: 20 }));
+
+const turboGraph = new DataGraph<...>()
+  .node('cfgScale', sliderNode({ min: 1, max: 2,  defaultValue: 1, step: 0.1 }))
+  .node('steps', sliderNode({ min: 1, max: 12, defaultValue: 4 }));
+```
+
+The `.effect()` mechanism is fine for *derived* state that the user shouldn't be editing directly (e.g. computed flags). It is NOT fine for slider values the user has agency over.
+
+### Turbo/distilled variants need per-model storage scoping
+
+When the new ecosystem ships a **turbo (or distilled) variant alongside a base variant** with meaningfully different `cfgScale` / `steps` ranges, the variants will trample each other's stored values without an extra step. Example: a user sets cfg=8 on base, switches to turbo (max=2), `snapToStep` clamps to 2 and persists; switching back to base now shows cfg=2 instead of the prior 8.
+
+The fix lives in [GenerationFormProvider.tsx](src/components/generation_v2/GenerationFormProvider.tsx) — there's a `TURBO_VARIANT_ECOSYSTEMS` `Set<string>` that drives a conditional storage group scoping `cfgScale`/`steps` per `model.id`. **Add your ecosystem's key to that set** when introducing a turbo/distilled variant.
+
+```ts
+// src/components/generation_v2/GenerationFormProvider.tsx
+const TURBO_VARIANT_ECOSYSTEMS = new Set<string>([
+  'Lens',
+  'Ernie',
+  'ZImageTurbo',
+  'ZImageBase',
+  // 'YourNewEcosystem',
+]);
+```
+
+Skip this if the variants share the same slider ranges (e.g. version bumps with identical capabilities) — there's nothing to trample in that case.
+
 ## Common patterns reference
 
 | Pattern | Reference file |
@@ -337,3 +395,4 @@ Use this to avoid combinatorial rule duplication, but **be aware**: adding a rul
 - **Sampler/scheduler**: if the provider recommends a single fixed sampler+scheduler, hardcode them in the handler rather than creating UI controls. Simpler UX and avoids bad user choices.
 - **Model-locked ecosystems**: set `modelLocked: true` in `ecosystemSettings.defaults` unless the ecosystem has multiple user-selectable checkpoints.
 - **Aspect ratio source**: prefer HuggingFace model card recommended resolutions over round-number guesses. They affect output quality significantly.
+- **Aspect ratio `priorityOptions`**: when an ecosystem exposes more than ~5 aspect ratios, pass `priorityOptions` to `aspectRatioNode` so the UI shows a standard preferred subset up front and tucks the rest behind the "More" overflow. Use the standard preferred set `['16:9', '4:3', '1:1', '3:4', '9:16']` (as Lens and NanoBanana do) when the ecosystem supports those ratios; substitute the nearest available ratio for any it lacks (e.g. Krea2 uses `4:5` in place of `3:4`). Without `priorityOptions`, every ratio renders inline, which is noisy for wide ratio sets.

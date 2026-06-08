@@ -6,7 +6,10 @@ import { ImagesAsPostsInfinite } from '~/components/Image/AsPosts/ImagesAsPostsI
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 export function ModelGallery(props: ImagesAsPostsInfiniteProps) {
   const node = useScrollAreaRef();
@@ -19,11 +22,12 @@ export function ModelGallery(props: ImagesAsPostsInfiniteProps) {
 
   const content = inView && <ImagesAsPostsInfinite {...props} />;
   const forceMinorLevel = props.model.minor && !currentUser?.isModerator;
+  const minorBrowsingLevel = currentUser ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
 
   return (
     <div ref={ref} className="min-h-80 w-full">
       {forceMinorLevel ? (
-        <BrowsingLevelProvider forcedBrowsingLevel={publicBrowsingLevelsFlag}>
+        <BrowsingLevelProvider forcedBrowsingLevel={minorBrowsingLevel}>
           <BrowsingSettingsAddonsProvider>
             <HiddenPreferencesProvider>{content || null}</HiddenPreferencesProvider>
           </BrowsingSettingsAddonsProvider>

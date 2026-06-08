@@ -5,6 +5,7 @@ import React from 'react';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 
 export function GenerateButton({
   iconOnly,
@@ -15,18 +16,47 @@ export function GenerateButton({
   onClick,
   epochNumber,
   versionId,
+  modelId,
   wildcardSetId,
   ...buttonProps
 }: Props) {
   const theme = useMantineTheme();
+  const { trackAction } = useTrackEvent();
 
   const opened = useGenerationPanelStore((state) => state.opened);
-  const onClickHandler = () => {
+  const onClickHandler = (e?: React.MouseEvent<HTMLElement>) => {
     if (generationPrice) {
       onPurchase?.();
       return;
     }
     if (mode === 'toggle' && opened) return generationGraphPanel.close();
+
+    // Top-of-funnel telemetry — fire-and-forget. Joined downstream to
+    // orchestration.jobs by userId + ts to compute view→click→submit→job
+    // conversion. `source` comes from data-activity on the rendered button
+    // (create:model | create:model-stat | create:model-card | ...) so
+    // entry-points can be split without an extra prop on every caller.
+    //
+    // Only treat this as an entry-point click when the button targets a
+    // specific resource. The same component is reused as the form-submit
+    // button inside the generator panel (no versionId/wildcardSetId/modelId);
+    // that submit fires Generator_Submit from the form handler instead, so
+    // we'd double-count if we tracked Model_Create_Click here too.
+    const isEntryPoint = versionId != null || wildcardSetId != null || modelId != null;
+    if (isEntryPoint) {
+      const dataActivityProp = (buttonProps as Record<string, unknown>)['data-activity'];
+      const source =
+        e?.currentTarget?.dataset?.activity ??
+        (typeof dataActivityProp === 'string' ? dataActivityProp : undefined);
+      trackAction({
+        type: 'Model_Create_Click',
+        details: {
+          modelId,
+          modelVersionId: versionId,
+          source,
+        },
+      }).catch(() => undefined);
+    }
 
     // Wildcards-type versions: short-circuit straight to the snippets node
     // — no `getGenerationData` round-trip required, since a wildcard set
@@ -123,6 +153,12 @@ type Props = Omit<ButtonProps, 'onClick' | 'children'> & {
   onClick?: () => void;
   epochNumber?: number;
   versionId?: number;
+  /**
+   * Parent model id, when known by the caller. Used for funnel telemetry
+   * (Model_Create_Click event) so we can attribute clicks back to the
+   * model entry-point even when only versionId is on the button.
+   */
+  modelId?: number;
   /**
    * When set, the button opens the panel directly with this wildcard set
    * id loaded into the snippets node. Takes precedence over `versionId`.

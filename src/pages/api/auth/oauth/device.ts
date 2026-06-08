@@ -54,26 +54,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Verify client supports device flow
   if (!client.grants.includes('urn:ietf:params:oauth:grant-type:device_code')) {
-    return res
-      .status(400)
-      .json({
-        error: 'unauthorized_client',
-        error_description: 'Client not authorized for device flow',
-      });
+    return res.status(400).json({
+      error: 'unauthorized_client',
+      error_description: 'Client not authorized for device flow',
+    });
   }
 
   // Validate scope early (also validated at token exchange, but fail fast for UX)
-  const requestedScope = parseInt(scope as string, 10) || 0;
-  if (requestedScope < 0 || requestedScope > TokenScope.Full) {
+  const rawScope = parseInt(scope as string, 10) || 0;
+  if (rawScope < 0 || rawScope > TokenScope.Full) {
     return res.status(400).json({ error: 'invalid_scope' });
   }
-  if (requestedScope > 0 && !Flags.hasFlag(client.allowedScopes, requestedScope)) {
-    return res
-      .status(400)
-      .json({
-        error: 'invalid_scope',
-        error_description: 'Requested scope exceeds client permissions',
-      });
+  // UserRead is a mandatory baseline on every grant — force it on and treat it
+  // as always-allowed so a device client that omitted it still gets it.
+  const requestedScope = rawScope | TokenScope.UserRead;
+  const allowedScopes = client.allowedScopes | TokenScope.UserRead;
+  if (requestedScope > 0 && !Flags.hasFlag(allowedScopes, requestedScope)) {
+    return res.status(400).json({
+      error: 'invalid_scope',
+      error_description: 'Requested scope exceeds client permissions',
+    });
   }
 
   // Generate codes

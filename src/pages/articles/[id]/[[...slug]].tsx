@@ -326,7 +326,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     >
       <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
       <Container size="xl" pos="relative">
-        <LoadingOverlay visible={isRefetching || upsertArticleMutation.isLoading} />
+        <LoadingOverlay visible={isRefetching || upsertArticleMutation.isPending} />
         <Stack gap={8} mb="xl">
           <Group justify="space-between" wrap="nowrap">
             <Title fw="bold" className={classes.title} order={1}>

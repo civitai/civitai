@@ -33,12 +33,14 @@ export function AssociatedModels({
   label,
   ownerId,
   versionId,
+  allowAIRecommendations,
 }: {
   fromId: number;
   type: AssociationType;
   label: React.ReactNode;
   ownerId: number;
   versionId: number;
+  allowAIRecommendations?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
@@ -47,6 +49,7 @@ export function AssociatedModels({
     fromId,
     type,
     modelVersionId: versionId,
+    allowAIRecommendations,
   });
 
   const handleManageClick = () => {

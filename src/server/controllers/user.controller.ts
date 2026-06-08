@@ -29,6 +29,7 @@ import type {
   GetUserListSchema,
   GetUserTagsSchema,
   ReportProhibitedRequestInput,
+  RestoreUserInput,
   SetLeaderboardEligibilitySchema,
   SetUserSettingsInput,
   ToggleBanUser,
@@ -89,6 +90,7 @@ import {
   setDismissedAlerts,
   getUsersWithSearch,
   isUsernamePermitted,
+  restoreUser,
   setLeaderboardEligibility,
   setUserSetting,
   toggleBan,
@@ -531,6 +533,29 @@ export const deleteUserHandler = async ({
     });
 
     return user;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const restoreUserHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: RestoreUserInput;
+}) => {
+  const { id } = input;
+  try {
+    const result = await restoreUser(input);
+
+    await ctx.track.userActivity({
+      targetUserId: id,
+      type: 'Account restoration',
+    });
+
+    return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -999,7 +1024,6 @@ export const toggleMuteHandler = async ({
     data: {
       muted: !user.muted,
       mutedAt: !user.muted ? date : undefined,
-      muteConfirmedAt: !user.muted ? date : undefined,
     },
     updateSource: 'toggleMute',
   });

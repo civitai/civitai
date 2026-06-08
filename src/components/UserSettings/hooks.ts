@@ -18,14 +18,15 @@ export function useMutateUserSettings({
       return { previousData };
     },
     onSuccess,
-    async onError(error, data, context) {
-      queryUtils.user.getSettings.setData(undefined, context?.previousData);
+    // v5.101: mutation callbacks are (error, variables, onMutateResult, context).
+    async onError(error, data, onMutateResult, mutationContext) {
+      queryUtils.user.getSettings.setData(undefined, onMutateResult?.previousData);
       if (!onError) {
         showErrorNotification({
           title: 'Failed to update user settings',
           error: new Error(error.message),
         });
-      } else await onError?.(error, data, context);
+      } else await onError?.(error, data, onMutateResult, mutationContext);
     },
   });
 }

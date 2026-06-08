@@ -277,8 +277,12 @@ export const oauthModel = {
   // ─── Scope Validation ──────────────────────────────────────
 
   async validateScope(_user: User, client: Client, scope: string[]): Promise<string[] | false> {
-    const requestedScope = stringToScope(scope);
-    const allowedScopes = (client as any).allowedScopes ?? TokenScope.Full;
+    // UserRead is always granted as a baseline (see createOAuthTokenPair).
+    // Force it into both the requested and allowed sets so it propagates to
+    // the issued token and never trips the allowed-scope check even for
+    // clients that didn't register UserRead in allowedScopes.
+    const requestedScope = stringToScope(scope) | TokenScope.UserRead;
+    const allowedScopes = ((client as any).allowedScopes ?? TokenScope.Full) | TokenScope.UserRead;
 
     if (!Flags.hasFlag(allowedScopes, requestedScope)) {
       return false;

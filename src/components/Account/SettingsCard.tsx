@@ -36,7 +36,7 @@ export function SettingsCard() {
   const queryUtils = trpc.useUtils();
   const flags = useFeatureFlags();
 
-  const { mutate, isLoading } = trpc.user.update.useMutation({
+  const { mutate, isPending: isLoading } = trpc.user.update.useMutation({
     async onSuccess() {
       await queryUtils.model.getAll.invalidate();
       await user?.refresh();
@@ -45,7 +45,7 @@ export function SettingsCard() {
   });
 
   const { assistantPersonality } = useCurrentUserSettings();
-  const { mutate: mutateSetting, isLoading: isLoadingSetting } = useMutateUserSettings();
+  const { mutate: mutateSetting, isPending: isLoadingSetting } = useMutateUserSettings();
 
   if (!user) return null;
 

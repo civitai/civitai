@@ -1635,71 +1635,8 @@ export const DEFAULT_LIVE_FEATURE_FLAGS: LiveFeatureFlags = {
   trainingAnnouncement: null,
 };
 
-/**
- * Dynamic, Redis-backed gating for generator ecosystems and individual
- * model versions. Lives under REDIS_SYS_KEYS.SYSTEM.FEATURES, hash field
- * `generation:ecosystem-config`.
- *
- * Two scopes — ecosystems (string keys) and model version IDs (numbers).
- * ID-level rules override ecosystem-level rules so a single version can be
- * disabled/tested/mod-only while its ecosystem is otherwise enabled.
- *
- * Three states per scope:
- * - `disabled*`: kill-switch, off for everyone including mods
- * - `modOnly*`: hidden from non-moderators
- * - `testing*`: visible to mods and users who pass the `generation-testing`
- *   Flipt flag (testers); hidden from everyone else
- */
-export type GenerationEcosystemConfig = {
-  modOnlyEcosystems: string[];
-  disabledEcosystems: string[];
-  testingEcosystems: string[];
-  /**
-   * Ecosystem keys that should show the "experimental build" alert in the
-   * generator UI. Unioned with the static `isEcosystemExperimental` check
-   * (which derives experimental-ness from base-model records) — this is the
-   * dynamic override for ecosystems not yet flagged in code.
-   */
-  experimentalEcosystems: string[];
-  modOnlyIds: number[];
-  disabledIds: number[];
-  testingIds: number[];
-  /**
-   * Model version IDs hidden on green (SFW-only) domains. Use this for NSFW
-   * models that should remain available on red/blue but disappear on green.
-   * Applied in addition to the ecosystem-level / mod / testing gates.
-   */
-  nsfwIds: number[];
-};
-
-export const DEFAULT_GENERATION_ECOSYSTEM_CONFIG: GenerationEcosystemConfig = {
-  modOnlyEcosystems: [],
-  disabledEcosystems: [],
-  testingEcosystems: [],
-  experimentalEcosystems: [],
-  modOnlyIds: [],
-  disabledIds: [],
-  testingIds: [],
-  nsfwIds: [],
-};
-
-/**
- * Runtime-evaluated ecosystem config: the operator-set lists from Redis
- * plus the per-user Flipt result for `generation-testing`. Returned by
- * `getGenerationEcosystemConfig(user)` and passed wholesale into
- * `getResourceCanGenerate`.
- */
-export type GenerationEcosystemContext = GenerationEcosystemConfig & {
-  /** Whether the current user passes the `generation-testing` Flipt flag (mods always do). */
-  hasTestingAccess: boolean;
-  /**
-   * Whether the current request is on a green (SFW-only) domain. Drives the
-   * `nsfwIds` gate. When omitted (undefined), the NSFW gate is skipped — use
-   * this for callers that aren't surfacing the resource to the user-facing
-   * generator (e.g. backend pipelines, file-download endpoints).
-   */
-  isGreen?: boolean;
-};
+// GenerationEcosystemConfig / Context + DEFAULT_GENERATION_ECOSYSTEM_CONFIG now
+// derive from `generationEcosystemConfigSchema` in `~/server/schema/generation.schema`.
 
 export const EARLY_ACCESS_CONFIG: {
   article: number;

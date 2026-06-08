@@ -112,6 +112,7 @@ const postFilterSchema = z.object({
   periodMode: periodModeSchema,
   sort: z.enum(PostSort).default(PostSort.MostReactions),
   followed: z.boolean().optional(),
+  scheduled: z.boolean().optional(),
 });
 
 type ArticleFilterSchema = z.infer<typeof articleFilterSchema>;

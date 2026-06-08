@@ -10,6 +10,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { TrainingResultsV1 } from '~/server/schema/model-file.schema';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { refundTransaction } from '~/server/services/buzz.service';
+import { withSignals } from '~/server/signals/wrapper';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
 import { queueNewTrainingModerationWebhook } from '~/server/webhooks/training-moderation.webhooks';
@@ -288,13 +289,15 @@ export async function updateRecords(
       status,
       fileMetadata: metadata,
     };
-    await fetch(
-      `${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/${SignalMessages.TrainingUpdate}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bodyData),
-      }
+    await withSignals(() =>
+      fetch(
+        `${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/${SignalMessages.TrainingUpdate}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bodyData),
+        }
+      )
     );
   } catch (e: unknown) {
     logWebhook({
