@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import {
   buildGenerationContext,
+  bustQueriedWorkflowsCache,
   formatGenerationResponse2,
   generateFromGraph,
   getWorkflowStatusUpdate,
@@ -342,6 +343,8 @@ export const orchestratorRouter = router({
         user: ctx.user,
         tags: ctx.domain === 'green' ? [...input.tags, 'green'] : input.tags,
         hideMatureContent: ctx.hideMatureContent,
+        // Self-serve feed: token belongs to ctx.user, so the per-user cache is safe.
+        cache: true,
       })
     ),
   // #region [Generation Graph V2 endpoints]
@@ -383,7 +386,7 @@ export const orchestratorRouter = router({
         });
       }
 
-      return generateFromGraph({
+      const result = await generateFromGraph({
         input: formInput,
         externalCtx,
         userId: ctx.user.id,
@@ -401,6 +404,14 @@ export const orchestratorRouter = router({
         sourceMetadataMap,
         remixOfId,
       });
+
+      // Bust the short-TTL queryGeneratedImages cache so a concurrent tab or an
+      // immediate signal reconnect sees the just-submitted workflow without
+      // waiting out the TTL. Fire-and-forget: the response must not block on a
+      // cache eviction, and a failed bust only falls back to the short TTL.
+      bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
+
+      return result;
     }),
 
   /**

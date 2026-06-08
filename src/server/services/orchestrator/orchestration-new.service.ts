@@ -46,7 +46,8 @@ import {
 } from '~/server/services/generation/generation.service';
 import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { clearCacheByPattern, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/generation.schema';
@@ -2262,20 +2263,129 @@ export type GeneratedImageWorkflowModel = NormalizedWorkflow;
  * Simplified queryGeneratedImageWorkflows.
  * Replaces the version in common.ts.
  */
+// Short-TTL cache in front of the user's generated-images feed. On every
+// SignalR reconnect the client invalidates `orchestrator.queryGeneratedImages`
+// for every tab at once (see SignalsProvider.onStateChange), so a single user
+// flapping their connection — or many users reconnecting on the same wave —
+// produces a burst of identical first-page queries within milliseconds. Each
+// uncached call hits the orchestrator over HTTP and then runs the CPU-heavy
+// `formatGenerationResponse2` (resource enrichment + per-workflow mapping),
+// which is part of the aggregate per-request load that pins the API pods.
+//
+// The TTL is intentionally tiny. Live generation progress does NOT flow through
+// this route: status updates arrive via SignalR `TextToImageUpdate` ->
+// `orchestrator.statusUpdate` (a separate per-workflow endpoint) and are patched
+// into the client's query cache in place (see useGenerationSignalUpdate.ts), with
+// a 60s poll fallback. So a 3s cache on the *list* query collapses the reconnect
+// storm without delaying any live status the user actually sees. The user's own
+// new generations / deletes are applied optimistically client-side via
+// setQueryData in generationRequestHooks.ts, so they too are unaffected by this
+// server cache; the short TTL is the freshness net for anything else.
+const QUERIED_WORKFLOWS_CACHE_TTL = 3; // seconds
+
+// Builds a stable redis key per (userId, fully-resolved query params). The key
+// MUST include every param that changes the response (cursor, take, the
+// green-injected tags, sort direction, date range, excludeFailed,
+// hideMatureContent) so different pages/filters never collide. `token` is
+// deliberately excluded: it is per-session, but the response is identical for a
+// given user regardless of which session token made the request, and including
+// it would prevent a user's concurrent tabs from sharing a cache entry — the
+// exact case this cache exists to collapse. Anonymous callers (no user id) are
+// not cached.
+function getQueriedWorkflowsCacheKey({
+  userId,
+  take,
+  cursor,
+  tags,
+  ascending,
+  fromDate,
+  toDate,
+  excludeFailed,
+  hideMatureContent,
+}: {
+  userId: number;
+  take: number;
+  cursor?: string;
+  tags: string[];
+  ascending?: boolean;
+  fromDate?: Date;
+  toDate?: Date;
+  excludeFailed?: boolean;
+  hideMatureContent: boolean;
+}) {
+  const variant = JSON.stringify({
+    t: take,
+    c: cursor ?? null,
+    // sort tags so [a,b] and [b,a] map to the same entry
+    tags: [...tags].sort(),
+    a: ascending ?? null,
+    f: fromDate?.toISOString() ?? null,
+    to: toDate?.toISOString() ?? null,
+    ef: excludeFailed ?? null,
+    hmc: hideMatureContent,
+  });
+  return `${REDIS_KEYS.GENERATION.QUERIED_WORKFLOWS}:${userId}:${variant}` as const;
+}
+
+// Busts every cached feed variant for a user. Called when the user submits a new
+// generation so a concurrent tab / immediate reconnect refetch sees the new
+// workflow without waiting out the 3s TTL. Generation submits are far rarer than
+// feed reads, so the per-submit SCAN is an acceptable cost (same approach the
+// buzz-account cache uses). Best-effort: a bust failure only means the user's
+// other surfaces fall back to the short TTL, so errors are swallowed.
+export async function bustQueriedWorkflowsCache(userId?: number) {
+  if (!userId) return;
+  await clearCacheByPattern(`${REDIS_KEYS.GENERATION.QUERIED_WORKFLOWS}:${userId}:*`).catch(
+    () => null
+  );
+}
+
 export async function queryGeneratedImageWorkflows2({
   user,
+  cache,
   ...props
 }: z.output<typeof workflowQuerySchema> & {
   token: string;
   user?: SessionUser;
   hideMatureContent: boolean;
+  // Opt-in short-TTL cache. ONLY safe when `token` belongs to `user` — i.e. the
+  // self-serve feed. The moderator path (queryUserGeneratedImages) passes the
+  // *target* user's token but the *moderator's* `user`, so the data identity is
+  // the token, not user.id; caching there would key the target's feed under the
+  // moderator's id and collide across different targets. That path leaves this
+  // off and is not part of the reconnect storm anyway.
+  cache?: boolean;
 }) {
-  const { nextCursor, items } = await queryWorkflows(props);
-
-  return {
-    items: await formatGenerationResponse2(items as Workflow[], user),
-    nextCursor,
+  const fetchAndFormat = async () => {
+    const { nextCursor, items } = await queryWorkflows(props);
+    return {
+      items: await formatGenerationResponse2(items as Workflow[], user),
+      nextCursor,
+    };
   };
+
+  // Only cache the self-serve feed of a logged-in user. fetchThroughCache does
+  // not cache thrown errors (the fetchFn rejection propagates without writing
+  // redis), and it single-flights concurrent misses behind a lock, so a
+  // reconnect burst that arrives before the first fetch resolves is coalesced
+  // rather than fanned out.
+  if (!cache || !user?.id) return fetchAndFormat();
+
+  return fetchThroughCache(
+    getQueriedWorkflowsCacheKey({
+      userId: user.id,
+      take: props.take,
+      cursor: props.cursor,
+      tags: props.tags,
+      ascending: props.ascending,
+      fromDate: props.fromDate,
+      toDate: props.toDate,
+      excludeFailed: props.excludeFailed,
+      hideMatureContent: props.hideMatureContent,
+    }),
+    fetchAndFormat,
+    { ttl: QUERIED_WORKFLOWS_CACHE_TTL }
+  );
 }
 
 // =============================================================================
