@@ -929,6 +929,7 @@ export const REDIS_KEYS = {
     TOKENS: 'generation:tokens',
     COUNT: 'generation:count',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
+    QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
   },
   OAUTH: {
     AUTHORIZATION_CODES: 'packed:oauth:authorization-codes',
