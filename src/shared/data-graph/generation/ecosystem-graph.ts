@@ -423,7 +423,9 @@ export const ecosystemGraph = new DataGraph<
         when: ctx.output === 'image' || supportsVideoQuantity,
       };
     },
-    ['workflow', 'output', 'ecosystem', 'model', 'enhancedCompatibility']
+    // `ext:limits` tracks live getStatus quantity caps (maxQuantity / vidQuantity);
+    // `ext:flags` tracks the enhancedCompatibilitySdcpp toggle that drives the bogo step.
+    ['workflow', 'output', 'ecosystem', 'model', 'enhancedCompatibility', 'ext:limits', 'ext:flags']
   );
 
 // Prompt + triggerWords are now defined per-ecosystem inside each subgraph

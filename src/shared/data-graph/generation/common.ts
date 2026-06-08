@@ -1188,7 +1188,9 @@ export function createResourcesGraph(options?: { resourceTypes?: ModelType[]; li
           resourceTypes: options?.resourceTypes,
           limit: options?.limit ?? ext.limits.maxResources,
         }),
-      ['ecosystem']
+      // `ext:limits` re-runs the node when getStatus limits change so the
+      // resource cap (`.max()` schema + meta.limit) tracks the live value.
+      ['ecosystem', 'ext:limits']
     )
     .effect(
       (ctx, _ext, set) => {
