@@ -36,7 +36,7 @@ export function useQueryRecommendedResources(
     // majority of versions that have it disabled. recommenders.getResourceRecommendations
     // was ~58% of all tRPC volume; this removes that load (+ its middleware/Flipt
     // cost) from the main pool for the disabled case with no behavior change.
-    { enabled: !!modelVersionId && features.recommenders && allowAIRecommendations === true }
+    { enabled: !!modelVersionId && features.recommenders && !!allowAIRecommendations }
   );
 
   // Memoize combined data to prevent unnecessary re-renders
