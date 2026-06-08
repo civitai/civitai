@@ -72,6 +72,17 @@ vi.mock('~/server/utils/server-domain', () => ({ getAllServerHosts: () => ['civi
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: vi.fn(async () => true),
 }));
+// Mint gate is now the `appBlocks` feature flag evaluated for the (possibly
+// null) session — NOT a hardcoded isModerator check. In prod the flag is
+// `availability: ['mod']`, so getFeatureFlags returns appBlocks:true only for
+// mods (and appBlocks:false for anon/non-mod). We mock the service so each test
+// can choose what the flag evaluates to for its caller. Default models the prod
+// 'mod' availability: mods get the flag, everyone else does not.
+vi.mock('~/server/services/feature-flags.service', () => ({
+  getFeatureFlags: vi.fn(({ user }: { user?: { isModerator?: boolean } }) => ({
+    appBlocks: !!user?.isModerator,
+  })),
+}));
 
 function makeReq(opts: {
   method?: string;
@@ -166,6 +177,16 @@ describe('POST /api/v1/block-tokens', () => {
     mockTokenService.checkRateLimit.mockResolvedValue(true);
   });
 
+  beforeEach(async () => {
+    // Restore the default flag behaviour (models prod 'mod' availability) after
+    // any test that overrode it with mockReturnValue. clearAllMocks resets call
+    // history but keeps a sticky mockReturnValue, so re-establish it explicitly.
+    const flagMod = await import('~/server/services/feature-flags.service');
+    (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      ({ user }: { user?: { isModerator?: boolean } }) => ({ appBlocks: !!user?.isModerator })
+    );
+  });
+
   it('B1: rejects cross-origin POST with 403 (no Origin header) instead of silent token-mint', async () => {
     const { default: handler } = await import('../index');
     const req = makeReq({ body: validBody() });
@@ -218,16 +239,30 @@ describe('POST /api/v1/block-tokens', () => {
     expect(res._headers['access-control-allow-origin']).toBe('https://civitai.com');
   });
 
-  it('Phase 2: non-moderator is rejected at the mint-gate (App Blocks is mod-only)', async () => {
-    // App Blocks is internal-only until GA: minting a block token is the
-    // linchpin (the whole runtime is mod-only transitively), so a verified
-    // non-mod must be refused before any resolve/sign.
+  it('mint gate: non-moderator is rejected when appBlocks flag is mod-only (prod default)', async () => {
+    // Prod default: appBlocks `availability: ['mod']`. A verified non-mod fails
+    // the flag and must be refused before any resolve/sign — unchanged behaviour
+    // from the prior hardcoded isModerator gate, now expressed via the flag.
     mockSession.value = { user: { id: 99, bannedAt: null, isModerator: false } } as never;
     const { default: handler } = await import('../index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(403);
-    expect((res._body as { error: string }).error).toMatch(/civitai team/i);
+    expect((res._body as { error: string }).error).toMatch(/not available/i);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+    expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
+  });
+
+  it('mint gate (anon, flag mod-only): anon caller is rejected when appBlocks is NOT available', async () => {
+    // The prod posture: anon (no session) fails the `appBlocks` flag (mod-only),
+    // so minting is refused with 403 — anon never mints in prod today. This is
+    // the (b) acceptance case: anon mint blocked when appBlocks not available.
+    mockSession.value = null; // anonymous
+    const { default: handler } = await import('../index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(403);
+    expect((res._body as { error: string }).error).toMatch(/not available/i);
     expect(mockTokenService.sign).not.toHaveBeenCalled();
     expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
   });
@@ -503,6 +538,112 @@ describe('POST /api/v1/block-tokens', () => {
     expect(signArgs.scopes).toEqual(['block:settings:read']);
     const body = res._body as { needsConsent: boolean };
     expect(body.needsConsent).toBe(false);
+  });
+
+  // ==========================================================================
+  // Anonymous conversion — when the appBlocks flag is public (preview/GA), an
+  // anon caller mints a token carrying ONLY the anon-safe scope subset (every
+  // consent-gated `:self`/owned/money/tip scope STRIPPED), instead of a 403.
+  // ==========================================================================
+
+  it('anon mint (flag public): issues a token with money/self scopes STRIPPED, not 403', async () => {
+    const flagMod = await import('~/server/services/feature-flags.service');
+    // Flag widened to public: anon now passes the mint gate.
+    (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      appBlocks: true,
+    });
+    mockSession.value = null; // anonymous
+    // generate-from-model's real manifest: models:read:self + ai:write:budgeted.
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...RESOLVED_INSTALL,
+      appBlock: {
+        ...RESOLVED_INSTALL.appBlock,
+        manifest: { scopes: ['models:read:self', 'ai:write:budgeted'] },
+        approvedScopes: ['models:read:self', 'ai:write:budgeted'],
+        app: { allowedScopes: 4 | 32768 /* ModelsRead | AIServicesWrite */ },
+      },
+    });
+    const { default: handler } = await import('../index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalled();
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as {
+      scopes: string[];
+      userId: number | null;
+    };
+    // SECURITY INVARIANT: no money/self/owned/tip scope in an anon token.
+    expect(signArgs.scopes).not.toContain('ai:write:budgeted');
+    expect(signArgs.scopes).not.toContain('models:read:self');
+    expect(signArgs.scopes).not.toContain('buzz:read:self');
+    expect(signArgs.scopes).not.toContain('user:read:self');
+    expect(signArgs.scopes).not.toContain('social:tip:self');
+    expect(signArgs.scopes).not.toContain('media:read:owned');
+    // For generate-from-model the anon-safe subset is effectively empty.
+    expect(signArgs.scopes).toEqual([]);
+    // sub is anon (userId null on the sign call).
+    expect(signArgs.userId).toBeNull();
+    // No consent prompt for anon — the host converts gated actions to sign-in.
+    const body = res._body as { needsConsent: boolean; missingScopes: string[] };
+    expect(body.needsConsent).toBe(false);
+    expect(body.missingScopes).toEqual([]);
+  });
+
+  it('anon mint (flag public): consent-exempt apps:storage:* survives the strip', async () => {
+    // Belt-and-suspenders: a manifest mixing a money scope with a consent-exempt
+    // ambient scope keeps only the exempt one for anon. Proves the strip is the
+    // COMPLEMENT of the exempt set, not a hand-maintained money denylist.
+    const flagMod = await import('~/server/services/feature-flags.service');
+    (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      appBlocks: true,
+    });
+    mockSession.value = null;
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...RESOLVED_INSTALL,
+      appBlock: {
+        ...RESOLVED_INSTALL.appBlock,
+        manifest: { scopes: ['apps:storage:read', 'ai:write:budgeted', 'buzz:read:self'] },
+        approvedScopes: ['apps:storage:read', 'ai:write:budgeted', 'buzz:read:self'],
+        app: { allowedScopes: 0xffffffff },
+      },
+    });
+    const { default: handler } = await import('../index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(200);
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { scopes: string[] };
+    expect(signArgs.scopes).toEqual(['apps:storage:read']);
+    expect(signArgs.scopes).not.toContain('ai:write:budgeted');
+    expect(signArgs.scopes).not.toContain('buzz:read:self');
+  });
+
+  it('authed-mod mint: unchanged — manifest scopes sign when granted', async () => {
+    // (c) acceptance: the authed-mod path is behaviour-identical. Mod passes the
+    // flag; default grant ledger has everything granted; both scopes sign.
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...RESOLVED_INSTALL,
+      appBlock: {
+        ...RESOLVED_INSTALL.appBlock,
+        manifest: { scopes: ['models:read:self', 'buzz:read:self'] },
+        approvedScopes: ['models:read:self', 'buzz:read:self'],
+        app: { allowedScopes: 4 | 65536 },
+      },
+    });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['models:read:self', 'buzz:read:self'],
+      revokedAt: null,
+    });
+    const { default: handler } = await import('../index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(200);
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as {
+      scopes: string[];
+      userId: number | null;
+    };
+    expect(new Set(signArgs.scopes)).toEqual(new Set(['models:read:self', 'buzz:read:self']));
+    expect(signArgs.userId).toBe(42);
   });
 
   // Last in file: this test resets modules to swap out the env mock; vitest

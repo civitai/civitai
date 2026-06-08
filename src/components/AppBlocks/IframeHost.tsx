@@ -7,6 +7,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
+import { resolveRequestSignIn } from './requestSignInGate';
 import { intersectSandbox } from './sandbox';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
@@ -18,6 +19,9 @@ import { trpc } from '~/utils/trpc';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
+// Login flow for anonymous-conversion (REQUEST_SIGN_IN). SSR-disabled to match
+// requireLogin()'s own dynamic import — LoginContent touches window/router.
+const LoginModal = dynamic(() => import('~/components/Login/LoginModal'), { ssr: false });
 
 // Hard cap on the suggested top-up amount a block can pre-fill in the
 // BuyBuzzModal (security audit #10). Without this a malicious block could
@@ -391,6 +395,32 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     });
     return off;
   }, [onMessage]);
+
+  // Anonymous conversion: the block (rendered for a logged-out viewer from the
+  // scope-free BLOCK_INIT context) asks the host to start the civitai login
+  // flow when the user clicks an action that needs auth/money (e.g. Generate).
+  // usePostMessage already pins origin + event.source; we additionally gate on
+  // status === 'ready' (post-BLOCK_READY) so a pre-handshake block can't pop a
+  // login modal before any interaction, matching the OPEN_BUZZ_PURCHASE posture.
+  //
+  // returnUrl: an untrusted same-origin path the block may supply (must begin
+  // with a single '/', no protocol-relative '//', so it can't redirect off-site
+  // after login). When absent or unsafe we fall through to undefined and
+  // LoginModal defaults returnUrl to the current page (router.asPath).
+  useEffect(() => {
+    const off = onMessage<{ returnUrl?: unknown } | undefined>('REQUEST_SIGN_IN', (raw) => {
+      const resolved = resolveRequestSignIn(status, raw);
+      if (resolved == null) return; // not ready — drop (gate centralises the rules)
+      dialogStore.trigger({
+        component: LoginModal,
+        props: {
+          reason: 'image-gen',
+          ...(resolved.returnUrl ? { returnUrl: resolved.returnUrl } : {}),
+        },
+      });
+    });
+    return off;
+  }, [onMessage, status]);
 
   // SDK workflow bridge: receive SUBMIT/ESTIMATE/POLL requests from the block,
   // forward to blocks.* tRPC, echo the response back with matching requestId.

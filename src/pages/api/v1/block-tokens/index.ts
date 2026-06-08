@@ -19,12 +19,17 @@ import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import {
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
-import { getGrantedScopes, partitionByConsent } from '~/server/services/blocks/scope-grant.service';
+import {
+  getGrantedScopes,
+  partitionByConsent,
+  consentGatedScopes,
+} from '~/server/services/blocks/scope-grant.service';
 
 /**
  * POST /api/v1/block-tokens
@@ -287,17 +292,24 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id ?? null;
 
-  // Phase 2 (internal-only graduation gate): App Blocks is moderator-only
-  // until GA. Block tokens are the linchpin — the entire block-token runtime
-  // (workflow submit/poll/cancel/estimate, KV storage, /blocks/me) is reachable
-  // only with a minted token, so gating MINTING on isModerator makes the whole
-  // surface transitively mod-only. Anon callers (no session) get no token.
-  // The per-call assertViewerIsModerator checks in blocks/apps routers are the
-  // defense-in-depth layer on top of this. Reject right after the session load
-  // (before the per-(subject,instance) rate-limit + resolveBlockInstance DB
-  // read) so a non-mod can't probe install existence or consume those buckets.
-  if (!session?.user?.isModerator) {
-    res.status(403).json({ error: 'App Blocks is restricted to the civitai team' });
+  // Graduation gate: who may mint a block token is governed by the `appBlocks`
+  // feature flag, evaluated for THIS caller (possibly anon). Today the flag is
+  // `availability: ['mod']`, so this is behaviour-identical to the previous
+  // hardcoded `isModerator` check — anon/non-mod callers fail the flag and are
+  // refused. When the flag is later widened (preview/GA → `['user']`/`['public']`
+  // via Flipt or the registry), anon/non-mod callers start passing here and the
+  // anon-scope stripping below keeps the issued token safe (no money/self scope).
+  //
+  // Block tokens are the linchpin — the entire block-token runtime (workflow
+  // submit/poll/cancel/estimate, KV storage, /blocks/me) is reachable only with
+  // a minted token. The per-call assertViewerIsModerator checks in blocks/apps
+  // routers remain the defense-in-depth layer on top of this. Evaluate right
+  // after the session load (before the per-(subject,instance) rate-limit +
+  // resolveBlockInstance DB read) so a refused caller can't probe install
+  // existence or consume those buckets.
+  const appBlocksAvailable = getFeatureFlags({ user: session?.user, req }).appBlocks;
+  if (!appBlocksAvailable) {
+    res.status(403).json({ error: 'App Blocks is not available to this account' });
     return;
   }
 
@@ -408,12 +420,13 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // manifest/approved ceiling: a v2 that adds a scope no longer silently mints
   // that scope for an existing install — the user must re-consent first.
   //
-  // App Blocks is mod-only today, so userId is always present here (anon is
-  // rejected far above at the isModerator gate). The grant lookup is keyed on
-  // (userId, appBlockId); a missing grant row → empty set → every consent-gated
-  // scope is withheld (fail-closed). Publisher/ambient scopes (block:settings:*,
-  // apps:storage:*) are consent-exempt and always pass through — see
-  // partitionByConsent.
+  // The per-user grant gate only applies to authenticated callers. Anon callers
+  // (allowed through the mint gate once the appBlocks flag is public) are handled
+  // by the anon-scope strip immediately below — they have no grant ledger. The
+  // grant lookup is keyed on (userId, appBlockId); a missing grant row → empty
+  // set → every consent-gated scope is withheld (fail-closed). Publisher/ambient
+  // scopes (block:settings:*, apps:storage:*) are consent-exempt and always pass
+  // through — see partitionByConsent.
   let manifestScopes = requestedScopes;
   let needsConsent = false;
   let missingScopes: string[] = [];
@@ -425,25 +438,35 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     needsConsent = missing.length > 0;
   }
 
-  // Audit-9 #4: pre-reject anon callers requesting `:self` scopes here at
-  // issuance, instead of letting them mint a token that enforceContextBinding
-  // 403s on first use. The runtime path was returning a fatal_block_error
-  // fallback for what is really a misconfigured-block-for-anon-viewer case.
-  const ANON_REJECTED_SCOPES = new Set([
-    'user:read:self',
-    'buzz:read:self',
-    'media:read:owned',
-    'social:tip:self',
-  ]);
+  // Anonymous conversion: a logged-out viewer gets a token carrying ONLY the
+  // anon-safe scope subset rather than a 403. The anon-safe subset is the
+  // manifest scopes with every consent-gated scope STRIPPED — which is exactly
+  // every `:self` / owned / money / tip scope (`user:read:self`,
+  // `buzz:read:self`, `media:read:owned`, `social:tip:self`,
+  // `ai:write:budgeted`, `models:read:self`, …). `consentGatedScopes` is the
+  // single source of truth for "requires a per-user grant"; an anon viewer has
+  // no grant and never can, so the entire consent-gated set is withheld.
+  //
+  // What remains for anon is only the consent-exempt scopes
+  // (`apps:storage:*`; `block:settings:*` is additionally installer-only and
+  // gets rejected just below for anon). For generate-from-model the manifest is
+  // `models:read:self` + `ai:write:budgeted`, so the anon subset is empty — the
+  // block renders from the (scope-free) BLOCK_INIT context (showcase + form),
+  // and Generate stays server-gated: with no `ai:write:budgeted` scope the
+  // submitWorkflow path rejects, which the block converts into a sign-in prompt.
+  //
+  // SECURITY INVARIANT: no money/self/owned/tip scope can appear in an anon
+  // token. Because the strip set is the COMPLEMENT of the consent-exempt set
+  // (not an allowlist of "known bad" scopes), any future money/self-class scope
+  // added to the vocabulary is stripped for anon by default (fail-closed),
+  // unless it is explicitly added to CONSENT_EXEMPT_SCOPES.
   if (userId == null) {
-    const needsAuth = manifestScopes.filter((s) => ANON_REJECTED_SCOPES.has(s));
-    if (needsAuth.length > 0) {
-      res.status(403).json({
-        error: 'manifest requires authenticated viewer; this block cannot render for anon',
-        scopes: needsAuth,
-      });
-      return;
-    }
+    const stripped = consentGatedScopes(manifestScopes);
+    manifestScopes = manifestScopes.filter((s) => !stripped.includes(s));
+    // No consent signal for anon — the host converts an attempted gated action
+    // into a sign-in prompt, not a re-consent flow.
+    missingScopes = [];
+    needsConsent = false;
   }
 
   // C8: settings scopes are publisher-only. Caller must be the install's
