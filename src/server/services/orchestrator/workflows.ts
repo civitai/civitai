@@ -19,6 +19,7 @@ import {
 } from '@civitai/client';
 import type * as z from 'zod';
 import { isDev, isProd } from '~/env/other';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import type {
   PatchWorkflowParams,
   TagsPatchSchema,
@@ -354,6 +355,7 @@ export async function refreshBlobUrlsInBody(
           throw new Error('Refresh endpoint returned no URL data');
         }
       } catch (error) {
+        logToAxiom({ type: 'error', name: 'blob-refresh-failed', blobId, error: safeError(error) });
         throw throwBadRequestError(
           `Failed to refresh image URL for blob: ${blobId}. Please try uploading the image again.`
         );
@@ -371,7 +373,7 @@ export function findBlobUrls(obj: unknown): { path: string[]; blobId: string }[]
 
     if (typeof current === 'string') {
       if (shouldRefreshBlobUrl(current)) {
-        const match = current.match(/\/v\d\/consumer\/blobs\/(?<blobId>[a-zA-Z0-9_.-]+)/);
+        const match = current.match(/\/v\d+\/consumer\/blobs\/(?<blobId>[a-zA-Z0-9_.-]+)/);
         if (match && match.groups?.blobId) {
           results.push({ path, blobId: match.groups.blobId });
         }
@@ -401,7 +403,8 @@ export function shouldRefreshBlobUrl(url: string): boolean {
     if (!sig || !exp) return true;
 
     const expiryDate = new Date(exp);
-    const bufferTime = 5 * 60 * 1000; // 5 minutes buffer
+    if (isNaN(expiryDate.getTime())) return true; // Unparseable exp → treat as expired
+    const bufferTime = 5 * 60 * 1000;
     return expiryDate.getTime() - Date.now() < bufferTime;
   } catch {
     return false;

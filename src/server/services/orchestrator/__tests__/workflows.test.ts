@@ -56,6 +56,14 @@ describe('shouldRefreshBlobUrl', () => {
     expect(shouldRefreshBlobUrl('https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg?exp=2026-06-07T10:00:00Z')).toBe(true);
   });
 
+  it('should return true if exp param is not a valid date', () => {
+    expect(
+      shouldRefreshBlobUrl(
+        'https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg?sig=123&exp=not-a-date'
+      )
+    ).toBe(true);
+  });
+
   it('should return true if the URL signature has already expired or expires in < 5 mins', () => {
     const expiredTime = new Date(Date.now() - 60 * 1000).toISOString(); // 1 min ago
     expect(
@@ -191,7 +199,7 @@ describe('refreshBlobUrlsInBody', () => {
   });
 });
 
-describe('submitWorkflow Integration Test', () => {
+describe('submitWorkflow (mocked)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
