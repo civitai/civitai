@@ -145,10 +145,10 @@ export default function ArticleRatingReviewModal({
           to see what mods look at.
         </Text>
         <Group justify="flex-end">
-          <Button variant="default" onClick={dialog.onClose} disabled={mutation.isLoading}>
+          <Button variant="default" onClick={dialog.onClose} disabled={mutation.isPending}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} loading={mutation.isLoading} disabled={!suggestedLevel}>
+          <Button onClick={handleSubmit} loading={mutation.isPending} disabled={!suggestedLevel}>
             Submit review
           </Button>
         </Group>

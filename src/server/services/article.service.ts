@@ -2513,10 +2513,7 @@ export async function getArticleRatingReviewForOwner({
   // option anyway (Pending review blocks it).
   let derivedLevel: number | null = null;
   let derivedRatingDroppedBelowOverride = false;
-  if (
-    article.moderatorNsfwLevel != null &&
-    review?.status !== ReportStatus.Pending
-  ) {
+  if (article.moderatorNsfwLevel != null && review?.status !== ReportStatus.Pending) {
     derivedLevel = await computeArticleDerivedNsfwLevel(articleId);
     derivedRatingDroppedBelowOverride =
       derivedLevel != null && derivedLevel < article.moderatorNsfwLevel;

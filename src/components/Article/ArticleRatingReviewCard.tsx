@@ -83,7 +83,7 @@ export function ArticleRatingReviewCard({
   const [resolvedLocal, setResolvedLocal] = useState<boolean>(isResolved);
 
   const utils = trpc.useUtils();
-  const { mutate, isLoading } = trpc.article.resolveRatingReview.useMutation({
+  const { mutate, isPending } = trpc.article.resolveRatingReview.useMutation({
     onSuccess: (_, variables) => {
       setResolvedLocal(true);
       showSuccessNotification({
@@ -129,8 +129,8 @@ export function ArticleRatingReviewCard({
     });
   };
 
-  const dismissDisabled = isLoading || resolvedLocal || (requireReason && !modComment.trim());
-  const approveDisabled = isLoading || resolvedLocal;
+  const dismissDisabled = isPending || resolvedLocal || (requireReason && !modComment.trim());
+  const approveDisabled = isPending || resolvedLocal;
 
   const articleHref = `/articles/${article.id}`;
   const userHref = user.username ? `/user/${user.username}` : undefined;
@@ -281,7 +281,7 @@ export function ArticleRatingReviewCard({
                   color="red"
                   variant="filled"
                   data-disabled={dismissDisabled || undefined}
-                  loading={isLoading}
+                  loading={isPending}
                   onClick={(event: DismissButtonClickEvent) => {
                     // Mantine strips pointer events from `disabled` buttons,
                     // which kills the wrapping Tooltip. Use `data-disabled`
@@ -302,7 +302,7 @@ export function ArticleRatingReviewCard({
                 color="teal"
                 disabled={approveDisabled}
                 onClick={handleApprove}
-                loading={isLoading}
+                loading={isPending}
               >
                 Approve as {getBrowsingLevelLabel(Number(selectedLevel))}
               </Button>
