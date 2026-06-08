@@ -56,6 +56,13 @@ const maiAspectRatios = [
 /** Standard preferred ratios shown before the "More" overflow. */
 const maiPriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
+/**
+ * Allowed aspect ratios for img2img:edit reference images. Derived from
+ * maiAspectRatios so cropping stays in sync with the supported output ratios —
+ * uploads that don't match one of these must be cropped before generating.
+ */
+export const maiCropAspectRatios = maiAspectRatios.map((r) => r.value as `${number}:${number}`);
+
 // =============================================================================
 // MAI Graph
 // =============================================================================
@@ -76,19 +83,25 @@ export const maiGraph = new DataGraph<{ ecosystem: string; workflow: string }, G
   .merge(triggerWordsGraph)
   .merge(snippetsGraph)
   .merge(promptGraph)
+  // Aspect ratio picker — shown only for txt2img. For img2img:edit the output
+  // ratio is derived from the (cropped) reference image, so the picker is hidden.
   .node(
     'aspectRatio',
-    aspectRatioNode({
-      options: maiAspectRatios,
-      defaultValue: '1:1',
-      priorityOptions: maiPriorityRatios,
-    })
+    (ctx) => ({
+      ...aspectRatioNode({
+        options: maiAspectRatios,
+        defaultValue: '1:1',
+        priorityOptions: maiPriorityRatios,
+      }),
+      when: ctx.workflow.startsWith('txt'),
+    }),
+    ['workflow']
   )
   // Reference images — shown only for img2img:edit, hidden for txt2img.
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ max: 4 }),
+      ...imagesNode({ max: 1, aspectRatios: maiCropAspectRatios }),
       when: !ctx.workflow.startsWith('txt'),
     }),
     ['workflow']
