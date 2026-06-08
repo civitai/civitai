@@ -1544,10 +1544,7 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
     `;
   });
 
-  const model = await dbWrite.model.findUnique({
-    where: { id },
-    select: { id: true, userId: true, status: true },
-  });
+  const model = await dbWrite.model.findUnique({ where: { id } });
   if (model) await userModelCountCache.refresh(model.userId);
 
   return model;
@@ -3730,8 +3727,8 @@ export const publishPrivateModel = async ({
   const versionIds = versions.map((v) => v.id);
   const now = new Date();
 
-  await dbWrite.$transaction([
-    dbWrite.post.updateMany({
+  await dbWrite.$transaction(async (tx) => {
+    await tx.post.updateMany({
       where: {
         modelVersionId: { in: versionIds },
       },
@@ -3739,20 +3736,23 @@ export const publishPrivateModel = async ({
         publishedAt: publishVersions ? now : null,
         availability: Availability.Public,
       },
-    }),
-    dbWrite.modelVersion.updateMany({
+    });
+
+    await tx.modelVersion.updateMany({
       where: { id: { in: versionIds } },
       data: {
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Draft,
-        // Private->Public flip preserves the original private-publish date —
-        // the anti-bump guard in publishModelVersionsWithEarlyAccess would
-        // lock it anyway. Demotion still writes null so a follow-up publish
-        // can transition cleanly.
+        // Private->Public flip: status flips unconditionally; publishedAt is
+        // handled separately under the anti-bump SQL guard below so legacy
+        // rows with NULL publishedAt still get a first-publish timestamp,
+        // while already-public rows keep their original date. Demotion
+        // writes null so a follow-up publish can transition cleanly.
         publishedAt: publishVersions ? undefined : null,
       },
-    }),
-    dbWrite.model.update({
+    });
+
+    await tx.model.update({
       where: {
         id: modelId,
       },
@@ -3767,8 +3767,27 @@ export const publishPrivateModel = async ({
         },
       },
       select: { id: true },
-    }),
-  ]);
+    });
+
+    if (publishVersions) {
+      // Anti-bump guard: set publishedAt = NOW() only on rows that are
+      // currently NULL (never published) or scheduled in the future. Rows
+      // already public keep their original publishedAt — same invariant as
+      // publishModelById / publishModelVersionById.
+      await tx.$executeRaw`
+        UPDATE "ModelVersion"
+        SET "publishedAt" = ${now}
+        WHERE id IN (${Prisma.join(versionIds, ',')})
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
+      await tx.$executeRaw`
+        UPDATE "Model"
+        SET "publishedAt" = ${now}
+        WHERE id = ${modelId}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
+    }
+  });
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {
