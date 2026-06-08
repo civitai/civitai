@@ -1,5 +1,8 @@
 // src/pages/_app.tsx
 
+// Side-effect import: globally disables next/link route prefetching. Must run
+// before any <Link> mounts — see the file for rationale.
+import '~/utils/disable-router-prefetch';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getCookie, getCookies, deleteCookie } from 'cookies-next';
 import type { Session } from 'next-auth';
