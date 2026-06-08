@@ -12,17 +12,23 @@ BEGIN;
 
 -- 1) Clamp ModelVersion.publishedAt where we have any evidence of an earlier
 --    publish: a stashed `meta.unpublishedAt` (set by the cron job that demoted
---    the version to Draft, or by the unpublish handler) or, conservatively,
---    the row's own createdAt (publish can never precede creation).
+--    the version to Draft, or by the unpublish handler) is the tightest upper
+--    bound on the real publish date — you cannot unpublish before publishing.
+--    `createdAt` is the *lower* bound (publish can never precede creation), so
+--    it belongs in the floor (`GREATEST`), not in the candidate list — using it
+--    as a candidate collapses every row with an `unpublishedAt` to its
+--    creation timestamp and loses the best evidence we have.
 --
 --    Scoped to Published rows with a past publishedAt so Scheduled rows
 --    (future publishedAt) are not touched — those are still mutable by the
 --    invariant.
 UPDATE "ModelVersion"
-SET "publishedAt" = LEAST(
-  "publishedAt",
-  COALESCE((meta->>'unpublishedAt')::timestamptz, "publishedAt"),
-  "createdAt"
+SET "publishedAt" = GREATEST(
+  "createdAt",
+  LEAST(
+    "publishedAt",
+    COALESCE((meta->>'unpublishedAt')::timestamptz, "publishedAt")
+  )
 )
 WHERE "publishedAt" IS NOT NULL
   AND "publishedAt" <= NOW()
