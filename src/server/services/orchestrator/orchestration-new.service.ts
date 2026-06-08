@@ -46,8 +46,9 @@ import {
 } from '~/server/services/generation/generation.service';
 import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { clearCacheByPattern, fetchThroughCache } from '~/server/utils/cache-helpers';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/generation.schema';
@@ -2324,20 +2325,59 @@ function getQueriedWorkflowsCacheKey({
     ef: excludeFailed ?? null,
     hmc: hideMatureContent,
   });
-  return `${REDIS_KEYS.GENERATION.QUERIED_WORKFLOWS}:${userId}:${variant}` as const;
+  return `${REDIS_KEYS.GENERATION.QUERIED_WORKFLOWS}:${userId}:${variant}` as RedisKeyTemplateCache;
+}
+
+// Per-user index set holding every cached feed-variant key for a user. Lets the
+// bust enumerate exactly this user's keys (SMEMBERS) instead of SCANning the
+// whole main cache cluster for a pattern — the latter's cost scales with total
+// keyspace, not matched keys, which is a recurring load on the very cluster this
+// cache exists to protect (the bust now fires on every submit AND every
+// delete/cancel/patch).
+function getQueriedWorkflowsIndexKey(userId: number): RedisKeyTemplateCache {
+  return `${REDIS_KEYS.GENERATION.QUERIED_WORKFLOWS}:idx:${userId}` as RedisKeyTemplateCache;
+}
+
+// The index set must outlive the cache entries it points at, otherwise a bust
+// could miss a still-live entry. fetchThroughCache writes its data key with
+// EX = ttl * 2, so the index TTL has to be at least that; we use a comfortable
+// multiple to absorb clock skew and TTL refresh races. Stale members (entries
+// that already expired) are harmless — DEL of a missing key is a no-op.
+const QUERIED_WORKFLOWS_INDEX_TTL = QUERIED_WORKFLOWS_CACHE_TTL * 4; // seconds
+
+// Records a cache-variant key in the user's index set and refreshes the set's
+// TTL. Called on every cached read (hit or miss): SADD of an existing member is
+// a no-op, and re-EXPIRE keeps the index alive as long as the user keeps
+// reading. Best-effort — a failure here only means a later bust may miss this
+// key, which then falls back to the short TTL. Errors are swallowed.
+async function indexQueriedWorkflowsKey(userId: number, key: RedisKeyTemplateCache) {
+  try {
+    const indexKey = getQueriedWorkflowsIndexKey(userId);
+    await redis.sAdd(indexKey, key);
+    await redis.expire(indexKey, QUERIED_WORKFLOWS_INDEX_TTL);
+  } catch {
+    // ignore — index is an optimization for the bust, not a correctness store
+  }
 }
 
 // Busts every cached feed variant for a user. Called when the user submits a new
-// generation so a concurrent tab / immediate reconnect refetch sees the new
-// workflow without waiting out the 3s TTL. Generation submits are far rarer than
-// feed reads, so the per-submit SCAN is an acceptable cost (same approach the
-// buzz-account cache uses). Best-effort: a bust failure only means the user's
-// other surfaces fall back to the short TTL, so errors are swallowed.
+// generation OR mutates their workflows (delete / cancel / patch / update) so a
+// concurrent tab / immediate reconnect refetch sees the change without waiting
+// out the short TTL. Uses the per-user index set (SMEMBERS -> DEL the members ->
+// DEL the index) so there is no full-keyspace SCAN per bust. Stale members are
+// harmless: DEL of an already-expired key is a no-op. Best-effort: a bust
+// failure only means the user's other surfaces fall back to the short TTL, so
+// errors are swallowed.
 export async function bustQueriedWorkflowsCache(userId?: number) {
   if (!userId) return;
-  await clearCacheByPattern(`${REDIS_KEYS.GENERATION.QUERIED_WORKFLOWS}:${userId}:*`).catch(
-    () => null
-  );
+  try {
+    const indexKey = getQueriedWorkflowsIndexKey(userId);
+    const keys = await redis.sMembers<RedisKeyTemplateCache>(indexKey);
+    if (keys.length) await redis.del(keys);
+    await redis.del(indexKey);
+  } catch {
+    // ignore — see jsdoc above
+  }
 }
 
 export async function queryGeneratedImageWorkflows2({
@@ -2371,21 +2411,24 @@ export async function queryGeneratedImageWorkflows2({
   // rather than fanned out.
   if (!cache || !user?.id) return fetchAndFormat();
 
-  return fetchThroughCache(
-    getQueriedWorkflowsCacheKey({
-      userId: user.id,
-      take: props.take,
-      cursor: props.cursor,
-      tags: props.tags,
-      ascending: props.ascending,
-      fromDate: props.fromDate,
-      toDate: props.toDate,
-      excludeFailed: props.excludeFailed,
-      hideMatureContent: props.hideMatureContent,
-    }),
-    fetchAndFormat,
-    { ttl: QUERIED_WORKFLOWS_CACHE_TTL }
-  );
+  const cacheKey = getQueriedWorkflowsCacheKey({
+    userId: user.id,
+    take: props.take,
+    cursor: props.cursor,
+    tags: props.tags,
+    ascending: props.ascending,
+    fromDate: props.fromDate,
+    toDate: props.toDate,
+    excludeFailed: props.excludeFailed,
+    hideMatureContent: props.hideMatureContent,
+  });
+
+  // Record this variant in the user's index set so bustQueriedWorkflowsCache can
+  // enumerate and delete it without a keyspace SCAN. Done on every cached read
+  // (hit or miss) and fire-and-forget so it never adds latency to the response.
+  indexQueriedWorkflowsKey(user.id, cacheKey).catch(() => null);
+
+  return fetchThroughCache(cacheKey, fetchAndFormat, { ttl: QUERIED_WORKFLOWS_CACHE_TTL });
 }
 
 // =============================================================================

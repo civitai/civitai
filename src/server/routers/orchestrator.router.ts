@@ -265,15 +265,35 @@ export const orchestratorRouter = router({
   deleteWorkflow: orchestratorProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowIdSchema)
-    .mutation(({ ctx, input }) => deleteWorkflow({ ...input, token: ctx.token })),
+    .mutation(async ({ ctx, input }) => {
+      const result = await deleteWorkflow({ ...input, token: ctx.token });
+      // Bust the short-TTL queryGeneratedImages cache so a reconnect/invalidate
+      // refetch within the TTL doesn't resurrect the just-deleted workflow.
+      // ctx.token is ctx.user's own token (orchestratorMiddleware), so the
+      // owning user is ctx.user.id. Fire-and-forget — see generateFromGraph.
+      bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
+      return result;
+    }),
   cancelWorkflow: orchestratorProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowIdSchema)
-    .mutation(({ ctx, input }) => cancelWorkflow({ ...input, token: ctx.token })),
+    .mutation(async ({ ctx, input }) => {
+      const result = await cancelWorkflow({ ...input, token: ctx.token });
+      // Bust so a refetch within the TTL doesn't show the cancelled workflow
+      // back in a non-cancelled state. Owner is ctx.user.id (own token).
+      bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
+      return result;
+    }),
   updateWorkflow: orchestratorProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(workflowUpdateSchema)
-    .mutation(({ ctx, input }) => updateWorkflow({ ...input, token: ctx.token })),
+    .mutation(async ({ ctx, input }) => {
+      const result = await updateWorkflow({ ...input, token: ctx.token });
+      // Bust so a refetch within the TTL doesn't revert the update. Owner is
+      // ctx.user.id (own token).
+      bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
+      return result;
+    }),
   // #endregion
 
   // #region [steps]
@@ -328,6 +348,16 @@ export const orchestratorRouter = router({
               })
           )
         );
+      }
+
+      // Bust the short-TTL queryGeneratedImages cache if this patch changed
+      // anything the feed renders (workflow patch, removal, tag change, or the
+      // step-metadata update behind useUpdateImageStepMetadata). Without this, a
+      // reconnect/invalidate refetch within the TTL reverts the optimistic
+      // client patch / resurrects a removed item. ctx.token is ctx.user's own
+      // token, so the owner is ctx.user.id. Fire-and-forget.
+      if (workflows?.length || remove?.length || tags?.length || steps?.length) {
+        bustQueriedWorkflowsCache(user.id).catch(() => null);
       }
     }),
   // #endregion
