@@ -51,7 +51,11 @@ import {
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { logToAxiom } from '~/server/logging/client';
-import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
+import {
+  clearCacheByPattern,
+  createCachedObject,
+  fetchThroughCache,
+} from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
   throwInsufficientFundsError,
@@ -153,12 +157,75 @@ async function fetchUserBuzzAccounts({
     : getUserBuzzAccountByAccountId(accountId);
 }
 
+// Short-TTL cache in front of the external buzz API. `buzz.getBuzzAccount` is
+// called on nearly every request and is otherwise uncached, so it surges and
+// hammers the external service (the confirmed root cause of API-pod CPU pin
+// waves). The TTL is intentionally tiny: it absorbs request bursts without
+// meaningfully delaying balance changes, and every in-app balance mutation
+// busts the cache for the affected account (see `bustBuzzAccountCache`). The
+// TTL is the freshness safety net for balance changes that originate outside
+// the app (e.g. rewards credited by other services) that app code can't bust.
+const BUZZ_ACCOUNT_CACHE_TTL = 3; // seconds
+
+// Builds a stable redis key per (accountId, requested account type/types). The
+// three request shapes (default account, single accountType, accountTypes[])
+// return different payload shapes, so they MUST NOT share a cache entry.
+// accountTypes is sorted so [a,b] and [b,a] map to the same key.
+function getBuzzAccountCacheKey({
+  accountId,
+  accountType,
+  accountTypes,
+}: GetUserBuzzAccountSchema) {
+  const variant = accountType
+    ? `t:${accountType}`
+    : accountTypes
+    ? `ts:${[...accountTypes].sort().join(',')}`
+    : 'default';
+  return `${REDIS_KEYS.BUZZ.ACCOUNT}:${accountId}:${variant}` as const;
+}
+
+// Busts every cached variant for the given account id(s). Mutations can't know
+// which (type/types) variants a caller cached, so we pattern-clear the account
+// namespace. Mutations are far rarer than reads, so the per-mutation SCAN is an
+// acceptable cost. Account id 0 is the system "bank" and is never read through
+// getBuzzAccount, so it's skipped.
+export async function bustBuzzAccountCache(accountIds: number | (number | undefined)[]) {
+  const ids = (Array.isArray(accountIds) ? accountIds : [accountIds]).filter(
+    (id): id is number => typeof id === 'number' && id > 0
+  );
+  const uniqueIds = [...new Set(ids)];
+  if (!uniqueIds.length) return;
+
+  await Promise.all(
+    uniqueIds.map((id) =>
+      clearCacheByPattern(`${REDIS_KEYS.BUZZ.ACCOUNT}:${id}:*`).catch((error) => {
+        logToAxiom(
+          {
+            name: 'bust-buzz-account-cache',
+            type: 'error',
+            accountId: id,
+            message: (error as Error)?.message ?? String(error),
+          },
+          'webhooks'
+        ).catch(() => null);
+      })
+    )
+  );
+}
+
 export async function getUserBuzzAccount({
   accountId,
   accountType,
   accountTypes,
 }: GetUserBuzzAccountSchema) {
-  const data = await fetchUserBuzzAccounts({ accountId, accountType, accountTypes });
+  // Cache the raw external fetch only. fetchThroughCache does not cache thrown
+  // errors (the fetchFn rejection propagates without writing redis), so error
+  // responses are never cached.
+  const data = await fetchThroughCache(
+    getBuzzAccountCacheKey({ accountId, accountType, accountTypes }),
+    () => fetchUserBuzzAccounts({ accountId, accountType, accountTypes }),
+    { ttl: BUZZ_ACCOUNT_CACHE_TTL }
+  );
 
   let res: (Omit<BuzzAccountResponse, 'lifetimeBalance'> & {
     accountType: BuzzAccountType;
@@ -386,6 +453,8 @@ export async function createBuzzTransaction({
     body,
   });
 
+  await bustBuzzAccountCache([payload.fromAccountId, toAccountId]);
+
   return data;
 }
 
@@ -496,6 +565,8 @@ export async function createBuzzTransactionMany(
     body,
   });
 
+  await bustBuzzAccountCache(transactions.flatMap((t) => [t.fromAccountId, t.toAccountId]));
+
   return data;
 }
 
@@ -569,6 +640,11 @@ export async function completeStripeBuzzTransaction({
       headers: { 'Content-Type': 'application/json' },
       body,
     });
+
+    // fromAccountId is the system bank (0) and is skipped by bustBuzzAccountCache;
+    // the blue-buzz sub-grant below goes through createBuzzTransaction, which
+    // busts its own accounts.
+    await bustBuzzAccountCache(userId);
 
     // Write transactionId immediately so any subsequent failure lets the retry
     // path skip the main grant via the early-return above.
@@ -658,6 +734,11 @@ export async function completeStripeBuzzTransaction({
   }
 }
 
+// NOTE: refundTransaction only receives a transactionId — the affected
+// from/to accounts are not available here (and the buzz API response doesn't
+// return them), so we cannot bust the account cache. The 3s TTL is the only
+// freshness guarantee for refunds. If precise busting is needed later, resolve
+// the accountIds via getTransactionByExternalId / a buzz-API lookup first.
 export async function refundTransaction(
   transactionId: string,
   description?: string,
@@ -693,9 +774,15 @@ export async function createMultiAccountBuzzTransaction(
     body,
   });
 
+  await bustBuzzAccountCache([input.fromAccountId, input.toAccountId]);
+
   return createMultiAccountBuzzTransactionResponse.parse(data);
 }
 
+// NOTE: refundMultiAccountTransaction is keyed by externalTransactionIdPrefix
+// and neither the input nor the buzz-API response include the affected
+// accountIds, so the account cache cannot be busted here. The 3s TTL is the
+// only freshness guarantee for these refunds.
 export async function refundMultiAccountTransaction(input: RefundMultiAccountTransactionInput) {
   const body = JSON.stringify(input);
 
