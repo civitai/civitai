@@ -398,6 +398,44 @@ export const getInfiniteImagesSchema = baseQuerySchema
     return value;
   });
 
+// Dedicated, server-pinned schema for the post image carousel. Unlike
+// getInfiniteImagesSchema it does NOT expose `useIndex` or any broad feed
+// filter — postId is required and the handler always runs the cheap covered-
+// index DB path. This keeps post viewing off the heavy, index-only feed
+// surface. See docs/plans/per-domain-getimages.md.
+export type GetPostImagesInput = z.input<typeof getPostImagesSchema>;
+export type GetPostImagesOutput = z.output<typeof getPostImagesSchema>;
+export const getPostImagesSchema = baseQuerySchema
+  .extend({
+    postId: z.number(),
+    limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
+    period: z.enum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
+    periodMode: periodModeSchema,
+    sort: z.enum(ImageSort).default(constants.galleryFilterDefaults.sort),
+    withMeta: z.boolean().default(false),
+    withTags: z.boolean().optional(),
+    include: z.array(imageInclude).default((): ImageInclude[] => ['cosmetics']),
+    cursor: z
+      .union([z.bigint(), z.number(), z.string(), z.date()])
+      .transform((val) =>
+        typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
+          ? new Date(val)
+          : val
+      )
+      .optional(),
+    pending: z.boolean().optional(),
+    hidden: z.boolean().optional(),
+    excludedTagIds: z.array(z.number()).optional(),
+    excludedUserIds: z.array(z.number()).optional(),
+    disablePoi: z.boolean().optional(),
+    disableMinor: z.boolean().optional(),
+  })
+  .transform((value) => {
+    if (value.withTags && !value.include.includes('tags')) value.include.push('tags');
+    if (value.withMeta && !value.include.includes('meta')) value.include.push('meta');
+    return value;
+  });
+
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({
   id: z.number(),

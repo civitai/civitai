@@ -11,7 +11,7 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 import type { FilterKeys } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
-import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import type { GetInfiniteImagesInput, GetPostImagesInput } from '~/server/schema/image.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -205,6 +205,71 @@ export const useQueryImages = (
     isLoading: isLoading || loadingPreferences,
     debugRetryActive,
     debugDelayMs,
+    ...rest,
+  };
+};
+
+// Post image carousel — hits the dedicated, DB-backed `post.getImages`
+// endpoint instead of the heavy `image.getInfinite` feed. Same post-processing
+// (dedup + hidden preferences) as useQueryImages. See
+// docs/plans/per-domain-getimages.md.
+export const useQueryPostImages = (
+  filters: GetPostImagesInput,
+  options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
+) => {
+  const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+
+  const excludedTagIds = [
+    ...(filters.excludedTagIds ?? []),
+    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
+  ].filter(isDefined);
+
+  const { data, isLoading, ...rest } = trpc.post.getImages.useInfiniteQuery(
+    {
+      ...filters,
+      excludedTagIds,
+      // OR-merge with the addon so either source can flag the filter (mirrors
+      // useQueryImages).
+      disablePoi: !!filters.disablePoi || browsingSettingsAddons.settings.disablePoi,
+      disableMinor: !!filters.disableMinor || browsingSettingsAddons.settings.disableMinor,
+    },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      trpc: { context: { skipBatch: true }, abortOnUnmount: true },
+      retry: 0,
+      ...withPlaceholderData(queryOptions),
+    }
+  );
+
+  const flatData = useMemo(() => {
+    const allItems = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
+    const seenIds = new Set<number>();
+    const dedupedItems: typeof allItems = [];
+    for (const item of allItems) {
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        dedupedItems.push(item);
+      }
+    }
+    return dedupedItems;
+  }, [data]);
+
+  const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
+    type: 'images',
+    data: flatData,
+    showHidden: !!filters.hidden,
+    disabled: !applyHiddenPreferences,
+    isRefetching: rest.isRefetching,
+  });
+
+  return {
+    data,
+    flatData,
+    images: items,
+    removedImages: hiddenCount,
+    fetchedImages: flatData?.length,
+    isLoading: isLoading || loadingPreferences,
     ...rest,
   };
 };

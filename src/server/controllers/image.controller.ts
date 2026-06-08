@@ -61,6 +61,7 @@ import type {
   GetEntitiesCoverImage,
   GetImageInput,
   GetInfiniteImagesOutput,
+  GetPostImagesOutput,
   ImageModerationSchema,
   ImageReviewQueueInput,
   SetTosViolationSchema,
@@ -340,6 +341,34 @@ export const getInfiniteImagesHandler = async ({
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
     }
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+// Server-pinned post image carousel. Always runs the cheap covered-index DB
+// path (getAllImages with a required postId) — never the heavy index feed and
+// never client-selectable via useIndex. Lives off the heavyProcedure surface so
+// opening/refreshing post pages can't trip the feed rate limits.
+// See docs/plans/per-domain-getimages.md.
+export const getPostImagesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetPostImagesOutput;
+  ctx: Context;
+}) => {
+  const { user, features } = ctx;
+  try {
+    return await getAllImages({
+      ...input,
+      user,
+      useCombinedNsfwLevel: !features.canViewNsfw,
+      headers: { src: 'getPostImagesHandler' },
+      include: [...input.include, 'tagIds'],
+      dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

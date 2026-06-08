@@ -134,6 +134,8 @@ export function ReorderImagesButton() {
     async onSuccess() {
       await queryUtils.model.getAll.invalidate();
       await queryUtils.image.getInfinite.invalidate();
+      // Post detail now reads from the dedicated post.getImages endpoint.
+      await queryUtils.post.getImages.invalidate();
     },
   });
   const previous = usePrevious(images);

@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { imageSchema } from '~/server/schema/image.schema';
+import { getPostImagesSchema, imageSchema } from '~/server/schema/image.schema';
+import { getPostImagesHandler } from '~/server/controllers/image.controller';
 import { middleware, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
@@ -159,6 +160,12 @@ export const postRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(getPostResourcesHandler),
+  // Server-pinned post image carousel — DB-backed, off the heavy feed surface.
+  // See docs/plans/per-domain-getimages.md.
+  getImages: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getPostImagesSchema)
+    .query(getPostImagesHandler),
   getContestCollectionDetails: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)

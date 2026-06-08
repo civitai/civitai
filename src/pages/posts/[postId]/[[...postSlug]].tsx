@@ -45,7 +45,7 @@ export const getServerSideProps = createServerSideProps({
       }
 
       await ssg?.post.get.prefetch({ id: postId });
-      await ssg?.image.getInfinite.prefetchInfinite({
+      await ssg?.post.getImages.prefetchInfinite({
         postId,
         pending: !!session?.user,
         withMeta: false,

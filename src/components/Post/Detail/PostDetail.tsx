@@ -43,7 +43,7 @@ import {
   ExplainHiddenImages,
   useExplainHiddenImages,
 } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
-import { useQueryImages } from '~/components/Image/image.utils';
+import { useQueryPostImages } from '~/components/Image/image.utils';
 import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostComments } from '~/components/Post/Detail/PostComments';
@@ -117,7 +117,7 @@ export function PostDetailContent({ postId }: Props) {
     flatData: unfilteredImages,
     images,
     isLoading: imagesLoading,
-  } = useQueryImages(
+  } = useQueryPostImages(
     {
       postId,
       pending: !!currentUser,
