@@ -2346,10 +2346,12 @@ function getQueriedWorkflowsIndexKey(userId: number): RedisKeyTemplateCache {
 const QUERIED_WORKFLOWS_INDEX_TTL = QUERIED_WORKFLOWS_CACHE_TTL * 4; // seconds
 
 // Records a cache-variant key in the user's index set and refreshes the set's
-// TTL. Called on every cached read (hit or miss): SADD of an existing member is
-// a no-op, and re-EXPIRE keeps the index alive as long as the user keeps
-// reading. Best-effort — a failure here only means a later bust may miss this
-// key, which then falls back to the short TTL. Errors are swallowed.
+// TTL. Called ONLY on a real cache miss (from inside the fetcher passed to
+// fetchThroughCache), never on a hit — a hit's hot path is a single
+// redis.packed.get and must stay that way. SADD of an existing member is a
+// no-op, and re-EXPIRE keeps the index alive as long as the user keeps missing
+// and re-fetching. Best-effort — a failure here only means a later bust may miss
+// this key, which then falls back to the short TTL. Errors are swallowed.
 async function indexQueriedWorkflowsKey(userId: number, key: RedisKeyTemplateCache) {
   try {
     const indexKey = getQueriedWorkflowsIndexKey(userId);
@@ -2404,15 +2406,20 @@ export async function queryGeneratedImageWorkflows2({
     };
   };
 
-  // Only cache the self-serve feed of a logged-in user. fetchThroughCache does
-  // not cache thrown errors (the fetchFn rejection propagates without writing
-  // redis), and it single-flights concurrent misses behind a lock, so a
-  // reconnect burst that arrives before the first fetch resolves is coalesced
-  // rather than fanned out.
-  if (!cache || !user?.id) return fetchAndFormat();
+  // Only cache the self-serve feed of a logged-in user, AND only the first page
+  // (no cursor). The infinite feed gives every later page a distinct cursor, so
+  // caching them would bloat the per-user index set with entries no one refetches
+  // — the reconnect storm only refetches page 1. Deep pages fall straight through
+  // to the uncached fetch, exactly like the !cache / anonymous bypass below.
+  // fetchThroughCache does not cache thrown errors (the fetchFn rejection
+  // propagates without writing redis), and it single-flights concurrent misses
+  // behind a lock, so a reconnect burst that arrives before the first fetch
+  // resolves is coalesced rather than fanned out.
+  if (!cache || !user?.id || props.cursor != null) return fetchAndFormat();
 
+  const userId = user.id;
   const cacheKey = getQueriedWorkflowsCacheKey({
-    userId: user.id,
+    userId,
     take: props.take,
     cursor: props.cursor,
     tags: props.tags,
@@ -2423,12 +2430,19 @@ export async function queryGeneratedImageWorkflows2({
     hideMatureContent: props.hideMatureContent,
   });
 
-  // Record this variant in the user's index set so bustQueriedWorkflowsCache can
-  // enumerate and delete it without a keyspace SCAN. Done on every cached read
-  // (hit or miss) and fire-and-forget so it never adds latency to the response.
-  indexQueriedWorkflowsKey(user.id, cacheKey).catch(() => null);
+  // Index the key from INSIDE the fetcher so it runs only on a real miss (the
+  // single-flight leader), never on a hit. A hit's hot path — the path this
+  // cache exists to make single-op — then does zero index ops; it is just the
+  // redis.packed.get inside fetchThroughCache. Fire-and-forget so the miss
+  // itself never blocks on the index write. (A key whose miss-time SADD failed
+  // simply won't be re-added on later hits — same best-effort semantics as
+  // before; a missed bust just falls back to the short TTL.)
+  const fetchIndexAndFormat = async () => {
+    indexQueriedWorkflowsKey(userId, cacheKey).catch(() => null);
+    return fetchAndFormat();
+  };
 
-  return fetchThroughCache(cacheKey, fetchAndFormat, { ttl: QUERIED_WORKFLOWS_CACHE_TTL });
+  return fetchThroughCache(cacheKey, fetchIndexAndFormat, { ttl: QUERIED_WORKFLOWS_CACHE_TTL });
 }
 
 // =============================================================================
