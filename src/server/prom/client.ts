@@ -172,7 +172,7 @@ export const trpcProcedureDuration = registerHistogram({
 // Image feed metrics
 export const imagesFeedWithoutIndexCounter = registerCounter({
   name: 'images_feed_without_index_total',
-  help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
+  help: 'Number of times getInfiniteImagesHandler resolves to the DB path (index cannot serve the query params)',
 });
 
 // Creator compensation metrics
