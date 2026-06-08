@@ -7,7 +7,7 @@ import {
   IconEye,
   IconHeart,
   IconMessageCircle2,
-  IconStar,
+  IconThumbUp,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -80,8 +80,10 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
   const commentCount = metric?.commentCount ?? 0;
   const reactionCount = metric?.reactionCount ?? 0;
   const tippedAmountCount = metric?.tippedAmountCount ?? 0;
-  const ratingAvg = metric?.ratingAvg ?? 0;
   const ratingCount = metric?.ratingCount ?? 0;
+  const recommendedCount = metric?.recommendedCount ?? 0;
+  const recommendedPct =
+    ratingCount > 0 ? Math.round((recommendedCount / ratingCount) * 100) : 0;
   // Optimistic tip overlay — matches ModelCard so a user's own tap updates the
   // displayed number immediately even though we don't invalidate the feed query.
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model3D', entityId: id });
@@ -246,9 +248,9 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
                   radius="xl"
                 >
                   <Group gap={2} wrap="nowrap">
-                    <IconStar size={12} stroke={2} fill="currentColor" color="#facc15" />
+                    <IconThumbUp size={12} stroke={2.5} />
                     <Text size="xs">
-                      {ratingAvg.toFixed(1)}
+                      {recommendedPct}%
                       <Text component="span" c="dimmed" ml={2}>
                         ({abbreviateNumber(ratingCount)})
                       </Text>

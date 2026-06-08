@@ -8,13 +8,12 @@ import {
   Divider,
   Group,
   Loader,
-  Rating,
   Stack,
   Text,
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconPencil, IconStar, IconThumbUp } from '@tabler/icons-react';
+import { IconPencil, IconStar, IconThumbDown, IconThumbUp } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
 import type { InferGetServerSidePropsType } from 'next';
@@ -155,24 +154,17 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
           {/* Summary */}
           <Card withBorder radius="md" p="md">
             {summary && summary.ratingCount > 0 ? (
-              <Group gap="md" wrap="wrap">
+              <Group gap="md" wrap="wrap" align="center">
                 <Group gap="xs" align="center">
-                  <Rating value={summary.ratingAvg} fractions={2} readOnly />
-                  <Text size="sm" c="dimmed">
-                    {summary.ratingAvg.toFixed(2)} from {summary.ratingCount}{' '}
-                    {summary.ratingCount === 1 ? 'review' : 'reviews'}
+                  <IconThumbUp size={20} stroke={2} />
+                  <Text size="lg" fw={700}>
+                    {Math.round((summary.recommendedCount / summary.ratingCount) * 100)}%
                   </Text>
                 </Group>
-                {summary.recommendedCount > 0 && (
-                  <Badge
-                    leftSection={<IconThumbUp size={14} />}
-                    variant="light"
-                    color="green"
-                    size="lg"
-                  >
-                    {summary.recommendedCount} recommend
-                  </Badge>
-                )}
+                <Text size="sm" c="dimmed">
+                  · {summary.recommendedCount} of {summary.ratingCount}{' '}
+                  {summary.ratingCount === 1 ? 'review' : 'reviews'} recommend this model
+                </Text>
               </Group>
             ) : (
               <Text size="sm" c="dimmed">
@@ -226,8 +218,7 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
                         }
                       />
                       <Group gap="xs">
-                        <Rating value={review.rating} readOnly fractions={2} />
-                        {review.recommended && (
+                        {review.recommended ? (
                           <Badge
                             leftSection={<IconThumbUp size={12} />}
                             variant="light"
@@ -235,6 +226,15 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
                             size="sm"
                           >
                             Recommends
+                          </Badge>
+                        ) : (
+                          <Badge
+                            leftSection={<IconThumbDown size={12} />}
+                            variant="light"
+                            color="red"
+                            size="sm"
+                          >
+                            Doesn&apos;t recommend
                           </Badge>
                         )}
                       </Group>

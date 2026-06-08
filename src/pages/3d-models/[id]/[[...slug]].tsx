@@ -10,7 +10,6 @@ import {
   Group,
   Loader,
   LoadingOverlay,
-  Rating,
   Select,
   Stack,
   Text,
@@ -26,6 +25,8 @@ import {
   IconMessageCircle2,
   IconShare3,
   IconStar,
+  IconThumbDown,
+  IconThumbUp,
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import type { InferGetServerSidePropsType } from 'next';
@@ -243,13 +244,24 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <IconBadge radius="sm" size="lg" icon={<IconMessageCircle2 size={18} />}>
                   <Text size="sm">{abbreviateNumber(model3d.metric?.commentCount ?? 0)}</Text>
                 </IconBadge>
-                <IconBadge
-                  radius="sm"
-                  size="lg"
-                  icon={<IconBolt size={18} className="text-yellow-7" fill="currentColor" />}
+                {/* Single buzz surface: the metrics-row badge IS the tip CTA.
+                    Wrapping in InteractiveTipBuzzButton makes the badge
+                    clickable and removes the second buzz button that used to
+                    live in the right-side action row. */}
+                <InteractiveTipBuzzButton
+                  toUserId={model3d.user.id}
+                  entityType="Model3D"
+                  entityId={id}
                 >
-                  <Text size="sm">{abbreviateNumber(tippedAmountTotal)}</Text>
-                </IconBadge>
+                  <IconBadge
+                    radius="sm"
+                    size="lg"
+                    style={{ cursor: 'pointer' }}
+                    icon={<IconBolt size={18} className="text-yellow-7" fill="currentColor" />}
+                  >
+                    <Text size="sm">{abbreviateNumber(tippedAmountTotal)}</Text>
+                  </IconBadge>
+                </InteractiveTipBuzzButton>
               </Group>
               <Group gap="sm" wrap="wrap">
                 <UserAvatar user={model3d.user} withUsername linkToProfile />
@@ -294,22 +306,6 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   }}
                 />
               )}
-              <InteractiveTipBuzzButton
-                toUserId={model3d.user.id}
-                entityType="Model3D"
-                entityId={id}
-              >
-                <IconBadge
-                  radius="sm"
-                  style={{ cursor: 'pointer' }}
-                  color="gray"
-                  size="lg"
-                  h={28}
-                  icon={<IconBolt />}
-                >
-                  <Text size="sm">{abbreviateNumber(tippedAmountTotal)}</Text>
-                </IconBadge>
-              </InteractiveTipBuzzButton>
               <ShareButton url={`/3d-models/${model3d.id}`} title={model3d.name}>
                 <LegacyActionIcon variant="subtle" color="gray" aria-label="Share">
                   <IconShare3 />
@@ -432,10 +428,16 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     </Group>
 
                     {reviewSummary && reviewSummary.ratingCount > 0 ? (
-                      <Group gap="sm" align="center">
-                        <Rating value={reviewSummary.ratingAvg} fractions={2} readOnly size="sm" />
+                      <Group gap="xs" align="center">
+                        <IconThumbUp size={14} stroke={2} />
+                        <Text size="sm" fw={600}>
+                          {Math.round(
+                            (reviewSummary.recommendedCount / reviewSummary.ratingCount) * 100
+                          )}
+                          %
+                        </Text>
                         <Text size="xs" c="dimmed">
-                          {reviewSummary.ratingAvg.toFixed(2)} · {reviewSummary.ratingCount}{' '}
+                          · {abbreviateNumber(reviewSummary.ratingCount)}{' '}
                           {reviewSummary.ratingCount === 1 ? 'review' : 'reviews'}
                         </Text>
                       </Group>
@@ -462,11 +464,24 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                                   {formatDate(review.createdAt)}
                                 </Text>
                               </Group>
-                              <Group gap="xs" align="center">
-                                <Rating value={review.rating} readOnly size="xs" />
-                                {review.recommended && (
-                                  <Badge color="green" size="xs" variant="light">
+                              <Group gap={4} align="center">
+                                {review.recommended ? (
+                                  <Badge
+                                    color="green"
+                                    size="xs"
+                                    variant="light"
+                                    leftSection={<IconThumbUp size={10} />}
+                                  >
                                     Recommends
+                                  </Badge>
+                                ) : (
+                                  <Badge
+                                    color="red"
+                                    size="xs"
+                                    variant="light"
+                                    leftSection={<IconThumbDown size={10} />}
+                                  >
+                                    Doesn&apos;t recommend
                                   </Badge>
                                 )}
                               </Group>

@@ -1,20 +1,9 @@
-import {
-  Alert,
-  Badge,
-  Button,
-  Group,
-  Modal,
-  Rating,
-  Stack,
-  Switch,
-  Text,
-  Textarea,
-  Title,
-} from '@mantine/core';
+import { Alert, Button, Group, Modal, Stack, Text, Textarea, Title } from '@mantine/core';
 import { IconCamera, IconStar } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -49,8 +38,13 @@ export default function Model3DReviewModal({
   const router = useRouter();
   const queryUtils = trpc.useUtils();
 
-  const [rating, setRating] = useState<number>(existing?.rating ?? 0);
-  const [recommended, setRecommended] = useState<boolean>(existing?.recommended ?? true);
+  // Recommendation is the new source of truth (thumbs up / thumbs down). The
+  // legacy `rating` 1-5 column is kept on the schema for now and hard-coded from
+  // `recommended` below so the existing ratingAvg/ratingCount rollups still
+  // produce sensible numbers until the metrics job is migrated.
+  // `undefined` means "user hasn't picked yet" so we can require a choice on
+  // submit. Existing reviews always have a recommended value.
+  const [recommended, setRecommended] = useState<boolean | undefined>(existing?.recommended);
   const [details, setDetails] = useState<string>(existing?.details ?? '');
 
   const upsertReview = trpc.model3d.reviews.upsert.useMutation({
@@ -77,24 +71,31 @@ export default function Model3DReviewModal({
   const isLoading = upsertReview.isPending || createPost.isPending;
 
   const validate = () => {
-    if (!rating || rating < 1 || rating > 5) {
+    if (recommended === undefined) {
       showErrorNotification({
-        title: 'Rating required',
-        error: new Error('Please give a rating from 1 to 5 stars.'),
+        title: 'Recommendation required',
+        error: new Error('Please pick thumbs up or thumbs down.'),
       });
       return false;
     }
     return true;
   };
 
+  // TODO(model3d-thumbs): Remove this hack once the metrics job (and any other
+  // consumer of `Model3DReview.rating` / `Model3DMetric.ratingAvg`) is migrated
+  // to read from `recommended` directly. Until then we hard-code 5 for thumbs
+  // up and 1 for thumbs down so the existing avg/count rollups keep working.
+  const ratingFromRecommended = (rec: boolean) => (rec ? 5 : 1);
+
   const handleSaveOnly = async () => {
     if (!validate()) return;
+    const rec = recommended as boolean;
     try {
       await upsertReview.mutateAsync({
         id: existing?.id,
         model3dId,
-        rating,
-        recommended,
+        rating: ratingFromRecommended(rec),
+        recommended: rec,
         details: details || null,
       });
       showSuccessNotification({
@@ -113,13 +114,15 @@ export default function Model3DReviewModal({
 
   const handleSaveAndAddImages = async () => {
     if (!validate()) return;
+    const rec = recommended as boolean;
+    const rating = ratingFromRecommended(rec);
     try {
       // 1. Upsert the review first so we have its id.
       const review = await upsertReview.mutateAsync({
         id: existing?.id,
         model3dId,
         rating,
-        recommended,
+        recommended: rec,
         details: details || null,
         postId: existing?.postId ?? undefined,
       });
@@ -137,7 +140,7 @@ export default function Model3DReviewModal({
           id: review.id,
           model3dId,
           rating,
-          recommended,
+          recommended: rec,
           details: details || null,
           postId,
         });
@@ -169,23 +172,27 @@ export default function Model3DReviewModal({
 
         <Stack gap={4}>
           <Text size="sm" fw={500}>
-            Rating
+            Do you recommend this 3D model?
           </Text>
-          <Group gap="sm">
-            <Rating value={rating} onChange={setRating} size="xl" />
-            {rating > 0 && (
-              <Badge variant="light" size="lg">
-                {rating} / 5
-              </Badge>
-            )}
+          <Group gap="xs">
+            <Button
+              variant={recommended === true ? 'light' : 'default'}
+              color={recommended === true ? 'success' : 'gray'}
+              leftSection={<ThumbsUpIcon size={18} filled={recommended === true} />}
+              onClick={() => setRecommended(true)}
+            >
+              Thumbs up
+            </Button>
+            <Button
+              variant={recommended === false ? 'light' : 'default'}
+              color={recommended === false ? 'red' : 'gray'}
+              leftSection={<ThumbsDownIcon size={18} filled={recommended === false} />}
+              onClick={() => setRecommended(false)}
+            >
+              Thumbs down
+            </Button>
           </Group>
         </Stack>
-
-        <Switch
-          label="I recommend this 3D model"
-          checked={recommended}
-          onChange={(e) => setRecommended(e.currentTarget.checked)}
-        />
 
         <Textarea
           label="Details (optional)"
