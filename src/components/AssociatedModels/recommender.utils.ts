@@ -110,6 +110,12 @@ export function useToggleResourceRecommendationMutation() {
           affectedVersion.meta.allowAIRecommendations = result.meta.allowAIRecommendations;
         })
       );
+      // Invalidate getById by { id } (partial match → also covers the model page's
+      // { id, excludeTrainingData: true } cache key, which the setData above does
+      // NOT, since React Query matches keys exactly). This refetches the page's
+      // `model` so its now-current meta.allowAIRecommendations flips the client-side
+      // recommenders gate on, making recs appear without a page reload.
+      await queryUtils.model.getById.invalidate({ id: result.modelId });
       await queryUtils.recommenders.getResourceRecommendations.invalidate({
         modelVersionId: result.id,
       });
