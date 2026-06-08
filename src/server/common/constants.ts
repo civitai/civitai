@@ -467,7 +467,7 @@ export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
-export const POST_IMAGE_RESOURCE_LIMIT = 20;
+export const POST_IMAGE_RESOURCE_LIMIT = 9;
 export const POST_MINIMUM_SCHEDULE_MINUTES = 60;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
