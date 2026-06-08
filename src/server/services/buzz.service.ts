@@ -125,7 +125,7 @@ async function getUserBuzzAccountByAccountType(
   return buzzApiFetch(`/account/${BuzzTypes.toApiType(accountType)}/${accountId}`);
 }
 
-export async function getUserBuzzAccountByAccountTypes<T extends BuzzAccountType>(
+async function fetchUserBuzzAccountByAccountTypes<T extends BuzzAccountType>(
   accountId: number,
   accountTypes: T[]
 ): Promise<BuzzAccountsResponse<T>> {
@@ -139,6 +139,47 @@ export async function getUserBuzzAccountByAccountTypes<T extends BuzzAccountType
     if (!type) return acc;
     return { ...acc, [type]: value };
   }, {} as BuzzAccountsResponse<T>);
+}
+
+// Builds a stable redis key per (accountId, requested accountTypes[]). accountTypes
+// is sorted so [a,b] and [b,a] map to the same key. The prefix MUST stay
+// `${REDIS_KEYS.BUZZ.ACCOUNT}:${accountId}:` so `bustBuzzAccountCache`'s
+// `${REDIS_KEYS.BUZZ.ACCOUNT}:${id}:*` pattern clears it.
+function getBuzzAccountTypesCacheKey(accountId: number, accountTypes: BuzzAccountType[]) {
+  return `${REDIS_KEYS.BUZZ.ACCOUNT}:${accountId}:ts:${[...accountTypes]
+    .sort()
+    .join(',')}` as const;
+}
+
+// `getUserBuzzAccountByAccountTypes` is the read/display path the live, very
+// high-frequency `buzz.getBuzzAccount` tRPC endpoint resolves to (router ->
+// getUserBuzzAccounts -> here), so it is otherwise uncached and surges against
+// the external buzz API (the confirmed root cause of API-pod CPU pin waves).
+// The cache lives HERE, not on `getUserBuzzAccount`, because the live endpoint
+// never goes through `getUserBuzzAccount`.
+//
+// IMPORTANT: the spend-authorization balance gate in `createBuzzTransaction`
+// reads `getUserBuzzAccountByAccountId` / `getUserBuzzAccountByAccountType`
+// (the byId/byType paths), which stay UNCACHED so a stale balance can never
+// gate a spend. Only this read/display path is cached.
+//
+// fetchThroughCache stores the entry with EX: ttl*2 and serves stale data while
+// a single holder refreshes (stale-while-revalidate), so the effective freshness
+// window is ~2x the TTL (~6s for TTL=3). It does not cache thrown errors (the
+// redis write only happens after fetchFn resolves), so error responses are never
+// cached. Every in-app balance mutation busts the account via
+// `bustBuzzAccountCache`; the TTL is the freshness net for out-of-app changes.
+const BUZZ_ACCOUNT_CACHE_TTL = 3; // seconds
+
+export async function getUserBuzzAccountByAccountTypes<T extends BuzzAccountType>(
+  accountId: number,
+  accountTypes: T[]
+): Promise<BuzzAccountsResponse<T>> {
+  return fetchThroughCache(
+    getBuzzAccountTypesCacheKey(accountId, accountTypes),
+    () => fetchUserBuzzAccountByAccountTypes(accountId, accountTypes),
+    { ttl: BUZZ_ACCOUNT_CACHE_TTL }
+  );
 }
 
 export async function getUserBuzzAccounts({ userId }: { userId: number }) {
@@ -155,33 +196,6 @@ async function fetchUserBuzzAccounts({
     : accountTypes
     ? getUserBuzzAccountByAccountTypes(accountId, accountTypes)
     : getUserBuzzAccountByAccountId(accountId);
-}
-
-// Short-TTL cache in front of the external buzz API. `buzz.getBuzzAccount` is
-// called on nearly every request and is otherwise uncached, so it surges and
-// hammers the external service (the confirmed root cause of API-pod CPU pin
-// waves). The TTL is intentionally tiny: it absorbs request bursts without
-// meaningfully delaying balance changes, and every in-app balance mutation
-// busts the cache for the affected account (see `bustBuzzAccountCache`). The
-// TTL is the freshness safety net for balance changes that originate outside
-// the app (e.g. rewards credited by other services) that app code can't bust.
-const BUZZ_ACCOUNT_CACHE_TTL = 3; // seconds
-
-// Builds a stable redis key per (accountId, requested account type/types). The
-// three request shapes (default account, single accountType, accountTypes[])
-// return different payload shapes, so they MUST NOT share a cache entry.
-// accountTypes is sorted so [a,b] and [b,a] map to the same key.
-function getBuzzAccountCacheKey({
-  accountId,
-  accountType,
-  accountTypes,
-}: GetUserBuzzAccountSchema) {
-  const variant = accountType
-    ? `t:${accountType}`
-    : accountTypes
-    ? `ts:${[...accountTypes].sort().join(',')}`
-    : 'default';
-  return `${REDIS_KEYS.BUZZ.ACCOUNT}:${accountId}:${variant}` as const;
 }
 
 // Busts every cached variant for the given account id(s). Mutations can't know
@@ -218,14 +232,11 @@ export async function getUserBuzzAccount({
   accountType,
   accountTypes,
 }: GetUserBuzzAccountSchema) {
-  // Cache the raw external fetch only. fetchThroughCache does not cache thrown
-  // errors (the fetchFn rejection propagates without writing redis), so error
-  // responses are never cached.
-  const data = await fetchThroughCache(
-    getBuzzAccountCacheKey({ accountId, accountType, accountTypes }),
-    () => fetchUserBuzzAccounts({ accountId, accountType, accountTypes }),
-    { ttl: BUZZ_ACCOUNT_CACHE_TTL }
-  );
+  // Caching lives one level down on `getUserBuzzAccountByAccountTypes` (the
+  // read/display path the live `buzz.getBuzzAccount` endpoint hits). The
+  // accountTypes branch below benefits from that cache automatically, while the
+  // accountType/accountId branches stay uncached to match the spend-gate reads.
+  const data = await fetchUserBuzzAccounts({ accountId, accountType, accountTypes });
 
   let res: (Omit<BuzzAccountResponse, 'lifetimeBalance'> & {
     accountType: BuzzAccountType;
