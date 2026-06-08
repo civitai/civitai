@@ -71,7 +71,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 // 2. Import the handler after the mocks are defined
-import handler from '../index';
+import handler from '~/pages/api/v1/images/index';
 
 // 3. Helper to mock NextApiRequest/Response
 function createMocks({ query = {} }: { query?: Record<string, string | string[]> }) {
