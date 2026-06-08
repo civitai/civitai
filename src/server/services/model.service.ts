@@ -1511,19 +1511,44 @@ export const deleteModelById = async ({
 };
 
 export const restoreModelById = async ({ id }: GetByIdInput) => {
-  const model = await dbWrite.model.update({
-    where: { id },
-    data: {
-      deletedAt: null,
-      status: 'Draft',
-      deletedBy: null,
-      modelVersions: {
-        updateMany: { where: { status: 'Deleted' }, data: { status: 'Draft' } },
-      },
-    },
+  // Derive restored status from publishedAt so a previously-public model
+  // returns to Unpublished (was public -> hidden) rather than Draft. Blanket
+  // Draft would let the next publish reset publishedAt under the legacy gate
+  // (the anti-bump SQL guard now blocks that, but mismatched status was its
+  // own UX bug — restored work shouldn't pretend it was never published).
+  //   publishedAt IS NULL    -> Draft
+  //   publishedAt >  NOW()   -> Scheduled (future publish was queued)
+  //   publishedAt <= NOW()   -> Unpublished
+  await dbWrite.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      UPDATE "Model"
+      SET "deletedAt" = NULL,
+          "deletedBy" = NULL,
+          "status" = CASE
+            WHEN "publishedAt" IS NULL      THEN 'Draft'::"ModelStatus"
+            WHEN "publishedAt" >  NOW()     THEN 'Scheduled'::"ModelStatus"
+            ELSE 'Unpublished'::"ModelStatus"
+          END
+      WHERE id = ${id}
+        AND "status" = 'Deleted'::"ModelStatus"
+    `;
+    await tx.$executeRaw`
+      UPDATE "ModelVersion"
+      SET "status" = CASE
+        WHEN "publishedAt" IS NULL  THEN 'Draft'::"ModelStatus"
+        WHEN "publishedAt" >  NOW() THEN 'Scheduled'::"ModelStatus"
+        ELSE 'Unpublished'::"ModelStatus"
+      END
+      WHERE "modelId" = ${id}
+        AND "status" = 'Deleted'::"ModelStatus"
+    `;
   });
 
-  await userModelCountCache.refresh(model.userId);
+  const model = await dbWrite.model.findUnique({
+    where: { id },
+    select: { id: true, userId: true, status: true },
+  });
+  if (model) await userModelCountCache.refresh(model.userId);
 
   return model;
 };
@@ -2035,7 +2060,6 @@ export const publishModelById = async ({
         where: { id },
         data: {
           status,
-          publishedAt: !republishing ? publishedAt : undefined,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
           deletedAt: null,
         },
@@ -2053,6 +2077,17 @@ export const publishModelById = async ({
           status: true,
         },
       });
+
+      // Anti-bump guard: publishedAt is immutable once a model has gone
+      // public. Allowed transitions: NULL (Draft) -> set, or future
+      // (Scheduled) -> reschedule. Republish of an already-public model is a
+      // no-op for this column. Mirrors the Post guard below.
+      await tx.$executeRaw`
+        UPDATE "Model"
+        SET "publishedAt" = ${publishedAt}
+        WHERE id = ${id}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
 
       // Validate NSFW + restricted base model combination
       if (model.nsfw) {
@@ -2088,19 +2123,27 @@ export const publishModelById = async ({
 
       if (includeVersions) {
         if (status === ModelStatus.Published) {
-          // Publish model versions with early access check:
+          // Publish model versions with early access check. Anti-bump guard
+          // for ModelVersion.publishedAt lives inside this call.
           await publishModelVersionsWithEarlyAccess({
             modelVersionIds: versionIds,
-            publishedAt: !republishing ? publishedAt : undefined,
+            publishedAt,
             tx,
-            republishing,
           });
         } else if (status === ModelStatus.Scheduled) {
-          // Schedule model versions:
+          // Schedule model versions. Status flips unconditionally, but
+          // publishedAt only flips while the row is mutable (Draft or
+          // future-Scheduled) — anti-bump guard via raw SQL.
           await tx.modelVersion.updateMany({
             where: { id: { in: versionIds } },
-            data: { status, publishedAt: !republishing ? publishedAt : undefined },
+            data: { status },
           });
+          await tx.$executeRaw`
+            UPDATE "ModelVersion"
+            SET "publishedAt" = ${publishedAt}
+            WHERE id IN (${Prisma.join(versionIds, ',')})
+            AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+          `;
         }
 
         // Restore posts that were unpublished alongside the model, and re-target
@@ -2604,9 +2647,7 @@ export async function bumpModel({ id }: { id: number }) {
 
   await Promise.all([
     dataForModelsCache.refresh([id]),
-    modelsSearchIndex.queueUpdate([
-      { id, action: SearchIndexUpdateQueueAction.Update },
-    ]),
+    modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]),
     userModelCountCache.refresh(updated.userId),
   ]);
 
@@ -3149,7 +3190,6 @@ export async function copyGallerySettingsToAllModelsByUser({
       WHERE
         "userId" = ${userId}
     `;
-
   });
 
   // Count-cache refresh hits Redis — run after commit, off the txn budget.
@@ -3705,7 +3745,11 @@ export const publishPrivateModel = async ({
       data: {
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Draft,
-        publishedAt: publishVersions ? now : null,
+        // Private->Public flip preserves the original private-publish date —
+        // the anti-bump guard in publishModelVersionsWithEarlyAccess would
+        // lock it anyway. Demotion still writes null so a follow-up publish
+        // can transition cleanly.
+        publishedAt: publishVersions ? undefined : null,
       },
     }),
     dbWrite.model.update({
@@ -3715,7 +3759,8 @@ export const publishPrivateModel = async ({
       data: {
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
-        publishedAt: publishVersions ? now : null,
+        // Same rationale as the ModelVersion write above.
+        publishedAt: publishVersions ? undefined : null,
         meta: {
           ...((model.meta ?? {}) as ModelMeta),
           cannotPromote: false,
