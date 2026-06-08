@@ -12,8 +12,9 @@ BEGIN;
 
 -- Clamp Article.publishedAt where we have evidence of an earlier publish
 -- date: a stashed `metadata.unpublishedAt` (set by user unpublish or mod
--- action) that predates the current publishedAt. Conservatively floor by
--- createdAt as well (publish can never precede creation).
+-- action) that predates the current publishedAt. Use unpublishedAt as the
+-- clamp target (best available evidence of the original publish window),
+-- with createdAt as a defensive floor — publish can never precede creation.
 --
 -- Scope:
 --   * Only Published rows with a past publishedAt (skip Scheduled if any).
@@ -21,10 +22,12 @@ BEGIN;
 --     — otherwise the metadata key is a stale artifact of a later unpublish
 --     that didn't bump on republish (i.e. nothing to clamp).
 UPDATE "Article"
-SET "publishedAt" = LEAST(
-  "publishedAt",
-  (metadata->>'unpublishedAt')::timestamptz,
-  "createdAt"
+SET "publishedAt" = GREATEST(
+  "createdAt",
+  LEAST(
+    "publishedAt",
+    COALESCE((metadata->>'unpublishedAt')::timestamptz, "publishedAt")
+  )
 )
 WHERE status = 'Published'::"ArticleStatus"
   AND "publishedAt" IS NOT NULL
