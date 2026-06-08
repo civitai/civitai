@@ -154,15 +154,19 @@ export const cacheRevalidateCounter = registerCounterWithLabels({
 });
 
 // tRPC per-procedure latency — wall-clock duration of the full middleware chain +
-// resolver, labeled by procedure path (~93 fixed, low-cardinality values). Used to
-// rank heavy-pool isolation candidates by P99 x rate (the criterion behind the
-// image-feed cutover). Buckets span to 60s so the pin tail is visible like the
-// images_search histogram.
+// resolver, labeled by procedure path. Used to rank heavy-pool isolation
+// candidates by P99 x rate (the criterion behind the image-feed cutover). Bucket
+// layout (to 30s) keeps the long tail visible like images_search.
+//
+// ⚠️ HIGH CARDINALITY: `path` is a fixed enum of ~870 procedure names (NOT ~93 —
+// that's the router count), so this emits ~870 x (buckets+sum+count) series PER
+// POD. It is gated OPT-IN behind TRPC_PROCEDURE_METRICS (see trpc.ts) so only the
+// pools we point it at (api-primary, api-heavy) pay the cost. Buckets kept lean.
 export const trpcProcedureDuration = registerHistogram({
   name: 'trpc_procedure_duration_seconds',
   help: 'tRPC procedure wall-clock duration (full chain + resolver) by path',
   labelNames: ['path'] as const,
-  buckets: [0.05, 0.25, 0.5, 1, 2, 3, 5, 10, 30, 60],
+  buckets: [0.05, 0.25, 1, 2, 5, 10, 30],
 });
 
 // Image feed metrics
