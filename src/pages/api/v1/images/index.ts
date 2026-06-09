@@ -20,6 +20,7 @@ import {
 import { imageMetaCache } from '~/server/redis/caches';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import {
   acquireBulkheadSlot,
   BulkheadFullError,
@@ -99,6 +100,13 @@ const imagesEndpointSchema = z.object({
 const { requestDurationSeconds } = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Attribute any synchronous event-loop block during this heavy handler to
+  // 'rest:/api/v1/images' for the long-task detector. Thin passthrough (no ALS
+  // cost) unless the detector is armed. See src/server/eventloop-longtask.ts.
+  return runWithLongTaskLabel('rest:/api/v1/images', () => handleImagesRequest(req, res));
+});
+
+async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
   // Started AFTER param validation + the paging guard so cheap 400/429 rejects
   // aren't recorded as ~0ms heavy requests, which would dilute the heavy-tail P99
   // this metric exists to measure. (Also the correct slot for the bulkhead merge:
@@ -315,7 +323,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     // serialization — the actual pin cost — is done by now), not on socket close.
     releaseSlot?.();
   }
-});
+}
 
 type Metadata = {
   currentPage?: number;

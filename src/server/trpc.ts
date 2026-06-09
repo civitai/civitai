@@ -10,6 +10,7 @@ import {
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration } from '~/server/prom/client';
+import { runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -212,13 +213,19 @@ const enforceTokenScope = t.middleware(({ ctx, meta, next }) => {
 // on SSR/jobs/canary to bound the series count and keep an instant off-switch.
 const TRPC_PROCEDURE_METRICS = process.env.TRPC_PROCEDURE_METRICS === 'true';
 const recordProcedureDuration = t.middleware(async ({ path, next }) => {
-  if (!TRPC_PROCEDURE_METRICS) return next();
-  const end = trpcProcedureDuration.startTimer({ path });
-  try {
-    return await next();
-  } finally {
-    end();
-  }
+  // Tag the async context with the procedure path so the event-loop long-task
+  // detector can attribute a synchronous block to the running procedure. This is
+  // a thin passthrough (no ALS store) unless the detector is armed, so it costs
+  // nothing in the default/disabled case. Independent of TRPC_PROCEDURE_METRICS.
+  return runWithLongTaskLabel(`trpc:${path}`, async () => {
+    if (!TRPC_PROCEDURE_METRICS) return next();
+    const end = trpcProcedureDuration.startTimer({ path });
+    try {
+      return await next();
+    } finally {
+      end();
+    }
+  });
 });
 
 export const publicProcedure = t.procedure

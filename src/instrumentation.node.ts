@@ -15,11 +15,19 @@ import { logs } from '@opentelemetry/api-logs';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { registerCpuProfiler } from '~/server/cpu-profiler';
+import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is
 // always available for live incident capture. See src/server/cpu-profiler.ts.
 registerCpuProfiler();
+
+// Arm the event-loop long-task detector. Default OFF (no-op unless
+// EVENTLOOP_LONGTASK_THRESHOLD_MS > 0). When armed, attributes synchronous
+// loop blocks to the running tRPC procedure / route via AsyncLocalStorage and
+// emits Prom metrics + rate-limited structured logs. Independent of OTEL.
+// See src/server/eventloop-longtask.ts.
+registerEventLoopLongTaskDetector();
 
 // Only enable OTEL if explicitly set AND endpoint is configured
 const OTEL_ENABLED = process.env.OTEL_ENABLED === 'true';
