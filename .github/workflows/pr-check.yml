@@ -52,6 +52,12 @@ jobs:
       - name: Run typecheck
         run: pnpm run typecheck
 
+      # Enforces that every @civitai/* package declares the deps it imports (no phantom
+      # deps via root hoisting) and imports no app code (~/...). Keeps the packages
+      # installable standalone + keeps Turborepo's cache invalidation correct.
+      - name: Lint packages (deps + boundaries)
+        run: pnpm run lint:packages
+
       # Gates the custom `no-io-in-transaction` ESLint rule (eslint-local-rules.js)
       # via its RuleTester suite. Scoped to the rule's own test rather than the
       # full `test:unit:run` suite, which currently has pre-existing failures and
