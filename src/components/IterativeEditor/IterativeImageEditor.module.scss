@@ -12,7 +12,7 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
 }
 
 .editorContainerPage {
-  composes: editorContainer;
+  @extend .editorContainer;
   max-height: none;
   height: 100%;
 }
@@ -300,19 +300,19 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
 }
 
 .costBadge {
-  composes: badge;
+  @extend .badge;
   background: rgba(250, 176, 5, 0.15);
   color: #fab005;
 }
 
 .annotatedBadge {
-  composes: badge;
+  @extend .badge;
   background: rgba(51, 154, 240, 0.15);
   color: #339af0;
 }
 
 .currentSourceBadge {
-  composes: badge;
+  @extend .badge;
   background: rgba(51, 154, 240, 0.15);
   color: #339af0;
 }
