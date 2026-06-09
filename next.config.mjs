@@ -111,7 +111,7 @@ export default defineNextConfig(
             // removeConsole: true,
           }
         : {},
-    transpilePackages: ['superjson'],
+    transpilePackages: ['devalue'],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
       'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',

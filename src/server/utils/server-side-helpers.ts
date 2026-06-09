@@ -1,8 +1,8 @@
 import { createServerSideHelpers } from '@trpc/react-query/server';
 import type { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
 import type { Session } from 'next-auth';
-import superjson from 'superjson';
 import { Tracker } from '~/server/clickhouse/client';
+import { trpcTransformer } from '~/shared/utils/trpc-transformer';
 
 import { appRouter } from '~/server/routers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -34,7 +34,7 @@ export const getServerProxySSGHelpers = async (
       apiKeyId: undefined,
       subject: undefined,
     },
-    transformer: superjson,
+    transformer: trpcTransformer,
   });
   return ssg;
 };
