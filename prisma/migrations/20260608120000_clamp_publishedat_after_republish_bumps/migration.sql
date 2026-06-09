@@ -8,8 +8,36 @@
 -- NOTE: This file is for review/history only. Per the project migration
 -- policy, this SQL is NOT applied automatically by `prisma migrate deploy`.
 -- It must be applied manually to preview / staging / prod by a human.
+--
+-- IMPORTANT: Scope for steps 1a/1b is captured upfront in temp tables
+-- because the evidence those steps use to *find* bumped rows is the same
+-- evidence the steps then *consume* by clamping. Without snapshotting,
+-- downstream steps (2, 2b) that filter by the same modelIds would see an
+-- empty set after 1a/1b ran inside the transaction.
 
 BEGIN;
+
+-- Snapshot bump-evidence rowsets BEFORE any clamp runs.
+CREATE TEMP TABLE op1a_versions ON COMMIT DROP AS
+SELECT id, "modelId"
+FROM "ModelVersion"
+WHERE "publishedAt" IS NOT NULL
+  AND "publishedAt" <= NOW()
+  AND status = 'Published'
+  AND meta->>'unpublishedAt' IS NOT NULL
+  AND (meta->>'unpublishedAt')::timestamptz < "publishedAt";
+
+CREATE TEMP TABLE op1b_versions ON COMMIT DROP AS
+SELECT DISTINCT mv.id, mv."modelId"
+FROM "ModelVersion" mv
+JOIN "Post" p ON p."modelVersionId" = mv.id
+JOIN "Model" mm ON mm.id = mv."modelId" AND mm."userId" = p."userId"
+WHERE mv.status = 'Published'
+  AND mv."publishedAt" IS NOT NULL
+  AND mv."publishedAt" <= NOW()
+  AND p.metadata->>'unpublishedAt' IS NOT NULL
+  AND p."publishedAt" IS NOT NULL
+  AND p."publishedAt" < mv."publishedAt";
 
 -- 1a) Clamp ModelVersion.publishedAt where we have direct evidence of an
 --     earlier publish that got bumped: a stashed `meta.unpublishedAt` (set by
@@ -20,14 +48,6 @@ BEGIN;
 --     (`GREATEST`), not in the candidate list — using it as a candidate
 --     collapses every row with an `unpublishedAt` to its creation timestamp
 --     and loses the best evidence we have.
---
---     Scoped tightly: only Published rows where `meta.unpublishedAt` exists
---     AND `publishedAt` was bumped past it. Rows without the breadcrumb (no
---     evidence of a prior publish) or rows where publishedAt is still <=
---     unpublishedAt (not bumped) are left alone — this matches the bump-bug
---     story exactly and avoids no-op tuple rewrites on the rest of the table.
---     Scheduled rows (future publishedAt) are not touched — those are still
---     mutable by the invariant.
 UPDATE "ModelVersion"
 SET "publishedAt" = GREATEST(
   "createdAt",
@@ -36,11 +56,7 @@ SET "publishedAt" = GREATEST(
     (meta->>'unpublishedAt')::timestamptz
   )
 )
-WHERE "publishedAt" IS NOT NULL
-  AND "publishedAt" <= NOW()
-  AND status = 'Published'
-  AND meta->>'unpublishedAt' IS NOT NULL
-  AND (meta->>'unpublishedAt')::timestamptz < "publishedAt";
+WHERE id IN (SELECT id FROM op1a_versions);
 
 -- 1b) Clamp ModelVersion.publishedAt using owner-post evidence for versions
 --     where the version-level `meta.unpublishedAt` breadcrumb was stripped on
@@ -48,13 +64,11 @@ WHERE "publishedAt" IS NOT NULL
 --     line ~580 removes `unpublishedAt`/`unpublishedBy` from version meta
 --     before persisting). On those rows step 1a finds no breadcrumb on the
 --     version itself, but the owner-attached Posts still carry their own
---     `metadata.unpublishedAt` (the unpublish-cascade in unpublishModelById /
---     unpublishModelVersionById writes it onto Posts and does NOT strip on
---     republish in pre-fix code). Post.publishedAt was preserved across the
---     unpublish/republish cycle via `prevPublishedAt` restore, so it gives us
---     the real original Post publish date — the version had to be public when
---     its owner-post was published, making MIN(owner-post.publishedAt) a tight
---     upper bound on the original version.publishedAt.
+--     `metadata.unpublishedAt`. Post.publishedAt was preserved across the
+--     unpublish/republish cycle via `prevPublishedAt` restore, so it gives
+--     us the real original Post publish date — the version had to be public
+--     when its owner-post was published, making MIN(owner-post.publishedAt)
+--     a tight upper bound on the original version.publishedAt.
 --
 --     Only owner-attached posts count (`p.userId = m.userId`) so unrelated
 --     image-only posts by other users on the same version don't pull the
@@ -75,19 +89,7 @@ SET "publishedAt" = GREATEST(
     )
   )
 )
-WHERE mv.status = 'Published'
-  AND mv."publishedAt" IS NOT NULL
-  AND mv."publishedAt" <= NOW()
-  AND EXISTS (
-    SELECT 1
-    FROM "Post" p
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE p."modelVersionId" = mv.id
-      AND p."userId" = m."userId"
-      AND p.metadata->>'unpublishedAt' IS NOT NULL
-      AND p."publishedAt" IS NOT NULL
-      AND p."publishedAt" < mv."publishedAt"
-  );
+WHERE mv.id IN (SELECT id FROM op1b_versions);
 
 -- 2) Resync Model.lastVersionAt to MAX(version.publishedAt) for models whose
 --    versions were clamped in step 1a or 1b. lastVersionAt drives the
@@ -112,41 +114,24 @@ FROM (
 WHERE m.id = sub."modelId"
   AND m."lastVersionAt" IS DISTINCT FROM sub.last_pub
   AND m.id IN (
-    -- 1a-touched modelIds: version meta breadcrumb evidence
-    SELECT DISTINCT "modelId"
-    FROM "ModelVersion"
-    WHERE "publishedAt" IS NOT NULL
-      AND "publishedAt" <= NOW()
-      AND status = 'Published'
-      AND meta->>'unpublishedAt' IS NOT NULL
-      AND (meta->>'unpublishedAt')::timestamptz < "publishedAt"
+    SELECT "modelId" FROM op1a_versions
     UNION
-    -- 1b-touched modelIds: post breadcrumb evidence
-    SELECT DISTINCT mv."modelId"
-    FROM "ModelVersion" mv
-    JOIN "Post" p ON p."modelVersionId" = mv.id
-    JOIN "Model" mm ON mm.id = mv."modelId" AND mm."userId" = p."userId"
-    WHERE mv.status = 'Published'
-      AND mv."publishedAt" IS NOT NULL
-      AND mv."publishedAt" <= NOW()
-      AND p.metadata->>'unpublishedAt' IS NOT NULL
-      AND p."publishedAt" IS NOT NULL
-      AND p."publishedAt" < mv."publishedAt"
+    SELECT "modelId" FROM op1b_versions
   );
 
 -- 2b) Clamp Model.publishedAt to MIN(version.publishedAt) for models touched
 --     by step 1b. Model.publishedAt drives the "Published X ago" badge and
 --     search-index `publishedAtUnix`; when a model went through the
 --     unpublish-republish cycle, pre-fix code wrote model.publishedAt = NOW()
---     in the same transaction as the bumped version.publishedAt, so the model
---     value is bumped wherever the version is.
+--     in the same transaction as the bumped version.publishedAt, so the
+--     model value is bumped wherever the version is.
 --
 --     Restricted to 1b scope (post breadcrumb evidence) so we only touch
 --     models where we have *direct* evidence the model went through the
 --     unpublish cycle — broader Model.publishedAt drift (rows where
 --     Model.publishedAt > MIN(version.publishedAt) without breadcrumbs) is
---     left alone here. Those numbers (~12k models with drift) almost certainly
---     include legitimate historical state we shouldn't rewrite.
+--     left alone here. Those numbers (~12k models with drift) almost
+--     certainly include legitimate historical state we shouldn't rewrite.
 UPDATE "Model" m
 SET "publishedAt" = sub.first_pub
 FROM (
@@ -160,18 +145,7 @@ FROM (
 WHERE m.id = sub."modelId"
   AND m."publishedAt" IS NOT NULL
   AND m."publishedAt" > sub.first_pub
-  AND m.id IN (
-    SELECT DISTINCT mv."modelId"
-    FROM "ModelVersion" mv
-    JOIN "Post" p ON p."modelVersionId" = mv.id
-    JOIN "Model" mm ON mm.id = mv."modelId" AND mm."userId" = p."userId"
-    WHERE mv.status = 'Published'
-      AND mv."publishedAt" IS NOT NULL
-      AND mv."publishedAt" <= NOW()
-      AND p.metadata->>'unpublishedAt' IS NOT NULL
-      AND p."publishedAt" IS NOT NULL
-      AND p."publishedAt" < mv."publishedAt"
-  );
+  AND m.id IN (SELECT "modelId" FROM op1b_versions);
 
 -- 3) Clamp Post.publishedAt where prior republishes bumped it past the
 --    original publish date. Posts stash `metadata.prevPublishedAt` on
@@ -190,7 +164,10 @@ WHERE m.id = sub."modelId"
 --    historical import quirks; without the floor the clamp could land
 --    before the row physically existed).
 --
---    Scope: ~1687 rows.
+--    Self-contained: WHERE filter encodes "is currently bumped past
+--    prevPublishedAt", which only flips false once the UPDATE writes the
+--    new value to the same row — single-row, single-pass. No transient-
+--    evidence problem like steps 1a/1b have with downstream filters.
 UPDATE "Post"
 SET "publishedAt" = GREATEST(
   "createdAt",
