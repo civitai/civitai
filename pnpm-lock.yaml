@@ -801,6 +801,34 @@ importers:
         specifier: ^8.19.0
         version: 8.19.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
 
+  apps/moderator:
+    dependencies:
+      '@civitai/db':
+        specifier: workspace:*
+        version: link:../../packages/civitai-db
+      '@civitai/db-schema':
+        specifier: workspace:*
+        version: link:../../packages/civitai-db-schema
+      next:
+        specifier: ^16.2.7
+        version: 16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
+    devDependencies:
+      '@types/node':
+        specifier: 20.19.9
+        version: 20.19.9
+      '@types/react':
+        specifier: 18.0.14
+        version: 18.0.14
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.2
+
   packages/civitai-axiom: {}
 
   packages/civitai-clickhouse: {}
@@ -810,6 +838,19 @@ importers:
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../civitai-db-schema
+      pg:
+        specifier: ^8.11.3
+        version: 8.16.3
+      prom-client:
+        specifier: ^14.2.0
+        version: 14.2.0
+      zod:
+        specifier: ^4.0.17
+        version: 4.0.17
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.15.5
 
   packages/civitai-db-schema: {}
 
@@ -14357,7 +14398,7 @@ snapshots:
   '@types/jsonwebtoken@9.0.10':
     dependencies:
       '@types/ms': 2.1.0
-      '@types/node': 18.19.130
+      '@types/node': 20.19.9
 
   '@types/keyv@3.1.4':
     dependencies:
@@ -14415,7 +14456,7 @@ snapshots:
 
   '@types/nodemailer@6.4.17':
     dependencies:
-      '@types/node': 18.19.130
+      '@types/node': 20.19.9
 
   '@types/normalize-package-data@2.4.4': {}
 
@@ -14427,7 +14468,7 @@ snapshots:
 
   '@types/pg@8.15.5':
     dependencies:
-      '@types/node': 18.19.130
+      '@types/node': 20.19.9
       pg-protocol: 1.10.3
       pg-types: 2.2.0
 
@@ -14457,11 +14498,11 @@ snapshots:
 
   '@types/readdir-glob@1.1.5':
     dependencies:
-      '@types/node': 18.19.130
+      '@types/node': 20.19.9
 
   '@types/request-ip@0.0.37':
     dependencies:
-      '@types/node': 18.19.130
+      '@types/node': 20.19.9
 
   '@types/request@2.48.13':
     dependencies:
@@ -14484,13 +14525,13 @@ snapshots:
 
   '@types/sharp@0.31.1':
     dependencies:
-      '@types/node': 18.19.130
+      '@types/node': 20.19.9
 
   '@types/statuses@2.0.6': {}
 
   '@types/stream-to-blob@2.0.0':
     dependencies:
-      '@types/node': 18.19.130
+      '@types/node': 20.19.9
 
   '@types/tough-cookie@4.0.5': {}
 
@@ -14520,7 +14561,7 @@ snapshots:
 
   '@types/xml2js@0.4.14':
     dependencies:
-      '@types/node': 18.19.130
+      '@types/node': 20.19.9
 
   '@types/youtube-player@5.5.11': {}
 
@@ -20995,7 +21036,7 @@ snapshots:
 
   stripe@11.18.0:
     dependencies:
-      '@types/node': 18.19.130
+      '@types/node': 20.19.9
       qs: 6.14.0
 
   strnum@2.1.1: {}
