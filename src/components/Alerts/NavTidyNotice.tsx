@@ -58,9 +58,10 @@ export function NavTidyNotice() {
       position="bottom-start"
       shadow="lg"
       opened
-      onChange={(opened) => {
-        if (!opened) handleDismiss();
-      }}
+      // Stay put until the user explicitly closes it via the X — clicking away
+      // or pressing Escape should not permanently dismiss the nudge.
+      closeOnClickOutside={false}
+      closeOnEscape={false}
       withArrow
       arrowSize={10}
     >
@@ -94,7 +95,6 @@ export function NavTidyNotice() {
           <Button
             component={Link}
             href="/user/account#settings"
-            onClick={handleDismiss}
             variant="light"
             color="yellow"
             size="compact-xs"
