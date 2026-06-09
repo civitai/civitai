@@ -1313,6 +1313,14 @@ export default function ModelDetailsV2({
                   type="Suggested"
                   versionId={selectedVersion.id}
                   ownerId={model.user.id}
+                  allowAIRecommendations={
+                    // Read from the live `model` query data (kept current by the
+                    // toggle mutation's getById cache update) rather than the
+                    // `selectedVersion` useState snapshot, so toggling AI recs on
+                    // re-enables the query without a page reload.
+                    model.modelVersions.find((v) => v.id === selectedVersion.id)?.meta
+                      ?.allowAIRecommendations ?? false
+                  }
                   label={
                     <Group gap={8} wrap="nowrap">
                       Suggested Resources{' '}

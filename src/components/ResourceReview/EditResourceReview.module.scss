@@ -4,12 +4,12 @@
   padding: 0;
   font-size: 12px;
 
-  :global .ProseMirror {
+  :global(.ProseMirror) {
     padding: 6px 10px;
     min-height: 22px;
     cursor: text;
 
-    :global p.is-editor-empty:first-of-type::before {
+    :global(p.is-editor-empty:first-of-type::before) {
       font-size: 12px;
     }
   }

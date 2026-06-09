@@ -91,10 +91,21 @@ async function republishOne(c: Candidate): Promise<Result> {
       // from Model.meta (Prisma's typed update can't do JSON key subtraction).
       // Strip keys set by the auto-unpublish-models-with-no-versions cron
       // while stuck in Draft; preserve anything else a mod/user may have set.
+      //
+      // Anti-bump guard on publishedAt: only set it when the row is currently
+      // Draft (NULL) or future-Scheduled. Recovery from orphaned-Draft must
+      // not rewrite a Model.publishedAt that's already in the past — the
+      // candidate query already filters Model.status='Draft', but a
+      // concurrent publish could race us, so the SQL guard is belt-and-
+      // suspenders.
       await tx.$executeRaw(Prisma.sql`
         UPDATE "Model"
         SET "status"      = 'Published',
-            "publishedAt" = ${publishedAt},
+            "publishedAt" = CASE
+                              WHEN "publishedAt" IS NULL OR "publishedAt" > NOW()
+                                THEN ${publishedAt}
+                              ELSE "publishedAt"
+                            END,
             "meta"        = COALESCE("meta", '{}'::jsonb)
                               - 'unpublishedAt'
                               - 'unpublishedReason'
@@ -102,25 +113,39 @@ async function republishOne(c: Candidate): Promise<Result> {
         WHERE id = ${c.modelId}
       `);
 
+      // Split publishedAt off so the anti-bump guard can no-op it when the
+      // version is already public. Status/availability still flip
+      // unconditionally to recover the orphaned-Draft state.
       await tx.modelVersion.update({
         where: { id: c.versionId },
         data: {
           status: 'Published',
-          publishedAt,
           availability: 'Public',
         },
       });
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE "ModelVersion"
+        SET "publishedAt" = ${publishedAt}
+        WHERE id = ${c.versionId}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `);
 
       // Defensive: sync any other Posts on this version to the same
       // publishedAt if they were orphaned similarly. Matches the logic in
-      // publishModelById but with the specific versionId scope.
+      // publishModelById but with the specific versionId scope. Same
+      // anti-bump invariant as the model/version writes above: only NULL
+      // (Draft/Unpublished) or future-Scheduled rows accept the new value;
+      // already-public posts keep their original publishedAt, even if it
+      // happens to differ from the candidate publishedAt we're writing for
+      // the model — those posts are independently published and not ours
+      // to bump.
       await tx.$executeRaw(Prisma.sql`
         UPDATE "Post" p
         SET "publishedAt" = ${publishedAt},
             "metadata"    = COALESCE(p."metadata", '{}'::jsonb) - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
         WHERE p."modelVersionId" = ${c.versionId}
           AND p."userId"         = ${c.userId}
-          AND (p."publishedAt" IS NULL OR p."publishedAt" <> ${publishedAt})
+          AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
       `);
     });
 

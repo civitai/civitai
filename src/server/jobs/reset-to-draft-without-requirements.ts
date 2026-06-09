@@ -26,11 +26,15 @@ export const resetToDraftWithoutRequirements = createJob(
     `;
 
     if (modelVersionsWithoutPosts.length) {
-      // Unpublish all model versions that have no posts and flag them for notification
+      // Unpublish all model versions that have no posts and flag them for
+      // notification. Status flips to Unpublished (not Draft) so that a later
+      // user-initiated republish goes through the controller's republish
+      // branch and the anti-bump publishedAt guard stays consistent with the
+      // semantics of "was public, hidden by system."
       const modelVersionIds = modelVersionsWithoutPosts.map((r) => r.modelVersionId);
       await dbWrite.$executeRaw`
         UPDATE "ModelVersion" mv
-        SET status = 'Draft',
+        SET status = 'Unpublished',
           meta = jsonb_set(jsonb_set(meta, '{unpublishedReason}', '"no-posts"'), '{unpublishedAt}', to_jsonb(now())),
           availability = 'Private'
         WHERE mv.id IN (${Prisma.join(modelVersionIds)})
@@ -52,14 +56,16 @@ export const resetToDraftWithoutRequirements = createJob(
         AND NOT EXISTS (SELECT 1 FROM "ModelFile" f WHERE f."modelVersionId" = mv.id);
     `;
     if (modelVersionsWithoutFiles.length) {
-      // Unpublish all model versions that have no files and flag them for notification
+      // Unpublish all model versions that have no files and flag them for
+      // notification. See no-posts branch above for the Draft -> Unpublished
+      // rationale.
       const modelVersionIds = modelVersionsWithoutFiles.map((r) => r.modelVersionId);
       const tasks = chunk(modelVersionIds, 500).map((batch, i) => async () => {
         console.log(`Processing batch ${i + 1}`);
         await dbWrite.$executeRaw`
           UPDATE "ModelVersion" mv
           SET
-            status = 'Draft',
+            status = 'Unpublished',
             meta = jsonb_set(jsonb_set(meta, '{unpublishedReason}', '"no-files"'), '{unpublishedAt}', to_jsonb(now())),
             availability = 'Private'
           WHERE mv.id IN (${Prisma.join(batch)})
@@ -68,11 +74,12 @@ export const resetToDraftWithoutRequirements = createJob(
       await limitConcurrency(tasks, 5);
     }
 
-    // Unpublish all models that have no published model versions
+    // Unpublish all models that have no published model versions. See
+    // no-posts branch above for the Draft -> Unpublished rationale.
     await dbWrite.$executeRaw`
       UPDATE "Model" m
       SET
-        status = 'Draft',
+        status = 'Unpublished',
         meta = jsonb_set(jsonb_set(iif(jsonb_typeof(meta) != 'object', '{}', meta), '{unpublishedReason}', '"no-versions"'), '{unpublishedAt}', to_jsonb(now()))
       WHERE
         m."status" = 'Published'

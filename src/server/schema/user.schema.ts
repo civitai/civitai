@@ -180,6 +180,14 @@ export const deleteUserSchema = z.object({
   removeModels: z.boolean().optional(),
 });
 
+export type RestoreUserInput = z.infer<typeof restoreUserSchema>;
+export const restoreUserSchema = z.object({
+  id: z.number(),
+  username: usernameSchema,
+  email: z.string().email(),
+  restoreModels: z.boolean().optional(),
+});
+
 export type GetUserCosmeticsSchema = z.infer<typeof getUserCosmeticsSchema>;
 export const getUserCosmeticsSchema = z.object({
   equipped: z.boolean().optional(),

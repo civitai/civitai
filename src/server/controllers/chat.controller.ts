@@ -229,7 +229,16 @@ export const addUsersHandler = async ({
 
     const dedupedUserIds = uniq(input.userIds);
     const existingChatMemberIds = existing.chatMembers.map((cm) => cm.userId);
-    const usersToAdd = dedupedUserIds.filter((uid) => !existingChatMemberIds.includes(uid));
+    let usersToAdd = dedupedUserIds.filter((uid) => !existingChatMemberIds.includes(uid));
+
+    // don't pull users who have disabled chat into a chat (mods bypass)
+    if (!ctx.user.isModerator && usersToAdd.length) {
+      const settings = await Promise.all(usersToAdd.map((id) => getUserSettings(id)));
+      usersToAdd = usersToAdd.filter((_, i) => settings[i]?.features?.chat !== false);
+      if (!usersToAdd.length) {
+        throw throwBadRequestError('The requested users are not accepting chat requests');
+      }
+    }
 
     const mergedUsers = [...existingChatMemberIds, ...usersToAdd];
     if (mergedUsers.length >= maxUsersPerChat) {
@@ -488,7 +497,7 @@ export const getInfiniteMessagesHandler = async ({
       where: { chatId: input.chatId, ...dateLimit },
       take: input.limit + 1,
       cursor: input.cursor ? { id: input.cursor } : undefined,
-      orderBy: [{ id: input.direction }],
+      orderBy: [{ id: input.sortDirection }],
     });
 
     let nextCursor: number | undefined;
@@ -498,7 +507,7 @@ export const getInfiniteMessagesHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    if (input.direction === 'desc') {
+    if (input.sortDirection === 'desc') {
       items.reverse();
     }
 

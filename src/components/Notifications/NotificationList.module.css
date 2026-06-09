@@ -36,8 +36,8 @@
 
     &:hover {
       background: light-dark(
-        darken(var(--mantine-color-gray-0), 5%),
-        lighten(var(--mantine-color-dark-6), 5%)
+        color-mix(in srgb, var(--mantine-color-gray-0), black 5%),
+        color-mix(in srgb, var(--mantine-color-dark-6), white 5%)
       );
     }
   }

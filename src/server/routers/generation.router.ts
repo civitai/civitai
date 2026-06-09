@@ -1,6 +1,8 @@
+import { gateRuleSchema } from '~/shared/data-graph/generation/gates';
 import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,
+  generationEcosystemConfigSchema,
   generationStatusModeSchema,
   getGenerationDataSchema,
   getGenerationResourcesSchema,
@@ -14,12 +16,15 @@ import {
   getGenerationEcosystemConfig,
   getGenerationResources,
   getGenerationStatus,
+  getGateRules,
   getGenerationConfig,
   getResourceData,
   getUnavailableResources,
   resolveImageMeta,
+  setGateRules,
   setGenerationEcosystemConfig,
   setGenerationStatus,
+  setSelfHostedGenerationStatus,
   // textToImage,
   // textToImageTestRun,
   toggleUnavailableResource,
@@ -34,17 +39,6 @@ import {
 import * as z from 'zod';
 import { getGenerationEngines } from '~/server/services/generation/engines';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-
-const ecosystemConfigInputSchema = z.object({
-  modOnlyEcosystems: z.array(z.string()),
-  disabledEcosystems: z.array(z.string()),
-  testingEcosystems: z.array(z.string()),
-  experimentalEcosystems: z.array(z.string()),
-  modOnlyIds: z.array(z.number().int().positive()),
-  disabledIds: z.array(z.number().int().positive()),
-  testingIds: z.array(z.number().int().positive()),
-  nsfwIds: z.array(z.number().int().positive()),
-});
 
 export const generationRouter = router({
   getGenerationEngines: publicProcedure
@@ -85,9 +79,16 @@ export const generationRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['generation-status'] }))
     .query(async () => {
-      // Don't expose the moderator-identity audit stamp on the public,
-      // edge-cached endpoint — it's moderator-only (getStatusModerator).
-      const { updatedBy, ...status } = await getGenerationStatus();
+      // Don't expose the moderator-identity audit stamps on the public,
+      // edge-cached endpoint — they're moderator-only (getStatusModerator).
+      const { updatedBy, selfHostedUpdatedBy, ...status } = await getGenerationStatus();
+
+      // Only surface the status message to clients while the gate is actually
+      // engaged. The message stays persisted in Redis (so operators don't have
+      // to re-enter it when toggling), but a stale/irrelevant message isn't
+      // returned while the mode is 'enabled'. getStatusModerator still returns
+      // the raw stored message so the mod UI can see/edit it.
+      if (status.mode === 'enabled') status.message = null;
       return status;
     }),
   getStatusModerator: moderatorProcedure.query(() => getGenerationStatus()),
@@ -106,22 +107,37 @@ export const generationRouter = router({
         updatedBy: { id: ctx.user.id, username: ctx.user.username ?? 'unknown' },
       })
     ),
+  setSelfHostedStatus: moderatorProcedure
+    .input(z.object({ mode: generationStatusModeSchema }))
+    .use(purgeOnSuccess(['generation-status']))
+    .mutation(({ input, ctx }) =>
+      setSelfHostedGenerationStatus({
+        mode: input.mode,
+        updatedBy: { id: ctx.user.id, username: ctx.user.username ?? 'unknown' },
+      })
+    ),
   getGenerationConfig: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
-    .query(({ ctx }) => getGenerationConfig(ctx.user ?? {}, { isGreen: ctx.features.isGreen })),
+    .query(({ ctx }) =>
+      getGenerationConfig({
+        id: ctx.user?.id,
+        isModerator: ctx.user?.isModerator,
+        tier: ctx.user?.tier,
+      })
+    ),
   getEcosystemConfig: moderatorProcedure.query(async () => {
-    // Strip the runtime-context fields (`hasTestingAccess`, `isGreen`) — the
-    // moderator UI edits the raw operator-set config that gets persisted to Redis.
-    const {
-      hasTestingAccess: _hasTestingAccess,
-      isGreen: _isGreen,
-      ...config
-    } = await getGenerationEcosystemConfig();
+    // Strip the runtime-only `hasTestingAccess` — the moderator UI edits the raw
+    // operator-set config (just `experimentalEcosystems`) persisted to Redis.
+    const { hasTestingAccess: _hasTestingAccess, ...config } = await getGenerationEcosystemConfig();
     return config;
   }),
   setEcosystemConfig: moderatorProcedure
-    .input(ecosystemConfigInputSchema)
+    .input(generationEcosystemConfigSchema)
     .mutation(({ input }) => setGenerationEcosystemConfig(input)),
+  getGateRules: moderatorProcedure.query(() => getGateRules()),
+  setGateRules: moderatorProcedure
+    .input(z.array(gateRuleSchema))
+    .mutation(({ input }) => setGateRules(input)),
   getUnavailableResources: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(() => getUnavailableResources()),

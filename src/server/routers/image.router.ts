@@ -39,6 +39,7 @@ import {
 } from '~/server/services/image.service';
 import {
   middleware,
+  heavyProcedure,
   moderatorProcedure,
   protectedProcedure,
   publicProcedure,
@@ -122,7 +123,7 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(({ input }) => getImageDetail({ ...input })),
-  getInfinite: publicProcedure
+  getInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
     .query(getInfiniteImagesHandler),
@@ -130,7 +131,7 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(({ input }) => getImagesForModelVersionCache([input.id])),
-  getImagesAsPostsInfinite: publicProcedure
+  getImagesAsPostsInfinite: heavyProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteImagesSchema)
     .query(getImagesAsPostsInfiniteHandler),

@@ -44,6 +44,7 @@ export type UserActivityType =
   | 'Registration'
   | 'Login'
   | 'Account closure'
+  | 'Account restoration'
   | 'Subscribe'
   | 'Cancel'
   | 'Donate'
@@ -167,14 +168,20 @@ export class Tracker {
     userAgent: 'unknown',
   };
   private session: Session | null = null;
+  // True once the session has been resolved (either eagerly via the constructor
+  // or lazily on first track()). Distinguishes a genuinely-anonymous request
+  // (resolved to null) from one that simply hasn't fetched yet, so anonymous
+  // requests don't re-enter getServerAuthSession on every track() call.
+  private sessionResolved = false;
   private req: NextApiRequest | undefined;
   private res: NextApiResponse | undefined;
 
   private async resolveSession() {
-    if (!this.session && this.req && this.res) {
+    if (!this.sessionResolved && this.req && this.res) {
       try {
         await getServerAuthSession({ req: this.req, res: this.res }).then((session) => {
           this.session = session;
+          this.sessionResolved = true;
           this.actor.userId = session?.user?.id ?? this.actor.userId;
           return session;
         });
@@ -194,12 +201,29 @@ export class Tracker {
     }
   }
 
-  constructor(req?: NextApiRequest, res?: NextApiResponse) {
+  constructor(
+    req?: NextApiRequest,
+    res?: NextApiResponse,
+    // The tRPC context has already resolved the session before constructing a
+    // Tracker. Passing it in lets high-volume tracking routes (e.g. track.addView
+    // ~100/s on api-primary) skip the Tracker's own getServerAuthSession call.
+    // The win is specifically ANONYMOUS requests: getServerAuthSession memoizes
+    // into req.context.session, but a null (anon) session fails that truthy guard,
+    // so the lazy resolveSession() re-ran a full JWE decrypt on every track()
+    // call. Authenticated requests already cache-hit the memo. Omitting this arg
+    // keeps the legacy behavior: resolveSession() lazily fetches on first track().
+    session?: Session | null
+  ) {
     if (req && res) {
       this.req = req;
       this.res = res;
       this.actor.ip = requestIp.getClientIp(req) ?? this.actor.ip;
       this.actor.userAgent = req.headers['user-agent'] ?? this.actor.userAgent;
+    }
+    if (session !== undefined) {
+      this.session = session;
+      this.sessionResolved = true;
+      this.actor.userId = session?.user?.id ?? this.actor.userId;
     }
   }
 

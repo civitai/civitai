@@ -61,6 +61,13 @@ export default defineNextConfig(
 
     //   return config;
     // },
+    // Turbopack is the default bundler as of Next 16. The OpenTelemetry packages
+    // that produced the `require-in-the-middle` webpack warnings are listed in
+    // `serverExternalPackages` below, so Turbopack externalizes them and never
+    // emits those warnings — an empty config just acknowledges we're on Turbopack
+    // and silences Next's "webpack config with no turbopack config" build error.
+    turbopack: {},
+    // Retained for the `next build --webpack` fallback path; ignored under Turbopack.
     webpack: (config) => {
       config.ignoreWarnings = [
         { module: /require-in-the-middle/ },
@@ -69,14 +76,15 @@ export default defineNextConfig(
       return config;
     },
     reactStrictMode: true,
+    // TEST: re-enabled to evaluate Turbopack source-map output (server + client).
+    // Safe now that the typed-scss-modules `*.module.scss.d.ts` files are removed
+    // (they previously crashed source-map generation). Note: Turbopack ignores
+    // `experimental.serverSourceMaps` (webpack-only); this is the only map lever it reads.
     productionBrowserSourceMaps: true,
     // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
     i18n: {
       locales: ['en'],
       defaultLocale: 'en',
-    },
-    eslint: {
-      ignoreDuringBuilds: true,
     },
     generateEtags: false,
     compress: false,
@@ -104,6 +112,7 @@ export default defineNextConfig(
           }
         : {},
     transpilePackages: [
+      'superjson',
       '@civitai/db-schema',
       '@civitai/db',
       '@civitai/redis',
@@ -111,17 +120,31 @@ export default defineNextConfig(
       '@civitai/axiom',
       '@civitai/telemetry',
     ],
+    // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
+    serverExternalPackages: [
+      'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
+      '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
+      '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+    ],
+    // Several entry points read markdown from src/static-content at runtime via fs
+    // (dynamic string paths that @vercel/nft can't trace). With output:'standalone'
+    // the build only ships traced files, so without these explicit includes the
+    // markdown is missing in the deployed image and every read hits ENOENT ->
+    // 500/404 (works locally because the full source tree is present). Top-level as
+    // of Next 15 (lived under `experimental` on Next 14). Keyed by each read site.
+    outputFileTracingIncludes: {
+      '/safety': ['./src/static-content/**/*'],
+      '/region-blocked': ['./src/static-content/**/*'],
+      '/content/[[...slug]]': ['./src/static-content/**/*'],
+      '/api/trpc/[trpc]': ['./src/static-content/**/*'],
+      '/api/v1/content/[[...slug]]': ['./src/static-content/**/*'],
+    },
     experimental: {
       // scrollRestoration: true,
       cpus: 8,
       serverSourceMaps: true,
-      instrumentationHook: true, // Enable instrumentation.ts for OTEL
+      // instrumentationHook removed in Next 15 — instrumentation.ts is enabled by default now
       largePageDataBytes: 512 * 100000,
-      serverComponentsExternalPackages: [
-        'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
-        '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
-        '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
-      ],
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',

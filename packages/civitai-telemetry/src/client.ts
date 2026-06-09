@@ -1,7 +1,7 @@
 import type { Counter, Gauge, Histogram } from 'prom-client';
 import client from 'prom-client';
 
-const PROM_PREFIX = 'civitai_app_';
+export const PROM_PREFIX = 'civitai_app_';
 export function registerCounter({ name, help }: { name: string; help: string }) {
   // Do this to deal with HMR in nextjs
   try {
@@ -146,6 +146,22 @@ export const cacheRevalidateCounter = registerCounterWithLabels({
   name: 'cache_revalidate_total',
   help: 'Cache revalidations (stale-while-revalidate) by cache name and type',
   labelNames: ['cache_name', 'cache_type'] as const,
+});
+
+// tRPC per-procedure latency — wall-clock duration of the full middleware chain +
+// resolver, labeled by procedure path. Used to rank heavy-pool isolation
+// candidates by P99 x rate (the criterion behind the image-feed cutover). Bucket
+// layout (to 30s) keeps the long tail visible like images_search.
+//
+// ⚠️ HIGH CARDINALITY: `path` is a fixed enum of ~870 procedure names (NOT ~93 —
+// that's the router count), so this emits ~870 x (buckets+sum+count) series PER
+// POD. It is gated OPT-IN behind TRPC_PROCEDURE_METRICS (see trpc.ts) so only the
+// pools we point it at (api-primary, api-heavy) pay the cost. Buckets kept lean.
+export const trpcProcedureDuration = registerHistogram({
+  name: 'trpc_procedure_duration_seconds',
+  help: 'tRPC procedure wall-clock duration (full chain + resolver) by path',
+  labelNames: ['path'] as const,
+  buckets: [0.05, 0.25, 1, 2, 5, 10, 30],
 });
 
 // Image feed metrics

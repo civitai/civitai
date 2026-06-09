@@ -39,8 +39,12 @@ COPY --from=deps /app/packages/civitai-db-schema/prisma/schema.prisma ./packages
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Node heap for the Next.js build. Default raised 6144 -> 8192: a cold build
+# (no warm .next/cache) peaks higher than an incremental one and OOMs at 6 GB on
+# newer commits. Build-arg so a builder with more memory can raise it further.
+ARG NODE_BUILD_MEM=8192
 RUN --mount=type=cache,target=/app/.next/cache \
-    SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=6144" pnpm run build
+    SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
 ##### RUNNER
 
