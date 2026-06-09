@@ -24,7 +24,11 @@ export function Model3DComments({ model3dId, userId }: Model3DCommentsProps) {
     <RootThreadProvider
       entityType="model3d"
       entityId={model3dId}
-      limit={20}
+      // Initial page size — limited to 5 so the detail page leads with a
+      // short discussion preview and a "Load more" CTA, mirroring the
+      // regular model page comments slot. Pagination is handled by the
+      // provider's `showMore`/`toggleShowMore`.
+      limit={5}
       hideWhenLocked
       badges={[{ userId, label: 'op', color: 'violet' }]}
     >

@@ -20,7 +20,6 @@ const metricKeys = [
   'tippedCount',
   'tippedAmountCount',
   'ratingCount',
-  'ratingAvg',
   'recommendedCount',
   'reactionCount',
   'earnedAmount',
@@ -61,14 +60,7 @@ export const model3dMetrics = createMetricProcessor({
 
     // Bulk insert metrics
     //---------------------------------------
-    const numericKeys = metricKeys.filter((k) => k !== 'ratingAvg');
-    const floatKeys = (['ratingAvg'] as const).filter((k) =>
-      (metricKeys as readonly string[]).includes(k)
-    );
-    const metricInsertColumns = [
-      ...numericKeys.map((key) => `"${key}" INT`),
-      ...floatKeys.map((key) => `"${key}" FLOAT`),
-    ].join(', ');
+    const metricInsertColumns = metricKeys.map((key) => `"${key}" INT`).join(', ');
     const metricInsertKeys = metricKeys.map((key) => `"${key}"`).join(', ');
     const metricValues = metricKeys
       .map((key) => `COALESCE(d."${key}", mm."${key}", 0) as "${key}"`)
@@ -171,7 +163,7 @@ async function getCommentTasks(ctx: MetricContext) {
 }
 
 // ---------------------------------------------------------------------------
-// Reviews (Model3DReview) → ratingCount, ratingAvg, recommendedCount
+// Reviews (Model3DReview) → ratingCount, recommendedCount
 // ---------------------------------------------------------------------------
 async function getReviewTasks(ctx: MetricContext) {
   const affected = await getAffected(ctx)`
@@ -186,14 +178,16 @@ async function getReviewTasks(ctx: MetricContext) {
     log('getReviewTasks', i + 1, 'of', tasks.length);
     await getMetrics(ctx)`
       -- get Model3D review rollup
-      -- Mirrors ResourceReview-derived modelRating in shape: ratingCount is
-      -- distinct-user count, ratingAvg averages by rating value, recommended
-      -- only counts the thumbs-up users. Excludes tos-violating /
-      -- author-excluded reviews so a bad review doesn't poison the average.
+      -- The UI is fully thumbs-based (recommend / don't recommend), so the
+      -- rollup is derived from \`recommended\` directly:
+      --   ratingCount      = distinct reviewers
+      --   recommendedCount = distinct reviewers who recommended
+      -- Clients compute the recommend % as recommendedCount / ratingCount.
+      -- Excludes tos-violating / author-excluded reviews so a bad review
+      -- doesn't poison the rollup.
       SELECT
         r."model3dId",
         COUNT(DISTINCT r."userId")::int AS "ratingCount",
-        COALESCE(AVG(r.rating), 0)::float AS "ratingAvg",
         COUNT(DISTINCT r."userId") FILTER (WHERE r.recommended)::int AS "recommendedCount"
       FROM "Model3DReview" r
       WHERE r.exclude = FALSE

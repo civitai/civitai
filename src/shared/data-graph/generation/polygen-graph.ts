@@ -151,17 +151,26 @@ const imageTo3DGraph = new DataGraph<PolyGenProcessCtx, GenerationCtx>()
 type PolyGenCtx = { ecosystem: string; workflow: string };
 
 export const polyGenGraph = new DataGraph<PolyGenCtx, GenerationCtx>()
-  // Process selector — surfaced as a button group in the UI. Defaults
-  // are computed from workflow so picking `img2model3d` from the workflow
-  // picker lands on `imageTo3D` automatically.
+  // Process is driven entirely by `workflow` — the V2 form collapses
+  // "workflow" and "process" into the single Text-to-3D / Image-to-3D
+  // toggle at the top of the panel (mirrors the Image segment's
+  // txt2img/img2img toggle). The `transform` re-syncs process whenever
+  // workflow changes so the user can't get them out-of-step, and the
+  // process Controller is intentionally NOT rendered in the form.
   .node(
     'process',
-    (ctx) => ({
-      input: z.enum(['textTo3D', 'imageTo3D']).optional(),
-      output: z.enum(['textTo3D', 'imageTo3D']),
-      defaultValue: ctx.workflow === 'img2model3d' ? ('imageTo3D' as const) : ('textTo3D' as const),
-      meta: { options: polygenProcessOptions },
-    }),
+    (ctx) => {
+      const processForWorkflow = ctx.workflow === 'img2model3d' ? 'imageTo3D' : 'textTo3D';
+      return {
+        input: z.enum(['textTo3D', 'imageTo3D']).optional(),
+        output: z.enum(['textTo3D', 'imageTo3D']),
+        defaultValue: processForWorkflow as 'textTo3D' | 'imageTo3D',
+        meta: { options: polygenProcessOptions },
+        // Force process to follow workflow on workflow-change so the
+        // graph stays consistent with whichever segment is active.
+        transform: () => processForWorkflow as 'textTo3D' | 'imageTo3D',
+      };
+    },
     ['workflow']
   )
 

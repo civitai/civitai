@@ -1126,7 +1126,7 @@ function Model3DQueueCardOutputs({
           loading={ctaBusy}
           disabled={ctaDisabled}
         >
-          Save 3D Model
+          Post
         </Button>
         {/* Download the orchestrator's presigned URLs directly. URLs are
             short-lived, so this is "download now or never" — same constraint

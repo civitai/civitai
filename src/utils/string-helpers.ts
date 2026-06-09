@@ -84,6 +84,13 @@ const nameOverrides: Record<string, string> = {
   UNet: 'UNet',
   CLIPVision: 'CLIP Vision',
   ControlNet: 'ControlNet',
+  // ReportEntity enum value `'model3d'` would otherwise auto-split to
+  // "model 3 d" / "3 D Models". Same story for the review variant.
+  model3d: '3D Model',
+  Model3D: '3D Model',
+  model3dReview: '3D Model Review',
+  Model3DReview: '3D Model Review',
+  '3d-models': '3D Models',
 };
 
 export function getDisplayName(

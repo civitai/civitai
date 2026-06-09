@@ -13,6 +13,7 @@ import {
   getModel3DByThumbnailImageIdSchema,
   getModel3DByWorkflowIdSchema,
   getModel3DsInfiniteSchema,
+  getModel3DTagsSchema,
   publishModel3DSchema,
   unpublishModel3DSchema,
   deleteModel3DSchema,
@@ -36,6 +37,7 @@ import {
   getModel3DByThumbnailImageId,
   getModel3DByWorkflowId,
   getModel3DsInfinite,
+  getModel3DTags,
   publishModel3D,
   unpublishModel3D,
   deleteModel3D,
@@ -132,6 +134,12 @@ export const model3dRouter = router({
   getLicenses: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .query(() => getModel3DLicenses()),
+  // Distinct tags actually attached to Model3Ds, ranked by usage count. Used
+  // by the chip row above the /3d-models feed.
+  getTags: publicProcedure
+    .use(isFlagProtected('model3dFeed'))
+    .input(getModel3DTagsSchema)
+    .query(({ input }) => getModel3DTags(input)),
   getInfinite: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DsInfiniteSchema)

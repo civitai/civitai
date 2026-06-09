@@ -170,7 +170,9 @@ export function HomeTabs() {
             {key === 'updates' && (latestChangelog ?? 0) > lastSeenChangelog && (
               <IconPointFilled color="green" size={20} />
             )}
-            {!!value.new && value.new > new Date() && <Badge>New</Badge>}
+            {!!value.new && value.new > new Date() && (
+              <IconPointFilled color="green" size={14} aria-label="New" />
+            )}
           </Button>
         );
       })}
@@ -212,7 +214,9 @@ export function HomeTabs() {
                     {value.key === 'updates' && (latestChangelog ?? 0) > lastSeenChangelog && (
                       <IconPointFilled color="green" size={20} />
                     )}
-                    {!!value.new && value.new > new Date() && <Badge>New</Badge>}
+                    {!!value.new && value.new > new Date() && (
+              <IconPointFilled color="green" size={14} aria-label="New" />
+            )}
                   </Group>
                 </Menu.Item>
               </Link>

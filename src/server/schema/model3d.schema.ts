@@ -1,10 +1,23 @@
 import * as z from 'zod';
-import { Model3DStatus, ReportReason } from '~/shared/utils/prisma/enums';
+import { MetricTimeframe, Model3DStatus, ReportReason } from '~/shared/utils/prisma/enums';
 import {
   baseQuerySchema,
   infiniteQuerySchema,
   paginationSchema,
 } from '~/server/schema/base.schema';
+
+/**
+ * Sort options for the 3D models feed. Mirrors `ModelSort` shape (label-as-value
+ * so the dropdown can render the enum directly), but limited to keys we can
+ * actually compute against Model3D + Model3DMetric.
+ */
+export const Model3DSort = {
+  Newest: 'Newest',
+  MostDownloaded: 'Most Downloaded',
+  HighestRated: 'Highest Rated',
+  MostLiked: 'Most Liked',
+} as const;
+export type Model3DSort = (typeof Model3DSort)[keyof typeof Model3DSort];
 import {
   reportAdminAttentionDetailsSchema,
   reportAutomatedDetailsSchema,
@@ -65,8 +78,22 @@ export const getModel3DsInfiniteSchema = infiniteQuerySchema
     statuses: z.array(z.enum(Model3DStatus)).optional(),
     tagIds: z.array(z.number().int().positive()).optional(),
     includeDrafts: z.boolean().optional(),
+    sort: z
+      .enum(Object.values(Model3DSort) as [Model3DSort, ...Model3DSort[]])
+      .optional(),
+    period: z.enum(MetricTimeframe).optional(),
+    // PolyGen generation-param toggles — JSON checks on Model3D.generationParams.
+    rigged: z.boolean().optional(),
+    animated: z.boolean().optional(),
   })
   .merge(baseQuerySchema);
+
+export type GetModel3DTagsInput = z.infer<typeof getModel3DTagsSchema>;
+export const getModel3DTagsSchema = z.object({
+  // Optional filter to narrow the dropdown of "popular Model3D tags".
+  query: z.string().optional(),
+  limit: z.number().int().min(1).max(200).default(50),
+});
 
 export type PublishModel3DInput = z.infer<typeof publishModel3DSchema>;
 export const publishModel3DSchema = z.object({
@@ -137,7 +164,6 @@ export type UpsertModel3DReviewInput = z.infer<typeof upsertModel3DReviewSchema>
 export const upsertModel3DReviewSchema = z.object({
   id: z.number().int().positive().optional(),
   model3dId: z.number().int().positive(),
-  rating: z.number().int().min(1).max(5),
   recommended: z.boolean().default(true),
   details: z.string().nullish(),
   // Optional Post for image attachments — Post.model3dReviewId @unique.

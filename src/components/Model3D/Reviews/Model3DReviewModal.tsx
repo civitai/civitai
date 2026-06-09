@@ -22,7 +22,6 @@ export type Model3DReviewModalProps = {
   model3dName?: string;
   existing?: {
     id: number;
-    rating: number;
     recommended: boolean;
     details?: string | null;
     postId?: number | null;
@@ -38,12 +37,8 @@ export default function Model3DReviewModal({
   const router = useRouter();
   const queryUtils = trpc.useUtils();
 
-  // Recommendation is the new source of truth (thumbs up / thumbs down). The
-  // legacy `rating` 1-5 column is kept on the schema for now and hard-coded from
-  // `recommended` below so the existing ratingAvg/ratingCount rollups still
-  // produce sensible numbers until the metrics job is migrated.
-  // `undefined` means "user hasn't picked yet" so we can require a choice on
-  // submit. Existing reviews always have a recommended value.
+  // Thumbs up / thumbs down — `undefined` means "user hasn't picked yet" so
+  // we can require a choice on submit. Existing reviews always have a value.
   const [recommended, setRecommended] = useState<boolean | undefined>(existing?.recommended);
   const [details, setDetails] = useState<string>(existing?.details ?? '');
 
@@ -81,12 +76,6 @@ export default function Model3DReviewModal({
     return true;
   };
 
-  // TODO(model3d-thumbs): Remove this hack once the metrics job (and any other
-  // consumer of `Model3DReview.rating` / `Model3DMetric.ratingAvg`) is migrated
-  // to read from `recommended` directly. Until then we hard-code 5 for thumbs
-  // up and 1 for thumbs down so the existing avg/count rollups keep working.
-  const ratingFromRecommended = (rec: boolean) => (rec ? 5 : 1);
-
   const handleSaveOnly = async () => {
     if (!validate()) return;
     const rec = recommended as boolean;
@@ -94,7 +83,6 @@ export default function Model3DReviewModal({
       await upsertReview.mutateAsync({
         id: existing?.id,
         model3dId,
-        rating: ratingFromRecommended(rec),
         recommended: rec,
         details: details || null,
       });
@@ -115,13 +103,11 @@ export default function Model3DReviewModal({
   const handleSaveAndAddImages = async () => {
     if (!validate()) return;
     const rec = recommended as boolean;
-    const rating = ratingFromRecommended(rec);
     try {
       // 1. Upsert the review first so we have its id.
       const review = await upsertReview.mutateAsync({
         id: existing?.id,
         model3dId,
-        rating,
         recommended: rec,
         details: details || null,
         postId: existing?.postId ?? undefined,
@@ -139,7 +125,6 @@ export default function Model3DReviewModal({
         await upsertReview.mutateAsync({
           id: review.id,
           model3dId,
-          rating,
           recommended: rec,
           details: details || null,
           postId,

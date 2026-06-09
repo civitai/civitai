@@ -133,6 +133,9 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
       });
       utils.model3d.getById.invalidate({ id });
       utils.model3d.getInfinite.invalidate();
+      // Publish is a terminal action from the editor's POV — send the owner
+      // to the public detail page so they can see the result they shipped.
+      router.push(`/3d-models/${id}`);
     },
     onError: (e) => {
       showErrorNotification({ title: 'Publish failed', error: new Error(e.message) });

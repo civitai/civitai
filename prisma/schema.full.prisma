@@ -5896,7 +5896,6 @@ model Model3DReview {
   model3d      Model3D  @relation(fields: [model3dId], references: [id], onDelete: Cascade)
   userId       Int
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  rating       Int
   recommended  Boolean  @default(true)
   details      String?
   nsfw         Boolean  @default(false)
@@ -5934,7 +5933,6 @@ model Model3DMetric {
   tippedCount       Int              @default(0)
   tippedAmountCount Int              @default(0)
   ratingCount       Int              @default(0)
-  ratingAvg         Float            @default(0)
   recommendedCount  Int              @default(0)
   reactionCount     Int              @default(0)
   earnedAmount      Int              @default(0)

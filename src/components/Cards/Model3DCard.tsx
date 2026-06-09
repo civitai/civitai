@@ -2,7 +2,6 @@ import { ActionIcon, Badge, Box, Group, Stack, Text, Tooltip } from '@mantine/co
 import {
   IconArrowUpRight,
   IconBolt,
-  IconCube,
   IconDownload,
   IconEye,
   IconHeart,
@@ -114,16 +113,10 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
             : undefined
         }
         header={
-          <Group gap={4} justify="space-between" wrap="nowrap" className="w-full">
-            <Badge
-              className={clsx(cardClasses.infoChip, cardClasses.chip)}
-              variant="light"
-              radius="xl"
-              color="violet"
-              leftSection={<IconCube size={12} stroke={2.2} />}
-            >
-              3D
-            </Badge>
+          <Group gap={4} justify="flex-end" wrap="nowrap" className="w-full">
+            {/* No "3D" eyebrow badge — the whole feed is 3D models, so it's
+                redundant. If we ever surface NSFW level on the card, it
+                replaces the top-left slot here. */}
             <Group gap={4} wrap="nowrap">
               <Tooltip
                 label={previewing ? 'Close preview' : 'Preview in-line'}
@@ -181,7 +174,7 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
               size="xl"
               fw={700}
               lineClamp={3}
-              lh={1.2}
+              lh={1.35}
               c="white"
               className={cardClasses.dropShadow}
             >
@@ -283,7 +276,11 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
           onClick={(e: React.MouseEvent) => e.stopPropagation()}
         >
           {previewUrl ? (
-            <Model3DViewer url={previewUrl} format={primaryFile?.format ?? 'glb'} />
+            <Model3DViewer
+              url={previewUrl}
+              format={primaryFile?.format ?? 'glb'}
+              compact
+            />
           ) : (
             <Group justify="center" align="center" h="100%">
               <Text size="sm" c="dimmed">

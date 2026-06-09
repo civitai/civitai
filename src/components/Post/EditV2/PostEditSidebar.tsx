@@ -1,19 +1,36 @@
 import type { TooltipProps } from '@mantine/core';
-import { Alert, Anchor, Badge, Button, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
-import { IconClock, IconTrash } from '@tabler/icons-react';
+import {
+  Alert,
+  Anchor,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Loader,
+  Skeleton,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+  Tooltip,
+} from '@mantine/core';
+import { IconClock, IconCube, IconTrash } from '@tabler/icons-react';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 import { useMemo, useRef, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 // import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -266,6 +283,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Text>
       </div>
 
+      {params.model3dId ? <Model3DPostLinkCard model3dId={params.model3dId} /> : null}
+
       {!post.publishedAt ? (
         <Tooltip
           disabled={canPublish}
@@ -390,3 +409,88 @@ const tooltipProps: Partial<TooltipProps> = {
   position: 'bottom',
   withArrow: true,
 };
+
+/**
+ * Small "Posting to: <3D Model>" affordance shown in the editor sidebar when
+ * the post is linked to a Model3D. Mirrors the richer hint on /posts/create so
+ * the link to the parent 3D model is obvious throughout the post flow.
+ *
+ * `model3dId` is sourced from `usePostEditParams()` (carried through the URL
+ * from the create page); the Post API surface itself does not expose
+ * `model3dId`, so the card only renders when the param is in scope.
+ */
+function Model3DPostLinkCard({ model3dId }: { model3dId: number }) {
+  const { data: model3d, isLoading } = trpc.model3d.getById.useQuery(
+    { id: model3dId },
+    { enabled: !!model3dId }
+  );
+
+  if (isLoading && !model3d) {
+    return (
+      <Card withBorder p="sm" radius="md">
+        <Group gap="sm" wrap="nowrap">
+          <Skeleton height={48} width={48} radius="sm" />
+          <Stack gap={6} className="min-w-0 flex-1">
+            <Skeleton height={12} width="60%" radius="sm" />
+            <Skeleton height={10} width="80%" radius="sm" />
+          </Stack>
+          <Loader size="xs" />
+        </Group>
+      </Card>
+    );
+  }
+
+  if (!model3d) return null;
+
+  const detailHref = `/3d-models/${model3d.id}`;
+
+  return (
+    <Card withBorder p="sm" radius="md">
+      <Stack gap={8}>
+        <Group gap="sm" wrap="nowrap" align="flex-start">
+          <Link href={detailHref} className="shrink-0">
+            <div
+              className="flex items-center justify-center overflow-hidden rounded-sm bg-gray-1 dark:bg-dark-6"
+              style={{ width: 48, height: 48 }}
+            >
+              {model3d.thumbnailImage?.url ? (
+                <EdgeMedia
+                  src={model3d.thumbnailImage.url}
+                  width={96}
+                  alt={model3d.name ?? '3D model thumbnail'}
+                  className="size-full object-cover"
+                />
+              ) : (
+                <ThemeIcon variant="light" color="gray" size={48} radius="sm">
+                  <IconCube size={24} />
+                </ThemeIcon>
+              )}
+            </div>
+          </Link>
+          <Stack gap={2} className="min-w-0 flex-1">
+            <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
+              Posting to
+            </Text>
+            <Anchor
+              component={Link}
+              href={detailHref}
+              size="sm"
+              fw={600}
+              lineClamp={2}
+              className="break-words"
+            >
+              {model3d.name}
+            </Anchor>
+          </Stack>
+        </Group>
+        <UserAvatarSimple
+          id={model3d.user.id}
+          profilePicture={model3d.user.profilePicture}
+          username={model3d.user.username}
+          deletedAt={model3d.user.deletedAt}
+          cosmetics={model3d.user.cosmetics}
+        />
+      </Stack>
+    </Card>
+  );
+}

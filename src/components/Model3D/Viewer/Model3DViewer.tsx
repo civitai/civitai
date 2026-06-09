@@ -1,4 +1,4 @@
-import { Alert, Box, Button, Group, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core';
+import { Alert, Box, Button, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconCubeOff,
@@ -14,7 +14,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { env } from '~/env/client';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { generationGraphStore } from '~/store/generation-graph.store';
+import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { showErrorNotification } from '~/utils/notifications';
 
 /**
@@ -38,6 +38,13 @@ export type Model3DViewerProps = {
   format: string;
   sizeKB?: number;
   className?: string;
+  /**
+   * Compact mode — hides the in-viewer overlays (background picker +
+   * "Generate with this image" CTA). Used by the feed card preview where
+   * the parent card already renders Open / Close controls that the
+   * picker would otherwise overlap. Default `false` (detail-page mount).
+   */
+  compact?: boolean;
 };
 
 const LARGE_FILE_KB = 100_000; // 100 MB
@@ -141,7 +148,13 @@ function buildEdgeUrlForId(id: string, filename: string): string {
   return [base, id, 'original=true', filename].filter(Boolean).join('/');
 }
 
-export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerProps) {
+export function Model3DViewer({
+  url,
+  format,
+  sizeKB,
+  className,
+  compact = false,
+}: Model3DViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sceneStateRef = useRef<{
     renderer: THREE.WebGLRenderer;
@@ -388,17 +401,24 @@ export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerP
       // picks those in the form. Empty resources avoids dragging in stale
       // checkpoint selections.
       //
-      // No `router.push('/generate')`: `generationGraphStore.setData` already
-      // opens the generator side panel automatically, and pushing the user
-      // off the 3D model page is unnecessary friction.
+      // `runType: 'append'` so the GenerationFormProvider's append branch
+      // dedups by URL and merges the snapshot into any existing img2img:edit
+      // images (either from the live snapshot or persisted localStorage)
+      // — handy when the user wants to combine multiple captures or stack
+      // a 3D frame on top of an existing reference set instead of replacing.
       generationGraphStore.setData({
         params: {
           workflow: 'img2img:edit',
           images: [{ url: imageUrl, width: captureWidth, height: captureHeight }],
         },
         resources: [],
-        runType: 'run',
+        runType: 'append',
       });
+
+      // `setData` only flips the panel's *view* setting; it doesn't actually
+      // open a closed side panel. Explicit `open()` so the user sees the
+      // generator side panel pop in with their snapshot already loaded.
+      void generationGraphPanel.open();
     } catch (e) {
       // Best effort: also restore in the error path in case we threw between
       // the capture and the restore above.
@@ -460,19 +480,31 @@ export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerP
           </Stack>
         </Box>
       ) : (
-        <Box className="relative">
+        <Box className={clsx('relative', compact && 'h-full w-full')}>
           {/* `group` lets the overlays fade in on hover without intercepting
-              orbit gestures — controls themselves stay pointer-interactive. */}
+              orbit gestures — controls themselves stay pointer-interactive.
+
+              Compact callers (Model3DCard's preview overlay, the generator
+              queue card) already constrain the viewer to a smaller box —
+              `min-h-[480px]` would overflow that container, the parent's
+              `overflow: hidden` would clip the bottom, and the camera-fit
+              math (which targets the actual canvas dimensions, not the
+              visible region) would land the model below the visible area.
+              In compact mode the container fills its parent instead. */}
           <div
             ref={containerRef}
             className={clsx(
-              'group relative min-h-[480px] w-full overflow-hidden rounded-md bg-dark-7',
+              'group relative w-full overflow-hidden rounded-md bg-dark-7',
+              compact ? 'h-full' : 'min-h-[480px]',
               loadState === 'loading' && 'opacity-50'
             )}
           >
-            {loadState === 'ready' && (
+            {loadState === 'ready' && !compact && (
               <>
-                {/* Background picker — top-right, fades in on hover/focus. */}
+                {/* Background picker — top-right, fades in on hover/focus.
+                    Suppressed in `compact` mode (feed card preview) where the
+                    parent already renders Open / Close controls on top of the
+                    viewer and the picker would otherwise overlap them. */}
                 <div
                   className={clsx(
                     'pointer-events-auto absolute right-2 top-2 z-10',
@@ -500,17 +532,30 @@ export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerP
                   />
                 </div>
 
-                {/* Generate-with-this-image CTA — bottom-right. Same hover/focus
-                    fade as the picker so it doesn't crowd the scene by default. */}
+                {/* Bottom-right action group — Reset view + Generate-with-this-image
+                    CTA. Same hover/focus fade as the picker so they don't crowd
+                    the scene by default. Reset sits left of Generate so the
+                    primary CTA stays in the canonical bottom-right slot. */}
                 <div
                   className={clsx(
-                    'pointer-events-auto absolute bottom-2 right-2 z-10',
+                    'pointer-events-auto absolute bottom-2 right-2 z-10 flex items-center gap-2',
                     'opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100'
                   )}
                   onMouseDown={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
                   onWheel={(e) => e.stopPropagation()}
                 >
+                  <Tooltip label="Reset the camera to the initial fitted view." withArrow>
+                    <Button
+                      size="xs"
+                      variant="filled"
+                      color="dark"
+                      leftSection={<IconRefresh size={14} />}
+                      onClick={handleReset}
+                    >
+                      Reset view
+                    </Button>
+                  </Tooltip>
                   <Tooltip
                     label="Capture the current view and send it to the generator as an img2img reference."
                     multiline
@@ -546,17 +591,6 @@ export function Model3DViewer({ url, format, sizeKB, className }: Model3DViewerP
               </Alert>
             </div>
           )}
-          <Group gap="xs" justify="flex-end" mt="xs">
-            <Button
-              size="xs"
-              variant="light"
-              leftSection={<IconRefresh size={14} />}
-              onClick={handleReset}
-              disabled={loadState !== 'ready'}
-            >
-              Reset view
-            </Button>
-          </Group>
         </Box>
       )}
     </Stack>

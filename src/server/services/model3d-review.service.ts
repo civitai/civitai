@@ -26,7 +26,6 @@ const reviewSelect = {
   id: true,
   model3dId: true,
   userId: true,
-  rating: true,
   recommended: true,
   details: true,
   nsfw: true,
@@ -78,7 +77,7 @@ export const upsertModel3DReview = async ({
   input: UpsertModel3DReviewInput;
   user: SessionUser;
 }) => {
-  const { model3dId, rating, recommended, details, postId } = input;
+  const { model3dId, recommended, details, postId } = input;
   let { id } = input;
 
   // Resolve the (model3dId, userId) uniqueness up-front: if a row already
@@ -141,7 +140,7 @@ export const upsertModel3DReview = async ({
       return await dbWrite.$transaction(async (tx) => {
         const updated = await tx.model3DReview.update({
           where: { id },
-          data: { rating, recommended, details },
+          data: { recommended, details },
           select: reviewSelect,
         });
         if (postId !== undefined) {
@@ -169,7 +168,6 @@ export const upsertModel3DReview = async ({
         data: {
           model3dId,
           userId: user.id,
-          rating,
           recommended,
           details,
         },

@@ -111,7 +111,6 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
         existing: myReview
           ? {
               id: myReview.id,
-              rating: myReview.rating,
               recommended: myReview.recommended,
               details: myReview.details ?? null,
               postId: myReview.post?.id ?? null,

@@ -61,9 +61,9 @@ export type Model3DActionsMenuProps = {
   model3d: Model3DActionsMenuModel;
   /**
    * Show the "Report" item for logged-in non-owner non-moderator users.
-   * When true, the trigger also renders for those users (otherwise the menu
-   * is owner/mod-only — the detail page passes `false` because it already
-   * surfaces a dedicated Report button alongside this menu).
+   * When true, the trigger also renders for those users. Defaults to `true`
+   * — the detail page folds Report into this menu (it no longer renders a
+   * standalone Report icon). Card surfaces also surface Report inline.
    */
   showReport?: boolean;
   /** Mantine size for the trigger. Defaults to `'lg'` (detail-page sizing). */
@@ -82,7 +82,7 @@ export type Model3DActionsMenuProps = {
  */
 export function Model3DActionsMenu({
   model3d,
-  showReport = false,
+  showReport = true,
   triggerSize = 'lg',
 }: Model3DActionsMenuProps) {
   const currentUser = useCurrentUser();
@@ -277,6 +277,9 @@ export function Model3DActionsMenu({
               >
                 Edit
               </Menu.Item>
+              {/* Edit for mods lives in the Moderator section below — keeping
+                  it in both sections would render two identical Edit rows when
+                  the current user is both owner and mod. */}
               {(isDraft || isUnpublished) && (
                 <Menu.Item
                   leftSection={<IconUpload size={14} stroke={1.5} />}
@@ -325,6 +328,15 @@ export function Model3DActionsMenu({
                 </Group>
               </Menu.Label>
 
+              {!isOwner && (
+                <Menu.Item
+                  component={Link}
+                  href={`/3d-models/${model3d.id}/edit`}
+                  leftSection={<IconPencil size={14} stroke={1.5} />}
+                >
+                  Edit
+                </Menu.Item>
+              )}
               {!isOwner && isPublished && (
                 <Menu.Item
                   leftSection={<IconArchive size={14} stroke={1.5} />}

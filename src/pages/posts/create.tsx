@@ -6,11 +6,13 @@ import {
   Group,
   Loader,
   Select,
+  Skeleton,
   Stack,
   Text,
+  ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconAlertCircle, IconLock } from '@tabler/icons-react';
+import { IconAlertCircle, IconCube, IconLock } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
@@ -18,8 +20,10 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Page } from '~/components/AppLayout/Page';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { CollectionUploadSettingsWrapper } from '~/components/Collections/components/CollectionUploadSettingsWrapper';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import type { ReviewEditCommandsRef } from '~/components/ResourceReview/EditUserResourceReview';
 import {
   EditUserResourceReviewV2,
@@ -165,16 +169,66 @@ export default Page(
               </Text>
             </Group>
           )}
-          {model3dId && (model3d || model3dLoading) && (
-            <Group gap="xs">
-              {model3dLoading && <Loader size="sm" />}
-              <Text size="sm" c="dimmed">
-                Posting to 3D model{' '}
-                <Text component="span" td="underline">
-                  {model3d?.name}
-                </Text>
-              </Text>
-            </Group>
+          {model3dId && model3dLoading && !model3d && (
+            <Card withBorder p="sm" radius="md">
+              <Group gap="sm" wrap="nowrap">
+                <Skeleton height={56} width={56} radius="sm" />
+                <Stack gap={6} className="min-w-0 flex-1">
+                  <Skeleton height={14} width="70%" radius="sm" />
+                  <Skeleton height={10} width="50%" radius="sm" />
+                </Stack>
+                <Loader size="xs" />
+              </Group>
+            </Card>
+          )}
+          {model3dId && model3d && (
+            <Card withBorder p="sm" radius="md">
+              <Stack gap={8}>
+                <Group gap="sm" wrap="nowrap" align="flex-start">
+                  <Link legacyBehavior href={`/3d-models/${model3d.id}`} passHref>
+                    <Anchor className="shrink-0">
+                      <div
+                        className="flex items-center justify-center overflow-hidden rounded-sm bg-gray-1 dark:bg-dark-6"
+                        style={{ width: 56, height: 56 }}
+                      >
+                        {model3d.thumbnailImage?.url ? (
+                          <EdgeMedia
+                            src={model3d.thumbnailImage.url}
+                            width={112}
+                            alt={model3d.name ?? '3D model thumbnail'}
+                            className="size-full object-cover"
+                          />
+                        ) : (
+                          <ThemeIcon variant="light" color="gray" size={56} radius="sm">
+                            <IconCube size={28} />
+                          </ThemeIcon>
+                        )}
+                      </div>
+                    </Anchor>
+                  </Link>
+                  <Stack gap={2} className="min-w-0 flex-1">
+                    <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
+                      Posting to 3D model
+                    </Text>
+                    <Link legacyBehavior href={`/3d-models/${model3d.id}`} passHref>
+                      <Anchor size="md" fw={600} lineClamp={2} className="break-words">
+                        {model3d.name}
+                      </Anchor>
+                    </Link>
+                    <Text size="xs" c="dimmed">
+                      This post will appear on the 3D model&apos;s page
+                    </Text>
+                  </Stack>
+                </Group>
+                <UserAvatarSimple
+                  id={model3d.user.id}
+                  profilePicture={model3d.user.profilePicture}
+                  username={model3d.user.username}
+                  deletedAt={model3d.user.deletedAt}
+                  cosmetics={model3d.user.cosmetics}
+                />
+              </Stack>
+            </Card>
           )}
           {versions && !reviewing && (
             <Select

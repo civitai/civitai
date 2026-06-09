@@ -1,6 +1,16 @@
-import { Center, Group, Loader, LoadingOverlay, Stack, Title } from '@mantine/core';
-import { IconCube } from '@tabler/icons-react';
+import {
+  Button,
+  Center,
+  Chip,
+  Group,
+  Loader,
+  LoadingOverlay,
+  Stack,
+  useComputedColorScheme,
+} from '@mantine/core';
 import { keepPreviousData } from '@tanstack/react-query';
+import { useRouter } from 'next/router';
+import { useCallback, useMemo } from 'react';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { Model3DCard } from '~/components/Cards/Model3DCard';
@@ -10,7 +20,13 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
+import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
+import { Model3DSort } from '~/server/schema/model3d.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { removeEmpty } from '~/utils/object-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -19,11 +35,17 @@ import { trpc } from '~/utils/trpc';
  * Flag gating lives in `getServerSideProps` (returns 404 server-side when the
  * flag is off) so unauthorized viewers never see a flash of content.
  *
- * Phase 2 will wire Meilisearch + filters / sort UI. For v1 this renders the
- * raw Postgres listing from `trpc.model3d.getInfinite` ordered by publishedAt
- * (handled in the service). The service also gates non-mod / non-owner reads
- * to an empty list at the service layer — that's defense-in-depth on top of
- * the flag gate.
+ * Discovery affordances:
+ *   - SortFilter (Newest / Most Downloaded / Highest Rated / Most Liked)
+ *   - PeriodFilter (Day / Week / Month / Year / AllTime)
+ *   - Tag chip row, pulled from `model3d.getTags` (tags actually used on
+ *     Model3Ds, ranked by usage count)
+ *   - Rigged / Animated toggles — filter on the PolyGen `enableRigging` /
+ *     `enableAnimation` flags stored on `Model3D.generationParams`
+ *
+ * State lives on the URL (sort / period / tagId / rigged / animated) so deep
+ * links + back/forward retain filter context. Switching any filter resets the
+ * infinite-query cursor automatically — TanStack Query re-keys on input.
  */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -33,21 +55,76 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+const sortOptions = [
+  { label: Model3DSort.Newest, value: Model3DSort.Newest },
+  { label: Model3DSort.MostDownloaded, value: Model3DSort.MostDownloaded },
+  { label: Model3DSort.HighestRated, value: Model3DSort.HighestRated },
+  { label: Model3DSort.MostLiked, value: Model3DSort.MostLiked },
+];
+
+const periodOptions = (Object.values(MetricTimeframe) as MetricTimeframe[]).map((p) => ({
+  label: getDisplayName(p),
+  value: p,
+}));
+
+const SORT_VALUES = new Set<string>(Object.values(Model3DSort));
+const PERIOD_VALUES = new Set<string>(Object.values(MetricTimeframe));
+
 function Model3DsPage() {
-  const {
-    data,
-    isLoading,
-    isFetching,
-    isRefetching,
-    hasNextPage,
-    fetchNextPage,
-  } = trpc.model3d.getInfinite.useInfiniteQuery(
-    { limit: 50 },
-    {
-      getNextPageParam: (last) => last.nextCursor,
-      placeholderData: keepPreviousData,
-    }
+  const router = useRouter();
+  const { query } = router;
+  const colorScheme = useComputedColorScheme('dark');
+
+  // ---- URL-backed filter state ------------------------------------------------
+  const sort: Model3DSort = useMemo(() => {
+    const raw = typeof query.sort === 'string' ? query.sort : undefined;
+    return raw && SORT_VALUES.has(raw) ? (raw as Model3DSort) : Model3DSort.Newest;
+  }, [query.sort]);
+
+  const period: MetricTimeframe = useMemo(() => {
+    const raw = typeof query.period === 'string' ? query.period : undefined;
+    return raw && PERIOD_VALUES.has(raw) ? (raw as MetricTimeframe) : MetricTimeframe.AllTime;
+  }, [query.period]);
+
+  const activeTagId: number | undefined = useMemo(() => {
+    const raw = typeof query.tagId === 'string' ? Number(query.tagId) : undefined;
+    return raw && Number.isFinite(raw) && raw > 0 ? raw : undefined;
+  }, [query.tagId]);
+
+  const rigged = query.rigged === 'true';
+  const animated = query.animated === 'true';
+
+  const setQuery = useCallback(
+    (patch: Record<string, string | undefined>) => {
+      router.replace(
+        { pathname: router.pathname, query: removeEmpty({ ...query, ...patch }) },
+        undefined,
+        { shallow: true }
+      );
+    },
+    [router, query]
   );
+
+  // ---- Tag chip row (above grid) ---------------------------------------------
+  const { data: tagsData } = trpc.model3d.getTags.useQuery({ limit: 50 });
+  const tags = tagsData?.items ?? [];
+
+  // ---- Feed -------------------------------------------------------------------
+  const { data, isLoading, isFetching, isRefetching, hasNextPage, fetchNextPage } =
+    trpc.model3d.getInfinite.useInfiniteQuery(
+      {
+        limit: 50,
+        sort,
+        period,
+        tagIds: activeTagId ? [activeTagId] : undefined,
+        rigged: rigged || undefined,
+        animated: animated || undefined,
+      },
+      {
+        getNextPageParam: (last) => last.nextCursor,
+        placeholderData: keepPreviousData,
+      }
+    );
 
   const items = data?.pages.flatMap((p) => p.items) ?? [];
 
@@ -62,9 +139,70 @@ function Model3DsPage() {
 
       <MasonryContainer>
         <Stack gap="md">
-          <Group gap="xs" align="center">
-            <IconCube size={28} stroke={1.5} />
-            <Title order={1}>3D Models</Title>
+          {/* Sort + Period dropdowns sit on a single row above the tag chips. */}
+          <Group gap="md" align="center" wrap="wrap" justify="flex-end">
+            <SelectMenu
+              label={sort}
+              value={sort}
+              options={sortOptions}
+              onClick={(value) =>
+                setQuery({ sort: value === Model3DSort.Newest ? undefined : value })
+              }
+            />
+            <SelectMenu
+              label={getDisplayName(period)}
+              value={period}
+              options={periodOptions}
+              onClick={(value) =>
+                setQuery({ period: value === MetricTimeframe.AllTime ? undefined : value })
+              }
+            />
+          </Group>
+
+          {/* Tag row — popular Model3D tags, click to filter, click again to clear. */}
+          {tags.length > 0 && (
+            <TwScrollX className="flex gap-1">
+              <Button
+                className="overflow-visible uppercase"
+                variant={!activeTagId ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
+                color={!activeTagId ? 'blue' : 'gray'}
+                onClick={() => setQuery({ tagId: undefined })}
+                size="compact-sm"
+              >
+                All
+              </Button>
+              {tags.map((tag) => {
+                const active = activeTagId === tag.id;
+                return (
+                  <Button
+                    key={tag.id}
+                    className="overflow-visible uppercase"
+                    variant={active ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
+                    color={active ? 'blue' : 'gray'}
+                    onClick={() => setQuery({ tagId: active ? undefined : String(tag.id) })}
+                    size="compact-sm"
+                  >
+                    {tag.name}
+                  </Button>
+                );
+              })}
+            </TwScrollX>
+          )}
+
+          {/* PolyGen generation-param toggle chips. */}
+          <Group gap={8}>
+            <Chip
+              checked={rigged}
+              onChange={(checked) => setQuery({ rigged: checked ? 'true' : undefined })}
+            >
+              Rigged
+            </Chip>
+            <Chip
+              checked={animated}
+              onChange={(checked) => setQuery({ animated: checked ? 'true' : undefined })}
+            >
+              Animated
+            </Chip>
           </Group>
 
           {isLoading ? (

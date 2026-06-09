@@ -10,7 +10,7 @@ import {
   getUploadS3Client,
   isB2Url,
 } from '~/utils/s3-utils';
-import { Model3DStatus } from '~/shared/utils/prisma/enums';
+import { MetricTimeframe, Model3DStatus } from '~/shared/utils/prisma/enums';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -29,6 +29,7 @@ import type {
   GetModel3DRelatedPostsInput,
   GetModel3DReviewSummaryInput,
   GetModel3DsInfiniteInput,
+  GetModel3DTagsInput,
   PublishModel3DInput,
   RestoreModel3DInput,
   SetModel3DNsfwLevelInput,
@@ -36,6 +37,7 @@ import type {
   UnpublishModel3DInput,
   UpsertModel3DInput,
 } from '~/server/schema/model3d.schema';
+import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/ecosystems/polyGen.handler';
@@ -129,6 +131,36 @@ const model3dListSelect = {
   user: { select: userWithCosmeticsSelect },
   metric: true,
 } satisfies Prisma.Model3DSelect;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a `MetricTimeframe` to the JS Date marking the start of that window.
+ * Returns `null` for AllTime (caller should skip the filter entirely).
+ */
+const periodStartDate = (period: MetricTimeframe): Date | null => {
+  if (period === MetricTimeframe.AllTime) return null;
+  const now = new Date();
+  const d = new Date(now);
+  switch (period) {
+    case MetricTimeframe.Day:
+      d.setDate(d.getDate() - 1);
+      return d;
+    case MetricTimeframe.Week:
+      d.setDate(d.getDate() - 7);
+      return d;
+    case MetricTimeframe.Month:
+      d.setMonth(d.getMonth() - 1);
+      return d;
+    case MetricTimeframe.Year:
+      d.setFullYear(d.getFullYear() - 1);
+      return d;
+    default:
+      return null;
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Read helpers
@@ -295,6 +327,10 @@ export const getModel3DsInfinite = async ({
   statuses,
   tagIds,
   includeDrafts,
+  sort,
+  period,
+  rigged,
+  animated,
   user,
 }: GetModel3DsInfiniteInput & { user?: SessionUser | null }) => {
   try {
@@ -350,12 +386,59 @@ export const getModel3DsInfinite = async ({
     if (query) AND.push({ name: { contains: query, mode: 'insensitive' } });
     if (tagIds?.length) AND.push({ tags: { some: { tagId: { in: tagIds } } } });
 
+    // PolyGen generation-param toggles. JSON path equality against the form-input
+    // snapshot stored on Model3D.generationParams.
+    if (rigged) {
+      AND.push({ generationParams: { path: ['enableRigging'], equals: true } });
+    }
+    if (animated) {
+      AND.push({ generationParams: { path: ['enableAnimation'], equals: true } });
+    }
+
+    // Period filter — clamps the feed to rows published (or, for unpublished
+    // owner views, created) inside the requested window. Mirrors the regular
+    // models feed's "date posted" dropdown.
+    if (period && period !== MetricTimeframe.AllTime) {
+      const since = periodStartDate(period);
+      if (since) {
+        AND.push({
+          OR: [{ publishedAt: { gte: since } }, { createdAt: { gte: since } }],
+        });
+      }
+    }
+
+    // Sort. Default (or `Newest`) keeps the existing publishedAt-desc behavior.
+    // The metric-driven sorts orderBy the related Model3DMetric row; counts
+    // are non-nullable Ints (Prisma default 0 backfill), so plain `'desc'`
+    // — `{ sort, nulls }` is only valid on nullable scalars.
+    const orderBy: Prisma.Model3DOrderByWithRelationInput[] = (() => {
+      switch (sort) {
+        case Model3DSort.MostDownloaded:
+          return [{ metric: { downloadCount: 'desc' } }, { id: 'desc' }];
+        case Model3DSort.HighestRated:
+          // "Highest rated" = highest thumbs-up share. We don't have a stored
+          // ratio column, so order by recommendedCount as a proxy (rows with
+          // more recommends rise) — matches the spirit of the regular models
+          // feed (which also uses an aggregate metric, not a normalized rate).
+          return [
+            { metric: { recommendedCount: 'desc' } },
+            { metric: { ratingCount: 'desc' } },
+            { id: 'desc' },
+          ];
+        case Model3DSort.MostLiked:
+          return [{ metric: { reactionCount: 'desc' } }, { id: 'desc' }];
+        case Model3DSort.Newest:
+        default:
+          return [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }];
+      }
+    })();
+
     const take = Math.min(limit, 100);
     const items = await dbRead.model3D.findMany({
       take: take + 1,
       where: { AND },
       cursor: cursor ? { id: cursor } : undefined,
-      orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+      orderBy,
       select: model3dListSelect,
     });
 
@@ -366,6 +449,39 @@ export const getModel3DsInfinite = async ({
     }
 
     return { items, nextCursor };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+/**
+ * Tags actually used by Model3Ds, ranked by usage count. Drives the chip row
+ * above the /3d-models feed. Mirrors `tag.getAll` shape (id + name) but scoped
+ * to the Model3D corpus so empty/irrelevant tags don't pollute the row.
+ */
+export const getModel3DTags = async ({ query, limit }: GetModel3DTagsInput) => {
+  try {
+    const rows = await dbRead.tagsOnModel3D.groupBy({
+      by: ['tagId'],
+      _count: { tagId: true },
+      orderBy: { _count: { tagId: 'desc' } },
+      take: Math.min(limit, 200),
+    });
+    if (!rows.length) return { items: [] as { id: number; name: string; count: number }[] };
+
+    const tags = await dbRead.tag.findMany({
+      where: {
+        id: { in: rows.map((r) => r.tagId) },
+        ...(query ? { name: { contains: query, mode: 'insensitive' as const } } : {}),
+      },
+      select: { id: true, name: true },
+    });
+    const countById = new Map(rows.map((r) => [r.tagId, r._count.tagId]));
+    const items = tags
+      .map((t) => ({ id: t.id, name: t.name, count: countById.get(t.id) ?? 0 }))
+      .sort((a, b) => b.count - a.count);
+    return { items };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -1013,16 +1129,17 @@ export const getModel3DReviewSummary = async ({
   input: GetModel3DReviewSummaryInput;
 }) => {
   try {
+    // Pure thumbs system: clients compute % from `recommendedCount /
+    // ratingCount`. The legacy `rating` 1-5 column was dropped in
+    // migration `20260605120000_model3d_drop_legacy_rating`.
     const agg = await dbRead.model3DReview.aggregate({
       where: { model3dId: input.model3dId, exclude: false },
-      _avg: { rating: true },
       _count: { _all: true },
     });
     const recommendedCount = await dbRead.model3DReview.count({
       where: { model3dId: input.model3dId, exclude: false, recommended: true },
     });
     return {
-      ratingAvg: agg._avg.rating ?? 0,
       ratingCount: agg._count._all,
       recommendedCount,
     };

@@ -4443,7 +4443,6 @@ export interface Model3DReview {
   model3d?: Model3D;
   userId: number;
   user?: User;
-  rating: number;
   recommended: boolean;
   details: string | null;
   nsfw: boolean;
@@ -4474,7 +4473,6 @@ export interface Model3DMetric {
   tippedCount: number;
   tippedAmountCount: number;
   ratingCount: number;
-  ratingAvg: number;
   recommendedCount: number;
   reactionCount: number;
   earnedAmount: number;

@@ -14,19 +14,24 @@ import {
   Stack,
   Text,
   Title,
+  useComputedColorScheme,
 } from '@mantine/core';
 import {
-  IconAlertTriangle,
   IconBolt,
+  IconBrush,
   IconCube,
+  IconCurrencyDollar,
   IconDownload,
-  IconFlag,
+  IconForms,
+  IconGitMerge,
   IconHeart,
+  IconLicense,
   IconMessageCircle2,
   IconShare3,
-  IconStar,
   IconThumbDown,
   IconThumbUp,
+  IconUser,
+  IconWand,
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import type { InferGetServerSidePropsType } from 'next';
@@ -40,26 +45,23 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { Collection } from '~/components/Collection/Collection';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
-import { openReportModal } from '~/components/Dialog/triggers/report';
-import { ReportEntity } from '~/shared/utils/report-helpers';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
-import { GenerationDetails } from '~/components/Model3D/GenerationDetails/GenerationDetails';
 import { Model3DGallery } from '~/components/Model3D/Gallery/Model3DGallery';
 import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
-import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -107,20 +109,31 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+/**
+ * Derive a coarse sentiment label from the recommend percentage. Inlined
+ * here — no shared helper exists for this on the AI-model side (they show
+ * raw thumbs counts instead of a sentiment band). Bands mirror the common
+ * Steam-style scale, scaled down to fit the typical Civitai review volume.
+ */
+function sentimentLabel(recommendPct: number, ratingCount: number): string {
+  if (ratingCount < 5) return 'Too few reviews';
+  if (recommendPct >= 95) return 'Overwhelmingly positive';
+  if (recommendPct >= 80) return 'Very positive';
+  if (recommendPct >= 70) return 'Mostly positive';
+  if (recommendPct >= 40) return 'Mixed';
+  if (recommendPct >= 20) return 'Mostly negative';
+  return 'Overwhelmingly negative';
+}
+
 function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const features = useFeatureFlags();
+  // Feature flag is gated server-side in getServerSideProps.
+  useFeatureFlags();
   const currentUser = useCurrentUser();
+  const colorScheme = useComputedColorScheme('dark');
 
   const { data: model3d, isLoading, isRefetching } = trpc.model3d.getById.useQuery({ id });
   const { data: filesData } = trpc.model3d.getFiles.useQuery({ id }, { enabled: !!model3d });
   const { data: reviewSummary } = trpc.model3d.reviews.getSummary.useQuery({ model3dId: id });
-  // Top 3 reviews shown inline. Full pagination lives on /3d-models/[id]/reviews.
-  const { data: previewReviewsData } = trpc.model3d.reviews.getInfinite.useQuery({
-    model3dId: id,
-    limit: 3,
-    page: 1,
-  });
-  const previewReviews = previewReviewsData?.items ?? [];
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model3D', entityId: id });
 
   const files = filesData?.files ?? [];
@@ -166,6 +179,34 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     });
   };
 
+  // Generation Details — collect surfaced params as DescriptionTable rows.
+  // Hook MUST run on every render — keep above the early returns below or
+  // React throws "Rendered more hooks than during the previous render"
+  // (model3d goes from undefined → defined across the loading transition).
+  const generationDetailItems = useMemo(() => {
+    const params = (model3d?.generationParams ?? null) as Record<string, unknown> | null;
+    const surfaced: Array<[string, string]> = [];
+    const push = (label: string, value: unknown) => {
+      if (value === undefined || value === null || value === '') return;
+      if (typeof value === 'boolean') surfaced.push([label, value ? 'Yes' : 'No']);
+      else if (typeof value === 'number') surfaced.push([label, value.toLocaleString()]);
+      else surfaced.push([label, String(value)]);
+    };
+    if (params) {
+      push('Prompt', params.prompt);
+      push('Topology', params.topology);
+      push('Target polycount', params.targetPolycount);
+      push('Symmetry', params.symmetryMode);
+      push('PBR materials', params.enablePbr);
+      push('Mode', params.mode);
+      push('Seed', params.seed);
+      push('Rigging', params.enableRigging);
+      push('Animation', params.enableAnimation);
+      push('Texture prompt', params.texturePrompt);
+    }
+    return surfaced;
+  }, [model3d?.generationParams]);
+
   if (isLoading) return <PageLoader />;
   if (!model3d) return <NotFound />;
 
@@ -175,6 +216,9 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isDraft = model3d.status === Model3DStatus.Draft;
   const isUnpublished = model3d.status === Model3DStatus.Unpublished;
 
+  // Format dropdown shows just the format + size — the filename is implicit
+  // (we kick off the download with the resolved primary/variant filename) so
+  // the download card stays compact.
   const formatOptions = files.map((f) => ({
     value: f.format,
     label: `${f.format.toUpperCase()} · ${(f.sizeKB / 1024).toFixed(1)} MB${
@@ -184,8 +228,37 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const tippedAmountTotal = (model3d.metric?.tippedAmountCount ?? 0) + tippedAmount;
 
-  // Feature flag is gated server-side in getServerSideProps — no client check
-  // needed (and removing it avoids a NotFound flash during hydration).
+  const ratingCount = reviewSummary?.ratingCount ?? 0;
+  const recommendedCount = reviewSummary?.recommendedCount ?? 0;
+  const recommendPct = ratingCount > 0 ? Math.round((recommendedCount / ratingCount) * 100) : null;
+
+  const hasGenerationData = generationDetailItems.length > 0 || !!model3d.sourceImage;
+
+  const license = model3d.license;
+  const licenseFeatures: Array<{ allowed: boolean; label: string; icon: JSX.Element }> = license
+    ? [
+        {
+          allowed: license.allowCommercialUse,
+          label: license.allowCommercialUse ? 'Commercial use allowed' : 'No commercial use',
+          icon: <IconCurrencyDollar size={14} stroke={1.5} />,
+        },
+        {
+          allowed: license.allowDerivatives,
+          label: license.allowDerivatives ? 'Derivatives allowed' : 'No derivatives',
+          icon: <IconGitMerge size={14} stroke={1.5} />,
+        },
+        {
+          allowed: license.allowRedistribution,
+          label: license.allowRedistribution ? 'Redistribution allowed' : 'No redistribution',
+          icon: <IconBrush size={14} stroke={1.5} />,
+        },
+        {
+          allowed: !license.requireAttribution,
+          label: license.requireAttribution ? 'Attribution required' : 'No attribution required',
+          icon: <IconUser size={14} stroke={1.5} />,
+        },
+      ]
+    : [];
 
   return (
     <>
@@ -196,7 +269,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         images={model3d.thumbnailImage ?? undefined}
         deIndex={isDraft || isUnpublished}
       />
-      <Container size="xl" pos="relative">
+      <Container size="xl" pos="relative" className="pb-8">
         <LoadingOverlay visible={isRefetching} />
 
         <Stack gap="md">
@@ -204,7 +277,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               Unpublished/Deleted Model3D. Mirrors the Image appeal pattern. */}
           {isOwner && (isUnpublished || model3d.status === Model3DStatus.Deleted) && (
             <AlertWithIcon
-              icon={<IconAlertTriangle />}
+              icon={<IconCube />}
               color="yellow"
               iconColor="yellow"
               title="Removed by moderators"
@@ -227,14 +300,31 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             </AlertWithIcon>
           )}
 
-          {/* Header */}
-          <Group justify="space-between" wrap="nowrap" align="flex-start">
-            <Stack gap={4} style={{ flex: 1 }}>
-              <Title order={1}>{model3d.name}</Title>
-              <Group gap="xs" wrap="wrap">
-                <IconBadge radius="sm" size="lg" icon={<IconStar size={18} />}>
-                  <Text size="sm">{abbreviateNumber(model3d.metric?.ratingCount ?? 0)}</Text>
-                </IconBadge>
+          {/* Header — mirrors models/[id] structure:
+              • title + metric chips on a single line
+              • Share + unified context menu to the right
+              • underneath: Updated date | tags
+              No License badge here (it moves to the sidebar) and no creator
+              row (the sidebar card surfaces the creator). */}
+          <Stack gap={4}>
+            <Group justify="space-between" wrap="nowrap" align="flex-start">
+              <Group className="flex-1" gap="xs" align="center" wrap="wrap">
+                <Title order={1} lineClamp={2} className="break-words">
+                  {model3d.name}
+                </Title>
+                {/* Top-left summary stat: thumbs-up % chip. Hidden until there
+                    is at least one review so we don't surface a misleading
+                    "0%" before any community signal exists. */}
+                {recommendPct !== null && (
+                  <IconBadge
+                    radius="sm"
+                    size="lg"
+                    color="green"
+                    icon={<IconThumbUp size={18} />}
+                  >
+                    <Text size="sm">{recommendPct}%</Text>
+                  </IconBadge>
+                )}
                 <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                   <Text size="sm">{abbreviateNumber(model3d.metric?.downloadCount ?? 0)}</Text>
                 </IconBadge>
@@ -244,10 +334,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <IconBadge radius="sm" size="lg" icon={<IconMessageCircle2 size={18} />}>
                   <Text size="sm">{abbreviateNumber(model3d.metric?.commentCount ?? 0)}</Text>
                 </IconBadge>
-                {/* Single buzz surface: the metrics-row badge IS the tip CTA.
-                    Wrapping in InteractiveTipBuzzButton makes the badge
-                    clickable and removes the second buzz button that used to
-                    live in the right-side action row. */}
+                {/* Single buzz surface: the metrics-row badge IS the tip CTA. */}
                 <InteractiveTipBuzzButton
                   toUserId={model3d.user.id}
                   entityType="Model3D"
@@ -262,34 +349,22 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     <Text size="sm">{abbreviateNumber(tippedAmountTotal)}</Text>
                   </IconBadge>
                 </InteractiveTipBuzzButton>
-              </Group>
-              <Group gap="sm" wrap="wrap">
-                <UserAvatar user={model3d.user} withUsername linkToProfile />
-                <Divider orientation="vertical" />
-                {model3d.license?.name && (
-                  <Badge variant="light" color="gray">
-                    License: {model3d.license.name}
-                  </Badge>
-                )}
                 {model3d.status !== Model3DStatus.Published && canSeeDraft && (
                   <Badge color="yellow" variant="light">
                     {model3d.status}
                   </Badge>
                 )}
-                {!!model3d.tags?.length && (
-                  <Group gap={4}>
-                    {model3d.tags.map((t) => (
-                      <Badge key={t.id} variant="outline" size="sm">
-                        {t.name}
-                      </Badge>
-                    ))}
-                  </Group>
-                )}
               </Group>
-            </Stack>
 
-            <Group gap={4} align="center" wrap="nowrap">
-              {(isOwner || isModerator) && (
+              <Group gap={4} align="center" wrap="nowrap">
+                <ShareButton url={`/3d-models/${model3d.id}`} title={model3d.name}>
+                  <LegacyActionIcon variant="subtle" color="gray" aria-label="Share">
+                    <IconShare3 />
+                  </LegacyActionIcon>
+                </ShareButton>
+                {/* Single menu trigger — Report is folded into this menu for
+                    any logged-in non-owner / non-mod user (Model3DActionsMenu
+                    defaults `showReport={true}`). */}
                 <Model3DActionsMenu
                   model3d={{
                     id: model3d.id,
@@ -305,103 +380,177 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     thumbnailImageId: model3d.thumbnailImageId,
                   }}
                 />
-              )}
-              <ShareButton url={`/3d-models/${model3d.id}`} title={model3d.name}>
-                <LegacyActionIcon variant="subtle" color="gray" aria-label="Share">
-                  <IconShare3 />
-                </LegacyActionIcon>
-              </ShareButton>
-              <LegacyActionIcon
-                variant="subtle"
-                color="gray"
-                aria-label="Report"
-                onClick={() =>
-                  openReportModal({
-                    entityType: ReportEntity.Model3D,
-                    entityId: model3d.id,
-                  })
-                }
-              >
-                <IconFlag />
-              </LegacyActionIcon>
+              </Group>
             </Group>
-          </Group>
-
-          {/* Viewer pulled out of the grid so it sits full-width above on both
-              mobile and desktop. This lets us reorder the remaining columns so
-              that on mobile (single column) the sidebar (files / gen details /
-              creator / reviews) appears directly under the viewer, with the
-              main column content (description / makes-uses / comments) below. */}
-          <Card withBorder radius="md" p={0} className="overflow-hidden">
-            {primaryFile ? (
-              <Model3DViewer
-                // Use the resolved/presigned downloadUrl so the browser can
-                // actually fetch the GLB — the raw `url` may point at a
-                // bucket the public delivery worker doesn't authorize.
-                url={primaryFile.downloadUrl ?? primaryFile.url}
-                format={primaryFile.format}
-                sizeKB={primaryFile.sizeKB}
+            <Group gap={4} wrap="wrap" align="center">
+              <Text size="xs" c="dimmed">
+                Updated: {formatDate(model3d.updatedAt)}
+              </Text>
+              {!!model3d.tags?.length && <Divider orientation="vertical" />}
+              <Collection
+                items={model3d.tags ?? []}
+                renderItem={(tag) => (
+                  <Link
+                    legacyBehavior
+                    href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
+                    passHref
+                  >
+                    <Badge
+                      component="a"
+                      size="sm"
+                      color="gray"
+                      variant={colorScheme === 'dark' ? 'filled' : undefined}
+                      className="cursor-pointer"
+                    >
+                      {tag.name}
+                    </Badge>
+                  </Link>
+                )}
               />
-            ) : (
-              <Box className="flex min-h-[420px] items-center justify-center bg-dark-7 p-6">
-                <Stack align="center" gap="xs" maw={420} ta="center">
-                  <IconCube size={48} stroke={1.5} />
-                  <Text fw={600}>No files yet</Text>
-                  <Text size="sm" c="dimmed">
-                    The 3D files for this model are still being processed.
-                  </Text>
-                </Stack>
-              </Box>
-            )}
-          </Card>
+            </Group>
+          </Stack>
 
-          {/* Body grid: main column + sidebar on desktop, stacked on mobile.
-              Sidebar Col is FIRST in DOM order so on mobile (single column) it
-              renders directly under the viewer. On md+ the `order` prop swaps
-              the columns visually so the main column is on the left. */}
+          {/* Two-column body — viewer + main content in the left column,
+              sidebar (files / generation data / creator / reviews-preview /
+              license) on the right. Mirrors the regular model page two-column
+              structure so a user moving between the two doesn't feel
+              disoriented. */}
           <ContainerGrid2 gutter="xl">
-            {/* Sidebar — files dropdown + generation details + creator + reviews preview */}
-            <ContainerGrid2.Col span={{ base: 12, md: 4 }} order={{ base: 1, md: 2 }}>
+            {/* Main column — viewer (top, matches the body width) + about
+                this model body + comments. */}
+            <ContainerGrid2.Col span={{ base: 12, md: 8 }} order={{ base: 2, md: 1 }}>
               <Stack gap="md">
-                {/* Files dropdown + download */}
-                <Card withBorder radius="md" p="md">
-                  <Stack gap="xs">
-                    <Title order={4}>Files</Title>
-                    {files.length === 0 ? (
-                      <Text c="dimmed" size="sm">
-                        No downloadable files available.
-                      </Text>
-                    ) : (
-                      <Stack gap="xs">
-                        <Select
-                          label="Format"
-                          data={formatOptions}
-                          value={selectedFormat}
-                          onChange={setSelectedFormat}
-                        />
-                        <Button
-                          leftSection={<IconDownload size={16} />}
-                          onClick={handleDownload}
-                          disabled={!selectedFile}
-                          fullWidth
-                        >
-                          Download
-                        </Button>
-                        {selectedFile && (
-                          <Text size="xs" c="dimmed" lineClamp={1}>
-                            {selectedFile.name} · {(selectedFile.sizeKB / 1024).toFixed(2)} MB
-                          </Text>
-                        )}
+                <Card withBorder radius="md" p={0} className="overflow-hidden">
+                  {primaryFile ? (
+                    <Model3DViewer
+                      // Use the resolved/presigned downloadUrl so the browser
+                      // can actually fetch the GLB — the raw `url` may point
+                      // at a bucket the public delivery worker doesn't
+                      // authorize.
+                      url={primaryFile.downloadUrl ?? primaryFile.url}
+                      format={primaryFile.format}
+                      sizeKB={primaryFile.sizeKB}
+                    />
+                  ) : (
+                    <Box className="flex min-h-[420px] items-center justify-center bg-dark-7 p-6">
+                      <Stack align="center" gap="xs" maw={420} ta="center">
+                        <IconCube size={48} stroke={1.5} />
+                        <Text fw={600}>No files yet</Text>
+                        <Text size="sm" c="dimmed">
+                          The 3D files for this model are still being processed.
+                        </Text>
                       </Stack>
-                    )}
-                  </Stack>
+                    </Box>
+                  )}
                 </Card>
 
-                {/* Generation Details */}
-                <GenerationDetails
-                  params={model3d.generationParams}
-                  sourceImage={model3d.sourceImage ?? undefined}
-                />
+                {/* About this model — inline body, no card wrapper, no
+                    "About this model" heading. Matches the model page. */}
+                {model3d.description && (
+                  <ContentClamp maxHeight={460}>
+                    <RenderHtml html={model3d.description ?? ''} />
+                  </ContentClamp>
+                )}
+
+                <Divider />
+
+                {/* Comments — limited to 5 initial entries with the
+                    Load-More CTA already rendered by RootThreadProvider when
+                    the page count exceeds `limit`. */}
+                <div id="comments">
+                  <Model3DComments model3dId={id} userId={model3d.user.id} />
+                </div>
+              </Stack>
+            </ContainerGrid2.Col>
+
+            {/* Sidebar — Files / Generation Data / Creator / Reviews-preview
+                / License. Lifted to the top of the page (visually) so it sits
+                beside the viewer on desktop. On mobile (single column) it
+                renders directly under the title block. */}
+            <ContainerGrid2.Col span={{ base: 12, md: 4 }} order={{ base: 1, md: 2 }}>
+              <Stack gap="md">
+                {/* Files card — no title, just a format Select + a primary
+                    Download button with the file size baked into the button.
+                    Mirrors the model-detail download card. */}
+                <Card withBorder radius="md" p="md">
+                  {files.length === 0 ? (
+                    <Text c="dimmed" size="sm">
+                      No downloadable files available.
+                    </Text>
+                  ) : (
+                    <Stack gap="xs">
+                      <Select
+                        data={formatOptions}
+                        value={selectedFormat}
+                        onChange={setSelectedFormat}
+                        aria-label="File format"
+                      />
+                      <Button
+                        leftSection={<IconDownload size={16} />}
+                        onClick={handleDownload}
+                        disabled={!selectedFile}
+                        fullWidth
+                      >
+                        Download{' '}
+                        {selectedFile && (
+                          <Text span ml={4}>
+                            ({(selectedFile.sizeKB / 1024).toFixed(2)} MB)
+                          </Text>
+                        )}
+                      </Button>
+                    </Stack>
+                  )}
+                </Card>
+
+                {/* Generation Data — image-detail card pattern. Body is a
+                    DescriptionTable instead of the prior badge-chip layout. */}
+                {hasGenerationData && (
+                  <Card withBorder radius="md" p="md">
+                    <Stack gap="sm">
+                      <Group gap="xs">
+                        <IconForms size={20} />
+                        <Text className="text-xl" fw={600}>
+                          Generation Data
+                        </Text>
+                      </Group>
+                      {model3d.sourceImage && (
+                        <Box>
+                          <Text size="sm" fw={500} mb={4}>
+                            Source image
+                          </Text>
+                          <Link
+                            href={`/images/${model3d.sourceImage.id}`}
+                            className="block w-full max-w-[240px] overflow-hidden rounded-md border border-solid border-dark-4"
+                          >
+                            <EdgeMedia
+                              src={model3d.sourceImage.url}
+                              name={model3d.sourceImage.name ?? undefined}
+                              type={
+                                (model3d.sourceImage.type as
+                                  | 'image'
+                                  | 'video'
+                                  | 'audio'
+                                  | undefined) ?? undefined
+                              }
+                              width={320}
+                              anim={false}
+                              className="size-full object-cover"
+                            />
+                          </Link>
+                        </Box>
+                      )}
+                      {generationDetailItems.length > 0 && (
+                        <DescriptionTable
+                          items={generationDetailItems.map(([label, value]) => ({
+                            label,
+                            value: <Text size="sm">{value}</Text>,
+                          }))}
+                          labelWidth="35%"
+                        />
+                      )}
+                    </Stack>
+                  </Card>
+                )}
 
                 {/* Creator card */}
                 <SmartCreatorCard
@@ -410,162 +559,115 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   tipBuzzEntityType="Model3D"
                 />
 
-                {/* Inline reviews preview */}
+                {/* Reviews preview — sentiment label + count chip, click
+                    through to the full reviews page. No inline review rows. */}
                 <Card withBorder radius="md" p="md">
                   <Stack gap="sm">
                     <Group justify="space-between" wrap="nowrap">
                       <Group gap="xs">
-                        <IconStar size={18} />
-                        <Title order={4}>Reviews</Title>
+                        <IconThumbUp size={18} />
+                        <Text className="text-lg" fw={600}>
+                          Reviews
+                        </Text>
                       </Group>
                       <Button
                         size="xs"
                         onClick={openReviewModal}
-                        leftSection={<IconStar size={12} />}
+                        leftSection={<IconWand size={12} />}
                       >
                         Write a review
                       </Button>
                     </Group>
-
-                    {reviewSummary && reviewSummary.ratingCount > 0 ? (
-                      <Group gap="xs" align="center">
-                        <IconThumbUp size={14} stroke={2} />
-                        <Text size="sm" fw={600}>
-                          {Math.round(
-                            (reviewSummary.recommendedCount / reviewSummary.ratingCount) * 100
+                    {recommendPct !== null ? (
+                      <Anchor
+                        component={Link}
+                        href={`/3d-models/${id}/reviews`}
+                        underline="hover"
+                      >
+                        <Group gap="xs" align="center" wrap="nowrap">
+                          {recommendPct >= 50 ? (
+                            <IconThumbUp size={16} />
+                          ) : (
+                            <IconThumbDown size={16} />
                           )}
-                          %
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          · {abbreviateNumber(reviewSummary.ratingCount)}{' '}
-                          {reviewSummary.ratingCount === 1 ? 'review' : 'reviews'}
-                        </Text>
-                      </Group>
+                          <Text size="sm" fw={600}>
+                            {sentimentLabel(recommendPct, ratingCount)}
+                          </Text>
+                          <Badge size="sm" variant="light" color="gray">
+                            {recommendPct}% · {abbreviateNumber(ratingCount)}{' '}
+                            {ratingCount === 1 ? 'review' : 'reviews'}
+                          </Badge>
+                        </Group>
+                      </Anchor>
                     ) : (
-                      <Text size="xs" c="dimmed">
-                        No reviews yet — be the first.
-                      </Text>
+                      <Group justify="space-between" align="center">
+                        <Text size="sm" c="dimmed">
+                          No reviews yet — be the first.
+                        </Text>
+                        <Anchor
+                          component={Link}
+                          href={`/3d-models/${id}/reviews`}
+                          size="sm"
+                        >
+                          See all reviews
+                        </Anchor>
+                      </Group>
                     )}
-
-                    {previewReviews.length > 0 && (
-                      <Stack gap="sm">
-                        {previewReviews.map((review) => (
-                          <Box key={review.id} className="rounded-md bg-gray-1 p-2 dark:bg-dark-6">
-                            <Stack gap={4}>
-                              <Group gap="xs" justify="space-between" wrap="nowrap">
-                                <UserAvatarSimple
-                                  id={review.user.id}
-                                  username={review.user.username}
-                                  profilePicture={review.user.profilePicture}
-                                  deletedAt={review.user.deletedAt}
-                                  cosmetics={review.user.cosmetics}
-                                />
-                                <Text size="xs" c="dimmed">
-                                  {formatDate(review.createdAt)}
-                                </Text>
-                              </Group>
-                              <Group gap={4} align="center">
-                                {review.recommended ? (
-                                  <Badge
-                                    color="green"
-                                    size="xs"
-                                    variant="light"
-                                    leftSection={<IconThumbUp size={10} />}
-                                  >
-                                    Recommends
-                                  </Badge>
-                                ) : (
-                                  <Badge
-                                    color="red"
-                                    size="xs"
-                                    variant="light"
-                                    leftSection={<IconThumbDown size={10} />}
-                                  >
-                                    Doesn&apos;t recommend
-                                  </Badge>
-                                )}
-                              </Group>
-                              {review.details && (
-                                <Text size="xs" lineClamp={3}>
-                                  {review.details}
-                                </Text>
-                              )}
-                              {review.post?.images && review.post.images.length > 0 && (
-                                <Group gap={4}>
-                                  {review.post.images.slice(0, 3).map((img) => (
-                                    <Link
-                                      key={img.id}
-                                      href={`/posts/${review.post?.id}`}
-                                      className="block aspect-square w-9 overflow-hidden rounded-sm border border-solid border-dark-4 bg-dark-7"
-                                    >
-                                      <EdgeMedia
-                                        src={img.url}
-                                        type={img.type}
-                                        name={img.name ?? undefined}
-                                        width={144}
-                                        anim={false}
-                                        className="size-full object-cover"
-                                      />
-                                    </Link>
-                                  ))}
-                                  {review.post.images.length > 3 && (
-                                    <Box className="flex h-9 w-9 items-center justify-center rounded-sm bg-dark-5 text-xs text-white">
-                                      +{review.post.images.length - 3}
-                                    </Box>
-                                  )}
-                                </Group>
-                              )}
-                            </Stack>
-                          </Box>
-                        ))}
-                      </Stack>
-                    )}
-
-                    <Anchor
-                      component={Link}
-                      href={`/3d-models/${id}/reviews`}
-                      size="sm"
-                      ta="center"
-                    >
-                      See all reviews →
-                    </Anchor>
                   </Stack>
                 </Card>
-              </Stack>
-            </ContainerGrid2.Col>
 
-            {/* Main column — description, makes/uses, comments */}
-            <ContainerGrid2.Col span={{ base: 12, md: 8 }} order={{ base: 2, md: 1 }}>
-              <Stack gap="md">
-                {/* Description */}
-                {model3d.description && (
+                {/* License — name as heading + feature-allowed badges.
+                    Lives at the bottom of the sidebar, just under the
+                    creator card, mirroring the model page permissions
+                    surface. */}
+                {license && (
                   <Card withBorder radius="md" p="md">
-                    <Stack gap="xs">
-                      <Title order={3}>About this model</Title>
-                      <ContentClamp maxHeight={460}>
-                        <RenderHtml html={model3d.description ?? ''} />
-                      </ContentClamp>
+                    <Stack gap="sm">
+                      <Group gap="xs">
+                        <IconLicense size={18} />
+                        <Text className="text-lg" fw={600}>
+                          {license.name}
+                        </Text>
+                      </Group>
+                      <Stack gap={4}>
+                        {licenseFeatures.map(({ allowed, label, icon }) => (
+                          <Group key={label} gap={6} wrap="nowrap">
+                            <Box
+                              className="flex h-5 w-5 items-center justify-center rounded"
+                              style={{
+                                backgroundColor: allowed
+                                  ? 'rgba(64, 192, 87, 0.2)'
+                                  : 'rgba(250, 82, 82, 0.2)',
+                                color: allowed ? '#40c057' : '#fa5252',
+                              }}
+                            >
+                              {icon}
+                            </Box>
+                            <Text size="xs">{label}</Text>
+                          </Group>
+                        ))}
+                      </Stack>
+                      {model3d.licenseDetails && (
+                        <Text size="xs" c="dimmed">
+                          {model3d.licenseDetails}
+                        </Text>
+                      )}
                     </Stack>
                   </Card>
                 )}
-
-                {/* Community gallery — posts linked to this Model3D, rendered
-                    via the same `ImagesAsPostsInfinite` used on the regular
-                    model page (multi-image carousels, NSFW gating, image
-                    metadata popovers). */}
-                <Model3DGallery
-                  model3d={{ id, userId: model3d.userId, minor: model3d.minor }}
-                />
-
-                <Divider />
-
-                {/* Comments */}
-                <div id="comments">
-                  <Model3DComments model3dId={id} userId={model3d.user.id} />
-                </div>
               </Stack>
             </ContainerGrid2.Col>
           </ContainerGrid2>
+
+          {/* Community gallery — posts linked to this Model3D. Lifted out of
+              the right column and rendered at the bottom of the page as a
+              full-width section, matching the model-detail page's bottom
+              gallery. */}
+          <Box id="gallery" mt="md">
+            <Model3DGallery
+              model3d={{ id, userId: model3d.userId, minor: model3d.minor }}
+            />
+          </Box>
         </Stack>
       </Container>
     </>

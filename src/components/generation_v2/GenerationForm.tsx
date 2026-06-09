@@ -1022,36 +1022,56 @@ export function GenerationForm() {
                         }
                         required={meta.required}
                       />
-                      {value && (
-                        <Button
-                          variant="subtle"
-                          size="compact-xs"
-                          leftSection={<IconSparkles size={14} />}
-                          onClick={() => {
-                            const snap = graph.getSnapshot() as {
-                              ecosystem?: string;
-                              negativePrompt?: string;
-                              resources?: ResourcesNodeValue;
-                              snippets?: SnippetsNodeValue;
-                            };
-                            triggerPromptEnhance(
-                              {
-                                prompt: value as string,
-                                negativePrompt: snap.negativePrompt,
-                                ecosystem: snap.ecosystem ?? '',
-                                resources: snap.resources,
-                                snippetTargets: snap.snippets?.targets,
-                              },
-                              (wf) =>
-                                graph.set({
-                                  workflow: wf,
-                                } as Parameters<typeof graph.set>[0])
-                            );
-                          }}
-                        >
-                          Enhance
-                        </Button>
-                      )}
+                      <Group gap="xs" wrap="nowrap">
+                        {/* PolyGen text-to-3D auto-expand toggle. Lives in
+                            the Prompt label's right side so the affordance
+                            sits next to the field it modifies. Auto-hides
+                            when the active graph doesn't include the node
+                            (i.e. non-PolyGen / image-to-3D). */}
+                        <Controller
+                          graph={graph}
+                          name="enablePromptExpansion"
+                          render={({ value: expValue, onChange: onExpChange }) => (
+                            <Switch
+                              size="xs"
+                              label="Enhance prompt"
+                              labelPosition="left"
+                              checked={!!expValue}
+                              onChange={(e) => onExpChange(e.currentTarget.checked)}
+                            />
+                          )}
+                        />
+                        {value && (
+                          <Button
+                            variant="subtle"
+                            size="compact-xs"
+                            leftSection={<IconSparkles size={14} />}
+                            onClick={() => {
+                              const snap = graph.getSnapshot() as {
+                                ecosystem?: string;
+                                negativePrompt?: string;
+                                resources?: ResourcesNodeValue;
+                                snippets?: SnippetsNodeValue;
+                              };
+                              triggerPromptEnhance(
+                                {
+                                  prompt: value as string,
+                                  negativePrompt: snap.negativePrompt,
+                                  ecosystem: snap.ecosystem ?? '',
+                                  resources: snap.resources,
+                                  snippetTargets: snap.snippets?.targets,
+                                },
+                                (wf) =>
+                                  graph.set({
+                                    workflow: wf,
+                                  } as Parameters<typeof graph.set>[0])
+                              );
+                            }}
+                          >
+                            Enhance
+                          </Button>
+                        )}
+                      </Group>
                     </Group>
                   }
                   error={error?.message}
@@ -1236,18 +1256,31 @@ export function GenerationForm() {
                 block above (audio, video, etc.).
                 ============================================================ */}
 
-            {/* PolyGen process selector — textTo3D | imageTo3D */}
+            {/* PolyGen: the process selector (textTo3D | imageTo3D) is NOT
+                rendered here — it's driven by the workflow segmented control
+                at the top of the panel (txt2model3d / img2model3d), mirroring
+                the Image segment's collapse of workflow + process into one
+                toggle. The `process` node in `polygen-graph.ts` has a
+                `transform` on `workflow` that keeps the two in sync. */}
+
+            {/* PolyGen: text mode (preview | full) — text-to-3D only.
+                Rendered ABOVE the prompt so Mode is the first decision the
+                user sees after the workflow header, matching Image. */}
             <Controller
               graph={graph}
-              name="process"
+              name="polygenMode"
               render={({ value, meta, onChange }) => (
-                <Input.Wrapper label="Process">
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Mode"
+                    info="Preview is faster and cheaper. Full produces a higher-quality mesh."
+                  />
                   <ButtonGroupInput
                     value={value as string}
                     onChange={(v) => onChange(v as typeof value)}
                     data={(meta as { options: { label: string; value: string }[] }).options}
                   />
-                </Input.Wrapper>
+                </div>
               )}
             />
 
@@ -1287,37 +1320,10 @@ export function GenerationForm() {
               )}
             />
 
-            {/* PolyGen: text mode (preview | full) — text-to-3D only */}
-            <Controller
-              graph={graph}
-              name="polygenMode"
-              render={({ value, meta, onChange }) => (
-                <Input.Wrapper
-                  label="Mode"
-                  description="Preview is faster and cheaper. Full produces the higher-quality mesh."
-                >
-                  <ButtonGroupInput
-                    value={value as string}
-                    onChange={(v) => onChange(v as typeof value)}
-                    data={(meta as { options: { label: string; value: string }[] }).options}
-                  />
-                </Input.Wrapper>
-              )}
-            />
-
-            {/* PolyGen: prompt expansion toggle (text-to-3D only) */}
-            <Controller
-              graph={graph}
-              name="enablePromptExpansion"
-              render={({ value, onChange }) => (
-                <Checkbox
-                  label="Auto-expand prompt"
-                  description="Let Meshy elaborate sparse prompts before generation"
-                  checked={!!value}
-                  onChange={(e) => onChange(e.currentTarget.checked)}
-                />
-              )}
-            />
+            {/* PolyGen: `polygenMode` (text mode) and `enablePromptExpansion`
+                used to render here; both have moved. Mode is above the prompt
+                (mirroring Image's process-first layout) and "Enhance prompt"
+                is now a Switch in the Prompt label's right side. */}
 
             {/* PolyGen: target polycount (shared by both processes) */}
             <Controller
@@ -1325,8 +1331,12 @@ export function GenerationForm() {
               name="targetPolycount"
               render={({ value, meta, onChange }) => (
                 <SliderInput
-                  label="Target polycount"
-                  description="Final triangle count target. Higher = more detail, more cost."
+                  label={
+                    <ControllerLabel
+                      label="Target polycount"
+                      info="Final triangle count target. Higher means more detail in the generated mesh."
+                    />
+                  }
                   value={value as number}
                   onChange={onChange}
                   min={(meta as { min: number }).min}
@@ -1342,13 +1352,17 @@ export function GenerationForm() {
               graph={graph}
               name="topology"
               render={({ value, meta, onChange }) => (
-                <Input.Wrapper label="Topology">
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Topology"
+                    info="Choose triangles for hard-surface and game-ready meshes; choose quads for organic shapes and downstream sculpting."
+                  />
                   <ButtonGroupInput
                     value={value as string}
                     onChange={(v) => onChange(v as typeof value)}
                     data={(meta as { options: { label: string; value: string }[] }).options}
                   />
-                </Input.Wrapper>
+                </div>
               )}
             />
 
@@ -1357,13 +1371,17 @@ export function GenerationForm() {
               graph={graph}
               name="symmetryMode"
               render={({ value, meta, onChange }) => (
-                <Input.Wrapper label="Symmetry">
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Symmetry"
+                    info="Auto detects bilateral symmetry from the prompt or source image. Use On to force a symmetric mesh, or Off to disable for asymmetric subjects."
+                  />
                   <ButtonGroupInput
                     value={value as string}
                     onChange={(v) => onChange(v as typeof value)}
                     data={(meta as { options: { label: string; value: string }[] }).options}
                   />
-                </Input.Wrapper>
+                </div>
               )}
             />
 
@@ -1746,7 +1764,37 @@ export function GenerationForm() {
                 )}
               />
 
-              {/* PolyGen advanced toggles — auto-hide when not in active graph */}
+              {/* PolyGen advanced — texturePrompt first so all the boolean
+                  toggles below group together. Each Controller auto-hides
+                  when not in active graph. */}
+              <Controller
+                graph={graph}
+                name="texturePrompt"
+                render={({ value, meta, onChange }) => (
+                  <Textarea
+                    label={
+                      <ControllerLabel
+                        label="Texture prompt"
+                        info="Optional. Describe the material, finish, or style for the generated texture (e.g. 'weathered oak with bronze fittings'). Leave blank to let Meshy infer from the main prompt."
+                      />
+                    }
+                    placeholder={
+                      (meta as { placeholder?: string })?.placeholder ??
+                      'Weathered oak with bronze fittings…'
+                    }
+                    value={(value as string) ?? ''}
+                    onChange={(e) => onChange(e.currentTarget.value)}
+                    autosize
+                    minRows={2}
+                    maxLength={(meta as { maxLength?: number })?.maxLength}
+                    classNames={{
+                      // Bumped contrast so the textarea reads as an input
+                      // against the Advanced accordion's Card surface.
+                      input: 'bg-gray-1 dark:bg-dark-8',
+                    }}
+                  />
+                )}
+              />
               <Controller
                 graph={graph}
                 name="shouldRemesh"
@@ -1768,25 +1816,6 @@ export function GenerationForm() {
                     description="Generate physically-based rendering textures (albedo, normal, roughness)"
                     checked={!!value}
                     onChange={(e) => onChange(e.currentTarget.checked)}
-                  />
-                )}
-              />
-              <Controller
-                graph={graph}
-                name="texturePrompt"
-                render={({ value, meta, onChange }) => (
-                  <Textarea
-                    label="Texture prompt"
-                    description="Describe the material / style for the texture"
-                    placeholder={
-                      (meta as { placeholder?: string })?.placeholder ??
-                      'Weathered oak with bronze fittings…'
-                    }
-                    value={(value as string) ?? ''}
-                    onChange={(e) => onChange(e.currentTarget.value)}
-                    autosize
-                    minRows={2}
-                    maxLength={(meta as { maxLength?: number })?.maxLength}
                   />
                 )}
               />

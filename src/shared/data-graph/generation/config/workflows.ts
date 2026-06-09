@@ -370,7 +370,10 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   img2model3d: {
-    label: 'Image to 3D Model',
+    // Shares the `txt2model3d` label so the in-form title row reads the
+    // same "Create 3D Model" regardless of the selected mode (mirrors the
+    // Image segment, where txt2img/img2img both title as "Create Image").
+    label: 'Create 3D Model',
     modeLabel: 'Image to 3D',
     description: 'Generate a 3D model from a source image (PolyGen via Meshy)',
     category: 'model3d',
@@ -840,6 +843,8 @@ export const workflowGroups: WorkflowGroup[] = [
     overrides: [{ ecosystemIds: WAN_ALL_IDS, workflows: ['txt2vid', 'img2vid'] }],
   },
   { workflows: ['vid2vid:edit', 'vid2vid:extend'] },
+  // 3D Models — mirrors the Image segment's "Text to / Image to" toggle.
+  { workflows: ['txt2model3d', 'img2model3d'] },
 ];
 
 /**
