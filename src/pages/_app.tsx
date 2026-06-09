@@ -1,6 +1,9 @@
 // src/pages/_app.tsx
 
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import dynamic from 'next/dynamic';
+// Side-effect import: globally disables next/link route prefetching. Must run
+// before any <Link> mounts — see the file for rationale.
+import '~/utils/disable-router-prefetch';
 import { getCookie, getCookies, deleteCookie } from 'cookies-next';
 import type { Session } from 'next-auth';
 import { SessionProvider } from 'next-auth/react';
@@ -78,6 +81,16 @@ import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
 applyNodeOverrides();
+
+// React Query Devtools renders a container div and mounts its UI imperatively
+// in an effect, so it is not SSR-safe: the server emits its div but the client
+// doesn't reproduce it during hydration, which under Turbopack trips a
+// dev-only hydration mismatch. Load it client-only so it never participates in
+// SSR/hydration. Dev-only anyway.
+const ReactQueryDevtools = dynamic(
+  () => import('@tanstack/react-query-devtools').then((m) => m.ReactQueryDevtools),
+  { ssr: false }
+);
 
 type CustomAppProps = {
   Component: CustomNextPage;

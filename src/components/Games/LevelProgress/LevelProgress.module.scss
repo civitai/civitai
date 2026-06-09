@@ -37,8 +37,8 @@
   flex-direction: column;
   align-items: center;
   overflow: visible;
-  & :global {
-    animation: fadeOut 500ms ease-in 2s forwards;
-    will-change: opacity;
-  }
+  // `fadeOut` is a global keyframes (src/styles/globals.css); kept global because
+  // no local @keyframes of that name exists in this module.
+  animation: fadeOut 500ms ease-in 2s forwards;
+  will-change: opacity;
 }

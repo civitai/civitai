@@ -48,9 +48,11 @@ export function useSignalsWorker(options?: {
   // handle init worker
   useEffect(() => {
     const emitter = emitterRef.current;
-    const newWorker = new SharedWorker(new URL('./worker.ts', import.meta.url), {
+    // Built by `pnpm build:workers` (scripts/build-workers.mjs) → public/workers.
+    // Static path (not new URL(import.meta.url)) to bypass Turbopack's broken
+    // .ts SharedWorker compilation — see vercel/next.js#74842.
+    const newWorker = new SharedWorker('/workers/signals.worker.js', {
       name: 'civitai-signals:2.1',
-      type: 'module',
     });
     setReady(false);
     setWorker(newWorker);

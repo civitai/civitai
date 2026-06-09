@@ -40,14 +40,13 @@ const IS_DEV = process.env.NODE_ENV !== 'production';
 
 function getClientIp(request: NextRequest): string | null {
   // Cloudflare sets cf-connecting-ip with the real client IP. Fall back to
-  // x-forwarded-for (proxies, curl-spoofed local tests) and then to
-  // request.ip (Next's resolved socket address). In dev with a direct
-  // browser hit to localhost, none of these are reliably set — fall back
-  // to '127.0.0.1' so BOT_TEST_IPS=127.0.0.1 actually matches.
+  // x-forwarded-for (proxies, curl-spoofed local tests). NextRequest.ip was
+  // removed in Next 15, so the socket-address fallback is gone. In dev with a
+  // direct browser hit to localhost, neither header is reliably set — fall
+  // back to '127.0.0.1' so BOT_TEST_IPS=127.0.0.1 actually matches.
   const detected =
     request.headers.get('cf-connecting-ip') ??
     request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
-    request.ip ??
     null;
   if (detected) return detected;
   if (IS_DEV) return '127.0.0.1';
