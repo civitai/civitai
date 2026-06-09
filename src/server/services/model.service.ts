@@ -1519,8 +1519,8 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
   //   publishedAt IS NULL    -> Draft
   //   publishedAt >  NOW()   -> Scheduled (future publish was queued)
   //   publishedAt <= NOW()   -> Unpublished
-  await dbWrite.$transaction(async (tx) => {
-    await tx.$executeRaw`
+  const result = await dbWrite.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<{ userId: number }[]>`
       UPDATE "Model"
       SET "deletedAt" = NULL,
           "deletedBy" = NULL,
@@ -1531,6 +1531,7 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
           END
       WHERE id = ${id}
         AND "status" = 'Deleted'::"ModelStatus"
+      RETURNING "userId"
     `;
     await tx.$executeRaw`
       UPDATE "ModelVersion"
@@ -1542,12 +1543,13 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
       WHERE "modelId" = ${id}
         AND "status" = 'Deleted'::"ModelStatus"
     `;
+    return rows[0] ?? null;
   });
 
-  const model = await dbWrite.model.findUnique({ where: { id } });
-  if (model) await userModelCountCache.refresh(model.userId);
+  if (!result) return null;
+  await userModelCountCache.refresh(result.userId);
 
-  return model;
+  return { id, userId: result.userId };
 };
 
 export const permaDeleteModelById = async ({
