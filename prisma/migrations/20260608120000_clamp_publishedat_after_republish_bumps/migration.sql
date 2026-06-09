@@ -5,9 +5,21 @@
 -- One-shot data fix — the application code now enforces the "publishedAt is
 -- immutable once <= NOW()" invariant going forward (Model, ModelVersion, Post).
 --
--- NOTE: This file is for review/history only. Per the project migration
--- policy, this SQL is NOT applied automatically by `prisma migrate deploy`.
--- It must be applied manually to preview / staging / prod by a human.
+-- !!! DO NOT RUN THIS SQL DIRECTLY !!!
+--
+-- Execution goes through the admin webhook endpoint:
+--   POST /api/admin/temp/clamp-publishedat-bumps?token=$WEBHOOK_TOKEN&dryRun=true
+--   POST /api/admin/temp/clamp-publishedat-bumps?token=$WEBHOOK_TOKEN
+--
+-- The endpoint runs this SQL inside a single transaction AND queues the
+-- Meilisearch index updates (Model + Image docs both carry publishedAtUnix
+-- and would otherwise stay stuck on the bumped sort keys) AND refreshes
+-- dataForModelsCache + bustMvCache so feed reads pick up the new sort
+-- without waiting for TTL. Running this file standalone leaves search +
+-- caches stale and is not safe.
+--
+-- This file is kept for SQL review/history. Per the project migration
+-- policy it is NOT applied automatically by `prisma migrate deploy`.
 --
 -- IMPORTANT: Scope for steps 1a/1b is captured upfront in temp tables
 -- because the evidence those steps use to *find* bumped rows is the same
