@@ -48,7 +48,13 @@ import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing
 import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { createTextToImageStep } from '~/server/services/orchestrator/textToImage/textToImage';
 import { getUserById } from '~/server/services/user.service';
-import { moderatorProcedure, middleware, publicProcedure, router } from '~/server/trpc';
+import {
+  moderatorProcedure,
+  protectedProcedure,
+  middleware,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { SessionUser } from 'next-auth';
 
@@ -772,7 +778,15 @@ export const blocksRouter = router({
    * actually declares + the mod approved (a malicious host can't grant itself
    * scopes the manifest never asked for). Additive: prior grants persist.
    */
-  grantScopes: moderatorProcedure
+  // Un-gated from moderatorProcedure → protectedProcedure (authenticated, not
+  // moderator) + the appBlocks feature-flag check below. Consent is the
+  // VIEWER's OWN action, so a logged-in non-mod viewer must be able to grant the
+  // scopes their block needs (e.g. ai:write:budgeted) once the flag is public —
+  // the old moderator gate meant a non-mod could never consent, so the block
+  // could never spend their buzz. The grant stays bounded to the app's approved
+  // manifest ∩ approvedScopes ceiling below, and writes only the caller's own
+  // grant row.
+  grantScopes: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -781,6 +795,12 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      if (!ctx.features.appBlocks) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'App Blocks is not available to this account',
+        });
+      }
       const block = await dbRead.appBlock.findUnique({
         where: { id: input.appBlockId },
         select: { status: true, manifest: true, approvedScopes: true, version: true },
