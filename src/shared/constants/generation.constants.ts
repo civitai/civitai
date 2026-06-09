@@ -513,8 +513,6 @@ export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'Pony',
   'Illustrious',
   'NoobAI',
-  'Flux1',
-  'FluxKrea',
 ];
 
 // Ecosystems that run via the sdcpp engine and qualify for the 2-for-1 quantity
@@ -523,6 +521,8 @@ export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
 // sdcpp under the hood.
 export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
   ...EXPERIMENTAL_MODE_SUPPORTED_MODELS,
+  'Flux1',
+  'FluxKrea',
   'ZImageBase',
   'ZImageTurbo',
   'Flux2Klein_9B',
