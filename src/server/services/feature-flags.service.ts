@@ -107,6 +107,13 @@ const featureFlags = createFeatureFlags({
     description: `Show the Posts item in the main site navigation.`,
     availability: ['public'],
   },
+  eventsNavItem: {
+    toggleable: true,
+    default: false,
+    displayName: 'Events in Navigation',
+    description: `Show the Events item in the main site navigation.`,
+    availability: ['public'],
+  },
   alternateHome: ['public'],
   collections: ['public'],
   air: {

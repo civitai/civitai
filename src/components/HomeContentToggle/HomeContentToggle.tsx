@@ -121,6 +121,7 @@ export function filterHomeOptions(features: FeatureAccess) {
         key === 'challenges' && !features.challengePlatform,
         key === 'comics' && !features.comicCreator,
         key === 'posts' && !features.postsNavItem,
+        key === 'events' && !features.eventsNavItem,
       ].some((b) => b)
   );
 }
