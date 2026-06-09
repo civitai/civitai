@@ -789,14 +789,40 @@ export const updatePost = async ({
 }: PostUpdateInput & { user: SessionUser; availability?: Availability }) => {
   if (data.title) await throwOnBlockedLinkDomain(data.title);
   if (data.detail) await throwOnBlockedLinkDomain(data.detail);
-  const post = await dbWrite.post.update({
-    where: { id, userId: !user.isModerator ? user.id : undefined },
-    data: {
-      ...data,
-      title: !!data.title ? (data.title.length > 0 ? data.title : null) : undefined,
-      detail: !!data.detail ? (data.detail.length > 0 ? data.detail : null) : undefined,
-    },
+
+  // Peel off a plain-Date publishedAt so it can be routed through the
+  // anti-bump guard. Other update-input shapes (null, undefined,
+  // FieldUpdateOperations) flow through prisma .update() unchanged.
+  // Mirrors the pattern in updateModelVersion (model-version.service.ts).
+  const publishedAt = data.publishedAt instanceof Date ? data.publishedAt : undefined;
+  const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
+
+  const post = await dbWrite.$transaction(async (tx) => {
+    const updated = await tx.post.update({
+      where: { id, userId: !user.isModerator ? user.id : undefined },
+      data: {
+        ...restData,
+        title: !!restData.title ? (restData.title.length > 0 ? restData.title : null) : undefined,
+        detail: !!restData.detail
+          ? (restData.detail.length > 0 ? restData.detail : null)
+          : undefined,
+      },
+    });
+    if (publishedAt !== undefined) {
+      // Anti-bump guard: publishedAt is immutable once a post has gone
+      // public. Allowed transitions: NULL (Draft/Unpublished) -> set, or
+      // future (Scheduled) -> reschedule. Republish of an already-public
+      // post is a no-op for this column. Mirrors the Model/Version guards.
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET "publishedAt" = ${publishedAt}
+        WHERE id = ${id}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
+    }
+    return updated;
   });
+
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(post.userId);
 
