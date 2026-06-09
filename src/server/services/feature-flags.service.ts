@@ -120,7 +120,6 @@ const featureFlags = createFeatureFlags({
   imageSearch: ['public'],
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
-  recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
     toggleable: true,
     default: true,
