@@ -22,10 +22,14 @@ import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 // always available for live incident capture. See src/server/cpu-profiler.ts.
 registerCpuProfiler();
 
-// Arm the event-loop long-task detector. Default OFF (no-op unless
-// EVENTLOOP_LONGTASK_THRESHOLD_MS > 0). When armed, attributes synchronous
-// loop blocks to the running tRPC procedure / route via AsyncLocalStorage and
-// emits Prom metrics + rate-limited structured logs. Independent of OTEL.
+// Arm the event-loop long-task detector. DISARMED by default (no-op unless
+// EVENTLOOP_LONGTASK_THRESHOLD_MS > 0), in which case the request hot path runs
+// completely untouched (no ALS wrapper). Base armed mode adds only the
+// monitorEventLoopDelay lag gauge + a drift detector (cheap, no async_hooks).
+// Per-procedure ALS label attribution (EVENTLOOP_LONGTASK_LABELS) and async_hooks
+// stack capture (EVENTLOOP_LONGTASK_STACKS) are separate opt-in tiers for short
+// diagnostic windows — they add async-context-propagation cost and are NOT
+// enabled by base armed mode. Independent of OTEL.
 // See src/server/eventloop-longtask.ts.
 registerEventLoopLongTaskDetector();
 

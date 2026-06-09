@@ -10,7 +10,7 @@ import {
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration } from '~/server/prom/client';
-import { runWithLongTaskLabel } from '~/server/eventloop-longtask';
+import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -212,20 +212,34 @@ const enforceTokenScope = t.middleware(({ ctx, meta, next }) => {
 // pools whose isolation we're deciding (api-primary, api-heavy) and leave it off
 // on SSR/jobs/canary to bound the series count and keep an instant off-switch.
 const TRPC_PROCEDURE_METRICS = process.env.TRPC_PROCEDURE_METRICS === 'true';
-const recordProcedureDuration = t.middleware(async ({ path, next }) => {
-  // Tag the async context with the procedure path so the event-loop long-task
-  // detector can attribute a synchronous block to the running procedure. This is
-  // a thin passthrough (no ALS store) unless the detector is armed, so it costs
-  // nothing in the default/disabled case. Independent of TRPC_PROCEDURE_METRICS.
-  return runWithLongTaskLabel(`trpc:${path}`, async () => {
-    if (!TRPC_PROCEDURE_METRICS) return next();
-    const end = trpcProcedureDuration.startTimer({ path });
+
+// The actual procedure-timing logic. Generic over `next`'s return type so it
+// stays transparent to tRPC's MiddlewareResult typing. Kept standalone so the
+// ALS label wrapper can be applied ONLY when the long-task labels tier is armed.
+function runRecordProcedureDuration<T>(path: string, next: () => Promise<T>): Promise<T> {
+  if (!TRPC_PROCEDURE_METRICS) return next();
+  const end = trpcProcedureDuration.startTimer({ path });
+  return (async () => {
     try {
       return await next();
     } finally {
       end();
     }
-  });
+  })();
+}
+
+const recordProcedureDuration = t.middleware(({ path, next }) => {
+  // When the long-task LABELS tier is armed, wrap the procedure in an ALS store
+  // tagged with its path so a detected synchronous block can be attributed to the
+  // running procedure. This costs one AsyncLocalStorage.run() per request — the
+  // async_hooks context-propagation cost — so it is OFF by default. When it is
+  // not armed (the disarmed default AND base-armed-without-labels), this is the
+  // ORIGINAL code path: a direct call with NO wrapper, NO extra closure, NO
+  // microtask hop. Independent of TRPC_PROCEDURE_METRICS.
+  if (longTaskLabelsArmed) {
+    return runWithLongTaskLabel(`trpc:${path}`, () => runRecordProcedureDuration(path, next));
+  }
+  return runRecordProcedureDuration(path, next);
 });
 
 export const publicProcedure = t.procedure

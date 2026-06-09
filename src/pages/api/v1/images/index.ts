@@ -20,7 +20,7 @@ import {
 import { imageMetaCache } from '~/server/redis/caches';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { runWithLongTaskLabel } from '~/server/eventloop-longtask';
+import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import {
   acquireBulkheadSlot,
   BulkheadFullError,
@@ -100,10 +100,16 @@ const imagesEndpointSchema = z.object({
 const { requestDurationSeconds } = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // Attribute any synchronous event-loop block during this heavy handler to
-  // 'rest:/api/v1/images' for the long-task detector. Thin passthrough (no ALS
-  // cost) unless the detector is armed. See src/server/eventloop-longtask.ts.
-  return runWithLongTaskLabel('rest:/api/v1/images', () => handleImagesRequest(req, res));
+  // When the long-task LABELS tier is armed, attribute any synchronous event-loop
+  // block during this heavy handler to 'rest:/api/v1/images'. That costs one
+  // AsyncLocalStorage.run() per request and is OFF by default. When it is not
+  // armed (the disarmed default AND base-armed-without-labels), this is the
+  // ORIGINAL code path: a direct handler call with NO wrapper/closure. See
+  // src/server/eventloop-longtask.ts.
+  if (longTaskLabelsArmed) {
+    return runWithLongTaskLabel('rest:/api/v1/images', () => handleImagesRequest(req, res));
+  }
+  return handleImagesRequest(req, res);
 });
 
 async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
