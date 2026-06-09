@@ -53,7 +53,12 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
-import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
+import {
+  getWorkflow,
+  submitWorkflow,
+  updateWorkflow as clientUpdateWorkflow,
+} from '~/server/services/orchestrator/workflows';
+import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -2130,6 +2135,16 @@ function formatStep(
  * Simplified formatGenerationResponse.
  * Replaces the complex switch-based formatting in common.ts.
  */
+/** Update a workflow and return the normalized response. */
+export async function updateWorkflow({
+  user,
+  ...props
+}: WorkflowUpdateSchema & { token: string; user?: SessionUser }) {
+  const workflow = await clientUpdateWorkflow(props);
+  const [formatted] = await formatGenerationResponse2([workflow], user);
+  return formatted;
+}
+
 export async function formatGenerationResponse2(
   workflows: Workflow[],
   user?: SessionUser
