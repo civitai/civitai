@@ -1337,20 +1337,20 @@ export const blocksRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
-      // Phase 2: moderator-only until GA. This is a block-specific resolver
-      // call (not a model-page render), so FORBIDDEN for non-mods.
-      if (!ctx.user?.isModerator) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'App Blocks is restricted to the civitai team',
-        });
-      }
-      const userId = ctx.user.id;
+      // Gated by the `appBlocks` feature flag (mirrors listForModel +
+      // getShowcaseImages + the block-token mint), NOT a hardcoded moderator
+      // check — otherwise anon / non-mod viewers' blocks FORBIDDEN on
+      // checkpoint resolution even when the flag is public, breaking the
+      // anonymous-conversion flow. Return a null checkpoint when the flag is
+      // off (the block falls back to the platform per-ecosystem default).
+      // getEffectiveCheckpoint already accepts userId: number | null, so anon
+      // (no viewer override) resolves to the publisher/platform default.
+      if (!ctx.features.appBlocks) return { checkpoint: null };
       const checkpoint = await BlockRegistry.getEffectiveCheckpoint({
         blockInstanceId: input.blockInstanceId,
         modelId: input.modelId,
         slotId: input.slotId,
-        userId,
+        userId: ctx.user?.id ?? null,
       });
       return { checkpoint };
     }),
