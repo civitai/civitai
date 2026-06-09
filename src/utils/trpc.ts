@@ -5,8 +5,8 @@ import { createTRPCClient, httpLink, loggerLink, splitLink } from '@trpc/client'
 import type { CreateTRPCNext } from '@trpc/next';
 import { createTRPCNext } from '@trpc/next';
 import type { NextPageContext } from 'next';
-import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
+import { trpcTransformer } from '~/shared/utils/trpc-transformer';
 import { isDev } from '~/env/other';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
@@ -59,8 +59,8 @@ function httpLinkWithLargeQuerySupport({
 }): TRPCLink<AppRouter> {
   return splitLink({
     condition: isLargeQuery,
-    true: httpLink({ transformer: superjson, url, methodOverride: 'POST', headers }),
-    false: httpLink({ transformer: superjson, url, headers }),
+    true: httpLink({ transformer: trpcTransformer, url, methodOverride: 'POST', headers }),
+    false: httpLink({ transformer: trpcTransformer, url, headers }),
   });
 }
 const headers: RequestHeaders = {
@@ -201,7 +201,7 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
   // v11: `createTRPCNext` requires the transformer at the top level of its options
   // (WithTRPCOptions intersects TransformerOptions). The link carries it too for the
   // actual wire (de)serialization.
-  transformer: superjson,
+  transformer: trpcTransformer,
   ssr: false,
 });
 
