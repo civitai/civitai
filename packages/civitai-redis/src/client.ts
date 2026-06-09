@@ -4,7 +4,7 @@ import type { RedisClientType, SetOptions } from 'redis';
 import { createClient, createCluster } from 'redis';
 import { RESP_TYPES } from 'redis';
 import slugify from 'slugify';
-import { redisEnv, type RedisConfig } from './env';
+import { loadRedisEnv, type RedisConfig } from './env';
 
 export type { RedisConfig } from './env';
 export type RedisLogFn = (message: string, ...args: unknown[]) => void;
@@ -181,10 +181,12 @@ interface CustomRedisClientCache extends CustomRedisClient<RedisKeyTemplateCache
 // eslint-disable-next-line @typescript-eslint/no-empty-interface
 interface CustomRedisClientSys extends CustomRedisClient<RedisKeyTemplateSys> {}
 
-// Configured once per process by createRedisClients(). The defaults keep the
-// module-level helpers safe if referenced before the factory runs. (HMR/global
-// singleton caching lives in the app shim, where the factory is called.)
-let config: RedisConfig = redisEnv;
+// Configured by createRedisClients() before any client is built. The internal helpers
+// (getBaseClient/getClient/getCacheClient/getSysClient) are not exported, so they only
+// ever run *after* the factory has assigned `config` — the placeholder is never read.
+// Env is loaded lazily inside the factory (loadRedisEnv()), so importing this module
+// never touches process.env. (HMR/global caching lives in the app shim.)
+let config: RedisConfig = undefined as unknown as RedisConfig;
 let log: RedisLogFn = () => {};
 let isEnhancedFailoverEnabled: RedisFailoverResolver = async () => false;
 
@@ -670,7 +672,7 @@ export type CreateRedisClientsOptions = Partial<RedisConfig> & {
  */
 export function createRedisClients(options: CreateRedisClientsOptions = {}): RedisClients {
   const { log: logOption, isEnhancedFailoverEnabled: failoverOption, ...envOverrides } = options;
-  config = { ...redisEnv, ...envOverrides };
+  config = { ...loadRedisEnv(), ...envOverrides };
   if (logOption) log = logOption;
   if (failoverOption) isEnhancedFailoverEnabled = failoverOption;
 

@@ -1,5 +1,5 @@
 import { Client } from '@axiomhq/axiom-node';
-import { axiomEnv, type AxiomConfig } from './env';
+import { loadAxiomEnv, type AxiomConfig } from './env';
 
 /**
  * Extract only safe primitive fields from an error for logging.
@@ -38,7 +38,7 @@ export type AxiomLogger = {
  * deps (it *is* the logger). See the `~/server/logging/client` shim.
  */
 export function createAxiomLogger(overrides: Partial<AxiomConfig> = {}): AxiomLogger {
-  const config = { ...axiomEnv, ...overrides };
+  const config = { ...loadAxiomEnv(), ...overrides };
 
   const axiom =
     config.token && config.orgId

@@ -2,7 +2,7 @@
 // @civitai/db-schema contract package, never @prisma/client directly.
 import type { Prisma } from '@civitai/db-schema';
 import { PrismaClient } from '@civitai/db-schema';
-import { dbEnv, type DbConfig } from './env';
+import { loadDbEnv, type DbConfig } from './env';
 
 export type PrismaClients = { dbRead: PrismaClient; dbWrite: PrismaClient };
 
@@ -19,7 +19,7 @@ export type CreatePrismaClientsOptions = Partial<DbConfig> & {
  */
 export function createPrismaClients(options: CreatePrismaClientsOptions = {}): PrismaClients {
   const { onSlowQuery, ...envOverrides } = options;
-  const config = { ...dbEnv, ...envOverrides };
+  const config = { ...loadDbEnv(), ...envOverrides };
 
   const singleClient = config.replicaUrl === config.databaseUrl;
 

@@ -16,22 +16,31 @@ const schema = z.object({
   FLIPT_DEPLOYMENT_ID: z.string().optional(),
 });
 
-const parsed = schema.safeParse(process.env);
-if (!parsed.success) {
-  throw new Error('[@civitai/redis] Invalid environment variables:\n' + z.prettifyError(parsed.error));
-}
-
 // Normalized, env-derived defaults. The factory accepts a Partial<RedisConfig> to
 // override any of these per call.
-export const redisEnv = {
-  url: parsed.data.REDIS_URL,
-  sysUrl: parsed.data.REDIS_SYS_URL,
-  timeout: parsed.data.REDIS_TIMEOUT,
-  cluster: parsed.data.REDIS_CLUSTER,
-  clusterNodes: parsed.data.REDIS_CLUSTER_NODES,
-  clusterRefreshInterval: parsed.data.REDIS_CLUSTER_REFRESH_INTERVAL,
-  nextAuthUrl: parsed.data.NEXTAUTH_URL,
-  fliptDeploymentId: parsed.data.FLIPT_DEPLOYMENT_ID,
-};
+function buildEnv() {
+  const parsed = schema.safeParse(process.env);
+  if (!parsed.success) {
+    throw new Error('[@civitai/redis] Invalid environment variables:\n' + z.prettifyError(parsed.error));
+  }
+  return {
+    url: parsed.data.REDIS_URL,
+    sysUrl: parsed.data.REDIS_SYS_URL,
+    timeout: parsed.data.REDIS_TIMEOUT,
+    cluster: parsed.data.REDIS_CLUSTER,
+    clusterNodes: parsed.data.REDIS_CLUSTER_NODES,
+    clusterRefreshInterval: parsed.data.REDIS_CLUSTER_REFRESH_INTERVAL,
+    nextAuthUrl: parsed.data.NEXTAUTH_URL,
+    fliptDeploymentId: parsed.data.FLIPT_DEPLOYMENT_ID,
+  };
+}
 
-export type RedisConfig = typeof redisEnv;
+export type RedisConfig = ReturnType<typeof buildEnv>;
+
+// Lazy + memoized: importing this module never touches process.env. Validation runs only
+// when the factory calls loadRedisEnv(), so a bare import (build, script, test) never
+// throws. Parsed once, then cached.
+let _env: RedisConfig | undefined;
+export function loadRedisEnv(): RedisConfig {
+  return (_env ??= buildEnv());
+}

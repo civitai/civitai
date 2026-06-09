@@ -10,19 +10,28 @@ const schema = z.object({
   CLICKHOUSE_PASSWORD: isProd ? z.string() : z.string().optional(),
 });
 
-const parsed = schema.safeParse(process.env);
-if (!parsed.success) {
-  throw new Error(
-    '[@civitai/clickhouse] Invalid environment variables:\n' + z.prettifyError(parsed.error)
-  );
+// Normalized, env-derived defaults. The factory accepts a Partial<ClickhouseConfig>.
+function buildEnv() {
+  const parsed = schema.safeParse(process.env);
+  if (!parsed.success) {
+    throw new Error(
+      '[@civitai/clickhouse] Invalid environment variables:\n' + z.prettifyError(parsed.error)
+    );
+  }
+  return {
+    host: parsed.data.CLICKHOUSE_HOST,
+    username: parsed.data.CLICKHOUSE_USERNAME,
+    password: parsed.data.CLICKHOUSE_PASSWORD,
+    isProd,
+  };
 }
 
-// Normalized, env-derived defaults. The factory accepts a Partial<ClickhouseConfig>.
-export const clickhouseEnv = {
-  host: parsed.data.CLICKHOUSE_HOST,
-  username: parsed.data.CLICKHOUSE_USERNAME,
-  password: parsed.data.CLICKHOUSE_PASSWORD,
-  isProd,
-};
+export type ClickhouseConfig = ReturnType<typeof buildEnv>;
 
-export type ClickhouseConfig = typeof clickhouseEnv;
+// Lazy + memoized: importing this module never touches process.env (beyond NODE_ENV for
+// the schema shape). Validation runs only when the factory calls loadClickhouseEnv(), so a
+// bare import (build, script, test) never throws. Parsed once, then cached.
+let _env: ClickhouseConfig | undefined;
+export function loadClickhouseEnv(): ClickhouseConfig {
+  return (_env ??= buildEnv());
+}

@@ -3,7 +3,7 @@ import type { QueryResult, QueryResultRow } from 'pg';
 import { Pool, types } from 'pg';
 import { performance } from 'node:perf_hooks';
 import client from 'prom-client';
-import { dbEnv, type DbConfig, type DbLogFn } from './env';
+import { loadDbEnv, type DbConfig, type DbLogFn } from './env';
 import { limitConcurrency } from './concurrency-helpers';
 
 // Fix Dates: TIMESTAMP comes back as a UTC Date (was set per-pool-module in the app).
@@ -82,7 +82,7 @@ export type GetClientOptions = Partial<DbConfig> & {
 
 export function getClient(options: GetClientOptions = {}) {
   const { instance = 'primary', log: logOption, ...envOverrides } = options;
-  const config = { ...dbEnv, ...envOverrides };
+  const config = { ...loadDbEnv(), ...envOverrides };
   const log: DbLogFn = logOption ?? (() => {});
 
   const instanceUrlMap: Record<ClientInstanceType, string> = {

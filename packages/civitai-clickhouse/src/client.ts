@@ -3,7 +3,7 @@
 import type { ClickHouseClient } from '@clickhouse/client';
 import { createClient } from '@clickhouse/client';
 import dayjs from 'dayjs';
-import { clickhouseEnv, type ClickhouseConfig } from './env';
+import { loadClickhouseEnv, type ClickhouseConfig } from './env';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
@@ -47,7 +47,7 @@ export function createClickhouseClient(
   options: CreateClickhouseClientOptions = {}
 ): CustomClickHouseClient {
   const { log: logOption, ...envOverrides } = options;
-  const config = { ...clickhouseEnv, ...envOverrides };
+  const config = { ...loadClickhouseEnv(), ...envOverrides };
   const log: ClickhouseLogFn = logOption ?? (() => {});
 
   console.log('Creating ClickHouse client');

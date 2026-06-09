@@ -15,21 +15,30 @@ const schema = z.object({
   LOG_ERRORS_TO_STDOUT: booleanString.default(false),
 });
 
-const parsed = schema.safeParse(process.env);
-if (!parsed.success) {
-  throw new Error('[@civitai/axiom] Invalid environment variables:\n' + z.prettifyError(parsed.error));
-}
-
 // Normalized, env-derived defaults. The factory accepts a Partial<AxiomConfig> to
 // override any of these per call (tests, multi-instance, alternate config sources).
-export const axiomEnv = {
-  token: parsed.data.AXIOM_TOKEN,
-  orgId: parsed.data.AXIOM_ORG_ID,
-  datastream: parsed.data.AXIOM_DATASTREAM,
-  podName: parsed.data.PODNAME,
-  logErrorsToStdout: parsed.data.LOG_ERRORS_TO_STDOUT,
-  // NODE_ENV is a universal Node convention (not Next-specific), so it's fine for a package.
-  isProd: process.env.NODE_ENV === 'production',
-};
+function buildEnv() {
+  const parsed = schema.safeParse(process.env);
+  if (!parsed.success) {
+    throw new Error('[@civitai/axiom] Invalid environment variables:\n' + z.prettifyError(parsed.error));
+  }
+  return {
+    token: parsed.data.AXIOM_TOKEN,
+    orgId: parsed.data.AXIOM_ORG_ID,
+    datastream: parsed.data.AXIOM_DATASTREAM,
+    podName: parsed.data.PODNAME,
+    logErrorsToStdout: parsed.data.LOG_ERRORS_TO_STDOUT,
+    // NODE_ENV is a universal Node convention (not Next-specific), so it's fine for a package.
+    isProd: process.env.NODE_ENV === 'production',
+  };
+}
 
-export type AxiomConfig = typeof axiomEnv;
+export type AxiomConfig = ReturnType<typeof buildEnv>;
+
+// Lazy + memoized: importing this module does NOT touch process.env. Validation runs
+// only when the factory calls loadAxiomEnv() — so a bare import (build, script, test)
+// never throws. Parsed once, then cached.
+let _env: AxiomConfig | undefined;
+export function loadAxiomEnv(): AxiomConfig {
+  return (_env ??= buildEnv());
+}

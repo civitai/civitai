@@ -32,32 +32,41 @@ const schema = z.object({
   LOGGING: commaDelimitedStringArray,
 });
 
-const parsed = schema.safeParse(process.env);
-if (!parsed.success) {
-  throw new Error('[@civitai/db] Invalid environment variables:\n' + z.prettifyError(parsed.error));
+// Normalized, env-derived defaults. Factories accept a Partial<DbConfig> to override.
+function buildEnv() {
+  const parsed = schema.safeParse(process.env);
+  if (!parsed.success) {
+    throw new Error('[@civitai/db] Invalid environment variables:\n' + z.prettifyError(parsed.error));
+  }
+  return {
+    databaseUrl: parsed.data.DATABASE_URL,
+    replicaUrl: parsed.data.DATABASE_REPLICA_URL,
+    replicaLongUrl: parsed.data.DATABASE_REPLICA_LONG_URL,
+    ssl: parsed.data.DATABASE_SSL,
+    notificationUrl: parsed.data.NOTIFICATION_DB_URL,
+    notificationReplicaUrl: parsed.data.NOTIFICATION_DB_REPLICA_URL,
+    datapacketReadUrl: parsed.data.DATAPACKET_DATABASE_RO_URL,
+    connectionTimeout: parsed.data.DATABASE_CONNECTION_TIMEOUT,
+    poolMax: parsed.data.DATABASE_POOL_MAX,
+    notificationPoolMax: parsed.data.NOTIFICATION_POOL_MAX,
+    poolIdleTimeout: parsed.data.DATABASE_POOL_IDLE_TIMEOUT,
+    readTimeout: parsed.data.DATABASE_READ_TIMEOUT,
+    writeTimeout: parsed.data.DATABASE_WRITE_TIMEOUT,
+    isDatapacket: parsed.data.IS_DATAPACKET,
+    podName: parsed.data.PODNAME,
+    logging: parsed.data.LOGGING,
+    // NODE_ENV is a universal Node convention; the Next build guard lives in the app shim.
+    isProd: process.env.NODE_ENV === 'production',
+  };
 }
 
-// Normalized, env-derived defaults. Factories accept a Partial<DbConfig> to override.
-export const dbEnv = {
-  databaseUrl: parsed.data.DATABASE_URL,
-  replicaUrl: parsed.data.DATABASE_REPLICA_URL,
-  replicaLongUrl: parsed.data.DATABASE_REPLICA_LONG_URL,
-  ssl: parsed.data.DATABASE_SSL,
-  notificationUrl: parsed.data.NOTIFICATION_DB_URL,
-  notificationReplicaUrl: parsed.data.NOTIFICATION_DB_REPLICA_URL,
-  datapacketReadUrl: parsed.data.DATAPACKET_DATABASE_RO_URL,
-  connectionTimeout: parsed.data.DATABASE_CONNECTION_TIMEOUT,
-  poolMax: parsed.data.DATABASE_POOL_MAX,
-  notificationPoolMax: parsed.data.NOTIFICATION_POOL_MAX,
-  poolIdleTimeout: parsed.data.DATABASE_POOL_IDLE_TIMEOUT,
-  readTimeout: parsed.data.DATABASE_READ_TIMEOUT,
-  writeTimeout: parsed.data.DATABASE_WRITE_TIMEOUT,
-  isDatapacket: parsed.data.IS_DATAPACKET,
-  podName: parsed.data.PODNAME,
-  logging: parsed.data.LOGGING,
-  // NODE_ENV is a universal Node convention; the Next build guard lives in the app shim.
-  isProd: process.env.NODE_ENV === 'production',
-};
-
-export type DbConfig = typeof dbEnv;
+export type DbConfig = ReturnType<typeof buildEnv>;
 export type DbLogFn = (message: string, ...args: unknown[]) => void;
+
+// Lazy + memoized: importing this module never touches process.env. Validation runs
+// only when a factory calls loadDbEnv(), so a bare import (build, script, test) never
+// throws. Parsed once, then cached.
+let _env: DbConfig | undefined;
+export function loadDbEnv(): DbConfig {
+  return (_env ??= buildEnv());
+}
