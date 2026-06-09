@@ -67,7 +67,15 @@ export class EntityMetricRedisClient {
     amount = 1
   ): Promise<number> {
     const key = this.getKey(entityType, entityId);
-    return await this.redis.hIncrBy(key, metricType, amount);
+    const result = await this.redis.hIncrBy(key, metricType, amount);
+    // Bound the key on the hot increment path too. setMetric/setMultipleMetrics
+    // set this TTL, but increment() previously left the key permanent — so any
+    // entitymetric:* key whose first/only touch was an increment (the hot
+    // reaction/comment path) never expired. Refreshing on each increment also
+    // gives a sliding TTL: the key lives while active, reaped 1h after the last
+    // touch. (2026-06-09 redis usage audit)
+    await this.redis.expire(key, EntityMetricRedisClient.METRIC_TTL_SECONDS);
+    return result;
   }
 
   async getMetric(
