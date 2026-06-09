@@ -237,15 +237,20 @@ export const blocksRouter = router({
     )
     .query(async ({ input, ctx }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
-      // Phase 2: App Blocks is moderator-only until GA. listForModel is a
-      // public procedure rendered on every model page — return [] for
-      // non-mods (the "no blocks installed" shape) rather than throwing on a
-      // user-facing page. UI also gates via features.appBlocks; this is the
-      // server-side belt-and-suspenders so a direct tRPC call leaks nothing.
-      if (!ctx.user?.isModerator) return [];
+      // App Blocks visibility is gated by the `appBlocks` feature flag
+      // (availability ['mod'] in prod today, 'public' once GA'd / on the
+      // anon-conversion preview) — NOT a hardcoded moderator check. The old
+      // `!ctx.user?.isModerator` gate returned [] for every anon / non-mod
+      // viewer even when the flag was public, so the slot rendered but never
+      // received installs — the anonymous-conversion flow's blocks never
+      // appeared. ctx.features mirrors the client `useFeatureFlags()` gate and
+      // the block-token mint gate (getFeatureFlags(...).appBlocks), keeping all
+      // three consistent. In prod the flag is mod-only, so a direct tRPC call
+      // from a non-mod still gets [] (nothing leaks pre-GA).
+      if (!ctx.features.appBlocks) return [];
       return BlockRegistry.listForModel({
         ...input,
-        viewerUserId: ctx.user.id,
+        viewerUserId: ctx.user?.id ?? null,
       });
     }),
 
@@ -1297,14 +1302,15 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(z.object({ modelVersionId: z.number().int().positive() }))
     .query(({ input, ctx }) => {
-      // Phase 2: moderator-only until GA. This is a block-specific call (not a
-      // model-page render), so a hard FORBIDDEN is correct for non-mods.
-      if (!ctx.user?.isModerator) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'App Blocks is restricted to the civitai team',
-        });
-      }
+      // Gated by the `appBlocks` feature flag (availability ['mod'] in prod
+      // today, 'public' once GA'd / on the anon-conversion preview), mirroring
+      // listForModel + the block-token mint gate. A hardcoded moderator check
+      // here blocked anon / non-mod viewers' blocks from loading showcase
+      // images (FORBIDDEN) even when the flag was public, breaking the
+      // anonymous-conversion flow. Return an empty showcase (the block renders
+      // a "no preview images" state) when the flag is off, so a non-eligible
+      // caller leaks nothing and the slot degrades gracefully.
+      if (!ctx.features.appBlocks) return [];
       return getModelShowcaseImages(input.modelVersionId);
     }),
 

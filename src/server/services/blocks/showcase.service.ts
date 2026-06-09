@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
@@ -63,11 +64,6 @@ export async function getModelShowcaseImages(modelVersionId: number): Promise<Sh
           height: true,
           meta: true,
           nsfwLevel: true,
-          metrics: {
-            where: { timeframe: 'AllTime' },
-            select: { reactionCount: true },
-            take: 1,
-          },
         },
       },
     },
@@ -77,6 +73,27 @@ export async function getModelShowcaseImages(modelVersionId: number): Promise<Sh
     // model) before slicing. Cap at 50 to bound the query cost.
     take: 50,
   });
+
+  // Reaction counts come from a raw query, NOT the typed Prisma relation:
+  // ImageMetric.reactionCount is declared non-nullable `Int` in schema.prisma
+  // (no @default) but is actually NULL for some rows in prod, so selecting it
+  // through the typed client throws "Error converting field reactionCount of
+  // expected non-nullable type Int, found null" on deserialize (a 500 on this
+  // endpoint). $queryRaw is null-tolerant; coalesce to 0 (the same intent as
+  // the original `?? 0`).
+  const candidateImageIds = Array.from(
+    new Set(rows.map((r) => r.image?.id).filter((id): id is number => id != null))
+  );
+  const reactionByImage = new Map<number, number>();
+  if (candidateImageIds.length > 0) {
+    const metricRows = await dbRead.$queryRaw<Array<{ imageId: number; reactionCount: number | null }>>`
+      SELECT "imageId", "reactionCount"
+      FROM "ImageMetric"
+      WHERE "imageId" IN (${Prisma.join(candidateImageIds)})
+        AND "timeframe" = 'AllTime'
+    `;
+    for (const m of metricRows) reactionByImage.set(m.imageId, m.reactionCount ?? 0);
+  }
 
   // De-dupe (one Image can have multiple ImageResource rows) + sort by
   // reactionCount desc. Doing this in JS instead of via Prisma's
@@ -88,7 +105,7 @@ export async function getModelShowcaseImages(modelVersionId: number): Promise<Sh
     const img = row.image;
     if (!img || seen.has(img.id)) continue;
     seen.add(img.id);
-    const reactions = img.metrics[0]?.reactionCount ?? 0;
+    const reactions = reactionByImage.get(img.id) ?? 0;
     flat.push({ img, reactions });
   }
   flat.sort((a, b) => b.reactions - a.reactions);
