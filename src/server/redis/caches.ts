@@ -1311,7 +1311,11 @@ type ImageTagsCacheItem = {
 export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_TAGS,
   idKey: 'imageId',
-  ttl: CacheTTL.day,
+  // Reduced from day to 1h — this cache ran at ~50% of next-redis-cluster
+  // (~12.7M keys/shard × ~4.2KB full tag composites) yet had a 25.5% hit ratio
+  // (misses > hits): a 24h TTL bought nothing since entries were LRU-evicted long
+  // before reuse. SWR off → effective Redis EX = 1h. (2026-06-09 redis usage audit)
+  ttl: CacheTTL.hour,
   staleWhileRevalidate: false,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
@@ -1397,7 +1401,10 @@ type ImageResourcesCacheItem = {
 export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_RESOURCES,
   idKey: 'imageId',
-  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
+  // Reduced from day to 8h — 68.8% hit at ~728B/key × ~7.3M keys; with SWR on,
+  // the day TTL resided for 48h, generous for a sub-average-hit cache.
+  // Effective Redis EX = 16h. (2026-06-09 redis usage audit)
+  ttl: CacheTTL.hour * 8,
   lookupFn: async (ids, fromWrite) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};
