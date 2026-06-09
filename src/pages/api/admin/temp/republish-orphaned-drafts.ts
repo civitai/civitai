@@ -132,14 +132,20 @@ async function republishOne(c: Candidate): Promise<Result> {
 
       // Defensive: sync any other Posts on this version to the same
       // publishedAt if they were orphaned similarly. Matches the logic in
-      // publishModelById but with the specific versionId scope.
+      // publishModelById but with the specific versionId scope. Same
+      // anti-bump invariant as the model/version writes above: only NULL
+      // (Draft/Unpublished) or future-Scheduled rows accept the new value;
+      // already-public posts keep their original publishedAt, even if it
+      // happens to differ from the candidate publishedAt we're writing for
+      // the model — those posts are independently published and not ours
+      // to bump.
       await tx.$executeRaw(Prisma.sql`
         UPDATE "Post" p
         SET "publishedAt" = ${publishedAt},
             "metadata"    = COALESCE(p."metadata", '{}'::jsonb) - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
         WHERE p."modelVersionId" = ${c.versionId}
           AND p."userId"         = ${c.userId}
-          AND (p."publishedAt" IS NULL OR p."publishedAt" <> ${publishedAt})
+          AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
       `);
     });
 

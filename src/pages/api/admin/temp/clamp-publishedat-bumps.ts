@@ -149,6 +149,31 @@ async function runApply(dryRun: boolean): Promise<{ ops: Ops; affected: Affected
           AND "publishedAt" > (metadata->>'prevPublishedAt')::timestamptz
       `);
 
+      // Op 4 reclass scope is captured upfront too. Without this the
+      // post-commit side-effects (dataForModelsCache.refresh, bustMvCache)
+      // would skip the reclassed Draft->Unpublished rows on apply, while
+      // the rollback path picks them up via the `prevStatus IS NOT NULL`
+      // filter and refreshes their caches — the asymmetry would mean
+      // running apply→rollback touches a wider set of caches than apply
+      // alone, masking any drift between the two paths.
+      await tx.$executeRaw(Prisma.sql`
+        CREATE TEMP TABLE op4_versions ON COMMIT DROP AS
+        SELECT id, "modelId"
+        FROM "ModelVersion"
+        WHERE status = 'Draft'::"ModelStatus"
+          AND meta->>'unpublishedAt'     IS NOT NULL
+          AND meta->>'unpublishedReason' IN ('no-files', 'no-posts')
+      `);
+
+      await tx.$executeRaw(Prisma.sql`
+        CREATE TEMP TABLE op4_models ON COMMIT DROP AS
+        SELECT id
+        FROM "Model"
+        WHERE status = 'Draft'::"ModelStatus"
+          AND meta->>'unpublishedAt'     IS NOT NULL
+          AND meta->>'unpublishedReason' = 'no-versions'
+      `);
+
       // ---- 1a) clamp ModelVersion.publishedAt via version meta breadcrumb ----
       const clampedVersionsByVersionMeta = await tx.$executeRaw(Prisma.sql`
         UPDATE "ModelVersion"
@@ -246,40 +271,52 @@ async function runApply(dryRun: boolean): Promise<{ ops: Ops; affected: Affected
       `);
 
       // ---- 4) reclassify legacy cron-demoted Draft -> Unpublished ----
+      // Driven off the op4_versions / op4_models snapshots so the affected
+      // ID set used for side-effects below stays consistent with what we
+      // actually wrote.
       const reclassedVersionsToUnpublished = await tx.$executeRaw(Prisma.sql`
         UPDATE "ModelVersion"
         SET
           meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object(${STASH.prevStatus}, status::text),
           status = 'Unpublished'::"ModelStatus"
-        WHERE status = 'Draft'::"ModelStatus"
-          AND meta->>'unpublishedAt'     IS NOT NULL
-          AND meta->>'unpublishedReason' IN ('no-files', 'no-posts')
+        WHERE id IN (SELECT id FROM op4_versions)
       `);
 
       const reclassedModelsToUnpublished = await tx.$executeRaw(Prisma.sql`
-        UPDATE "Model" m
+        UPDATE "Model"
         SET
-          meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(${STASH.prevStatus}, m.status::text),
+          meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object(${STASH.prevStatus}, status::text),
           status = 'Unpublished'::"ModelStatus"
-        WHERE m.status = 'Draft'::"ModelStatus"
-          AND m.meta->>'unpublishedAt'     IS NOT NULL
-          AND m.meta->>'unpublishedReason' = 'no-versions'
+        WHERE id IN (SELECT id FROM op4_models)
       `);
 
       // ---- collect affected IDs for side-effects ----
+      // Union all four scopes (1a, 1b, op4 versions, op4 models) so the
+      // cache + search-index sweep matches what rollback would touch in
+      // reverse. Apply/rollback asymmetry would otherwise mask drift
+      // because rollback's filter (`prevStatus IS NOT NULL`) catches the
+      // op4 reclass rows but apply did not.
       const affectedVersionRows = await tx.$queryRaw<{ id: number; modelId: number }[]>(Prisma.sql`
         SELECT id, "modelId" FROM op1a_versions
         UNION
         SELECT id, "modelId" FROM op1b_versions
+        UNION
+        SELECT id, "modelId" FROM op4_versions
       `);
       const versionIds = affectedVersionRows.map((r) => r.id);
       const versionModelIds = affectedVersionRows.map((r) => r.modelId);
+
+      const op4ModelRows = await tx.$queryRaw<{ id: number }[]>(Prisma.sql`
+        SELECT id FROM op4_models
+      `);
 
       const postRows = await tx.$queryRaw<{ id: number }[]>(Prisma.sql`
         SELECT id FROM op3_posts
       `);
 
-      const modelIds = Array.from(new Set(versionModelIds));
+      const modelIds = Array.from(
+        new Set([...versionModelIds, ...op4ModelRows.map((r) => r.id)])
+      );
       const postIds = postRows.map((r) => r.id);
 
       const result = {

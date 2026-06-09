@@ -3728,15 +3728,27 @@ export const publishPrivateModel = async ({
   const now = new Date();
 
   await dbWrite.$transaction(async (tx) => {
+    // Availability + demotion to null flip unconditionally; the publish
+    // bump to `now` is routed through the anti-bump SQL guard below so an
+    // already-public post (e.g. a Public→Private→Public flip) keeps its
+    // original publishedAt. Same invariant as publishModelById:2154-2167.
     await tx.post.updateMany({
       where: {
         modelVersionId: { in: versionIds },
       },
       data: {
-        publishedAt: publishVersions ? now : null,
+        publishedAt: publishVersions ? undefined : null,
         availability: Availability.Public,
       },
     });
+    if (publishVersions) {
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET "publishedAt" = ${now}
+        WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
+    }
 
     await tx.modelVersion.updateMany({
       where: { id: { in: versionIds } },

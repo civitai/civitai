@@ -722,12 +722,18 @@ export const updateModelVersionById = async ({
   const result = await dbWrite.$transaction(async (tx) => {
     const updated = await tx.modelVersion.update({ where: { id }, data: restData });
     if (publishedAt !== undefined) {
-      await tx.$executeRaw`
+      const writeCount = await tx.$executeRaw`
         UPDATE "ModelVersion"
         SET "publishedAt" = ${publishedAt}
         WHERE id = ${id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
       `;
+      // Reflect the guard outcome on the returned object. tx.modelVersion
+      // .update() captured row state BEFORE this raw write, so without
+      // patching here callers reading `result.publishedAt` would see the
+      // pre-guard value. When writeCount = 0 the guard blocked the write
+      // and the original returned value is still authoritative.
+      if (writeCount > 0) updated.publishedAt = publishedAt;
     }
     return updated;
   });
