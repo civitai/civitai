@@ -14,6 +14,8 @@ tests
 .github
 .vscode
 playwright.config.ts
-prisma/migrations
-prisma/programmability
-prisma/seed.ts
+
+# NOTE: we intentionally do NOT exclude packages/*/prisma/{migrations,programmability,seed.ts}.
+# The runtime image (runner stage) only copies Next's standalone output, never packages/, so
+# these never ship to production regardless. Excluding them only trimmed the build context — a
+# micro-optimization not worth the "remember to update it per new package" maintenance.
