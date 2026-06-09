@@ -6,6 +6,7 @@ import { IconApps, IconDots } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
+import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { intersectSandbox } from './sandbox';
@@ -910,12 +911,13 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // FRAME-1: host trust frame wraps EVERY state — loading, ready, AND the
-  // error/timeout/fatal/no-token fallbacks. Rendered here (around the iframe,
-  // not inside it) so a block can't shed the "App block" chrome by never
-  // sending BLOCK_READY (→ timeout) or by sending BLOCK_ERROR{fatal}. The
-  // provenance label + "Manage apps" escape hatch stay present exactly when
-  // something is going wrong.
+  // W7 host trust frame: wraps the LOADING + READY states (rendered here,
+  // around the iframe, not inside it — so a block can't fake/restyle/hide the
+  // "App block" provenance chrome). Terminal-FAILURE states no longer render
+  // a framed fallback card; they collapse to null (see hostRenderDecision
+  // above). Rendering null shows no content at all, so a failed block can't
+  // masquerade as anything — the FRAME-1 anti-spoofing property holds without
+  // a visible frame on failure.
   const framed = (children: ReactNode) => (
     <Box
       data-testid="app-block-frame"
@@ -931,20 +933,19 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     </Box>
   );
 
-  // H-7: malformed manifest with empty iframe.src or invalid origin mounts
-  // an about:blank that sits on the skeleton for 10s before timing out.
-  // Short-circuit straight to the fatal fallback instead.
-  if (!iframeSrc || !expectedOrigin) {
-    return framed(<BlockFallback reason="fatal_block_error" blockName={install.manifest.name} />);
-  }
-  if (status === 'timeout') {
-    return framed(<BlockFallback reason="timeout" blockName={install.manifest.name} />);
-  }
-  if (status === 'fatal') {
-    return framed(<BlockFallback reason="fatal_block_error" blockName={install.manifest.name} />);
-  }
-  if (status === 'no_token') {
-    return framed(<BlockFallback reason="token_error" blockName={install.manifest.name} />);
+  // Terminal-failure collapse: a block that fails to load shows NOTHING
+  // (render null → the slot takes no space) rather than a visible broken
+  // card. Covers malformed manifest (empty iframe.src / invalid origin, the
+  // old H-7 fatal), 'timeout' (no BLOCK_READY within 10s), 'fatal'
+  // (BLOCK_ERROR{fatal:true}), and 'no_token' (token never resolved → the old
+  // token_error). Rendering null shows no content at all, so the W7
+  // anti-spoofing property (FRAME-1) is NOT weakened: there's nothing for a
+  // block to masquerade as. The trust chrome is preserved only on the READY
+  // (rendered) state below; the brief loading skeleton is also preserved.
+  // Decision logic lives in the pure, unit-tested `hostRenderDecision` helper.
+  const render = hostRenderDecision({ iframeSrc, expectedOrigin, status });
+  if (render === 'collapse') {
+    return null;
   }
 
   // CLS fix (Source B): collapse the hidden→shown iframe swap. The iframe is

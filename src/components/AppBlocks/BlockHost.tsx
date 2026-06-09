@@ -23,8 +23,12 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
     slotContext
   );
 
+  // Terminal token-mint failure → collapse (render null, take no space)
+  // rather than show a visible "authorization error" card. Matches the
+  // IframeHost terminal-failure collapse: a block that can't load shows
+  // nothing. The brief loading skeleton below is preserved.
   if (error) {
-    return <BlockFallback reason="token_error" blockName={blockInstall.manifest.name} />;
+    return null;
   }
   if (pending || !token || !expiresAt) {
     return (
