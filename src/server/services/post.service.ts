@@ -813,12 +813,20 @@ export const updatePost = async ({
       // public. Allowed transitions: NULL (Draft/Unpublished) -> set, or
       // future (Scheduled) -> reschedule. Republish of an already-public
       // post is a no-op for this column. Mirrors the Model/Version guards.
-      await tx.$executeRaw`
+      const writeCount = await tx.$executeRaw`
         UPDATE "Post"
         SET "publishedAt" = ${publishedAt}
         WHERE id = ${id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
       `;
+      // Reflect the guard outcome on the returned object. tx.post.update
+      // captured the row state BEFORE this raw write, so without patching
+      // here the controller's `wasPublished` check
+      // (post.controller.ts: `!post?.publishedAt && updatedPost.publishedAt`)
+      // misses a fresh publish and skips reward / event-engine side-effects.
+      // When writeCount = 0 the guard blocked the write and the original
+      // returned value is still the authoritative DB state.
+      if (writeCount > 0) updated.publishedAt = publishedAt;
     }
     return updated;
   });
