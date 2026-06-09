@@ -29,7 +29,9 @@ export function CivitaiSessionProvider({
   const { allowMatureContent, region, verifiedBot } = useAppContext();
   const isRestricted = isRegionRestricted(region) && !user?.isModerator;
   useDomainSync(data?.user as SessionUser, status);
-  const { data: settings } = trpc.user.getSettings.useQuery();
+  const { data: settings } = trpc.user.getSettings.useQuery(undefined, {
+    enabled: !!user,
+  });
   const settingsAllowAds = settings?.allowAds;
   const settingsDisableHidden = settings?.disableHidden;
   // User-column toggles now ride the same React Query cache so

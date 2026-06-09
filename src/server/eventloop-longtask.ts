@@ -1,0 +1,503 @@
+// Event-loop long-task detector + attribution.
+//
+// WHY: api-primary pods pin under bursts because the single Node JS thread
+// saturates. A V8 CPU profile (src/server/cpu-profiler.ts) shows where CPU is
+// spent but is idle-diluted and can't show *per-task blocking frequency* — i.e.
+// "operation X blocked the loop for Y ms, N times/min". This module produces
+// that frequency-weighted signal directly.
+//
+// TIERS (cheapest first; each tier ADDS to the ones below it):
+//
+//   DISARMED (EVENTLOOP_LONGTASK_THRESHOLD_MS unset/<=0): the production
+//     default. NOTHING is installed and — critically — the request hot path
+//     (tRPC middleware, /api/v1/images) runs with NO wrapper, NO extra closure,
+//     NO microtask hop. It is byte-for-byte the pre-instrumentation code path.
+//     The call sites branch on `longTaskLabelsArmed` (resolved once at module
+//     load) so the disarmed call is the original `return next()` / handler call.
+//
+//   BASE ARMED (THRESHOLD_MS > 0): cheap + safe, the intended steady-state prod
+//     mode. Installs:
+//       1. monitorEventLoopDelay() — a libuv-internal lag histogram. Effectively
+//          zero JS overhead (no per-event callback; timing happens in C++).
+//          This is the AUTHORITATIVE lag signal. Exposed as Prometheus gauges.
+//       2. A timer-drift long-task detector — one repeating timer expected to
+//          fire every TICK_MS. When the actual gap exceeds TICK_MS + threshold,
+//          the loop was blocked for ~(gap - TICK_MS). Increments a Prom
+//          histogram + counter + (rate-limited) structured log. Cost is one
+//          Date.now() subtraction per tick. Blocks are labeled 'unlabeled'.
+//       NOTE: base armed does NOT touch async_hooks at all — no ALS, no
+//       createHook. This is deliberate: per-request async-context propagation is
+//       the exact cost the team removed from OTEL (Redis/Prisma instrumentation,
+//       see instrumentation.node.ts) to stop the pins. We do not re-add it as a
+//       default.
+//
+//   LABELS (EVENTLOOP_LONGTASK_LABELS=true, requires armed): per-procedure
+//     attribution via AsyncLocalStorage. Handlers set a short label (tRPC
+//     procedure path / API route) via runWithLongTaskLabel; on a detected block
+//     we read the CURRENTLY-RUNNING label. This adds an ALS .run() per armed
+//     request — the async_hooks context-propagation cost. Opt-in for short
+//     diagnostic windows; NOT recommended as an always-on default at 1500 req/s.
+//
+//   STACKS (EVENTLOOP_LONGTASK_STACKS=true, requires armed): async_hooks stack
+//     capture (most expensive). Records a captured Error().stack on sampled
+//     async resources; on a block the just-finished resource's stack is the
+//     blocker (the `blocked-at` technique). Sampled (~1/STACK_SAMPLE) to bound
+//     cost. For short, deliberate diagnostic windows only.
+//
+// Server-side (nodejs runtime) only. Never imported on the edge/client.
+
+import { AsyncLocalStorage, createHook, type AsyncHook } from 'node:async_hooks';
+import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+import client from 'prom-client';
+import { registerCounter, registerHistogram } from '~/server/prom/client';
+import { logToAxiom } from '~/server/logging/client';
+
+// ---------------------------------------------------------------------------
+// Config (env-tunable)
+// ---------------------------------------------------------------------------
+
+/** Block threshold in ms. <=0 or unset => the whole detector is DISARMED. */
+function resolveThresholdMs(): number {
+  const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_THRESHOLD_MS ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/**
+ * How often the drift-detection timer fires. The loop is sampled at this
+ * granularity, so a block shorter than ~TICK_MS may be missed and a block is
+ * resolved to within +/-TICK_MS. 20ms is a good balance: fine enough to catch a
+ * 50ms block, coarse enough that the timer itself is negligible.
+ */
+function resolveTickMs(): number {
+  const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_TICK_MS ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 5 ? parsed : 20;
+}
+
+/** Max structured log lines per minute, so a storm of blocks can't flood logs/loop. */
+function resolveLogPerMin(): number {
+  const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_LOG_PER_MIN ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 30;
+}
+
+/** Only LOG blocks at/above this ms (metrics still count everything >= threshold). */
+function resolveLogMinMs(threshold: number): number {
+  const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_LOG_MIN_MS ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : threshold;
+}
+
+/**
+ * OPT-IN per-procedure ALS label attribution. Requires the detector to be armed.
+ * Adds an AsyncLocalStorage .run() per armed request (async_hooks context
+ * propagation) — the same structural cost removed from OTEL. Off by default.
+ */
+function resolveLabelsEnabled(): boolean {
+  return process.env.EVENTLOOP_LONGTASK_LABELS === 'true';
+}
+
+/**
+ * OPT-IN async_hooks stack-capture attribution (most expensive). Requires armed
+ * AND EVENTLOOP_LONGTASK_STACKS=true. Sampled: capture a stack on ~1/STACK_SAMPLE
+ * async resources (1 => every resource; 50 => ~2%). Higher = cheaper + lossier.
+ */
+function resolveStacksEnabled(): boolean {
+  return process.env.EVENTLOOP_LONGTASK_STACKS === 'true';
+}
+function resolveStackSample(): number {
+  const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_STACK_SAMPLE ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : 50;
+}
+
+/**
+ * Gaps longer than this are treated as process suspension (GC can't pause this
+ * long; this is pod CPU-steal, VM suspend, or a descheduled container), NOT a JS
+ * block — so a descheduled pod doesn't emit a fake multi-second "block". The
+ * authoritative lag signal remains the monitorEventLoopDelay histogram. Tunable
+ * via EVENTLOOP_LONGTASK_SUSPEND_MS; <=0 disables the cap.
+ */
+function resolveSuspendCapMs(): number {
+  const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_SUSPEND_MS ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 5000;
+}
+
+/** Hard cap on the per-asyncId stack Map (stacks tier) so it can't grow unbounded. */
+function resolveStackMapCap(): number {
+  const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_STACK_MAP_CAP ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 100 ? parsed : 10_000;
+}
+
+function resolvePodName(): string {
+  return process.env.PODNAME || process.env.HOSTNAME || 'unknown';
+}
+
+// ---------------------------------------------------------------------------
+// Module-load tier resolution
+// ---------------------------------------------------------------------------
+
+// `armed` and `labelsArmed` are settled ONCE at module load. registerEventLoop...
+// runs at instrumentation time, before any request is served, so the request
+// hot path can branch on these constants with zero per-request indirection.
+
+/** True when the detector base tier is armed (THRESHOLD_MS > 0). */
+let armed = false;
+
+/**
+ * True when per-procedure ALS label attribution is active (armed AND
+ * EVENTLOOP_LONGTASK_LABELS=true). The tRPC middleware and /api/v1/images handler
+ * import this and branch on it so the DISARMED (and base-armed-without-labels)
+ * path runs the original code with NO wrapper/closure/microtask hop.
+ */
+export let longTaskLabelsArmed = false;
+
+// ---------------------------------------------------------------------------
+// AsyncLocalStorage attribution label (labels tier)
+// ---------------------------------------------------------------------------
+
+type LabelStore = { label: string };
+const labelStorage = new AsyncLocalStorage<LabelStore>();
+
+/**
+ * Run `fn` with `label` as the active long-task attribution label.
+ *
+ * IMPORTANT: callers MUST gate this with `longTaskLabelsArmed` so the disarmed
+ * path is wrapper-free:
+ *
+ *   return longTaskLabelsArmed ? runWithLongTaskLabel(path, () => next()) : next();
+ *
+ * As a defense-in-depth safeguard this also short-circuits internally when the
+ * labels tier is not armed (then it's a direct `fn()` with no ALS store created),
+ * but the call-site gate is what guarantees zero added closure when disarmed.
+ */
+export function runWithLongTaskLabel<T>(label: string, fn: () => T): T {
+  if (!longTaskLabelsArmed) return fn();
+  return labelStorage.run({ label }, fn);
+}
+
+/** Current attribution label, or 'unlabeled' when running outside a labeled scope. */
+function currentLabel(): string {
+  if (!longTaskLabelsArmed) return 'unlabeled';
+  return labelStorage.getStore()?.label ?? 'unlabeled';
+}
+
+// ---------------------------------------------------------------------------
+// async_hooks stack capture (stacks tier — opt-in, sampled, capped)
+// ---------------------------------------------------------------------------
+
+// Most-recently-entered async resource's captured stack (or undefined if that
+// resource wasn't sampled). Read on a detected block: the resource that just ran
+// `before` is the one whose synchronous body blocked the loop.
+let lastBeforeStack: string | undefined;
+let lastBeforeType: string | undefined;
+let stackHook: AsyncHook | undefined;
+
+function installStackHook(sampleEvery: number, mapCap: number): void {
+  // Per-resource captured stack, keyed by asyncId. Sampled to bound capture cost,
+  // and HARD-CAPPED in size: `destroy` is not guaranteed to fire for every
+  // sampled resource (some resources never emit destroy), so without a cap the
+  // Map could grow without bound under sustained load and leak memory. On reaching
+  // the cap we evict the oldest insertion (Map preserves insertion order), which
+  // bounds memory while keeping the most recent — most likely to be `before`-read
+  // — stacks.
+  const stacks = new Map<number, { stack: string; type: string }>();
+  let counter = 0;
+
+  stackHook = createHook({
+    init(asyncId: number, type: string) {
+      // Sample: only capture a stack for ~1/sampleEvery resources.
+      counter = (counter + 1) % sampleEvery;
+      if (counter !== 0) return;
+      // Error().stack is the dominant cost; this is why the whole tier is gated.
+      const stack = new Error().stack;
+      if (!stack) return;
+      // Bound the Map: evict oldest entries until under the cap before inserting.
+      while (stacks.size >= mapCap) {
+        const oldest = stacks.keys().next().value;
+        if (oldest === undefined) break;
+        stacks.delete(oldest);
+      }
+      stacks.set(asyncId, { stack, type });
+    },
+    before(asyncId: number) {
+      const entry = stacks.get(asyncId);
+      if (entry) {
+        lastBeforeStack = entry.stack;
+        lastBeforeType = entry.type;
+      }
+    },
+    destroy(asyncId: number) {
+      stacks.delete(asyncId);
+    },
+  });
+  stackHook.enable();
+}
+
+// ---------------------------------------------------------------------------
+// Prometheus metrics (registered via the existing prom/client helpers)
+// ---------------------------------------------------------------------------
+
+// Long-task duration histogram, labeled by attributed operation. Cardinality is
+// bounded: in base-armed mode every block is 'unlabeled' (one series); with the
+// labels tier on, `label` is the same fixed tRPC-procedure / route enum that
+// trpc_procedure_duration already uses. Buckets target the 50ms..several-seconds
+// range that matters for pins.
+const longTaskHistogram = registerHistogram({
+  name: 'eventloop_longtask_duration_seconds',
+  help: 'Synchronous event-loop blocks over threshold, by attributed operation label. NOTE: drift-timer based — counts include GC pauses and (below the suspension cap) brief CPU-steal, not only JS blocks. The authoritative lag signal is civitai_app_eventloop_delay_ms.',
+  labelNames: ['label'] as const,
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
+});
+
+// Cheap always-armed count of detected long tasks (no label) — a single series
+// that's safe to alert on even if label cardinality is ever a concern.
+const longTaskCounter = registerCounter({
+  name: 'eventloop_longtask_total',
+  help: 'Total event-loop blocks detected over threshold (drift-timer based; includes GC pauses)',
+});
+
+// Count of gaps classified as process suspension (over the suspension cap) and
+// therefore NOT recorded as JS blocks — surfaces pod CPU-steal / VM suspend.
+const suspensionCounter = registerCounter({
+  name: 'eventloop_longtask_suspension_total',
+  help: 'Drift-timer gaps over the suspension cap, treated as process suspension (CPU-steal/VM suspend), not JS blocks',
+});
+
+// monitorEventLoopDelay() histogram, surfaced as collect()-based gauges (matching
+// the pg-pool gauge pattern in prom/client.ts). Reset after each scrape so each
+// scrape reflects the interval since the last one (Prometheus-friendly).
+let elDelayHistogram: IntervalHistogram | undefined;
+let elGaugeInitialized = false;
+
+function initEventLoopDelayGauges(): void {
+  if (elGaugeInitialized) return;
+  elGaugeInitialized = true;
+
+  elDelayHistogram = monitorEventLoopDelay({ resolution: 10 });
+  elDelayHistogram.enable();
+
+  // One labeled gauge emitting p50/p99/max/mean (ms). collect() reads the live
+  // libuv histogram on each scrape — no per-event JS work.
+  const g = new client.Gauge({
+    name: 'civitai_app_eventloop_delay_ms',
+    help: 'Event-loop delay (lag) distribution from perf_hooks.monitorEventLoopDelay, ms. This is the AUTHORITATIVE event-loop lag signal (C++ measured, no JS per-event cost).',
+    labelNames: ['quantile'],
+    collect() {
+      const h = elDelayHistogram;
+      if (!h) return;
+      const toMs = (ns: number) => (Number.isFinite(ns) ? ns / 1e6 : 0);
+      this.set({ quantile: 'p50' }, toMs(h.percentile(50)));
+      this.set({ quantile: 'p90' }, toMs(h.percentile(90)));
+      this.set({ quantile: 'p99' }, toMs(h.percentile(99)));
+      this.set({ quantile: 'max' }, toMs(h.max));
+      this.set({ quantile: 'mean' }, toMs(h.mean));
+      // Reset so the next scrape window is independent (avoids max/p99 sticking
+      // at an all-time high forever after a single spike).
+      h.reset();
+    },
+  });
+  // Guard against double-registration under Next.js HMR.
+  try {
+    client.register.registerMetric(g);
+  } catch {
+    // already registered
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rate-limited structured logging
+// ---------------------------------------------------------------------------
+
+let logBudget = 0;
+let logWindowStart = 0;
+let droppedSinceLastLog = 0;
+
+function tryLog(durationMs: number, label: string, threshold: number, logPerMin: number): void {
+  const now = Date.now();
+  // Refill the per-minute budget.
+  if (now - logWindowStart >= 60_000) {
+    logWindowStart = now;
+    logBudget = logPerMin;
+  }
+  if (logBudget <= 0) {
+    droppedSinceLastLog++;
+    return;
+  }
+  logBudget--;
+
+  const dropped = droppedSinceLastLog;
+  droppedSinceLastLog = 0;
+
+  // logToAxiom is fire-and-forget (async); never await it on this path.
+  void logToAxiom(
+    {
+      name: 'eventloop-longtask',
+      pod: resolvePodName(),
+      durationMs: Math.round(durationMs),
+      thresholdMs: threshold,
+      label,
+      // Stack is only present when the stacks tier is enabled AND this resource
+      // was sampled.
+      stack: lastBeforeStack,
+      resourceType: lastBeforeType,
+      // How many blocks were suppressed by the rate-limiter since the last logged
+      // line — so a storm is visible in the data without flooding.
+      droppedSinceLastLog: dropped,
+    },
+    'eventloop-longtask'
+  ).catch(() => {
+    // Logging must never crash or block the detector.
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Drift math (pure, unit-testable)
+// ---------------------------------------------------------------------------
+
+export type DriftClassification =
+  | { kind: 'ok'; blockedMs: number }
+  | { kind: 'block'; blockedMs: number }
+  | { kind: 'suspension'; gapMs: number };
+
+/**
+ * Classify a single drift-timer tick. Pure function so the math is unit-testable
+ * without timers.
+ *
+ * @param nowMs        timestamp of this tick
+ * @param lastMs       timestamp of the previous tick
+ * @param tickMs       expected interval between ticks
+ * @param thresholdMs  block threshold (excess over tickMs)
+ * @param suspendCapMs gaps with excess >= this are process suspension, not a JS
+ *                     block (<=0 disables the cap)
+ *
+ * NOTE: blockedMs from a JS setInterval includes GC pauses and brief pod
+ * CPU-steal — it is NOT a pure "JS executed synchronously for N ms" signal. The
+ * authoritative lag signal is the monitorEventLoopDelay histogram. The suspension
+ * cap filters out absurd gaps (descheduled pod / VM suspend) so they aren't
+ * recorded as multi-second JS blocks.
+ */
+export function classifyDrift(
+  nowMs: number,
+  lastMs: number,
+  tickMs: number,
+  thresholdMs: number,
+  suspendCapMs: number
+): DriftClassification {
+  const blockedMs = nowMs - lastMs - tickMs;
+  if (blockedMs < thresholdMs) return { kind: 'ok', blockedMs };
+  if (suspendCapMs > 0 && blockedMs >= suspendCapMs) {
+    return { kind: 'suspension', gapMs: nowMs - lastMs };
+  }
+  return { kind: 'block', blockedMs };
+}
+
+// ---------------------------------------------------------------------------
+// Arm / detector loop
+// ---------------------------------------------------------------------------
+
+/**
+ * Arm the event-loop long-task detector. Safe to call once at server startup.
+ * No-op off the nodejs runtime and when EVENTLOOP_LONGTASK_THRESHOLD_MS <= 0
+ * (the disarmed default), in which case the request hot path is left completely
+ * untouched (no wrapper — see longTaskLabelsArmed and runWithLongTaskLabel).
+ */
+export function registerEventLoopLongTaskDetector(): void {
+  try {
+    if (process.env.NEXT_RUNTIME && process.env.NEXT_RUNTIME !== 'nodejs') return;
+    if (armed) return;
+
+    const threshold = resolveThresholdMs();
+    if (threshold <= 0) {
+      // DISARMED — the common production default. Nothing installed; the request
+      // hot path runs the original code with zero added indirection.
+      return;
+    }
+
+    const tickMs = resolveTickMs();
+    const logPerMin = resolveLogPerMin();
+    const logMinMs = resolveLogMinMs(threshold);
+    const suspendCapMs = resolveSuspendCapMs();
+    const labelsEnabled = resolveLabelsEnabled();
+    const stacksEnabled = resolveStacksEnabled();
+    const stackSample = resolveStackSample();
+    const stackMapCap = resolveStackMapCap();
+
+    armed = true;
+    // Labels tier is the ONLY thing the request hot path branches on. Set before
+    // any request runs so call sites read a settled constant.
+    longTaskLabelsArmed = labelsEnabled;
+
+    // BASE ARMED: always-on lag histogram (cheap, C++-measured).
+    initEventLoopDelayGauges();
+
+    // STACKS tier: opt-in, sampled, capped async_hooks stack attribution (expensive).
+    if (stacksEnabled) {
+      installStackHook(stackSample, stackMapCap);
+    }
+
+    // Drift-detection timer. Expected gap is tickMs; anything beyond
+    // tickMs + threshold means the loop was synchronously blocked for the excess
+    // (subject to the suspension cap, which reclassifies absurd gaps).
+    let last = Date.now();
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const result = classifyDrift(now, last, tickMs, threshold, suspendCapMs);
+      last = now;
+
+      if (result.kind === 'suspension') {
+        // Descheduled pod / VM suspend / CPU-steal — NOT a JS block. Count it
+        // separately and skip the block histogram + log so we don't emit a fake
+        // multi-second block.
+        suspensionCounter.inc();
+      } else if (result.kind === 'block') {
+        const { blockedMs } = result;
+        const label = currentLabel();
+        longTaskCounter.inc();
+        longTaskHistogram.observe({ label }, blockedMs / 1000);
+        if (blockedMs >= logMinMs) {
+          tryLog(blockedMs, label, threshold, logPerMin);
+        }
+      }
+
+      // Clear the sampled stack after each tick so a stale stack from a previous
+      // tick can't be mis-attributed to a later block. Cheap no-op when stacks
+      // tier is off.
+      lastBeforeStack = undefined;
+      lastBeforeType = undefined;
+    }, tickMs);
+
+    // Don't keep the process alive solely for this timer (e.g. during shutdown).
+    timer.unref();
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `[eventloop-longtask] armed: threshold=${threshold}ms tick=${tickMs}ms ` +
+        `logPerMin=${logPerMin} logMinMs=${logMinMs} suspendCap=${suspendCapMs}ms ` +
+        `labels=${labelsEnabled ? 'on' : 'off'} ` +
+        `stacks=${stacksEnabled ? `on(sample=1/${stackSample},cap=${stackMapCap})` : 'off'}`
+    );
+  } catch (err) {
+    // Arm-time failure must never take down instrumentation/boot.
+    // eslint-disable-next-line no-console
+    console.error('[eventloop-longtask] failed to arm; continuing without it:', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test-only hooks (not for production use)
+// ---------------------------------------------------------------------------
+
+/**
+ * Test-only: force the labels-armed flag. Returns a restore fn. Lets the unit
+ * tests assert the disarmed passthrough without booting the whole detector or
+ * relying on env at import time.
+ */
+export function __setLongTaskLabelsArmedForTests(value: boolean): () => void {
+  const prev = longTaskLabelsArmed;
+  longTaskLabelsArmed = value;
+  return () => {
+    longTaskLabelsArmed = prev;
+  };
+}
+
+/** Test-only: observe whether the ALS store is currently set (proves no .run()). */
+export function __hasActiveLabelStoreForTests(): boolean {
+  return labelStorage.getStore() !== undefined;
+}

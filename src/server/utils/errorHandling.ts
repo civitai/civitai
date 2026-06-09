@@ -227,6 +227,63 @@ function extractNextPath(filePath: string): string | null {
 }
 
 /**
+ * Loads the source-map content for a built chunk, given its `.next`-relative path
+ * (e.g. `static/chunks/abc.js`).
+ *
+ * Webpack names a chunk's map after the chunk itself (`abc.js` -> `abc.js.map`),
+ * but Turbopack (the default bundler in Next 16) gives the map a *different* hash
+ * and links it only through the in-file `//# sourceMappingURL=<name>` comment, so
+ * the `<chunk>.js.map` sibling does not exist. We therefore read the chunk, follow
+ * its `sourceMappingURL` when present, and fall back to the webpack convention so
+ * this keeps working on either bundler.
+ */
+function loadSourceMapContent(relativePath: string): string | null {
+  const chunkPath = path.join(process.cwd(), '.next', relativePath);
+
+  // Preferred: follow the chunk's own sourceMappingURL (covers Turbopack + webpack).
+  try {
+    const chunkContent = fs.readFileSync(chunkPath, 'utf-8');
+    const match = chunkContent.match(/\/\/[#@]\s*sourceMappingURL=(\S+)/);
+    if (match) {
+      const url = match[1];
+      if (url.startsWith('data:')) {
+        const base64 = url.match(/;base64,(.*)$/);
+        if (base64) return Buffer.from(base64[1], 'base64').toString('utf-8');
+      } else {
+        const mapPath = path.resolve(path.dirname(chunkPath), url);
+        if (fs.existsSync(mapPath)) return fs.readFileSync(mapPath, 'utf-8');
+      }
+    }
+  } catch {
+    // Chunk not readable; fall through to the convention-based lookup.
+  }
+
+  // Fallback: webpack convention `<chunk>.map` next to the chunk.
+  try {
+    const fallbackPath = `${chunkPath}.map`;
+    if (fs.existsSync(fallbackPath)) return fs.readFileSync(fallbackPath, 'utf-8');
+  } catch {
+    // Ignore; no map available.
+  }
+
+  return null;
+}
+
+/**
+ * Normalizes a source-map `source` URL to a clean project-relative path so the
+ * resolved stack reads the same regardless of bundler. Webpack emits
+ * `webpack://_N_E/../src/...`; Turbopack emits `turbopack:///[project]/src/...`.
+ */
+function normalizeSourcePath(source: string): string {
+  return source
+    .replace(/^webpack-internal:\/\/\/(\([^)]*\)\/)?/, '')
+    .replace(/^webpack:\/\/[^/]*\//, '')
+    .replace(/^turbopack:\/\/\/\[project\]\//, '')
+    .replace(/^turbopack:\/\//, '')
+    .replace(/^\.\.?\//, '');
+}
+
+/**
  * Applies source maps to a minified stack trace to get original source locations.
  * Only works in production where source maps are available in the .next directory.
  * @param stack - The minified stack trace string
@@ -245,12 +302,8 @@ export async function applySourceMaps(stack: string): Promise<string> {
       const relativePath = extractNextPath(file);
       if (!relativePath) continue;
 
-      const sourceMapPath = path.join(process.cwd(), '.next', `${relativePath}.map`);
-
-      if (!fs.existsSync(sourceMapPath)) continue;
-
       try {
-        const sourceMapContent = fs.readFileSync(sourceMapPath, 'utf-8');
+        const sourceMapContent = loadSourceMapContent(relativePath);
         if (sourceMapContent) {
           const smc = await new SourceMapConsumer(sourceMapContent);
           sourceMapConsumers.set(file, smc);
@@ -274,7 +327,8 @@ export async function applySourceMaps(stack: string): Promise<string> {
         const lineIndex = lines.findIndex((x) => x.includes(file) && x.includes(`:${lineNumber}:`));
         if (lineIndex > -1) {
           const displayName = name !== '<unknown>' ? name : '';
-          lines[lineIndex] = `    at ${displayName} (${pos.source}:${pos.line}:${pos.column ?? 0})`;
+          const sourcePath = normalizeSourcePath(pos.source);
+          lines[lineIndex] = `    at ${displayName} (${sourcePath}:${pos.line}:${pos.column ?? 0})`;
         }
       }
     }

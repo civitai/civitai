@@ -473,11 +473,16 @@ export const ltxGraph = new DataGraph<LTXCtx, GenerationCtx>()
 
   // Prompt enhancer toggle — when on, the handler prepends a promptEnhancement
   // step and feeds its enhancedPrompt into the videoGen step via $ref.
-  .node('enablePromptEnhancer', {
-    input: z.boolean().optional(),
-    output: z.boolean(),
-    defaultValue: true,
-  })
+  .node(
+    'enablePromptEnhancer',
+    () => ({
+      input: z.boolean().optional(),
+      output: z.boolean(),
+      defaultValue: true,
+      when: false,
+    }),
+    []
+  )
 
   // Prompt + triggerWords are common to all LTX versions (no negativePrompt for LTX).
   .merge(triggerWordsGraph)
