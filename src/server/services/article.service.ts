@@ -1032,7 +1032,13 @@ export const upsertArticle = async ({
     // - Published: Set to now for new articles, preserve for republishing
     // - Processing: Preserve existing publishedAt if article was already published (re-scan scenario)
     // - Unpublished: Preserve publishedAt so republish keeps original date
-    // - Draft: Clear publishedAt (never been published)
+    // - Draft: Preserve publishedAt — once an article has gone public,
+    //   demoting it back to Draft must not erase the original publish date.
+    //   Otherwise the next republish satisfies `republishing = !!article.publishedAt === false`
+    //   and gets a fresh `new Date()`, surfacing old content at the top of
+    //   the Newest feed. Only legitimately never-published rows keep
+    //   publishedAt = null (it was already null on read; `article.publishedAt`
+    //   passes that through unchanged).
     let publishedAt: Date | null | undefined = undefined;
     if (data.status === ArticleStatus.Published) {
       publishedAt = republishing ? article.publishedAt : new Date();
@@ -1044,8 +1050,7 @@ export const upsertArticle = async ({
       // Preserve publishedAt when unpublishing so republish keeps original date
       publishedAt = article.publishedAt;
     } else if (data.status === ArticleStatus.Draft) {
-      // Clear publishedAt for drafts
-      publishedAt = null;
+      publishedAt = article.publishedAt;
     }
 
     const result = await dbWrite.$transaction(async (tx) => {
@@ -1433,6 +1438,7 @@ export async function restoreArticleById({ id, userId }: { id: number; userId: n
       userId: true,
       status: true,
       metadata: true,
+      publishedAt: true,
     },
   });
 
@@ -1464,7 +1470,13 @@ export async function restoreArticleById({ id, userId }: { id: number; userId: n
         where: { id },
         data: {
           status: ArticleStatus.Published,
-          publishedAt: new Date(),
+          // Preserve the original publishedAt so mod-restoring an
+          // Unpublished/UnpublishedViolation article doesn't surface it at
+          // the top of the Newest feed (which sorts by publishedAt). Fresh
+          // `new Date()` is the fallback only for the edge case of restoring
+          // a row that was never publishedAt-stamped — same anti-bump shape
+          // used by recomputeArticleIngestion's flipPublishedAt.
+          publishedAt: article.publishedAt ?? new Date(),
           metadata: updatedMetadata,
         },
       });
