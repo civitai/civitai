@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Civitai Monorepo Migration — Guide</title>
+<style>
+  :root {
+    --bg: #f6f8fb;
+    --card: #ffffff;
+    --ink: #1a1b1e;
+    --muted: #6b7280;
+    --line: #e6e9ef;
+    --accent: #1971c2;
+    --accent-soft: #e7f1fb;
+    --green: #2f9e44;
+    --green-soft: #e9f7ee;
+    --amber: #e8961b;
+    --amber-soft: #fdf3e2;
+    --violet: #7048e8;
+    --violet-soft: #efeafe;
+    --code-bg: #0f172a;
+    --code-ink: #e2e8f0;
+    --radius: 12px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.62; font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: var(--mono); font-size: 0.86em; }
+  :not(pre) > code {
+    background: #eef1f6; color: #324; padding: 0.12em 0.4em;
+    border-radius: 5px; border: 1px solid #e2e6ee; white-space: nowrap;
+  }
+
+  /* layout */
+  .wrap { display: grid; grid-template-columns: 256px minmax(0, 1fr); max-width: 1180px; margin: 0 auto; gap: 40px; }
+  nav.toc {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 28px 8px 28px 20px; border-right: 1px solid var(--line);
+  }
+  nav.toc .brand { font-weight: 800; font-size: 15px; letter-spacing: -0.01em; margin-bottom: 4px; }
+  nav.toc .brand span { color: var(--accent); }
+  nav.toc .tag { font-size: 11.5px; color: var(--muted); margin-bottom: 22px; text-transform: uppercase; letter-spacing: 0.06em; }
+  nav.toc a { display: block; color: #4b5563; font-size: 13.5px; padding: 5px 10px; border-radius: 7px; margin: 1px 0; }
+  nav.toc a:hover { background: #eef1f6; text-decoration: none; color: var(--ink); }
+  nav.toc a.sub { padding-left: 22px; font-size: 12.8px; color: #6b7280; }
+  main { padding: 40px 32px 120px 0; min-width: 0; }
+
+  /* hero */
+  .hero {
+    background: linear-gradient(135deg, #1971c2 0%, #1098ad 100%);
+    color: #fff; border-radius: 16px; padding: 38px 40px; margin-bottom: 36px;
+    box-shadow: 0 12px 30px -12px rgba(25,113,194,.5);
+  }
+  .hero h1 { margin: 0 0 8px; font-size: 30px; letter-spacing: -0.02em; }
+  .hero p { margin: 0; opacity: .94; font-size: 16.5px; max-width: 60ch; }
+  .badges { margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .badge {
+    background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.28);
+    padding: 5px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+  }
+
+  section { margin-bottom: 46px; scroll-margin-top: 24px; }
+  h2 { font-size: 22px; letter-spacing: -0.01em; margin: 0 0 6px; padding-top: 8px; }
+  h2 .num { color: var(--accent); font-weight: 800; margin-right: 10px; }
+  h3 { font-size: 16.5px; margin: 26px 0 8px; }
+  .lead { color: var(--muted); margin: 0 0 18px; font-size: 15.5px; }
+  p { margin: 0 0 14px; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 24px; }
+
+  /* callouts */
+  .note { border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; font-size: 14.5px; }
+  .note.green { border-color: var(--green); background: var(--green-soft); }
+  .note.amber { border-color: var(--amber); background: var(--amber-soft); }
+  .note.violet { border-color: var(--violet); background: var(--violet-soft); }
+  .note strong { font-weight: 700; }
+
+  /* code */
+  pre {
+    background: var(--code-bg); color: var(--code-ink); border-radius: 10px;
+    padding: 18px 20px; overflow-x: auto; font-family: var(--mono);
+    font-size: 13px; line-height: 1.7; margin: 16px 0; border: 1px solid #1e293b;
+  }
+  pre .c { color: #7c8aa5; font-style: italic; }   /* comment */
+  pre .k { color: #93c5fd; }                          /* keyword */
+  pre .s { color: #86efac; }                          /* string */
+  pre .f { color: #fcd34d; }                          /* function/type */
+  pre .p { color: #c4b5fd; }                          /* punctuation accent */
+  pre .d { color: #5eead4; }                          /* decorator/path */
+
+  /* tree */
+  .tree { background: #0f172a; color: #cbd5e1; border-radius: 10px; padding: 20px 22px; font-family: var(--mono); font-size: 12.6px; line-height: 1.75; overflow-x: auto; }
+  .tree .root { color: #fff; font-weight: 700; }
+  .tree .pk { color: #fcd34d; }      /* package name */
+  .tree .contract { color: #5eead4; }
+  .tree .shim { color: #f0abfc; }
+  .tree .cm { color: #64748b; }      /* comment */
+  .tree .badge2 { color: #94a3b8; }
+
+  /* layer diagram */
+  .layers { display: flex; flex-direction: column; gap: 10px; margin: 18px 0; }
+  .layer { border-radius: 10px; padding: 14px 18px; border: 1px solid var(--line); position: relative; }
+  .layer .lt { font-weight: 700; font-size: 14.5px; }
+  .layer .ld { color: var(--muted); font-size: 13.5px; }
+  .layer.app { background: #fff; }
+  .layer.shim { background: #fdf0fe; border-color: #f5d0fe; }
+  .layer.base { background: var(--accent-soft); border-color: #c7e0f7; }
+  .layer.contract { background: var(--green-soft); border-color: #c3e8d1; }
+  .arrow { text-align: center; color: var(--muted); font-size: 13px; margin: -4px 0; }
+
+  /* diagram figure */
+  figure.diagram { margin: 18px 0 8px; }
+  figure.diagram svg { width: 100%; height: auto; display: block; background: #fbfcfe; border: 1px solid var(--line); border-radius: 12px; }
+  figure.diagram figcaption { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 8px; }
+
+  /* step flow */
+  .steps { display: flex; gap: 14px; margin: 18px 0 10px; flex-wrap: wrap; }
+  .step { flex: 1; min-width: 168px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; position: relative; }
+  .step::after { content: "→"; position: absolute; right: -13px; top: 50%; transform: translateY(-50%); color: #c2cbd8; font-weight: 700; font-size: 16px; }
+  .step:last-child::after { content: ""; }
+  .stepn { display: inline-flex; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 13px; font-weight: 700; align-items: center; justify-content: center; margin-bottom: 8px; }
+  .step h4 { margin: 0 0 4px; font-size: 14px; }
+  .step p { margin: 0; font-size: 12.8px; color: var(--muted); line-height: 1.5; }
+  @media (max-width: 640px) { .step::after { content: ""; } }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  td code { font-size: 12.5px; }
+
+  .pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+  .pill.ok { background: var(--green-soft); color: var(--green); }
+  .pill.plan { background: var(--amber-soft); color: var(--amber); }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  ul.clean { margin: 8px 0 16px; padding-left: 20px; }
+  ul.clean li { margin: 5px 0; }
+  hr.soft { border: none; border-top: 1px solid var(--line); margin: 36px 0; }
+  .foot { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 18px; }
+
+  @media (max-width: 900px) {
+    .wrap { grid-template-columns: 1fr; }
+    nav.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); }
+    main { padding: 24px 20px 80px; }
+    .grid2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="toc">
+    <div class="brand">Civitai <span>Monorepo</span></div>
+    <div class="tag">Migration Guide</div>
+    <a href="#overview">Overview</a>
+    <a href="#layers">The layering model</a>
+    <a href="#layout">Directory layout</a>
+    <a href="#rules">Architecture rules</a>
+    <a href="#anatomy">Anatomy of a package</a>
+    <a href="#newapp">Using packages in a new app</a>
+    <a href="#newapp" class="sub">Postgres &amp; Redis</a>
+    <a href="#newapp" class="sub">Overrides</a>
+    <a href="#newapp" class="sub">Kysely instead of Prisma</a>
+    <a href="#domain">The domain layer</a>
+    <a href="#sharing">Package · copy · proxy</a>
+    <a href="#reference">Package reference</a>
+    <a href="#status">Migration status</a>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <h1>Civitai Monorepo Migration</h1>
+      <p>Extracting our infrastructure (Postgres, Redis, ClickHouse, Axiom, telemetry) into app-agnostic packages any future app can reuse — and the <strong>domain contracts</strong> two apps must agree on — without copying connection code, re-validating env, or drifting on shared data.</p>
+      <div class="badges">
+        <span class="badge">pnpm workspaces</span>
+        <span class="badge">6 packages + domain layer</span>
+        <span class="badge">Factory + injected behavior</span>
+        <span class="badge">Per-package env schemas</span>
+        <span class="badge">Moderator app: first consumer</span>
+      </div>
+    </div>
+
+    <!-- OVERVIEW -->
+    <section id="overview">
+      <h2><span class="num">01</span>Overview</h2>
+      <p class="lead">Why we're doing this, in one paragraph.</p>
+      <p>Today the main Next.js app owns all of its infrastructure clients directly. As we add more apps (a moderator app, an advertising service, internal tools), each one needs the <em>same</em> Postgres / Redis / ClickHouse connections — and we don't want to copy-paste connection setup, drift on pool tuning, or validate the same env vars three different ways.</p>
+      <p>The migration moves each piece of infrastructure into its own package under <code>packages/</code>. A package owns <strong>how to connect</strong> (validated env + a factory that builds the client); each app decides <strong>whether and with what behavior</strong> to instantiate it (its own logger, feature flags, etc.). The main app keeps working unchanged through thin <em>shim</em> files at the original import paths.</p>
+      <div class="note green"><strong>Net result:</strong> a new app gets production-grade DB/Redis/ClickHouse access in a few lines, with the exact same connection behavior and env contract as the main app.</div>
+    </section>
+
+    <!-- LAYERS -->
+    <section id="layers">
+      <h2><span class="num">02</span>The layering model</h2>
+      <p class="lead">Four layers, each only depending downward.</p>
+      <div class="layers">
+        <div class="layer app">
+          <div class="lt">Apps &nbsp;·&nbsp; <span style="font-weight:400">main app (repo root), <code>apps/*</code></span></div>
+          <div class="ld">Business logic. Imports infrastructure through shims / factories. Owns its own env values, loggers, and policies.</div>
+        </div>
+        <div class="arrow">▲ imports</div>
+        <div class="layer shim">
+          <div class="lt">App shims &nbsp;·&nbsp; <span style="font-weight:400"><code>src/server/{db,redis,clickhouse,logging,prom}/…</code></span></div>
+          <div class="ld">Thin app-owned files at the original import paths. Call the factory, inject app behavior, own HMR globals + the Next build guard, re-export the same names so call sites never change.</div>
+        </div>
+        <div class="arrow">▲ calls factory</div>
+        <div class="layer base">
+          <div class="lt">Base packages &nbsp;·&nbsp; <span style="font-weight:400"><code>@civitai/{db,redis,clickhouse,axiom,telemetry}</code></span></div>
+          <div class="ld">Infrastructure only. Each owns a zod env schema + a <code>createX()</code> factory. Imports external npm deps only — <strong>never</strong> app code, <strong>never</strong> a sibling base package.</div>
+        </div>
+        <div class="arrow">▲ generated types only</div>
+        <div class="layer contract">
+          <div class="lt">Contract layer &nbsp;·&nbsp; <span style="font-weight:400"><code>@civitai/db-schema</code> &nbsp;·&nbsp; <code>@civitai/domain</code></span></div>
+          <div class="ld"><strong>db-schema</strong> — pure <em>generated</em> artifact: Prisma schema, migrations, generated client / enums / models (+ Kysely types). No runtime; a Kysely app uses it without the Prisma runtime. <strong>domain</strong> — pure <em>hand-authored</em> vocabulary both apps must agree on: non-Prisma enums, the <code>nsfwLevel</code> bit-decoders, base-model identity. Both are leaves.</div>
+        </div>
+      </div>
+      <div class="note">The only cross-package edges point <em>downward onto the contract leaves</em>: <code>@civitai/db → @civitai/db-schema</code> (imports the generated Prisma client) and <code>@civitai/domain → @civitai/db-schema</code> (references generated enums). Like depending on <code>@prisma/client</code> — not sibling coupling.</div>
+    </section>
+
+    <!-- LAYOUT -->
+    <section id="layout">
+      <h2><span class="num">03</span>Directory layout</h2>
+      <p class="lead">How the monorepo is organized and how every app shares the same infrastructure.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 900 532" role="img" aria-label="Monorepo: apps share the @civitai/* packages via factories">
+          <defs>
+            <marker id="ah" markerWidth="9" markerHeight="9" refX="5.5" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L6,3 L0,6 z" fill="#94a3b8"/>
+            </marker>
+            <style>
+              .lbl{font:700 12px system-ui,-apple-system,"Segoe UI",sans-serif;fill:#64748b;letter-spacing:.07em}
+              .bt{font:700 15px system-ui,-apple-system,"Segoe UI",sans-serif}
+              .bs{font:400 11px ui-monospace,Menlo,Consolas,monospace;fill:#64748b}
+              .pn{font:700 13px system-ui,-apple-system,"Segoe UI",sans-serif}
+              .nw{font:800 9px system-ui;fill:#c026d3;letter-spacing:.08em}
+              .fl{font:600 12.5px system-ui,-apple-system,"Segoe UI",sans-serif;fill:#1971c2}
+              .lg{font:400 11px system-ui;fill:#475569}
+            </style>
+          </defs>
+
+          <rect x="6" y="6" width="888" height="520" rx="18" fill="#ffffff" stroke="#d8dee9"/>
+          <text x="28" y="33" class="bt" fill="#0f172a">model-share/ <tspan class="bs" font-size="11.5">monorepo root</tspan></text>
+
+          <!-- APPS -->
+          <text x="40" y="60" class="lbl">APPS · + REPO ROOT</text>
+          <rect x="40" y="70" width="200" height="72" rx="12" fill="#e7f1fb" stroke="#1971c2" stroke-width="1.6"/>
+          <text x="140" y="103" text-anchor="middle" class="bt" fill="#13447a">main app</text>
+          <text x="140" y="123" text-anchor="middle" class="bs">repo root · Next.js</text>
+
+          <rect x="348" y="70" width="200" height="72" rx="12" fill="#fbfcfe" stroke="#c026d3" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="448" y="99" text-anchor="middle" class="bt" fill="#0f172a">moderator</text>
+          <text x="448" y="117" text-anchor="middle" class="bs">apps/moderator</text>
+          <text x="448" y="133" text-anchor="middle" class="nw">NEW · DROPS IN HERE</text>
+
+          <rect x="656" y="70" width="200" height="72" rx="12" fill="#fbfcfe" stroke="#c026d3" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="756" y="99" text-anchor="middle" class="bt" fill="#0f172a">ads service</text>
+          <text x="756" y="117" text-anchor="middle" class="bs">apps/ads</text>
+          <text x="756" y="133" text-anchor="middle" class="nw">NEW · DROPS IN HERE</text>
+
+          <!-- arrows into factory band -->
+          <line x1="140" y1="144" x2="140" y2="172" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ah)"/>
+          <line x1="448" y1="144" x2="448" y2="172" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ah)"/>
+          <line x1="756" y1="144" x2="756" y2="172" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ah)"/>
+
+          <!-- factory band -->
+          <rect x="40" y="176" width="816" height="40" rx="10" fill="#eef5fd" stroke="#c7e0f7"/>
+          <text x="448" y="201" text-anchor="middle" class="fl">@civitai/* factory layer — createX({ log, …policy }), env-validated on boot</text>
+          <line x1="448" y1="216" x2="448" y2="240" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ah)"/>
+
+          <!-- PACKAGES -->
+          <text x="40" y="262" class="lbl">PACKAGES · base packages (infrastructure only)</text>
+          <g>
+            <rect x="40"  y="272" width="140" height="62" rx="11" fill="#e7f1fb" stroke="#9ac3ea"/>
+            <text x="110" y="300" text-anchor="middle" class="pn" fill="#13447a">db</text>
+            <text x="110" y="318" text-anchor="middle" class="bs">Prisma + pg</text>
+
+            <rect x="209" y="272" width="140" height="62" rx="11" fill="#e7f1fb" stroke="#9ac3ea"/>
+            <text x="279" y="300" text-anchor="middle" class="pn" fill="#13447a">redis</text>
+            <text x="279" y="318" text-anchor="middle" class="bs">cache + sys</text>
+
+            <rect x="378" y="272" width="140" height="62" rx="11" fill="#e7f1fb" stroke="#9ac3ea"/>
+            <text x="448" y="300" text-anchor="middle" class="pn" fill="#13447a">clickhouse</text>
+            <text x="448" y="318" text-anchor="middle" class="bs">analytics</text>
+
+            <rect x="547" y="272" width="140" height="62" rx="11" fill="#e7f1fb" stroke="#9ac3ea"/>
+            <text x="617" y="300" text-anchor="middle" class="pn" fill="#13447a">axiom</text>
+            <text x="617" y="318" text-anchor="middle" class="bs">logging</text>
+
+            <rect x="716" y="272" width="140" height="62" rx="11" fill="#e7f1fb" stroke="#9ac3ea"/>
+            <text x="786" y="300" text-anchor="middle" class="pn" fill="#13447a">telemetry</text>
+            <text x="786" y="318" text-anchor="middle" class="bs">prom + otel</text>
+          </g>
+
+          <!-- contract -->
+          <line x1="110" y1="334" x2="110" y2="372" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ah)"/>
+          <text x="150" y="356" class="bs" fill="#0c8599">generated types only ↓</text>
+          <rect x="40" y="376" width="816" height="62" rx="11" fill="#e9f7ee" stroke="#9fd6b4"/>
+          <text x="60" y="404" class="pn" fill="#0b6e3f">◆ db-schema — contract layer</text>
+          <text x="60" y="423" class="bs">Prisma schema · migrations · generated client / enums / models / Kysely types &nbsp;·&nbsp; tool-agnostic, no runtime</text>
+
+          <!-- legend -->
+          <g transform="translate(40,462)">
+            <rect x="0" y="0" width="14" height="14" rx="3" fill="#e7f1fb" stroke="#1971c2"/><text x="20" y="11" class="lg">app</text>
+            <rect x="78" y="0" width="14" height="14" rx="3" fill="#fbfcfe" stroke="#c026d3" stroke-dasharray="4 3"/><text x="98" y="11" class="lg">new app (planned)</text>
+            <rect x="240" y="0" width="14" height="14" rx="3" fill="#e7f1fb" stroke="#9ac3ea"/><text x="260" y="11" class="lg">base package</text>
+            <rect x="372" y="0" width="14" height="14" rx="3" fill="#e9f7ee" stroke="#9fd6b4"/><text x="392" y="11" class="lg">contract layer</text>
+            <text x="520" y="11" class="lg" fill="#1971c2">↑ arrows = dependency direction (downward only)</text>
+          </g>
+        </svg>
+        <figcaption>Every app — the main app today, new apps tomorrow — imports the same <code>@civitai/*</code> packages and builds clients through the factories. New apps slot into <code>apps/</code> with no changes to the packages.</figcaption>
+      </figure>
+
+      <h3>Detailed file tree</h3>
+      <p class="lead" style="margin-bottom:12px"><span class="pk" style="color:#b8860b">●</span> base package &nbsp; <span class="contract" style="color:#0c8599">◆</span> contract layer &nbsp; <span style="color:#c026d3">▸</span> app shim.</p>
+      <div class="tree"><span class="root">model-share/</span>                          <span class="cm"># repo root = main Next.js app</span>
+├─ <span class="pk">apps/</span>                              <span class="cm"># future apps live here (moderator, …)</span>
+│
+├─ <span class="pk">packages/</span>
+│  ├─ <span class="contract">◆ civitai-db-schema/</span>             <span class="cm"># CONTRACT LAYER (leaf — no @civitai deps)</span>
+│  │  ├─ prisma/
+│  │  │  ├─ schema.full.prisma       <span class="cm"># source of truth (+ generators)</span>
+│  │  │  ├─ migrations/              <span class="cm"># applied manually</span>
+│  │  │  └─ programmability/
+│  │  ├─ generated/client/           <span class="cm"># prisma-client output (gitignored)</span>
+│  │  └─ src/
+│  │     ├─ enums.ts  models.ts      <span class="cm"># generated types</span>
+│  │     └─ index.ts                 <span class="cm"># re-exports the Prisma client</span>
+│  │
+│  ├─ <span class="contract">◆ civitai-domain/</span>                <span class="cm"># CONTRACT LAYER · hand-authored vocabulary → db-schema</span>
+│  │  └─ src/ enums · browsing-level · flags · mime-types · basemodel · cache
+│  │
+│  ├─ <span class="pk">● civitai-db/</span>                    <span class="cm"># Prisma + pg runtime  → db-schema</span>
+│  │  └─ src/ env · client · db-helpers · kv-helpers · concurrency-helpers
+│  ├─ <span class="pk">● civitai-redis/</span>                 <span class="cm"># src/ env · client</span>
+│  ├─ <span class="pk">● civitai-clickhouse/</span>            <span class="cm"># src/ env · client</span>
+│  ├─ <span class="pk">● civitai-axiom/</span>                 <span class="cm"># src/ env · client</span>
+│  ├─ <span class="pk">● civitai-telemetry/</span>             <span class="cm"># src/ client · otel-helpers</span>
+│  └─ <span class="pk">● civitai-orchestrator/</span>          <span class="cm"># planned · @civitai/client wrapper (scanner/csam/training)</span>
+│
+├─ <span class="pk">src/</span>                               <span class="cm"># main app</span>
+│  └─ server/
+│     ├─ <span class="shim">▸ db/</span>         client · pgDb · notifDb · datapacketDb · db-helpers
+│     ├─ <span class="shim">▸ redis/</span>      client  <span class="cm">(+ cache files: caches, queues, …)</span>
+│     ├─ <span class="shim">▸ clickhouse/</span> client  <span class="cm">+ tracker.ts (app-owned)</span>
+│     ├─ <span class="shim">▸ logging/</span>    client  <span class="cm">(axiom shim)</span>
+│     └─ <span class="shim">▸ prom/</span>       client  <span class="cm">(telemetry shim + pg pool gauges)</span>
+│
+├─ pnpm-workspace.yaml               <span class="cm"># packages: ['.', 'packages/*', 'apps/*']</span>
+├─ tsconfig.json                     <span class="cm"># @civitai/* path mappings</span>
+└─ next.config.mjs                   <span class="cm"># transpilePackages: ['@civitai/*']</span></div>
+      <div class="note amber"><strong>The main app stays at the repo root.</strong> We deliberately did <em>not</em> move it into <code>apps/main/</code> — that would be a giant freeze-week move for little gain. New apps go in <code>apps/</code>; the main app stays put.</div>
+    </section>
+
+    <!-- RULES -->
+    <section id="rules">
+      <h2><span class="num">04</span>Architecture rules</h2>
+      <p class="lead">The handful of rules that keep packages reusable. Follow these when adding a package.</p>
+      <div class="grid2">
+        <div class="card">
+          <h3>① Packages import external deps only</h3>
+          <p style="margin:0;font-size:14.5px">No <code>~/…</code> app imports. No sibling base package. The moment a file needs app code, it's a <em>consumer</em> of infra, not infra — it stays in the app (or a higher-level package).</p>
+        </div>
+        <div class="card">
+          <h3>② Env values → the package's schema</h3>
+          <p style="margin:0;font-size:14.5px">Each package owns a <code>env.ts</code> zod schema (mirrors the app's <code>server-schema.ts</code>) and reads <code>process.env</code> through it. Validated on deploy. Connection config never crosses the boundary as plain arguments.</p>
+        </div>
+        <div class="card">
+          <h3>③ App behavior → injected as functions</h3>
+          <p style="margin:0;font-size:14.5px">Loggers, the Flipt failover resolver, the slow-query → Axiom sink: these are <em>functions/policy</em> the app owns, passed into the factory. Not env, not baked into the package.</p>
+        </div>
+        <div class="card">
+          <h3>④ <code>isProd</code> in package, <code>isBuild</code> in shim</h3>
+          <p style="margin:0;font-size:14.5px"><code>NODE_ENV</code> is universal, so packages may read it. Detecting <code>next build</code> is a Next-specific concern, so the build guard (<code>env.IS_BUILD ? skip : createX()</code>) lives in the app shim.</p>
+        </div>
+      </div>
+      <div class="note violet" style="margin-top:18px"><strong>Mnemonic:</strong> a package answers <em>“how do I connect?”</em> (env + factory). An app answers <em>“should I, and with what behavior?”</em> (build guard + injected logger/policy + globals).</div>
+    </section>
+
+    <!-- ANATOMY -->
+    <section id="anatomy">
+      <h2><span class="num">05</span>Anatomy of a package</h2>
+      <p class="lead">Every package is the same three pieces. Here's <code>@civitai/redis</code> end to end.</p>
+
+      <h3>1 · <code>env.ts</code> — package-owned, validated config</h3>
+      <pre><span class="c">// packages/civitai-redis/src/env.ts</span>
+<span class="k">import</span> * <span class="k">as</span> z <span class="k">from</span> <span class="s">'zod'</span>;
+
+<span class="k">const</span> schema = z.<span class="f">object</span>({
+  <span class="f">REDIS_URL</span>: z.<span class="f">url</span>(),
+  <span class="f">REDIS_SYS_URL</span>: z.<span class="f">url</span>(),
+  <span class="f">REDIS_TIMEOUT</span>: z.<span class="f">preprocess</span>((x) => (x ? <span class="f">parseInt</span>(<span class="f">String</span>(x)) : <span class="p">5000</span>), z.<span class="f">number</span>().<span class="f">optional</span>()),
+  <span class="f">REDIS_CLUSTER</span>: z.<span class="f">preprocess</span>((x) => x === <span class="s">'true'</span>, z.<span class="f">boolean</span>().<span class="f">default</span>(<span class="k">false</span>)),
+  <span class="c">/* … cluster nodes, refresh interval, flipt context … */</span>
+});
+
+<span class="k">const</span> parsed = schema.<span class="f">safeParse</span>(process.env);
+<span class="k">if</span> (!parsed.success)
+  <span class="k">throw new</span> <span class="f">Error</span>(<span class="s">'[@civitai/redis] Invalid env:\n'</span> + z.<span class="f">prettifyError</span>(parsed.error));
+
+<span class="c">// Normalized defaults the factory can override per call.</span>
+<span class="k">export const</span> redisEnv = { url: parsed.data.<span class="f">REDIS_URL</span>, <span class="c">/* … */</span> };
+<span class="k">export type</span> <span class="f">RedisConfig</span> = <span class="k">typeof</span> redisEnv;</pre>
+
+      <h3>2 · <code>client.ts</code> — the factory (reads env, injects behavior)</h3>
+      <pre><span class="c">// packages/civitai-redis/src/client.ts</span>
+<span class="k">export function</span> <span class="f">createRedisClients</span>(
+  options: <span class="f">Partial</span>&lt;<span class="f">RedisConfig</span>&gt; & {
+    log?: <span class="f">RedisLogFn</span>;                                 <span class="c">// injected app logger</span>
+    isEnhancedFailoverEnabled?: <span class="f">RedisFailoverResolver</span>;  <span class="c">// injected Flipt policy</span>
+  } = {}
+): { redis: <span class="f">CustomRedisClientCache</span>; sysRedis: <span class="f">CustomRedisClientSys</span> } {
+  <span class="k">const</span> config = { ...redisEnv, ...envOverrides };   <span class="c">// env defaults + per-call overrides</span>
+  <span class="c">// build cache + sys clients from config; failover uses the injected resolver</span>
+  <span class="k">return</span> { redis, sysRedis };
+}
+
+<span class="k">export const</span> REDIS_KEYS = { <span class="c">/* … key definitions stay in the package … */</span> };</pre>
+
+      <h3>3 · The app shim — wires reality, owns globals</h3>
+      <pre><span class="c">// src/server/redis/client.ts  (main app — original import path preserved)</span>
+<span class="k">import</span> { createRedisClients } <span class="k">from</span> <span class="s">'@civitai/redis/client'</span>;
+<span class="k">export</span> * <span class="k">from</span> <span class="s">'@civitai/redis/client'</span>;   <span class="c">// re-export keys, types, factory</span>
+
+<span class="k">const</span> make = () => <span class="f">createRedisClients</span>({
+  log: <span class="f">createLogger</span>(<span class="s">'redis'</span>, <span class="s">'green'</span>),                  <span class="c">// THIS app's logger</span>
+  isEnhancedFailoverEnabled: (ctx) => <span class="f">isFlipt</span>(FLAG, <span class="s">'redis-cluster'</span>, ctx),
+});
+
+<span class="c">// build guard (Next-specific) + HMR singleton both live here, not in the package</span>
+<span class="k">const</span> clients = env.<span class="f">IS_BUILD</span> ? EMPTY : isProd ? <span class="f">make</span>() : (global.__redis ??= <span class="f">make</span>());
+<span class="k">export const</span> { redis, sysRedis } = clients;</pre>
+      <div class="note green">Because the shim re-exports <code>redis</code>, <code>sysRedis</code>, and <code>REDIS_KEYS</code> under the same names, <strong>every existing <code>import { redis } from '~/server/redis/client'</code> call site keeps working unchanged.</strong></div>
+    </section>
+
+    <!-- NEW APP -->
+    <section id="newapp">
+      <h2><span class="num">06</span>Using base packages in a new app</h2>
+      <p class="lead">This is the payoff. A new app in <code>apps/</code> gets the same infrastructure in a few lines.</p>
+
+      <div class="steps">
+        <div class="step"><span class="stepn">1</span><h4>Scaffold</h4><p>Create <code>apps/moderator/</code> with a <code>package.json</code>. <code>pnpm-workspace.yaml</code> already globs <code>apps/*</code>, so it's picked up automatically.</p></div>
+        <div class="step"><span class="stepn">2</span><h4>Configure env</h4><p>Set the vars each package validates (<code>DATABASE_URL</code>, <code>REDIS_URL</code>, …). Missing → fail fast on boot.</p></div>
+        <div class="step"><span class="stepn">3</span><h4>Call factories</h4><p>Instantiate clients with <code>createX({ log })</code>, injecting this app's logger &amp; policies.</p></div>
+        <div class="step"><span class="stepn">4</span><h4>Use &amp; ship</h4><p>Same typed API as the main app — no connection code, pooling, or env validation to rewrite.</p></div>
+      </div>
+
+      <h3>Step 1 · Set the env vars (same names the packages validate)</h3>
+      <p>Each package validates its own slice of <code>process.env</code> on boot. Provide the same variable names the main app uses — the package's schema enforces them.</p>
+      <pre><span class="c"># apps/moderator/.env</span>
+DATABASE_URL=postgres://…
+DATABASE_REPLICA_URL=postgres://…
+REDIS_URL=redis://…
+REDIS_SYS_URL=redis://…
+<span class="c"># missing/invalid → the app fails fast on boot with a clear message</span></pre>
+
+      <h3>Step 2 · Build the clients via the factories</h3>
+      <pre><span class="c">// apps/moderator/src/db.ts</span>
+<span class="k">import</span> { createPrismaClients } <span class="k">from</span> <span class="s">'@civitai/db'</span>;
+<span class="k">export const</span> { dbRead, dbWrite } = <span class="f">createPrismaClients</span>();   <span class="c">// env supplies the config</span>
+
+<span class="c">// apps/moderator/src/redis.ts</span>
+<span class="k">import</span> { createRedisClients } <span class="k">from</span> <span class="s">'@civitai/redis'</span>;
+<span class="k">export const</span> { redis, sysRedis } = <span class="f">createRedisClients</span>({
+  log: myAppLogger,        <span class="c">// inject YOUR logger</span>
+  <span class="c">// no Flipt in this app? omit it — enhanced failover stays off by default</span>
+});
+
+<span class="c">// apps/moderator/src/clickhouse.ts</span>
+<span class="k">import</span> { createClickhouseClient } <span class="k">from</span> <span class="s">'@civitai/clickhouse'</span>;
+<span class="k">export const</span> clickhouse = <span class="f">createClickhouseClient</span>({ log: myAppLogger });</pre>
+
+      <h3>Step 3 · Use them — identical typed API to the main app</h3>
+      <pre><span class="k">import</span> { dbRead } <span class="k">from</span> <span class="s">'./db'</span>;
+<span class="k">import</span> { redis, REDIS_KEYS } <span class="k">from</span> <span class="s">'./redis'</span>;
+
+<span class="k">const</span> user = <span class="k">await</span> dbRead.user.<span class="f">findUnique</span>({ where: { id } });
+<span class="k">await</span> redis.packed.<span class="f">set</span>(REDIS_KEYS.SOMETHING, value);</pre>
+      <div class="note green"><strong>What you did <em>not</em> do:</strong> write pool tuning, re-implement the typed Redis wrapper, set up the TIMESTAMP parser, or re-declare env validation. The package owns all of that — so every app connects the same way.</div>
+
+      <h3 id="overrides">Per-call overrides</h3>
+      <p>Env supplies defaults; the factory accepts a <code>Partial&lt;Config&gt;</code> to override any of them — handy for tests, multi-instance setups, or an alternate config source.</p>
+      <pre><span class="c">// override an env default for this instance only</span>
+<span class="k">const</span> logger = <span class="f">createAxiomLogger</span>({ datastream: <span class="s">'moderator-logs'</span> });
+
+<span class="c">// point a test at a throwaway DB without touching process.env</span>
+<span class="k">const</span> { dbWrite } = <span class="f">createPrismaClients</span>({ databaseUrl: TEST_DB_URL, replicaUrl: TEST_DB_URL });</pre>
+
+      <h3 id="kysely">Prefer Kysely over Prisma? Use the contract layer directly</h3>
+      <p>This is why <code>@civitai/db-schema</code> is split out from <code>@civitai/db</code>. The schema is the source of truth; the Prisma <em>runtime</em> is just one way to query it. An app that wants Kysely (as our advertising service does) consumes the generated types and brings its own query builder — <strong>without</strong> the Prisma-client runtime.</p>
+      <pre><span class="c">// 1. add a prisma-kysely generator to schema.full.prisma (one block):</span>
+<span class="c">//    generator kysely { provider = "prisma-kysely"  output = "../src/kysely" }</span>
+
+<span class="c">// 2. apps/ads/src/db.ts — Kysely over a raw pg pool, typed by the same schema</span>
+<span class="k">import</span> { Kysely, PostgresDialect } <span class="k">from</span> <span class="s">'kysely'</span>;
+<span class="k">import type</span> { <span class="f">DB</span> } <span class="k">from</span> <span class="s">'@civitai/db-schema/kysely'</span>;
+<span class="k">export const</span> db = <span class="k">new</span> <span class="f">Kysely</span>&lt;<span class="f">DB</span>&gt;({ dialect: <span class="k">new</span> <span class="f">PostgresDialect</span>({ pool }) });</pre>
+      <div class="note amber"><strong>Status:</strong> the <code>prisma-kysely</code> generator isn't wired into the schema yet — this is the supported path for the first Kysely-based app to turn on. Migrations &amp; enums/models already generate from the same schema today.</div>
+    </section>
+
+    <!-- DOMAIN -->
+    <section id="domain">
+      <h2><span class="num">07</span>The domain layer — sharing more than infrastructure</h2>
+      <p class="lead">Infra was the easy part. The first new app forces a second, subtler kind of sharing.</p>
+      <p>Standing up the <strong>moderator app</strong> — the first app to run its <em>own</em> routers against the <em>shared</em> database — surfaced a new class of shared code. Beyond connections, two apps that write the same tables must agree on the hand-authored <em>meaning</em> of those columns: which bit of <code>nsfwLevel</code> is R-rated, what <code>BlocklistType.LinkDomain</code> equals, which <code>ReportEntity</code> keys the <code>Report</code> table. Keep two copies and they drift — and drift on a shared column is silent data corruption.</p>
+      <div class="note green"><strong><code>@civitai/domain</code></strong> — a new pure, hand-authored contract package, peer to <code>@civitai/db-schema</code>. It holds the vocabulary both apps must agree on: non-Prisma enums (<code>BlocklistType</code>, <code>NotificationCategory</code>, <code>NsfwLevel</code>, <code>ReportEntity</code>, <code>unpublishReasons</code>), the <code>nsfwLevel</code> bit-decoders (browsing levels&nbsp;+&nbsp;<code>Flags</code>), file-ext ↔ <code>MediaType</code> maps, and base-model / ecosystem identity. Its only edge is the downward dep <code>@civitai/domain → @civitai/db-schema</code>.</div>
+
+      <h3>The forcing function</h3>
+      <p>The rule for what becomes a package is deliberately narrow — not “is it pure” or “is it reused,” but:</p>
+      <div class="note violet"><strong>Extract to a package only when duplicating the code would corrupt shared data</strong> — a hand-authored contract on a column both apps read or write. Everything else is <em>copied</em> into the app (generic utils, display strings) or <em>left in the main app</em> behind its API (feed / marketplace machinery). <code>src/shared/</code> is a client/server boundary <em>within</em> the main app — orthogonal to cross-app packaging.</div>
+
+      <h3>Two ways code enters the package</h3>
+      <div class="grid2">
+        <div class="card">
+          <h3 style="margin-top:0">① Whole-file move</h3>
+          <p style="margin:0;font-size:14.5px">The file <em>is</em> the shared unit. Pure <code>git mv</code> (R100 rename, history preserved), then a re-export shim at the old path so every existing call site keeps working. Used for <code>enums</code>, <code>browsingLevel.constants</code>, <code>flags</code>, <code>mime-types</code>, <code>basemodel.constants</code>.</p>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">② Member extraction</h3>
+          <p style="margin:0;font-size:14.5px">A small shared member is buried in an app-coupled file (e.g. <code>CacheTTL</code> inside a 1,700-line env-coupled <code>constants.ts</code>). Carve out <em>just that member</em>, leave a re-export behind — the coupled file never moves. A content edit, not a rename.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SHARING -->
+    <section id="sharing">
+      <h2><span class="num">08</span>Package · copy · proxy</h2>
+      <p class="lead">How every dependency of a new app gets sorted — demonstrated by the moderator app.</p>
+      <p>Tracing the moderator pages through their tRPC routers and services showed the server is <strong>~80% cleanly separable</strong> (read queues, simple writes, Redis config, orchestrator calls) and <strong>~20% entangled</strong> in feed / marketplace machinery. Crucially, that clean 80% is <em>moderator-only</em> — one consumer — so it lives <strong>in the app</strong>, not a package. Every remaining dependency sorts into one of three buckets:</p>
+
+      <div class="layers">
+        <div class="layer base">
+          <div class="lt">📦 Package &nbsp;·&nbsp; <span style="font-weight:400">shared contract — duplication corrupts data</span></div>
+          <div class="ld"><code>@civitai/domain</code> (the vocabulary above) · persisted JSON-column shapes (<code>ModelMeta</code> → <code>Model.meta</code>, <code>UserMeta</code> → <code>User.meta</code>) · the 13-line <code>@civitai/orchestrator</code> client. <em>Both apps import one source of truth.</em></div>
+        </div>
+        <div class="layer app">
+          <div class="lt">📋 Copy &nbsp;·&nbsp; <span style="font-weight:400">generic — drift is harmless</span></div>
+          <div class="ld">Prisma selectors, tRPC input schemas, <code>pagination-helpers</code>, <code>errorHandling</code>, display strings. Each app keeps its own — a mismatch is cosmetic, never corrupting.</div>
+        </div>
+        <div class="layer shim">
+          <div class="lt">🔌 Proxy &nbsp;·&nbsp; <span style="font-weight:400">entangled — stays in the main app</span></div>
+          <div class="ld">Feed cache-busting, search-index sync, the image-rating game, rewards, the buzz ledger, <code>upsertModel</code>. The moderator app calls the main app’s tRPC instead of owning these.</div>
+        </div>
+      </div>
+
+      <div class="note amber"><strong>Extract-clean-slice.</strong> The moderator’s functions are often buried inside giant entangled services — e.g. CSAM needs a ~20-line ClickHouse insert from the 7,982-line <code>image.service</code>. The fix is to lift the clean slice out into a small module; because it has one consumer, it travels <em>with the moderator app</em>, not into a package.</div>
+
+      <div class="note green"><strong>Net result:</strong> the entire moderator app adds just <strong>two</strong> packages on top of the six already shipped — <code>@civitai/domain</code> (shared vocabulary) and <code>@civitai/orchestrator</code> (the generation client). Everything else is the app’s own code, a copy, or a call back to the main app.</div>
+    </section>
+
+    <!-- REFERENCE -->
+    <section id="reference">
+      <h2><span class="num">09</span>Package reference</h2>
+      <table>
+        <thead><tr><th>Package</th><th>Provides</th><th>Inject</th><th>Env it owns</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>@civitai/db-schema</code><br><span class="pill plan">contract</span></td>
+            <td>Prisma schema, migrations, generated client + enums + models (+ Kysely types)</td>
+            <td>—</td>
+            <td><code>DATABASE_URL</code> (generate/migrate)</td>
+          </tr>
+          <tr>
+            <td><code>@civitai/domain</code><br><span class="pill plan">contract</span></td>
+            <td>Hand-authored domain vocabulary — non-Prisma enums, <code>nsfwLevel</code> bit-decoders (browsing levels + <code>Flags</code>), <code>mime-types</code>, base-model / ecosystem identity</td>
+            <td>—</td>
+            <td>— (no connection/env; deps on <code>@civitai/db-schema</code>)</td>
+          </tr>
+          <tr>
+            <td><code>@civitai/db</code><br><span class="pill ok">factory</span></td>
+            <td><code>createPrismaClients()</code> · <code>getClient()</code> pg-pool factory · SQL helpers</td>
+            <td><code>onSlowQuery</code>, pool <code>log</code></td>
+            <td><code>DATABASE_*</code>, <code>NOTIFICATION_DB_*</code>, <code>DATAPACKET_*</code>, pool sizing/timeouts</td>
+          </tr>
+          <tr>
+            <td><code>@civitai/redis</code><br><span class="pill ok">factory</span></td>
+            <td><code>createRedisClients()</code> · typed client wrapper · <code>REDIS_KEYS</code></td>
+            <td><code>log</code>, <code>isEnhancedFailoverEnabled</code></td>
+            <td><code>REDIS_URL</code>, <code>REDIS_SYS_URL</code>, cluster &amp; timeout vars</td>
+          </tr>
+          <tr>
+            <td><code>@civitai/clickhouse</code><br><span class="pill ok">factory</span></td>
+            <td><code>createClickhouseClient()</code> · <code>$query</code>/<code>$exec</code> helpers</td>
+            <td><code>log</code></td>
+            <td><code>CLICKHOUSE_HOST/USERNAME/PASSWORD</code></td>
+          </tr>
+          <tr>
+            <td><code>@civitai/axiom</code><br><span class="pill ok">factory</span></td>
+            <td><code>createAxiomLogger()</code> → <code>logToAxiom</code> · <code>safeError</code></td>
+            <td>— (config via env/overrides)</td>
+            <td><code>AXIOM_*</code>, <code>PODNAME</code>, <code>LOG_ERRORS_TO_STDOUT</code></td>
+          </tr>
+          <tr>
+            <td><code>@civitai/telemetry</code><br><span class="pill ok">helpers</span></td>
+            <td><code>registerCounter/Gauge/Histogram</code> · <code>withSpan</code> (otel)</td>
+            <td>— (stateless)</td>
+            <td>— (no connection/env)</td>
+          </tr>
+          <tr>
+            <td><code>@civitai/orchestrator</code><br><span class="pill plan">planned</span></td>
+            <td><code>createOrchestratorClient(token)</code> — 13-line wrapper over the <code>@civitai/client</code> SDK; needed by scanner / CSAM / training</td>
+            <td>— (token via env)</td>
+            <td><code>ORCHESTRATOR_ENDPOINT</code>, <code>ORCHESTRATOR_ACCESS_TOKEN</code>, <code>ORCHESTRATOR_MODE</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- STATUS -->
+    <section id="status">
+      <h2><span class="num">10</span>Migration status</h2>
+      <ul class="clean">
+        <li><span class="pill ok">done</span> &nbsp;Pure file relocation of infra into <code>packages/*</code> (history preserved as renames).</li>
+        <li><span class="pill ok">done</span> &nbsp;Workspace bootstrap — <code>pnpm-workspace.yaml</code>, per-package <code>package.json</code>, <code>@civitai/*</code> tsconfig paths, <code>transpilePackages</code>.</li>
+        <li><span class="pill ok">done</span> &nbsp;<code>@civitai/db-schema</code> contract package (schema + migrations + generated enums/models).</li>
+        <li><span class="pill ok">done</span> &nbsp;Factory + per-package env schema for all five base packages; main app wired through shims; <strong>full typecheck passes</strong>.</li>
+        <li><span class="pill ok">done</span> &nbsp;Moderator-app dependency analysis — service-closure traces, the package/copy/proxy boundary, and the minimal <code>@civitai/domain</code> extraction plan (<code>docs/moderator-app-package-extraction-plan.md</code>).</li>
+        <li><span class="pill plan">next</span> &nbsp;Runtime verification (dev-server boot) to exercise env parsing + factory wiring.</li>
+        <li><span class="pill plan">next</span> &nbsp;Extract <code>@civitai/domain</code> (8 whole-file moves + 2 member extractions) per the plan.</li>
+        <li><span class="pill plan">later</span> &nbsp;Carve out <code>@civitai/orchestrator</code>; closure-check the persisted-shape schemas (<code>ModelMeta</code>, <code>UserMeta</code>, …).</li>
+        <li><span class="pill plan">later</span> &nbsp;Wire the <code>prisma-kysely</code> generator when the first Kysely-based app needs it.</li>
+        <li><span class="pill plan">later</span> &nbsp;Stand up the moderator app under <code>apps/moderator/</code> using the factories + <code>@civitai/domain</code>.</li>
+      </ul>
+      <div class="foot">
+        Civitai Monorepo Migration · generated from the in-repo plan (<code>docs/monorepo-conversion-plan.md</code>,
+        <code>docs/monorepo-package-adaptation-plan.md</code>). Questions → the platform channel.
+      </div>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>
