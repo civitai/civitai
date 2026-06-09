@@ -1,8 +1,8 @@
--- Clamp ModelVersion.publishedAt and Model.publishedAt where prior republishes
--- bumped them past their original publish date. Companion to the anti-bump
--- guards added at the publish write sites (see commit notes / ClickUp
--- 868jne3fd). One-shot data fix — the application code now enforces the
--- "publishedAt is immutable once <= NOW()" invariant going forward.
+-- Clamp ModelVersion.publishedAt and resync Model.lastVersionAt where prior
+-- republishes bumped them past their original publish date. Companion to the
+-- anti-bump guards added at the publish write sites (see commit notes /
+-- ClickUp 868jne3fd). One-shot data fix — the application code now enforces
+-- the "publishedAt is immutable once <= NOW()" invariant going forward.
 --
 -- NOTE: This file is for review/history only. Per the project migration
 -- policy, this SQL is NOT applied automatically by `prisma migrate deploy`.
@@ -10,38 +10,51 @@
 
 BEGIN;
 
--- 1) Clamp ModelVersion.publishedAt where we have any evidence of an earlier
---    publish: a stashed `meta.unpublishedAt` (set by the cron job that demoted
---    the version to Draft, or by the unpublish handler) is the tightest upper
---    bound on the real publish date — you cannot unpublish before publishing.
---    `createdAt` is the *lower* bound (publish can never precede creation), so
---    it belongs in the floor (`GREATEST`), not in the candidate list — using it
---    as a candidate collapses every row with an `unpublishedAt` to its
---    creation timestamp and loses the best evidence we have.
+-- 1) Clamp ModelVersion.publishedAt where we have direct evidence of an
+--    earlier publish that got bumped: a stashed `meta.unpublishedAt` (set by
+--    the cron job that demoted the version to Draft, or by the unpublish
+--    handler) is the tightest upper bound on the real publish date — you
+--    cannot unpublish before publishing. `createdAt` is the *lower* bound
+--    (publish can never precede creation), so it belongs in the floor
+--    (`GREATEST`), not in the candidate list — using it as a candidate
+--    collapses every row with an `unpublishedAt` to its creation timestamp
+--    and loses the best evidence we have.
 --
---    Scoped to Published rows with a past publishedAt so Scheduled rows
---    (future publishedAt) are not touched — those are still mutable by the
---    invariant.
+--    Scoped tightly: only Published rows where `meta.unpublishedAt` exists
+--    AND `publishedAt` was bumped past it. Rows without the breadcrumb (no
+--    evidence of a prior publish) or rows where publishedAt is still <=
+--    unpublishedAt (not bumped) are left alone — this matches the bump-bug
+--    story exactly and avoids no-op tuple rewrites on the rest of the table.
+--    Scheduled rows (future publishedAt) are not touched — those are still
+--    mutable by the invariant.
 UPDATE "ModelVersion"
 SET "publishedAt" = GREATEST(
   "createdAt",
   LEAST(
     "publishedAt",
-    COALESCE((meta->>'unpublishedAt')::timestamptz, "publishedAt")
+    (meta->>'unpublishedAt')::timestamptz
   )
 )
 WHERE "publishedAt" IS NOT NULL
   AND "publishedAt" <= NOW()
-  AND status = 'Published';
+  AND status = 'Published'
+  AND meta->>'unpublishedAt' IS NOT NULL
+  AND (meta->>'unpublishedAt')::timestamptz < "publishedAt";
 
--- 2) Resync Model.publishedAt to the oldest Published version's publishedAt.
---    A Model's published-state was always derived from its versions; aligning
---    here keeps the Newest-feed sort, search-index `publishedAtUnix`, and
---    "Published X ago" badge consistent with the clamped version dates.
+-- 2) Resync Model.lastVersionAt to MAX(version.publishedAt) for models whose
+--    versions were clamped in step 1. lastVersionAt drives the Newest-feed
+--    sort (see model.service.ts orderBy on `mm."lastVersionAt"`); a bumped
+--    version.publishedAt cascaded into lastVersionAt via
+--    updateModelLastVersionAt and pinned the model to the top of the feed.
+--
+--    Scope is the set of modelIds whose versions step 1 touched — narrower
+--    than "every model with drift" so legacy drift unrelated to the bump bug
+--    (e.g. historical imports where Model.lastVersionAt was set manually)
+--    is not rewritten here.
 UPDATE "Model" m
-SET "publishedAt" = sub.first_pub
+SET "lastVersionAt" = sub.last_pub
 FROM (
-  SELECT "modelId", MIN("publishedAt") AS first_pub
+  SELECT "modelId", MAX("publishedAt") AS last_pub
   FROM "ModelVersion"
   WHERE status = 'Published'
     AND "publishedAt" IS NOT NULL
@@ -49,8 +62,16 @@ FROM (
   GROUP BY "modelId"
 ) sub
 WHERE m.id = sub."modelId"
-  AND m."publishedAt" IS NOT NULL
-  AND m."publishedAt" > sub.first_pub;
+  AND m."lastVersionAt" IS DISTINCT FROM sub.last_pub
+  AND m.id IN (
+    SELECT DISTINCT "modelId"
+    FROM "ModelVersion"
+    WHERE "publishedAt" IS NOT NULL
+      AND "publishedAt" <= NOW()
+      AND status = 'Published'
+      AND meta->>'unpublishedAt' IS NOT NULL
+      AND (meta->>'unpublishedAt')::timestamptz < "publishedAt"
+  );
 
 -- 3) Reclassify legacy cron-demoted rows from Draft -> Unpublished.
 --    The reset-to-draft-without-requirements job now writes 'Unpublished'
