@@ -107,6 +107,13 @@ const featureFlags = createFeatureFlags({
     description: `Show the Posts item in the main site navigation.`,
     availability: ['public'],
   },
+  eventsNavItem: {
+    toggleable: true,
+    default: false,
+    displayName: 'Events in Navigation',
+    description: `Show the Events item in the main site navigation.`,
+    availability: ['public'],
+  },
   alternateHome: ['public'],
   collections: ['public'],
   air: {
@@ -120,7 +127,6 @@ const featureFlags = createFeatureFlags({
   imageSearch: ['public'],
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
-  recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
     toggleable: true,
     default: true,

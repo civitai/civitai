@@ -415,7 +415,6 @@ export type ModelVersionMeta = ModelMeta & {
   picFinderModelId?: number;
   earlyAccessDownloadData?: { date: string; downloads: number }[];
   generationImagesCount?: { date: string; generations: number }[];
-  allowAIRecommendations?: boolean;
   hadEarlyAccessPurchase?: boolean;
   /**
    * When set, opening this version in the generator loads the target version's

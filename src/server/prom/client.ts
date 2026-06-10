@@ -7,6 +7,60 @@ import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { bulkheadSnapshot } from '~/server/utils/request-bulkhead';
 
 const PROM_PREFIX = 'civitai_app_';
+
+// ---------------------------------------------------------------------------
+// Cross-graph shared registry (for instrumentation-time metrics)
+// ---------------------------------------------------------------------------
+//
+// WHY: Next.js compiles `instrumentation.ts` into a SEPARATE webpack bundle from
+// the API-route/pages bundle, and `prom-client` is NOT in `serverExternalPackages`
+// (next.config.mjs), so each bundle gets its own copy of the module — and thus its
+// own `client.register` (the prom-client `globalRegistry`). A metric created and
+// mutated from the instrumentation graph (e.g. the event-loop long-task detector's
+// `setInterval`) lands in the instrumentation graph's registry, while `/metrics`
+// (an API route) scrapes the request graph's registry. The two never meet, so the
+// counter/histogram/gauge appear registered-but-never-incremented (or never
+// exported) even though the emitting code runs. See the eventloop-longtask metrics
+// bug (civitai PR #2451).
+//
+// FIX: pin ONE `Registry` on `globalThis` (the real V8 global, shared across all
+// webpack bundles in the same Node process — the same mechanism the
+// `global.pgGaugeInitialized` guards below already rely on). Any metric created in
+// EITHER graph registers into this single object, and `/metrics` merges it into the
+// scrape. This is required only for metrics emitted from the instrumentation graph;
+// request-graph-only metrics already work because they emit + scrape in one graph.
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiInstrumentationRegistry: client.Registry | undefined;
+}
+
+export const instrumentationRegistry: client.Registry =
+  globalThis.__civitaiInstrumentationRegistry ??
+  (globalThis.__civitaiInstrumentationRegistry = new client.Registry());
+
+/**
+ * Get-or-create a metric in the cross-graph shared `instrumentationRegistry`,
+ * idempotently. Use this for any metric created or mutated from the instrumentation
+ * graph (`instrumentation.ts` subtree) so that `/metrics` — scraped from the request
+ * graph — can actually see it.
+ *
+ * The metric is created via `factory` which MUST construct it with
+ * `registers: [instrumentationRegistry]` (so it lands in the shared registry, not
+ * the default per-graph one). Because both webpack graphs eval the same module-level
+ * code against the SAME globalThis-pinned registry, the second graph (and HMR
+ * re-evals) would otherwise throw "already registered" inside the constructor — so we
+ * short-circuit to the existing instance BEFORE calling `factory`. Returns the single
+ * shared instance either way.
+ */
+export function registerInstrumentationMetric<M extends client.Metric<string>>(
+  name: string,
+  factory: () => M
+): M {
+  const existing = instrumentationRegistry.getSingleMetric(name);
+  if (existing) return existing as unknown as M;
+  return factory();
+}
+
 export function registerCounter({ name, help }: { name: string; help: string }) {
   // Do this to deal with HMR in nextjs
   try {
@@ -172,7 +226,7 @@ export const trpcProcedureDuration = registerHistogram({
 // Image feed metrics
 export const imagesFeedWithoutIndexCounter = registerCounter({
   name: 'images_feed_without_index_total',
-  help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
+  help: 'Number of times getInfiniteImagesHandler resolves to the DB path (index cannot serve the query params)',
 });
 
 // Creator compensation metrics

@@ -88,7 +88,6 @@ function ToolFeedPage() {
                 }}
                 showEof
                 showAds
-                useIndex
                 disableStoreFilters
               />
             </IsClient>

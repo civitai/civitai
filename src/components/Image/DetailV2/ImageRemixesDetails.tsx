@@ -15,7 +15,6 @@ export const ImageRemixesDetails = ({ imageId }: { imageId: number }) => {
     sort: ImageSort.MostReactions,
     // Fetch more than the max show images mainly due to filter settings.
     limit: 25,
-    useIndex: true,
   });
 
   if ((images?.length ?? 0) === 0) return null;
