@@ -6,21 +6,40 @@
 // WHY: prod pods emit V8 `.cpuprofile`s to find what blocks the event loop, but the
 // standalone build's server chunks are minified, so frames read like
 // `p @ chunks/_0eaaij7._.js:4398:12` — unnameable. This tool loads the matching
-// `.js.map` files (now shipped in the image; see Dockerfile RUNNER stage) and rewrites
-// each frame's `(url, lineNumber, columnNumber)` back to its original
-// `source.ts:line:col` + original function name via the `source-map` package.
+// `.js.map` files and rewrites each frame's `(url, lineNumber, columnNumber)` back to
+// its original `source.ts:line:col` + original function name via `source-map`.
+//
+// Server source maps are NOT shipped in the runtime image (they added ~761 MB per
+// prod pod). They are published per build as a separate, fetched-on-demand artifact
+// image `ghcr.io/civitai/civitai-web-maps:<tag>` keyed by the SAME tag as the runtime
+// image. This tool can fetch that artifact for a given tag (`--image`) and resolve
+// against it, OR resolve against a local maps dir (`--maps`).
 //
 // USAGE:
+//   # Fetch the maps for the build that produced the profile, then resolve:
+//   node scripts/resolve-cpuprofile.mjs <profile.cpuprofile> --image <tag-or-ref> [options]
+//   # Or resolve against a local directory of .js.map files:
 //   node scripts/resolve-cpuprofile.mjs <profile.cpuprofile> --maps <dir-of-js.map> [options]
 //
 // OPTIONS:
-//   --maps <dir>        Directory to search recursively for `<chunk>.js.map` files.
-//                       In the deployed image this is `.next/server`. (required)
+//   --image <ref>       Fetch this build's server maps from the maps artifact image,
+//                       then resolve. <ref> may be a bare tag (e.g. v5.0.1806-datapacket
+//                       or 20260610123456-abc1234) — expanded against --maps-repo
+//                       (default ghcr.io/civitai/civitai-web-maps) — or a full
+//                       repo:tag reference. Requires `crane` (or `oras`) on PATH and
+//                       registry read auth (e.g. `crane auth login ghcr.io`, or a
+//                       docker config already logged in). Mutually exclusive with --maps.
+//   --maps-repo <repo>  Override the maps artifact repo used to expand a bare --image
+//                       tag (default ghcr.io/civitai/civitai-web-maps).
+//   --maps <dir>        Directory to search recursively for `<chunk>.js.map` files
+//                       (offline/local mode; e.g. an already-extracted maps tree).
 //   --top <n>           Show the N hottest self-time functions (default 25).
 //   --block             Run the "longest synchronous block" analysis (see below) and
 //                       print its stack, de-minified.
 //   --json              Emit the full resolved profile as JSON instead of a report.
 //   --no-resolve        Skip map resolution (raw frames) — useful to diff before/after.
+//
+// Exactly one of --image or --maps is required (unless --no-resolve).
 //
 // "Longest synchronous block": V8 sampling profiles record per-sample deltas
 // (`timeDeltas`). A run of consecutive samples that stay inside the same top-of-stack
@@ -31,10 +50,14 @@
 // V8 coordinate convention: callFrame.lineNumber / columnNumber are 0-based.
 // `source-map` originalPositionFor wants { line: 1-based, column: 0-based }.
 
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat, mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+
+const DEFAULT_MAPS_REPO = 'ghcr.io/civitai/civitai-web-maps';
 
 // `source-map` is a direct dependency (package.json). Imported lazily so --no-resolve
 // and --help work even if it's somehow absent.
@@ -55,6 +78,8 @@ function parseArgs(argv) {
   const args = {
     profile: /** @type {string | null} */ (null),
     mapsDir: /** @type {string | null} */ (null),
+    image: /** @type {string | null} */ (null),
+    mapsRepo: DEFAULT_MAPS_REPO,
     top: 25,
     block: false,
     json: false,
@@ -63,6 +88,8 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--maps') args.mapsDir = argv[++i];
+    else if (a === '--image') args.image = argv[++i];
+    else if (a === '--maps-repo') args.mapsRepo = argv[++i];
     else if (a === '--top') args.top = Number(argv[++i]);
     else if (a === '--block') args.block = true;
     else if (a === '--json') args.json = true;
@@ -81,8 +108,66 @@ function parseArgs(argv) {
 
 function printHelp() {
   console.log(
-    'Usage: node scripts/resolve-cpuprofile.mjs <profile.cpuprofile> --maps <dir> [--top N] [--block] [--json] [--no-resolve]'
+    'Usage: node scripts/resolve-cpuprofile.mjs <profile.cpuprofile> (--image <tag-or-ref> | --maps <dir>)\n' +
+      '         [--maps-repo <repo>] [--top N] [--block] [--json] [--no-resolve]'
   );
+}
+
+// Resolve a bare tag to a full maps-image reference. A value that already contains
+// a '/' (a repo path) or starts with a registry host is treated as a full ref; a
+// bare tag is expanded against mapsRepo.
+function resolveImageRef(image, mapsRepo) {
+  if (image.includes('/')) return image; // already repo[:tag] or registry/repo:tag
+  // bare tag (possibly with a leading ':' someone added) -> repo:tag
+  const tag = image.startsWith(':') ? image.slice(1) : image;
+  return `${mapsRepo}:${tag}`;
+}
+
+// Fetch the server maps for a build into a fresh temp dir and return that dir.
+// Prefers `crane export` (single static binary, already cached in the Tekton build
+// node); falls back to `oras pull`. The maps artifact stores files under
+// /server-maps mirroring .next/server, so we return <tmp>/server-maps if present
+// (else <tmp>, so a differently-rooted artifact still resolves).
+//
+// Auth: relies on ambient registry auth — a docker config already logged in to the
+// registry (DOCKER_CONFIG / ~/.docker/config.json) or `crane auth login ghcr.io`.
+// No credentials are embedded here.
+async function fetchMapsImage(ref) {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'cpuprofile-maps-'));
+  const haveCrane = spawnSync('crane', ['version'], { stdio: 'ignore' }).status === 0;
+  const haveOras = !haveCrane && spawnSync('oras', ['version'], { stdio: 'ignore' }).status === 0;
+
+  if (!haveCrane && !haveOras) {
+    await rm(tmp, { recursive: true, force: true });
+    throw new Error(
+      "neither 'crane' nor 'oras' found on PATH. Install one " +
+        '(e.g. `go install github.com/google/go-containerregistry/cmd/crane@latest`) ' +
+        'or download a release binary, then ensure registry read auth is configured.'
+    );
+  }
+
+  console.error(`info: fetching maps artifact ${ref} via ${haveCrane ? 'crane' : 'oras'} ...`);
+  let res;
+  if (haveCrane) {
+    // `crane export` streams the image filesystem as a tar; pipe it into tar -x.
+    // Using a shell pipeline keeps memory flat for large map sets.
+    res = spawnSync('sh', ['-c', `crane export "${ref}" - | tar -x -C "${tmp}"`], {
+      stdio: ['ignore', 'inherit', 'inherit'],
+    });
+  } else {
+    res = spawnSync('oras', ['pull', ref, '-o', tmp], { stdio: ['ignore', 'inherit', 'inherit'] });
+  }
+  if (res.status !== 0) {
+    await rm(tmp, { recursive: true, force: true });
+    throw new Error(
+      `failed to fetch maps artifact ${ref} (exit ${res.status}). ` +
+        'Check the tag exists in the maps repo and that registry read auth is configured.'
+    );
+  }
+
+  const nested = path.join(tmp, 'server-maps');
+  const dir = existsSync(nested) ? nested : tmp;
+  return { dir, cleanup: () => rm(tmp, { recursive: true, force: true }) };
 }
 
 // Recursively index every *.js.map under dir, keyed by the basename of the
@@ -209,8 +294,12 @@ async function main() {
     printHelp();
     process.exit(1);
   }
-  if (args.resolve && !args.mapsDir) {
-    console.error('error: --maps <dir> is required (or pass --no-resolve).');
+  if (args.image && args.mapsDir) {
+    console.error('error: pass only one of --image or --maps, not both.');
+    process.exit(1);
+  }
+  if (args.resolve && !args.mapsDir && !args.image) {
+    console.error('error: --image <tag-or-ref> or --maps <dir> is required (or pass --no-resolve).');
     process.exit(1);
   }
   if (args.mapsDir && !existsSync(args.mapsDir)) {
@@ -226,14 +315,25 @@ async function main() {
     process.exit(1);
   }
 
+  // If --image was given, fetch that build's maps artifact into a temp dir and
+  // resolve against it (cleaned up before we return).
+  let mapsDir = args.mapsDir;
+  let fetchCleanup = null;
+  if (args.resolve && args.image) {
+    const ref = resolveImageRef(args.image, args.mapsRepo);
+    const fetched = await fetchMapsImage(ref);
+    mapsDir = fetched.dir;
+    fetchCleanup = fetched.cleanup;
+  }
+
   let resolver = null;
   if (args.resolve) {
     const sm = await loadSourceMapModule();
-    const mapIndex = await indexMaps(args.mapsDir);
+    const mapIndex = await indexMaps(mapsDir);
     if (mapIndex.byChunkBasename.size === 0) {
-      console.error(`warn: no .js.map files found under ${args.mapsDir} — frames will be unresolved.`);
+      console.error(`warn: no .js.map files found under ${mapsDir} — frames will be unresolved.`);
     } else {
-      console.error(`info: indexed ${mapIndex.byChunkBasename.size} source maps under ${args.mapsDir}`);
+      console.error(`info: indexed ${mapIndex.byChunkBasename.size} source maps under ${mapsDir}`);
     }
     resolver = makeResolver(sm.SourceMapConsumer, mapIndex);
   }
@@ -276,6 +376,7 @@ async function main() {
     }));
     process.stdout.write(JSON.stringify({ nodes: out }, null, 2) + '\n');
     if (resolver) resolver.destroy();
+    if (fetchCleanup) await fetchCleanup();
     return;
   }
 
@@ -341,6 +442,7 @@ async function main() {
   }
 
   if (resolver) resolver.destroy();
+  if (fetchCleanup) await fetchCleanup();
 }
 
 main().catch((err) => {
