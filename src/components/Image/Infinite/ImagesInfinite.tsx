@@ -1,5 +1,4 @@
 import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
 import { getQueryKey } from '@trpc/react-query';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
@@ -67,13 +66,16 @@ export function ImagesInfiniteContent({
   ...imageProviderProps
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
-  const filters = removeEmpty({
+  const computedFilters = removeEmpty({
     ...(disableStoreFilters ? filterOverrides : { ...imageFilters, ...filterOverrides }),
     useIndex,
     withTags,
   });
+  // Stabilize identity so effects/query keys only fire on real content change.
+  const filtersRef = useRef(computedFilters);
+  if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
+  const filters = filtersRef.current;
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const infiniteQueryKey = useMemo(() => getQueryKey(trpc.image.getInfinite), []);
 
   const rawBrowsingLevel = useBrowsingLevelDebounced();
@@ -99,18 +101,12 @@ export function ImagesInfiniteContent({
     debugRetryActive,
     debugDelayMs,
   } = useQueryImages(
-    { ...debouncedFilters, browsingLevel, include: ['cosmetics'] },
+    { ...filters, browsingLevel, include: ['cosmetics'] },
     { keepPreviousData: true }
   );
 
-  //#region [useEffect] cancel debounced filters
-  useEffect(() => {
-    if (isEqual(filters, debouncedFilters)) cancel();
-  }, [cancel, debouncedFilters, filters]);
-  //#endregion
-
   //#region [abort orphaned in-flight feed requests on filter change]
-  // When debouncedFilters change, the previous useInfiniteQuery observer
+  // When filters change, the previous useInfiniteQuery observer
   // unsubscribes and a new one subscribes under the new key. Any request
   // already in flight for the old key keeps running server-side and holds a
   // heavy-image bulkhead slot (see request-bulkhead.ts + heavyProcedure in
@@ -123,7 +119,7 @@ export function ImagesInfiniteContent({
       queryKey: infiniteQueryKey,
       predicate: (q) => q.getObserversCount() === 0 && q.state.fetchStatus === 'fetching',
     });
-  }, [debouncedFilters, browsingLevel, infiniteQueryKey]);
+  }, [filters, browsingLevel, infiniteQueryKey]);
   //#endregion
 
   //#region [search retry] — any backend failure (Meili, API, network)
@@ -144,7 +140,7 @@ export function ImagesInfiniteContent({
   // Reset retry state when filters change (new query = fresh slate).
   useEffect(() => {
     setRetryAttempt(0);
-  }, [debouncedFilters, browsingLevel]);
+  }, [filters, browsingLevel]);
   //#endregion
 
   //#region [slow fetch] — bad pods hang; show banner at 5s, abort at 15s

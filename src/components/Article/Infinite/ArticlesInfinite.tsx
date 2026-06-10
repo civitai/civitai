@@ -1,7 +1,6 @@
 import { Button, Center, Loader, LoadingOverlay } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
-import { useEffect } from 'react';
+import { useRef } from 'react';
 import { useArticleFilters, useQueryArticles } from '~/components/Article/article.utils';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -20,21 +19,18 @@ export function ArticlesInfinite({
 }: Props) {
   const articlesFilters = useArticleFilters();
 
-  const filters = disableStoreFilters
+  const computedFilters = disableStoreFilters
     ? filterOverrides
     : removeEmpty({ ...articlesFilters, ...filterOverrides });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  // Stabilize identity so query keys only update on real content change.
+  const filtersRef = useRef(computedFilters);
+  if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
+  const filters = filtersRef.current;
 
   const { articles, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryArticles(
-    debouncedFilters,
+    filters,
     { keepPreviousData: true }
   );
-
-  //#region [useEffect] cancel debounced filters
-  useEffect(() => {
-    if (isEqual(filters, debouncedFilters)) cancel();
-  }, [cancel, debouncedFilters, filters]);
-  //#endregion
 
   return (
     <>
