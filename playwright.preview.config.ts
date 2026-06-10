@@ -19,7 +19,10 @@ if (!PREVIEW_URL) {
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: /preview-(auth\.setup|smoke\.spec)\.ts/,
+  // Anchor to the FILENAME (after a path separator) — an unanchored /preview-…/
+  // also matches a parent dir named like a worktree (…/civitai-preview-x/), which
+  // would wrongly pull in the non-preview specs (auction/generation/example).
+  testMatch: /(^|\/)preview-.*\.(setup|spec)\.ts$/,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -40,10 +43,10 @@ export default defineConfig({
     navigationTimeout: 45_000,
   },
   projects: [
-    { name: 'preview-setup', testMatch: /preview-auth\.setup\.ts/ },
+    { name: 'preview-setup', testMatch: /(^|\/)preview-auth\.setup\.ts$/ },
     {
       name: 'preview-smoke',
-      testMatch: /preview-smoke\.spec\.ts/,
+      testMatch: /(^|\/)preview-.*\.spec\.ts$/,
       dependencies: ['preview-setup'],
       use: { ...devices['Desktop Chrome'] },
     },
