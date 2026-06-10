@@ -20,6 +20,10 @@ if (!global.collectMetricsInitialized) {
     register: client.register,
     labels,
   });
+  // Apply the same default labels (e.g. podname) to the cross-graph instrumentation
+  // registry so its series (eventloop long-task metrics) carry podname like every
+  // other app metric — otherwise per-pod attribution on those series is lost.
+  instrumentationRegistry.setDefaultLabels(labels);
   global.collectMetricsInitialized = true;
 }
 

@@ -301,11 +301,13 @@ function initEventLoopDelayGauges(): void {
   // One labeled gauge emitting p50/p99/max/mean (ms). collect() reads the live
   // libuv histogram on each scrape — no per-event JS work.
   //
-  // Registered with `registers: []` so the constructor does NOT auto-add it to the
-  // default per-graph globalRegistry; we then register it into the cross-graph
-  // shared `instrumentationRegistry` via registerInstrumentationMetric (idempotent
-  // under HMR). The collect() hook fires when that shared registry is scraped, which
-  // /metrics does by merging it in.
+  // Registered directly into the cross-graph shared `instrumentationRegistry` (via
+  // `registers: [instrumentationRegistry]` below) instead of the default per-graph
+  // globalRegistry. registerInstrumentationMetric is the idempotent get-or-create
+  // guard (safe under HMR / dual-graph eval). The collect() hook fires when that
+  // shared registry is scraped, which /metrics reads in explicitly by
+  // string-concatenating its output (NOT Registry.merge — so it can't throw on a
+  // name clash).
   registerInstrumentationMetric(
     PROM_PREFIX + 'eventloop_delay_ms',
     () =>
@@ -314,7 +316,7 @@ function initEventLoopDelayGauges(): void {
         help: 'Event-loop delay (lag) distribution from perf_hooks.monitorEventLoopDelay, ms. This is the AUTHORITATIVE event-loop lag signal (C++ measured, no JS per-event cost).',
         labelNames: ['quantile'],
         // Register into the shared cross-graph registry (NOT the default per-graph
-        // globalRegistry) so the collect() hook fires when /metrics merges it in.
+        // globalRegistry) so the collect() hook fires when /metrics reads it in.
         registers: [instrumentationRegistry],
         collect() {
           const h = elDelayHistogram;
