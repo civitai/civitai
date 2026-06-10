@@ -74,6 +74,7 @@ export function ImagesInfiniteContent({
   });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const infiniteQueryKey = useMemo(() => getQueryKey(trpc.image.getInfinite), []);
 
   const rawBrowsingLevel = useBrowsingLevelDebounced();
   const domainColor = useDomainColor();
@@ -108,6 +109,23 @@ export function ImagesInfiniteContent({
   }, [cancel, debouncedFilters, filters]);
   //#endregion
 
+  //#region [abort orphaned in-flight feed requests on filter change]
+  // When debouncedFilters change, the previous useInfiniteQuery observer
+  // unsubscribes and a new one subscribes under the new key. Any request
+  // already in flight for the old key keeps running server-side and holds a
+  // heavy-image bulkhead slot (see request-bulkhead.ts + heavyProcedure in
+  // src/server/trpc.ts) until it completes. Rapid filter changes stack these
+  // orphans and produce TOO_MANY_REQUESTS on subsequent users. Cancelling
+  // orphaned (observer-less) in-flight queries fires the AbortSignal that
+  // tRPC plumbs into the handler ctx, freeing the slot immediately.
+  useEffect(() => {
+    queryClient.cancelQueries({
+      queryKey: infiniteQueryKey,
+      predicate: (q) => q.getObserversCount() === 0 && q.state.fetchStatus === 'fetching',
+    });
+  }, [debouncedFilters, browsingLevel, infiniteQueryKey]);
+  //#endregion
+
   //#region [search retry] — any backend failure (Meili, API, network)
   const [retryAttempt, setRetryAttempt] = useState(0);
   const imagesCount = images.length;
@@ -131,7 +149,6 @@ export function ImagesInfiniteContent({
 
   //#region [slow fetch] — bad pods hang; show banner at 5s, abort at 15s
   const [isSlow, setIsSlow] = useState(false);
-  const infiniteQueryKey = useMemo(() => getQueryKey(trpc.image.getInfinite), []);
 
   // Depend on retryAttempt so every retry restarts the slow timer even when
   // isFetching doesn't visibly transition through false (cancel + refetch in
