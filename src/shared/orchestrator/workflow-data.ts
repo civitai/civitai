@@ -220,7 +220,7 @@ export class StepData {
     return this.output.filter((x) => x.available && !x.blockedReason && !x.hidden);
   }
   /** Outputs suitable for display — not hidden, not hard-blocked (upgradeable + errored items included). */
-  get displayOutput(): Array<ImageBlob | VideoBlob | AudioBlob | Model3DBlob | Model3DBlob> {
+  get displayOutput(): Array<ImageBlob | VideoBlob | AudioBlob | Model3DBlob> {
     if (this.suppressOutput) return [];
     return this.output.filter((x) => x.displayable);
   }

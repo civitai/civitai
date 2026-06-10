@@ -487,8 +487,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
         actor,
       });
 
-      console.log({ input, items, itemsFetched: items.length, cursor, nextCursor });
-
       // Merge images by postId
       for (const image of items) {
         // Skip images that aren't part of a post or are pinned
@@ -553,7 +551,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
           })
         : [];
 
-    console.log({ mergedPosts });
     // Prepare the results
     const results = mergedPosts.map((images) => {
       const [image] = images;
