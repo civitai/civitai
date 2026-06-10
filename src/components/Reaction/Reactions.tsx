@@ -1,4 +1,4 @@
-import type { GroupProps } from '@mantine/core';
+import type { ButtonProps, GroupProps } from '@mantine/core';
 import { Badge, Button, Group, Text, useMantineTheme } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
@@ -267,20 +267,22 @@ function ReactionBadge({
   reaction,
   canClick,
   abbreviate,
+  ...buttonProps
 }: {
   hasReacted: boolean;
   count: number;
   reaction: ReviewReactions;
   canClick: boolean;
   abbreviate?: boolean;
-}) {
+} & Omit<ButtonProps, 'children'> &
+  React.ComponentPropsWithoutRef<'button'>) {
   const color = hasReacted ? 'blue' : 'gray';
   const { hideReactionCount, buttonStyling } = useReactionSettingsContext();
   return (
     <Button
       radius="xs"
       variant={hasReacted ? 'light' : 'subtle'}
-      className={classes.reactionBadge}
+      className={clsx(classes.reactionBadge, hasReacted && classes.hasReacted)}
       disabled={!canClick}
       pl={2}
       pr={3}
@@ -288,6 +290,7 @@ function ReactionBadge({
       size="compact-xs"
       classNames={{ label: 'flex gap-1' }}
       {...buttonStyling?.(reaction, hasReacted)}
+      {...buttonProps}
     >
       <Text style={{ fontSize: '1.2em', lineHeight: 1.1 }}>
         {constants.availableReactions[reaction]}
