@@ -656,8 +656,13 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
   // Only fetch the unpublish-context JOIN when the post is currently
   // unpublished (publishedAt = NULL). Public reads are the hot path and
-  // don't need this — a published post is by definition not in the
-  // "was unpublished" state, so default the fields and skip the query.
+  // don't need this — default the fields and skip the query. Note: a small
+  // set of orphan rows can have `publishedAt != null` AND a `prevPublishedAt`
+  // stash (future-scheduled clamp orphans documented in the
+  // clamp-publishedat-bumps endpoint); we deliberately don't surface
+  // restore-only state for those — they're cleaned out-of-band.
+  // Pass the same `db` client used above so the stash JOIN shares
+  // `getDbWithoutLag`'s primary-routing right after an unpublish/republish.
   const unpublishContext: PostUnpublishContext = post.publishedAt
     ? {
         wasPublished: false,
@@ -665,7 +670,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
         unpublishedBy: null,
         parentModelId: null,
       }
-    : await getPostUnpublishContext({ id });
+    : await getPostUnpublishContext({ id, db });
 
   return {
     ...post,
@@ -718,8 +723,14 @@ export type PostUnpublishContext = {
   parentModelId: number | null;
 };
 
-async function getPostUnpublishContext({ id }: { id: number }): Promise<PostUnpublishContext> {
-  const rows = await dbRead.$queryRaw<
+async function getPostUnpublishContext({
+  id,
+  db = dbRead,
+}: {
+  id: number;
+  db?: typeof dbRead | typeof dbWrite;
+}): Promise<PostUnpublishContext> {
+  const rows = await db.$queryRaw<
     {
       metadata: Record<string, unknown> | null;
       modelId: number | null;

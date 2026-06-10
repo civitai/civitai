@@ -57,7 +57,6 @@
  */
 
 import type { NextApiResponse } from 'next';
-import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
