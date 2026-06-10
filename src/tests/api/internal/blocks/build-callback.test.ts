@@ -9,7 +9,7 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   waitForApplyJob: vi.fn(),
 }));
 
-import { expectedImageRef } from '../build-callback';
+import { expectedImageRef } from '~/pages/api/internal/blocks/build-callback';
 
 /**
  * L-CALLBACK coverage. The build-callback handler accepts an `imageRef` from

@@ -94,7 +94,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
       trustTier: 'unverified',
       renderMode: 'iframe',
     });
-    const { default: handler } = await import('../block-manifests');
+    const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
     const res = makeRes();
     await handler(makeReq({ body: VALID_BODY }), res);
     expect(res._status).toBe(200);
@@ -105,7 +105,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
   });
 
   it('M1: trustTier supplied in manifest is IGNORED on INSERT (forced unverified)', async () => {
-    const { default: handler } = await import('../block-manifests');
+    const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
     const res = makeRes();
     await handler(
       makeReq({
@@ -125,7 +125,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
   });
 
   it('M1: renderMode supplied in manifest is IGNORED on INSERT (forced iframe)', async () => {
-    const { default: handler } = await import('../block-manifests');
+    const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
     const res = makeRes();
     await handler(
       makeReq({

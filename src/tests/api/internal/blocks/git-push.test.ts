@@ -9,7 +9,7 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: vi.fn(),
 }));
 
-import { parseExpectedRepo } from '../git-push';
+import { parseExpectedRepo } from '~/pages/api/internal/blocks/git-push';
 
 /**
  * M-WEBHOOK coverage. The git-push webhook is authenticated only by the

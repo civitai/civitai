@@ -188,7 +188,7 @@ describe('POST /api/v1/block-tokens', () => {
   });
 
   it('B1: rejects cross-origin POST with 403 (no Origin header) instead of silent token-mint', async () => {
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const req = makeReq({ body: validBody() });
     const res = makeRes();
     await handler(req, res);
@@ -198,7 +198,7 @@ describe('POST /api/v1/block-tokens', () => {
   });
 
   it('B1: rejects cross-origin POST from non-allowlisted origin', async () => {
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const req = makeReq({
       origin: 'https://civitai.com.attacker.tld',
       body: validBody(),
@@ -214,7 +214,7 @@ describe('POST /api/v1/block-tokens', () => {
     (flagMod.isAppBlocksEnabled as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
       false
     );
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const req = makeReq({ origin: 'https://civitai.com', body: validBody() });
     const res = makeRes();
     await handler(req, res);
@@ -224,7 +224,7 @@ describe('POST /api/v1/block-tokens', () => {
   });
 
   it('H1: rejects cross-origin requests via exact-host match (no startsWith bypass)', async () => {
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const req = makeReq({ origin: 'https://civitai.com.attacker.tld', body: validBody() });
     const res = makeRes();
     await handler(req, res);
@@ -232,7 +232,7 @@ describe('POST /api/v1/block-tokens', () => {
   });
 
   it('H1: accepts the canonical civitai.com origin', async () => {
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const req = makeReq({ origin: 'https://civitai.com', body: validBody() });
     const res = makeRes();
     await handler(req, res);
@@ -244,7 +244,7 @@ describe('POST /api/v1/block-tokens', () => {
     // the flag and must be refused before any resolve/sign — unchanged behaviour
     // from the prior hardcoded isModerator gate, now expressed via the flag.
     mockSession.value = { user: { id: 99, bannedAt: null, isModerator: false } } as never;
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(403);
@@ -258,7 +258,7 @@ describe('POST /api/v1/block-tokens', () => {
     // so minting is refused with 403 — anon never mints in prod today. This is
     // the (b) acceptance case: anon mint blocked when appBlocks not available.
     mockSession.value = null; // anonymous
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(403);
@@ -270,7 +270,7 @@ describe('POST /api/v1/block-tokens', () => {
   it('M1: banned user is rejected at issuance', async () => {
     // Mod (passes the Phase-2 mint-gate) but banned → rejected at the ban check.
     mockSession.value = { user: { id: 99, bannedAt: new Date(), isModerator: true } } as never;
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(403);
@@ -281,7 +281,7 @@ describe('POST /api/v1/block-tokens', () => {
     // Mod (passes the Phase-2 mint-gate) but soft-deleted → rejected downstream.
     mockSession.value = { user: { id: 99, bannedAt: null, isModerator: true } } as never;
     mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: new Date(), bannedAt: null });
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(403);
@@ -302,7 +302,7 @@ describe('POST /api/v1/block-tokens', () => {
     // not the upstream mod-gate.
     mockSession.value = { user: { id: 999, bannedAt: null, isModerator: true } } as never; // not the installer (42)
     mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(403);
@@ -322,7 +322,7 @@ describe('POST /api/v1/block-tokens', () => {
     // == installedByUserId; mod gate satisfied (App Blocks is mod-only today).
     mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
     mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(200);
@@ -342,7 +342,7 @@ describe('POST /api/v1/block-tokens', () => {
     // Mod session: pass the Phase-2 mint-gate so the scope-allowlist check
     // (which fires after the mod-gate) is what produces the 403.
     mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(403);
@@ -350,7 +350,7 @@ describe('POST /api/v1/block-tokens', () => {
   });
 
   it('schema: rejects body missing modelId/slotId in slotContext', async () => {
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(
       makeReq({
@@ -369,7 +369,7 @@ describe('POST /api/v1/block-tokens', () => {
     // install row was deleted between page load and token mint.
     mockBlockRegistry.resolveBlockInstance.mockResolvedValueOnce(null);
     mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(404);
@@ -383,7 +383,7 @@ describe('POST /api/v1/block-tokens', () => {
     // lies about slotId here triggers a 404 (resolver returns null), not a
     // mint against the wrong slot.
     mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(
       makeReq({
@@ -401,7 +401,7 @@ describe('POST /api/v1/block-tokens', () => {
 
   it('JWT ctx: extra slotContext fields beyond modelId/slotId never reach the JWT', async () => {
     mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(
       makeReq({
@@ -430,7 +430,7 @@ describe('POST /api/v1/block-tokens', () => {
       source: 'publisher_subscription',
     });
     mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(
       makeReq({
@@ -471,7 +471,7 @@ describe('POST /api/v1/block-tokens', () => {
       grantedScopes: ['models:read:self'],
       revokedAt: null,
     });
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(200);
@@ -489,7 +489,7 @@ describe('POST /api/v1/block-tokens', () => {
       grantedScopes: ['models:read:self', 'buzz:read:self'],
       revokedAt: null,
     });
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(200);
@@ -507,7 +507,7 @@ describe('POST /api/v1/block-tokens', () => {
       grantedScopes: ['models:read:self', 'buzz:read:self'],
       revokedAt: new Date(), // revoked → treated as empty
     });
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(200);
@@ -530,7 +530,7 @@ describe('POST /api/v1/block-tokens', () => {
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null); // no grant at all
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(200);
@@ -563,7 +563,7 @@ describe('POST /api/v1/block-tokens', () => {
         app: { allowedScopes: 4 | 32768 /* ModelsRead | AIServicesWrite */ },
       },
     });
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(200);
@@ -607,7 +607,7 @@ describe('POST /api/v1/block-tokens', () => {
         app: { allowedScopes: 0xffffffff },
       },
     });
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(200);
@@ -634,7 +634,7 @@ describe('POST /api/v1/block-tokens', () => {
       grantedScopes: ['models:read:self', 'buzz:read:self'],
       revokedAt: null,
     });
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(200);
@@ -654,7 +654,7 @@ describe('POST /api/v1/block-tokens', () => {
     vi.doMock('~/env/server', () => ({
       env: { NEXTAUTH_URL: 'https://civitai.com', TRPC_ORIGINS: [] },
     }));
-    const { default: handler } = await import('../index');
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(503);
