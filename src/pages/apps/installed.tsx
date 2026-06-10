@@ -19,6 +19,7 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import {
+  IconEyeOff,
   IconHistory,
   IconPlugConnected,
   IconPlus,
@@ -33,6 +34,7 @@ import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
 import { groupSubscriptionsByApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
+import { useHiddenBlockList, unhideBlock } from '~/components/AppBlocks/hiddenBlocks';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   AvailableBlock,
@@ -683,6 +685,73 @@ function ScopeStatusBadge({ statusCode }: { statusCode: number }) {
   );
 }
 
+/**
+ * Viewer-local "Hide app block" restore surface. The ⋯ menu on a block's host
+ * trust-frame lets a viewer hide an owner-installed block; that lives only in
+ * this browser's localStorage (see components/AppBlocks/hiddenBlocks.ts), so it
+ * has no server-side row and isn't part of the user's installs/subscriptions —
+ * hence its own tab. "Restore" un-hides it, and the block reappears on the
+ * model page (reactively, via the shared change event).
+ */
+function HiddenBlocksPanel() {
+  const hidden = useHiddenBlockList();
+
+  if (hidden.length === 0) {
+    return (
+      <Center py="md">
+        <Stack align="center" gap="xs">
+          <IconEyeOff size={28} opacity={0.5} />
+          <Text size="sm" c="dimmed" ta="center" maw={420}>
+            You haven't hidden any app blocks. Use the ⋯ menu on a block to hide it on this
+            device — it only affects what you see, never the publisher or other viewers.
+          </Text>
+        </Stack>
+      </Center>
+    );
+  }
+
+  return (
+    <Stack gap="sm">
+      {hidden.map((block) => (
+        <Card key={block.blockInstanceId} withBorder padding="sm" radius="md">
+          <Group justify="space-between" wrap="nowrap" gap="md" align="center">
+            <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+              <Text fw={600} className="truncate">
+                {block.appName ?? 'App block'}
+              </Text>
+              <Group gap={6} wrap="wrap">
+                {block.modelId ? (
+                  <Anchor component={Link} href={`/models/${block.modelId}`} size="xs">
+                    {block.modelName ?? `Model ${block.modelId}`}
+                  </Anchor>
+                ) : null}
+                {block.hiddenAt > 0 && (
+                  <Text size="xs" c="dimmed">
+                    Hidden {formatDate(new Date(block.hiddenAt), 'YYYY-MM-DD')}
+                  </Text>
+                )}
+              </Group>
+            </Stack>
+            <Button
+              variant="default"
+              size="xs"
+              onClick={() => {
+                unhideBlock(block.blockInstanceId);
+                showSuccessNotification({
+                  title: 'Restored',
+                  message: `${block.appName ?? 'App block'} will show again.`,
+                });
+              }}
+            >
+              Restore
+            </Button>
+          </Group>
+        </Card>
+      ))}
+    </Stack>
+  );
+}
+
 export default function InstalledAppsPage() {
   const features = useFeatureFlags();
   const { data: subs, isLoading } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
@@ -749,6 +818,9 @@ export default function InstalledAppsPage() {
               <Tabs.Tab value="activity" leftSection={<IconHistory size={14} />}>
                 Recent activity
               </Tabs.Tab>
+              <Tabs.Tab value="hidden" leftSection={<IconEyeOff size={14} />}>
+                Hidden
+              </Tabs.Tab>
             </Tabs.List>
 
             <Tabs.Panel value="subscriptions" pt="md">
@@ -789,6 +861,17 @@ export default function InstalledAppsPage() {
                   scope-gated API call (read profile, read model, etc.).
                 </Text>
                 <ActivityPanel />
+              </Stack>
+            </Tabs.Panel>
+
+            <Tabs.Panel value="hidden" pt="md">
+              <Stack gap="sm">
+                <Text size="sm" c="dimmed">
+                  App blocks you've hidden on this device. Hiding is local to your browser —
+                  it never affects the publisher's install or other viewers. Restore one to
+                  have it show on its model page again.
+                </Text>
+                <HiddenBlocksPanel />
               </Stack>
             </Tabs.Panel>
           </Tabs>

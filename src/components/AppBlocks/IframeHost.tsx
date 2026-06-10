@@ -106,7 +106,17 @@ function storageErrorMessage(err: unknown): string {
  * publisher or anyone else). Rendering it here (vs in the sandboxed iframe) is
  * the whole point — the trust boundary belongs to the host. (Roadmap W7.)
  */
-function AppBlockChrome({ blockInstanceId }: { blockInstanceId: string }) {
+function AppBlockChrome({
+  blockInstanceId,
+  appName,
+  modelId,
+  modelName,
+}: {
+  blockInstanceId: string;
+  appName?: string;
+  modelId?: number;
+  modelName?: string;
+}) {
   return (
     <Group
       justify="space-between"
@@ -143,7 +153,15 @@ function AppBlockChrome({ blockInstanceId }: { blockInstanceId: string }) {
           </Menu.Item>
           <Menu.Item
             leftSection={<IconEyeOff size={14} stroke={1.5} />}
-            onClick={() => hideBlock(blockInstanceId)}
+            onClick={() =>
+              hideBlock({
+                blockInstanceId,
+                appName,
+                modelId,
+                modelName,
+                hiddenAt: Date.now(),
+              })
+            }
           >
             Hide app block
           </Menu.Item>
@@ -1009,7 +1027,12 @@ export function IframeHost({
         overflow: 'hidden',
       }}
     >
-      <AppBlockChrome blockInstanceId={install.blockInstanceId} />
+      <AppBlockChrome
+        blockInstanceId={install.blockInstanceId}
+        appName={install.manifest.name}
+        modelId={modelCtx.modelId}
+        modelName={modelCtx.modelName}
+      />
       {children}
     </Box>
   );
