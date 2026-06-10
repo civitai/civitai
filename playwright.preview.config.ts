@@ -43,7 +43,10 @@ export default defineConfig({
     baseURL: PREVIEW_URL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    navigationTimeout: 45_000,
+    // Align with the per-test timeout: a cold heavy-page (/models) goto can need
+    // most of the budget, and a 45s nav cap would fail it even though the test has
+    // 60s. The setup project also pre-warms /models + /images authenticated.
+    navigationTimeout: 60_000,
   },
   projects: [
     { name: 'preview-setup', testMatch: /(^|\/)preview-auth\.setup\.ts$/ },
