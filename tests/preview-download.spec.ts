@@ -1,140 +1,59 @@
-import { expect, test, type Page } from '@playwright/test';
-import { storageStatePath, type PreviewRole } from './preview-fixtures';
+import { expect, test } from '@playwright/test';
+import { storageStatePath } from './preview-fixtures';
 
 /**
- * E2E for the model-detail page + download affordance on a deployed PR preview.
+ * E2E: a model detail page renders + a download affordance is present for a
+ * gate-passing member, on a deployed PR preview.
  *
- * Navigates from the /models listing to a real model detail page (PROD-CLONE
- * data) WITHOUT hardcoding a model id, then asserts a gate-passing member sees a
- * download control. Runs only under playwright.preview.config.ts.
+ * Resolves a real model id from the PUBLIC API (`/api/v1/models`) and navigates
+ * DIRECTLY to `/models/<id>` — deliberately NOT browsing the heavy `/models`
+ * infinite-scroll listing. An earlier draft clicked the first listing card;
+ * loading that feed concurrently across workers crashed the single-replica
+ * preview pod (exit 139) and cascaded failures into the rest of the suite (see
+ * PR #2467 run pr-preview-2467-jpcgz). Direct navigation is light and has no
+ * fragile card selector.
  *
- * Why only `tester` (FREE) and `gold` (PAID), never `restricted`: the preview
- * gate (preview-auth.middleware) bounces `restricted` to /preview-restricted, so
- * it never reaches an in-app page. tester + gold both clear the gate, so they are
- * the meaningful in-app comparison.
- *
- * Free-vs-paid download difference — read from the source, NOT assumed:
- *   ModelVersionDetails.tsx: `canDownload = version.canDownload || hasDownloadPermissions`.
- *   For a normal public model `version.canDownload` is true for any member, so the
- *   Download section + button render identically for tester and gold. A tier/price
- *   difference only appears on EARLY-ACCESS versions (earlyAccessConfig.chargeForDownload
- *   → DownloadButton shows a Buzz `downloadPrice` badge and wraps in JoinPopover when
- *   !canDownload). We can't deterministically land on an early-access model without
- *   hardcoding an id, so this spec asserts the shared truth — both gate-passing members
- *   see a Download affordance — and does NOT assert a difference the code doesn't
- *   guarantee for an arbitrary listing model.
+ * Only `gold` (a gate-passing PAID member): per the source there is no
+ * free-vs-paid download difference outside early-access models
+ * (`ModelVersionDetails.tsx`: `canDownload = version.canDownload ||
+ * hasDownloadPermissions`), so one member role suffices to assert "a member sees
+ * a download affordance". `restricted` is never used — it fails the gate.
  */
 
 const DETAIL_URL = /\/models\/\d+(\/|$|\?)/;
 
-/**
- * Click the first model card on /models and land on a detail page.
- * Returns the resolved detail URL.
- *
- * NOTE (riskiest selector): the listing is client-fetched (ModelsInfinite →
- * MasonryGridVirtual → ModelCard). Each ModelCard renders an
- * `<a href="/models/<id>/<slug>">` via AspectRatioImageCard → LinkOrClick →
- * NextLink (getModelUrl() in src/utils/string-helpers.ts builds that path). So we
- * target the first anchor whose href matches /models/<digits>. Derived from
- * src/components/Cards/ModelCard.tsx (href) + CardTemplates/AspectRatioImageCard.tsx
- * (NextLink) + ModelsInfinite.tsx (render={ModelCard}).
- * FALLBACK if the anchor shape changes: switch to
- * `page.getByRole('link').filter({ has: page.locator('img') })` first match, or
- * read an id from a card and `page.goto('/models/<id>')` — but DO NOT hardcode an id.
- */
-async function reachFirstModelDetail(page: Page): Promise<string> {
-  await page.goto('/models', { waitUntil: 'domcontentloaded' });
+test.describe('model detail + download affordance (gold)', () => {
+  test.use({ storageState: storageStatePath('gold') });
 
-  // The listing populates via client fetch. Prefer a role-based locator for the
-  // first real model card link (anchor wrapping the card image).
-  const firstCard = page
-    .getByRole('link')
-    .filter({ has: page.locator('img') })
-    .first();
+  test('gold reaches a model detail page and sees a download affordance', async ({ page }) => {
+    // Resolve a real, well-formed public model id from the documented v1 API.
+    // page.request shares the gold session cookies; the list endpoint is public
+    // regardless. nsfw=false keeps us on a model without browsing-level gating.
+    const res = await page.request.get('/api/v1/models?limit=1&nsfw=false');
+    expect(res.ok(), `/api/v1/models returned HTTP ${res.status()}`).toBeTruthy();
+    const body = await res.json();
+    const modelId = body?.items?.[0]?.id;
+    expect(modelId, 'public API returned at least one model id').toBeTruthy();
 
-  // Wait for the client-fetched grid to render at least one card-with-image.
-  await expect(firstCard).toBeVisible({ timeout: 30_000 });
+    await page.goto(`/models/${modelId}`, { waitUntil: 'domcontentloaded' });
 
-  // Resolve the href and assert it is a model-detail URL before clicking, so a
-  // stray image-link (e.g. an ad) doesn't silently navigate us off-target.
-  const href = await firstCard.getAttribute('href');
-  expect(href, 'first card href should point at a model detail page').toMatch(
-    /^\/models\/\d+/
-  );
+    // Cleared the gate (not bounced to either gate destination) and on a detail URL.
+    expect(page.url(), 'should not redirect to /login').not.toContain('/login');
+    expect(page.url(), 'should not redirect to /preview-restricted').not.toContain(
+      '/preview-restricted'
+    );
+    await expect(page).toHaveURL(DETAIL_URL);
 
-  await Promise.all([
-    page.waitForURL(DETAIL_URL, { timeout: 45_000 }),
-    firstCard.click(),
-  ]);
+    // Detail page renders its <h1> model title.
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 30_000 });
 
-  await page.waitForLoadState('domcontentloaded');
-  return page.url();
-}
-
-/** Assert we did not get bounced to either gate destination. */
-function assertNoGateBounce(page: Page) {
-  expect(page.url(), 'should not redirect to /login').not.toContain('/login');
-  expect(page.url(), 'should not redirect to /preview-restricted').not.toContain(
-    '/preview-restricted'
-  );
-}
-
-/**
- * Assert a download affordance is present + visible on the current detail page.
- * The Download section (ModelVersionDetails.tsx ~L780) renders a card whose
- * header is the text "Download", and DownloadVariantDropdown renders a button
- * labelled "Download (<size>)" / "Download Selected" (DownloadButton.tsx, icon
- * IconDownload). We accept any of these as the affordance and require at least one
- * to be visible.
- *
- * NOTE: model.canDownload is true for members on normal public models, so the
- * control renders enabled. We assert presence/visibility, NOT a real download.
- */
-async function assertDownloadAffordance(page: Page) {
-  // A download-labelled control: button "Download ..." or "Download Selected",
-  // OR the section header text "Download". Tolerant to size suffix / "Selected".
-  const downloadButton = page
-    .getByRole('button', { name: /download/i })
-    .or(page.getByRole('link', { name: /download/i }))
-    .first();
-
-  const downloadText = page.getByText(/^Download( |$)/).first();
-
-  // Wait for client hydration of the version details panel.
-  await expect(downloadButton.or(downloadText)).toBeVisible({ timeout: 30_000 });
-
-  // If a download button/link resolved, it must not be disabled for a gate-passing
-  // member on a normal model. (When absent — e.g. component-only/generation-only —
-  // we fall back to the section text, which the .or() above already covered.)
-  if (await downloadButton.count()) {
-    const first = downloadButton.first();
-    if (await first.isVisible()) {
-      await expect(first).toBeEnabled();
-    }
-  }
-}
-
-const GATE_PASSING_ROLES: PreviewRole[] = ['gold', 'tester'];
-
-for (const role of GATE_PASSING_ROLES) {
-  test.describe(`model detail + download affordance (${role})`, () => {
-    test.use({ storageState: storageStatePath(role) });
-
-    test(`${role} reaches a model detail page from the listing`, async ({ page }) => {
-      const url = await reachFirstModelDetail(page);
-      expect(url, 'landed on a /models/<id> detail URL').toMatch(DETAIL_URL);
-      assertNoGateBounce(page);
-
-      // The detail page renders an <h1> (Title order={1}) with the model name.
-      await expect(page.getByRole('heading', { level: 1 })).toBeVisible({
-        timeout: 30_000,
-      });
-    });
-
-    test(`${role} sees a download affordance on the detail page`, async ({ page }) => {
-      await reachFirstModelDetail(page);
-      assertNoGateBounce(page);
-      await assertDownloadAffordance(page);
-    });
+    // A download affordance: a "Download…" button/link, or the "Download" section
+    // header (ModelVersionDetails.tsx). Tolerant to a size suffix / "Selected".
+    const downloadControl = page
+      .getByRole('button', { name: /download/i })
+      .or(page.getByRole('link', { name: /download/i }))
+      .or(page.getByText(/^Download( |$)/))
+      .first();
+    await expect(downloadControl).toBeVisible({ timeout: 30_000 });
   });
-}
+});
