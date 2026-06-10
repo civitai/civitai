@@ -14,6 +14,15 @@ export type RedisFailoverResolver = (context: Record<string, string>) => Promise
 // inlined — was slugit from ~/utils/string-helpers
 const slugit = (value: string) => slugify(value, { lower: true, strict: true });
 
+// Local definition so the package is self-contained (was relying on a global `Values` type from
+// the main app's tsconfig, which broke when typechecked from another app). Recursive: extracts
+// the leaf string values from the nested REDIS_KEYS / REDIS_SYS_KEYS objects.
+type Values<T> = T extends string | number | boolean
+  ? T
+  : T extends object
+  ? { [K in keyof T]: Values<T[K]> }[keyof T]
+  : never;
+
 export type RedisKeyStringsCache = Values<typeof REDIS_KEYS>;
 export type RedisKeyStringsSys = Values<typeof REDIS_SYS_KEYS>;
 
@@ -236,7 +245,8 @@ function triggerTopologyRediscovery(clusterClient: any, reason: string) {
  */
 function parseClusterNodes(fallbackUrl: string): { url: string }[] {
   if (config.clusterNodes) {
-    const nodes = config.clusterNodes.split(',')
+    const nodes = config.clusterNodes
+      .split(',')
       .map((nodeUrl) => nodeUrl.trim())
       .filter(Boolean)
       .map((nodeUrl) => {
@@ -941,6 +951,7 @@ export const REDIS_KEYS = {
     AUTHORIZATION_CODES: 'packed:oauth:authorization-codes',
     DEVICE_CODES: 'packed:oauth:device-codes',
     DEVICE_USER_CODES: 'packed:oauth:device-user-codes',
+    OIDC_CONTEXT: 'packed:oauth:oidc-context',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',
