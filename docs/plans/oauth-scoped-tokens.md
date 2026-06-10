@@ -471,3 +471,28 @@ The `AuthedEndpoint` helper already resolves the session from either a cookie or
 3. The orchestrator can then check `Flags.hasFlag(tokenScope, TokenScope.Generate)` and enforce spend limits on its side
 
 This means OAuth access tokens (which are stored as ApiKey rows) will work transparently with the orchestrator — no special handling needed.
+
+---
+
+## Addendum: OIDC `id_token` via the `@civitai/auth` hub (2026-06-09)
+
+**Context:** the OAuth server above made Civitai an OAuth2 provider + a *userinfo-based* pseudo-OIDC IdP — third parties get a code → access token → `/userinfo`. To match "Sign in with Google" exactly (a signed `id_token` the relying party verifies locally via JWKS, no userinfo round-trip), the only missing piece was a **signing key + JWKS**. The centralized-auth hub work ([centralized-auth-app.md](../centralized-auth-app.md), [auth-verification-strategy.md](../auth-verification-strategy.md)) provides exactly that — the same RS256 hub key + `/api/auth/jwks` endpoint serve both first-party session JWTs and third-party id_tokens.
+
+**What landed (opt-in, off unless the hub RS256 keys are set):**
+
+- `@civitai/auth` signer gained `mintIdToken({ sub, aud, nonce, authTime, claims?, expiresIn? })` — RS256, `iss = AUTH_JWT_ISSUER` (must equal the discovery `issuer` / `NEXTAUTH_URL`).
+- **`nonce`/`auth_time` capture** — [`src/server/oauth/oidc-nonce.ts`](../../src/server/oauth/oidc-nonce.ts) stashes them in a packed Redis hash (`REDIS_KEYS.OAUTH.OIDC_CONTEXT`, sha256(code) field, `AUTH_CODE_TTL`) at `/authorize`; `/token` consumes by `code`. @node-oauth doesn't carry nonce through the grant, hence the side channel.
+- **`/oauth/token`** now returns a signed `id_token` on the `authorization_code` grant when `UserRead` (identity) scope is granted and the signer is configured. Profile/email claims are intentionally omitted — RPs fetch them from the existing `/userinfo`.
+- **Discovery** advertises `jwks_uri` + `id_token_signing_alg_values_supported: ['RS256']`, but **only when signing is enabled** (else the JWKS 404s, so claiming RS256 would lie to RPs).
+
+**Design decisions:**
+
+- **Access tokens stay opaque/DB-backed** (the `ApiKey`-row model above) for **instant revocation** of untrusted clients. Only the **`id_token` is a JWT.** This is Google's split — and the deliberate inverse of the first-party session, which is a stateless JWT for performance.
+- **Trigger = `UserRead` scope** (always forced on at `/authorize`), not a literal `openid` scope (the scope system is bitwise, no `openid` bit). A dedicated `openid` marker scope is the spec-pure alternative if we want to *not* issue id_tokens to pure-API code grants.
+
+**Open follow-ups:**
+
+- `.well-known/jwks.json` rewrite (currently served at `/api/auth/jwks`; some RP libraries assume the `.well-known` path).
+- Optionally fold profile/email claims into the id_token (gated by scope) to save the `/userinfo` round-trip.
+- `at_hash` claim (OIDC §3.1.3.6) if any RP validates it.
+- A dedicated `openid` scope if we want to gate id_token issuance to OIDC clients specifically.

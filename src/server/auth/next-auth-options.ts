@@ -9,6 +9,8 @@ import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
 import { v4 as uuid } from 'uuid';
+import type { JWT, JWTDecodeParams } from 'next-auth/jwt';
+import { createAuthVerifier, maybeCreateSessionSigner } from '@civitai/auth';
 import { isDev, isTest } from '~/env/other';
 import { env } from '~/env/server';
 import { civitaiTokenCookieName, cookiePrefix, useSecureCookies } from '~/libs/auth';
@@ -141,6 +143,18 @@ type AuthedRequest = {
 // JWT session errors that are expected and non-actionable (expired tokens, corrupt cookies)
 const jwtSessionWarnCodes = new Set(['JWT_SESSION_ERROR']);
 
+// Hub session signer (Path C, opt-in). Constructed once at module load; undefined unless
+// AUTH_JWT_PRIVATE_KEY + AUTH_JWT_KID are configured. See @civitai/auth.
+const sessionSigner = maybeCreateSessionSigner();
+
+// Verify-only hub interop (opt-in). When the hub's JWKS is configured but this app holds NO
+// private key, decode the hub's RS256 cookie via the public key (JWKS) — and still decode this
+// app's own legacy JWE via NEXTAUTH_SECRET. This is the verify-only spoke path: the hub is the
+// issuer; this app keeps next-auth's default JWE encode for any sessions it still issues.
+// Requires AUTH_JWKS_URI + AUTH_JWT_ISSUER (must match the hub's issuer). See @civitai/auth.
+const sessionVerifier =
+  !sessionSigner && process.env.AUTH_JWKS_URI ? createAuthVerifier() : undefined;
+
 export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
   // NextAuth's EmailProvider POSTs form-encoded data to /api/auth/signin/email.
   // Next.js parses that into req.body, so the Turnstile token the client passes
@@ -156,6 +170,29 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
       strategy: 'jwt',
       maxAge: 30 * 24 * 60 * 60, // 30 days
     },
+    // Path C (opt-in). Three modes, by env:
+    //  - PRIVATE key set  → this app signs + reads RS256 (transitional dual-issuer): encode+decode.
+    //  - only JWKS set    → verify-only spoke: override decode to read RS256 (public key) + legacy
+    //                       JWE; keep next-auth's default JWE encode (the hub is the issuer).
+    //  - neither          → unchanged next-auth symmetric JWE (current behavior).
+    // The jwt()/session() callbacks below are unchanged; only (de)serialization differs.
+    // See @civitai/auth + docs/auth-verification-strategy.md.
+    ...(sessionSigner
+      ? {
+          jwt: {
+            maxAge: sessionSigner.maxAge,
+            encode: sessionSigner.encode,
+            decode: sessionSigner.decode,
+          },
+        }
+      : sessionVerifier
+      ? {
+          jwt: {
+            decode: async ({ token }: JWTDecodeParams): Promise<JWT | null> =>
+              token ? ((await sessionVerifier.verifyToken(token)) as unknown as JWT | null) : null,
+          },
+        }
+      : {}),
     logger: {
       error(code, metadata) {
         const message =
@@ -254,12 +291,10 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
             await refreshSession(Number(token.sub), { sendSignal: false });
           } catch (err) {
             const userId = Number(token.sub);
-            logSysRedisFailOpen(
-              'write-degraded',
-              'next-auth jwt update refreshSession',
-              err,
-              { userId, action: 'continuing-without-marking-tokens' }
-            );
+            logSysRedisFailOpen('write-degraded', 'next-auth jwt update refreshSession', err, {
+              userId,
+              action: 'continuing-without-marking-tokens',
+            });
             await Promise.all([
               redis.del(`${REDIS_KEYS.USER.SESSION}:${userId}`),
               redis.del(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}`),

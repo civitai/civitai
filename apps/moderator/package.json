@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@civitai/auth": "workspace:*",
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "next": "^16.2.7",

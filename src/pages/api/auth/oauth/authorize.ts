@@ -10,6 +10,7 @@ import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-
 import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { buzzLimitSchema } from '~/server/schema/api-key.schema';
+import { storeOidcContext } from '~/server/oauth/oidc-nonce';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'OPTIONS') {
@@ -176,6 +177,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       authenticateHandler: {
         handle: () => ({ id: session.user!.id }),
       },
+    });
+
+    // OIDC: stash nonce + auth_time keyed by the code so /token can mint the id_token.
+    // No-op unless the client passed a `nonce` (i.e. an OIDC "Sign in with Civitai" request).
+    await storeOidcContext(code.authorizationCode, {
+      nonce: typeof params.nonce === 'string' ? params.nonce : undefined,
+      authTime: Math.floor(Date.now() / 1000),
     });
 
     const ip = requestIp.getClientIp(req) ?? '';

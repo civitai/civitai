@@ -1,0 +1,39 @@
+import pg from 'pg';
+import { Kysely, PostgresDialect } from 'kysely';
+import { dev } from '$app/environment';
+import { env } from '$env/dynamic/private';
+import type { DB } from './schema';
+
+// Direct pg Pool + Kysely, mirroring civitai-advertising's src/lib/server/db/db.ts (rather than
+// @civitai/db's createKyselyClients) so the connection/SSL is fully under this app's control.
+//
+// `DB` is the hand-written subset in ./schema for now — swap to
+//   import type { DB } from '@civitai/db-schema/kysely'
+// once the prisma-kysely generator lands in the schema package.
+const { Pool, types } = pg;
+
+// Numeric/bigint come back as JS numbers (Kysely-friendly)
+types.setTypeParser(types.builtins.NUMERIC, (val) => parseFloat(val));
+types.setTypeParser(types.builtins.INT8, (val) => parseFloat(val));
+
+// The cnpg pooler presents a self-signed cert. node-postgres maps the URL's `sslmode=require` to
+// FULL chain verification (unlike libpq), which rejects it — and a separate `ssl` option gets
+// overridden by the URL's sslmode. So force `sslmode=no-verify`: keep SSL on, skip verification.
+// Mirrors the main app's db-helpers. (Advertising's URL simply has no sslmode, so it never hits
+// this; ours does.)
+function buildConnectionString(): string {
+  const url = new URL(env.DATABASE_URL);
+  url.searchParams.set('sslmode', 'no-verify');
+  return url.toString();
+}
+
+const pool = new Pool({ connectionString: buildConnectionString() });
+
+export const db = new Kysely<DB>({
+  dialect: new PostgresDialect({ pool }),
+  log: (event) => {
+    if (dev && event.level === 'error') {
+      console.error('[db] query failed:', event.error, '\nsql:', event.query.sql);
+    }
+  },
+});

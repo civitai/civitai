@@ -8,6 +8,15 @@ import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-
 import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { OriginNotAllowedError } from '~/server/oauth/errors';
 import { ACCESS_TOKEN_TTL } from '~/server/oauth/constants';
+import { maybeCreateSessionSigner } from '@civitai/auth';
+import { consumeOidcContext } from '~/server/oauth/oidc-nonce';
+import { Flags } from '~/shared/utils/flags';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+// OIDC id_token signer (opt-in). Constructed once; undefined unless the hub RS256 keys are
+// set, in which case authorization_code grants that carry the UserRead (identity) scope also
+// receive a signed `id_token` — "Sign in with Civitai". Verified by RPs via /api/auth/jwks.
+const idTokenSigner = maybeCreateSessionSigner();
 
 /**
  * Per-origin CORS for a validated public client. The browser Origin is the
@@ -66,9 +75,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // with our wiring), so fail-closed with a fallback lookup rather than
     // defaulting to wildcard CORS and risking a cross-origin leak of a
     // public-client token response.
-    let attached = (request as Request & {
-      oauthClient?: { id: string; isConfidential: boolean; allowedOrigins: string[] };
-    }).oauthClient;
+    let attached = (
+      request as Request & {
+        oauthClient?: { id: string; isConfidential: boolean; allowedOrigins: string[] };
+      }
+    ).oauthClient;
     if (!attached) {
       const fallback =
         typeof clientId === 'string' && clientId !== 'unknown'
@@ -97,15 +108,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const grantType = req.body?.grant_type;
+    const scopeNum = token.scope
+      ? parseInt(Array.isArray(token.scope) ? token.scope[0] : token.scope, 10)
+      : undefined;
     logOAuthEvent({
       type: grantType === 'refresh_token' ? 'token.refreshed' : 'token.issued',
       userId: typeof token.user?.id === 'number' ? token.user.id : undefined,
       clientId,
-      scope: token.scope
-        ? parseInt(Array.isArray(token.scope) ? token.scope[0] : token.scope, 10)
-        : undefined,
+      scope: scopeNum,
       ip,
     });
+
+    // OIDC id_token: only on the authorization_code grant (not refresh), when the identity
+    // scope was granted and the hub signer is configured. nonce/auth_time come from the
+    // /authorize stash, keyed by the code. RPs verify it via /api/auth/jwks. Profile/email
+    // claims are intentionally omitted here — clients fetch them from /userinfo.
+    let idToken: string | undefined;
+    if (
+      idTokenSigner &&
+      grantType === 'authorization_code' &&
+      typeof token.user?.id === 'number' &&
+      scopeNum !== undefined &&
+      Flags.hasFlag(scopeNum, TokenScope.UserRead)
+    ) {
+      const code = typeof req.body?.code === 'string' ? req.body.code : undefined;
+      const ctx = code ? await consumeOidcContext(code) : {};
+      idToken = await idTokenSigner.mintIdToken({
+        sub: token.user.id,
+        aud: typeof clientId === 'string' ? clientId : String(clientId),
+        nonce: ctx.nonce,
+        authTime: ctx.authTime,
+        expiresIn: token.accessTokenLifetime ?? ACCESS_TOKEN_TTL,
+      });
+    }
 
     return res.status(200).json({
       access_token: token.accessToken,
@@ -113,6 +148,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       expires_in: token.accessTokenLifetime ?? ACCESS_TOKEN_TTL,
       refresh_token: token.refreshToken,
       scope: token.scope,
+      ...(idToken ? { id_token: idToken } : {}),
     });
   } catch (err: any) {
     if (err instanceof OriginNotAllowedError) {

@@ -1,0 +1,194 @@
+import { createHash, randomBytes } from 'crypto';
+import { env } from '$env/dynamic/private';
+
+// Minimal, dependency-free OAuth2 Authorization-Code + PKCE client. One generic flow drives
+// every provider via a small config table. Secrets are read lazily from env, so a provider
+// simply "turns on" once its CLIENT_ID/SECRET are present (see listEnabledProviders).
+//
+// NOTE: this is the hub's *upstream* login (Civitai logging the user in via Google/Discord/…),
+// distinct from Civitai's own OAuth server that third parties use ("Sign in with Civitai").
+
+export type ProviderId = 'discord' | 'google' | 'github' | 'reddit';
+
+export interface NormalizedProfile {
+  providerAccountId: string;
+  email?: string;
+  emailVerified?: boolean;
+  name?: string;
+  username?: string;
+  image?: string;
+}
+
+interface ProviderDef {
+  id: ProviderId;
+  name: string;
+  authorizeUrl: string;
+  tokenUrl: string;
+  userinfoUrl: string;
+  scope: string;
+  /** Reddit wants HTTP Basic auth on the token endpoint + a User-Agent. */
+  basicAuthTokenRequest?: boolean;
+  userAgent?: string;
+  clientId: () => string | undefined;
+  clientSecret: () => string | undefined;
+  mapProfile: (json: Record<string, unknown>) => NormalizedProfile;
+}
+
+const PROVIDERS: Record<ProviderId, ProviderDef> = {
+  discord: {
+    id: 'discord',
+    name: 'Discord',
+    authorizeUrl: 'https://discord.com/oauth2/authorize',
+    tokenUrl: 'https://discord.com/api/oauth2/token',
+    userinfoUrl: 'https://discord.com/api/users/@me',
+    scope: 'identify email',
+    clientId: () => env.DISCORD_CLIENT_ID,
+    clientSecret: () => env.DISCORD_CLIENT_SECRET,
+    mapProfile: (p) => ({
+      providerAccountId: String(p.id),
+      email: p.email as string | undefined,
+      emailVerified: p.verified as boolean | undefined,
+      username: p.username as string | undefined,
+      name: (p.global_name as string) ?? (p.username as string | undefined),
+      image:
+        p.avatar && p.id
+          ? `https://cdn.discordapp.com/avatars/${p.id}/${p.avatar}.png`
+          : undefined,
+    }),
+  },
+  google: {
+    id: 'google',
+    name: 'Google',
+    authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    userinfoUrl: 'https://openidconnect.googleapis.com/v1/userinfo',
+    scope: 'openid email profile',
+    clientId: () => env.GOOGLE_CLIENT_ID,
+    clientSecret: () => env.GOOGLE_CLIENT_SECRET,
+    mapProfile: (p) => ({
+      providerAccountId: String(p.sub),
+      email: p.email as string | undefined,
+      emailVerified: p.email_verified as boolean | undefined,
+      name: p.name as string | undefined,
+      image: p.picture as string | undefined,
+    }),
+  },
+  github: {
+    id: 'github',
+    name: 'GitHub',
+    authorizeUrl: 'https://github.com/login/oauth/authorize',
+    tokenUrl: 'https://github.com/login/oauth/access_token',
+    userinfoUrl: 'https://api.github.com/user',
+    scope: 'read:user user:email',
+    userAgent: 'civitai-auth',
+    clientId: () => env.GITHUB_CLIENT_ID,
+    clientSecret: () => env.GITHUB_CLIENT_SECRET,
+    // GitHub may return a null email here; the verified-primary email needs a follow-up call
+    // to /user/emails (TODO). Username always present.
+    mapProfile: (p) => ({
+      providerAccountId: String(p.id),
+      email: p.email as string | undefined,
+      name: (p.name as string) ?? (p.login as string | undefined),
+      username: p.login as string | undefined,
+      image: p.avatar_url as string | undefined,
+    }),
+  },
+  reddit: {
+    id: 'reddit',
+    name: 'Reddit',
+    authorizeUrl: 'https://www.reddit.com/api/v1/authorize',
+    tokenUrl: 'https://www.reddit.com/api/v1/access_token',
+    userinfoUrl: 'https://oauth.reddit.com/api/v1/me',
+    scope: 'identity',
+    basicAuthTokenRequest: true,
+    userAgent: 'civitai-auth',
+    clientId: () => env.REDDIT_CLIENT_ID,
+    clientSecret: () => env.REDDIT_CLIENT_SECRET,
+    mapProfile: (p) => ({
+      providerAccountId: String(p.id),
+      name: p.name as string | undefined,
+      username: p.name as string | undefined,
+      image:
+        typeof p.icon_img === 'string' ? (p.icon_img as string).split('?')[0] : undefined,
+    }),
+  },
+};
+
+export function getProvider(id: string): ProviderDef | undefined {
+  return (PROVIDERS as Record<string, ProviderDef>)[id];
+}
+
+/** Providers whose client credentials are actually configured — drives the login buttons. */
+export function listEnabledProviders(): { id: ProviderId; name: string }[] {
+  return Object.values(PROVIDERS)
+    .filter((p) => !!p.clientId() && !!p.clientSecret())
+    .map((p) => ({ id: p.id, name: p.name }));
+}
+
+// --- PKCE ---
+const b64url = (buf: Buffer) =>
+  buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+export function createPkce() {
+  const codeVerifier = b64url(randomBytes(32));
+  const codeChallenge = b64url(createHash('sha256').update(codeVerifier).digest());
+  return { codeVerifier, codeChallenge };
+}
+
+export function buildAuthorizeUrl(
+  provider: ProviderDef,
+  opts: { redirectUri: string; state: string; codeChallenge: string }
+): string {
+  const url = new URL(provider.authorizeUrl);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', provider.clientId()!);
+  url.searchParams.set('redirect_uri', opts.redirectUri);
+  url.searchParams.set('scope', provider.scope);
+  url.searchParams.set('state', opts.state);
+  url.searchParams.set('code_challenge', opts.codeChallenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  if (provider.id === 'reddit') url.searchParams.set('duration', 'temporary');
+  return url.toString();
+}
+
+export async function exchangeCode(
+  provider: ProviderDef,
+  opts: { code: string; redirectUri: string; codeVerifier: string }
+): Promise<string> {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: opts.code,
+    redirect_uri: opts.redirectUri,
+    code_verifier: opts.codeVerifier,
+  });
+  const headers: Record<string, string> = {
+    'content-type': 'application/x-www-form-urlencoded',
+    accept: 'application/json',
+  };
+  if (provider.userAgent) headers['user-agent'] = provider.userAgent;
+  if (provider.basicAuthTokenRequest) {
+    const basic = Buffer.from(`${provider.clientId()}:${provider.clientSecret()}`).toString('base64');
+    headers['authorization'] = `Basic ${basic}`;
+  } else {
+    body.set('client_id', provider.clientId()!);
+    body.set('client_secret', provider.clientSecret()!);
+  }
+
+  const res = await fetch(provider.tokenUrl, { method: 'POST', headers, body });
+  if (!res.ok) throw new Error(`[${provider.id}] token exchange failed: ${res.status}`);
+  const json = (await res.json()) as { access_token?: string };
+  if (!json.access_token) throw new Error(`[${provider.id}] no access_token in response`);
+  return json.access_token;
+}
+
+export async function fetchProfile(
+  provider: ProviderDef,
+  accessToken: string
+): Promise<NormalizedProfile> {
+  const headers: Record<string, string> = { authorization: `Bearer ${accessToken}` };
+  if (provider.userAgent) headers['user-agent'] = provider.userAgent;
+  const res = await fetch(provider.userinfoUrl, { headers });
+  if (!res.ok) throw new Error(`[${provider.id}] userinfo failed: ${res.status}`);
+  const json = (await res.json()) as Record<string, unknown>;
+  return provider.mapProfile(json);
+}

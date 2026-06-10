@@ -1,6 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { maybeCreateSessionSigner } from '@civitai/auth';
 import { env } from '~/env/server';
 import { tokenScopeLabels } from '~/shared/constants/token-scope.constants';
+
+// Advertise id_token signing only when the hub RS256 keys are actually configured — otherwise
+// the JWKS endpoint 404s and no id_token is issued, so claiming RS256 would be a lie to RPs.
+const oidcSigningEnabled = !!maybeCreateSessionSigner();
 
 export default function handler(_req: NextApiRequest, res: NextApiResponse) {
   const issuer = env.NEXTAUTH_URL;
@@ -13,6 +18,14 @@ export default function handler(_req: NextApiRequest, res: NextApiResponse) {
     userinfo_endpoint: `${issuer}/api/auth/oauth/userinfo`,
     revocation_endpoint: `${issuer}/api/auth/oauth/revoke`,
     device_authorization_endpoint: `${issuer}/api/auth/oauth/device`,
+    // JWKS for verifying id_tokens (and first-party session JWTs). Only advertised when signing
+    // is enabled. Note: served at /api/auth/jwks (the .well-known path needs a rewrite).
+    ...(oidcSigningEnabled
+      ? {
+          jwks_uri: `${issuer}/api/auth/jwks`,
+          id_token_signing_alg_values_supported: ['RS256'],
+        }
+      : {}),
     response_types_supported: ['code'],
     grant_types_supported: [
       'authorization_code',

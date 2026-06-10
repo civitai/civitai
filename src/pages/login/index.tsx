@@ -8,10 +8,7 @@ import { isDev } from '~/env/other';
 export default function Login() {
   return (
     <>
-      <Meta
-        title="Sign in to Civitai"
-        canonical="/login"
-      />
+      <Meta title="Sign in to Civitai" canonical="/login" />
       <div className="container max-w-xs">
         <TwCard className="mt-6 border p-3 shadow">
           <LoginContent />
@@ -32,13 +29,16 @@ function isSafeCrossOriginRedirect(url: string): boolean {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ session, ctx }) => {
+    const { callbackUrl, returnUrl, error, reason } = ctx.query;
+
     if (session) {
-      const { callbackUrl, returnUrl, error, reason } = ctx.query;
       if (reason !== 'switch-accounts') {
         const rawCallback =
-          typeof returnUrl === 'string' ? returnUrl
-          : typeof callbackUrl === 'string' ? callbackUrl
-          : '/';
+          typeof returnUrl === 'string'
+            ? returnUrl
+            : typeof callbackUrl === 'string'
+            ? callbackUrl
+            : '/';
         // Prevent recursive login redirects
         const safeCallback = rawCallback.startsWith('/login') ? '/' : rawCallback;
 
@@ -63,6 +63,34 @@ export const getServerSideProps = createServerSideProps({
           },
         };
       }
+
+      return { props: { providers: null } };
+    }
+
+    // Not signed in: once the hub is the issuer (AUTH_JWT_ISSUER set), send login there. No-op
+    // until that env var is configured. Skipped when there's an error to surface on this page or
+    // an explicit account-switch. NOTE: AUTH_JWT_ISSUER also gates RS256 verification, so setting
+    // it moves login to the hub at the same time.
+    const hubIssuer = process.env.AUTH_JWT_ISSUER;
+    if (hubIssuer && !error && reason !== 'switch-accounts') {
+      const rawReturn =
+        typeof returnUrl === 'string'
+          ? returnUrl
+          : typeof callbackUrl === 'string'
+          ? callbackUrl
+          : '/';
+      // Guard against a /login → hub → /login loop.
+      const safeReturn = rawReturn.startsWith('/login') ? '/' : rawReturn;
+      // Absolute URL back to THIS app, so the hub returns the user here after login.
+      const returnAbsolute = new URL(safeReturn, getBaseUrl()).toString();
+      const hubLogin = new URL('/login', hubIssuer);
+      hubLogin.searchParams.set('returnUrl', returnAbsolute);
+      return {
+        redirect: {
+          destination: hubLogin.toString(),
+          permanent: false,
+        },
+      };
     }
 
     return {
