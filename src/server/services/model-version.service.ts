@@ -1795,7 +1795,7 @@ export const bustMvCache = async (
   await resourceDataCache.bust(versionIds);
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
-  // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,
+  // Refresh imagesForModelVersionsCache too — TTL is up to ~36h on Datapacket,
   // so a stale `images: []` entry from the publish race will hide the model
   // from feeds (the feed render drops items with no images for non-self
   // viewers) until the next image upload or natural expiry.
