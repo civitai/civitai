@@ -14,7 +14,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { IconClock, IconCube, IconTrash } from '@tabler/icons-react';
+import { IconAlertCircle, IconClock, IconCube, IconTrash } from '@tabler/icons-react';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 import { useMemo, useRef, useState } from 'react';
@@ -112,6 +112,24 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     hasImages && !isReordering && isAiVerified && !hasNsfwLicenseViolations && features.canWrite;
 
   const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
+  // Post was previously public, then unpublished via the parent
+  // model/version flow. publishedAt is NULL while a `prevPublishedAt`
+  // stash sits on Post.metadata. Hide Publish + Schedule controls — the
+  // post is gated by the parent's status; the user has to republish the
+  // parent model/version to bring this post back. Re-publishing the post
+  // directly would just restore the stashed date (via the CASE in
+  // updatePost) without making the post visible, which is confusing.
+  const isUnpublishedByParent = post.wasPublished && !post.publishedAt;
+  // Build a link to the parent model edit page so the user can see why the
+  // parent was taken down (the unpublish reason lives on the model/version,
+  // not on the post). Use `post.parentModelId` from the unpublish-context
+  // helper rather than `post.modelVersion?.id` — postSelect filters the
+  // modelVersion subquery by `publishedAt IS NOT NULL`, so it's null when
+  // the parent is unpublished (exactly the case we care about here).
+  const parentModelHref =
+    post.parentModelId && post.modelVersionId
+      ? `/models/${post.parentModelId}?modelVersionId=${post.modelVersionId}`
+      : null;
   const { returnUrl, afterPublish } = params;
 
   const { collection } = usePostContestCollectionDetails(
@@ -200,6 +218,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   };
 
   const handleScheduleClick = () => {
+    // Defensive: the Schedule controls aren't rendered when
+    // `isUnpublishedByParent`, but guard the entry point in case a future
+    // call site (keyboard shortcut, programmatic trigger) bypasses the UI.
+    if (isUnpublishedByParent) return;
     dialogStore.trigger({
       component: SchedulePostModal,
       props: {
@@ -211,7 +233,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   };
 
   useCatchNavigation({
-    unsavedChanges: !post.publishedAt && !deleted,
+    // When the post is unpublished because the parent model/version is
+    // unpublished, the user can't republish from this page anyway —
+    // showing the "you haven't published this post" warning is misleading.
+    unsavedChanges: !post.publishedAt && !deleted && !isUnpublishedByParent,
     message: `You haven't published this post, all images will stay hidden. Do you wish to continue?`,
   });
   // #endregion
@@ -256,7 +281,9 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </div>
 
         <Text size="xs" component="div">
-          {!post.publishedAt ? (
+          {isUnpublishedByParent ? (
+            <>Your {postLabel} is currently hidden because its parent resource was unpublished.</>
+          ) : !post.publishedAt ? (
             <>
               Your {postLabel} is currently{' '}
               <Tooltip
@@ -285,7 +312,37 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
       {params.model3dId ? <Model3DPostLinkCard model3dId={params.model3dId} /> : null}
 
-      {!post.publishedAt ? (
+      {isUnpublishedByParent && (
+        <Alert
+          color="yellow"
+          icon={<IconAlertCircle size={16} />}
+          radius="sm"
+          className="shrink-0"
+        >
+          <Stack gap="xs">
+            <Text size="sm" fw={600}>
+              Post unpublished
+            </Text>
+            {post.unpublishedAt && (
+              <Text size="xs">
+                Unpublished on {formatDate(post.unpublishedAt, 'MMMM D, YYYY')}.
+              </Text>
+            )}
+            <Text size="xs">
+              This post is hidden because its parent model or version was unpublished. Republish
+              the parent to bring this post back — the original publish date will be preserved.
+            </Text>
+            {parentModelHref && (
+              <Text size="xs">
+                <Anchor href={parentModelHref}>View the parent model</Anchor> to see why it was
+                unpublished.
+              </Text>
+            )}
+          </Stack>
+        </Alert>
+      )}
+
+      {isUnpublishedByParent ? null : !post.publishedAt ? (
         <Tooltip
           disabled={canPublish}
           label={
@@ -363,7 +420,13 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
       {showReorder && <ReorderImagesButton />}
 
-      {post.publishedAt && images.length > 0 && (
+      {/*
+        Always show the View button (gated only by having ≥1 image). Owners
+        can preview how the post will render to the public even while it's
+        still a draft or hidden via parent-unpublish — useful for staging
+        + reviewing changes before publishing.
+      */}
+      {images.length > 0 && (
         <Button
           onClick={() => {
             const [image] = images;

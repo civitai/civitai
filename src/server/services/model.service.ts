@@ -3744,9 +3744,20 @@ export const publishPrivateModel = async ({
       },
     });
     if (publishVersions) {
+      // Write-once-on-republish: honor the prevPublishedAt stash if it
+      // exists (e.g. post was previously public, unpublished via parent,
+      // then the model went through a Private cycle). Strips the stash on
+      // success. Mirrors the CASE pattern used by publishModelVersionById
+      // and publishModelById.
       await tx.$executeRaw`
         UPDATE "Post"
-        SET "publishedAt" = ${now}
+        SET
+          "publishedAt" = CASE
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
+            THEN ("metadata"->>'prevPublishedAt')::timestamptz
+            ELSE ${now}
+          END,
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
         WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
       `;
