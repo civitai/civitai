@@ -15,11 +15,23 @@ import { logs } from '@opentelemetry/api-logs';
 import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { registerCpuProfiler } from '~/server/cpu-profiler';
+import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is
 // always available for live incident capture. See src/server/cpu-profiler.ts.
 registerCpuProfiler();
+
+// Arm the event-loop long-task detector. DISARMED by default (no-op unless
+// EVENTLOOP_LONGTASK_THRESHOLD_MS > 0), in which case the request hot path runs
+// completely untouched (no ALS wrapper). Base armed mode adds only the
+// monitorEventLoopDelay lag gauge + a drift detector (cheap, no async_hooks).
+// Per-procedure ALS label attribution (EVENTLOOP_LONGTASK_LABELS) and async_hooks
+// stack capture (EVENTLOOP_LONGTASK_STACKS) are separate opt-in tiers for short
+// diagnostic windows — they add async-context-propagation cost and are NOT
+// enabled by base armed mode. Independent of OTEL.
+// See src/server/eventloop-longtask.ts.
+registerEventLoopLongTaskDetector();
 
 // Only enable OTEL if explicitly set AND endpoint is configured
 const OTEL_ENABLED = process.env.OTEL_ENABLED === 'true';

@@ -1,0 +1,587 @@
+/**
+ * One-time endpoint to clamp ModelVersion.publishedAt, Model.publishedAt,
+ * Model.lastVersionAt, and Post.publishedAt where prior republishes bumped
+ * them past their original publish date. Companion to the anti-bump guards
+ * added at the publish write sites (see ClickUp 868jne3fd).
+ *
+ * Why an endpoint instead of a raw SQL migration:
+ *   - clamping publishedAt changes the search-index sort keys
+ *     (publishedAtUnix on Model + Image docs); without queueing index
+ *     updates the Meilisearch entries stay stuck on the bumped values
+ *   - dataForModelsCache + bustMvCache need refreshing so feed reads
+ *     pick up the new sort order without waiting for TTL
+ *   - the raw SQL would otherwise need to also write to the
+ *     SearchIndexUpdateQueue table by hand, which is duplicative and
+ *     misses cache invalidation entirely
+ *
+ * Actions:
+ *   action=apply (default)
+ *     Clamps publishedAt + lastVersionAt to their inferred original values
+ *     AND stashes the pre-clamp value into meta/metadata under the key
+ *     `clamp_868jne3fd_prev{Column}`. Reclass step 4 also stashes the
+ *     pre-flip status. Stashes make the change reversible.
+ *
+ *   action=rollback
+ *     Reads the stash keys back, writes the stashed values into the live
+ *     columns, strips the stash. Idempotent — running rollback twice is a
+ *     no-op (second pass finds no stash to restore).
+ *
+ * Run with:
+ *   POST /api/admin/temp/clamp-publishedat-bumps?token=$WEBHOOK_TOKEN&dryRun=true
+ *   POST /api/admin/temp/clamp-publishedat-bumps?token=$WEBHOOK_TOKEN&dryRun=false&action=apply
+ *   POST /api/admin/temp/clamp-publishedat-bumps?token=$WEBHOOK_TOKEN&dryRun=false&action=rollback
+ *
+ * `dryRun=true` (the default) runs the SQL inside a transaction then aborts
+ * it via thrown sentinel — DB writes roll back, side-effects (search-index
+ * queue, cache refresh) are skipped, response includes the same `ops` counts
+ * the real run would produce.
+ */
+
+import type { NextApiResponse } from 'next';
+import { Prisma } from '@prisma/client';
+import { chunk } from 'lodash-es';
+import * as z from 'zod';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { dbWrite } from '~/server/db/client';
+import {
+  imagesSearchIndex,
+  imagesMetricsSearchIndex,
+  modelsSearchIndex,
+} from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dataForModelsCache } from '~/server/redis/caches';
+import { bustMvCache } from '~/server/services/model-version.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { booleanString } from '~/utils/zod-helpers';
+
+const schema = z.object({
+  dryRun: booleanString().default(true),
+  action: z.enum(['apply', 'rollback']).default('apply'),
+});
+
+// Stash keys live alongside the columns we mutate so a rollback can find
+// them with a simple `meta->>'<key>' IS NOT NULL` filter. The
+// `clamp_868jne3fd_` prefix namespaces this migration so a future cleanup
+// can also locate + strip the keys without ambiguity.
+const STASH = {
+  prevPublishedAt: 'clamp_868jne3fd_prevPublishedAt',
+  prevLastVersionAt: 'clamp_868jne3fd_prevLastVersionAt',
+  prevStatus: 'clamp_868jne3fd_prevStatus',
+} as const;
+
+type Ops = {
+  clampedVersionsByVersionMeta: number;
+  clampedVersionsByPostEvidence: number;
+  resyncedModelLastVersionAt: number;
+  clampedModelPublishedAt: number;
+  clampedPosts: number;
+  reclassedVersionsToUnpublished: number;
+  reclassedModelsToUnpublished: number;
+};
+
+type RollbackOps = {
+  restoredVersionPublishedAt: number;
+  restoredModelPublishedAt: number;
+  restoredModelLastVersionAt: number;
+  restoredPostPublishedAt: number;
+  restoredVersionStatus: number;
+  restoredModelStatus: number;
+};
+
+type AffectedIds = {
+  modelIds: number[];
+  versionIds: number[];
+  postIds: number[];
+};
+
+class DryRunRollback extends Error {
+  constructor(
+    public readonly payload: {
+      ops: Ops | RollbackOps;
+      affected: AffectedIds;
+    }
+  ) {
+    super('dry-run rollback');
+  }
+}
+
+async function runApply(dryRun: boolean): Promise<{ ops: Ops; affected: AffectedIds }> {
+  return dbWrite.$transaction(
+    async (tx) => {
+      // ---- Snapshot bump-evidence rowsets BEFORE any clamp runs ----
+      // Steps 2/2b filter by the same evidence (`meta.unpublishedAt <
+      // publishedAt`, `post.publishedAt < mv.publishedAt`) that steps 1a/1b
+      // *consume* by clamping. Snapshotting freezes the scope so downstream
+      // steps survive the in-transaction mutations. Step 3 (post clamp) is
+      // self-contained but we also snapshot its scope so we know which post
+      // IDs to queue for image-search reindex after commit.
+      await tx.$executeRaw(Prisma.sql`
+        CREATE TEMP TABLE op1a_versions ON COMMIT DROP AS
+        SELECT id, "modelId"
+        FROM "ModelVersion"
+        WHERE "publishedAt" IS NOT NULL
+          AND "publishedAt" <= NOW()
+          AND status = 'Published'
+          AND meta->>'unpublishedAt' IS NOT NULL
+          AND (meta->>'unpublishedAt')::timestamptz < "publishedAt"
+      `);
+
+      await tx.$executeRaw(Prisma.sql`
+        CREATE TEMP TABLE op1b_versions ON COMMIT DROP AS
+        SELECT DISTINCT mv.id, mv."modelId"
+        FROM "ModelVersion" mv
+        JOIN "Post" p ON p."modelVersionId" = mv.id
+        JOIN "Model" mm ON mm.id = mv."modelId" AND mm."userId" = p."userId"
+        WHERE mv.status = 'Published'
+          AND mv."publishedAt" IS NOT NULL
+          AND mv."publishedAt" <= NOW()
+          AND p.metadata->>'unpublishedAt' IS NOT NULL
+          AND p."publishedAt" IS NOT NULL
+          AND p."publishedAt" < mv."publishedAt"
+      `);
+
+      await tx.$executeRaw(Prisma.sql`
+        CREATE TEMP TABLE op3_posts ON COMMIT DROP AS
+        SELECT id
+        FROM "Post"
+        WHERE metadata->>'prevPublishedAt' IS NOT NULL
+          AND "publishedAt" IS NOT NULL
+          AND "publishedAt" > (metadata->>'prevPublishedAt')::timestamptz
+      `);
+
+      // Op 4 reclass scope is captured upfront too. Without this the
+      // post-commit side-effects (dataForModelsCache.refresh, bustMvCache)
+      // would skip the reclassed Draft->Unpublished rows on apply, while
+      // the rollback path picks them up via the `prevStatus IS NOT NULL`
+      // filter and refreshes their caches — the asymmetry would mean
+      // running apply→rollback touches a wider set of caches than apply
+      // alone, masking any drift between the two paths.
+      await tx.$executeRaw(Prisma.sql`
+        CREATE TEMP TABLE op4_versions ON COMMIT DROP AS
+        SELECT id, "modelId"
+        FROM "ModelVersion"
+        WHERE status = 'Draft'::"ModelStatus"
+          AND meta->>'unpublishedAt'     IS NOT NULL
+          AND meta->>'unpublishedReason' IN ('no-files', 'no-posts')
+      `);
+
+      await tx.$executeRaw(Prisma.sql`
+        CREATE TEMP TABLE op4_models ON COMMIT DROP AS
+        SELECT id
+        FROM "Model"
+        WHERE status = 'Draft'::"ModelStatus"
+          AND meta->>'unpublishedAt'     IS NOT NULL
+          AND meta->>'unpublishedReason' = 'no-versions'
+      `);
+
+      // ---- 1a) clamp ModelVersion.publishedAt via version meta breadcrumb ----
+      const clampedVersionsByVersionMeta = await tx.$executeRaw(Prisma.sql`
+        UPDATE "ModelVersion"
+        SET
+          meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object(${STASH.prevPublishedAt}, "publishedAt"),
+          "publishedAt" = GREATEST(
+            "createdAt",
+            LEAST(
+              "publishedAt",
+              (meta->>'unpublishedAt')::timestamptz
+            )
+          )
+        WHERE id IN (SELECT id FROM op1a_versions)
+      `);
+
+      // ---- 1b) clamp ModelVersion.publishedAt via owner-post evidence ----
+      const clampedVersionsByPostEvidence = await tx.$executeRaw(Prisma.sql`
+        UPDATE "ModelVersion" mv
+        SET
+          meta = COALESCE(mv.meta, '{}'::jsonb) || jsonb_build_object(${STASH.prevPublishedAt}, mv."publishedAt"),
+          "publishedAt" = GREATEST(
+            mv."createdAt",
+            LEAST(
+              mv."publishedAt",
+              (
+                SELECT MIN(p."publishedAt")
+                FROM "Post" p
+                JOIN "Model" m ON m.id = mv."modelId"
+                WHERE p."modelVersionId" = mv.id
+                  AND p."userId" = m."userId"
+                  AND p.metadata->>'unpublishedAt' IS NOT NULL
+                  AND p."publishedAt" IS NOT NULL
+              )
+            )
+          )
+        WHERE mv.id IN (SELECT id FROM op1b_versions)
+      `);
+
+      // ---- 2) resync Model.lastVersionAt for 1a ∪ 1b modelIds ----
+      const resyncedModelLastVersionAt = await tx.$executeRaw(Prisma.sql`
+        UPDATE "Model" m
+        SET
+          meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(${STASH.prevLastVersionAt}, m."lastVersionAt"),
+          "lastVersionAt" = sub.last_pub
+        FROM (
+          SELECT "modelId", MAX("publishedAt") AS last_pub
+          FROM "ModelVersion"
+          WHERE status = 'Published'
+            AND "publishedAt" IS NOT NULL
+            AND "publishedAt" <= NOW()
+          GROUP BY "modelId"
+        ) sub
+        WHERE m.id = sub."modelId"
+          AND m."lastVersionAt" IS DISTINCT FROM sub.last_pub
+          AND m.id IN (
+            SELECT "modelId" FROM op1a_versions
+            UNION
+            SELECT "modelId" FROM op1b_versions
+          )
+      `);
+
+      // ---- 2b) clamp Model.publishedAt for 1b modelIds ----
+      const clampedModelPublishedAt = await tx.$executeRaw(Prisma.sql`
+        UPDATE "Model" m
+        SET
+          meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(${STASH.prevPublishedAt}, m."publishedAt"),
+          "publishedAt" = sub.first_pub
+        FROM (
+          SELECT "modelId", MIN("publishedAt") AS first_pub
+          FROM "ModelVersion"
+          WHERE status = 'Published'
+            AND "publishedAt" IS NOT NULL
+            AND "publishedAt" <= NOW()
+          GROUP BY "modelId"
+        ) sub
+        WHERE m.id = sub."modelId"
+          AND m."publishedAt" IS NOT NULL
+          AND m."publishedAt" > sub.first_pub
+          AND m.id IN (SELECT "modelId" FROM op1b_versions)
+      `);
+
+      // ---- 3) clamp Post.publishedAt where bumped past prevPublishedAt ----
+      const clampedPosts = await tx.$executeRaw(Prisma.sql`
+        UPDATE "Post"
+        SET
+          metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(${STASH.prevPublishedAt}, "publishedAt"),
+          "publishedAt" = GREATEST(
+            "createdAt",
+            LEAST(
+              "publishedAt",
+              (metadata->>'prevPublishedAt')::timestamptz
+            )
+          )
+        WHERE id IN (SELECT id FROM op3_posts)
+      `);
+
+      // ---- 4) reclassify legacy cron-demoted Draft -> Unpublished ----
+      // Driven off the op4_versions / op4_models snapshots so the affected
+      // ID set used for side-effects below stays consistent with what we
+      // actually wrote.
+      const reclassedVersionsToUnpublished = await tx.$executeRaw(Prisma.sql`
+        UPDATE "ModelVersion"
+        SET
+          meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object(${STASH.prevStatus}, status::text),
+          status = 'Unpublished'::"ModelStatus"
+        WHERE id IN (SELECT id FROM op4_versions)
+      `);
+
+      const reclassedModelsToUnpublished = await tx.$executeRaw(Prisma.sql`
+        UPDATE "Model"
+        SET
+          meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object(${STASH.prevStatus}, status::text),
+          status = 'Unpublished'::"ModelStatus"
+        WHERE id IN (SELECT id FROM op4_models)
+      `);
+
+      // ---- collect affected IDs for side-effects ----
+      // Union all four scopes (1a, 1b, op4 versions, op4 models) so the
+      // cache + search-index sweep matches what rollback would touch in
+      // reverse. Apply/rollback asymmetry would otherwise mask drift
+      // because rollback's filter (`prevStatus IS NOT NULL`) catches the
+      // op4 reclass rows but apply did not.
+      const affectedVersionRows = await tx.$queryRaw<{ id: number; modelId: number }[]>(Prisma.sql`
+        SELECT id, "modelId" FROM op1a_versions
+        UNION
+        SELECT id, "modelId" FROM op1b_versions
+        UNION
+        SELECT id, "modelId" FROM op4_versions
+      `);
+      const versionIds = affectedVersionRows.map((r) => r.id);
+      const versionModelIds = affectedVersionRows.map((r) => r.modelId);
+
+      const op4ModelRows = await tx.$queryRaw<{ id: number }[]>(Prisma.sql`
+        SELECT id FROM op4_models
+      `);
+
+      const postRows = await tx.$queryRaw<{ id: number }[]>(Prisma.sql`
+        SELECT id FROM op3_posts
+      `);
+
+      const modelIds = Array.from(
+        new Set([...versionModelIds, ...op4ModelRows.map((r) => r.id)])
+      );
+      const postIds = postRows.map((r) => r.id);
+
+      const result = {
+        ops: {
+          clampedVersionsByVersionMeta: Number(clampedVersionsByVersionMeta),
+          clampedVersionsByPostEvidence: Number(clampedVersionsByPostEvidence),
+          resyncedModelLastVersionAt: Number(resyncedModelLastVersionAt),
+          clampedModelPublishedAt: Number(clampedModelPublishedAt),
+          clampedPosts: Number(clampedPosts),
+          reclassedVersionsToUnpublished: Number(reclassedVersionsToUnpublished),
+          reclassedModelsToUnpublished: Number(reclassedModelsToUnpublished),
+        },
+        affected: { modelIds, versionIds, postIds },
+      };
+
+      if (dryRun) {
+        throw new DryRunRollback(result);
+      }
+
+      return result;
+    },
+    { timeout: 5 * 60 * 1000, maxWait: 30 * 1000 }
+  );
+}
+
+async function runRollback(
+  dryRun: boolean
+): Promise<{ ops: RollbackOps; affected: AffectedIds }> {
+  return dbWrite.$transaction(
+    async (tx) => {
+      // Snapshot IDs that carry a stash BEFORE we strip the keys — we'll
+      // need them post-commit to queue search-index updates and cache busts.
+      await tx.$executeRaw(Prisma.sql`
+        CREATE TEMP TABLE rb_versions ON COMMIT DROP AS
+        SELECT id, "modelId"
+        FROM "ModelVersion"
+        WHERE meta->>${STASH.prevPublishedAt} IS NOT NULL
+           OR meta->>${STASH.prevStatus}      IS NOT NULL
+      `);
+
+      await tx.$executeRaw(Prisma.sql`
+        CREATE TEMP TABLE rb_models ON COMMIT DROP AS
+        SELECT id
+        FROM "Model"
+        WHERE meta->>${STASH.prevPublishedAt}    IS NOT NULL
+           OR meta->>${STASH.prevLastVersionAt}  IS NOT NULL
+           OR meta->>${STASH.prevStatus}         IS NOT NULL
+      `);
+
+      await tx.$executeRaw(Prisma.sql`
+        CREATE TEMP TABLE rb_posts ON COMMIT DROP AS
+        SELECT id
+        FROM "Post"
+        WHERE metadata->>${STASH.prevPublishedAt} IS NOT NULL
+      `);
+
+      // ---- Restore ModelVersion.publishedAt + strip stash ----
+      const restoredVersionPublishedAt = await tx.$executeRaw(Prisma.sql`
+        UPDATE "ModelVersion"
+        SET
+          "publishedAt" = (meta->>${STASH.prevPublishedAt})::timestamptz,
+          meta = meta - ${STASH.prevPublishedAt}
+        WHERE meta->>${STASH.prevPublishedAt} IS NOT NULL
+      `);
+
+      // ---- Restore ModelVersion.status (reclass step 4 reversal) ----
+      const restoredVersionStatus = await tx.$executeRaw(Prisma.sql`
+        UPDATE "ModelVersion"
+        SET
+          status = (meta->>${STASH.prevStatus})::"ModelStatus",
+          meta = meta - ${STASH.prevStatus}
+        WHERE meta->>${STASH.prevStatus} IS NOT NULL
+      `);
+
+      // ---- Restore Model.publishedAt + strip stash ----
+      const restoredModelPublishedAt = await tx.$executeRaw(Prisma.sql`
+        UPDATE "Model"
+        SET
+          "publishedAt" = (meta->>${STASH.prevPublishedAt})::timestamptz,
+          meta = meta - ${STASH.prevPublishedAt}
+        WHERE meta->>${STASH.prevPublishedAt} IS NOT NULL
+      `);
+
+      // ---- Restore Model.lastVersionAt + strip stash ----
+      const restoredModelLastVersionAt = await tx.$executeRaw(Prisma.sql`
+        UPDATE "Model"
+        SET
+          "lastVersionAt" = (meta->>${STASH.prevLastVersionAt})::timestamptz,
+          meta = meta - ${STASH.prevLastVersionAt}
+        WHERE meta->>${STASH.prevLastVersionAt} IS NOT NULL
+      `);
+
+      // ---- Restore Model.status (reclass step 4 reversal) ----
+      const restoredModelStatus = await tx.$executeRaw(Prisma.sql`
+        UPDATE "Model"
+        SET
+          status = (meta->>${STASH.prevStatus})::"ModelStatus",
+          meta = meta - ${STASH.prevStatus}
+        WHERE meta->>${STASH.prevStatus} IS NOT NULL
+      `);
+
+      // ---- Restore Post.publishedAt + strip stash ----
+      const restoredPostPublishedAt = await tx.$executeRaw(Prisma.sql`
+        UPDATE "Post"
+        SET
+          "publishedAt" = (metadata->>${STASH.prevPublishedAt})::timestamptz,
+          metadata = metadata - ${STASH.prevPublishedAt}
+        WHERE metadata->>${STASH.prevPublishedAt} IS NOT NULL
+      `);
+
+      // ---- collect affected IDs for side-effects ----
+      const versionRows = await tx.$queryRaw<{ id: number; modelId: number }[]>(Prisma.sql`
+        SELECT id, "modelId" FROM rb_versions
+      `);
+      const modelRows = await tx.$queryRaw<{ id: number }[]>(Prisma.sql`
+        SELECT id FROM rb_models
+      `);
+      const postRows = await tx.$queryRaw<{ id: number }[]>(Prisma.sql`
+        SELECT id FROM rb_posts
+      `);
+
+      const modelIds = Array.from(
+        new Set([...versionRows.map((v) => v.modelId), ...modelRows.map((m) => m.id)])
+      );
+      const versionIds = versionRows.map((v) => v.id);
+      const postIds = postRows.map((p) => p.id);
+
+      const result = {
+        ops: {
+          restoredVersionPublishedAt: Number(restoredVersionPublishedAt),
+          restoredModelPublishedAt: Number(restoredModelPublishedAt),
+          restoredModelLastVersionAt: Number(restoredModelLastVersionAt),
+          restoredPostPublishedAt: Number(restoredPostPublishedAt),
+          restoredVersionStatus: Number(restoredVersionStatus),
+          restoredModelStatus: Number(restoredModelStatus),
+        },
+        affected: { modelIds, versionIds, postIds },
+      };
+
+      if (dryRun) {
+        throw new DryRunRollback(result);
+      }
+
+      return result;
+    },
+    { timeout: 5 * 60 * 1000, maxWait: 30 * 1000 }
+  );
+}
+
+async function queueSearchIndexUpdates(affected: AffectedIds) {
+  const { modelIds, postIds } = affected;
+
+  if (modelIds.length > 0) {
+    await modelsSearchIndex.queueUpdate(
+      modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+  }
+
+  let imagesReindexed = 0;
+  if (postIds.length > 0) {
+    // Reindex images on clamped/restored posts — publishedAt feeds the
+    // sort/filter keys on Image docs (publishedAtUnix). Chunk so a huge
+    // posts table doesn't blow out a single search-index batch.
+    for (const batch of chunk(postIds, 500)) {
+      const images = await dbWrite.image.findMany({
+        where: { postId: { in: batch } },
+        select: { id: true },
+      });
+      if (images.length === 0) continue;
+      const updates = images.map((i) => ({
+        id: i.id,
+        action: SearchIndexUpdateQueueAction.Update,
+      }));
+      await imagesSearchIndex.queueUpdate(updates);
+      await imagesMetricsSearchIndex.queueUpdate(updates);
+      imagesReindexed += images.length;
+    }
+  }
+
+  return { modelsReindexed: modelIds.length, imagesReindexed };
+}
+
+async function refreshCaches(affected: AffectedIds) {
+  const { modelIds, versionIds } = affected;
+
+  // dataForModelsCache.refresh is per-id; bound concurrency so we don't
+  // hammer Redis when there are ~1800 models to invalidate.
+  if (modelIds.length > 0) {
+    const tasks = modelIds.map((id) => async () => dataForModelsCache.refresh(id));
+    await limitConcurrency(tasks, 10);
+  }
+
+  if (versionIds.length > 0) {
+    const versionRows = await dbWrite.modelVersion.findMany({
+      where: { id: { in: versionIds } },
+      select: { id: true, modelId: true },
+    });
+    const tasks = versionRows.map((v) => async () => bustMvCache(v.id, v.modelId));
+    await limitConcurrency(tasks, 10);
+  }
+}
+
+export default WebhookEndpoint(async (req, res: NextApiResponse) => {
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: z.treeifyError(parsed.error) });
+  }
+  const { dryRun, action } = parsed.data;
+
+  console.log(`[clamp-publishedat-bumps] action=${action} dryRun=${dryRun} starting`);
+  const startTime = Date.now();
+
+  let ops: Ops | RollbackOps;
+  let affected: AffectedIds;
+  try {
+    const result = action === 'apply' ? await runApply(dryRun) : await runRollback(dryRun);
+    ops = result.ops;
+    affected = result.affected;
+  } catch (error) {
+    if (error instanceof DryRunRollback) {
+      const dbDurationSec = Number(((Date.now() - startTime) / 1000).toFixed(2));
+      console.log(
+        `[clamp-publishedat-bumps] action=${action} dry-run complete duration=${dbDurationSec}s`
+      );
+      return res.status(200).json({
+        action,
+        dryRun: true,
+        dbDurationSec,
+        ops: error.payload.ops,
+        affectedCounts: {
+          models: error.payload.affected.modelIds.length,
+          versions: error.payload.affected.versionIds.length,
+          posts: error.payload.affected.postIds.length,
+        },
+      });
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[clamp-publishedat-bumps] action=${action} tx failed: ${message}`);
+    return res.status(500).json({ error: message });
+  }
+
+  const dbDurationSec = Number(((Date.now() - startTime) / 1000).toFixed(2));
+  console.log(
+    `[clamp-publishedat-bumps] action=${action} tx committed duration=${dbDurationSec}s ` +
+      `models=${affected.modelIds.length} versions=${affected.versionIds.length} ` +
+      `posts=${affected.postIds.length}`
+  );
+
+  const sideEffectsStart = Date.now();
+  const { modelsReindexed, imagesReindexed } = await queueSearchIndexUpdates(affected);
+  await refreshCaches(affected);
+  const sideEffectsDurationSec = Number(((Date.now() - sideEffectsStart) / 1000).toFixed(2));
+
+  return res.status(200).json({
+    action,
+    dryRun: false,
+    dbDurationSec,
+    sideEffectsDurationSec,
+    ops,
+    sideEffects: {
+      modelsReindexed,
+      imagesReindexed,
+      modelCachesRefreshed: affected.modelIds.length,
+      versionCachesRefreshed: affected.versionIds.length,
+      postsTouched: affected.postIds.length,
+    },
+  });
+});

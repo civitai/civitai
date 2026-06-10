@@ -15,20 +15,22 @@ export function MatureContentMigrationAlert() {
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
   const { data: session } = useSession();
+  // Check the raw session user preferences (before domain override).
+  // On green, the BrowserSettingsProvider forces showNsfw=false, so we
+  // need the original values to know if the user would see NSFW elsewhere.
+  const user = session?.user;
   // `AppProvider` seeds `user.getSettings` with SSR `initialData` and the
   // global `staleTime: Infinity` prevents refetching — so `data` is truthy
   // immediately with potentially stale `dismissedAlerts`. Gate on `isFetched`
   // (only true after a real network fetch resolves) so we never render based
   // on the SSR snapshot, and force a refetch on mount via `staleTime: 0`.
+  // Gate on `!!user` so logged-out visits don't trigger a 401 against the
+  // protected procedure.
   const { data: settings, isFetched } = trpc.user.getSettings.useQuery(undefined, {
+    enabled: !!user,
     staleTime: 0,
   });
   const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
-
-  // Check the raw session user preferences (before domain override).
-  // On green, the BrowserSettingsProvider forces showNsfw=false, so we
-  // need the original values to know if the user would see NSFW elsewhere.
-  const user = session?.user;
   const hasNsfwEnabled =
     user?.showNsfw && Flags.intersects(user.browsingLevel, nsfwBrowsingLevelsFlag);
 

@@ -1,5 +1,6 @@
 // src/pages/api/trpc/[trpc].ts
 import { createNextApiHandler } from '@trpc/server/adapters/next';
+import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { withAxiom } from '@civitai/next-axiom';
 import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
@@ -101,4 +102,15 @@ const trpcHandler = createNextApiHandler({
 });
 
 // export API handler
-export default withAxiom(trpcHandler);
+//
+// withAxiom is overloaded with `(param: NextConfig): NextConfig` declared first.
+// With an untyped arrow, TS can't cleanly resolve the API-handler overload
+// (Next 16's stricter route types turn the ambiguity into a hard error). Typing
+// the params explicitly forces the `AxiomApiHandler` overload, and the async
+// body gives an explicit `Promise<void>` return. The result is still asserted to
+// NextApiHandler for the generated route-type validator. Method-override is
+// handled natively by `allowMethodOverride: true` above (main), so no manual
+// restore step is needed here.
+export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
+  await trpcHandler(req, res);
+}) as NextApiHandler;

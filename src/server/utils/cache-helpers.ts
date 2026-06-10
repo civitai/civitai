@@ -472,6 +472,28 @@ export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
   await redis.packed.set(key, toCache, { KEEPTTL: true });
 }
 
+/**
+ * ⚠️ DANGER — DO NOT call on a hot path (per-request / per-mutation cache busts).
+ *
+ * With a wildcard pattern this runs a CLUSTER-WIDE `SCAN` (every node, O(total
+ * keyspace)). SCAN is slow and effectively head-of-line-blocking on Redis's
+ * single thread; on a large or memory-pressured shard one call can take seconds
+ * and TIME OUT every other command on that node.
+ *
+ * Incident 2026-06-08 (civitai #2434): the buzz-balance cache busted via
+ * `clearCacheByPattern('buzz:account:<id>:*')` on EVERY buzz mutation. Each one
+ * triggered a cluster SCAN over a ~60M-key shard → redis command timeouts →
+ * request pileup → API main-thread CPU pin / 504 waves. It had to be reverted.
+ *
+ * ✅ For bust-on-write/mutation, NEVER scan. Record the keys you wrote in a
+ * per-entity index SET (`sAdd` on cache write, short TTL) and bust with
+ * `sMembers` + targeted `del` — see `bustQueriedWorkflowsCache` in
+ * `services/orchestrator/orchestration-new.service.ts` (#2436) for the pattern.
+ *
+ * ✅ Acceptable uses: RARE / admin / global operations only (the admin
+ * cache-clear endpoint, mass session invalidation, one-off legacy-key cleanup).
+ * Never on a path that runs per request, per mutation, or in a tight loop.
+ */
 export async function clearCacheByPattern(
   pattern: string,
   onProgress?: (cleared: number) => void,
@@ -526,6 +548,8 @@ export type ClearCacheByPatternsProgress = {
 
 // Single-pass purge across multiple patterns — iterates the keyspace once and
 // tests each key against every pattern regex. Replaces N full SCANs with 1.
+// ⚠️ Still a CLUSTER-WIDE SCAN — same hot-path danger as `clearCacheByPattern`
+// above (see its doc + the 2026-06-08 #2434 incident). Admin/rare/global only.
 export async function clearCacheByPatterns(
   patterns: string[],
   onProgress?: (progress: ClearCacheByPatternsProgress) => void,

@@ -4874,7 +4874,7 @@ type CachedImagesForModelVersions = {
 export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
-  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
+  ttl: CacheTTL.day,
   // The lookupFn filters on async-populated columns (i.nsfwLevel != 0,
   // i.needsReview IS NULL). A read between publish and ingestion-complete
   // returns zero rows. We still cache notFound to skip the requery cost on

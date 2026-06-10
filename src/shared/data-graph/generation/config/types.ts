@@ -79,7 +79,7 @@ export interface WorkflowConfig {
    * typed to keep server-side workflow configs free of client-only types.
    *
    * @example
-   *   featureFlag: 'controlNets'  // hide unless features.controlNets is true
+   *   featureFlag: 'wan22MultiStep'  // hide unless features.wan22MultiStep is true
    */
   featureFlag?: string;
 

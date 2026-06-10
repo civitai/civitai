@@ -56,7 +56,12 @@ export const createContext = async ({
   // Bearer/API-key auth carries no cookies, so CSRF does not apply.
   const isBearerAuth = (req as any).context?.apiKeyId != null;
   const acceptableOrigin = !isProd || isBearerAuth || isAllowedOriginRequest(req);
-  const track = new Tracker(req, res);
+  // Pass the already-resolved session so high-volume tracking routes
+  // (e.g. track.addView ~100/s on api-primary) skip the Tracker's own
+  // getServerAuthSession call. Matters for ANONYMOUS requests: a null session
+  // isn't memoized by req.context.session, so the lazy path re-decrypted the
+  // JWE on every track() call (authenticated requests already cache-hit).
+  const track = new Tracker(req, res, session);
   const cache: CacheSettings | null = {
     browserTTL: session?.user ? 0 : 60,
     edgeTTL: session?.user ? 0 : 60,

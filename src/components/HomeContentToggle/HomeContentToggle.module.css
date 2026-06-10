@@ -12,10 +12,10 @@
   background-repeat: no-repeat;
   color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-3));
   
-  & :global {
-    animation: button-highlight 5s linear infinite;
-    will-change: background-position;
-  }
+  /* `button-highlight` is a global keyframes (src/styles/globals.css); stays global
+     because no local @keyframes of that name exists in this module. */
+  animation: button-highlight 5s linear infinite;
+  will-change: background-position;
 }
 
 .tabRainbow {

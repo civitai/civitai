@@ -42,7 +42,6 @@ type ImagesInfiniteProps = {
   filterType?: 'images' | 'videos';
   showAds?: boolean;
   showEmptyCta?: boolean;
-  useIndex?: boolean;
   disableStoreFilters?: boolean;
 } & Pick<ImagesContextState, 'collectionId' | 'judgeInfo'>;
 
@@ -62,14 +61,12 @@ export function ImagesInfiniteContent({
   filterType = 'images',
   showAds,
   showEmptyCta,
-  useIndex,
   disableStoreFilters = false,
   ...imageProviderProps
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
   const filters = removeEmpty({
     ...(disableStoreFilters ? filterOverrides : { ...imageFilters, ...filterOverrides }),
-    useIndex,
     withTags,
   });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;

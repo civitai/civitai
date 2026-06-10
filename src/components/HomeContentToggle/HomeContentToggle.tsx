@@ -128,6 +128,8 @@ export function filterHomeOptions(features: FeatureAccess) {
         key === 'challenges' && !features.challengePlatform,
         key === 'comics' && !features.comicCreator,
         key === '3d-models' && !features.model3dFeed,
+        key === 'posts' && !features.postsNavItem,
+        key === 'events' && !features.eventsNavItem,
       ].some((b) => b)
   );
 }
