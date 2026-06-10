@@ -39,7 +39,7 @@ const PREVIEW_URL = process.env.PREVIEW_URL;
 const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https preview => __Secure- prefix
 const MAX_AGE_S = 30 * 24 * 60 * 60;
 
-async function mintStorageState(role: PreviewRole) {
+async function mintStorageState(role: PreviewRole): Promise<string> {
   const u = PREVIEW_USERS[role];
 
   // token.user shape (ExtendedUser, src/types/next-auth.d.ts). id + isModerator
@@ -80,19 +80,29 @@ async function mintStorageState(role: PreviewRole) {
 
   fs.mkdirSync('tests/auth', { recursive: true });
   fs.writeFileSync(storageStatePath(role), JSON.stringify(storageState, null, 2));
+  return value;
 }
 
 setup('mint preview sessions', async ({ request }) => {
   if (!SECRET) throw new Error('NEXTAUTH_SECRET is required to mint preview sessions');
   if (!PREVIEW_URL) throw new Error('PREVIEW_URL is required for preview smoke tests');
+  const jwts: Partial<Record<PreviewRole, string>> = {};
   for (const role of Object.keys(PREVIEW_USERS) as PreviewRole[]) {
-    await mintStorageState(role);
+    jwts[role] = await mintStorageState(role);
   }
 
-  // Warm the freshly-deployed preview before the suite runs so the first real
-  // test doesn't eat the full cold-SSR cost (Next server warm-up + JIT + DB pool
-  // open can push the homepage past the per-test timeout on a cold preview). An
-  // unauthenticated GET (which the gate 307s to /login) is enough to warm the
-  // server process; failures here are non-fatal — the suite + retries cover it.
-  await request.get('/', { timeout: 60_000, maxRedirects: 0 }).catch(() => {});
+  // Warm the freshly-deployed preview before the suite so the first real test
+  // doesn't pay the full cold-SSR cost (Next warm-up + JIT + DB pools). Warm the
+  // HEAVY listing pages too, not just `/` — those are the slow ones. They must be
+  // warmed AUTHENTICATED: on a preview the gate 307s an UNauthenticated /models to
+  // /login, so an anon GET wouldn't touch the real /models render path. Use the
+  // gold (gate-passing) cookie. Sequential + non-fatal; the suite + retries cover
+  // any miss.
+  const gold = jwts.gold;
+  if (gold) {
+    const headers = { cookie: `${COOKIE_NAME}=${gold}` };
+    for (const path of ['/', '/models', '/images']) {
+      await request.get(path, { timeout: 60_000, headers }).catch(() => {});
+    }
+  }
 });

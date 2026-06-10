@@ -19,13 +19,19 @@ if (!PREVIEW_URL) {
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: /preview-(auth\.setup|smoke\.spec)\.ts/,
-  fullyParallel: true,
+  // Anchor to the FILENAME (after a path separator) — an unanchored /preview-…/
+  // also matches a parent dir named like a worktree (…/civitai-preview-x/), which
+  // would wrongly pull in the non-preview specs (auction/generation/example).
+  testMatch: /(^|\/)preview-.*\.(setup|spec)\.ts$/,
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  // Modest parallelism: enough to not run 11 navigations serially, bounded so a
-  // single-replica preview pod isn't hammered. (workers:1 would defeat fullyParallel.)
-  workers: 4,
+  // Run SERIALLY. The preview is a single-replica, cold, resource-modest pod.
+  // Concurrent loads of the heavy pages (/models, /images, /purchase/buzz,
+  // /pricing, model detail) across multiple workers segfaulted it (exit 139),
+  // which cascaded fast failures into unrelated tests. One page at a time lets
+  // the pod cope; the suite is small + report-only, so serial (~2-3 min) is fine.
+  workers: 1,
   // A freshly-deployed preview is cold: the first SSR render of a heavy page (the
   // homepage especially) can take 30-40s while the Next server warms, JIT-compiles,
   // and opens DB pools. The default 30s per-test timeout is too tight for that cold
@@ -37,13 +43,16 @@ export default defineConfig({
     baseURL: PREVIEW_URL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    navigationTimeout: 45_000,
+    // Align with the per-test timeout: a cold heavy-page (/models) goto can need
+    // most of the budget, and a 45s nav cap would fail it even though the test has
+    // 60s. The setup project also pre-warms /models + /images authenticated.
+    navigationTimeout: 60_000,
   },
   projects: [
-    { name: 'preview-setup', testMatch: /preview-auth\.setup\.ts/ },
+    { name: 'preview-setup', testMatch: /(^|\/)preview-auth\.setup\.ts$/ },
     {
       name: 'preview-smoke',
-      testMatch: /preview-smoke\.spec\.ts/,
+      testMatch: /(^|\/)preview-.*\.spec\.ts$/,
       dependencies: ['preview-setup'],
       use: { ...devices['Desktop Chrome'] },
     },
