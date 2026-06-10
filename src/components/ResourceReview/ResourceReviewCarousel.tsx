@@ -37,7 +37,6 @@ export function ResourceReviewCarousel({
     sort: ImageSort.MostReactions,
     period: MetricTimeframe.AllTime,
     limit: 10,
-    useIndex: true,
   };
 
   const { data, images, isLoading } = useQueryImages(filters);

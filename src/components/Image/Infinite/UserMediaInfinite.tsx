@@ -166,7 +166,6 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   // pending: true,
                 }}
                 showEmptyCta={isSameUser}
-                useIndex={!viewingReactions}
               />
             )}
           </Stack>
