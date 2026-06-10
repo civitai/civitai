@@ -20,12 +20,14 @@ if (!global.collectMetricsInitialized) {
     register: client.register,
     labels,
   });
-  // Apply the same default labels (e.g. podname) to the cross-graph instrumentation
-  // registry so its series (eventloop long-task metrics) carry podname like every
-  // other app metric — otherwise per-pod attribution on those series is lost.
-  instrumentationRegistry.setDefaultLabels(labels);
   global.collectMetricsInitialized = true;
 }
+
+// NOTE: the instrumentation-registry metrics (eventloop long-task) intentionally do
+// NOT set an app-side `podname` default label. Like every other custom app metric
+// (trpc_procedure_duration, cache_hit_total, …) they get per-pod identity from
+// Prometheus' scrape-time `pod` label (honorLabels: true in the ServiceMonitor); an
+// app-emitted `podname` here would be redundant and inconsistent with the siblings.
 
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
   const metrics = await client.register.metrics();
