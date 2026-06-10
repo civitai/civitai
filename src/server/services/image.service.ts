@@ -4844,7 +4844,16 @@ type CachedImagesForModelVersions = {
 export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
-  ttl: CacheTTL.day,
+  // Largest per-key bucket on next-redis-cluster (~5 KiB/value, ~843k keys
+  // ≈ 4.2 GiB). With staleWhileRevalidate the effective Redis EX is ttl*2, so
+  // the old CacheTTL.day produced ~48h live keys and kept shards 0/1 pinned at
+  // ~98% (shard 0 actively evicting). Halved to 12h (EX ~24h) to relieve LRU
+  // pressure. Safe because SWR serves the stale value while revalidating under
+  // a lock (no user-facing latency on the heavy lookup query), and real
+  // showcase changes are handled by explicit bust()/refresh(), not TTL expiry —
+  // the TTL is a freshness floor, not the correctness mechanism. Tradeoff: the
+  // expensive multi-join lookupFn revalidates ~2x more often in the background.
+  ttl: CacheTTL.hour * 12,
   // The lookupFn filters on async-populated columns (i.nsfwLevel != 0,
   // i.needsReview IS NULL). A read between publish and ingestion-complete
   // returns zero rows. We still cache notFound to skip the requery cost on
