@@ -43,6 +43,14 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) utils.user.getSettings.setData(undefined, ctx.prev);
     },
+    // Reconcile with server truth after the optimistic update: the optimistic
+    // setData spreads `...old`, so if the cached base was incomplete (e.g. a
+    // failed SSR settings snapshot) it could persist a truncated settings
+    // object. Refetch once on dismiss to restore the full object + confirm the
+    // stored dismissedAlerts. One request per dismiss (rare) — not per mount.
+    onSettled: () => {
+      utils.user.getSettings.invalidate();
+    },
   });
 
   const yellowBalance = buzzAccounts?.yellow ?? 0;

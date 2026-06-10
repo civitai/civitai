@@ -41,6 +41,14 @@ export function NavTidyNotice() {
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) utils.user.getSettings.setData(undefined, ctx.prev);
     },
+    // Reconcile with server truth after the optimistic update: the optimistic
+    // setData spreads `...old`, so if the cached base was incomplete (e.g. a
+    // failed SSR settings snapshot) it could persist a truncated settings
+    // object. Refetch once on dismiss to restore the full object + confirm the
+    // stored dismissedAlerts. One request per dismiss (rare) — not per mount.
+    onSettled: () => {
+      utils.user.getSettings.invalidate();
+    },
   });
 
   // Only nudge users who actually have one of the tidied items hidden.
