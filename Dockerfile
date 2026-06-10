@@ -46,6 +46,24 @@ ARG NODE_BUILD_MEM=8192
 RUN --mount=type=cache,target=/app/.next/cache \
     SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
+# Server source maps (.next/server/**/*.js.map) are emitted by the build
+# (productionBrowserSourceMaps -> turbopackSourceMaps) but @vercel/nft does NOT
+# trace sibling .map files into .next/standalone, so they'd be missing at runtime.
+# Collect ONLY the server-chunk maps into a structure-preserving staging dir so the
+# runner can overlay them onto the standalone tree without dragging in untraced .js
+# chunks. Maps are inert at runtime (loaded only by an inspector/stack resolver),
+# so this adds image size but no request-path cost.
+# Build-chunk map filenames are content hashes (no spaces/newlines), so the
+# newline-delimited `tar -T -` files-from list is safe and works under both GNU tar
+# and busybox tar (alpine). `tar | tar` preserves the dir structure
+# (e.g. chunks/<hash>.js.map) so each map lands next to its .js in the runner.
+# (Comments must stay OUTSIDE the RUN: Docker collapses the \-continuations into one
+# line, where an inline `#` would swallow the rest of the command.)
+RUN mkdir -p /app/server-maps && \
+    cd /app/.next/server && \
+    { find . -name '*.js.map' | tar -cf - -T - | tar -xf - -C /app/server-maps || true; } && \
+    echo "Staged $(find /app/server-maps -name '*.js.map' | wc -l) server source maps ($(du -sh /app/server-maps | cut -f1))"
+
 ##### RUNNER
 
 FROM node:20-alpine3.20 AS runner
@@ -64,6 +82,11 @@ COPY --from=builder /app/package.json ./package.json
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Overlay server-chunk source maps that nft drops from the standalone trace.
+# Structure mirrors .next/server, so this lands each <chunk>.js.map next to the
+# <chunk>.js the standalone tree already shipped. Used offline by the cpuprofile
+# resolver — never read on the request path.
+COPY --from=builder --chown=nextjs:nodejs /app/server-maps/ ./.next/server/
 
 USER nextjs
 EXPOSE 3000
