@@ -118,15 +118,24 @@ export async function recordScopeGrant(opts: {
  * here — they are publisher-only / ambient-but-otherwise-gated scopes that have
  * their own issuance-time checks (caller-is-installer, resolveStorageContext).
  * Subjecting them to per-user consent would make the publisher re-consent to
- * their own block's settings on every version bump for no security gain. Only
- * the user-resource scopes (models/media/user/ai/buzz/social) flow through the
- * consent gate.
+ * their own block's settings on every version bump for no security gain. The
+ * remaining user-resource scopes (media/user/ai/buzz/social, models:write)
+ * flow through the consent gate.
+ *
+ * `models:read:self` is ALSO exempt (allow-by-default): a low-sensitivity read
+ * of the viewer's OWN models, and a no-op for an anon viewer (no user → nothing
+ * to read), so it is safe in an anon token. Exempting it lets the block render
+ * fully for a logged-in viewer with no upfront consent prompt; the consent gate
+ * is reserved for the money / AI scopes (`ai:write:budgeted`, `buzz:read:self`),
+ * which the host requests lazily on the first buzz-spending action (Generate)
+ * rather than on load.
  */
 const CONSENT_EXEMPT_SCOPES = new Set([
   'block:settings:read',
   'block:settings:write',
   'apps:storage:read',
   'apps:storage:write',
+  'models:read:self',
 ]);
 
 export function partitionByConsent(
