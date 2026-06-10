@@ -654,10 +654,29 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
   if (!post) throw throwNotFoundError();
 
+  // Only fetch the unpublish-context JOIN when the post is currently
+  // unpublished (publishedAt = NULL). Public reads are the hot path and
+  // don't need this — default the fields and skip the query. Note: a small
+  // set of orphan rows can have `publishedAt != null` AND a `prevPublishedAt`
+  // stash (future-scheduled clamp orphans documented in the
+  // clamp-publishedat-bumps endpoint); we deliberately don't surface
+  // restore-only state for those — they're cleaned out-of-band.
+  // Pass the same `db` client used above so the stash JOIN shares
+  // `getDbWithoutLag`'s primary-routing right after an unpublish/republish.
+  const unpublishContext: PostUnpublishContext = post.publishedAt
+    ? {
+        wasPublished: false,
+        unpublishedAt: null,
+        unpublishedBy: null,
+        parentModelId: null,
+      }
+    : await getPostUnpublishContext({ id, db });
+
   return {
     ...post,
     detail: post.detail,
     tags: post.tags.flatMap((x) => x.tag),
+    ...unpublishContext,
   };
 };
 
@@ -684,8 +703,60 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     collectionItemExists = !!collectionItem;
   }
 
+  // Unpublish context is already attached by getPostDetail above.
   return { ...post, collectionTagId, images, collectionItemExists };
 };
+
+export type PostUnpublishContext = {
+  // True when the post carries a `prevPublishedAt` stash — i.e. it was
+  // previously public, then unpublished via the parent model/version flow.
+  // Drives the restore-only UI in PostEditSidebar: when set, the post
+  // cannot be rescheduled, only republished at its original date.
+  wasPublished: boolean;
+  unpublishedAt: Date | null;
+  unpublishedBy: number | null;
+  // Surfaced via JOIN so the UI can build a link back to the parent model
+  // edit page (where the actual unpublish reason + custom message live).
+  // We deliberately don't surface the reason directly on the post —
+  // model-level reasons like "insufficient-description" don't always map
+  // onto the post itself, so showing them in the post alert is misleading.
+  parentModelId: number | null;
+};
+
+async function getPostUnpublishContext({
+  id,
+  db = dbRead,
+}: {
+  id: number;
+  db?: typeof dbRead | typeof dbWrite;
+}): Promise<PostUnpublishContext> {
+  const rows = await db.$queryRaw<
+    {
+      metadata: Record<string, unknown> | null;
+      modelId: number | null;
+    }[]
+  >`
+    SELECT
+      p.metadata                AS "metadata",
+      mv."modelId"              AS "modelId"
+    FROM "Post" p
+    LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+    WHERE p.id = ${id}
+  `;
+
+  const row = rows[0];
+  const metadata = (row?.metadata ?? {}) as Record<string, unknown>;
+  const prevPublishedAt = metadata.prevPublishedAt;
+  const rawUnpublishedAt = metadata.unpublishedAt;
+  const rawUnpublishedBy = metadata.unpublishedBy;
+
+  return {
+    wasPublished: !!prevPublishedAt,
+    unpublishedAt: typeof rawUnpublishedAt === 'string' ? new Date(rawUnpublishedAt) : null,
+    unpublishedBy: typeof rawUnpublishedBy === 'number' ? rawUnpublishedBy : null,
+    parentModelId: row?.modelId ?? null,
+  };
+}
 
 async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
   const imageIds = images.map((x) => x.id);
@@ -779,6 +850,13 @@ export const createPost = async ({
     tags: post.tags.flatMap((x) => x.tag),
     images: [] as PostImageEditable[],
     collectionItemExists,
+    // A fresh post has never been unpublished — supply the
+    // PostUnpublishContext defaults so the type matches getPostEditDetail
+    // (which carries these via the getPostDetail spread).
+    wasPublished: false,
+    unpublishedAt: null,
+    unpublishedBy: null,
+    parentModelId: null,
   };
 };
 
@@ -812,21 +890,41 @@ export const updatePost = async ({
       // Anti-bump guard: publishedAt is immutable once a post has gone
       // public. Allowed transitions: NULL (Draft/Unpublished) -> set, or
       // future (Scheduled) -> reschedule. Republish of an already-public
-      // post is a no-op for this column. Mirrors the Model/Version guards.
-      const writeCount = await tx.$executeRaw`
+      // post is a no-op for this column.
+      //
+      // Write-once-on-republish: if `metadata.prevPublishedAt` is set, the
+      // post was previously published then unpublished via the parent
+      // model/version unpublish flow. Restore the original date regardless
+      // of the submitted value — owners must not be able to bump a post to
+      // the top of feeds by unpublishing the parent, then picking a new
+      // `publishedAt` on the post edit page. Mirrors the CASE expressions
+      // used by `publishModelVersionById` (model-version.service.ts) and
+      // `publishModelById` (model.service.ts) when they fan out to attached
+      // posts. Strip the stash on success.
+      const writtenRows = await tx.$queryRaw<{ publishedAt: Date | null }[]>`
         UPDATE "Post"
-        SET "publishedAt" = ${publishedAt}
+        SET
+          "publishedAt" = CASE
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
+            THEN ("metadata"->>'prevPublishedAt')::timestamptz
+            ELSE ${publishedAt}
+          END,
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
         WHERE id = ${id}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        RETURNING "publishedAt"
       `;
-      // Reflect the guard outcome on the returned object. tx.post.update
-      // captured the row state BEFORE this raw write, so without patching
-      // here the controller's `wasPublished` check
-      // (post.controller.ts: `!post?.publishedAt && updatedPost.publishedAt`)
-      // misses a fresh publish and skips reward / event-engine side-effects.
-      // When writeCount = 0 the guard blocked the write and the original
-      // returned value is still the authoritative DB state.
-      if (writeCount > 0) updated.publishedAt = publishedAt;
+      // Reflect the actually-written timestamp (may be the stashed
+      // prevPublishedAt rather than the submitted value). The controller's
+      // wasPublished check (post.controller.ts: `!post?.publishedAt &&
+      // updatedPost.publishedAt`) needs this to fire reward / event-engine
+      // side-effects on a fresh publish. When no row matched, the guard
+      // blocked the write and the original returned value remains
+      // authoritative. Propagate the value faithfully — including null —
+      // rather than masking malformed stash data behind a truthy check.
+      if (writtenRows.length > 0) {
+        updated.publishedAt = writtenRows[0].publishedAt;
+      }
     }
     return updated;
   });
