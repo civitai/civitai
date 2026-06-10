@@ -9,10 +9,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockDbRead } = vi.hoisted(() => ({
   mockDbRead: {
     imageResourceNew: { findMany: vi.fn() },
+    // Reaction counts now come from a raw query (the reactionCount-is-NULL P2032
+    // fix), not the typed metrics relation. The default implementation in
+    // beforeEach derives the AllTime ImageMetric rows from whatever findMany
+    // returned, reading the per-image count off the test's `metrics` fixture —
+    // so the existing imageRow(...) call sites keep working unchanged.
+    $queryRaw: vi.fn(),
   },
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
+// Prisma.join is used to build the raw reactionCount query's IN-list. The test
+// env's generated client doesn't expose it, and the $queryRaw mock ignores the
+// SQL anyway, so a passthrough is all we need.
+vi.mock('@prisma/client', () => ({ Prisma: { join: (ids: unknown[]) => ids } }));
 // Mock getEdgeUrl as identity so tests assert against the input urls.
 vi.mock('~/client-utils/cf-images-utils', () => ({
   getEdgeUrl: (src: string) => src,
@@ -22,6 +32,25 @@ import { getModelShowcaseImages } from '../showcase.service';
 
 beforeEach(() => {
   mockDbRead.imageResourceNew.findMany.mockReset();
+  mockDbRead.$queryRaw.mockReset();
+  // Derive the AllTime ImageMetric rows from the last findMany result. An image
+  // whose fixture has `metrics: []` (or no count) is omitted → the service
+  // treats it as 0 reactions, exercising the null-tolerant fallback.
+  mockDbRead.$queryRaw.mockImplementation(async () => {
+    const last = mockDbRead.imageResourceNew.findMany.mock.results.at(-1);
+    const rows: Array<{ image?: { id: number; metrics?: Array<{ reactionCount?: number }> } }> =
+      last && last.type === 'return' ? await last.value : [];
+    const seen = new Set<number>();
+    const out: Array<{ imageId: number; reactionCount: number }> = [];
+    for (const r of rows) {
+      const img = r?.image;
+      if (!img || seen.has(img.id)) continue;
+      seen.add(img.id);
+      const rc = img.metrics?.[0]?.reactionCount;
+      if (rc != null) out.push({ imageId: img.id, reactionCount: rc });
+    }
+    return out;
+  });
 });
 
 function imageRow(

@@ -136,20 +136,27 @@ describe('scope-grant.service', () => {
       expect(missing).toEqual(['ai:write:budgeted']);
     });
 
-    it('always signs consent-exempt scopes (block:settings:*, apps:storage:*)', async () => {
+    it('always signs consent-exempt scopes (block:settings:*, apps:storage:*, models:read:self)', async () => {
       const { partitionByConsent } = await import('../scope-grant.service');
       const { signable, missing } = partitionByConsent(
         ['block:settings:read', 'apps:storage:write', 'models:read:self'],
         new Set() // user granted nothing
       );
-      expect(new Set(signable)).toEqual(new Set(['block:settings:read', 'apps:storage:write']));
-      expect(missing).toEqual(['models:read:self']);
+      // models:read:self is consent-exempt (allow-by-default, 01ea90441), so all
+      // three sign with no grant and nothing is withheld.
+      expect(new Set(signable)).toEqual(
+        new Set(['block:settings:read', 'apps:storage:write', 'models:read:self'])
+      );
+      expect(missing).toEqual([]);
     });
   });
 
   describe('consentGatedScopes', () => {
     it('drops the consent-exempt scopes so the implicit grant only stores gated ones', async () => {
       const { consentGatedScopes } = await import('../scope-grant.service');
+      // models:read:self is consent-exempt (01ea90441), so it's dropped here
+      // alongside block:settings:* / apps:storage:* — only ai:write:budgeted is
+      // gated and kept.
       expect(
         consentGatedScopes([
           'models:read:self',
@@ -157,7 +164,7 @@ describe('scope-grant.service', () => {
           'apps:storage:read',
           'ai:write:budgeted',
         ])
-      ).toEqual(['models:read:self', 'ai:write:budgeted']);
+      ).toEqual(['ai:write:budgeted']);
     });
   });
 });
