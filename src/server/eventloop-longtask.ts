@@ -49,8 +49,15 @@
 import { AsyncLocalStorage, createHook, type AsyncHook } from 'node:async_hooks';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 import client from 'prom-client';
-import { registerCounter, registerHistogram } from '~/server/prom/client';
+import { instrumentationRegistry, registerInstrumentationMetric } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
+
+// Prefix mirrors prom/client.ts's PROM_PREFIX so series names match the rest of the
+// app (civitai_app_*). We register these into the cross-graph `instrumentationRegistry`
+// (NOT the default per-graph `client.register`) because the detector's setInterval and
+// the delay gauge's collect() run in the instrumentation webpack graph, while /metrics
+// scrapes from the request graph — see the long WHY note on instrumentationRegistry.
+const PROM_PREFIX = 'civitai_app_';
 
 // ---------------------------------------------------------------------------
 // Config (env-tunable)
@@ -239,26 +246,44 @@ function installStackHook(sampleEvery: number, mapCap: number): void {
 // labels tier on, `label` is the same fixed tRPC-procedure / route enum that
 // trpc_procedure_duration already uses. Buckets target the 50ms..several-seconds
 // range that matters for pins.
-const longTaskHistogram = registerHistogram({
-  name: 'eventloop_longtask_duration_seconds',
-  help: 'Synchronous event-loop blocks over threshold, by attributed operation label. NOTE: drift-timer based — counts include GC pauses and (below the suspension cap) brief CPU-steal, not only JS blocks. The authoritative lag signal is civitai_app_eventloop_delay_ms.',
-  labelNames: ['label'] as const,
-  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
-});
+const longTaskHistogram = registerInstrumentationMetric(
+  PROM_PREFIX + 'eventloop_longtask_duration_seconds',
+  () =>
+    new client.Histogram({
+      name: PROM_PREFIX + 'eventloop_longtask_duration_seconds',
+      help: 'Synchronous event-loop blocks over threshold, by attributed operation label. NOTE: drift-timer based — counts include GC pauses and (below the suspension cap) brief CPU-steal, not only JS blocks. The authoritative lag signal is civitai_app_eventloop_delay_ms.',
+      labelNames: ['label'] as const,
+      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
+      // Register into the shared cross-graph registry instead of the default
+      // (per-graph) globalRegistry, so the request-graph /metrics scrape sees the
+      // observes made from the instrumentation-graph detector loop.
+      registers: [instrumentationRegistry],
+    })
+);
 
 // Cheap always-armed count of detected long tasks (no label) — a single series
 // that's safe to alert on even if label cardinality is ever a concern.
-const longTaskCounter = registerCounter({
-  name: 'eventloop_longtask_total',
-  help: 'Total event-loop blocks detected over threshold (drift-timer based; includes GC pauses)',
-});
+const longTaskCounter = registerInstrumentationMetric(
+  PROM_PREFIX + 'eventloop_longtask_total',
+  () =>
+    new client.Counter({
+      name: PROM_PREFIX + 'eventloop_longtask_total',
+      help: 'Total event-loop blocks detected over threshold (drift-timer based; includes GC pauses)',
+      registers: [instrumentationRegistry],
+    })
+);
 
 // Count of gaps classified as process suspension (over the suspension cap) and
 // therefore NOT recorded as JS blocks — surfaces pod CPU-steal / VM suspend.
-const suspensionCounter = registerCounter({
-  name: 'eventloop_longtask_suspension_total',
-  help: 'Drift-timer gaps over the suspension cap, treated as process suspension (CPU-steal/VM suspend), not JS blocks',
-});
+const suspensionCounter = registerInstrumentationMetric(
+  PROM_PREFIX + 'eventloop_longtask_suspension_total',
+  () =>
+    new client.Counter({
+      name: PROM_PREFIX + 'eventloop_longtask_suspension_total',
+      help: 'Drift-timer gaps over the suspension cap, treated as process suspension (CPU-steal/VM suspend), not JS blocks',
+      registers: [instrumentationRegistry],
+    })
+);
 
 // monitorEventLoopDelay() histogram, surfaced as collect()-based gauges (matching
 // the pg-pool gauge pattern in prom/client.ts). Reset after each scrape so each
@@ -275,30 +300,39 @@ function initEventLoopDelayGauges(): void {
 
   // One labeled gauge emitting p50/p99/max/mean (ms). collect() reads the live
   // libuv histogram on each scrape — no per-event JS work.
-  const g = new client.Gauge({
-    name: 'civitai_app_eventloop_delay_ms',
-    help: 'Event-loop delay (lag) distribution from perf_hooks.monitorEventLoopDelay, ms. This is the AUTHORITATIVE event-loop lag signal (C++ measured, no JS per-event cost).',
-    labelNames: ['quantile'],
-    collect() {
-      const h = elDelayHistogram;
-      if (!h) return;
-      const toMs = (ns: number) => (Number.isFinite(ns) ? ns / 1e6 : 0);
-      this.set({ quantile: 'p50' }, toMs(h.percentile(50)));
-      this.set({ quantile: 'p90' }, toMs(h.percentile(90)));
-      this.set({ quantile: 'p99' }, toMs(h.percentile(99)));
-      this.set({ quantile: 'max' }, toMs(h.max));
-      this.set({ quantile: 'mean' }, toMs(h.mean));
-      // Reset so the next scrape window is independent (avoids max/p99 sticking
-      // at an all-time high forever after a single spike).
-      h.reset();
-    },
-  });
-  // Guard against double-registration under Next.js HMR.
-  try {
-    client.register.registerMetric(g);
-  } catch {
-    // already registered
-  }
+  //
+  // Registered directly into the cross-graph shared `instrumentationRegistry` (via
+  // `registers: [instrumentationRegistry]` below) instead of the default per-graph
+  // globalRegistry. registerInstrumentationMetric is the idempotent get-or-create
+  // guard (safe under HMR / dual-graph eval). The collect() hook fires when that
+  // shared registry is scraped, which /metrics reads in explicitly by
+  // string-concatenating its output (NOT Registry.merge — so it can't throw on a
+  // name clash).
+  registerInstrumentationMetric(
+    PROM_PREFIX + 'eventloop_delay_ms',
+    () =>
+      new client.Gauge({
+        name: PROM_PREFIX + 'eventloop_delay_ms',
+        help: 'Event-loop delay (lag) distribution from perf_hooks.monitorEventLoopDelay, ms. This is the AUTHORITATIVE event-loop lag signal (C++ measured, no JS per-event cost).',
+        labelNames: ['quantile'],
+        // Register into the shared cross-graph registry (NOT the default per-graph
+        // globalRegistry) so the collect() hook fires when /metrics reads it in.
+        registers: [instrumentationRegistry],
+        collect() {
+          const h = elDelayHistogram;
+          if (!h) return;
+          const toMs = (ns: number) => (Number.isFinite(ns) ? ns / 1e6 : 0);
+          this.set({ quantile: 'p50' }, toMs(h.percentile(50)));
+          this.set({ quantile: 'p90' }, toMs(h.percentile(90)));
+          this.set({ quantile: 'p99' }, toMs(h.percentile(99)));
+          this.set({ quantile: 'max' }, toMs(h.max));
+          this.set({ quantile: 'mean' }, toMs(h.mean));
+          // Reset so the next scrape window is independent (avoids max/p99 sticking
+          // at an all-time high forever after a single spike).
+          h.reset();
+        },
+      })
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +422,41 @@ export function classifyDrift(
   return { kind: 'block', blockedMs };
 }
 
+/**
+ * Apply a classified drift result to the Prometheus metrics (and, for blocks over
+ * the log floor, the rate-limited structured log). This is the bridge from the
+ * detector's setInterval to the REGISTERED metric instances — the path that was
+ * silently broken when the metrics were registered in a different (per-graph)
+ * registry than the one /metrics scrapes. Exported so a unit test can assert it
+ * actually increments/observes the registered metric without a real timer.
+ *
+ * Returns the resolved attribution label (or undefined for non-block results) to
+ * make the test assertions explicit; the timer ignores the return.
+ */
+export function recordDrift(
+  result: DriftClassification,
+  opts: { logMinMs: number; threshold: number; logPerMin: number }
+): string | undefined {
+  if (result.kind === 'suspension') {
+    // Descheduled pod / VM suspend / CPU-steal — NOT a JS block. Count it
+    // separately and skip the block histogram + log so we don't emit a fake
+    // multi-second block.
+    suspensionCounter.inc();
+    return undefined;
+  }
+  if (result.kind === 'block') {
+    const { blockedMs } = result;
+    const label = currentLabel();
+    longTaskCounter.inc();
+    longTaskHistogram.observe({ label }, blockedMs / 1000);
+    if (blockedMs >= opts.logMinMs) {
+      tryLog(blockedMs, label, opts.threshold, opts.logPerMin);
+    }
+    return label;
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Arm / detector loop
 // ---------------------------------------------------------------------------
@@ -441,20 +510,7 @@ export function registerEventLoopLongTaskDetector(): void {
       const result = classifyDrift(now, last, tickMs, threshold, suspendCapMs);
       last = now;
 
-      if (result.kind === 'suspension') {
-        // Descheduled pod / VM suspend / CPU-steal — NOT a JS block. Count it
-        // separately and skip the block histogram + log so we don't emit a fake
-        // multi-second block.
-        suspensionCounter.inc();
-      } else if (result.kind === 'block') {
-        const { blockedMs } = result;
-        const label = currentLabel();
-        longTaskCounter.inc();
-        longTaskHistogram.observe({ label }, blockedMs / 1000);
-        if (blockedMs >= logMinMs) {
-          tryLog(blockedMs, label, threshold, logPerMin);
-        }
-      }
+      recordDrift(result, { logMinMs, threshold, logPerMin });
 
       // Clear the sampled stack after each tick so a stale stack from a previous
       // tick can't be mis-attributed to a later block. Cheap no-op when stacks
@@ -500,4 +556,14 @@ export function __setLongTaskLabelsArmedForTests(value: boolean): () => void {
 /** Test-only: observe whether the ALS store is currently set (proves no .run()). */
 export function __hasActiveLabelStoreForTests(): boolean {
   return labelStorage.getStore() !== undefined;
+}
+
+/**
+ * Test-only: run the base-armed gauge init (monitorEventLoopDelay + the
+ * civitai_app_eventloop_delay_ms collect()-gauge) so a test can assert the gauge is
+ * registered in the scraped (instrumentation) registry without booting the whole
+ * detector via env. Idempotent — mirrors the base-armed init path.
+ */
+export function __initEventLoopDelayGaugesForTests(): void {
+  initEventLoopDelayGauges();
 }
