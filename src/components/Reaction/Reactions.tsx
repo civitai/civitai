@@ -90,12 +90,14 @@ export function Reactions({
   showAll: initialShowAll,
   invisibleEmpty,
   disableBuzzTip,
+  abbreviate,
 }: ReactionsProps & {
   className?: string;
   targetUserId?: number;
   showAll?: boolean;
   invisibleEmpty?: boolean;
   disableBuzzTip?: boolean;
+  abbreviate?: boolean;
 }) {
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
@@ -174,6 +176,7 @@ export function Reactions({
           readonly={readonly}
           available={available}
           invisibleEmpty={invisibleEmpty}
+          abbreviate={abbreviate}
         />
         {supportsBuzzTipping && targetUserId && (
           <BuzzTippingBadge
@@ -210,12 +213,14 @@ function ReactionsList({
   noEmpty,
   readonly,
   invisibleEmpty,
+  abbreviate,
 }: Omit<ReactionsProps, 'popoverPosition'> & {
   noEmpty?: boolean;
   available?: ReviewReactions[];
 
   readonly?: boolean;
   invisibleEmpty?: boolean;
+  abbreviate?: boolean;
 }) {
   const currentUser = useCurrentUser();
   return (
@@ -248,7 +253,7 @@ function ReactionsList({
               noEmpty={noEmpty}
               invisibleEmpty={invisibleEmpty}
             >
-              {ReactionBadge}
+              {(props) => <ReactionBadge {...props} abbreviate={abbreviate} />}
             </ReactionButton>
           );
         })}
@@ -261,11 +266,13 @@ function ReactionBadge({
   count,
   reaction,
   canClick,
+  abbreviate,
 }: {
   hasReacted: boolean;
   count: number;
   reaction: ReviewReactions;
   canClick: boolean;
+  abbreviate?: boolean;
 }) {
   const color = hasReacted ? 'blue' : 'gray';
   const { hideReactionCount, buttonStyling } = useReactionSettingsContext();
@@ -285,7 +292,11 @@ function ReactionBadge({
       <Text style={{ fontSize: '1.2em', lineHeight: 1.1 }}>
         {constants.availableReactions[reaction]}
       </Text>{' '}
-      {!hideReactionCount && <AnimatedCount value={count} abbreviate={false} />}
+      {!hideReactionCount && (
+        <Text inherit lh={1}>
+          <AnimatedCount value={count} abbreviate={abbreviate ?? false} />
+        </Text>
+      )}
     </Button>
   );
 }
@@ -329,7 +340,7 @@ function BuzzTippingBadge({
       styles={{ root: { paddingBlock: 0 } }}
     >
       <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
-      <Text inherit>
+      <Text inherit lh={1}>
         <AnimatedCount value={tippedAmountCount + tippedAmount} />
       </Text>
     </Badge>
