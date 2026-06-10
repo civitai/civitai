@@ -98,12 +98,7 @@ export function ImagesAsPostsInfinite({
     const entityFilter =
       source.kind === 'model'
         ? { modelId: source.model.id, modelVersionId: selectedVersionId }
-        : {
-            model3dId: source.id,
-            // Honor an explicit opt-out on the source (false → force the DB
-            // path). Undefined leaves the existing flipt/flag logic alone.
-            ...(source.useIndex === false ? { useIndex: false } : {}),
-          };
+        : { model3dId: source.id };
     return removeEmpty({
       ...imageFilters,
       ...entityFilter,

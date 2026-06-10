@@ -402,13 +402,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
           buildFliptContext(user)
         );
     const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
-    // Model3D gallery: always go through the Meilisearch index — the DB
-    // path is too slow (was hitting the 20s ceiling on the busy
-    // `getImagesAsPostsInfinite` route). Other surfaces continue to honor
-    // `useIndex` + the `imageIndexFeed` feature flag.
-    const useIndex = !!input.model3dId
-      ? input.useIndex !== false
-      : input.useIndex !== false && (useBitdex || features.imageIndexFeed);
+    const useIndex = useBitdex || features.imageIndexFeed;
 
     const fetchFn = useIndex ? getAllImagesIndex : getAllImages;
     type ResultType = typeof features.imageIndexFeed extends true

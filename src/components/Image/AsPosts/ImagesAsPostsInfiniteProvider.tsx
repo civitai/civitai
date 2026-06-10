@@ -17,13 +17,6 @@ export type ImagesAsPostsSource =
       kind: 'model3d';
       id: number;
       creatorUserId: number;
-      /**
-       * Opt out of the Meilisearch index for this gallery — the
-       * metrics-images index isn't synced with Model3D-linked posts yet,
-       * so it would return zero hits. Server-side override in the handler
-       * means this is defense-in-depth.
-       */
-      useIndex?: boolean;
     };
 
 type ImagesAsPostsInfiniteState = {
