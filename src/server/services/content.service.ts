@@ -53,6 +53,64 @@ export async function getStaticContent({ slug, ctx }: { slug: string[]; ctx?: Co
   throw throwNotFoundError('Not found');
 }
 
+// Map domain colors to ToS field names. Single source of truth shared by the
+// `content.checkTosUpdate` resolver and the SSR seed in _app getInitialProps.
+export const tosFieldMap = {
+  green: 'tosGreenLastSeenDate',
+  red: 'tosRedLastSeenDate',
+  blue: 'tosLastSeenDate', // default
+} as const;
+
+export type CheckTosUpdateResult = {
+  // Matches the original resolver expression exactly: `!userTosLastSeen` is a
+  // boolean, the right branch is `Date | undefined` (truthy when an update
+  // exists). Consumers only read it for truthiness, so the union is preserved
+  // verbatim to keep the SSR seed byte-identical to a live fetch.
+  hasUpdate: boolean | Date | undefined;
+  lastmod: Date | undefined;
+  userLastSeen: Date | undefined;
+  domainColor: string | undefined;
+  tosFieldKey: (typeof tosFieldMap)[keyof typeof tosFieldMap];
+};
+
+/**
+ * Pure-ish computation of the `content.checkTosUpdate` result. Single source of
+ * truth shared by the tRPC resolver and the SSR seed in _app getInitialProps so
+ * the injected initialData byte-matches a live fetch.
+ *
+ * @param domainColor the request's resolved domain color (green/red/blue)
+ * @param userSettings the user's JSON settings (reads `tos*LastSeenDate`)
+ */
+// Only the three ToS-last-seen fields are read here. Typed structurally so both
+// `UserSettingsSchema` (resolver) and `UserContentSettings` (SSR seed) — and the
+// `{}` no-settings case — are assignable without an index-signature cast.
+type TosUserSettings = Partial<
+  Record<(typeof tosFieldMap)[keyof typeof tosFieldMap], Date | string | null>
+>;
+
+export async function checkTosUpdate({
+  domainColor,
+  userSettings,
+}: {
+  domainColor: string | undefined;
+  userSettings: TosUserSettings;
+}): Promise<CheckTosUpdateResult> {
+  const tos = await getStaticContent({ slug: ['tos'], ctx: { domain: domainColor } as Context });
+
+  const tosFieldKey = tosFieldMap[domainColor as keyof typeof tosFieldMap] || 'tosLastSeenDate';
+  const userTosLastSeenRaw = userSettings[tosFieldKey] as Date | string | undefined;
+  const userTosLastSeen = userTosLastSeenRaw ? new Date(userTosLastSeenRaw) : undefined;
+  const tosLastMod = tos.lastmod ? new Date(tos.lastmod) : undefined;
+
+  return {
+    hasUpdate: !userTosLastSeen || (tosLastMod && tosLastMod > userTosLastSeen),
+    lastmod: tosLastMod,
+    userLastSeen: userTosLastSeen,
+    domainColor,
+    tosFieldKey,
+  };
+}
+
 export async function getMarkdownContent({ key }: { key: string }) {
   try {
     const content = await sysRedis.hGet(REDIS_SYS_KEYS.CONTENT.REGION_WARNING, key);

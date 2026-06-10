@@ -1,7 +1,11 @@
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { cacheIt } from '~/server/middleware.trpc';
-import { getMarkdownContent, getStaticContent } from '~/server/services/content.service';
+import {
+  checkTosUpdate,
+  getMarkdownContent,
+  getStaticContent,
+} from '~/server/services/content.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -17,13 +21,6 @@ const slugSchema = z.object({
   ),
 });
 
-// Map domain colors to ToS field names
-const tosFieldMap = {
-  green: 'tosGreenLastSeenDate',
-  red: 'tosRedLastSeenDate',
-  blue: 'tosLastSeenDate', // default
-} as const;
-
 export const contentRouter = router({
   get: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
@@ -36,22 +33,8 @@ export const contentRouter = router({
   checkTosUpdate: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .query(async ({ ctx }) => {
-      const tos = await getStaticContent({ slug: ['tos'], ctx });
       const userSettings = ctx.user ? await getUserSettings(ctx.user.id) : {};
-
-      // Get domain color from request context to determine which ToS field to check
-      const domainColor = ctx.domain;
-      const tosFieldKey = tosFieldMap[domainColor as keyof typeof tosFieldMap] || 'tosLastSeenDate';
-      const userTosLastSeenRaw = userSettings[tosFieldKey] as Date | string | undefined;
-      const userTosLastSeen = userTosLastSeenRaw ? new Date(userTosLastSeenRaw) : undefined;
-      const tosLastMod = tos.lastmod ? new Date(tos.lastmod) : undefined;
-
-      return {
-        hasUpdate: !userTosLastSeen || (tosLastMod && tosLastMod > userTosLastSeen),
-        lastmod: tosLastMod,
-        userLastSeen: userTosLastSeen,
-        domainColor,
-        tosFieldKey,
-      };
+      // Shared computation — also used by the SSR seed in _app getInitialProps.
+      return checkTosUpdate({ domainColor: ctx.domain, userSettings });
     }),
 });

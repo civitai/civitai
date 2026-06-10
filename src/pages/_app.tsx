@@ -56,6 +56,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { CheckTosUpdateResult } from '~/server/services/content.service';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
@@ -99,6 +100,8 @@ type CustomAppProps = {
   colorScheme: 'light' | 'dark' | 'auto';
   cookies: ParsedCookies;
   flags: FeatureAccess;
+  userFeatureFlags?: FeatureAccess;
+  tosUpdate?: CheckTosUpdateResult;
   seed: number;
   settings: UserContentSettings;
   browsingSettingsAddons: BrowsingSettingsAddon[];
@@ -120,6 +123,8 @@ function MyApp(props: CustomAppProps) {
       colorScheme,
       cookies = parseCookies(getCookies()),
       flags,
+      userFeatureFlags,
+      tosUpdate,
       seed = Date.now(),
       canIndex,
       hasAuthCookie,
@@ -174,6 +179,7 @@ function MyApp(props: CustomAppProps) {
       seed={seed}
       canIndex={canIndex}
       settings={settings}
+      tosUpdate={tosUpdate}
       region={region}
       domain={domain}
       host={host}
@@ -202,7 +208,7 @@ function MyApp(props: CustomAppProps) {
                 <RegisterCatchNavigation />
                 <RouterTransition />
                 {/* <ChadGPT isAuthed={!!session} /> */}
-                <FeatureFlagsProvider flags={flags}>
+                <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
                   <GoogleAnalytics />
                   <AccountProvider>
                     <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
@@ -342,10 +348,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // every full render's critical path. SSR-injecting the addons keeps the
   // `system.getBrowsingSettingAddons` round-trip off api-primary (it becomes
   // `initialData` for the client provider).
-  const [{ getFeatureFlagsAsync }, { getBrowsingSettingAddons }] = await Promise.all([
-    import('~/server/services/feature-flags.service'),
-    import('~/server/services/system-cache'),
-  ]);
+  const [{ getFeatureFlagsAsync, computeUserFeatureFlagsOverlay }, { getBrowsingSettingAddons }] =
+    await Promise.all([
+      import('~/server/services/feature-flags.service'),
+      import('~/server/services/system-cache'),
+    ]);
   const [flags, browsingSettingsAddons] = await Promise.all([
     getFeatureFlagsAsync({
       user: session?.user,
@@ -355,13 +362,44 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     getBrowsingSettingAddons(),
   ]);
 
+  const domain = getRequestDomainColor(request);
+
+  // SSR-inject two ambient per-bootstrap trpc results that fire on every
+  // logged-in page load but are fully derivable from data already fetched here.
+  // Both client queries gate on a logged-in user, so only compute for sessions.
+  // - userFeatureFlags: the per-user toggleable-feature overlay
+  //   (`user.getFeatureFlags`), a pure function of `settings.features` + the SSR
+  //   host `flags`. Computed via the SAME shared function the resolver uses, so
+  //   the seed is byte-identical to a live fetch.
+  // - tosUpdate: the `content.checkTosUpdate` result. ToS lastmod only changes on
+  //   a content deploy (never mid-session), so a per-load SSR snapshot is exactly
+  //   as fresh as the per-load client fetch — and it moves the uncached readFile
+  //   off api-primary.
+  let userFeatureFlags: FeatureAccess | undefined;
+  let tosUpdate: CheckTosUpdateResult | undefined;
+  // Only seed when the SSR `/api/user/settings` snapshot actually succeeded.
+  // On the rare failed-snapshot path (`settings` undefined), leave both seeds
+  // undefined so the client queries self-heal via a real fetch rather than
+  // permanently caching a defaults-only overlay (staleTime: Infinity would
+  // never refetch a seed). This mirrors #2464's failed-snapshot handling.
+  if (session?.user && settings) {
+    const { checkTosUpdate } = await import('~/server/services/content.service');
+    [userFeatureFlags, tosUpdate] = await Promise.all([
+      Promise.resolve(computeUserFeatureFlagsOverlay(settings.features, flags)),
+      // Match the resolver's `ctx.domain` exactly: createContext defaults a
+      // null/unrecognized host to 'blue' (`getRequestDomainColor(req) ?? 'blue'`),
+      // so the SSR seed must use the same fallback to keep the ToS lastmod source
+      // (and the returned domainColor) byte-identical to a live fetch.
+      checkTosUpdate({ domainColor: domain ?? 'blue', userSettings: settings }),
+    ]);
+  }
+
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
   } else if (hasAuthCookie) {
     deleteCookie(civitaiTokenCookieName, appContext.ctx);
     hasAuthCookie = false;
   }
-  const domain = getRequestDomainColor(request);
 
   return {
     pageProps: {
@@ -374,6 +412,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       settings,
       browsingSettingsAddons,
       flags,
+      userFeatureFlags,
+      tosUpdate,
       seed: Date.now(),
       hasAuthCookie,
       region,
