@@ -11,7 +11,6 @@ import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
 import type { ReactElement } from 'react';
-import React from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
@@ -57,6 +56,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
@@ -101,6 +101,7 @@ type CustomAppProps = {
   flags: FeatureAccess;
   seed: number;
   settings: UserContentSettings;
+  browsingSettingsAddons: BrowsingSettingsAddon[];
   canIndex: boolean;
   hasAuthCookie: boolean;
   region: RegionInfo;
@@ -123,6 +124,7 @@ function MyApp(props: CustomAppProps) {
       canIndex,
       hasAuthCookie,
       settings,
+      browsingSettingsAddons,
       region,
       domain,
       host,
@@ -207,7 +209,7 @@ function MyApp(props: CustomAppProps) {
                       <ErrorBoundary>
                         <BrowserSettingsProvider>
                           <BrowsingLevelProvider>
-                            <BrowsingSettingsAddonsProvider>
+                            <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
                               <SignalsProviderStack>
                                 <ActivityReportingProvider>
                                   <ReferralsProvider {...cookies.referrals}>
@@ -334,13 +336,24 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     const data: { settings: UserContentSettings; session: Session | null } = await res.json();
     return data;
   });
-  // Pass this via the request so we can use it in SSR
-  const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
-  const flags = await getFeatureFlagsAsync({
-    user: session?.user,
-    host: request?.headers.host,
-    req: request,
-  });
+  // Pass these via the request so we can use them in SSR. Resolve the per-user
+  // feature flags and the global (redis-cached, identical-for-all-users) browsing
+  // setting addons in PARALLEL — neither depends on the other and both sit on
+  // every full render's critical path. SSR-injecting the addons keeps the
+  // `system.getBrowsingSettingAddons` round-trip off api-primary (it becomes
+  // `initialData` for the client provider).
+  const [{ getFeatureFlagsAsync }, { getBrowsingSettingAddons }] = await Promise.all([
+    import('~/server/services/feature-flags.service'),
+    import('~/server/services/system-cache'),
+  ]);
+  const [flags, browsingSettingsAddons] = await Promise.all([
+    getFeatureFlagsAsync({
+      user: session?.user,
+      host: request?.headers.host,
+      req: request,
+    }),
+    getBrowsingSettingAddons(),
+  ]);
 
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
@@ -359,6 +372,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       // cookieKeys: Object.keys(cookies),
       session,
       settings,
+      browsingSettingsAddons,
       flags,
       seed: Date.now(),
       hasAuthCookie,

@@ -26,11 +26,20 @@ export const useBrowsingSettingsAddons = () => {
   const context = useContext(BrowsingSettingsAddonsCtx);
   return context;
 };
-export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.ReactNode }) => {
+export const BrowsingSettingsAddonsProvider = ({
+  children,
+  initialData,
+}: {
+  children: React.ReactNode;
+  // SSR-seeded global addon list. Sharing the query key, only the outermost
+  // provider needs it — nested mounts read the primed cache without refetching.
+  initialData?: BrowsingSettingsAddon[];
+}) => {
   const { data = DEFAULT_BROWSING_SETTINGS_ADDONS, isLoading } =
     trpc.system.getBrowsingSettingAddons.useQuery(undefined, {
       gcTime: Infinity,
       staleTime: Infinity,
+      initialData,
     });
   const currentUser = useCurrentUser();
   const browsingLevel = useBrowsingLevelDebounced();
