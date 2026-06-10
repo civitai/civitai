@@ -53,7 +53,10 @@ export function NavTidyNotice() {
 
   // Only nudge users who actually have one of the tidied items hidden.
   const hasHiddenNavItem = !features.postsNavItem || !features.eventsNavItem;
-  const show = enabled && ready && !isDismissed && hasHiddenNavItem;
+  // `!!settings` guards the rare failed-SSR-snapshot path (undefined initialData):
+  // don't render against undefined `dismissedAlerts` until the self-healing mount
+  // fetch lands. Defined immediately on the normal SSR-seeded path → no delay.
+  const show = enabled && ready && !!settings && !isDismissed && hasHiddenNavItem;
 
   const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
 

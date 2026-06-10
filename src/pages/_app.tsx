@@ -336,19 +336,24 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     const data: { settings: UserContentSettings; session: Session | null } = await res.json();
     return data;
   });
-  // Pass this via the request so we can use it in SSR
-  const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
-  const flags = await getFeatureFlagsAsync({
-    user: session?.user,
-    host: request?.headers.host,
-    req: request,
-  });
-
-  // SSR-inject the global (redis-cached, identical-for-all-users) browsing
-  // setting addons so the client provider doesn't fire a per-bootstrap
-  // `system.getBrowsingSettingAddons` round-trip on api-primary.
-  const { getBrowsingSettingAddons } = await import('~/server/services/system-cache');
-  const browsingSettingsAddons = await getBrowsingSettingAddons();
+  // Pass these via the request so we can use them in SSR. Resolve the per-user
+  // feature flags and the global (redis-cached, identical-for-all-users) browsing
+  // setting addons in PARALLEL — neither depends on the other and both sit on
+  // every full render's critical path. SSR-injecting the addons keeps the
+  // `system.getBrowsingSettingAddons` round-trip off api-primary (it becomes
+  // `initialData` for the client provider).
+  const [{ getFeatureFlagsAsync }, { getBrowsingSettingAddons }] = await Promise.all([
+    import('~/server/services/feature-flags.service'),
+    import('~/server/services/system-cache'),
+  ]);
+  const [flags, browsingSettingsAddons] = await Promise.all([
+    getFeatureFlagsAsync({
+      user: session?.user,
+      host: request?.headers.host,
+      req: request,
+    }),
+    getBrowsingSettingAddons(),
+  ]);
 
   if (session) {
     (appContext.ctx.req as any)['session'] = session;

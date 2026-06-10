@@ -72,7 +72,12 @@ export function MatureContentMigrationAlert() {
     if (el) el.style.opacity = '0';
   }, []);
 
-  if (!features.isGreen || !hasNsfwEnabled || !ready || isDismissed) return null;
+  // `!settings` guards the rare path where the SSR `/api/user/settings` snapshot
+  // failed (→ undefined initialData): the query self-heals via a mount fetch, and
+  // until it lands we must not render against undefined `dismissedAlerts` (which
+  // would briefly re-show an already-dismissed alert). On the normal SSR-seeded
+  // path `settings` is defined immediately, so this adds no delay or refetch.
+  if (!features.isGreen || !hasNsfwEnabled || !ready || !settings || isDismissed) return null;
 
   const redDomain = serverDomains.red;
   const redUrl = syncAccount(`//${redDomain}`);

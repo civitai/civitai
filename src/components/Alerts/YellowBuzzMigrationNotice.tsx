@@ -54,7 +54,10 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
   });
 
   const yellowBalance = buzzAccounts?.yellow ?? 0;
-  const show = enabled && ready && !isDismissed && yellowBalance > 0;
+  // `!!settings` guards the rare failed-SSR-snapshot path (undefined initialData):
+  // don't render against undefined `dismissedAlerts` until the self-healing mount
+  // fetch lands. Defined immediately on the normal SSR-seeded path → no delay.
+  const show = enabled && ready && !!settings && !isDismissed && yellowBalance > 0;
 
   const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
 
