@@ -32,11 +32,32 @@
 //       default.
 //
 //   LABELS (EVENTLOOP_LONGTASK_LABELS=true, requires armed): per-procedure
-//     attribution via AsyncLocalStorage. Handlers set a short label (tRPC
-//     procedure path / API route) via runWithLongTaskLabel; on a detected block
-//     we read the CURRENTLY-RUNNING label. This adds an ALS .run() per armed
-//     request — the async_hooks context-propagation cost. Opt-in for short
-//     diagnostic windows; NOT recommended as an always-on default at 1500 req/s.
+//     attribution via AsyncLocalStorage + async_hooks. Handlers set a short label
+//     (tRPC procedure path / API route) via runWithLongTaskLabel, which opens an
+//     ALS scope. An async_hooks hook then attributes blocks from WITHIN the
+//     blocking resource's own execution (the `blocked-at` technique):
+//       - init(asyncId): runs synchronously in the CREATING (request) context, so
+//         AsyncLocalStorage.getStore() yields the request's label there. We capture
+//         label_by_asyncId[asyncId] = currentLabel() at resource-creation time.
+//       - before(asyncId): record start = now.
+//       - after(asyncId): dur = now - start; if dur >= threshold, the callback that
+//         just ran blocked the loop for `dur` => record a labeled block attributed
+//         to label_by_asyncId[asyncId]. before/after bracket the EXACT synchronous
+//         body, so the duration and the blamed resource are both correct.
+//       - destroy(asyncId): drop the asyncId from the maps.
+//     WHY NOT read ALS from the drift timer (the bug that shipped in #2451):
+//       AsyncLocalStorage does NOT propagate into a pre-existing timer's callbacks.
+//       The drift setInterval runs in the timer's OWN async context, never inside a
+//       request's labelStorage.run() scope, so labelStorage.getStore() there is
+//       always undefined => every block emitted `label="unlabeled"`. You cannot
+//       attribute a block by reading ALS from a separate timer after the block ends;
+//       attribution must come from the resource's own init/before/after bracket.
+//     COST: this re-adds per-resource async_hooks work (init/before/after/destroy on
+//     every async resource while armed) — the OTEL-class cost the team removed. It is
+//     intrinsic to correct attribution. LABELS is a SHORT measurement-window tool
+//     (canary-gated), NOT a steady-state default at 1500 req/s. The drift timer keeps
+//     emitting its own loop-level `label="unlabeled"` blocks (GC-inclusive); the
+//     async_hooks path adds the per-resource `label="trpc:*"` series alongside it.
 //
 //   STACKS (EVENTLOOP_LONGTASK_STACKS=true, requires armed): async_hooks stack
 //     capture (most expensive). Records a captured Error().stack on sampled
@@ -47,7 +68,7 @@
 // Server-side (nodejs runtime) only. Never imported on the edge/client.
 
 import { AsyncLocalStorage, createHook, type AsyncHook } from 'node:async_hooks';
-import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance, type IntervalHistogram } from 'node:perf_hooks';
 import client from 'prom-client';
 import { instrumentationRegistry, registerInstrumentationMetric } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -132,6 +153,16 @@ function resolveStackMapCap(): number {
   return Number.isFinite(parsed) && parsed >= 100 ? parsed : 10_000;
 }
 
+/**
+ * Hard cap on the per-asyncId label Map (labels tier) so it can't grow unbounded.
+ * `destroy` is not guaranteed to fire for every resource, so the Map is also
+ * eviction-bounded (oldest-first) on insert — see installLabelHook.
+ */
+function resolveLabelMapCap(): number {
+  const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_LABEL_MAP_CAP ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 100 ? parsed : 50_000;
+}
+
 function resolvePodName(): string {
   return process.env.PODNAME || process.env.HOSTNAME || 'unknown';
 }
@@ -179,10 +210,175 @@ export function runWithLongTaskLabel<T>(label: string, fn: () => T): T {
   return labelStorage.run({ label }, fn);
 }
 
-/** Current attribution label, or 'unlabeled' when running outside a labeled scope. */
+/**
+ * Current attribution label, or 'unlabeled' when running outside a labeled scope.
+ *
+ * IMPORTANT: this MUST only be read from a context that inherits the request's ALS
+ * scope. That holds inside an async_hooks `init` callback (which runs synchronously
+ * in the resource's CREATING context — see installLabelHook), and inside a handler's
+ * own runWithLongTaskLabel `fn`. It does NOT hold inside the drift setInterval
+ * callback (the timer's own async context, outside any request scope) — reading it
+ * there always returns 'unlabeled'. That mis-read is the exact bug that shipped in
+ * #2451, which is why the drift timer no longer calls this for attribution.
+ */
 function currentLabel(): string {
   if (!longTaskLabelsArmed) return 'unlabeled';
   return labelStorage.getStore()?.label ?? 'unlabeled';
+}
+
+// ---------------------------------------------------------------------------
+// async_hooks label attribution (labels tier — opt-in, capped)
+// ---------------------------------------------------------------------------
+
+let labelHook: AsyncHook | undefined;
+
+/**
+ * The per-resource attribution state machine, factored out of the async_hooks
+ * wiring so it's deterministically unit-testable WITHOUT a real async resource or
+ * the OS scheduler. installLabelHook drives these from createHook; a test drives
+ * them directly (init -> before -> after) to assert labeled attribution + bounding.
+ *
+ *   init(asyncId, label): label is captured at creation (request) context.
+ *   before(asyncId, now): start the clock for this resource's callback.
+ *   after(asyncId, now):  dur = now - start; if dur >= threshold, the callback that
+ *                         just ran blocked the loop -> record a labeled block.
+ *   destroy(asyncId):     drop the asyncId from both maps.
+ *
+ * `labelMapSize` is exposed for the bounding test.
+ */
+export type LabelAttributor = {
+  init: (asyncId: number, label: string) => void;
+  before: (asyncId: number, now: number) => void;
+  after: (asyncId: number, now: number) => void;
+  destroy: (asyncId: number) => void;
+  labelMapSize: () => number;
+};
+
+export function createLabelAttributor(
+  threshold: number,
+  mapCap: number,
+  opts: {
+    logMinMs: number;
+    logPerMin: number;
+    // Gaps >= this are treated as process suspension (CPU-steal/VM suspend), NOT a JS
+    // block, and skipped — mirrors the drift path's suspension cap. <=0 disables.
+    suspendCapMs?: number;
+    // Called when a started-but-not-finished (active) entry is evicted to stay under
+    // the cap, so the silent loss of its labeled block is observable. Optional so the
+    // pure attributor stays usable in tests without the prom counter.
+    onEvictActive?: () => void;
+  },
+  record: (
+    blockedMs: number,
+    label: string,
+    o: { logMinMs: number; threshold: number; logPerMin: number }
+  ) => void = recordLabeledBlock
+): LabelAttributor {
+  // asyncId -> attribution label, captured at resource creation. HARD-CAPPED: like
+  // the stacks-tier Map, `destroy` is not guaranteed for every resource, so without
+  // a cap this could grow unbounded under sustained load.
+  const labels = new Map<number, string>();
+  // asyncId -> start timestamp recorded in `before`, consumed in `after`. Bounded by
+  // the same destroy + the natural before/after pairing (deleted on `after`).
+  const starts = new Map<number, number>();
+  const suspendCapMs = opts.suspendCapMs ?? 0;
+
+  // Evict to stay under the cap, PREFERRING inactive entries (no pending `before`).
+  // An active entry (already `before`, awaiting `after`) that gets evicted would make
+  // its `after` early-return → its block is silently dropped from the labeled series.
+  // So we first sweep oldest-first for an inactive victim; only if every remaining
+  // entry is active do we fall back to evicting the oldest active one (and count it),
+  // which bounds memory without an unbounded scan per insert in the common case.
+  function evictOne(): void {
+    for (const id of labels.keys()) {
+      if (!starts.has(id)) {
+        labels.delete(id);
+        return;
+      }
+    }
+    // All entries are active — evict the oldest and record the loss.
+    const oldest = labels.keys().next().value;
+    if (oldest === undefined) return;
+    labels.delete(oldest);
+    starts.delete(oldest);
+    opts.onEvictActive?.();
+  }
+
+  return {
+    init(asyncId, label) {
+      // Only track resources that carry a real (non-'unlabeled') label, so the Map
+      // stays small and only spans request-scoped work.
+      if (label === 'unlabeled') return;
+      while (labels.size >= mapCap) evictOne();
+      labels.set(asyncId, label);
+    },
+    before(asyncId, now) {
+      if (!labels.has(asyncId)) return;
+      starts.set(asyncId, now);
+    },
+    after(asyncId, now) {
+      const start = starts.get(asyncId);
+      if (start === undefined) return;
+      starts.delete(asyncId);
+      const label = labels.get(asyncId);
+      if (label === undefined) return;
+      // before/after bracket the EXACT synchronous body of this resource's callback.
+      const dur = now - start;
+      // Suspension guard (mirrors the drift path): a callback spanning a VM-suspend /
+      // CPU-steal window isn't a real JS block — skip it instead of logging a fake
+      // multi-second trpc:* block. The drift path's own suspension counter already
+      // surfaces the suspension; the labeled view simply omits it.
+      if (suspendCapMs > 0 && dur >= suspendCapMs) return;
+      if (dur >= threshold) {
+        record(dur, label, { logMinMs: opts.logMinMs, threshold, logPerMin: opts.logPerMin });
+      }
+    },
+    destroy(asyncId) {
+      labels.delete(asyncId);
+      starts.delete(asyncId);
+    },
+    labelMapSize: () => labels.size,
+  };
+}
+
+/**
+ * Install the per-resource label-attribution hook (labels tier). This is the
+ * CORRECT attribution path: it blames the resource whose own synchronous callback
+ * blocked the loop, with the label captured at the resource's creation (request)
+ * context. See the LABELS tier note at the top of the file for the full rationale
+ * and the #2451 bug it replaces.
+ *
+ * @param threshold   block threshold in ms (same as the drift detector's)
+ * @param mapCap      hard cap on the asyncId->label Map (eviction-bounded)
+ * @param opts        logMinMs/logPerMin + suspendCapMs (mirrors the drift suspension
+ *                    cap) so a callback spanning a suspend window isn't a fake block
+ */
+function installLabelHook(
+  threshold: number,
+  mapCap: number,
+  opts: { logMinMs: number; logPerMin: number; suspendCapMs: number }
+): void {
+  const attr = createLabelAttributor(threshold, mapCap, {
+    ...opts,
+    onEvictActive: () => labeledEvictedCounter.inc(),
+  });
+  labelHook = createHook({
+    init(asyncId: number) {
+      // Runs synchronously in the CREATING context, which is INSIDE the request's
+      // labelStorage.run() scope — so getStore() yields the request's label here.
+      attr.init(asyncId, currentLabel());
+    },
+    before(asyncId: number) {
+      attr.before(asyncId, performance.now());
+    },
+    after(asyncId: number) {
+      attr.after(asyncId, performance.now());
+    },
+    destroy(asyncId: number) {
+      attr.destroy(asyncId);
+    },
+  });
+  labelHook.enable();
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +477,61 @@ const suspensionCounter = registerInstrumentationMetric(
     new client.Counter({
       name: PROM_PREFIX + 'eventloop_longtask_suspension_total',
       help: 'Drift-timer gaps over the suspension cap, treated as process suspension (CPU-steal/VM suspend), not JS blocks',
+      registers: [instrumentationRegistry],
+    })
+);
+
+// ---------------------------------------------------------------------------
+// Labeled (async_hooks) attribution metrics — SEPARATE from the drift metrics
+// ---------------------------------------------------------------------------
+//
+// These are a DISTINCT attribution VIEW from the loop-level drift metrics above,
+// emitted ONLY by the async_hooks label hook (recordLabeledBlock) while the LABELS
+// tier is armed. They are deliberately their OWN series — NOT the drift
+// counter/histogram — so a single physical block is never counted twice:
+//
+//   - eventloop_longtask_total / _duration_seconds (drift): loop-level, always
+//     'unlabeled', counted exactly once per detected gap by the drift timer. Valid
+//     to alert on regardless of tier; never inflated by the labeled path.
+//   - eventloop_longtask_labeled_total / _labeled_duration_seconds{label}: per-
+//     resource attribution. Answers "which routes contributed long single-callback
+//     blocks", NOT an accounting of total blocked time. It does NOT sum to the
+//     loop-level total: it omits GC/unlabeled blocks, may miss blocks made of many
+//     sub-threshold callbacks, and (since it's per-resource) sum by(label) can both
+//     under- and over-shoot wall-clock. Treat it as a ranking signal, not a budget.
+const labeledHistogram = registerInstrumentationMetric(
+  PROM_PREFIX + 'eventloop_longtask_labeled_duration_seconds',
+  () =>
+    new client.Histogram({
+      name: PROM_PREFIX + 'eventloop_longtask_labeled_duration_seconds',
+      help: 'Per-resource (async_hooks-attributed) synchronous event-loop blocks over threshold, by tRPC-procedure/route label. SEPARATE attribution view — only present when EVENTLOOP_LONGTASK_LABELS is armed. Does NOT sum to eventloop_longtask_duration_seconds (the loop-level drift total); it is "which routes contributed long single-callback blocks", not total blocked time.',
+      labelNames: ['label'] as const,
+      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
+      registers: [instrumentationRegistry],
+    })
+);
+
+const labeledCounter = registerInstrumentationMetric(
+  PROM_PREFIX + 'eventloop_longtask_labeled_total',
+  () =>
+    new client.Counter({
+      name: PROM_PREFIX + 'eventloop_longtask_labeled_total',
+      help: 'Total per-resource (async_hooks-attributed) event-loop blocks over threshold, by label. SEPARATE from eventloop_longtask_total (the drift total) — counts the labeled attribution view only, present when EVENTLOOP_LONGTASK_LABELS is armed.',
+      labelNames: ['label'] as const,
+      registers: [instrumentationRegistry],
+    })
+);
+
+// Count of asyncId->label entries evicted from the bounded map while still active
+// (had a pending `before` with no `after`). Each eviction silently drops one
+// potential labeled block from the labeled series — the drift path still catches it
+// as 'unlabeled', but this counter makes the loss in the LABELED view observable.
+const labeledEvictedCounter = registerInstrumentationMetric(
+  PROM_PREFIX + 'eventloop_longtask_labeled_evicted_total',
+  () =>
+    new client.Counter({
+      name: PROM_PREFIX + 'eventloop_longtask_labeled_evicted_total',
+      help: 'Active (started-but-not-finished) asyncId->label entries evicted from the bounded label map, whose labeled block is consequently lost from the labeled series (still counted as unlabeled by the drift path).',
       registers: [instrumentationRegistry],
     })
 );
@@ -432,6 +683,13 @@ export function classifyDrift(
  *
  * Returns the resolved attribution label (or undefined for non-block results) to
  * make the test assertions explicit; the timer ignores the return.
+ *
+ * ATTRIBUTION: drift-timer blocks are ALWAYS recorded as 'unlabeled'. The timer runs
+ * in its own async context (NOT a request's ALS scope), so it cannot know which
+ * request blocked the loop — reading currentLabel() here always yielded 'unlabeled'
+ * AND was the #2451 bug (it implied attribution that never worked). Per-procedure
+ * attribution is emitted separately by the async_hooks label hook (recordLabeledBlock),
+ * which blames the resource from within its own execution.
  */
 export function recordDrift(
   result: DriftClassification,
@@ -446,7 +704,8 @@ export function recordDrift(
   }
   if (result.kind === 'block') {
     const { blockedMs } = result;
-    const label = currentLabel();
+    // Loop-level drift is unattributable from the timer context — see the note above.
+    const label = 'unlabeled';
     longTaskCounter.inc();
     longTaskHistogram.observe({ label }, blockedMs / 1000);
     if (blockedMs >= opts.logMinMs) {
@@ -455,6 +714,38 @@ export function recordDrift(
     return label;
   }
   return undefined;
+}
+
+/**
+ * Record a per-procedure (async_hooks-attributed) labeled block. Called from the
+ * label hook's `after` when a resource's own callback blocked the loop for
+ * >= threshold, with the real attribution label (e.g. 'trpc:image.getInfinite')
+ * captured at the resource's creation context — NOT 'unlabeled'. Exported so a unit
+ * test can assert the attribution without a real async resource.
+ *
+ * IMPORTANT (double-counting fix): this writes to the DEDICATED labeled metrics
+ * (eventloop_longtask_labeled_total / _labeled_duration_seconds), NOT the drift
+ * metrics (longTaskCounter / longTaskHistogram). The drift timer already counts every
+ * physical gap once as 'unlabeled'; if this path also touched the drift metrics, a
+ * single 200ms block would be counted twice (_total +2, _sum ~2x), inflating the
+ * loop-level totals and letting sum by(label) exceed 100% of wall-clock while armed.
+ * Keeping the labeled series separate makes the drift totals accurate and alertable
+ * regardless of tier, and the labeled series an independent attribution view.
+ *
+ * Cardinality: `label` is the bounded tRPC-procedure/route set the callers pass to
+ * runWithLongTaskLabel — never an unbounded value. 'unlabeled' is excluded here (the
+ * hook only tracks request-scoped resources) so it stays the drift timer's series.
+ */
+export function recordLabeledBlock(
+  blockedMs: number,
+  label: string,
+  opts: { logMinMs: number; threshold: number; logPerMin: number }
+): void {
+  labeledCounter.inc({ label });
+  labeledHistogram.observe({ label }, blockedMs / 1000);
+  if (blockedMs >= opts.logMinMs) {
+    tryLog(blockedMs, label, opts.threshold, opts.logPerMin);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -487,14 +778,24 @@ export function registerEventLoopLongTaskDetector(): void {
     const stacksEnabled = resolveStacksEnabled();
     const stackSample = resolveStackSample();
     const stackMapCap = resolveStackMapCap();
+    const labelMapCap = resolveLabelMapCap();
 
     armed = true;
     // Labels tier is the ONLY thing the request hot path branches on. Set before
     // any request runs so call sites read a settled constant.
     longTaskLabelsArmed = labelsEnabled;
 
-    // BASE ARMED: always-on lag histogram (cheap, C++-measured).
+    // BASE ARMED: always-on lag histogram (cheap, C++-measured). NO async_hooks.
     initEventLoopDelayGauges();
+
+    // LABELS tier: opt-in, capped async_hooks per-resource attribution. This is the
+    // CORRECT label path (init/before/after bracket the blocking resource's own body)
+    // and the only thing that emits `label="trpc:*"` blocks. Re-adds per-resource
+    // async_hooks cost — short measurement-window / canary tool, NOT a steady-state
+    // default. Installed ONLY when labels are enabled; base-armed touches no async_hooks.
+    if (labelsEnabled) {
+      installLabelHook(threshold, labelMapCap, { logMinMs, logPerMin, suspendCapMs });
+    }
 
     // STACKS tier: opt-in, sampled, capped async_hooks stack attribution (expensive).
     if (stacksEnabled) {
@@ -526,7 +827,7 @@ export function registerEventLoopLongTaskDetector(): void {
     console.log(
       `[eventloop-longtask] armed: threshold=${threshold}ms tick=${tickMs}ms ` +
         `logPerMin=${logPerMin} logMinMs=${logMinMs} suspendCap=${suspendCapMs}ms ` +
-        `labels=${labelsEnabled ? 'on' : 'off'} ` +
+        `labels=${labelsEnabled ? `on(cap=${labelMapCap})` : 'off'} ` +
         `stacks=${stacksEnabled ? `on(sample=1/${stackSample},cap=${stackMapCap})` : 'off'}`
     );
   } catch (err) {
@@ -566,4 +867,41 @@ export function __hasActiveLabelStoreForTests(): boolean {
  */
 export function __initEventLoopDelayGaugesForTests(): void {
   initEventLoopDelayGauges();
+}
+
+/**
+ * Test-only: install the REAL async_hooks label hook and return a teardown fn. Lets
+ * an integration test drive a real async resource created inside runWithLongTaskLabel
+ * and assert the resulting block attributes to the request's label (the exact #2451
+ * failure) — wired to a custom `record` sink so the test can capture the emission
+ * without the prom registry. Mirrors the production installLabelHook wiring.
+ */
+export function __installLabelHookForTests(
+  threshold: number,
+  mapCap: number,
+  record: (blockedMs: number, label: string) => void,
+  suspendCapMs = 0
+): () => void {
+  const attr = createLabelAttributor(
+    threshold,
+    mapCap,
+    { logMinMs: threshold, logPerMin: 0, suspendCapMs },
+    (blockedMs, label) => record(blockedMs, label)
+  );
+  const hook = createHook({
+    init(asyncId: number) {
+      attr.init(asyncId, currentLabel());
+    },
+    before(asyncId: number) {
+      attr.before(asyncId, performance.now());
+    },
+    after(asyncId: number) {
+      attr.after(asyncId, performance.now());
+    },
+    destroy(asyncId: number) {
+      attr.destroy(asyncId);
+    },
+  });
+  hook.enable();
+  return () => hook.disable();
 }
