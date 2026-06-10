@@ -55,10 +55,13 @@ async function collectTrpcRequests(
   };
   page.on('request', onRequest);
   try {
-    await page.goto(path, { waitUntil: 'networkidle' });
-    // networkidle already waits out the bootstrap query burst; a small extra
-    // settle covers any deferred mount that fires just after idle.
-    await page.waitForTimeout(1500);
+    // NOT 'networkidle': the app keeps background requests alive (signals /
+    // polling / beacons), so the network never goes idle and goto would hang to
+    // the navigation timeout. We don't need it — the `request` listener above
+    // captures every tRPC call regardless of load state; a fixed settle window
+    // after DOMContentLoaded covers the bootstrap burst + any deferred mount.
+    await page.goto(path, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(2500);
   } finally {
     page.off('request', onRequest);
   }
