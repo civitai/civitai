@@ -2794,6 +2794,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const {
     sort,
     modelVersionId,
+    model3dId,
     types,
     withMeta,
     fromPlatform,
@@ -2971,6 +2972,14 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
+  }
+
+  // Model3D gallery filter — `model3dId` is the index analog of `postedToId`
+  // (set at index time from `Post.model3dId`). Lets the 3D-model detail page
+  // serve its gallery from Meilisearch instead of the DB feed path, which
+  // was tripping the 20s ceiling on `getAllImages` for model3d queries.
+  if (model3dId) {
+    filters.push(makeMeiliImageSearchFilter('model3dId', `= ${model3dId}`));
   }
 
   if (remixOfId) {
@@ -3660,6 +3669,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   const {
     sort,
     modelVersionId,
+    model3dId,
     types,
     withMeta,
     fromPlatform,
@@ -3824,6 +3834,14 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
+  }
+
+  // Model3D gallery filter — `model3dId` is the index analog of `postedToId`
+  // (set at index time from `Post.model3dId`). Lets the 3D-model detail page
+  // serve its gallery from Meilisearch instead of the DB feed path, which
+  // was tripping the 20s ceiling on `getAllImages` for model3d queries.
+  if (model3dId) {
+    filters.push(makeMeiliImageSearchFilter('model3dId', `= ${model3dId}`));
   }
 
   if (remixOfId) {

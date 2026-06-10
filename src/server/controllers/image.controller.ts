@@ -374,9 +374,10 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
     // Check BitDex mode â€” if active, always route through getAllImagesIndex.
     // Skip BitDex for unsupported query types (collections, prioritized
-    // users). Also skip for Model3D galleries: the Meilisearch metrics-images
-    // index isn't synced with Model3D-linked posts, so the DB path is the
-    // only one that returns results.
+    // users). BitDex doesn't index `model3dId` yet, so model3d galleries
+    // still skip it — but Meilisearch DOES index `model3dId` (added with the
+    // `images-model3d:` gallery enablement), so we always allow the Meili
+    // index path below.
     const skipBitdex =
       !!input.collectionId || !!input.prioritizedUserIds?.length || !!input.model3dId;
     const bitdexMode = skipBitdex
@@ -387,11 +388,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
           buildFliptContext(user)
         );
     const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
-    // `features.imageIndexFeed` is currently a feature flag; for Model3D we
-    // override it to false (and ignore `input.useIndex === true` for the
-    // same reason — the index doesn't contain these images yet).
-    const useIndex =
-      !input.model3dId && input.useIndex !== false && (useBitdex || features.imageIndexFeed);
+    // Model3D gallery: always go through the Meilisearch index — the DB
+    // path is too slow (was hitting the 20s ceiling on the busy
+    // `getImagesAsPostsInfinite` route). Other surfaces continue to honor
+    // `useIndex` + the `imageIndexFeed` feature flag.
+    const useIndex = !!input.model3dId
+      ? input.useIndex !== false
+      : input.useIndex !== false && (useBitdex || features.imageIndexFeed);
 
     const fetchFn = useIndex ? getAllImagesIndex : getAllImages;
     type ResultType = typeof features.imageIndexFeed extends true

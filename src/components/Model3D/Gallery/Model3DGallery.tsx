@@ -36,7 +36,7 @@ export function Model3DGallery({
 
   const content = inView && (
     <ImagesAsPostsInfinite
-      source={{ kind: 'model3d', id: model3d.id, creatorUserId: model3d.userId, useIndex: false }}
+      source={{ kind: 'model3d', id: model3d.id, creatorUserId: model3d.userId }}
     />
   );
   const forceMinorLevel = !!model3d.minor && !currentUser?.isModerator;
