@@ -4,6 +4,12 @@ import { type FeatureAccess } from '~/server/services/feature-flags.service';
 import { trpc } from '~/utils/trpc';
 
 const FeatureFlagsCtx = createContext<FeatureAccess | null>(null);
+// Whether the per-user `getFeatureFlags` overlay has resolved. SSR seeds
+// host-level flags synchronously, but user-specific flags arrive via the
+// client query — consumers that would flash if they rendered against the
+// anon SSR flags (chat icon, migration alerts) gate on this instead of
+// forcing their own `getSettings` refetch.
+const FeatureFlagsReadyCtx = createContext<boolean>(true);
 
 export type UseFeatureFlagsReturn = ReturnType<typeof useFeatureFlags>;
 export const useFeatureFlags = () => {
@@ -11,6 +17,12 @@ export const useFeatureFlags = () => {
   if (!context) throw new Error('useFeatureFlags can only be used inside FeatureFlagsCtx');
   return context;
 };
+/**
+ * True once the per-user feature-flag overlay is known (or there is no logged-in
+ * user). Use to defer rendering UI whose visibility depends on user flags, so it
+ * doesn't flash against the anonymous SSR snapshot.
+ */
+export const useFeatureFlagsReady = () => useContext(FeatureFlagsReadyCtx);
 export const FeatureFlagsProvider = ({
   children,
   flags: initialFlags,
@@ -19,17 +31,19 @@ export const FeatureFlagsProvider = ({
   flags: FeatureAccess;
 }) => {
   const session = useSession();
-  // Ensures FE and BE feature flags are in sync for staging.
-  const host =
-    typeof location !== 'undefined'
-      ? (location?.host ?? '').replace('stage.', '').replace('dev.', '')
-      : '';
-  const [flags, setFlags] = useState(initialFlags);
+  const [flags] = useState(initialFlags);
 
-  const { data: userFeatures = {} as FeatureAccess } = trpc.user.getFeatureFlags.useQuery(
-    undefined,
-    { gcTime: Infinity, staleTime: Infinity, retry: 0, enabled: !!session.data }
-  );
+  const { data: userFeatures = {} as FeatureAccess, isFetched } =
+    trpc.user.getFeatureFlags.useQuery(undefined, {
+      gcTime: Infinity,
+      staleTime: Infinity,
+      retry: 0,
+      enabled: !!session.data,
+    });
+
+  // Logged-out (query disabled) → ready immediately on the complete SSR flags.
+  // Logged-in → ready once the user overlay has settled (success or error).
+  const ready = !session.data || isFetched;
 
   const featureFlags = useMemo(
     () => ({
@@ -39,5 +53,9 @@ export const FeatureFlagsProvider = ({
     [flags, userFeatures]
   );
 
-  return <FeatureFlagsCtx.Provider value={featureFlags}>{children}</FeatureFlagsCtx.Provider>;
+  return (
+    <FeatureFlagsCtx.Provider value={featureFlags}>
+      <FeatureFlagsReadyCtx.Provider value={ready}>{children}</FeatureFlagsReadyCtx.Provider>
+    </FeatureFlagsCtx.Provider>
+  );
 };

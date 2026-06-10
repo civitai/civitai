@@ -2,7 +2,7 @@ import { Button, CloseButton, Popover, Text } from '@mantine/core';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useFeatureFlags, useFeatureFlagsReady } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 const ALERT_ID = 'nav-tidy-notice';
@@ -18,13 +18,12 @@ export function NavTidyNotice() {
   const features = useFeatureFlags();
 
   const enabled = !!currentUser;
-  // AppProvider seeds `user.getSettings` with SSR initialData and the global
-  // `staleTime: Infinity` prevents refetching — so `data` is truthy immediately
-  // with potentially stale `dismissedAlerts`. Gate on `isFetched` (only true
-  // after a real network fetch resolves) and force a refetch via `staleTime: 0`.
-  const { data: settings, isFetched: settingsFetched } = trpc.user.getSettings.useQuery(undefined, {
+  const ready = useFeatureFlagsReady();
+  // SSR-seeded `user.getSettings` + the dismiss mutation's optimistic cache
+  // update keep `dismissedAlerts` authoritative without a per-mount refetch.
+  // Gate visibility on `ready` (per-user flag overlay) instead.
+  const { data: settings } = trpc.user.getSettings.useQuery(undefined, {
     enabled,
-    staleTime: 0,
   });
   const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
 
@@ -46,7 +45,7 @@ export function NavTidyNotice() {
 
   // Only nudge users who actually have one of the tidied items hidden.
   const hasHiddenNavItem = !features.postsNavItem || !features.eventsNavItem;
-  const show = enabled && settingsFetched && !isDismissed && hasHiddenNavItem;
+  const show = enabled && ready && !isDismissed && hasHiddenNavItem;
 
   const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
 

@@ -1,6 +1,6 @@
 import { Button, CloseButton, Popover, Text } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useFeatureFlags, useFeatureFlagsReady } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
@@ -20,19 +20,13 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
   const serverDomains = useServerDomains();
 
   const enabled = !!currentUser && features.isGreen && features.buzz;
-  const { data: buzzAccounts, isFetched: buzzFetched } = trpc.buzz.getBuzzAccount.useQuery(
-    undefined,
-    { enabled, staleTime: 0 }
-  );
-  // AppProvider seeds `user.getSettings` with SSR initialData and the global
-  // `staleTime: Infinity` prevents refetching — so `data` is truthy immediately
-  // with potentially stale `dismissedAlerts`. Gate on `isFetched` (only true
-  // after a real network fetch resolves) so we never render based on the SSR
-  // snapshot, and force a refetch on mount via `staleTime: 0`.
-  const { data: settings, isFetched: settingsFetched } = trpc.user.getSettings.useQuery(undefined, {
-    enabled,
-    staleTime: 0,
-  });
+  const ready = useFeatureFlagsReady();
+  // Shares the `getBuzzAccount` cache with the global buzz display (signal-kept
+  // live) — no need to force a refetch here.
+  const { data: buzzAccounts } = trpc.buzz.getBuzzAccount.useQuery(undefined, { enabled });
+  // SSR-seeded `user.getSettings` + the dismiss mutation's optimistic cache
+  // update keep `dismissedAlerts` authoritative without a per-mount refetch.
+  const { data: settings } = trpc.user.getSettings.useQuery(undefined, { enabled });
   const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
 
   const utils = trpc.useUtils();
@@ -52,7 +46,7 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
   });
 
   const yellowBalance = buzzAccounts?.yellow ?? 0;
-  const show = enabled && buzzFetched && settingsFetched && !isDismissed && yellowBalance > 0;
+  const show = enabled && ready && !isDismissed && yellowBalance > 0;
 
   const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
 
