@@ -36,12 +36,7 @@ export function StagedFiltersFooter({
     <Stack
       gap="xs"
       className={clsx(
-        // Sticky bottom-0 pins the footer to the nearest scrolling ancestor.
-        // On desktop the footer is a sibling of the scrolling ScrollArea so
-        // sticky is inert (parent doesn't scroll); on mobile the Drawer body
-        // scrolls and the footer pins to its bottom, keeping Apply reachable
-        // without scrolling to the end of the filter list.
-        'sticky bottom-0 z-10 border-t border-gray-3 bg-white px-4 py-3 dark:border-dark-4 dark:bg-dark-7',
+        'border-t border-gray-3 bg-white px-4 py-3 dark:border-dark-4 dark:bg-dark-7',
         className
       )}
     >

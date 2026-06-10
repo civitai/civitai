@@ -87,10 +87,18 @@ export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[]
           position="bottom"
           classNames={{ ...classes }}
           styles={{
-            body: { padding: 0, overflowY: 'auto' },
+            content: { display: 'flex', flexDirection: 'column' },
+            body: {
+              padding: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              flex: 1,
+              minHeight: 0,
+            },
           }}
         >
-          {dropdownBody}
+          <div className="min-h-0 flex-1 overflow-y-auto">{dropdownBody}</div>
           {dropdownFooter}
         </Drawer>
       </>
