@@ -82,10 +82,17 @@ async function mintStorageState(role: PreviewRole) {
   fs.writeFileSync(storageStatePath(role), JSON.stringify(storageState, null, 2));
 }
 
-setup('mint preview sessions', async () => {
+setup('mint preview sessions', async ({ request }) => {
   if (!SECRET) throw new Error('NEXTAUTH_SECRET is required to mint preview sessions');
   if (!PREVIEW_URL) throw new Error('PREVIEW_URL is required for preview smoke tests');
   for (const role of Object.keys(PREVIEW_USERS) as PreviewRole[]) {
     await mintStorageState(role);
   }
+
+  // Warm the freshly-deployed preview before the suite runs so the first real
+  // test doesn't eat the full cold-SSR cost (Next server warm-up + JIT + DB pool
+  // open can push the homepage past the per-test timeout on a cold preview). An
+  // unauthenticated GET (which the gate 307s to /login) is enough to warm the
+  // server process; failures here are non-fatal — the suite + retries cover it.
+  await request.get('/', { timeout: 60_000, maxRedirects: 0 }).catch(() => {});
 });

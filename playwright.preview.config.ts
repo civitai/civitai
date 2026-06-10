@@ -26,11 +26,18 @@ export default defineConfig({
   // Modest parallelism: enough to not run 11 navigations serially, bounded so a
   // single-replica preview pod isn't hammered. (workers:1 would defeat fullyParallel.)
   workers: 4,
+  // A freshly-deployed preview is cold: the first SSR render of a heavy page (the
+  // homepage especially) can take 30-40s while the Next server warms, JIT-compiles,
+  // and opens DB pools. The default 30s per-test timeout is too tight for that cold
+  // first hit, so raise both the per-test and navigation timeouts. The setup project
+  // also fires a warm-up request before the suite (preview-auth.setup.ts).
+  timeout: 60_000,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
   use: {
     baseURL: PREVIEW_URL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
+    navigationTimeout: 45_000,
   },
   projects: [
     { name: 'preview-setup', testMatch: /preview-auth\.setup\.ts/ },
