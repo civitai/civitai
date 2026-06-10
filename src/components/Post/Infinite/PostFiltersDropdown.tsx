@@ -124,19 +124,12 @@ export function PostFiltersDropdown({
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
             },
-            body: {
-              padding: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-              flex: 1,
-              minHeight: 0,
-            },
+            body: { padding: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
             close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto">{dropdownBody}</div>
+          {dropdownBody}
           {dropdownFooter}
         </Drawer>
       </>

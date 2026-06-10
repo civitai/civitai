@@ -119,18 +119,11 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
             },
-            body: {
-              padding: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-              flex: 1,
-              minHeight: 0,
-            },
+            body: { padding: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
           }}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto">{dropdownBody}</div>
+          {dropdownBody}
           {dropdownFooter}
         </Drawer>
       </IsClient>
