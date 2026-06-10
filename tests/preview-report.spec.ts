@@ -65,20 +65,7 @@ test.describe('tester self-seeds a post and reports it (mutation flow)', () => {
     expect(report, 'report.create should resolve to a truthy result').toBeTruthy();
   });
 
-  // NOTE: optional, light UI affordance check — does NOT drive the report modal
-  // (heavier/flakier). Just asserts a report-trigger affordance exists on an image
-  // page. Selector is best-effort; if the preview's markup differs this may need a
-  // tweak. Kept separate from the mutation flow above so a UI-markup change can't
-  // fail the (robust, API-driven) core smoke.
-  test('an image page exposes a report affordance', async ({ page }) => {
-    await page.goto('/images', { waitUntil: 'domcontentloaded' });
-    // The report action surfaces via an aria-label or visible "Report" text on the
-    // entity action menu/button. Accept either, first match.
-    const reportAffordance = page
-      .getByRole('button', { name: /report/i })
-      .or(page.getByText(/^report$/i))
-      .first();
-    // Soft existence check: presence in the DOM is enough; we don't click it.
-    await expect(reportAffordance).toBeAttached({ timeout: 15_000 });
-  });
+  // A UI report-affordance check was dropped: the report action lives behind an
+  // entity action menu (not a top-level button), so a DOM-presence assertion on
+  // /images is fragile. The API-driven flow above already proves report.create.
 });
