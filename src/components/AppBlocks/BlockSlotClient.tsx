@@ -2,6 +2,7 @@ import { Tabs } from '@mantine/core';
 import { useMemo, useState } from 'react';
 import { BlockErrorBoundary } from './BlockErrorBoundary';
 import { BlockHost } from './BlockHost';
+import { useHiddenBlocks } from './hiddenBlocks';
 import { sortInstallsForSlot, tabLabelFor } from './sortInstallsForSlot';
 import { useBlockSlot } from './useBlockSlot';
 import type { ModelSlotContext } from './types';
@@ -38,15 +39,24 @@ export function BlockSlotClient({ slotId, context }: BlockSlotClientProps) {
   });
 
   const sortedInstalls = useMemo(() => sortInstallsForSlot(installs, slotId), [installs, slotId]);
-  const firstBlockInstanceId = sortedInstalls[0]?.blockInstanceId ?? null;
+  // Viewer-local "Hide app block" (persisted to localStorage, via the host
+  // trust-frame's ⋯ menu). Filter hidden installs out BEFORE any render/mount
+  // so a hidden block never issues a token; the hook re-renders this slot the
+  // instant a hide happens. See hiddenBlocks.ts.
+  const hidden = useHiddenBlocks();
+  const visibleInstalls = useMemo(
+    () => sortedInstalls.filter((i) => !hidden.has(i.blockInstanceId)),
+    [sortedInstalls, hidden]
+  );
+  const firstBlockInstanceId = visibleInstalls[0]?.blockInstanceId ?? null;
   const [activeTab, setActiveTab] = useState<string | null>(firstBlockInstanceId);
 
   // Keep activeTab in sync if the install list changes (e.g. a refetch drops
-  // the currently-active install). Resync only when the previously-active id
-  // is no longer present.
+  // the currently-active install, or the viewer just hid it). Resync only when
+  // the previously-active id is no longer present.
   const activeStillPresent = useMemo(
-    () => sortedInstalls.some((i) => i.blockInstanceId === activeTab),
-    [sortedInstalls, activeTab]
+    () => visibleInstalls.some((i) => i.blockInstanceId === activeTab),
+    [visibleInstalls, activeTab]
   );
 
   if (error) return null; // fail-soft — never surface a block error as page-level
@@ -75,12 +85,12 @@ export function BlockSlotClient({ slotId, context }: BlockSlotClientProps) {
     }
     return null;
   }
-  if (sortedInstalls.length === 0) return null;
+  if (visibleInstalls.length === 0) return null;
 
   // 1-install path: render the BlockHost directly with no tab chrome so the
   // existing visual layout is preserved.
-  if (sortedInstalls.length === 1) {
-    const install = sortedInstalls[0];
+  if (visibleInstalls.length === 1) {
+    const install = visibleInstalls[0];
     return (
       <div
         data-block-slot={slotId}
@@ -95,17 +105,17 @@ export function BlockSlotClient({ slotId, context }: BlockSlotClientProps) {
   }
 
   const effectiveActive = activeStillPresent ? activeTab : firstBlockInstanceId;
-  const activeInstall = sortedInstalls.find((i) => i.blockInstanceId === effectiveActive) ?? null;
+  const activeInstall = visibleInstalls.find((i) => i.blockInstanceId === effectiveActive) ?? null;
 
   return (
     <div
       data-block-slot={slotId}
-      data-block-count={sortedInstalls.length}
+      data-block-count={visibleInstalls.length}
       data-active-block-id={effectiveActive ?? undefined}
     >
       <Tabs value={effectiveActive} onChange={(v) => setActiveTab(v)} variant="default">
         <Tabs.List>
-          {sortedInstalls.map((install) => {
+          {visibleInstalls.map((install) => {
             const fullLabel = tabLabelFor(install);
             return (
               <Tabs.Tab

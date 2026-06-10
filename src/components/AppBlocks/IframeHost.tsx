@@ -2,7 +2,7 @@ import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ActionIcon, Box, Group, Menu } from '@mantine/core';
-import { IconApps, IconDots } from '@tabler/icons-react';
+import { IconApps, IconDots, IconEyeOff } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
@@ -10,6 +10,7 @@ import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { resolveRequestConsent } from './requestConsentGate';
+import { hideBlock } from './hiddenBlocks';
 import { intersectSandbox } from './sandbox';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
@@ -99,11 +100,13 @@ function storageErrorMessage(err: unknown): string {
  * block can't fake, restyle, or hide it. It's the user-facing safety
  * signal that says "this is a sandboxed app block, not native Civitai UI":
  * a thin top bar with the Civitai app-block badge plus a menu whose
- * "Manage apps" item routes to /apps/installed. Rendering it here (vs in
- * the sandboxed iframe) is the whole point — the trust boundary belongs to
- * the host. (Roadmap W7.)
+ * "Manage apps" item routes to /apps/installed and a "Hide app block" item
+ * that locally hides this install for the viewer (a model owner's block shows
+ * to every viewer; this lets a viewer dismiss one without affecting the
+ * publisher or anyone else). Rendering it here (vs in the sandboxed iframe) is
+ * the whole point — the trust boundary belongs to the host. (Roadmap W7.)
  */
-function AppBlockChrome() {
+function AppBlockChrome({ blockInstanceId }: { blockInstanceId: string }) {
   return (
     <Group
       justify="space-between"
@@ -137,6 +140,12 @@ function AppBlockChrome() {
             leftSection={<IconApps size={14} stroke={1.5} />}
           >
             Manage apps
+          </Menu.Item>
+          <Menu.Item
+            leftSection={<IconEyeOff size={14} stroke={1.5} />}
+            onClick={() => hideBlock(blockInstanceId)}
+          >
+            Hide app block
           </Menu.Item>
         </Menu.Dropdown>
       </Menu>
@@ -1000,7 +1009,7 @@ export function IframeHost({
         overflow: 'hidden',
       }}
     >
-      <AppBlockChrome />
+      <AppBlockChrome blockInstanceId={install.blockInstanceId} />
       {children}
     </Box>
   );
