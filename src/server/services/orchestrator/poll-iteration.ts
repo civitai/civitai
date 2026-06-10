@@ -6,6 +6,7 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
+import { sanitizeProviderError, extractRawStepErrors } from './common';
 
 /**
  * Translate the orchestrator's string nsfwLevel ("pg", "pg13", "r", ...)
@@ -43,8 +44,7 @@ async function downloadAndUploadImage(
 ): Promise<{ s3Key: string; imageId: number } | null> {
   try {
     const imageResponse = await fetch(imageUrl);
-    if (!imageResponse.ok)
-      throw new Error(`Failed to download: ${imageResponse.status}`);
+    if (!imageResponse.ok) throw new Error(`Failed to download: ${imageResponse.status}`);
     const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
 
     const s3Key = randomUUID();
@@ -166,6 +166,12 @@ export async function pollIterationWorkflow({
     };
   }
 
+  // Extract and sanitize worker errors if any
+  const engine = (firstStep?.metadata?.params as any)?.engine ?? (firstStep?.input as any)?.engine;
+  const rawErrors = extractRawStepErrors(firstStep);
+  const sanitizedErrors = rawErrors.map((msg) => sanitizeProviderError(msg, engine));
+  const extractedErrorMessage = sanitizedErrors.length > 0 ? sanitizedErrors.join('\n') : undefined;
+
   // Hard failure: workflow itself terminated without success.
   if (
     workflowStatus === 'failed' ||
@@ -176,7 +182,7 @@ export async function pollIterationWorkflow({
       status: 'failed' as const,
       imageUrl: null,
       images: [],
-      errorMessage: blockedReasonToMessage(blockedReason),
+      errorMessage: blockedReasonToMessage(blockedReason) || extractedErrorMessage,
     };
   }
 
@@ -189,7 +195,7 @@ export async function pollIterationWorkflow({
       status: 'failed' as const,
       imageUrl: null,
       images: [],
-      errorMessage: blockedReasonToMessage(blockedReason),
+      errorMessage: blockedReasonToMessage(blockedReason) || extractedErrorMessage,
     };
   }
 

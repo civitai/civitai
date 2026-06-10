@@ -76,7 +76,120 @@ import type {
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { getRoundedWidthHeight } from '~/utils/image-utils';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  formatGenerationResponse2,
+} from '~/server/services/orchestrator/orchestration-new.service';
+
+export const providerNameMap: Record<string, string> = {
+  grok: 'xAI (Grok)',
+  haiper: 'Haiper',
+  mochi: 'Mochi',
+  luma: 'Luma',
+  minimax: 'Minimax',
+  kling: 'Kling',
+  runway: 'Runway',
+  openai: 'OpenAI',
+  google: 'Google',
+  gemini: 'Google Gemini',
+  fal: 'Fal.ai',
+  flux2: 'Fal.ai (Flux)',
+  'flux2-klein': 'Fal.ai (Flux Klein)',
+  'flux1-kontext': 'Fal.ai (Flux Kontext)',
+  seedream: 'Fal.ai (SeeDream)',
+  zimage: 'Fal.ai (zImage)',
+};
+
+const sensitiveRegexes = [
+  /[A-Za-z]:\\|\/(?:home|usr|var|opt|node_modules)\//i,
+  /https?:\/\//i,
+  /\bat\s+[^\s]+/i,
+  /\b(?:bearer|token|api[_ ]?key)\b/i,
+  /\b(?:prisma|sql|database|econnrefused|connection refused)\b/i,
+  /\binternal server error\b/i,
+];
+
+export function sanitizeProviderError(errorMessage: string, engine?: string): string {
+  const provider =
+    engine && providerNameMap[engine.toLowerCase()]
+      ? providerNameMap[engine.toLowerCase()]
+      : 'external provider';
+
+  const lower = errorMessage.toLowerCase();
+
+  const hasSensitiveKeywords = sensitiveRegexes.some((regex) => regex.test(errorMessage));
+
+  if (hasSensitiveKeywords) {
+    return `The generation provider ${provider} experienced a system error. Please try again.`;
+  }
+
+  const providerAliases = provider.toLowerCase().split(/[()]/).map(s => s.trim()).filter(Boolean);
+  const providerMentioned = providerAliases.some(alias => lower.includes(alias));
+
+  if (!providerMentioned) {
+    return `${provider} Error: ${errorMessage}`;
+  }
+
+  return errorMessage;
+}
+
+export function extractRawStepErrors(step: any): string[] {
+  if (!step) return [];
+  const rawErrors: string[] = [];
+
+  if (step.output) {
+    if (Array.isArray(step.output)) {
+      for (const out of step.output) {
+        if (out?.errors && Array.isArray(out.errors)) {
+          rawErrors.push(...out.errors.map(String));
+        }
+        if (out?.message && typeof out.message === 'string') {
+          rawErrors.push(out.message);
+        }
+      }
+    } else {
+      if (step.output.errors && Array.isArray(step.output.errors)) {
+        rawErrors.push(...step.output.errors.map(String));
+      }
+      if (
+        'externalTOSViolation' in step.output &&
+        'message' in step.output &&
+        typeof step.output.message === 'string'
+      ) {
+        rawErrors.push(step.output.message);
+      }
+    }
+  }
+
+  if (step.jobs && Array.isArray(step.jobs)) {
+    for (const job of step.jobs) {
+      if (job?.status === 'failed') {
+        const reason = job.reason || job.error || job.message;
+        if (reason && typeof reason === 'string') {
+          rawErrors.push(reason);
+        }
+        if (job.errors && Array.isArray(job.errors)) {
+          rawErrors.push(...job.errors.map(String));
+        }
+      }
+    }
+  }
+
+  if (step.metadata) {
+    const metaError = step.metadata.error || step.metadata.errors;
+    if (typeof metaError === 'string') {
+      rawErrors.push(metaError);
+    } else if (Array.isArray(metaError)) {
+      for (const err of metaError) {
+        const errStr = String(err);
+        if (errStr) {
+          rawErrors.push(errStr);
+        }
+      }
+    }
+  }
+
+  return Array.from(new Set(rawErrors));
+}
 
 type WorkflowStepAggregate =
   | ComfyStep
@@ -794,9 +907,7 @@ function normalizeOutput(
     case 'videoGen': {
       // LTX 2.3 batches multiple videos in a single job — primary in `video`,
       // remainder in `additionalVideos` (each slot uses Seed + slotIndex).
-      const primary = step.output?.video
-        ? [{ ...step.output.video, type: 'video' as const }]
-        : [];
+      const primary = step.output?.video ? [{ ...step.output.video, type: 'video' as const }] : [];
       const additional =
         step.output?.additionalVideos?.map((v) => ({ ...v, type: 'video' as const })) ?? [];
       const all = [...primary, ...additional];
@@ -942,17 +1053,9 @@ function formatWorkflowStepOutput({
       duration: 'duration' in item ? (item as AudioBlob).duration : undefined,
     };
   });
-  const errors: string[] = [];
-  if (step.output) {
-    if ('errors' in step.output && step.output.errors) errors.push(...step.output.errors);
-    if (
-      'externalTOSViolation' in step.output &&
-      'message' in step.output &&
-      typeof step.output.message === 'string'
-    )
-      errors.push(step.output.message);
-  }
-  // const errors = step.output && 'errors' in step.output ? step.output.errors : undefined;
+  const engine = (step.metadata?.params as any)?.engine ?? (step.input as any)?.engine;
+  const rawErrors = extractRawStepErrors(step);
+  const errors = rawErrors.map((msg) => sanitizeProviderError(msg, engine));
 
   return {
     images,
