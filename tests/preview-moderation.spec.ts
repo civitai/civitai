@@ -129,7 +129,7 @@ test.describe('moderation surface (mod)', () => {
 
     // 3) Resolve the report id. Prefer it straight from report.create's return; fall
     //    back to report.getAll (moderatorProcedure) matching on the seeded post id.
-    let reportId = report?.id;
+    let reportId: number | undefined = report?.id;
     if (typeof reportId !== 'number') {
       // getReportsSchema = page/limit (getAllQuerySchema) + type (ReportEntity).
       // Newest-first isn't guaranteed by default, so request a generous page and
