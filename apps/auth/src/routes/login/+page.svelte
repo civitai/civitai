@@ -50,7 +50,9 @@
     {#if data.user}
       <div class="signed-in-card">
         <p>Signed in as <strong>{data.user.username ?? data.user.id}</strong>.</p>
-        <a class="social email" href="/logout">Log out</a>
+        <form method="POST" action="/logout" class="logout-form">
+          <button type="submit" class="social email">Log out</button>
+        </form>
       </div>
     {:else}
       {#if data.providers.length === 0 && !data.emailEnabled}
@@ -303,6 +305,10 @@
   }
   .signed-in-card .social {
     width: 100%;
+  }
+  .logout-form {
+    width: 100%;
+    margin: 0;
   }
   .error {
     font-size: 0.9rem;

@@ -88,8 +88,14 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
       }
     } else if (cfg.legacySecret) {
       // Legacy next-auth JWE (encrypted, hkdf from secret). Drop this branch post-cutover.
-      const { decode: nextAuthDecode } = await import('next-auth/jwt');
-      claims = (await nextAuthDecode({ token, secret: cfg.legacySecret })) as SessionClaims | null;
+      // Catch like the RS256 branch: a corrupt/foreign cookie must resolve to null (no session),
+      // not throw — callers (next-auth decode override, hub hooks) expect null on a bad token.
+      try {
+        const { decode: nextAuthDecode } = await import('next-auth/jwt');
+        claims = (await nextAuthDecode({ token, secret: cfg.legacySecret })) as SessionClaims | null;
+      } catch {
+        return null;
+      }
     }
 
     if (!claims) return null;

@@ -1,7 +1,44 @@
+import { randomBytes, randomInt } from 'crypto';
 import type { SessionUser } from '@civitai/auth';
 import { db } from '../db/db';
 import { toSessionUser } from './session';
 import type { NormalizedProfile } from './providers';
+
+// Username assignment — mirrors the main app's NextAuth `events.createUser` / `setUserName`
+// (next-auth-options.ts): sanitize a seed (email/name), suffix a random 3-digit int, and retry
+// on the unique-constraint collision. New users MUST get a username — a null one breaks main-app
+// invariants (profile routes, etc.). We assign it after insert (rather than inserting a raw
+// provider username, which can collide and 500 the insert).
+const sanitizeSeed = (s: string) => s.split('@')[0].replace(/[^A-Za-z0-9_]/g, '');
+
+const randomSeed = (len: number) =>
+  randomBytes(len * 2)
+    .toString('base64')
+    .replace(/[^A-Za-z0-9]/g, '')
+    .slice(0, len);
+
+async function assignUsername(
+  userId: number,
+  seeds: Array<string | null | undefined>
+): Promise<void> {
+  const candidates = seeds
+    .map((s) => (s ? sanitizeSeed(s.trim()) : ''))
+    .filter((s) => s.length > 0);
+  candidates.push(`${randomSeed(5)}_`); // always-available fallback, like generateToken(5) + '_'
+
+  for (const base of candidates) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const username = `${base}${randomInt(100, 1000)}`;
+      try {
+        await db.updateTable('User').set({ username }).where('id', '=', userId).execute();
+        return;
+      } catch {
+        // unique-constraint collision — retry with a fresh suffix (then the next seed)
+      }
+    }
+  }
+  // Extremely unlikely (the random fallback collided 2×); leave username unset rather than throw.
+}
 
 // Resolve (or provision) a Civitai user for an upstream OAuth profile, then link the Account.
 // Mirrors NextAuth's adapter behavior: match by linked account → verified email → create.
@@ -41,12 +78,13 @@ export async function findOrCreateUser(
   }
 
   // 3. Otherwise create a fresh user + account. Omitted NOT-NULL columns use their DB defaults.
+  // username is assigned post-insert (see assignUsername) — never the raw provider handle.
   if (!userId) {
     const created = await db
       .insertInto('User')
       .values({
         email: profile.email ?? null,
-        username: profile.username ?? null,
+        username: null,
         name: profile.name ?? null,
         image: profile.image ?? null,
         emailVerified: profile.email && profile.emailVerified ? new Date() : null,
@@ -58,6 +96,7 @@ export async function findOrCreateUser(
       .insertInto('Account')
       .values({ userId, type: 'oauth', provider, providerAccountId: profile.providerAccountId })
       .execute();
+    await assignUsername(userId, [profile.email, profile.name, profile.username]);
   }
 
   // Read back via db — read-your-writes (the user may have just been created on primary).
@@ -87,6 +126,7 @@ export async function findOrCreateUserByEmail(email: string): Promise<SessionUse
       .returning('id')
       .executeTakeFirstOrThrow();
     userId = created.id;
+    await assignUsername(userId, [email]);
   } else {
     // Mark verified if it wasn't already.
     await db

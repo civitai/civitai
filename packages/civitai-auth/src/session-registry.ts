@@ -47,7 +47,7 @@ export interface SessionRegistry {
   trackToken(tokenId: string, userId: number): Promise<void>;
   /** Mark a single session invalid (logout). */
   invalidateToken(tokenId: string, userId?: number): Promise<void>;
-  /** Mark every tracked session for a user invalid (ban). Requires redis.hKeys. */
+  /** Mark every tracked session for a user invalid (ban). Requires redis.hGetAll. */
   invalidateUserSessions(userId: number): Promise<void>;
   /** Global cutoff — revokes every token signed before now (mass logout). */
   invalidateAll(): Promise<void>;
