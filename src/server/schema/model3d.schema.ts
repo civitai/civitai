@@ -144,6 +144,14 @@ export const getModel3DByThumbnailImageIdSchema = z.object({
   imageId: z.number().int().positive(),
 });
 
+// Public lookup used by the image viewers to surface the "Posted to 3D
+// Model" chip — given an image's postId, returns the linked `model3dId` (or
+// null when the post isn't tied to a Model3D). Cheap single-column read.
+export type GetModel3DByPostIdInput = z.infer<typeof getModel3DByPostIdSchema>;
+export const getModel3DByPostIdSchema = z.object({
+  postId: z.number().int().positive(),
+});
+
 export type GetModel3DRelatedPostsInput = z.infer<typeof getModel3DRelatedPostsSchema>;
 export const getModel3DRelatedPostsSchema = z.object({
   model3dId: z.number().int().positive(),

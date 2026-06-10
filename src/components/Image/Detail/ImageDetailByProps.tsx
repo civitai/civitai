@@ -36,6 +36,7 @@ import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { ImageResources } from '~/components/Image/Detail/ImageResources';
+import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import type { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -240,6 +241,14 @@ export function ImageDetailByProps({
                     collapsible
                     px="sm"
                   />
+                  {image.postId && (
+                    <Box px="sm">
+                      <PostingToModel3DCard
+                        postId={image.postId}
+                        label="Posted to 3D Model"
+                      />
+                    </Box>
+                  )}
                   <div>
                     <Divider
                       label="Discussion"

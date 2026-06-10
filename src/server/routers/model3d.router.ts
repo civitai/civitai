@@ -10,6 +10,7 @@ import {
   upsertModel3DSchema,
   ensureModel3DFromWorkflowSchema,
   getModel3DByIdSchema,
+  getModel3DByPostIdSchema,
   getModel3DByThumbnailImageIdSchema,
   getModel3DByWorkflowIdSchema,
   getModel3DsInfiniteSchema,
@@ -34,6 +35,7 @@ import {
   ensureModel3DFromWorkflow,
   getModel3DLicenses,
   getModel3DById,
+  getModel3DByPostId,
   getModel3DByThumbnailImageId,
   getModel3DByWorkflowId,
   getModel3DsInfinite,
@@ -121,6 +123,19 @@ export const model3dRouter = router({
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DByWorkflowIdSchema)
     .query(({ input, ctx }) => getModel3DByWorkflowId({ input, user: ctx.user })),
+  // Public lookup used by the image viewers' "Posted to 3D Model" chip.
+  // Returns the linked Model3D's card payload (id, name, thumbnail) or null
+  // when the post isn't tied to one — the chip stays hidden on null.
+  getByPostId: publicProcedure
+    .use(isFlagProtected('model3dFeed'))
+    .input(getModel3DByPostIdSchema)
+    .query(({ input, ctx }) =>
+      getModel3DByPostId({
+        ...input,
+        userId: ctx.user?.id,
+        isModerator: !!ctx.user?.isModerator,
+      })
+    ),
   // Lazy materialization for the "Post from Generation" CTA. The webhook
   // that runs `handlePolyGenWorkflowResult` after a PolyGen workflow
   // completes isn't wired up yet — this mutation closes that gap on

@@ -23,6 +23,7 @@ import type {
   DeleteModel3DInput,
   EnsureModel3DFromWorkflowInput,
   GetModel3DByIdInput,
+  GetModel3DByPostIdInput,
   GetModel3DByThumbnailImageIdInput,
   GetModel3DByWorkflowIdInput,
   GetModel3DFilesInput,
@@ -972,6 +973,51 @@ export const getModel3DByThumbnailImageId = async ({
     where: { thumbnailImageId: imageId },
     select: { id: true, name: true, status: true },
   });
+
+// Resolve a post's linked Model3D in one round-trip — used by the
+// "Posted to 3D Model" chip on the image viewers and the post-create page.
+// Returns the minimal card payload (id + name + thumbnail) or null when the
+// post isn't linked OR the viewer can't see the Model3D. The chip silently
+// hides on null instead of surfacing a 404. Visibility mirrors
+// `getModel3DById`: mods see everything, owner sees their own (any status),
+// public sees Published + not-Deleted. Inlined here rather than calling
+// `getModel3DById` so this service takes primitives (userId/isModerator)
+// instead of a full session user.
+export const getModel3DByPostId = async ({
+  postId,
+  userId,
+  isModerator = false,
+}: GetModel3DByPostIdInput & { userId?: number; isModerator?: boolean }) => {
+  const post = await dbRead.post.findUnique({
+    where: { id: postId },
+    select: {
+      model3d: {
+        select: {
+          id: true,
+          name: true,
+          userId: true,
+          status: true,
+          deletedAt: true,
+          thumbnailImage: { select: { id: true, url: true, name: true } },
+        },
+      },
+    },
+  });
+  const model3d = post?.model3d;
+  if (!model3d) return null;
+
+  const isOwner = !!userId && model3d.userId === userId;
+  if (!isModerator && !isOwner) {
+    if (model3d.status !== Model3DStatus.Published) return null;
+    if (model3d.deletedAt) return null;
+  }
+
+  return {
+    id: model3d.id,
+    name: model3d.name,
+    thumbnailImage: model3d.thumbnailImage,
+  };
+};
 
 // ---------------------------------------------------------------------------
 // upsertModel3DFromWorkflow — orchestrator-side idempotent upsert by workflowId

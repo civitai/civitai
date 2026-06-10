@@ -53,6 +53,7 @@ import { openReportModal } from '~/components/Dialog/triggers/report';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
+import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
@@ -474,6 +475,12 @@ export function ImageDetail2() {
                           withActions: true,
                           tipsEnabled: !image.poi,
                         }}
+                      />
+                    )}
+                    {image.postId && (
+                      <PostingToModel3DCard
+                        postId={image.postId}
+                        label="Posted to 3D Model"
                       />
                     )}
                     {image.needsReview && isOwner && (
