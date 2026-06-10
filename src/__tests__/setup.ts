@@ -121,6 +121,29 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/prom/client', () => ({
   registerCounter: vi.fn(() => ({ inc: vi.fn() })),
   registerCounterWithLabels: vi.fn(() => ({ inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) })),
+  // Metric-factory helpers main added for the eventloop-longtask observability
+  // pass. eventloop-longtask.ts registers a histogram + counter via
+  // registerInstrumentationMetric AT MODULE LOAD, and trpc.ts imports it — so
+  // every test that touches a router (e.g. blocks.router.*) loads this. Without
+  // these the mock returns undefined → "No <export> defined on the mock".
+  registerInstrumentationMetric: vi.fn(() => ({
+    inc: vi.fn(),
+    observe: vi.fn(),
+    set: vi.fn(),
+    startTimer: vi.fn(() => vi.fn()),
+    labels: vi.fn(() => ({ inc: vi.fn(), observe: vi.fn(), set: vi.fn() })),
+  })),
+  registerHistogram: vi.fn(() => ({
+    observe: vi.fn(),
+    startTimer: vi.fn(() => vi.fn()),
+    labels: vi.fn(() => ({ observe: vi.fn(), startTimer: vi.fn(() => vi.fn()) })),
+  })),
+  registerGaugeWithLabels: vi.fn(() => ({
+    set: vi.fn(),
+    inc: vi.fn(),
+    dec: vi.fn(),
+    labels: vi.fn(() => ({ set: vi.fn(), inc: vi.fn(), dec: vi.fn() })),
+  })),
   missingSignedAtCounter: { inc: vi.fn() },
   newUserCounter: { inc: vi.fn() },
   loginCounter: { inc: vi.fn() },
