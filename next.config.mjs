@@ -93,8 +93,11 @@ export default defineNextConfig(
     // IMPORTANT: `output:'standalone'` traces required files via @vercel/nft, which
     // follows `import`/`require`/`fs` — it does NOT trace sibling `.js.map` files, so
     // the server maps are emitted to `.next/server` but DROPPED from `.next/standalone`.
-    // The Dockerfile re-copies `.next/server/**/*.js.map` into the runtime image
-    // explicitly (see the RUNNER stage) so prod profiles can be de-minified.
+    // The runtime image does NOT ship these maps (the RUNNER stage copies only
+    // standalone + static). The build instead publishes them as a separate
+    // `civitai-web-maps:<tag>` artifact (Dockerfile `maps` target + the pipeline),
+    // fetched on demand by `scripts/resolve-cpuprofile.mjs --image <tag>` to
+    // de-minify a captured profile — keeping the runtime image lean.
     productionBrowserSourceMaps: true,
     // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
     i18n: {

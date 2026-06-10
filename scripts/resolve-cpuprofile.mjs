@@ -327,6 +327,9 @@ async function main() {
   }
 
   let resolver = null;
+  // try/finally so a fetched maps temp dir (can be ~hundreds of MB) is always
+  // cleaned up, even if resolution throws partway through.
+  try {
   if (args.resolve) {
     const sm = await loadSourceMapModule();
     const mapIndex = await indexMaps(mapsDir);
@@ -441,8 +444,10 @@ async function main() {
     }
   }
 
-  if (resolver) resolver.destroy();
-  if (fetchCleanup) await fetchCleanup();
+  } finally {
+    if (resolver) resolver.destroy();
+    if (fetchCleanup) await fetchCleanup();
+  }
 }
 
 main().catch((err) => {
