@@ -333,7 +333,11 @@ export const blocksRouter = router({
    * uninstall re-enables platform defaults for this (model, slot) pair;
    * toggleEnabled(false) keeps the opt-out row in place.
    */
-  uninstallFromModel: moderatorProcedure
+  // GA-relax (gotcha #66): own-data management action. moderator→protected +
+  // flag below; ownership is still enforced by assertCanManageBlocks (the
+  // caller must be the model owner or a mod), so a non-mod can only uninstall
+  // a block from a model they own.
+  uninstallFromModel: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(z.object({ blockInstanceId: z.string().min(1).max(64) }))
     .mutation(async ({ ctx, input }) => {
@@ -693,7 +697,11 @@ export const blocksRouter = router({
    * + scope intersections derived from existing tables (no grant schema
    * yet — that's W5 v1). See user-app-surface.service.ts for shape.
    */
-  listMyScopeGrants: moderatorProcedure
+  // GA-relax (gotcha #66, manage-page half): own-data reflection query scoped
+  // to ctx.user.id. moderator→protected + the appBlocks flag below. The
+  // /apps/installed page already gates per-user on features.appBlocks, so the
+  // old moderator gate just broke this tab for non-mods on flag-public surfaces.
+  listMyScopeGrants: protectedProcedure
     .use(enforceAppBlocksFlag)
     .query(async ({ ctx }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
@@ -713,7 +721,8 @@ export const blocksRouter = router({
    * Cursor pagination by id (createdAt desc, id desc tiebreak); cap 100
    * to keep the payload bounded.
    */
-  listMyAppActivity: moderatorProcedure
+  // GA-relax (gotcha #66): own-data activity feed scoped to ctx.user.id below.
+  listMyAppActivity: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -748,7 +757,10 @@ export const blocksRouter = router({
    * Id, and the management UI on /apps/installed reads `id` off the
    * SubscriptionRecord directly.
    */
-  setSubscriptionPinnedVersion: moderatorProcedure
+  // GA-relax (gotcha #66): own-data management action. moderator→protected +
+  // flag below; the service throws 'not the subscription owner' when
+  // sub.userId !== caller, so a non-mod can only pin a version on their own sub.
+  setSubscriptionPinnedVersion: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -841,7 +853,8 @@ export const blocksRouter = router({
    * "show me what just this app did" drill-down. Cursor is the BigSerial
    * row id as a string (JSON can't carry int64 losslessly).
    */
-  listMyScopeInvocations: moderatorProcedure
+  // GA-relax (gotcha #66): own-data scope-invocation feed scoped to ctx.user.id.
+  listMyScopeInvocations: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -872,7 +885,9 @@ export const blocksRouter = router({
    * denormalised onto each subscription so the UI can render block name,
    * icon, and target slot without a second round-trip.
    */
-  listMySubscriptions: moderatorProcedure
+  // GA-relax (gotcha #66): returns only the caller's own subscriptions
+  // (listUserSubscriptions(ctx.user.id)). moderator→protected + flag below.
+  listMySubscriptions: protectedProcedure
     .use(enforceAppBlocksFlag)
     .query(async ({ ctx }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];

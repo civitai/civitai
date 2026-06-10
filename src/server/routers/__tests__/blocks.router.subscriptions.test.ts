@@ -146,6 +146,17 @@ describe('blocks.listMySubscriptions (guarded)', () => {
     expect(mockListUserSubscriptions).not.toHaveBeenCalled();
   });
 
+  // GA-relax (gotcha #66): the manage-page reflection queries are now
+  // protectedProcedure (not moderatorProcedure) — a logged-in non-mod reads
+  // their OWN subscriptions, since /apps/installed is reachable by any user the
+  // per-user appBlocks flag admits. Scoped to ctx.user.id, so no cross-user read.
+  it('allows a non-mod authed viewer — returns their own subscriptions', async () => {
+    mockListUserSubscriptions.mockResolvedValue([]);
+    const caller = blocksRouter.createCaller(authedCtx(7, false) as never);
+    await caller.listMySubscriptions();
+    expect(mockListUserSubscriptions).toHaveBeenCalledWith(7);
+  });
+
   it('returns an empty list when the appBlocks flag is off (fail-soft on query)', async () => {
     mockIsAppBlocksEnabled.mockImplementation(async () => false);
     const caller = blocksRouter.createCaller(authedCtx(42) as never);
@@ -374,10 +385,14 @@ describe('Phase 2 — management procedures reject non-mod verified users (FORBI
     expect(mockDeleteSubscription).not.toHaveBeenCalled();
   });
 
-  it('listMySubscriptions → FORBIDDEN', async () => {
-    await expect(nonMod().listMySubscriptions()).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(mockListUserSubscriptions).not.toHaveBeenCalled();
-  });
+  // NOTE: listMySubscriptions / listMyScopeGrants / listMyAppActivity /
+  // listMyScopeInvocations + the own-data management actions (uninstallFromModel,
+  // setSubscriptionPinnedVersion) were GA-relaxed moderator→protected (gotcha
+  // #66) — they're own-data and self-scoped, so a non-mod is NO LONGER FORBIDDEN.
+  // The non-mod happy path for listMySubscriptions is asserted in the
+  // 'blocks.listMySubscriptions (guarded)' describe above. The procedures kept
+  // in this block (install/upsert/delete + the mod-review queue + revenue/apps)
+  // remain mod-gated.
 
   it('installOnModel → FORBIDDEN', async () => {
     await expect(
