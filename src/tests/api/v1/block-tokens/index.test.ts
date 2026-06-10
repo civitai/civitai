@@ -500,7 +500,7 @@ describe('POST /api/v1/block-tokens', () => {
     expect(body.missingScopes).toEqual([]);
   });
 
-  it('A6: a revoked grant withholds every consent-gated scope', async () => {
+  it('A6: a revoked grant withholds every consent-gated scope (exempt scopes still sign)', async () => {
     mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
     mockBlockRegistry.resolveBlockInstance.mockResolvedValue(V2_INSTALL);
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
@@ -512,10 +512,12 @@ describe('POST /api/v1/block-tokens', () => {
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(200);
     const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { scopes: string[] };
-    expect(signArgs.scopes).toEqual([]); // all withheld
+    // models:read:self is consent-exempt (allow-by-default) so it signs even
+    // with the grant revoked; only the gated buzz:read:self is withheld.
+    expect(signArgs.scopes).toEqual(['models:read:self']);
     const body = res._body as { needsConsent: boolean; missingScopes: string[] };
     expect(body.needsConsent).toBe(true);
-    expect(new Set(body.missingScopes)).toEqual(new Set(['models:read:self', 'buzz:read:self']));
+    expect(new Set(body.missingScopes)).toEqual(new Set(['buzz:read:self']));
   });
 
   it('A6: consent-exempt scopes (block:settings:*) sign even with no grant', async () => {
@@ -572,15 +574,19 @@ describe('POST /api/v1/block-tokens', () => {
       scopes: string[];
       userId: number | null;
     };
-    // SECURITY INVARIANT: no money/self/owned/tip scope in an anon token.
+    // SECURITY INVARIANT: no money/owned/tip scope in an anon token. The
+    // consent-gated strip is the COMPLEMENT of CONSENT_EXEMPT_SCOPES, so every
+    // gated `:self`/owned/money/tip scope is withheld.
     expect(signArgs.scopes).not.toContain('ai:write:budgeted');
-    expect(signArgs.scopes).not.toContain('models:read:self');
     expect(signArgs.scopes).not.toContain('buzz:read:self');
     expect(signArgs.scopes).not.toContain('user:read:self');
     expect(signArgs.scopes).not.toContain('social:tip:self');
     expect(signArgs.scopes).not.toContain('media:read:owned');
-    // For generate-from-model the anon-safe subset is effectively empty.
-    expect(signArgs.scopes).toEqual([]);
+    // models:read:self is consent-exempt (allow-by-default — it's the public
+    // model on the page the block is mounted on), so it SURVIVES for anon. For
+    // generate-from-model (models:read:self + ai:write:budgeted) the anon-safe
+    // subset is therefore exactly [models:read:self].
+    expect(signArgs.scopes).toEqual(['models:read:self']);
     // sub is anon (userId null on the sign call).
     expect(signArgs.userId).toBeNull();
     // No consent prompt for anon — the host converts gated actions to sign-in.

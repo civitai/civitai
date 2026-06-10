@@ -1,5 +1,3 @@
-import { Stack } from '@mantine/core';
-import { BlockConsentPrompt } from './BlockConsentPrompt';
 import { BlockFallback } from './BlockFallback';
 import { IframeHost } from './IframeHost';
 import { useBlockToken } from './useBlockToken';
@@ -18,7 +16,7 @@ interface BlockHostProps {
  * so v2 can light it up without a structural refactor.
  */
 export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
-  const { token, expiresAt, error, pending, needsConsent, missingScopes, refresh } = useBlockToken(
+  const { token, expiresAt, error, pending, missingScopes, refresh } = useBlockToken(
     blockInstall,
     slotContext
   );
@@ -51,34 +49,23 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
     throw new Error('InlineHost is not enabled in v1');
   }
 
-  const iframe = (
+  // A6 lazy consent: the block renders in FULL even when the viewer hasn't
+  // granted every consent-gated scope. We pass `missingScopes` so IframeHost
+  // (a) trims the wrapped token's `scopes` to what was actually signed (so the
+  // block's "do I have ai:write:budgeted?" check is accurate) and (b) handles
+  // the block's REQUEST_CONSENT — opening the consent modal on the action click
+  // (e.g. Generate), not on load. On grant we re-mint via `refresh` so the new
+  // scopes reach the iframe through TOKEN_REFRESH and the block retries.
+  return (
     <IframeHost
       install={blockInstall}
       context={slotContext}
       token={token}
       expiresAt={expiresAt}
+      missingScopes={missingScopes}
+      onConsentGranted={() => {
+        void refresh();
+      }}
     />
   );
-
-  // A6: when the app's approved manifest declares scopes the viewer hasn't
-  // granted, render a re-consent prompt above the block. The block still
-  // renders with the granted subset; on grant we refresh the token so it
-  // picks up the newly-granted scopes.
-  if (needsConsent && missingScopes.length > 0) {
-    return (
-      <Stack gap="xs">
-        <BlockConsentPrompt
-          appBlockId={blockInstall.appBlockId}
-          blockName={blockInstall.manifest.name}
-          missingScopes={missingScopes}
-          onGranted={() => {
-            void refresh();
-          }}
-        />
-        {iframe}
-      </Stack>
-    );
-  }
-
-  return iframe;
 }

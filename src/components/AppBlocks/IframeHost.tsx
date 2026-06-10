@@ -9,6 +9,7 @@ import { failureSnapshot } from './failureSnapshot';
 import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
+import { resolveRequestConsent } from './requestConsentGate';
 import { intersectSandbox } from './sandbox';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
@@ -23,6 +24,9 @@ const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). SSR-disabled to match
 // requireLogin()'s own dynamic import — LoginContent touches window/router.
 const LoginModal = dynamic(() => import('~/components/Login/LoginModal'), { ssr: false });
+// Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
+// clicks an action whose consent-gated scope the token is missing.
+const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: false });
 
 // Hard cap on the suggested top-up amount a block can pre-fill in the
 // BuyBuzzModal (security audit #10). Without this a malicious block could
@@ -35,6 +39,15 @@ interface IframeHostProps {
   token: string;
   /** ISO-8601 — surfaces in BLOCK_INIT.token.expiresAt for the iframe. */
   expiresAt: string;
+  /** A6 lazy consent: consent-gated scopes the app's approved manifest declares
+   *  but the viewer hasn't granted, so they were WITHHELD from `token`. The
+   *  block sees a token without them and fires REQUEST_CONSENT on the action;
+   *  we also trim them from the wrapped `token.scopes` we send the iframe so
+   *  the block's "do I have this capability?" check is accurate. */
+  missingScopes?: string[];
+  /** Re-mint the block token after a consent grant so it carries the newly
+   *  granted scopes (pushed to the iframe via TOKEN_REFRESH). */
+  onConsentGranted?: () => void;
 }
 
 const BLOCK_READY_TIMEOUT_MS = 10_000;
@@ -131,7 +144,14 @@ function AppBlockChrome() {
   );
 }
 
-export function IframeHost({ install, context, token, expiresAt }: IframeHostProps) {
+export function IframeHost({
+  install,
+  context,
+  token,
+  expiresAt,
+  missingScopes,
+  onConsentGranted,
+}: IframeHostProps) {
   // Treat the slot context as ModelSlotContext when the optional viewer/theme
   // fields are present; otherwise default conservatively. ModelSlotContext is
   // the only producer in v1 (ModelVersionDetails); other surfaces use the
@@ -183,18 +203,34 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     [install.manifest.iframe?.minHeight, install.manifest.iframe?.maxHeight]
   );
 
+  // A6 lazy consent: the scopes ACTUALLY carried by the minted token — the
+  // manifest scopes minus the consent-gated ones the viewer hasn't granted yet
+  // (`missingScopes`, reported by the mint). The server signs exactly this set
+  // into the JWT; sending the full manifest scopes in the wrapped token would
+  // lie to the block (it would think it has `ai:write:budgeted` when the JWT
+  // doesn't), defeating the block's Generate-time consent check. For anon and
+  // fully-granted viewers `missingScopes` is empty, so this equals the manifest
+  // scopes — no behavior change. (Anon is gated block-side by `viewer === null`,
+  // not by scopes.)
+  const grantedScopes = useMemo<string[]>(() => {
+    const declared = install.manifest.scopes ?? [];
+    if (!missingScopes || missingScopes.length === 0) return declared;
+    const withheld = new Set(missingScopes);
+    return declared.filter((s) => !withheld.has(s));
+  }, [install.manifest.scopes, missingScopes]);
+
   // Mirror the server's buzzBudget resolution (publisher's
   // buzz_budget_per_gen → manifest default → 10, capped at 1000) so blocks
-  // can display the budget without a JWT decode. Only present when the
-  // manifest declares ai:write:budgeted; absent otherwise.
+  // can display the budget without a JWT decode. Only present when the token
+  // actually carries ai:write:budgeted (i.e. after consent); absent otherwise —
+  // a budget cap is meaningless without the spend scope it bounds.
   const buzzBudget = useMemo<number | undefined>(() => {
-    const scopes = install.manifest.scopes ?? [];
-    if (!scopes.includes('ai:write:budgeted')) return undefined;
+    if (!grantedScopes.includes('ai:write:budgeted')) return undefined;
     const raw = install.publisherSettings?.buzz_budget_per_gen;
     const candidate = typeof raw === 'number' && Number.isFinite(raw) ? raw : 10;
     if (candidate <= 0) return undefined;
     return Math.min(candidate, 1000);
-  }, [install.manifest.scopes, install.publisherSettings]);
+  }, [grantedScopes, install.publisherSettings]);
 
   // Effective Checkpoint after publisher-default ∪ viewer-override merge.
   // Anon viewers see publisher default; authenticated viewers see their
@@ -238,7 +274,7 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     appId: install.appId,
     token: {
       raw: token,
-      scopes: install.manifest.scopes ?? [],
+      scopes: grantedScopes,
       expiresAt,
       ...(buzzBudget !== undefined ? { buzzBudget } : {}),
     },
@@ -297,12 +333,12 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     send('TOKEN_REFRESH', {
       token: {
         raw: token,
-        scopes: install.manifest.scopes ?? [],
+        scopes: grantedScopes,
         expiresAt,
         ...(buzzBudget !== undefined ? { buzzBudget } : {}),
       },
     });
-  }, [token, expiresAt, buzzBudget, install.manifest.scopes, send]);
+  }, [token, expiresAt, buzzBudget, grantedScopes, send]);
 
   // SDK request-driven flow: iframe asks for the current token (e.g. right
   // before an expensive call) and we reply with the latest wrapped value.
@@ -318,14 +354,14 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
         ...(requestId ? { requestId } : {}),
         token: {
           raw: token,
-          scopes: install.manifest.scopes ?? [],
+          scopes: grantedScopes,
           expiresAt,
           ...(buzzBudget !== undefined ? { buzzBudget } : {}),
         },
       });
     });
     return off;
-  }, [token, expiresAt, buzzBudget, install.manifest.scopes, send, onMessage]);
+  }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage]);
 
   useEffect(() => {
     if (status !== 'loading') return;
@@ -422,6 +458,42 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     });
     return off;
   }, [onMessage, status]);
+
+  // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
+  // token is missing a consent-gated scope) asks the host to open the consent UI
+  // when the user clicks an action that needs that capability (e.g. Generate),
+  // instead of a prompt on load. We grant the missing set the MINT computed
+  // (`missingScopes` — server-known truth), NOT any scopes the block claims; the
+  // gate also pins status === 'ready' so a pre-handshake block can't pop a
+  // permission modal before any interaction (same posture as REQUEST_SIGN_IN /
+  // OPEN_BUZZ_PURCHASE). On grant we re-mint the token (onConsentGranted →
+  // useBlockToken.refresh); the new scopes flow to the iframe via TOKEN_REFRESH
+  // and the block retries — there is no host→block reply (fire-and-forget).
+  useEffect(() => {
+    const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', () => {
+      const scopesToGrant = resolveRequestConsent(status, missingScopes ?? []);
+      if (scopesToGrant == null) return; // not ready, or nothing missing — drop
+      dialogStore.trigger({
+        component: BlockConsentModal,
+        props: {
+          appBlockId: install.appBlockId,
+          blockName: install.manifest.name,
+          missingScopes: scopesToGrant,
+          onGranted: () => {
+            onConsentGranted?.();
+          },
+        },
+      });
+    });
+    return off;
+  }, [
+    onMessage,
+    status,
+    missingScopes,
+    install.appBlockId,
+    install.manifest.name,
+    onConsentGranted,
+  ]);
 
   // SDK workflow bridge: receive SUBMIT/ESTIMATE/POLL requests from the block,
   // forward to blocks.* tRPC, echo the response back with matching requestId.
