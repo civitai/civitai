@@ -23,7 +23,9 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: 1,
+  // Modest parallelism: enough to not run 11 navigations serially, bounded so a
+  // single-replica preview pod isn't hammered. (workers:1 would defeat fullyParallel.)
+  workers: 4,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
   use: {
     baseURL: PREVIEW_URL,
