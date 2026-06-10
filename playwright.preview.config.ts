@@ -23,12 +23,15 @@ export default defineConfig({
   // also matches a parent dir named like a worktree (…/civitai-preview-x/), which
   // would wrongly pull in the non-preview specs (auction/generation/example).
   testMatch: /(^|\/)preview-.*\.(setup|spec)\.ts$/,
-  fullyParallel: true,
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  // Modest parallelism: enough to not run 11 navigations serially, bounded so a
-  // single-replica preview pod isn't hammered. (workers:1 would defeat fullyParallel.)
-  workers: 4,
+  // Run SERIALLY. The preview is a single-replica, cold, resource-modest pod.
+  // Concurrent loads of the heavy pages (/models, /images, /purchase/buzz,
+  // /pricing, model detail) across multiple workers segfaulted it (exit 139),
+  // which cascaded fast failures into unrelated tests. One page at a time lets
+  // the pod cope; the suite is small + report-only, so serial (~2-3 min) is fine.
+  workers: 1,
   // A freshly-deployed preview is cold: the first SSR render of a heavy page (the
   // homepage especially) can take 30-40s while the Next server warms, JIT-compiles,
   // and opens DB pools. The default 30s per-test timeout is too tight for that cold
