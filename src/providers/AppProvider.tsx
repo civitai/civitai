@@ -20,6 +20,10 @@ type AppProviderProps = {
   // `useDomainColor()` key — this provider sits above FeatureFlagsProvider so it
   // can't compute that key itself.
   announcements?: AnnouncementsSeed;
+  // SSR-computed `user.getFollowingUsers` result (logged-in only) — the list of
+  // followed userIds. Seeds the query directly (fixed `undefined` key) so the
+  // ambient follow/notify buttons never fire it on bootstrap.
+  following?: number[];
   seed: number;
   canIndex: boolean;
   region: RegionInfo;
@@ -88,6 +92,7 @@ export function AppProvider({
   settings,
   tosUpdate,
   announcements,
+  following,
   domain,
   host,
   serverDomains,
@@ -113,6 +118,18 @@ export function AppProvider({
     enabled: !!tosUpdateInitial,
     staleTime: Infinity,
     gcTime: Infinity,
+  });
+  // Seed `user.getFollowingUsers` (the followed-userId list) from the SSR
+  // snapshot so the ambient follow/notify buttons read a primed cache and never
+  // fire it on bootstrap. The list only changes via the user's own follow/
+  // unfollow, which `FollowUserButton` already patches via optimistic `setData`
+  // — so the global `staleTime: Infinity` default is correct here (no external
+  // churn to refetch for). `enabled: !!following` skips the seed (and any
+  // self-heal fetch) only when there's no snapshot (anon never fires this query;
+  // a failed authed snapshot falls back to the consumers' own live fetch).
+  trpc.user.getFollowingUsers.useQuery(undefined, {
+    initialData: following,
+    enabled: !!following,
   });
   // Populate the module-level server domain map so `syncAccount(url)` can
   // resolve hosts to colors without pulling from React context.
