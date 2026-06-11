@@ -4,13 +4,10 @@ import type { CheckTosUpdateResult } from '~/server/services/content.service';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
-import type { RouterOutput } from '~/types/router';
 import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
-
-// The tRPC output shape of `announcement.getAnnouncements` — what the query's
-// `data`/`initialData` must be typed as (superjson preserves the Date fields).
-type AnnouncementsSeed = RouterOutput['announcement']['getAnnouncements'];
+import type { AnnouncementsSeed } from '~/providers/announcements-seed';
+import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -86,21 +83,6 @@ function reviveTosUpdate(tosUpdate?: CheckTosUpdateResult): CheckTosUpdateResult
   };
 }
 
-// The announcements SSR seed travels via Next pageProps (plain JSON), which
-// stringifies the `createdAt`/`startsAt`/`endsAt` Date fields — a live superjson
-// tRPC fetch keeps them as Date objects. Revive them so the seed is shape-
-// identical to a live response. (The display path doesn't read these dates, but
-// this keeps the seed byte-equal to a live fetch — see the seed-vs-live e2e.)
-function reviveAnnouncements(announcements?: AnnouncementsSeed): AnnouncementsSeed | undefined {
-  if (!announcements) return undefined;
-  return announcements.map((announcement) => ({
-    ...announcement,
-    createdAt: toDate(announcement.createdAt) as Date,
-    startsAt: toDate(announcement.startsAt) as Date,
-    endsAt: toDate(announcement.endsAt) ?? null,
-  }));
-}
-
 export function AppProvider({
   children,
   settings,
@@ -147,7 +129,7 @@ export function AppProvider({
     serverDomains,
     availableOAuthProviders,
     verifiedBot,
-    announcements: reviveAnnouncements(announcements),
+    announcements: reviveAnnouncementsSeed(announcements),
   }));
 
   return <Context.Provider value={state}>{children}</Context.Provider>;

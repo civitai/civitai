@@ -57,7 +57,7 @@ import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { CheckTosUpdateResult } from '~/server/services/content.service';
-import type { RouterOutput } from '~/types/router';
+import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
@@ -81,8 +81,6 @@ import { getRegion } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
-
-type AnnouncementsSeed = RouterOutput['announcement']['getAnnouncements'];
 
 applyNodeOverrides();
 

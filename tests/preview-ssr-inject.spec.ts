@@ -125,6 +125,32 @@ async function fetchTrpcQueryJson(
   return entry?.result?.data?.json;
 }
 
+/**
+ * Assert an announcements seed byte-equals a live fetch. Factored so the anon
+ * and authed cases share it. The core assertion (`toEqual`) holds for an EMPTY
+ * preview too (`[] === []`), but an all-empty run gives no field-shape signal —
+ * so we surface the count via the assertion message and, when non-empty, assert
+ * each item carries the resolver's expected display fields. That way a green run
+ * with active announcements actually exercises the field/Date serialization.
+ */
+function assertAnnouncementsSeedEqualsLive(seed: unknown, live: unknown, label: string) {
+  expect(
+    seed,
+    `announcement.getAnnouncements ${label} SSR seed must byte-equal a live resolver fetch`
+  ).toEqual(live);
+
+  const items = Array.isArray(seed) ? (seed as Array<Record<string, unknown>>) : [];
+  // eslint-disable-next-line no-console
+  console.log(`[ssr-inject] ${label} announcements seed length: ${items.length}`);
+  for (const item of items) {
+    expect(item, `${label} announcement item shape`).toMatchObject({
+      id: expect.any(Number),
+      title: expect.anything(),
+      content: expect.anything(),
+    });
+  }
+}
+
 test.describe('SSR-injected getFeatureFlags + checkTosUpdate (logged-in)', () => {
   test.use({ storageState: storageStatePath('mod') });
 
@@ -264,10 +290,7 @@ test.describe('SSR-injected announcements (logged-in)', () => {
     // Both the seed (Next pageProps via JSON.stringify) and the live fetch's
     // `result.data.json` carry Date fields as ISO strings, so a structural equal
     // compares apples-to-apples without revival.
-    expect(
-      seed.value,
-      'announcement.getAnnouncements SSR seed must byte-equal a live resolver fetch'
-    ).toEqual(live);
+    assertAnnouncementsSeedEqualsLive(seed.value, live, 'authed');
   });
 });
 
@@ -302,10 +325,7 @@ test.describe('SSR-injected announcements (anonymous)', () => {
     expect(seed.present, 'announcements seed present in __NEXT_DATA__').toBe(true);
 
     const live = await fetchTrpcQueryJson(page, ANNOUNCEMENTS_PROCEDURE, { domain: 'blue' });
-    expect(
-      seed.value,
-      'announcement.getAnnouncements anon SSR seed must byte-equal a live resolver fetch'
-    ).toEqual(live);
+    assertAnnouncementsSeedEqualsLive(seed.value, live, 'anon');
   });
 });
 
