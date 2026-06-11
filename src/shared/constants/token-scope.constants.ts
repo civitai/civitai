@@ -93,6 +93,80 @@ export const tokenScopeLabels: Record<number, string> = {
   [TokenScope.VaultWrite]: 'Manage vault',
 };
 
+/**
+ * Canonical scope NAMES (RFC 6749 / OAuth space-delimited scope strings).
+ *
+ * This map is the SOURCE OF TRUTH for the wire-format scope names exposed in
+ * discovery metadata (`scopes_supported`) and accepted by Dynamic Client
+ * Registration (RFC 7591). The MCP server's advertised scope metadata MUST
+ * match these names exactly. `full` maps to the all-bits mask but is never
+ * granted to dynamically-registered (DCR) clients.
+ */
+export const tokenScopeNameToFlag: Record<string, number> = {
+  'user:read': TokenScope.UserRead,
+  'user:write': TokenScope.UserWrite,
+  'models:read': TokenScope.ModelsRead,
+  'models:write': TokenScope.ModelsWrite,
+  'models:delete': TokenScope.ModelsDelete,
+  'media:read': TokenScope.MediaRead,
+  'media:write': TokenScope.MediaWrite,
+  'media:delete': TokenScope.MediaDelete,
+  'articles:read': TokenScope.ArticlesRead,
+  'articles:write': TokenScope.ArticlesWrite,
+  'articles:delete': TokenScope.ArticlesDelete,
+  'bounties:read': TokenScope.BountiesRead,
+  'bounties:write': TokenScope.BountiesWrite,
+  'bounties:delete': TokenScope.BountiesDelete,
+  'ai:read': TokenScope.AIServicesRead,
+  'ai:write': TokenScope.AIServicesWrite,
+  'buzz:read': TokenScope.BuzzRead,
+  'collections:read': TokenScope.CollectionsRead,
+  'collections:write': TokenScope.CollectionsWrite,
+  'social:write': TokenScope.SocialWrite,
+  'social:tip': TokenScope.SocialTip,
+  'notifications:read': TokenScope.NotificationsRead,
+  'notifications:write': TokenScope.NotificationsWrite,
+  'vault:read': TokenScope.VaultRead,
+  'vault:write': TokenScope.VaultWrite,
+  full: TokenScope.Full,
+};
+
+/** Reverse map (single-bit flag -> canonical name). `full` is excluded so a
+ * full mask decomposes into its individual scope names rather than collapsing
+ * to the umbrella name. */
+const tokenFlagToScopeName: Record<number, string> = Object.fromEntries(
+  Object.entries(tokenScopeNameToFlag)
+    .filter(([name]) => name !== 'full')
+    .map(([name, flag]) => [flag, name])
+);
+
+/**
+ * Convert an array of canonical scope names into a combined bitmask.
+ * Unknown names are ignored (caller is responsible for rejecting them if the
+ * contract requires it — e.g. the registration endpoint).
+ */
+export function scopeNamesToBitmask(names: string[]): number {
+  let mask = 0;
+  for (const name of names) {
+    const flag = tokenScopeNameToFlag[name];
+    if (flag != null) mask |= flag;
+  }
+  return mask;
+}
+
+/**
+ * Convert a scope bitmask into the array of canonical scope names it contains,
+ * in the enum's declared order. Never emits `full`.
+ */
+export function bitmaskToScopeNames(mask: number): string[] {
+  const names: string[] = [];
+  for (const [flagStr, name] of Object.entries(tokenFlagToScopeName)) {
+    const flag = Number(flagStr);
+    if ((mask & flag) === flag && flag !== 0) names.push(name);
+  }
+  return names;
+}
+
 /** Convenience presets for the API key creation UI */
 export const TokenScopePresets = {
   ReadOnly:
@@ -129,6 +203,55 @@ export const TokenScopePresets = {
     TokenScope.AIServicesRead |
     TokenScope.BuzzRead,
   Full: TokenScope.Full,
+
+  /**
+   * Maximum scope mask a Dynamically-Registered (RFC 7591) client may ever be
+   * granted. This is the hard cap enforced at /register: even if the client
+   * later requests more at /authorize, `validateScope` clamps to the client's
+   * stored `allowedScopes`, which can never exceed this mask.
+   *
+   * EXCLUDED by policy (never available to DCR clients):
+   *  - All Delete scopes (Models/Media/Articles/Bounties)
+   *  - SocialTip (buzz spend)
+   *  - AIServicesWrite (buzz spend — generation/training/scanning)
+   *  - BountiesWrite (buzz spend — bounty creation)
+   */
+  MCPMaxAllowed:
+    TokenScope.UserRead |
+    TokenScope.ModelsRead |
+    TokenScope.MediaRead |
+    TokenScope.ArticlesRead |
+    TokenScope.BountiesRead |
+    TokenScope.BuzzRead |
+    TokenScope.CollectionsRead |
+    TokenScope.AIServicesRead |
+    TokenScope.NotificationsRead |
+    TokenScope.VaultRead |
+    TokenScope.MediaWrite |
+    TokenScope.ArticlesWrite |
+    TokenScope.CollectionsWrite |
+    TokenScope.SocialWrite |
+    TokenScope.NotificationsWrite |
+    TokenScope.ModelsWrite,
+
+  /**
+   * The scope set a freshly-registered MCP client is expected to request by
+   * default (read everything it can + the safe writes). Used for the consent
+   * pre-check / display default.
+   */
+  MCPDefault:
+    TokenScope.UserRead |
+    TokenScope.ModelsRead |
+    TokenScope.MediaRead |
+    TokenScope.ArticlesRead |
+    TokenScope.BountiesRead |
+    TokenScope.BuzzRead |
+    TokenScope.CollectionsRead |
+    TokenScope.AIServicesRead |
+    TokenScope.NotificationsRead |
+    TokenScope.VaultRead |
+    TokenScope.MediaWrite |
+    TokenScope.SocialWrite,
 } as const;
 
 /** Preset labels for the dropdown */
@@ -137,6 +260,8 @@ export const tokenScopePresetLabels: Record<keyof typeof TokenScopePresets, stri
   Creator: 'Creator',
   AIServices: 'AI Services',
   Full: 'Full Access',
+  MCPMaxAllowed: 'MCP (Max Allowed)',
+  MCPDefault: 'MCP (Default)',
 };
 
 /**

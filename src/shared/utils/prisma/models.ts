@@ -1696,6 +1696,8 @@ export interface OauthClient {
   userId: number;
   user?: User;
   isVerified: boolean;
+  isDynamicallyRegistered: boolean;
+  lastUsedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   tokens?: ApiKey[];

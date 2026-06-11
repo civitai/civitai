@@ -48,6 +48,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const allowed = await checkOAuthRateLimit(req, res, 'token', ip || 'unknown');
   if (!allowed) return sendRateLimitResponse(res);
 
+  // RFC 8707 Resource Indicators: the `resource` param (if present in the body)
+  // is accept-and-ignored in v1. The OAuth library treats unknown body params
+  // as inert, so we pass the body through unchanged — no audience binding.
   const request = new Request({
     method: req.method,
     headers: req.headers as Record<string, string>,
@@ -66,9 +69,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // with our wiring), so fail-closed with a fallback lookup rather than
     // defaulting to wildcard CORS and risking a cross-origin leak of a
     // public-client token response.
-    let attached = (request as Request & {
-      oauthClient?: { id: string; isConfidential: boolean; allowedOrigins: string[] };
-    }).oauthClient;
+    let attached = (
+      request as Request & {
+        oauthClient?: { id: string; isConfidential: boolean; allowedOrigins: string[] };
+      }
+    ).oauthClient;
     if (!attached) {
       const fallback =
         typeof clientId === 'string' && clientId !== 'unknown'

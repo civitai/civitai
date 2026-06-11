@@ -16,8 +16,15 @@ import {
   Badge,
   List,
   Checkbox,
+  Alert,
 } from '@mantine/core';
-import { IconCheck, IconCoinFilled, IconShieldCheck, IconX } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconCoinFilled,
+  IconShieldCheck,
+  IconX,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -97,6 +104,18 @@ export default function OAuthAuthorizePage() {
   // so showing the limit prompt makes no sense unless this scope is included.
   const requestsSpend = Flags.hasFlag(scope, TokenScope.AIServicesWrite);
 
+  // For dynamically-registered (RFC 7591) clients that Civitai has not verified,
+  // surface a prominent warning with the raw client name + redirect host so the
+  // user can judge whether they actually initiated this. A verified client
+  // (manually reviewed) is exempt.
+  const showUnverifiedWarning = client.isDynamicallyRegistered && !client.isVerified;
+  let redirectHost = '';
+  try {
+    redirectHost = redirectUri ? new URL(redirectUri).host : '';
+  } catch {
+    redirectHost = '';
+  }
+
   const handleApprove = async () => {
     setSubmitting(true);
     try {
@@ -165,6 +184,34 @@ export default function OAuthAuthorizePage() {
               </Text>
             )}
           </Stack>
+
+          {showUnverifiedWarning && (
+            <Alert
+              icon={<IconAlertTriangle size={18} />}
+              color="yellow"
+              variant="light"
+              title="This application is not verified by Civitai"
+            >
+              <Stack gap={4}>
+                <Text size="sm">
+                  <Text span fw={600}>
+                    {client.name}
+                  </Text>{' '}
+                  registered itself automatically and has not been reviewed by Civitai. Only
+                  continue if you started this connection yourself.
+                </Text>
+                {redirectHost && (
+                  <Text size="xs" c="dimmed">
+                    You will be redirected to{' '}
+                    <Text span fw={600}>
+                      {redirectHost}
+                    </Text>{' '}
+                    after authorizing.
+                  </Text>
+                )}
+              </Stack>
+            </Alert>
+          )}
 
           <Divider />
 

@@ -61,5 +61,12 @@ export async function createOAuthTokenPair(
     },
   });
 
+  // Mark the client as recently used. Fire-and-forget: this is informational
+  // (drives DCR GC tuning + admin visibility) and must never add latency to or
+  // fail the token grant. Errors are swallowed.
+  dbWrite.oauthClient
+    .update({ where: { id: clientId }, data: { lastUsedAt: now } })
+    .catch(() => undefined);
+
   return { accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt };
 }

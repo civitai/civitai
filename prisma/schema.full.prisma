@@ -2173,6 +2173,8 @@ model OauthClient {
   userId         Int
   user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   isVerified     Boolean        @default(false)
+  isDynamicallyRegistered Boolean @default(false)
+  lastUsedAt     DateTime?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @default(now()) @updatedAt
   tokens         ApiKey[]
