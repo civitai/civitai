@@ -169,14 +169,28 @@ test.describe('SSR-injected getFeatureFlags + checkTosUpdate (logged-in)', () =>
     const liveFlags = await fetchTrpcQueryJson(page, FEATURE_FLAGS_PROCEDURE);
     const liveTos = await fetchTrpcQueryJson(page, TOS_PROCEDURE);
 
+    // Normalize the wire-representation difference for "no value" fields: the SSR
+    // seed crosses the wire via JSON.stringify (drops `undefined` keys) while the
+    // live fetch uses superjson (encodes `undefined` as `null`). Both mean absent;
+    // stripping null/undefined-valued keys compares the meaningful fields
+    // apples-to-apples. `false`/0/'' are kept, so a real value-vs-absent
+    // divergence is still caught. (e.g. checkTosUpdate's unused `userLastSeen`:
+    // omitted in the seed, `null` in the live fetch — semantically identical.)
+    const stripNullish = (o: unknown) =>
+      o && typeof o === 'object'
+        ? Object.fromEntries(
+            Object.entries(o as Record<string, unknown>).filter(([, v]) => v != null)
+          )
+        : o;
+
     expect(
-      seedFlags.value,
+      stripNullish(seedFlags.value),
       'user.getFeatureFlags SSR seed must byte-equal a live resolver fetch'
-    ).toEqual(liveFlags);
+    ).toEqual(stripNullish(liveFlags));
     expect(
-      seedTos.value,
+      stripNullish(seedTos.value),
       'content.checkTosUpdate SSR seed must byte-equal a live resolver fetch'
-    ).toEqual(liveTos);
+    ).toEqual(stripNullish(liveTos));
   });
 });
 
