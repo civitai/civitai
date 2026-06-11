@@ -10,6 +10,7 @@ import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-
 import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { buzzLimitSchema } from '~/server/schema/api-key.schema';
+import { isRegisteredRedirectUri } from '~/server/oauth/redirect-uri';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'OPTIONS') {
@@ -42,6 +43,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const params = req.method === 'GET' ? req.query : req.body;
 
+    // RFC 8707 Resource Indicators: accept-and-ignore the `resource` param in
+    // v1. We don't bind an audience or store it; the OAuth library treats
+    // unknown params as inert, so no special handling beyond not erroring.
+
     // Validate client exists
     const clientId = params.client_id as string;
     if (!clientId) {
@@ -57,9 +62,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         .json({ error: 'invalid_client', error_description: 'Unknown client_id' });
     }
 
-    // Validate redirect_uri against registered URIs
+    // Validate redirect_uri against registered URIs. Loopback-aware: native
+    // apps (RFC 8252) bind an ephemeral loopback port unknowable at
+    // registration time, so for loopback hosts we match scheme+host+path and
+    // ignore the port; all other hosts require an exact match.
     const redirectUri = params.redirect_uri as string;
-    if (!redirectUri || !client.redirectUris.includes(redirectUri)) {
+    if (!redirectUri || !isRegisteredRedirectUri(redirectUri, client.redirectUris)) {
       return res.status(400).json({
         error: 'invalid_request',
         error_description: 'redirect_uri does not match any registered URI',

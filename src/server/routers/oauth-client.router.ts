@@ -1,13 +1,12 @@
 import { TRPCError } from '@trpc/server';
-import { v4 as uuidv4 } from 'uuid';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
+import { createOauthClient } from '~/server/services/oauth-client.service';
 import {
   createOauthClientSchema,
   deleteOauthClientSchema,
-  deriveAllowedOriginsFromRedirectUris,
   getOauthClientByIdSchema,
   rotateOauthClientSecretSchema,
   updateOauthClientSchema,
@@ -28,6 +27,7 @@ export const oauthClientRouter = router({
           description: true,
           logoUrl: true,
           isVerified: true,
+          isDynamicallyRegistered: true,
           redirectUris: true,
           allowedOrigins: true,
           allowedScopes: true,
@@ -64,38 +64,19 @@ export const oauthClientRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(createOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
-      const clientId = uuidv4();
-      const clientSecret = input.isConfidential ? generateKey(48) : null;
-      const hashedSecret = clientSecret ? generateSecretHash(clientSecret) : null;
-
-      // Public clients depend on Origin pinning for token-endpoint identity;
-      // if the caller didn't supply explicit origins, fall back to the origin
-      // part of their redirect URIs so registration still produces a working
-      // client without forcing the user to type the same hosts twice.
-      const allowedOrigins =
-        input.allowedOrigins.length > 0
-          ? input.allowedOrigins
-          : deriveAllowedOriginsFromRedirectUris(input.redirectUris);
-
-      await dbWrite.oauthClient.create({
-        data: {
-          id: clientId,
-          secret: hashedSecret,
-          name: input.name,
-          description: input.description,
-          redirectUris: input.redirectUris,
-          allowedOrigins,
-          isConfidential: input.isConfidential,
-          allowedScopes: input.allowedScopes,
-          userId: ctx.user.id,
-        },
+      const result = await createOauthClient({
+        userId: ctx.user.id,
+        name: input.name,
+        description: input.description,
+        redirectUris: input.redirectUris,
+        allowedOrigins: input.allowedOrigins,
+        isConfidential: input.isConfidential,
+        allowedScopes: input.allowedScopes,
       });
 
-      logOAuthEvent({ type: 'client.created', userId: ctx.user.id, clientId });
-
       return {
-        clientId,
-        clientSecret, // Only returned once — shown to the developer
+        clientId: result.clientId,
+        clientSecret: result.clientSecret, // Only returned once — shown to the developer
       };
     }),
 

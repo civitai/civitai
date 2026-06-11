@@ -87,6 +87,11 @@ export const serverSchema = z.object({
   JOB_TOKEN: z.string(),
   WEBHOOK_URL: z.url().optional(),
   WEBHOOK_TOKEN: z.string(),
+  // Owner (system bot user) for OAuth Dynamic Client Registration (RFC 7591).
+  // When unset, the /register endpoint returns 503 temporarily_unavailable
+  // (fail-safe) rather than crashing. Justin must create the `oauth-dcr-bot`
+  // user and set this BEFORE DCR can go live. See oauth-client.service.ts.
+  OAUTH_DCR_OWNER_USER_ID: z.coerce.number().int().positive().optional(),
   UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
   UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
   LOGGING: commaDelimitedStringArray(),

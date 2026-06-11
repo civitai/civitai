@@ -17,6 +17,65 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
 };
 
 /**
+ * Dynamic Client Registration (RFC 7591) is open + unauthenticated, so the
+ * register endpoint gets a stricter, multi-window IP limit: 5/hour AND 20/day.
+ * A request must pass BOTH windows. Tracked separately from RATE_LIMITS so the
+ * single-window helper above stays simple for the existing endpoints.
+ */
+const REGISTER_RATE_LIMITS: RateLimitConfig[] = [
+  { limit: 5, windowSeconds: 60 * 60 }, // 5 per hour per IP
+  { limit: 20, windowSeconds: 24 * 60 * 60 }, // 20 per day per IP
+];
+
+/**
+ * Multi-window sliding-window rate limiter for the open DCR /register endpoint.
+ * Keyed by IP. Returns true if the request is allowed by ALL windows.
+ * Sets X-RateLimit-* headers reflecting the most-constrained window and a
+ * Retry-After when blocked. Fails open if Redis is unavailable.
+ */
+export async function checkRegisterRateLimit(res: NextApiResponse, ip: string): Promise<boolean> {
+  const identifier = ip || 'unknown';
+
+  try {
+    let blocked = false;
+    let tightestRemaining = Infinity;
+    let blockedTtl = 0;
+    let headerLimit = REGISTER_RATE_LIMITS[0].limit;
+
+    for (const config of REGISTER_RATE_LIMITS) {
+      const key = `${RATE_LIMIT_PREFIX}:register:${config.windowSeconds}:${identifier}`;
+      const current = await (redis as any).incr(key);
+      if (current === 1) {
+        await (redis as any).expire(key, config.windowSeconds);
+      }
+      const remaining = config.limit - current;
+      if (remaining < tightestRemaining) {
+        tightestRemaining = remaining;
+        headerLimit = config.limit;
+      }
+      if (current > config.limit) {
+        const ttl = await (redis as any).ttl(key);
+        blocked = true;
+        blockedTtl = Math.max(blockedTtl, Math.max(0, ttl));
+      }
+    }
+
+    res.setHeader('X-RateLimit-Limit', headerLimit);
+    res.setHeader('X-RateLimit-Remaining', Math.max(0, tightestRemaining));
+
+    if (blocked) {
+      res.setHeader('Retry-After', blockedTtl);
+      res.setHeader('X-RateLimit-Reset', Math.ceil(Date.now() / 1000) + blockedTtl);
+      return false;
+    }
+    return true;
+  } catch {
+    // Fail open for rate limiting if Redis is unavailable.
+    return true;
+  }
+}
+
+/**
  * Simple sliding-window rate limiter for OAuth endpoints.
  * Returns true if the request should be allowed, false if rate limited.
  * Sets rate limit headers on the response.
