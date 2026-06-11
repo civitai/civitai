@@ -77,6 +77,24 @@ async function readPageProp(page: Page, key: string) {
   }, key);
 }
 
+/**
+ * Fetch a no-input tRPC query LIVE via the page's authed request context
+ * (inherits the storageState session cookie). The client uses a non-batched
+ * httpLink + superjson, so the serialized value lives at `result.data.json`.
+ * We compare that JSON-serialized (pre-superjson-revival) form, which is exactly
+ * the shape the SSR seed is delivered in (both cross the wire as JSON), so Date
+ * fields are ISO strings on both sides — no revival needed for equality.
+ */
+async function fetchTrpcQueryJson(page: Page, procedure: string): Promise<unknown> {
+  const res = await page.request.get(`/api/trpc/${procedure}`, {
+    headers: { 'x-client': 'web' },
+  });
+  expect(res.ok(), `live ${procedure} fetch returned HTTP ${res.status()}`).toBe(true);
+  const body = await res.json();
+  const entry = Array.isArray(body) ? body[0] : body;
+  return entry?.result?.data?.json;
+}
+
 test.describe('SSR-injected getFeatureFlags + checkTosUpdate (logged-in)', () => {
   test.use({ storageState: storageStatePath('mod') });
 
@@ -121,6 +139,33 @@ test.describe('SSR-injected getFeatureFlags + checkTosUpdate (logged-in)', () =>
         '\n'
       )}`
     ).toHaveLength(0);
+  });
+
+  // The core correctness property: the SSR-injected seed must be byte-identical
+  // to what a live resolver fetch returns. With `staleTime: Infinity` a wrong
+  // seed would never self-correct (until reload), so a divergence here means
+  // users are served wrong feature flags / ToS state. Both paths call the same
+  // shared fn (computeUserFeatureFlagsOverlay / checkTosUpdate) so this should
+  // hold by construction — this asserts it for a real authed user end-to-end.
+  test('SSR seed byte-equals a live fetch for both procedures', async ({ page }) => {
+    await page.goto(AUTHED_LANDING, { waitUntil: 'domcontentloaded' });
+
+    const seedFlags = await readPageProp(page, 'userFeatureFlags');
+    const seedTos = await readPageProp(page, 'tosUpdate');
+    expect(seedFlags.present, 'userFeatureFlags seed present in __NEXT_DATA__').toBe(true);
+    expect(seedTos.present, 'tosUpdate seed present in __NEXT_DATA__').toBe(true);
+
+    const liveFlags = await fetchTrpcQueryJson(page, FEATURE_FLAGS_PROCEDURE);
+    const liveTos = await fetchTrpcQueryJson(page, TOS_PROCEDURE);
+
+    expect(
+      seedFlags.value,
+      'user.getFeatureFlags SSR seed must byte-equal a live resolver fetch'
+    ).toEqual(liveFlags);
+    expect(
+      seedTos.value,
+      'content.checkTosUpdate SSR seed must byte-equal a live resolver fetch'
+    ).toEqual(liveTos);
   });
 });
 
