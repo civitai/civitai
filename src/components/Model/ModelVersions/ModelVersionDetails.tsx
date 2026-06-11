@@ -481,9 +481,23 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           {isOwner && (
             <PublisherSubscriptionBanner modelId={model.id} modelType={model.type} />
           )}
+          {model.mode !== ModelModifier.TakenDown && mobile && (
+            <ModelCarousel
+              modelId={model.id}
+              modelVersionId={version.id}
+              modelUserId={model.user.id}
+              limit={CAROUSEL_LIMIT}
+              minor={model.minor}
+            />
+          )}
           {/* App Blocks: model.sidebar_top slot. Renders publisher-installed and
               platform-default blocks, capped at 3. Client-only — the server
-              emits a placeholder div. */}
+              emits a placeholder div.
+              Placed AFTER the mobile-only ModelCarousel above so that on small
+              screens (where the sidebar column stacks full-width) the block sits
+              BELOW the image carousel rather than pushing it down. On sm+ the
+              mobile carousel renders nothing, so the block keeps its sidebar-top
+              position (the gallery lives in the other grid column). */}
           <BlockSlot
             slotId="model.sidebar_top"
             context={{
@@ -505,15 +519,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               theme: colorScheme === 'dark' ? 'dark' : 'light',
             }}
           />
-          {model.mode !== ModelModifier.TakenDown && mobile && (
-            <ModelCarousel
-              modelId={model.id}
-              modelVersionId={version.id}
-              modelUserId={model.user.id}
-              limit={CAROUSEL_LIMIT}
-              minor={model.minor}
-            />
-          )}
           {showRequestReview ? (
             <Button
               color="yellow"
