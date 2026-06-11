@@ -1,8 +1,7 @@
 import type { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { Center, Loader, LoadingOverlay } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
-import { useEffect } from 'react';
+import { useRef } from 'react';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -14,19 +13,16 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 export function BountiesInfinite({ filters: filterOverrides, showEof = true }: Props) {
   const bountiesFilters = useBountyFilters();
 
-  const filters = removeEmpty({ ...bountiesFilters, ...filterOverrides });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const computedFilters = removeEmpty({ ...bountiesFilters, ...filterOverrides });
+  // Stabilize identity so query keys only update on real content change.
+  const filtersRef = useRef(computedFilters);
+  if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
+  const filters = filtersRef.current;
 
   const { bounties, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryBounties(
-    debouncedFilters,
+    filters,
     { keepPreviousData: true }
   );
-
-  //#region [useEffect] cancel debounced filters
-  useEffect(() => {
-    if (isEqual(filters, debouncedFilters)) cancel();
-  }, [cancel, debouncedFilters, filters]);
-  //#endregion
 
   return (
     <>
