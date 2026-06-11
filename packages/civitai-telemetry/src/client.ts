@@ -1,7 +1,44 @@
-import type { Counter, Gauge, Histogram } from 'prom-client';
+import type { Counter, Gauge, Histogram, Metric, Registry } from 'prom-client';
 import client from 'prom-client';
 
 export const PROM_PREFIX = 'civitai_app_';
+
+// ---------------------------------------------------------------------------
+// Cross-graph shared registry (for instrumentation-time metrics)
+// ---------------------------------------------------------------------------
+// Next.js compiles instrumentation.ts into a SEPARATE webpack bundle from the API-route/pages
+// bundle, and prom-client is NOT in serverExternalPackages, so each bundle gets its own
+// `client.register` (globalRegistry). A metric created/mutated from the instrumentation graph lands
+// in that graph's registry, while /metrics (an API route) scrapes the request graph's registry — so
+// the two never meet (the metric appears registered-but-never-exported). Fix: pin ONE Registry on
+// globalThis (the real V8 global, shared across all webpack bundles in one Node process — the same
+// mechanism the pgGaugeInitialized guards rely on). Any metric created in either graph registers
+// here, and /metrics merges it into the scrape. (See the eventloop-longtask metrics bug, PR #2451.)
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiInstrumentationRegistry: Registry | undefined;
+}
+
+export const instrumentationRegistry: Registry =
+  globalThis.__civitaiInstrumentationRegistry ??
+  (globalThis.__civitaiInstrumentationRegistry = new client.Registry());
+
+/**
+ * Get-or-create a metric in the cross-graph shared `instrumentationRegistry`, idempotently. The
+ * metric is created via `factory`, which MUST construct it with `registers: [instrumentationRegistry]`
+ * so it lands in the shared registry. Because both webpack graphs eval this module-level code against
+ * the SAME globalThis-pinned registry, the second graph (and HMR re-evals) would otherwise throw
+ * "already registered" inside the constructor — so we short-circuit to the existing instance first.
+ */
+export function registerInstrumentationMetric<M extends Metric<string>>(
+  name: string,
+  factory: () => M
+): M {
+  const existing = instrumentationRegistry.getSingleMetric(name);
+  if (existing) return existing as unknown as M;
+  return factory();
+}
+
 export function registerCounter({ name, help }: { name: string; help: string }) {
   // Do this to deal with HMR in nextjs
   try {

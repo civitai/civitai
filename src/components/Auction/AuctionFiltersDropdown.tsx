@@ -1,18 +1,10 @@
-import {
-  Button,
-  Chip,
-  Divider,
-  Drawer,
-  Group,
-  Indicator,
-  Popover,
-  Stack,
-  useComputedColorScheme,
-} from '@mantine/core';
+import { Chip, Divider, Drawer, Group, Indicator, Popover, Stack } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
+import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
+import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -20,24 +12,23 @@ import classes from './AuctionFiltersDropdown.module.scss';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 
 export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[] }) => {
-  const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
-  const [opened, setOpened] = useState(false);
 
-  const { filters, setFilters } = useFiltersContext((state) => ({
+  const { filters: committedFilters, setFilters } = useFiltersContext((state) => ({
     filters: state.auctions,
     setFilters: state.setAuctionFilters,
   }));
 
-  const filterLength = filters.baseModels?.length ? 1 : 0;
+  const handleClear = useCallback(() => setFilters({ baseModels: undefined }), [setFilters]);
 
-  const clearFilters = useCallback(
-    () =>
-      setFilters({
-        baseModels: undefined,
-      }),
-    [setFilters]
-  );
+  const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
+    useStagedFilters({
+      committed: committedFilters,
+      onApply: setFilters,
+      onClear: handleClear,
+    });
+
+  const filterLength = mergedFilters.baseModels?.length ? 1 : 0;
 
   const target = (
     <Indicator
@@ -48,26 +39,19 @@ export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[]
       disabled={!filterLength}
       inline
     >
-      <FilterButton
-        icon={IconFilter}
-        size="md"
-        onClick={() => setOpened((o) => !o)}
-        active={opened}
-      >
+      <FilterButton icon={IconFilter} size="md" onClick={toggle} active={opened}>
         Filters
       </FilterButton>
     </Indicator>
   );
 
-  const dropdown = (
-    <Stack gap="lg">
+  const dropdownBody = (
+    <Stack gap="lg" p="md">
       <Stack gap={0}>
         <Divider label="Base model" classNames={{ label: 'font-bold text-sm' }} mb="sm" />
         <Chip.Group
-          value={(filters.baseModels as string[]) ?? []}
-          onChange={(baseModels) =>
-            setFilters({ ...filters, baseModels: baseModels as BaseModel[] })
-          }
+          value={(mergedFilters.baseModels as string[]) ?? []}
+          onChange={(baseModels) => patchPending({ baseModels: baseModels as BaseModel[] })}
           multiple
         >
           <Group gap={8} my={4}>
@@ -79,17 +63,17 @@ export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[]
           </Group>
         </Chip.Group>
       </Stack>
-      {filterLength > 0 && (
-        <Button
-          color="gray"
-          variant={colorScheme === 'dark' ? 'filled' : 'light'}
-          onClick={clearFilters}
-          fullWidth
-        >
-          Clear all
-        </Button>
-      )}
     </Stack>
+  );
+
+  const dropdownFooter = (
+    <StagedFiltersFooter
+      isDirty={isDirty}
+      onApply={apply}
+      onReset={reset}
+      filterLength={filterLength}
+      onClear={clearAndClose}
+    />
   );
 
   if (mobile)
@@ -98,12 +82,24 @@ export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[]
         {target}
         <Drawer
           opened={opened}
-          onClose={() => setOpened(false)}
+          onClose={close}
           size="90%"
           position="bottom"
           classNames={{ ...classes }}
+          styles={{
+            content: { display: 'flex', flexDirection: 'column' },
+            body: {
+              padding: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              flex: 1,
+              minHeight: 0,
+            },
+          }}
         >
-          {dropdown}
+          <div className="min-h-0 flex-1 overflow-y-auto">{dropdownBody}</div>
+          {dropdownFooter}
         </Drawer>
       </>
     );
@@ -114,12 +110,14 @@ export const AuctionFiltersDropdown = ({ baseModels }: { baseModels: BaseModel[]
       position="bottom-end"
       shadow="md"
       radius={12}
-      onClose={() => setOpened(false)}
+      opened={opened}
+      onClose={close}
       middlewares={{ flip: true, shift: true }}
     >
       <Popover.Target>{target}</Popover.Target>
-      <Popover.Dropdown maw={468} p="md" w="100%">
-        {dropdown}
+      <Popover.Dropdown maw={468} p={0} w="100%">
+        {dropdownBody}
+        {dropdownFooter}
       </Popover.Dropdown>
     </Popover>
   );

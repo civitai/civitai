@@ -136,5 +136,5 @@ tmpclaude-*
 # nested Next build output (apps/*)
 apps/*/.next/
 
-# turborepo
-.turbo
+# Turborepo local task cache
+.turbo/
