@@ -40,11 +40,16 @@ import { storageStatePath } from './preview-fixtures';
 
 const FEATURE_FLAGS_PROCEDURE = 'user.getFeatureFlags';
 const TOS_PROCEDURE = 'content.checkTosUpdate';
+const ANNOUNCEMENTS_PROCEDURE = 'announcement.getAnnouncements';
 
 // A core page a gate-passing user lands on directly (no /login bounce). Both
 // procedures fire on every logged-in bootstrap regardless of which page, so
 // /models is representative.
 const AUTHED_LANDING = '/models';
+
+// The anon home 307s to /login, but `_app` getInitialProps still runs and seeds
+// the (non-auth-gated) announcements — same rationale as preview-bootstrap.spec.
+const ANON_LANDING = '/login';
 
 /**
  * Navigate to `path`, recording every tRPC request URL seen during the load and
@@ -89,14 +94,28 @@ async function readPageProp(page: Page, key: string) {
  * the session cookie automatically, mirroring what the real client sends. The
  * page must already be navigated to the preview origin before calling this.
  */
-async function fetchTrpcQueryJson(page: Page, procedure: string): Promise<unknown> {
-  const out = await page.evaluate(async (proc) => {
-    const r = await fetch(`/api/trpc/${proc}`, {
-      headers: { 'x-client': 'web' },
-      credentials: 'same-origin',
-    });
-    return { ok: r.ok, status: r.status, text: await r.text() };
-  }, procedure);
+async function fetchTrpcQueryJson(
+  page: Page,
+  procedure: string,
+  input?: unknown
+): Promise<unknown> {
+  const out = await page.evaluate(
+    async ({ proc, inp }) => {
+      // tRPC's non-batched httpLink puts a query's input in the `?input=` query
+      // string as the superjson envelope `{"json": <value>}`. Procedures with no
+      // input (getFeatureFlags/checkTosUpdate) omit it entirely.
+      const qs =
+        typeof inp === 'undefined'
+          ? ''
+          : `?input=${encodeURIComponent(JSON.stringify({ json: inp }))}`;
+      const r = await fetch(`/api/trpc/${proc}${qs}`, {
+        headers: { 'x-client': 'web' },
+        credentials: 'same-origin',
+      });
+      return { ok: r.ok, status: r.status, text: await r.text() };
+    },
+    { proc: procedure, inp: input }
+  );
   expect(
     out.ok,
     `live ${procedure} fetch returned HTTP ${out.status}: ${out.text.slice(0, 300)}`
@@ -195,6 +214,102 @@ test.describe('SSR-injected getFeatureFlags + checkTosUpdate (logged-in)', () =>
 });
 
 /**
+ * Regression guard for the follow-up PR perf/ssr-inject-announcements: cutting
+ * `announcement.getAnnouncements` (~26/s on api-primary) off the bootstrap by
+ * SSR-injecting it. Unlike the two procedures above this one is NOT auth-gated —
+ * it fires for anon AND authed — and it has a `{ domain }` input. We compute the
+ * seed in `/api/user/settings` with `getRequestDomainColor(req)` (exactly what
+ * the resolver's `applyRequestDomainColor` middleware uses) and seed the query
+ * inside `useGetAnnouncements`, under the client's `useDomainColor()` key.
+ *
+ * The seed can legitimately be an EMPTY array (no active announcements on the
+ * preview) — that is still a valid, present seed, and the byte-equality assertion
+ * ([] === []) holds.
+ */
+test.describe('SSR-injected announcements (logged-in)', () => {
+  test.use({ storageState: storageStatePath('mod') });
+
+  test('getAnnouncements is seeded into __NEXT_DATA__ and not fetched on bootstrap', async ({
+    page,
+  }) => {
+    const trpcUrls = await collectTrpcRequests(page, AUTHED_LANDING);
+
+    const announcements = await readPageProp(page, 'announcements');
+    expect(announcements.present, 'announcements present in __NEXT_DATA__ pageProps').toBe(true);
+    expect(Array.isArray(announcements.value), 'announcements seed is an array').toBe(true);
+
+    const announcementRequests = trpcUrls.filter((u) => u.includes(ANNOUNCEMENTS_PROCEDURE));
+    expect(
+      announcementRequests,
+      `no ${ANNOUNCEMENTS_PROCEDURE} tRPC request should fire on bootstrap (it is SSR-injected); saw:\n${announcementRequests.join(
+        '\n'
+      )}`
+    ).toHaveLength(0);
+  });
+
+  // The seed must byte-equal a live resolver fetch. The resolver ignores the
+  // client-sent `domain` (its middleware overrides it with the host's
+  // getRequestDomainColor), so we can send any non-empty domain in the input —
+  // it must just be PRESENT, because the middleware writes `input.domain` and
+  // would throw on an undefined input. The result reflects the host domain on
+  // both the seed and the live fetch, so they match regardless.
+  test('SSR seed byte-equals a live fetch', async ({ page }) => {
+    await page.goto(AUTHED_LANDING, { waitUntil: 'domcontentloaded' });
+
+    const seed = await readPageProp(page, 'announcements');
+    expect(seed.present, 'announcements seed present in __NEXT_DATA__').toBe(true);
+
+    const live = await fetchTrpcQueryJson(page, ANNOUNCEMENTS_PROCEDURE, { domain: 'blue' });
+
+    // Both the seed (Next pageProps via JSON.stringify) and the live fetch's
+    // `result.data.json` carry Date fields as ISO strings, so a structural equal
+    // compares apples-to-apples without revival.
+    expect(
+      seed.value,
+      'announcement.getAnnouncements SSR seed must byte-equal a live resolver fetch'
+    ).toEqual(live);
+  });
+});
+
+test.describe('SSR-injected announcements (anonymous)', () => {
+  // Explicitly anonymous: no minted session cookie. Announcements is the first
+  // SSR-inject that fires for anon, so this path needs its own coverage — the
+  // seed's targetAudience filtering differs by userId presence.
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test('getAnnouncements is seeded into __NEXT_DATA__ and not fetched on bootstrap', async ({
+    page,
+  }) => {
+    const trpcUrls = await collectTrpcRequests(page, ANON_LANDING);
+
+    const announcements = await readPageProp(page, 'announcements');
+    expect(announcements.present, 'announcements present in __NEXT_DATA__ pageProps').toBe(true);
+    expect(Array.isArray(announcements.value), 'announcements seed is an array').toBe(true);
+
+    const announcementRequests = trpcUrls.filter((u) => u.includes(ANNOUNCEMENTS_PROCEDURE));
+    expect(
+      announcementRequests,
+      `no ${ANNOUNCEMENTS_PROCEDURE} tRPC request should fire on bootstrap (it is SSR-injected); saw:\n${announcementRequests.join(
+        '\n'
+      )}`
+    ).toHaveLength(0);
+  });
+
+  test('SSR seed byte-equals a live anon fetch', async ({ page }) => {
+    await page.goto(ANON_LANDING, { waitUntil: 'domcontentloaded' });
+
+    const seed = await readPageProp(page, 'announcements');
+    expect(seed.present, 'announcements seed present in __NEXT_DATA__').toBe(true);
+
+    const live = await fetchTrpcQueryJson(page, ANNOUNCEMENTS_PROCEDURE, { domain: 'blue' });
+    expect(
+      seed.value,
+      'announcement.getAnnouncements anon SSR seed must byte-equal a live resolver fetch'
+    ).toEqual(live);
+  });
+});
+
+/**
  * MANUAL CHECKLIST — behaviours of this PR that are not auto-asserted above.
  * (Auth IS supported by this harness, but these are timing/visual/state cases
  * that would be flaky or no-op as live-preview assertions; verify by hand.)
@@ -218,4 +333,12 @@ test.describe('SSR-injected getFeatureFlags + checkTosUpdate (logged-in)', () =>
  *  [ ] Opt-2 ToS accept persists: accepting the ToS dismisses the modal (the
  *      accept flow's setData patches `hasUpdate=false`) and it stays dismissed
  *      on reload; the domain→field mapping is correct on green/red/blue hosts.
+ *  [ ] Announcements render + dismiss: with an ACTIVE announcement, the banner
+ *      renders from the SSR seed (now in the initial HTML) and dismissing it
+ *      persists across navigation (the dismissed-ids zustand store is unchanged
+ *      by this PR; the seed only feeds `data`).
+ *  [ ] Announcements eventual freshness: a newly-published / newly-time-windowed
+ *      announcement appears for an in-session user within the 5-min staleTime
+ *      (on the next mount/focus) and immediately on a hard navigation (fresh
+ *      getInitialProps reseed).
  */

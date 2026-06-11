@@ -4,8 +4,13 @@ import type { CheckTosUpdateResult } from '~/server/services/content.service';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
+import type { RouterOutput } from '~/types/router';
 import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
+
+// The tRPC output shape of `announcement.getAnnouncements` — what the query's
+// `data`/`initialData` must be typed as (superjson preserves the Date fields).
+type AnnouncementsSeed = RouterOutput['announcement']['getAnnouncements'];
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -13,6 +18,11 @@ type AppProviderProps = {
   // SSR-computed `content.checkTosUpdate` result (logged-in only). Seeds the
   // query so `useToSUpdateModal` never fires it on bootstrap.
   tosUpdate?: CheckTosUpdateResult;
+  // SSR-computed `announcement.getAnnouncements` result (anon + authed). Carried
+  // down to `useGetAnnouncements`, which seeds the query under the client's
+  // `useDomainColor()` key — this provider sits above FeatureFlagsProvider so it
+  // can't compute that key itself.
+  announcements?: AnnouncementsSeed;
   seed: number;
   canIndex: boolean;
   region: RegionInfo;
@@ -33,6 +43,7 @@ type AppContext = {
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
+  announcements?: AnnouncementsSeed;
 };
 const Context = createContext<AppContext | null>(null);
 export function useAppContext() {
@@ -75,10 +86,26 @@ function reviveTosUpdate(tosUpdate?: CheckTosUpdateResult): CheckTosUpdateResult
   };
 }
 
+// The announcements SSR seed travels via Next pageProps (plain JSON), which
+// stringifies the `createdAt`/`startsAt`/`endsAt` Date fields — a live superjson
+// tRPC fetch keeps them as Date objects. Revive them so the seed is shape-
+// identical to a live response. (The display path doesn't read these dates, but
+// this keeps the seed byte-equal to a live fetch — see the seed-vs-live e2e.)
+function reviveAnnouncements(announcements?: AnnouncementsSeed): AnnouncementsSeed | undefined {
+  if (!announcements) return undefined;
+  return announcements.map((announcement) => ({
+    ...announcement,
+    createdAt: toDate(announcement.createdAt) as Date,
+    startsAt: toDate(announcement.startsAt) as Date,
+    endsAt: toDate(announcement.endsAt) ?? null,
+  }));
+}
+
 export function AppProvider({
   children,
   settings,
   tosUpdate,
+  announcements,
   domain,
   host,
   serverDomains,
@@ -120,6 +147,7 @@ export function AppProvider({
     serverDomains,
     availableOAuthProviders,
     verifiedBot,
+    announcements: reviveAnnouncements(announcements),
   }));
 
   return <Context.Provider value={state}>{children}</Context.Provider>;

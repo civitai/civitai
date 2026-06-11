@@ -2,6 +2,7 @@ import { getUserContentSettings } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { checkTosUpdate } from '~/server/services/content.service';
+import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 
 export default PublicEndpoint(
@@ -23,9 +24,28 @@ export default PublicEndpoint(
             userSettings: settings,
           })
         : undefined;
+      // SSR-seed the ambient `announcement.getAnnouncements` query (fires on every
+      // bootstrap, anon + authed). Computed here — NOT in `_app` getInitialProps —
+      // because `announcement.service` is server-only and importing it into `_app`
+      // leaks it into the client bundle. Match the resolver byte-for-byte: its
+      // `applyRequestDomainColor` middleware overrides the client input with
+      // `getRequestDomainColor(req)` (NO 'blue' fallback), so we pass the same raw
+      // value here. Defensive: an announcements failure must not drop the critical
+      // settings/session payload — fall back to undefined and let the client
+      // self-heal via a live fetch.
+      let announcements: Awaited<ReturnType<typeof getCurrentAnnouncements>> | undefined;
+      try {
+        announcements = await getCurrentAnnouncements({
+          domain: getRequestDomainColor(req),
+          userId: session?.user?.id,
+        });
+      } catch {
+        announcements = undefined;
+      }
       res.status(200).json({
         settings,
         tosUpdate,
+        announcements,
         session: session?.user && Object.keys(session.user).length > 0 ? session : null,
       });
     } catch (e) {
