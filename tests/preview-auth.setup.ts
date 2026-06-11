@@ -84,6 +84,14 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
 }
 
 setup('mint preview sessions', async ({ request }) => {
+  // This setup runs the cold-pod warm-up below: ~9 SEQUENTIAL heavy-SSR GETs (each
+  // capped at 60s) so one route compiles at a time (parallel heavy renders OOM the
+  // single-replica pod). On a genuinely cold pod the cumulative warm-up can exceed
+  // the suite's 90s per-test timeout — and a setup timeout SKIPS every dependent
+  // smoke test (worse than the flake we're fixing). So give just this setup a large
+  // ceiling. It's a CEILING, not the runtime: the setup still finishes as fast as
+  // the warm-ups actually take (~2s when the pod is already warm from verify-preview).
+  setup.setTimeout(480_000);
   if (!SECRET) throw new Error('NEXTAUTH_SECRET is required to mint preview sessions');
   if (!PREVIEW_URL) throw new Error('PREVIEW_URL is required for preview smoke tests');
   const jwts: Partial<Record<PreviewRole, string>> = {};
