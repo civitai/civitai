@@ -37,20 +37,27 @@ import {
  */
 
 // RFC 7591 client metadata we accept. Unknown fields are ignored.
+// Bounded sizes throughout: this endpoint is open + unauthenticated, so every
+// field is capped to keep a single registration cheap to store.
 const registerSchema = z.object({
-  // Required: at least one redirect URI.
-  redirect_uris: z.array(z.string()).min(1),
+  // Required: at least one redirect URI. Capped so a single client can't bloat
+  // a row with thousands of URIs (the per-request throttle is per-IP only).
+  redirect_uris: z.array(z.string().url().max(2048)).min(1).max(10),
   // Optional human-readable name shown on the consent screen.
   client_name: z.string().min(1).max(128).optional(),
-  client_uri: z.string().url().optional(),
-  logo_uri: z.string().url().optional(),
+  client_uri: z.string().url().max(2048).optional(),
+  logo_uri: z.string().url().max(2048).optional(),
   // Space-delimited scope string (RFC 6749). Optional — defaults to MCPDefault.
-  scope: z.string().optional(),
+  scope: z.string().max(1024).optional(),
   // RFC 7591 allows these; we validate them against our forced-public policy.
-  grant_types: z.array(z.string()).optional(),
-  response_types: z.array(z.string()).optional(),
-  token_endpoint_auth_method: z.string().optional(),
+  grant_types: z.array(z.string().max(128)).max(10).optional(),
+  response_types: z.array(z.string().max(128)).max(10).optional(),
+  token_endpoint_auth_method: z.string().max(128).optional(),
 });
+
+// Open/unauthenticated endpoint: pin a tight body-size limit rather than relying
+// on the framework default.
+export const config = { api: { bodyParser: { sizeLimit: '16kb' } } };
 
 function error(res: NextApiResponse, status: number, error: string, error_description: string) {
   return res.status(status).json({ error, error_description });
