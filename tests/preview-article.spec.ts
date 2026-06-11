@@ -7,18 +7,22 @@ import { trpcMutation, trpcQuery, uniqueToken } from './preview-trpc';
  * content type (the /articles section) not otherwise covered by the suite.
  *
  * Fully API-driven + per-run self-seeded (same pattern as preview-engagement /
- * preview-collections): the tester creates its OWN article carrying a unique
+ * preview-collections): the moderator fixture creates its OWN article carrying a unique
  * token, reads it back by id to prove it persisted, then best-effort deletes it.
  * No dependency on shared content, no collision on the dev clone across concurrent
  * previews (each run's article is unique; we never touch a shared entity — unlike
  * e.g. a follow edge, which would be a shared row).
  *
- * Runs as `tester` (free member that PASSES the preview gate). article.upsert is a
- * guardedProcedure (onboarding-complete + not muted — ci-smoke `tester` is seeded
- * with onboarding=15) gated by isFlagProtected('articleCreate'); that flag is
- * `['public']` (feature-flags.service.ts), available to every logged-in user, so
- * the fixture passes. article.getById is publicProcedure; article.delete is a
- * protectedProcedure (owner may delete).
+ * Runs as `mod` (the moderator fixture). article.upsert is rate-limited by
+ * articleRateLimits — a HARD `limit: 1 / day` per user (plus 0/hour for accounts
+ * created <24h ago). The ci-smoke fixtures are shared across ALL concurrent
+ * previews, so a non-mod fixture would exhaust the 1/day quota after the first
+ * preview run and every later one would 429. The rateLimit middleware bypasses
+ * moderators entirely (`if (ctx.user?.isModerator) return next()` —
+ * middleware.trpc.ts), so running as `mod` is the only way to author an article
+ * reliably from the shared fixtures. (`mod` clears the same gates: guarded
+ * onboarding=15, and isFlagProtected('articleCreate') = `['public']`.)
+ * article.getById is publicProcedure; article.delete is protected (owner may delete).
  *
  * Verified tRPC shapes (civitai repo, paths relative to civitai/src):
  *  - article.upsert    guarded; input upsertArticleInput (article.schema.ts:90):
@@ -31,9 +35,9 @@ import { trpcMutation, trpcQuery, uniqueToken } from './preview-trpc';
  *  - article.delete    protected; input getByIdSchema ({ id }); owner-only cleanup.
  */
 
-const ROLE = 'tester' as const;
+const ROLE = 'mod' as const;
 
-test.describe('tester authors an article (mutation flow)', () => {
+test.describe('mod authors an article (mutation flow)', () => {
   test.use({ storageState: storageStatePath(ROLE) });
 
   test('article.upsert creates a draft, verified by getById read-back', async ({ page }) => {
