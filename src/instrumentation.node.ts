@@ -16,6 +16,7 @@ import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { registerCpuProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
+import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is
@@ -32,6 +33,14 @@ registerCpuProfiler();
 // enabled by base armed mode. Independent of OTEL.
 // See src/server/eventloop-longtask.ts.
 registerEventLoopLongTaskDetector();
+
+// Write an on-the-event-loop liveness heartbeat file (epoch-seconds, every 2s)
+// for an EXEC liveness probe to read. Lets the kubelet tell a busy-but-alive
+// pinned pod (loop still flushing timers) from a truly-wedged one — retiring the
+// ~15min probe-tolerance band-aid that the httpGet `/api/live` liveness needed
+// because it's served by the same saturated loop. See liveness-heartbeat.ts and
+// the liveness history in datapacket-talos deployment-api.yaml.
+registerLivenessHeartbeat();
 
 // Only enable OTEL if explicitly set AND endpoint is configured
 const OTEL_ENABLED = process.env.OTEL_ENABLED === 'true';
