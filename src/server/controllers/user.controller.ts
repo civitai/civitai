@@ -278,6 +278,41 @@ const verifyAvatar = (avatar: string) => {
   return false;
 };
 
+/**
+ * Cheap "whoami" for the authenticated caller, sourced entirely from the
+ * session/JWT (ctx.user) — no DB round-trip. Works with API-key auth. Returns
+ * the fields a headless/agent (MCP) caller needs to reason about its own
+ * account: identity, onboarding state (raw bitflag + decoded steps + an
+ * isOnboarded boolean), moderation/account flags, and tier/membership when
+ * cheaply available on the session.
+ *
+ * Note: does NOT use simpleUserSelect (which omits muted / isModerator /
+ * onboarding) — these come straight off the SessionUser.
+ */
+export const getSelfStatusHandler = ({ ctx }: { ctx: ProtectedContext }) => {
+  const { user } = ctx;
+
+  const onboardingSteps = Flags.instanceToArray(user.onboarding)
+    .map((flag) => OnboardingSteps[flag] as keyof typeof OnboardingSteps | undefined)
+    .filter((name): name is keyof typeof OnboardingSteps => !!name);
+
+  return {
+    id: user.id,
+    username: user.username ?? null,
+    onboarding: {
+      raw: user.onboarding,
+      completedSteps: onboardingSteps,
+      isOnboarded: Flags.hasFlag(user.onboarding, OnboardingComplete),
+    },
+    muted: !!user.muted,
+    isModerator: !!user.isModerator,
+    bannedAt: user.bannedAt ?? null,
+    deletedAt: user.deletedAt ?? null,
+    tier: user.tier ?? null,
+    subscriptionId: user.subscriptionId ?? null,
+  };
+};
+
 export const completeOnboardingHandler = async ({
   input,
   ctx,

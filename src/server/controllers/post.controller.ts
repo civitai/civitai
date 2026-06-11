@@ -11,6 +11,7 @@ import type { CollectionMetadataSchema } from '~/server/schema/collection.schema
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type {
   AddResourceToPostImageInput,
+  CreatePostWithImagesInput,
   PostCreateInput,
   RemoveResourceFromPostImageInput,
 } from '~/server/schema/post.schema';
@@ -23,6 +24,7 @@ import {
 import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -47,6 +49,7 @@ import type {
   UpdatePostImageInput,
 } from './../schema/post.schema';
 import {
+  addPostImage,
   addPostTag,
   addResourceToPostImage,
   createPost,
@@ -125,6 +128,82 @@ export const createPostHandler = async ({
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
+  }
+};
+
+/**
+ * Composite create-with-images handler for headless/agent (MCP) use.
+ *
+ * Creates the post, attaches each image in order, and optionally publishes —
+ * all server-side — to eliminate the multi-round-trip + orphan-draft window the
+ * MCP previously handled client-side. Reuses the existing createPost / addPostImage
+ * services and the full updatePostHandler publish path (rewards, tracking,
+ * collection items, contest validation) for the publish step.
+ *
+ * No single DB transaction is feasible here: createPost, addPostImage (which
+ * triggers image ingestion + cache busting), and the publish path each manage
+ * their own writes/side-effects. Instead we do best-effort sequential work and,
+ * on any failure before returning, DELETE the created post so no orphan draft
+ * remains.
+ */
+export const createPostWithImagesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: CreatePostWithImagesInput;
+  ctx: ProtectedContext;
+}) => {
+  const { images, publish, collectionId, ...createInput } = input;
+
+  // 1) Create the draft post (reuses createPostHandler for tracking + rewards
+  //    on the no-image publish path; we publish separately below once images
+  //    exist, so we always create as a draft here).
+  const post = await createPostHandler({
+    input: { ...createInput, collectionId },
+    ctx,
+  });
+
+  try {
+    // 2) Attach each image in order.
+    const sortedImages = [...images].sort((a, b) => a.index - b.index);
+    const attachedImageIds: number[] = [];
+    for (const image of sortedImages) {
+      const attached = await addPostImage({ ...image, postId: post.id, user: ctx.user });
+      attachedImageIds.push(attached.id);
+    }
+
+    // 3) Optionally publish. Route through updatePostHandler so the full publish
+    //    path runs (rewards, tracking, collaborator messages, collection items,
+    //    contest validation). updatePostHandler returns void, so we re-fetch the
+    //    post's published state afterward.
+    let publishedAt: Date | null = post.publishedAt ?? null;
+    if (publish) {
+      await updatePostHandler({
+        input: { id: post.id, publishedAt: new Date(), collectionId },
+        ctx,
+      });
+      const published = await dbWrite.post.findUnique({
+        where: { id: post.id },
+        select: { publishedAt: true },
+      });
+      publishedAt = published?.publishedAt ?? null;
+    }
+
+    return {
+      id: post.id,
+      title: post.title,
+      detail: post.detail,
+      modelVersionId: post.modelVersionId,
+      collectionId: post.collectionId,
+      publishedAt,
+      imageIds: attachedImageIds,
+      nsfwLevel: post.nsfwLevel,
+    };
+  } catch (error) {
+    // Roll back the orphan draft so no empty/partial post lingers.
+    await deletePost({ id: post.id, isModerator: ctx.user.isModerator }).catch(handleLogError);
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
   }
 };
 
