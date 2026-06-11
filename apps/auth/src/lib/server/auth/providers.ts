@@ -29,6 +29,9 @@ interface ProviderDef {
   /** Reddit wants HTTP Basic auth on the token endpoint + a User-Agent. */
   basicAuthTokenRequest?: boolean;
   userAgent?: string;
+  /** Separate "list emails" endpoint (GitHub), used to recover the verified primary email when the
+   *  profile omits it (private email). */
+  emailsUrl?: string;
   clientId: () => string | undefined;
   clientSecret: () => string | undefined;
   mapProfile: (json: Record<string, unknown>) => NormalizedProfile;
@@ -81,13 +84,16 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
     userinfoUrl: 'https://api.github.com/user',
     scope: 'read:user user:email',
     userAgent: 'civitai-auth',
+    emailsUrl: 'https://api.github.com/user/emails',
     clientId: () => env.GITHUB_CLIENT_ID,
     clientSecret: () => env.GITHUB_CLIENT_SECRET,
-    // GitHub may return a null email here; the verified-primary email needs a follow-up call
-    // to /user/emails (TODO). Username always present.
+    // GitHub returns a null email here when it's private; fetchProfile recovers the verified primary
+    // email from emailsUrl (/user/emails). Username always present.
     mapProfile: (p) => ({
       providerAccountId: String(p.id),
       email: p.email as string | undefined,
+      // GitHub's /user verifies the listed email; a non-null email here is the verified primary.
+      emailVerified: p.email ? true : undefined,
       name: (p.name as string) ?? (p.login as string | undefined),
       username: p.login as string | undefined,
       image: p.avatar_url as string | undefined,
@@ -190,5 +196,31 @@ export async function fetchProfile(
   const res = await fetch(provider.userinfoUrl, { headers });
   if (!res.ok) throw new Error(`[${provider.id}] userinfo failed: ${res.status}`);
   const json = (await res.json()) as Record<string, unknown>;
-  return provider.mapProfile(json);
+  const profile = provider.mapProfile(json);
+
+  // Recover a missing email from the provider's emails endpoint (GitHub hides the email by default).
+  // The verified primary email is what account-linking-by-email keys on, so without this a GitHub
+  // user with a private email would create a duplicate account instead of linking. Best-effort.
+  if (provider.emailsUrl && !profile.email) {
+    try {
+      const eRes = await fetch(provider.emailsUrl, { headers });
+      if (eRes.ok) {
+        const emails = (await eRes.json()) as Array<{
+          email: string;
+          primary?: boolean;
+          verified?: boolean;
+        }>;
+        const best =
+          emails.find((e) => e.primary && e.verified) ?? emails.find((e) => e.verified);
+        if (best) {
+          profile.email = best.email;
+          profile.emailVerified = true;
+        }
+      }
+    } catch {
+      // best-effort — proceed with no email (the user can add/verify one later)
+    }
+  }
+
+  return profile;
 }

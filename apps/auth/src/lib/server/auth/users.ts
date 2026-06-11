@@ -57,7 +57,12 @@ export async function findOrCreateUser(
 
   let userId = linked?.userId;
 
-  // 2. Otherwise link to an existing user by email (only if the provider verified it).
+  // 2. Otherwise link to an existing user by email — but ONLY if the provider VERIFIED it. This is
+  //    the safe analogue of the main app's `allowDangerousEmailAccountLinking` (Google/GitHub):
+  //    those providers verify emails, so a 2nd-provider login on the same verified address links to
+  //    the existing user (no duplicate) — but we deliberately DON'T link on an UNverified email,
+  //    which would be an account-takeover vector. (GitHub private emails are recovered + marked
+  //    verified in fetchProfile, so this path covers them too.)
   if (!userId && profile.email && profile.emailVerified) {
     const existing = await db
       .selectFrom('User')

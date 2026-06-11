@@ -7,10 +7,14 @@
 //                  not imported, so the package keeps zero infra deps (base-package rules).
 //
 // Factory mirrors the createXClients(config) injection convention.
-import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
+import { createRemoteJWKSet, decodeProtectedHeader, importSPKI, jwtVerify } from 'jose';
 import { sessionCookieName } from './cookies';
 import { loadAuthEnv } from './env';
 import type { SessionClaims } from './types';
+
+const ALG = 'RS256';
+// Accept a multiline PEM or a single-line value with literal `\n` escapes (matches sign.ts).
+const normalizePem = (pem: string) => pem.replace(/\\n/g, '\n');
 
 // next-auth is imported DYNAMICALLY (only in the legacy-decode branch) so the package's
 // static module graph stays jose + zod only — non-next-auth consumers (e.g. the SvelteKit
@@ -21,6 +25,14 @@ export interface AuthVerifierConfig {
   issuer?: string;
   audience?: string;
   cookieName?: string;
+  /**
+   * Verify RS256 tokens LOCALLY with this SPKI public key instead of fetching JWKS. The hub uses
+   * this to verify its OWN cookies — it already holds the key, so no self-HTTP-fetch to its JWKS
+   * endpoint (which is fragile behind a misconfigured proxy). Defaults to env.AUTH_JWT_PUBLIC_KEY,
+   * so a hub (which sets it) verifies locally while spokes (which only set AUTH_JWKS_URI) use JWKS.
+   * Single-key only — for key ROTATION across multiple kids, use JWKS (spokes) instead.
+   */
+  publicKeyPem?: string;
   /** Migration-window only: secret to decode legacy next-auth JWE cookies. */
   legacySecret?: string;
   /** Injected revocation check (e.g. the sysRedis TOKEN_STATE marker). Fail-open inside. */
@@ -57,12 +69,24 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     // libs/auth.ts (useSecureCookies = base URL is https) — here the hub issuer stands in for
     // that base URL (http://localhost → unprefixed, https://auth.civitai.com → __Secure-).
     cookieName: config.cookieName ?? sessionCookieName(issuer?.startsWith('https://') ?? false),
+    publicKeyPem: config.publicKeyPem ?? env.AUTH_JWT_PUBLIC_KEY,
     legacySecret: config.legacySecret ?? env.NEXTAUTH_SECRET,
     isRevoked: config.isRevoked,
   };
 
-  // Memoized remote keyset: caches keys, refetches only on an unknown kid (rotation).
-  const jwks = cfg.jwksUri ? createRemoteJWKSet(new URL(cfg.jwksUri)) : undefined;
+  // Verification key. Prefer a LOCAL public key (no network) when configured — the hub verifying its
+  // own tokens. Otherwise a memoized remote JWKS (caches keys, refetches on an unknown kid for
+  // rotation) — the spoke path. At least one must be present to verify RS256.
+  let _localKey: ReturnType<typeof importSPKI> | undefined;
+  const localKey = () => (_localKey ??= importSPKI(normalizePem(cfg.publicKeyPem!), ALG));
+  const jwks = !cfg.publicKeyPem && cfg.jwksUri ? createRemoteJWKSet(new URL(cfg.jwksUri)) : undefined;
+  const canVerify = () => !!cfg.publicKeyPem || !!jwks;
+
+  // Branch so each jwtVerify call matches a single jose overload (KeyLike vs JWKS-getter).
+  async function verifyRS256(token: string) {
+    const opts = { issuer: cfg.issuer, audience: cfg.audience };
+    return cfg.publicKeyPem ? jwtVerify(token, await localKey(), opts) : jwtVerify(token, jwks!, opts);
+  }
 
   async function verifyToken(token: string): Promise<SessionClaims | null> {
     let claims: SessionClaims | null = null;
@@ -75,13 +99,12 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     }
 
     if (alg === 'RS256') {
-      if (!jwks)
-        throw new Error('[@civitai/auth] AUTH_JWKS_URI not configured for RS256 verification');
+      if (!canVerify())
+        throw new Error(
+          '[@civitai/auth] no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI configured for RS256 verification'
+        );
       try {
-        const { payload } = await jwtVerify(token, jwks, {
-          issuer: cfg.issuer,
-          audience: cfg.audience,
-        });
+        const { payload } = await verifyRS256(token);
         claims = payload as SessionClaims;
       } catch {
         return null; // bad signature / expired / wrong issuer
@@ -122,13 +145,12 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
   }
 
   async function verifySwapToken(token: string): Promise<{ userId: number } | null> {
-    if (!jwks)
-      throw new Error('[@civitai/auth] AUTH_JWKS_URI not configured for swap verification');
+    if (!canVerify())
+      throw new Error(
+        '[@civitai/auth] no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI configured for swap verification'
+      );
     try {
-      const { payload } = await jwtVerify(token, jwks, {
-        issuer: cfg.issuer,
-        audience: cfg.audience,
-      });
+      const { payload } = await verifyRS256(token);
       if (payload.purpose !== 'swap') return null;
       const userId = Number(payload.sub);
       return Number.isFinite(userId) ? { userId } : null;

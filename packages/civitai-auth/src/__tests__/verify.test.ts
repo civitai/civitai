@@ -8,6 +8,7 @@ const audience = 'spokes';
 const jwksUri = 'https://auth.test/jwks';
 let signer: SessionSigner;
 let jwks: { keys: Record<string, unknown>[] };
+let publicKeyPem: string;
 
 beforeAll(async () => {
   const kp = generateKeyPairSync('rsa', {
@@ -15,6 +16,7 @@ beforeAll(async () => {
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
+  publicKeyPem = kp.publicKey;
   signer = createSessionSigner({
     privateKeyPem: kp.privateKey,
     publicKeyPem: kp.publicKey,
@@ -48,6 +50,22 @@ describe('createAuthVerifier', () => {
     const claims = await createAuthVerifier(cfg).verifyToken(token);
     expect(claims?.user).toMatchObject({ id: 7 });
     expect(claims?.id).toBe('t7');
+  });
+
+  it('verifies an RS256 token with a LOCAL public key (no JWKS fetch)', async () => {
+    // No stubJwks() here: a local public key must verify WITHOUT any network. If it fell through to
+    // JWKS, global fetch is unstubbed and this would reject.
+    const token = await signer.mintSessionToken({ user: { id: 7 }, id: 't7', signedAt: 1 });
+    const verifier = createAuthVerifier({ issuer, audience, publicKeyPem });
+    const claims = await verifier.verifyToken(token);
+    expect(claims?.user).toMatchObject({ id: 7 });
+    expect(claims?.id).toBe('t7');
+  });
+
+  it('local-key verifier still rejects a wrong-issuer token', async () => {
+    const token = await signer.mintSessionToken({ user: { id: 7 }, id: 't7' });
+    const verifier = createAuthVerifier({ issuer: 'https://nope.test', audience, publicKeyPem });
+    expect(await verifier.verifyToken(token)).toBeNull();
   });
 
   it('returns null when isRevoked says so', async () => {

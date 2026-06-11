@@ -23,18 +23,20 @@ that verifies locally via JWKS. See [centralized-auth-app.md](centralized-auth-a
 
 ## 🟡 Should fix before merge — code
 
-- [ ] **3. GitHub private-email users.** `providers.ts` `mapProfile` can return `email: undefined`
-      (GitHub hides it by default). Add the `/user/emails` follow-up call so those users get a
-      verified primary email (else they create account rows with no email and can't be matched).
-- [ ] **4. Account-linking parity.** The hub only links by *verified* email; otherwise it creates a
-      new user. The main app uses `allowDangerousEmailAccountLinking` for Google/GitHub. Decide
-      whether to match that, or accept duplicate accounts for the same human across providers.
-- [ ] **5. Verify own cookie with the local public key.** The hub currently HTTP-fetches its own
-      `/api/auth/jwks` to verify session cookies (`lib/server/auth/verifier.ts`). It already holds
-      `AUTH_JWT_PUBLIC_KEY` — verifying locally removes a fragile self-dependency (a bad `ORIGIN`
-      silently stops `locals.user` from populating, which breaks logout invalidation).
-- [ ] **6. Health/readiness route.** Add `/healthz` (or `/api/health`) returning 200 for the k8s
-      probes.
+- [x] **3. GitHub private-email users.** `fetchProfile` now does the `/user/emails` follow-up
+      (`emailsUrl` on the GitHub provider) and picks the verified primary email, so a private-email
+      GitHub user gets a verified email for linking. → `lib/server/auth/providers.ts`.
+- [x] **4. Account-linking parity.** Decided: keep **verified-email-only** linking — the safe
+      analogue of `allowDangerousEmailAccountLinking` (Google/GitHub verify emails, so same-person
+      logins link with no duplicate; we deliberately do NOT link on an *unverified* email, which is
+      an account-takeover vector). With #3, GitHub now provides a verified email, so the duplicate
+      concern is resolved. Documented in `lib/server/auth/users.ts`.
+- [x] **5. Verify own cookie with the local public key.** `createAuthVerifier` now defaults
+      `publicKeyPem` from `AUTH_JWT_PUBLIC_KEY` and verifies RS256 **locally** when present (no
+      self-HTTP-fetch); spokes without the key still use JWKS. → `@civitai/auth/verify.ts`,
+      `lib/server/auth/verifier.ts`.
+- [x] **6. Health route.** `GET /api/health` → 200 `{status:'ok'}` (no DB/redis work, so it won't
+      flap). → `routes/api/health/+server.ts`.
 
 ## 🟢 Deferred / by-design (note, not blockers)
 
@@ -75,8 +77,12 @@ that verifies locally via JWKS. See [centralized-auth-app.md](centralized-auth-a
 
 These are environment/deployment concerns, owned by the devops/deploy process — not code changes.
 
-- [ ] **adapter-node `ORIGIN=https://auth.civitai.com`** — *critical*. Without it, `url.origin` is
-      wrong behind the proxy, so OAuth `redirect_uri`s and email links break.
+- [ ] **adapter-node runtime vars** — *critical* behind the ingress:
+      - `ORIGIN=https://auth.civitai.com` — without it `url.origin` is wrong, breaking OAuth
+        `redirect_uri`s, email links, and the CSRF origin check on login/logout POSTs.
+      - `ADDRESS_HEADER=x-forwarded-for` + `XFF_DEPTH=<proxy depth>` — so `getClientAddress()`
+        returns the real client IP; the email/login **rate limiter** and Turnstile `remoteip` depend
+        on it, else every request looks like the ingress IP and the limits become global.
 - [ ] **RSA keypair → secret manager:** `AUTH_JWT_PRIVATE_KEY` (PKCS8), `AUTH_JWT_PUBLIC_KEY`
       (SPKI), `AUTH_JWT_KID`. Generate with
       `openssl genpkey -algorithm RSA -out priv.pem -pkeyopt rsa_keygen_bits:2048` then
