@@ -6,6 +6,8 @@ import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
 import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
+import type { AnnouncementsSeed } from '~/providers/announcements-seed';
+import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -13,6 +15,11 @@ type AppProviderProps = {
   // SSR-computed `content.checkTosUpdate` result (logged-in only). Seeds the
   // query so `useToSUpdateModal` never fires it on bootstrap.
   tosUpdate?: CheckTosUpdateResult;
+  // SSR-computed `announcement.getAnnouncements` result (anon + authed). Carried
+  // down to `useGetAnnouncements`, which seeds the query under the client's
+  // `useDomainColor()` key — this provider sits above FeatureFlagsProvider so it
+  // can't compute that key itself.
+  announcements?: AnnouncementsSeed;
   seed: number;
   canIndex: boolean;
   region: RegionInfo;
@@ -33,6 +40,7 @@ type AppContext = {
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
+  announcements?: AnnouncementsSeed;
 };
 const Context = createContext<AppContext | null>(null);
 export function useAppContext() {
@@ -79,6 +87,7 @@ export function AppProvider({
   children,
   settings,
   tosUpdate,
+  announcements,
   domain,
   host,
   serverDomains,
@@ -120,6 +129,7 @@ export function AppProvider({
     serverDomains,
     availableOAuthProviders,
     verifiedBot,
+    announcements: reviveAnnouncementsSeed(announcements),
   }));
 
   return <Context.Provider value={state}>{children}</Context.Provider>;
