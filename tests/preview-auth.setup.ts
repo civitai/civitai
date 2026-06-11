@@ -84,6 +84,14 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
 }
 
 setup('mint preview sessions', async ({ request }) => {
+  // This setup runs the cold-pod warm-up below: ~9 SEQUENTIAL heavy-SSR GETs (each
+  // capped at 60s) so one route compiles at a time (parallel heavy renders OOM the
+  // single-replica pod). On a genuinely cold pod the cumulative warm-up can exceed
+  // the suite's 90s per-test timeout — and a setup timeout SKIPS every dependent
+  // smoke test (worse than the flake we're fixing). So give just this setup a large
+  // ceiling. It's a CEILING, not the runtime: the setup still finishes as fast as
+  // the warm-ups actually take (~2s when the pod is already warm from verify-preview).
+  setup.setTimeout(480_000);
   if (!SECRET) throw new Error('NEXTAUTH_SECRET is required to mint preview sessions');
   if (!PREVIEW_URL) throw new Error('PREVIEW_URL is required for preview smoke tests');
   const jwts: Partial<Record<PreviewRole, string>> = {};
@@ -92,16 +100,38 @@ setup('mint preview sessions', async ({ request }) => {
   }
 
   // Warm the freshly-deployed preview before the suite so the first real test
-  // doesn't pay the full cold-SSR cost (Next warm-up + JIT + DB pools). Warm the
-  // HEAVY listing pages too, not just `/` — those are the slow ones. They must be
-  // warmed AUTHENTICATED: on a preview the gate 307s an UNauthenticated /models to
-  // /login, so an anon GET wouldn't touch the real /models render path. Use the
-  // gold (gate-passing) cookie. Sequential + non-fatal; the suite + retries cover
-  // any miss.
+  // doesn't pay the full cold-SSR cost (Next warm-up + JIT + DB pools). Each route
+  // JIT-compiles on its first hit, so we warm EVERY heavy SSR page the suite then
+  // navigates — cold-page timeouts were the dominant smoke flake (a slow-window
+  // page.goto exceeding the nav budget, then passing on retry once warm). They must
+  // be warmed AUTHENTICATED: on a preview the gate 307s an UNauthenticated request
+  // to /login, so an anon GET wouldn't touch the real render path. Sequential (one
+  // concurrent heavy SSR at a time — the single-replica pod OOM'd under parallel
+  // heavy loads) + non-fatal (.catch): a slow warm-up GET still triggers the
+  // server-side compile even if the client times out, and the suite + retries
+  // cover any miss.
   const gold = jwts.gold;
   if (gold) {
     const headers = { cookie: `${COOKIE_NAME}=${gold}` };
-    for (const path of ['/', '/models', '/images']) {
+    // gold (gate-passing paid member) reaches all non-mod heavy pages the suite hits.
+    for (const path of [
+      '/',
+      '/models',
+      '/images',
+      '/user/membership',
+      '/generate',
+      '/purchase/buzz',
+      '/pricing',
+    ]) {
+      await request.get(path, { timeout: 60_000, headers }).catch(() => {});
+    }
+  }
+  const mod = jwts.mod;
+  if (mod) {
+    // /moderator/* render only for a moderator (gold would be bounced), so warm the
+    // moderation-spec pages with the mod cookie.
+    const headers = { cookie: `${COOKIE_NAME}=${mod}` };
+    for (const path of ['/moderator/reports', '/moderator/images']) {
       await request.get(path, { timeout: 60_000, headers }).catch(() => {});
     }
   }
