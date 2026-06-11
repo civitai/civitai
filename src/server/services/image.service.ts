@@ -2121,6 +2121,19 @@ export const getAllImagesIndex = async (
         cause: err,
       });
     }
+    // Upstream returned 408 (backend timeout) or 5xx (feeds-proxy shed /
+    // brownout). Same disposition as the timeout above — a retryable TIMEOUT
+    // so the client shows its retry banner with a friendly message, instead
+    // of a raw 500 ("Meilisearch fetch failed (503): ...") leaking to the UI.
+    // Mirrors the user/model search REST handlers. 4xx-other (malformed
+    // filter / auth) is NOT failfast-eligible and still bubbles as-is.
+    if (err instanceof MeilisearchFetchError && isFailfastStatus(err.status)) {
+      throw new TRPCError({
+        code: 'TIMEOUT',
+        message: 'Image search is temporarily overloaded — please retry.',
+        cause: err,
+      });
+    }
     throw err;
   }
 
@@ -2765,6 +2778,16 @@ export async function getImagesFromFeedSearch(
     // Traefik gives up. tRPC v10 has no SERVICE_UNAVAILABLE / 503 code, so
     // TIMEOUT (the closest semantic match) is used here.
     if (err instanceof MeiliCallTimeoutError) {
+      throw new TRPCError({
+        code: 'TIMEOUT',
+        message: 'Image search is temporarily overloaded — please retry.',
+        cause: err,
+      });
+    }
+    // 408/5xx from the upstream (or feeds-proxy) → retryable TIMEOUT, same as
+    // the circuit-open path above. Keeps this path symmetric with
+    // getAllImagesIndex even though it's REST-only and historically low-error.
+    if (err instanceof MeilisearchFetchError && isFailfastStatus(err.status)) {
       throw new TRPCError({
         code: 'TIMEOUT',
         message: 'Image search is temporarily overloaded — please retry.',
@@ -3980,6 +4003,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   let totalProcessed = 0;
   let consecutiveEmptyBatches = 0;
   let nextCursor: number | undefined;
+  // Set true when the iteration loop breaks because the upstream signalled
+  // unavailability (local deadline, 408/5xx, or circuit-open). Used after the
+  // loop to distinguish "feed is genuinely empty" from "we returned nothing
+  // because Meili was unhealthy" — the latter must surface as a retryable
+  // TIMEOUT, not a silent empty 200 the client renders as end-of-feed.
+  let brokeOnUpstreamFailure = false;
   const request: SearchParams = {
     filter: filters.join(' AND '),
     sort: sorts,
@@ -4049,8 +4078,10 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
           });
           // Fall out of the iteration loop with whatever's already in
           // accumulatedHits. The nextCursor / merge logic below handles the
-          // partial / empty case (nextCursor cleared when mergedHits.length
-          // <= limit).
+          // partial case; the empty case is converted to a retryable TIMEOUT
+          // after the loop (brokeOnUpstreamFailure) so the client shows its
+          // retry banner instead of a silent end-of-feed.
+          brokeOnUpstreamFailure = true;
           break;
         }
         // Upstream-side fast-fail: 408 (proxy/backend timeout) or 5xx
@@ -4062,6 +4093,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
             iteration: String(iteration),
             reason: failfastReasonForStatus(e.status),
           });
+          brokeOnUpstreamFailure = true;
           break;
         }
         // Wrapper-side fail-fast: runWithLimiter said no before the request
@@ -4083,6 +4115,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
             iteration: String(iteration),
             reason: MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
           });
+          brokeOnUpstreamFailure = true;
           break;
         }
         throw e;
@@ -4157,6 +4190,20 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       if (results.length < requestLimit) {
         break;
       }
+    }
+
+    // If the loop bailed because Meili was unhealthy AND we accumulated
+    // nothing, we have no usable page to serve. Returning an empty 200 here
+    // makes the client treat it as end-of-feed (nextCursor undefined →
+    // hasNextPage false → no retry), and during a brownout every feed does
+    // the same, so switching feeds also shows "no results". Surface a
+    // retryable TIMEOUT instead so the existing SearchRetryBanner kicks in.
+    // (A non-empty partial page still serves normally — degraded, not broken.)
+    if (brokeOnUpstreamFailure && accumulatedHits.length === 0) {
+      throw new TRPCError({
+        code: 'TIMEOUT',
+        message: 'Image search is temporarily overloaded — please retry.',
+      });
     }
 
     // Record PostFilter metrics
