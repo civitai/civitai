@@ -36,7 +36,7 @@ export function StagedFiltersFooter({
     <Stack
       gap="xs"
       className={clsx(
-        'border-t border-gray-3 bg-white px-4 py-3 dark:border-dark-4 dark:bg-dark-7',
+        'rounded-b-[inherit] border-t border-gray-3 bg-white px-4 py-3 dark:border-dark-4 dark:bg-dark-7',
         className
       )}
     >
