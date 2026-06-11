@@ -41,6 +41,7 @@ import { storageStatePath } from './preview-fixtures';
 const FEATURE_FLAGS_PROCEDURE = 'user.getFeatureFlags';
 const TOS_PROCEDURE = 'content.checkTosUpdate';
 const ANNOUNCEMENTS_PROCEDURE = 'announcement.getAnnouncements';
+const FOLLOWING_PROCEDURE = 'user.getFollowingUsers';
 
 // A core page a gate-passing user lands on directly (no /login bounce). Both
 // procedures fire on every logged-in bootstrap regardless of which page, so
@@ -327,6 +328,50 @@ test.describe('SSR-injected announcements (anonymous)', () => {
   // fetch" test above. The anon coverage that matters — seed present in
   // __NEXT_DATA__ and NO getAnnouncements request on bootstrap (the SSR-inject
   // contract) — is asserted in the test above.
+});
+
+/**
+ * Regression guard for the SSR-inject of `user.getFollowingUsers` (~27/s on
+ * api-primary). AUTH-GATED (the consumers gate on `enabled: !!currentUser`), so
+ * it NEVER fires anonymously — authed block only, like getFeatureFlags/tos.
+ * Seeded directly in AppProvider (fixed `undefined` key) and inheriting the
+ * global `staleTime: Infinity`, so a seeded query never refetches. The payload
+ * is a plain `number[]` of followed userIds — no Date/serialization subtlety, so
+ * the seed (JSON) and a live fetch (`result.data.json`) compare directly.
+ */
+test.describe('SSR-injected getFollowingUsers (logged-in)', () => {
+  test.use({ storageState: storageStatePath('mod') });
+
+  test('getFollowingUsers is seeded into __NEXT_DATA__ and not fetched on bootstrap', async ({
+    page,
+  }) => {
+    const trpcUrls = await collectTrpcRequests(page, AUTHED_LANDING);
+
+    const following = await readPageProp(page, 'following');
+    expect(following.present, 'following present in __NEXT_DATA__ pageProps').toBe(true);
+    expect(Array.isArray(following.value), 'following seed is an array').toBe(true);
+
+    const followingRequests = trpcUrls.filter((u) => u.includes(FOLLOWING_PROCEDURE));
+    expect(
+      followingRequests,
+      `no ${FOLLOWING_PROCEDURE} tRPC request should fire on bootstrap (it is SSR-injected); saw:\n${followingRequests.join(
+        '\n'
+      )}`
+    ).toHaveLength(0);
+  });
+
+  test('SSR seed byte-equals a live fetch', async ({ page }) => {
+    await page.goto(AUTHED_LANDING, { waitUntil: 'domcontentloaded' });
+
+    const seed = await readPageProp(page, 'following');
+    expect(seed.present, 'following seed present in __NEXT_DATA__').toBe(true);
+
+    const live = await fetchTrpcQueryJson(page, FOLLOWING_PROCEDURE);
+    expect(
+      seed.value,
+      'user.getFollowingUsers SSR seed must byte-equal a live resolver fetch'
+    ).toEqual(live);
+  });
 });
 
 /**

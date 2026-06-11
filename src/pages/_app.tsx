@@ -104,6 +104,7 @@ type CustomAppProps = {
   userFeatureFlags?: FeatureAccess;
   tosUpdate?: CheckTosUpdateResult;
   announcements?: AnnouncementsSeed;
+  following?: number[];
   seed: number;
   settings: UserContentSettings;
   browsingSettingsAddons: BrowsingSettingsAddon[];
@@ -128,6 +129,7 @@ function MyApp(props: CustomAppProps) {
       userFeatureFlags,
       tosUpdate,
       announcements,
+      following,
       seed = Date.now(),
       canIndex,
       hasAuthCookie,
@@ -184,6 +186,7 @@ function MyApp(props: CustomAppProps) {
       settings={settings}
       tosUpdate={tosUpdate}
       announcements={announcements}
+      following={following}
       region={region}
       domain={domain}
       host={host}
@@ -340,7 +343,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // Read the verified-bot header set by botDetectionMiddleware.
   const verifiedBot = parseVerifiedBotHeader(request.headers[VERIFIED_BOT_HEADER]);
 
-  const { settings, session, tosUpdate, announcements } = await fetch(
+  const { settings, session, tosUpdate, announcements, following } = await fetch(
     `${baseUrl as string}/api/user/settings`,
     {
       headers: { ...request.headers } as HeadersInit,
@@ -350,6 +353,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       settings: UserContentSettings;
       tosUpdate?: CheckTosUpdateResult;
       announcements?: AnnouncementsSeed;
+      following?: number[];
       session: Session | null;
     } = await res.json();
     return data;
@@ -418,6 +422,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       userFeatureFlags,
       tosUpdate,
       announcements,
+      following,
       seed: Date.now(),
       hasAuthCookie,
       region,
