@@ -1,5 +1,12 @@
 # Monorepo Conversion Plan
 
+> **Historical plan — amended since.** Records the original conversion approach. What actually
+> shipped differs in two places: (1) the Prisma **schema + generated client + `enums.ts`/`models.ts`**
+> landed in a dedicated **`@civitai/db-schema`** package (with a `prisma-kysely` generator), and
+> `@civitai/db` kept only the *runtime* client factories and depends on db-schema; (2) **Turborepo
+> was later adopted** (`turbo.json`) despite the "not Turborepo" note below. For the current
+> structure see [monorepo-directory-snapshot.md](./monorepo-directory-snapshot.md).
+
 ## Goal
 
 Convert the existing repo into a pnpm workspace monorepo, starting by extracting **globally-used infrastructure** (Prisma schema/client, Postgres pools, Redis, ClickHouse, Axiom logging) into shared packages. Future apps (the moderator app from [moderator-app-shared-modules.md](./moderator-app-shared-modules.md)) consume those packages instead of importing from `~/server/...`.

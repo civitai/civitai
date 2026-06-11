@@ -1,6 +1,6 @@
 # Monorepo Environment Variables — Setup Plan
 
-**Status:** proposal · **Author:** @ai · **Date:** 2026-06-10
+**Status:** proposal · **Author:** @ai · **Date:** 2026-06-10 · **Revised:** 2026-06-11 (config-file loading; no launcher / no new dep)
 
 How env vars are sourced across the monorepo so that shared values (`DATABASE_URL`,
 `REDIS_URL`, `EMAIL_*`, OAuth creds) live in **one** place while each app keeps its
@@ -18,8 +18,11 @@ own app-specific secrets.
   from its own `cwd`; Vite/SvelteKit loads from the app dir. That's why
   `DATABASE_URL` is currently copy-pasted into three files.
 - **Plan:** introduce a root `.env.shared` for cross-app values; keep a per-app
-  `.env` for app-specific values; each app loads **shared first, then local
-  override**. In production nothing reads files — the platform injects per-app env.
+  `.env` for app-specific values; each app loads both with **app-local taking
+  precedence** over shared. Loading happens in each app's own config file
+  (`src/env/server.ts`, `vite.config.ts`, `next.config.ts`) via `dotenv` — no
+  launcher, no new dependency. In production nothing reads files — the platform
+  injects per-app env.
 
 ---
 
@@ -135,31 +138,52 @@ path array. One line, no new dependency.
 dotenv.config({ path: ['.env.shared', '.env.development.local', '.env.local', '.env.development', '.env'], override: false });
 ```
 
-### apps/auth (SvelteKit) & apps/moderator (Next.js)
-Next's `cwd`-only loader and Vite's single-`envDir` can't cleanly layer two files
-from different directories. Use a launcher that loads both **before** the framework
-starts, so `$env/dynamic/private` (auth) and `process.env` (moderator server) see
-the merged result. Recommended: **`dotenvx`** (cross-platform, explicit cascade).
+The sub-apps don't need a launcher. Their config files (`vite.config.ts`,
+`next.config.ts`) are plain JS evaluated **before** the framework reads env, so load
+the files there with `dotenv`. Load **most-specific first** — `dotenv` never
+overrides an already-set key, so this yields precedence
+`real shell env > app-local .env > /.env.shared` without any override flag, and
+scripts stay vanilla (`vite dev`, `next dev`).
 
-```jsonc
-// apps/auth/package.json
-"dev":   "dotenvx run -f ../../.env.shared -f .env --overload -- vite dev",
-"build": "dotenvx run -f ../../.env.shared -f .env --overload -- vite build",
+### apps/auth (SvelteKit / Vite)
 
-// apps/moderator/package.json
-"dev":   "dotenvx run -f ../../.env.shared -f .env --overload -- next dev",
-"build": "dotenvx run -f ../../.env.shared -f .env --overload -- next build",
+`$env/dynamic/private` reads `process.env` at runtime (the same path
+[`db.ts`](../../apps/auth/src/lib/server/db/db.ts) uses), and we populate it before
+SvelteKit boots:
+
+```ts
+// apps/auth/vite.config.ts
+import { config } from 'dotenv';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+config({ path: resolve(here, '.env') });              // app-local first (wins)
+config({ path: resolve(here, '../../.env.shared') }); // shared fills the gaps
 ```
 
-`-f` files cascade left→right; `--overload` lets the later (local) file override the
-earlier (shared) one — matching the precedence rule above.
+### apps/moderator (Next.js)
 
-> Alternative (no new dep): SvelteKit can point Vite at the root with
-> `envDir: '../../'`, and Next can `dotenv.config({ path: '../../.env.shared' })` at
-> the top of `next.config.ts`. **Downside:** Vite's `envDir` is a *single* directory,
-> so auth would then read root `.env.shared` but stop reading its own
-> `apps/auth/.env` — no layering. That's why the launcher approach above is
-> preferred for the sub-apps.
+Same idea in `next.config.ts` (also plain JS, evaluated before the server reads env):
+
+```ts
+// apps/moderator/next.config.ts
+import { config } from 'dotenv';
+import { resolve } from 'node:path';
+
+config({ path: resolve(process.cwd(), '.env') });              // app-local first
+config({ path: resolve(process.cwd(), '../../.env.shared') }); // shared fills gaps
+```
+
+Next also auto-loads `apps/moderator/.env` on its own, which is harmless (already
+set → not overridden).
+
+> **Why not Vite `envDir` or a launcher?** Vite's `envDir` is a *single* directory
+> (can't point at root *and* the app dir), and Vite's `loadEnv` only reads
+> conventionally-named files — it won't find a custom `.env.shared`. A
+> `dotenvx` / `dotenv-cli` launcher works but adds a dependency and shell-quoting for
+> the same result. Calling `dotenv` inside the config file sidesteps both limits:
+> no new dep, no script noise, cross-platform (matters on Windows).
 
 ---
 
@@ -185,8 +209,9 @@ at runtime, so production needs no loader changes.
    `.env.shared`; keep only app-specific keys (auth keeps `AUTH_*` + `NEXTAUTH_URL`).
 4. **Main app:** add `.env.shared` to the `dotenv.config` path array in
    `src/env/server.ts`.
-5. **Sub-apps:** add `dotenvx` and switch `dev`/`build` scripts as above
-   (`pnpm add -D -w dotenvx` or per-app).
+5. **Sub-apps:** load `.env.shared` from `apps/auth/vite.config.ts` and
+   `apps/moderator/next.config.ts` via `dotenv` (snippets above). Scripts stay
+   vanilla; no new dependency.
 6. **`.gitignore`:** the example files are re-included. Current rules only un-ignore
    `.env-example` / `.env.example`; add `!*.env.example` (or `!.env.shared.example`)
    so the new template is committable.
@@ -205,7 +230,7 @@ at runtime, so production needs no loader changes.
 - `@ai:` **OAuth creds placement.** Put in `.env.shared` for now (main app + auth
   both use them during coexistence). Once the main app fully delegates login to the
   auth app, these can move to `apps/auth/.env` only. — `@dev:` ?
-- `@ai:` **`dotenvx` vs `dotenv-cli`.** Recommending `dotenvx` (active, cross-platform,
-  supports encrypted `.env` later). `dotenv-cli` is lighter if you prefer fewer
-  features. — `@dev:` ?
+
+> **Resolved:** loading mechanism — use plain `dotenv` inside each app's config file
+> (no `dotenvx` / `dotenv-cli` launcher, no new dependency). See *Loading mechanism*.
 ```
