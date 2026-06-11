@@ -174,30 +174,39 @@ export const createPostWithImagesHandler = async ({
 
     // 3) Optionally publish. Route through updatePostHandler so the full publish
     //    path runs (rewards, tracking, collaborator messages, collection items,
-    //    contest validation). updatePostHandler returns void, so we re-fetch the
-    //    post's published state afterward.
-    let publishedAt: Date | null = post.publishedAt ?? null;
+    //    contest validation). updatePostHandler returns void.
     if (publish) {
       await updatePostHandler({
         input: { id: post.id, publishedAt: new Date(), collectionId },
         ctx,
       });
-      const published = await dbWrite.post.findUnique({
-        where: { id: post.id },
-        select: { publishedAt: true },
-      });
-      publishedAt = published?.publishedAt ?? null;
     }
+
+    // Re-select the post's current persisted state so the response reflects
+    // mutations that happen after the initial create: nsfwLevel is recomputed
+    // once images are attached, and publish can adjust collectionId/publishedAt.
+    // Returning the stale create-time `post` object would be inconsistent w/ DB.
+    const current = await dbWrite.post.findUnique({
+      where: { id: post.id },
+      select: {
+        title: true,
+        detail: true,
+        modelVersionId: true,
+        collectionId: true,
+        publishedAt: true,
+        nsfwLevel: true,
+      },
+    });
 
     return {
       id: post.id,
-      title: post.title,
-      detail: post.detail,
-      modelVersionId: post.modelVersionId,
-      collectionId: post.collectionId,
-      publishedAt,
+      title: current?.title ?? post.title,
+      detail: current?.detail ?? post.detail,
+      modelVersionId: current?.modelVersionId ?? post.modelVersionId,
+      collectionId: current?.collectionId ?? post.collectionId,
+      publishedAt: current?.publishedAt ?? null,
       imageIds: attachedImageIds,
-      nsfwLevel: post.nsfwLevel,
+      nsfwLevel: current?.nsfwLevel ?? post.nsfwLevel,
     };
   } catch (error) {
     // Roll back the orphan draft so no empty/partial post lingers.

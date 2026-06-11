@@ -85,7 +85,12 @@ export const createPostWithImagesSchema = z.object({
   collectionId: z.number().optional(),
   publish: z.boolean().optional(),
   images: z
-    .array(imageSchema.omit({ postId: true, index: true }).extend({ index: z.number().min(0) }))
+    .array(
+      // Omit `id` as well: this is a create path, so a caller-supplied Image PK
+      // would be forwarded into createImage and fail (or clobber). The server
+      // fills postId, and index is required for explicit ordering.
+      imageSchema.omit({ postId: true, index: true, id: true }).extend({ index: z.number().min(0) })
+    )
     .min(1, 'At least one image must be provided'),
 });
 
