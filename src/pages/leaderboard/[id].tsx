@@ -146,26 +146,31 @@ export default function Leaderboard() {
   const loadingLeaderboardResults =
     board === 'season' ? loadingLeaderboardSeason : loadingLeaderboardLegend;
 
-  if (
-    (selectedLeaderboard && selectedLeaderboard.id !== id) ||
-    (selectedPosition && selectedPosition !== urlPosition) ||
-    (!hasLegends && board === 'legend')
-  ) {
-    const shallow = selectedLeaderboard?.id === id && selectedPosition !== urlPosition;
+  // Sync the URL to the selected leaderboard/position. Must run as an effect:
+  // doing this during render calls router.replace() + setState mid-render,
+  // which re-triggers render before navigation settles -> "Too many re-renders".
+  useEffect(() => {
+    if (
+      (selectedLeaderboard && selectedLeaderboard.id !== id) ||
+      (selectedPosition && selectedPosition !== urlPosition) ||
+      (!hasLegends && board === 'legend')
+    ) {
+      const shallow = selectedLeaderboard?.id === id && selectedPosition !== urlPosition;
 
-    replace(
-      {
-        pathname: `/leaderboard/${selectedLeaderboard?.id}`,
-        hash: selectedPosition ? `${selectedPosition}` : undefined,
-        query: removeEmpty({
-          board: board === 'season' || (!hasLegends && board === 'legend') ? undefined : board,
-        }),
-      },
-      undefined,
-      { shallow }
-    );
-    setUrlPosition(selectedPosition);
-  }
+      replace(
+        {
+          pathname: `/leaderboard/${selectedLeaderboard?.id}`,
+          hash: selectedPosition ? `${selectedPosition}` : undefined,
+          query: removeEmpty({
+            board: board === 'season' || (!hasLegends && board === 'legend') ? undefined : board,
+          }),
+        },
+        undefined,
+        { shallow }
+      );
+      setUrlPosition(selectedPosition);
+    }
+  }, [selectedLeaderboard, id, selectedPosition, urlPosition, hasLegends, board, replace]);
 
   const endTime = useMemo(() => dayjs().utc().endOf('day').toDate(), []);
 
