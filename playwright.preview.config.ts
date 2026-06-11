@@ -37,16 +37,20 @@ export default defineConfig({
   // and opens DB pools. The default 30s per-test timeout is too tight for that cold
   // first hit, so raise both the per-test and navigation timeouts. The setup project
   // also fires a warm-up request before the suite (preview-auth.setup.ts).
-  timeout: 60_000,
+  // 90s (was 60s): on a contended preview node the single-replica pod gets CPU-
+  // throttled and the heaviest SSR pages (/user/membership, /models) intermittently
+  // crossed the 60s ceiling (observed ~66s) — a slow window should flake-and-recover
+  // on retry, not hard-fail. 90s gives comfortable margin without masking a real hang.
+  timeout: 90_000,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
   use: {
     baseURL: PREVIEW_URL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     // Align with the per-test timeout: a cold heavy-page (/models) goto can need
-    // most of the budget, and a 45s nav cap would fail it even though the test has
-    // 60s. The setup project also pre-warms /models + /images authenticated.
-    navigationTimeout: 60_000,
+    // most of the budget, and a tighter nav cap would fail it even though the test
+    // has 90s. The setup project also pre-warms /models + /images authenticated.
+    navigationTimeout: 90_000,
   },
   projects: [
     { name: 'preview-setup', testMatch: /(^|\/)preview-auth\.setup\.ts$/ },

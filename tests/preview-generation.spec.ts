@@ -46,9 +46,14 @@ test.describe('generation cost quote (gold)', () => {
   // 1. Primary, network-based: whatIf fires on /generate load and quotes a cost.
   test('whatIfFromGraph fires on /generate and returns a numeric cost', async ({ page }) => {
     // Arm the response listener BEFORE navigating so an on-load fire isn't missed.
+    // 45s (was 25s): whatIf is the heaviest client-side flow — page load + hydrate +
+    // form init + resource resolve + orchestrator round-trip must all complete before
+    // it fires. On a CPU-throttled preview pod a slow window pushed this past 25s and
+    // it hard-failed (both attempts). 45s lets a slow window flake-and-recover; the
+    // orchestrator itself is fast (~57ms), so this never approaches 45s when healthy.
     const whatIfResponse = page.waitForResponse(
       (r) => r.url().includes(WHATIF_URL) && r.status() === 200,
-      { timeout: 25_000 }
+      { timeout: 45_000 }
     );
 
     const resp = await page.goto('/generate', { waitUntil: 'domcontentloaded' });
