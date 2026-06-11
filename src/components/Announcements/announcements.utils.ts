@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { useIsClient } from '~/providers/IsClientProvider';
 import { useAppContext } from '~/providers/AppProvider';
 import { trpc } from '~/utils/trpc';
 
@@ -32,6 +33,7 @@ export function dismissAnnouncements(ids: number | number[]) {
 }
 
 export function useGetAnnouncements() {
+  const isClient = useIsClient();
   const dismissed = useAnnouncementsStore((state) => state.dismissed);
   const domainColor = useDomainColor();
   // Seed from the SSR snapshot carried by AppProvider. We seed HERE (not in
@@ -55,13 +57,25 @@ export function useGetAnnouncements() {
     }));
   }, [data]);
 
+  // Only EXPOSE the seeded data once hydrated. `dismissed` comes from a
+  // localStorage-backed zustand store that rehydrates synchronously on the
+  // client — so server (dismissed=[]) and client-first-paint (dismissed=[...])
+  // would render different banners off the SSR seed → hydration mismatch / a
+  // flash of a previously-dismissed announcement. Gating on `useIsClient()`
+  // (false on the server AND the first client render) makes SSR output match
+  // `main` (empty) and defers dismissed-dependent rendering to after hydration.
+  // The network cut is unaffected — the seed stays in the RQ cache, so no fetch
+  // fires; we just don't surface it until the client paint where `dismissed` is
+  // authoritative.
   const announcements = useMemo(
     () =>
-      data?.map((announcement) => ({
-        ...announcement,
-        dismissed: dismissed.includes(announcement.id),
-      })) ?? [],
-    [data, dismissed]
+      isClient
+        ? data?.map((announcement) => ({
+            ...announcement,
+            dismissed: dismissed.includes(announcement.id),
+          })) ?? []
+        : [],
+    [data, dismissed, isClient]
   );
 
   return { data: announcements, ...rest };
