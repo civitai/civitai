@@ -371,6 +371,17 @@ test.describe('SSR-injected getFollowingUsers (logged-in)', () => {
       seed.value,
       'user.getFollowingUsers SSR seed must byte-equal a live resolver fetch'
     ).toEqual(live);
+
+    // The byte-equality above holds trivially for a user who follows nobody
+    // (`[] === []`) — surface the length so an all-empty run is visible (not a
+    // silent no-op), and when non-empty assert the payload is a number[] of
+    // userIds (mirrors the announcements test's non-empty shape check).
+    const ids = Array.isArray(seed.value) ? (seed.value as unknown[]) : [];
+    // eslint-disable-next-line no-console
+    console.log(`[ssr-inject] following seed length: ${ids.length}`);
+    for (const id of ids) {
+      expect(typeof id, 'following item is a userId (number)').toBe('number');
+    }
   });
 });
 
