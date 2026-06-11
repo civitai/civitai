@@ -69,6 +69,41 @@ describe('createAuthVerifier', () => {
     expect(await createAuthVerifier(cfg).verifyToken('not.a.jwt')).toBeNull();
   });
 
+  it('rejects an expired RS256 token', async () => {
+    stubJwks();
+    // expiresIn in the past → exp already elapsed.
+    const token = await signer.mintSessionToken({ user: { id: 7 }, id: 't7' }, { expiresIn: -10 });
+    expect(await createAuthVerifier(cfg).verifyToken(token)).toBeNull();
+  });
+
+  it('rejects a token minted by the right key but for a different issuer', async () => {
+    stubJwks();
+    const token = await signer.mintSessionToken({ user: { id: 7 }, id: 't7' });
+    const verifier = createAuthVerifier({ ...cfg, issuer: 'https://someone-else.test' });
+    expect(await verifier.verifyToken(token)).toBeNull();
+  });
+
+  it('returns null (not throw) on a corrupt legacy token in the JWE branch', async () => {
+    // No JWKS configured + legacySecret set → a non-RS256/garbage token falls to the legacy
+    // next-auth decode, which throws on corrupt input. verifyToken must swallow that → null.
+    const verifier = createAuthVerifier({ issuer, audience, legacySecret: 'legacy-secret' });
+    await expect(verifier.verifyToken('not.a.jwt')).resolves.toBeNull();
+  });
+
+  it('getSession reads the token out of a parsed cookie map', async () => {
+    stubJwks();
+    const token = await signer.mintSessionToken({ user: { id: 7 }, id: 't7' });
+    const verifier = createAuthVerifier({ ...cfg, cookieName: 'civitai-token' });
+    const claims = await verifier.getSession({ other: '1', 'civitai-token': token });
+    expect(claims?.user).toMatchObject({ id: 7 });
+  });
+
+  it('getSession returns null when the cookie is absent', async () => {
+    stubJwks();
+    const verifier = createAuthVerifier({ ...cfg, cookieName: 'civitai-token' });
+    expect(await verifier.getSession('unrelated=1; other=2')).toBeNull();
+  });
+
   it('verifies a swap token and extracts the userId', async () => {
     stubJwks();
     const token = await signer.mintSwapToken(99);

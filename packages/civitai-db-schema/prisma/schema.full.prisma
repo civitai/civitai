@@ -22,6 +22,16 @@ generator typescriptInterfaces {
   output   = "../src/models.ts"
 }
 
+// Kysely table types (Generated<>/ColumnType<> wrappers) for apps that query via Kysely
+// (e.g. the SvelteKit auth hub). Mirrors civitai-advertising's setup. Consumed via the
+// `@civitai/db-schema/kysely` subpath export.
+generator kysely {
+  provider     = "prisma-kysely"
+  output       = "../src/kysely"
+  fileName     = "types.ts"
+  enumFileName = "enums.ts"
+}
+
 datasource db {
   provider          = "postgresql"
   // NOTE: When using postgresql, mysql or sqlserver, uncomment the @db.Text annotations in model Account below

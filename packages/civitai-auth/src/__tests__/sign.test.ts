@@ -42,6 +42,15 @@ describe('mintSessionToken', () => {
     expect(payload.signedAt).toBe(123);
     expect(payload.iss).toBe(issuer);
   });
+
+  it('ignores caller-supplied reserved claims (cannot forge exp)', async () => {
+    const forgedExp = Math.floor(Date.now() / 1000) + 10 * 365 * 24 * 3600; // +10y
+    const token = await signer.mintSessionToken({ user: { id: 5 }, id: 't', exp: forgedExp });
+    const { payload } = await jwtVerify(token, await pub(), { issuer, audience });
+    // The signer sets exp from maxAge (3600s), not the value passed in the payload.
+    expect(payload.exp).not.toBe(forgedExp);
+    expect(payload.exp! - payload.iat!).toBeLessThanOrEqual(3601);
+  });
 });
 
 describe('mintIdToken', () => {
@@ -51,6 +60,20 @@ describe('mintIdToken', () => {
     expect(payload.sub).toBe('5');
     expect(payload.nonce).toBe('n0nce');
     expect(payload.iss).toBe(issuer);
+  });
+
+  it('echoes auth_time and profile claims, and omits nonce when not given', async () => {
+    const token = await signer.mintIdToken({
+      sub: 9,
+      aud: 'client-y',
+      authTime: 1700000000,
+      claims: { email: 'a@b.com', email_verified: true },
+    });
+    const { payload } = await jwtVerify(token, await pub(), { issuer, audience: 'client-y' });
+    expect(payload.auth_time).toBe(1700000000);
+    expect(payload.email).toBe('a@b.com');
+    expect(payload.email_verified).toBe(true);
+    expect(payload.nonce).toBeUndefined();
   });
 });
 

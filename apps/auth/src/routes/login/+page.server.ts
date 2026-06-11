@@ -6,6 +6,9 @@ import { listEnabledProviders } from '$lib/server/auth/providers';
 import { readReturnUrl, readSync, buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { createVerificationToken } from '$lib/server/auth/email-tokens';
 import { sendVerificationEmail } from '$lib/server/email/verification.email';
+import { captchaSiteKey, verifyCaptchaToken } from '$lib/server/auth/captcha';
+import { getBlockedEmailDomains } from '$lib/server/auth/blocklist';
+import { checkRateLimit } from '$lib/server/auth/rate-limit';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -30,6 +33,9 @@ export const load: PageServerLoad = ({ url, locals }) => {
     returnUrl,
     sync,
     error,
+    // Public Turnstile site key (delivered via SSR data, not a PUBLIC_ env var). The page renders
+    // the widget only when it's set; the email action verifies the token server-side.
+    turnstileSiteKey: captchaSiteKey() ?? null,
     user: locals.user ? { username: locals.user.username, id: locals.user.id } : null,
   };
 };
@@ -37,7 +43,9 @@ export const load: PageServerLoad = ({ url, locals }) => {
 export const actions: Actions = {
   // Magic-link request: validate the email, issue a token, and send the sign-in link. returnUrl
   // + sync ride along in the link so post-verify honors them (validated at verify time).
-  email: async ({ request, url }) => {
+  // Abuse controls mirror the main app's isAllowedToSignIn: rate limit by IP, Turnstile captcha,
+  // and the blocked-email-domain list.
+  email: async ({ request, url, getClientAddress }) => {
     const data = await request.formData();
     const email = String(data.get('email') ?? '')
       .trim()
@@ -46,7 +54,26 @@ export const actions: Actions = {
     const sync = data.get('sync') ? String(data.get('sync')) : null;
 
     if (!EMAIL_RE.test(email)) return fail(400, { email, invalid: true });
-    // TODO: blocked-email-domain check (main app's getBlockedEmailDomains) + Turnstile captcha.
+
+    const ip = getClientAddress();
+
+    // 1. Rate limit (per IP) — cheap gate before any captcha/DB work.
+    if (!(await checkRateLimit('email-login', ip, 5, 600))) {
+      return fail(429, { email, rateLimited: true });
+    }
+
+    // 2. Turnstile — the widget injects `cf-turnstile-response` into the form. Passes through when
+    //    captcha is disabled (dev / no secret).
+    const captchaToken = data.get('cf-turnstile-response')?.toString();
+    if (!(await verifyCaptchaToken(captchaToken, ip))) {
+      return fail(400, { email, captcha: true });
+    }
+
+    // 3. Blocked email domains.
+    const domain = email.split('@')[1];
+    if (domain && (await getBlockedEmailDomains()).includes(domain)) {
+      return fail(400, { email, blockedDomain: true });
+    }
 
     try {
       const token = await createVerificationToken(email);

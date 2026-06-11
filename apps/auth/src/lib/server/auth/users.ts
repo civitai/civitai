@@ -18,9 +18,10 @@ const randomSeed = (len: number) =>
     .slice(0, len);
 
 async function assignUsername(
-  userId: number,
+  userId: number | undefined,
   seeds: Array<string | null | undefined>
 ): Promise<void> {
+  if (userId == null) return;
   const candidates = seeds
     .map((s) => (s ? sanitizeSeed(s.trim()) : ''))
     .filter((s) => s.length > 0);

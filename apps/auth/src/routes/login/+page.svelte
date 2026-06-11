@@ -33,7 +33,20 @@
     if (data.sync) params.set('sync', data.sync);
     return `/login/${providerId}?${params.toString()}`;
   };
+
+  // Cloudflare Turnstile auto-renders any `.cf-turnstile` element once its script loads and injects
+  // a hidden `cf-turnstile-response` input into the form. We reset it after each submit so a fresh
+  // (single-use) token is available for the next attempt.
+  const resetTurnstile = () => {
+    (globalThis as unknown as { turnstile?: { reset: () => void } }).turnstile?.reset();
+  };
 </script>
+
+<svelte:head>
+  {#if data.turnstileSiteKey}
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  {/if}
+</svelte:head>
 
 <main>
   <div class="card">
@@ -91,10 +104,12 @@
             class="email-form"
             use:enhance={() => {
               submitting = true;
-              // Let SvelteKit apply the action result (updates `form`), then clear pending.
+              // Let SvelteKit apply the action result (updates `form`), then clear pending and reset
+              // the captcha so a fresh single-use token is ready for the next attempt.
               return async ({ update }) => {
                 await update();
                 submitting = false;
+                resetTurnstile();
               };
             }}
           >
@@ -108,11 +123,21 @@
             />
             <input type="hidden" name="returnUrl" value={data.returnUrl} />
             {#if data.sync}<input type="hidden" name="sync" value={data.sync} />{/if}
+            {#if data.turnstileSiteKey}
+              <div class="cf-turnstile" data-sitekey={data.turnstileSiteKey} data-theme="dark"></div>
+            {/if}
             <button type="submit" class="social email" disabled={submitting}>
               <IconMail size={20} stroke={2} />
               <span>{submitting ? 'Sending…' : 'Email me a login link'}</span>
             </button>
             {#if form?.invalid}<p class="error">Enter a valid email address.</p>{/if}
+            {#if form?.rateLimited}
+              <p class="error">Too many attempts. Please wait a few minutes and try again.</p>
+            {/if}
+            {#if form?.captcha}<p class="error">Captcha verification failed. Please try again.</p>{/if}
+            {#if form?.blockedDomain}
+              <p class="error">That email domain isn't allowed. Try a different address.</p>
+            {/if}
             {#if form?.serverError}
               <p class="error">Something went wrong on our end. Please try again in a moment.</p>
             {/if}
