@@ -78,19 +78,30 @@ async function readPageProp(page: Page, key: string) {
 }
 
 /**
- * Fetch a no-input tRPC query LIVE via the page's authed request context
- * (inherits the storageState session cookie). The client uses a non-batched
- * httpLink + superjson, so the serialized value lives at `result.data.json`.
- * We compare that JSON-serialized (pre-superjson-revival) form, which is exactly
+ * Fetch a no-input tRPC query LIVE as the logged-in user, then return its
+ * JSON-serialized (pre-superjson-revival) value at `result.data.json` — exactly
  * the shape the SSR seed is delivered in (both cross the wire as JSON), so Date
- * fields are ISO strings on both sides — no revival needed for equality.
+ * fields are ISO strings on both sides; no revival needed for equality.
+ *
+ * Fetch from WITHIN the page (`page.evaluate` + same-origin `fetch`) rather than
+ * `page.request` — `page.request` does not reliably carry the HttpOnly NextAuth
+ * session cookie / page Origin and returns 401. A same-origin `fetch` includes
+ * the session cookie automatically, mirroring what the real client sends. The
+ * page must already be navigated to the preview origin before calling this.
  */
 async function fetchTrpcQueryJson(page: Page, procedure: string): Promise<unknown> {
-  const res = await page.request.get(`/api/trpc/${procedure}`, {
-    headers: { 'x-client': 'web' },
-  });
-  expect(res.ok(), `live ${procedure} fetch returned HTTP ${res.status()}`).toBe(true);
-  const body = await res.json();
+  const out = await page.evaluate(async (proc) => {
+    const r = await fetch(`/api/trpc/${proc}`, {
+      headers: { 'x-client': 'web' },
+      credentials: 'same-origin',
+    });
+    return { ok: r.ok, status: r.status, text: await r.text() };
+  }, procedure);
+  expect(
+    out.ok,
+    `live ${procedure} fetch returned HTTP ${out.status}: ${out.text.slice(0, 300)}`
+  ).toBe(true);
+  const body = JSON.parse(out.text);
   const entry = Array.isArray(body) ? body[0] : body;
   return entry?.result?.data?.json;
 }
