@@ -12,36 +12,34 @@ export default PublicEndpoint(
       // Use the content-settings view so SSR initialData matches the tRPC
       // getSettings response shape (JSON settings + User-column toggles).
       const settings = await getUserContentSettings(session?.user?.id ?? -1);
-      // Compute the `content.checkTosUpdate` result here (server-only API route)
-      // so `_app` getInitialProps can SSR-seed that query WITHOUT importing
-      // `content.service` — which pulls `fs/promises` into `_app`'s client-bundled
-      // graph and breaks the build. Domain fallback matches createContext's
-      // `getRequestDomainColor(req) ?? 'blue'` so the seed stays byte-identical to
-      // a live `checkTosUpdate` fetch.
-      const tosUpdate = session?.user
-        ? await checkTosUpdate({
-            domainColor: getRequestDomainColor(req) ?? 'blue',
-            userSettings: settings,
-          })
-        : undefined;
-      // SSR-seed the ambient `announcement.getAnnouncements` query (fires on every
-      // bootstrap, anon + authed). Computed here — NOT in `_app` getInitialProps —
-      // because `announcement.service` is server-only and importing it into `_app`
-      // leaks it into the client bundle. Match the resolver byte-for-byte: its
-      // `applyRequestDomainColor` middleware overrides the client input with
-      // `getRequestDomainColor(req)` (NO 'blue' fallback), so we pass the same raw
-      // value here. Defensive: an announcements failure must not drop the critical
-      // settings/session payload — fall back to undefined and let the client
-      // self-heal via a live fetch.
-      let announcements: Awaited<ReturnType<typeof getCurrentAnnouncements>> | undefined;
-      try {
-        announcements = await getCurrentAnnouncements({
-          domain: getRequestDomainColor(req),
-          userId: session?.user?.id,
-        });
-      } catch {
-        announcements = undefined;
-      }
+      // tosUpdate + announcements both only need (session, settings) — compute
+      // them concurrently to keep this hot per-bootstrap route off the critical
+      // path. announcements swallows its own errors (`.catch`) so it can never
+      // reject the Promise.all and drop the critical settings/session payload;
+      // tosUpdate can still throw to the outer catch (preserving prior behaviour).
+      const domainColor = getRequestDomainColor(req);
+      const [tosUpdate, announcements] = await Promise.all([
+        // Compute the `content.checkTosUpdate` result here (server-only API route)
+        // so `_app` getInitialProps can SSR-seed that query WITHOUT importing
+        // `content.service` — which pulls `fs/promises` into `_app`'s client-bundled
+        // graph and breaks the build. Domain fallback matches createContext's
+        // `getRequestDomainColor(req) ?? 'blue'` so the seed stays byte-identical to
+        // a live `checkTosUpdate` fetch.
+        session?.user
+          ? checkTosUpdate({ domainColor: domainColor ?? 'blue', userSettings: settings })
+          : Promise.resolve(undefined),
+        // SSR-seed the ambient `announcement.getAnnouncements` query (fires on every
+        // bootstrap, anon + authed). Computed here — NOT in `_app` getInitialProps —
+        // because `announcement.service` is server-only and importing it into `_app`
+        // leaks it into the client bundle. Match the resolver byte-for-byte: its
+        // `applyRequestDomainColor` middleware overrides the client input with
+        // `getRequestDomainColor(req)` (NO 'blue' fallback), so we pass the same raw
+        // value here. On failure fall back to undefined and let the client self-heal
+        // via a live fetch.
+        getCurrentAnnouncements({ domain: domainColor, userId: session?.user?.id }).catch(
+          () => undefined
+        ),
+      ]);
       res.status(200).json({
         settings,
         tosUpdate,
