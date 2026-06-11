@@ -6,19 +6,20 @@ import { trpcQuery } from './preview-trpc';
  * Image-content smoke (DB path): the image query actually returns real images for
  * browse content. This closes the gap preview-feed.spec.ts deliberately left open.
  *
- * Why this exists / why it's scoped to a model:
- *  - The BROAD /images feed (image.getInfinite with no entity filter) is served by
- *    the MEILISEARCH index path (getAllImagesIndex) under the prod-like default
- *    (features.imageIndexFeed / BitDex flag) — see image.controller.ts:300-320.
- *    The preview doesn't populate that index, so a broad image.getInfinite returns
- *    flaky/empty results in preview and can't be asserted on (same limitation as
- *    site search; preview-feed.spec.ts documents this and only covers the DB-backed
- *    models feed).
- *  - A query carrying a bare `modelId` (and no modelVersionId) sets requiresDbPath
- *    = true (image.controller.ts:306), so it runs through getAllImages — the DB
- *    path, with all the real nsfwLevel / ingestion / published filters — NOT the
- *    index. That IS reliable against the preview's dev-clone DB, and it exercises a
- *    real high-traffic surface: the model-detail image gallery.
+ * Two complementary surfaces are covered:
+ *  - DB path (first test): a query carrying a bare `modelId` (no modelVersionId)
+ *    sets requiresDbPath = true (image.controller.ts:306), so it runs through
+ *    getAllImages — the DB path, with all the real nsfwLevel / ingestion / published
+ *    filters — entirely within the preview's dev-clone DB. No shared-service
+ *    dependency, so it's the always-reliable signal. Exercises the model-detail
+ *    image gallery (a real high-traffic surface).
+ *  - Broad /images feed (second test): image.getInfinite with no entity filter
+ *    routes server-side through getAllImagesIndex — the MEILISEARCH index path
+ *    (image.controller.ts:300-320). The index (metrics_images_v1, ~114M docs) lives
+ *    on the in-cluster feeds-proxy, which previews DO reach via METRICS_SEARCH_HOST,
+ *    so the broad feed IS available to previews and covers the actual /images
+ *    surface. (Earlier belief that previews lacked the index was wrong — both feeds
+ *    backends are populated; verified 2026-06-11.)
  *
  * Strategy (self-contained, prod-clone-tolerant):
  *  1. model.getAll returns a page of real models the tester can see (proven by
@@ -77,8 +78,9 @@ test.describe('image gallery query returns real DB-backed images (tester)', () =
     expect(modelIds.length, 'model.getAll should yield real model ids to scan').toBeGreaterThan(0);
 
     // 2. Find the first model whose gallery resolves to >= 1 DB-backed image. Bare
-    // modelId forces getAllImages (the DB path), so this never touches the
-    // preview-unpopulated Meilisearch index.
+    // modelId forces getAllImages (the DB path), entirely within the dev-clone DB —
+    // no Meilisearch / feeds-proxy dependency, so this test never flakes on a shared
+    // search service (the broad-feed test below is the one that exercises meili).
     let firstImageId: number | undefined;
     let scanned = 0;
     for (const modelId of modelIds) {
@@ -106,5 +108,34 @@ test.describe('image gallery query returns real DB-backed images (tester)', () =
       typeof firstImageId,
       `at least one of ${scanned} scanned models should resolve to a DB-backed image with a numeric id`
     ).toBe('number');
+  });
+
+  // The REAL /images feed: a broad image.getInfinite (no entity filter) routes
+  // server-side through getAllImagesIndex — the Meilisearch index path
+  // (metrics_images_v1 on the in-cluster feeds-proxy, ~114M docs, populated on BOTH
+  // feeds backends; verified 2026-06-11). The preview's METRICS_SEARCH_HOST points
+  // at that real feeds-proxy, so the index IS available to previews. Asserting the
+  // broad feed therefore covers the actual /images surface, not just the model
+  // gallery DB path above. (Validates the meili-backed feed on the now-2-core
+  // preview pod; an earlier 1-core run intermittently returned 0 here, suspected
+  // server-side abort under CPU throttle — this confirms whether the CPU bump made
+  // it reliable.)
+  test('image.getInfinite broad (the /images feed via meili) returns a non-empty page', async ({
+    page,
+  }) => {
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+
+    const data = await trpcQuery<{ items: Array<{ id: number }> }>(
+      page.request,
+      'image.getInfinite',
+      { limit: IMAGE_LIMIT }
+    );
+    const items = data?.items ?? [];
+    expect(Array.isArray(items), 'image.getInfinite (broad) returns an items array').toBe(true);
+    expect(
+      items.length,
+      'the /images feed (meili-backed) should render >= 1 image'
+    ).toBeGreaterThan(0);
+    expect(typeof items[0]?.id, 'a feed image should carry a numeric id').toBe('number');
   });
 });
