@@ -38,6 +38,7 @@ const HEARTBEAT_FILE = process.env.LIVENESS_HEARTBEAT_FILE ?? '/tmp/heartbeat';
 const HEARTBEAT_INTERVAL_MS = 2000;
 
 let started = false;
+let loggedError = false;
 
 export function registerLivenessHeartbeat() {
   if (started) return;
@@ -46,8 +47,17 @@ export function registerLivenessHeartbeat() {
   const write = () => {
     try {
       fs.writeFileSync(HEARTBEAT_FILE, String(Math.floor(Date.now() / 1000)));
-    } catch {
-      // best-effort — never throw from the heartbeat
+      loggedError = false;
+    } catch (err) {
+      // best-effort — never throw from the heartbeat. But a PERSISTENT failure
+      // (read-only /tmp, disk full) makes the file go stale, which under the
+      // phase-2 exec liveness probe REAPS the pod — and this log is the only
+      // in-app signal for that. Log once at the start of each failure streak
+      // (reset on the next success) so it's greppable without spamming.
+      if (!loggedError) {
+        loggedError = true;
+        console.error(`[liveness-heartbeat] failed to write ${HEARTBEAT_FILE}:`, err);
+      }
     }
   };
 
