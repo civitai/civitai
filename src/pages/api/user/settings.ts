@@ -3,6 +3,7 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { checkTosUpdate } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
+import { getUserFollows } from '~/server/redis/caches';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 
 export default PublicEndpoint(
@@ -12,13 +13,14 @@ export default PublicEndpoint(
       // Use the content-settings view so SSR initialData matches the tRPC
       // getSettings response shape (JSON settings + User-column toggles).
       const settings = await getUserContentSettings(session?.user?.id ?? -1);
-      // tosUpdate + announcements both only need (session, settings) — compute
-      // them concurrently to keep this hot per-bootstrap route off the critical
-      // path. announcements swallows its own errors (`.catch`) so it can never
-      // reject the Promise.all and drop the critical settings/session payload;
-      // tosUpdate can still throw to the outer catch (preserving prior behaviour).
+      // tosUpdate + announcements + following all only need (session, settings) —
+      // compute them concurrently to keep this hot per-bootstrap route off the
+      // critical path. announcements + following swallow their own errors
+      // (`.catch`) so they can never reject the Promise.all and drop the critical
+      // settings/session payload; tosUpdate can still throw to the outer catch
+      // (preserving prior behaviour).
       const domainColor = getRequestDomainColor(req);
-      const [tosUpdate, announcements] = await Promise.all([
+      const [tosUpdate, announcements, following] = await Promise.all([
         // Compute the `content.checkTosUpdate` result here (server-only API route)
         // so `_app` getInitialProps can SSR-seed that query WITHOUT importing
         // `content.service` — which pulls `fs/promises` into `_app`'s client-bundled
@@ -39,11 +41,20 @@ export default PublicEndpoint(
         getCurrentAnnouncements({ domain: domainColor, userId: session?.user?.id }).catch(
           () => undefined
         ),
+        // SSR-seed the ambient, auth-gated `user.getFollowingUsers` query (fires
+        // on every logged-in bootstrap wherever a follow/notify button mounts).
+        // `getUserFollows` is the same redis-cached fn the resolver calls, so the
+        // seed is byte-identical (a `number[]` of followed userIds). Anon never
+        // fires this query (`enabled: !!currentUser`), so seed authed-only.
+        session?.user
+          ? getUserFollows(session.user.id).catch(() => undefined)
+          : Promise.resolve(undefined),
       ]);
       res.status(200).json({
         settings,
         tosUpdate,
         announcements,
+        following,
         session: session?.user && Object.keys(session.user).length > 0 ? session : null,
       });
     } catch (e) {
