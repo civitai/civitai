@@ -26,24 +26,43 @@ export const useFeatureFlagsReady = () => useContext(FeatureFlagsReadyCtx);
 export const FeatureFlagsProvider = ({
   children,
   flags: initialFlags,
+  userFlags,
 }: {
   children: React.ReactNode;
   flags: FeatureAccess;
+  // SSR-computed per-user toggleable overlay. When present, seeds the
+  // `user.getFeatureFlags` query so the client never fetches it on bootstrap.
+  userFlags?: FeatureAccess;
 }) => {
   const session = useSession();
   const [flags] = useState(initialFlags);
 
-  const { data: userFeatures = {} as FeatureAccess, isFetched } =
-    trpc.user.getFeatureFlags.useQuery(undefined, {
-      gcTime: Infinity,
-      staleTime: Infinity,
-      retry: 0,
-      enabled: !!session.data,
-    });
+  const {
+    data: userFeatures = {} as FeatureAccess,
+    isSuccess,
+    isError,
+  } = trpc.user.getFeatureFlags.useQuery(undefined, {
+    gcTime: Infinity,
+    staleTime: Infinity,
+    retry: 0,
+    enabled: !!session.data,
+    initialData: userFlags,
+  });
 
   // Logged-out (query disabled) → ready immediately on the complete SSR flags.
-  // Logged-in → ready once the user overlay has settled (success or error).
-  const ready = !session.data || isFetched;
+  // Logged-in → ready once the per-user overlay is KNOWN, i.e. the query has
+  // SETTLED (success or error) — matching #2464's original `isFetched` gate.
+  //
+  // Why `isSuccess || isError` instead of `isFetched`: with an SSR seed
+  // (`initialData`) React Query marks the query `isSuccess: true` from frame 0
+  // and never performs a network fetch (staleTime: Infinity), so `isFetched`
+  // stays FALSE forever — which would wedge readiness false for every seeded
+  // logged-in user and permanently hide the chat icon + 3 migration alerts.
+  // `isSuccess` flips true immediately on the seed (no flash: user flags are
+  // present from frame 0). The `|| isError` arm preserves the no-seed error
+  // path (retry: 0): a failed client fetch still settles to ready, exactly as
+  // `isFetched` did, so consumers don't hang forever on a transient failure.
+  const ready = !session.data || isSuccess || isError;
 
   const featureFlags = useMemo(
     () => ({

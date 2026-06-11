@@ -56,6 +56,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { CheckTosUpdateResult } from '~/server/services/content.service';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
@@ -99,6 +100,8 @@ type CustomAppProps = {
   colorScheme: 'light' | 'dark' | 'auto';
   cookies: ParsedCookies;
   flags: FeatureAccess;
+  userFeatureFlags?: FeatureAccess;
+  tosUpdate?: CheckTosUpdateResult;
   seed: number;
   settings: UserContentSettings;
   browsingSettingsAddons: BrowsingSettingsAddon[];
@@ -120,6 +123,8 @@ function MyApp(props: CustomAppProps) {
       colorScheme,
       cookies = parseCookies(getCookies()),
       flags,
+      userFeatureFlags,
+      tosUpdate,
       seed = Date.now(),
       canIndex,
       hasAuthCookie,
@@ -174,6 +179,7 @@ function MyApp(props: CustomAppProps) {
       seed={seed}
       canIndex={canIndex}
       settings={settings}
+      tosUpdate={tosUpdate}
       region={region}
       domain={domain}
       host={host}
@@ -202,7 +208,7 @@ function MyApp(props: CustomAppProps) {
                 <RegisterCatchNavigation />
                 <RouterTransition />
                 {/* <ChadGPT isAuthed={!!session} /> */}
-                <FeatureFlagsProvider flags={flags}>
+                <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
                   <GoogleAnalytics />
                   <AccountProvider>
                     <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
@@ -330,10 +336,14 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // Read the verified-bot header set by botDetectionMiddleware.
   const verifiedBot = parseVerifiedBotHeader(request.headers[VERIFIED_BOT_HEADER]);
 
-  const { settings, session } = await fetch(`${baseUrl as string}/api/user/settings`, {
+  const { settings, session, tosUpdate } = await fetch(`${baseUrl as string}/api/user/settings`, {
     headers: { ...request.headers } as HeadersInit,
   }).then(async (res) => {
-    const data: { settings: UserContentSettings; session: Session | null } = await res.json();
+    const data: {
+      settings: UserContentSettings;
+      tosUpdate?: CheckTosUpdateResult;
+      session: Session | null;
+    } = await res.json();
     return data;
   });
   // Pass these via the request so we can use them in SSR. Resolve the per-user
@@ -342,10 +352,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // every full render's critical path. SSR-injecting the addons keeps the
   // `system.getBrowsingSettingAddons` round-trip off api-primary (it becomes
   // `initialData` for the client provider).
-  const [{ getFeatureFlagsAsync }, { getBrowsingSettingAddons }] = await Promise.all([
-    import('~/server/services/feature-flags.service'),
-    import('~/server/services/system-cache'),
-  ]);
+  const [{ getFeatureFlagsAsync, computeUserFeatureFlagsOverlay }, { getBrowsingSettingAddons }] =
+    await Promise.all([
+      import('~/server/services/feature-flags.service'),
+      import('~/server/services/system-cache'),
+    ]);
   const [flags, browsingSettingsAddons] = await Promise.all([
     getFeatureFlagsAsync({
       user: session?.user,
@@ -355,13 +366,35 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     getBrowsingSettingAddons(),
   ]);
 
+  const domain = getRequestDomainColor(request);
+
+  // SSR-inject two ambient per-bootstrap trpc results that fire on every
+  // logged-in page load but are fully derivable from data already fetched here.
+  // Both client queries gate on a logged-in user, so only seed for sessions.
+  // - userFeatureFlags: the per-user toggleable-feature overlay
+  //   (`user.getFeatureFlags`), a pure function of `settings.features` + the SSR
+  //   host `flags`. Computed here via the SAME shared function the resolver uses
+  //   (fs-free, safe in this client-bundled getInitialProps graph).
+  // - tosUpdate: the `content.checkTosUpdate` result — computed server-side in the
+  //   `/api/user/settings` route above and delivered via that fetch, so we never
+  //   import `content.service` (and its `fs/promises` read) into this graph.
+  //   ToS lastmod only changes on a content deploy (never mid-session), so a
+  //   per-load SSR snapshot is exactly as fresh as the per-load client fetch.
+  // Only seed when the SSR `/api/user/settings` snapshot actually succeeded; on
+  // the rare failed-snapshot path (`settings` undefined) leave the seed undefined
+  // so the client query self-heals via a real fetch (staleTime: Infinity would
+  // never refetch a seed). The settings route applies the same gate to tosUpdate.
+  let userFeatureFlags: FeatureAccess | undefined;
+  if (session?.user && settings) {
+    userFeatureFlags = computeUserFeatureFlagsOverlay(settings.features, flags);
+  }
+
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
   } else if (hasAuthCookie) {
     deleteCookie(civitaiTokenCookieName, appContext.ctx);
     hasAuthCookie = false;
   }
-  const domain = getRequestDomainColor(request);
 
   return {
     pageProps: {
@@ -374,6 +407,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       settings,
       browsingSettingsAddons,
       flags,
+      userFeatureFlags,
+      tosUpdate,
       seed: Date.now(),
       hasAuthCookie,
       region,

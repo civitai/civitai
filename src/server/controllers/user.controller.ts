@@ -129,8 +129,8 @@ import { verifyCaptchaToken } from '../recaptcha/client';
 import { createBuzzTransaction } from '../services/buzz.service';
 import type { FeatureAccess } from '../services/feature-flags.service';
 import {
-  domainRestrictedToggleableKeys,
-  toggleableFeatures,
+  computeUserFeatureFlagsOverlay,
+  defaultToggleableFeatures,
 } from '../services/feature-flags.service';
 import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -1288,35 +1288,14 @@ export const deleteUserPaymentMethodHandler = async ({
   }
 };
 
-const defaultToggleableFeatures = toggleableFeatures.reduce(
-  (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
-  {} as FeatureAccess
-);
 export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     const { id } = ctx.user;
-    const { features = {} } = await getUserSettings(id);
+    const { features } = await getUserSettings(id);
 
-    // filter toggleable features from user settings
-    const filteredUserFeatures = Object.keys(features).reduce(
-      (acc, key) =>
-        toggleableFeatures.some((x) => x.key === key) ? { ...acc, [key]: features[key] } : acc,
-      {} as FeatureAccess
-    );
-
-    const result = {
-      ...defaultToggleableFeatures,
-      ...filteredUserFeatures,
-    } as FeatureAccess;
-
-    // Don't let toggleable defaults override domain restrictions
-    for (const key of domainRestrictedToggleableKeys) {
-      if (key in result && !ctx.features[key]) {
-        delete result[key];
-      }
-    }
-
-    return result;
+    // Shared pure overlay computation — also used by the SSR seed in _app
+    // getInitialProps so the injected initialData byte-matches this response.
+    return computeUserFeatureFlagsOverlay(features, ctx.features);
   } catch (error) {
     throw throwDbError(error);
   }
