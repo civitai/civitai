@@ -43,13 +43,30 @@ that verifies locally via JWKS. See [centralized-auth-app.md](centralized-auth-a
 - [ ] **7. Full `createUser` side-effects on hub signup.** Username provisioning is done; signup
       rewards, default cosmetics, and referral handling still don't run on a hub-originated signup.
       Product decision: replicate in the hub, or have the hub call a shared main-app endpoint.
-- [ ] **8. `TOKEN_STATE='refresh'` handling in the hub.** The hub treats only `'invalid'` as
-      revoked; it doesn't re-mint on `'refresh'`. Stale claims persist until token expiry for
-      hub-read sessions. (Main-app spokes still re-mint via `refreshToken`.)
+- [~] **8. `TOKEN_STATE='refresh'` handling — SUPERSEDED by the thin-token design.** The fat-token
+      refresh machinery (`checkSession`-on-`'refresh'`, `getState`, `createSpokeSessionChecker`,
+      `/userinfo`-on-refresh) was built and validated but **not committed**, then superseded: thin
+      cookies have no snapshot to refresh. See **[thin-session-token-design.md](./thin-session-token-design.md)**
+      (replaces #8 and #11). Keep from that work: the verifier, signer, per-token track/invalidate,
+      and `/api/auth/userinfo` (repurposed as the shared resolve source).
 - [ ] **9. Cross-root `.red` SSO.** Keep the session cookie `SameSite=Lax` (correct/secure for
       `*.civitai.com`). When `.red` is needed, do the swap via a top-level navigation redirect
       (lax cookies ride top-level GETs) rather than a credentialed background fetch — no need to
       weaken to `SameSite=None`.
+- [ ] **11. THIN session token — DECIDED.** Full design (cookie = identity only; resolve the user from
+      a shared source per request; `@civitai/auth` auto-wires redis+db and owns `getSessionUser`;
+      `verifyToken` vs `getSessionUser` split; revocation without `SESSION.ALL`; per-app implementation
+      for the hub + main app): **[thin-session-token-design.md](./thin-session-token-design.md)**.
+      Clincher = cross-root consistency (`.com`/`.red` separate cookies can't be kept coherent as fat
+      snapshots). First gating step: the **field audit** in that doc.
+- [ ] **12. Main app onto `@civitai/auth` — folded into the thin-token design.** The main app's own
+      marker logic (`refreshToken`/`token-tracking`/`session-invalidation`) is reworked as part of the
+      thin migration (always-resolve `session.user`, drop the refresh/re-mint path, `SESSION.ALL`, and
+      `needsCookieRefresh`; keep single-session invalidate). Per-app steps + the keep/drop list are in
+      **[thin-session-token-design.md](./thin-session-token-design.md)** ("Implementation — main civitai
+      app"). The earlier fat-token mapping in [auth-hub-main-app-changes.md](./auth-hub-main-app-changes.md)
+      is partly superseded — the de-dup goal stands, the `createSessionChecker` mechanism does not.
+      **Timing:** the hot `session()`/`refreshToken` path still lands AFTER the dry-run.
 
 ## 🧪 Testing
 
