@@ -24,9 +24,11 @@ import { trpcMutation, uniqueToken } from './preview-trpc';
  *    entityType: enum(reactableEntities incl. 'post'); reaction: enum(ReviewReactions) }.
  *    ReviewReactions.Like = 'Like' (enums.ts:355). The mutation is FIRE-AND-FORGET:
  *    the router calls toggleReactionHandler(...).catch(handleLogError) and returns
- *    nothing (reaction.router.ts:13-17), so the tRPC result is `undefined`. Success
+ *    nothing (reaction.router.ts:13-17), which superjson serializes as `json: null`
+ *    over the wire (NOT undefined — confirmed against a live preview run). Success
  *    therefore = the call RESOLVES (the helper throws on any HTTP/tRPC error, so
- *    reaching past it means auth + rate-limit + handler-dispatch all accepted it).
+ *    reaching past it means auth + rate-limit + handler-dispatch all accepted it);
+ *    we assert the resolved value is nullish rather than a specific type.
  *  - commentv2.upsert (commentv2.router.ts:62 guardedProcedure .input(upsertCommentv2Schema))
  *    — upsertCommentv2Schema (commentv2.schema.ts) extends commentConnectorSchema
  *    ({ entityId: number; entityType: enum incl. 'post' }) with a non-empty sanitized
@@ -58,17 +60,18 @@ test.describe('tester self-seeds a post, reacts to it, and comments on it (mutat
     });
     expect(typeof post?.id, 'post.create should return a numeric post id').toBe('number');
 
-    // 2. React to that exact post. reaction.toggle is fire-and-forget (returns
-    // undefined), so success = the call resolves without the helper throwing. A
-    // broken auth/rate-limit/dispatch path would surface as an HTTP/tRPC error here.
-    await expect(
-      trpcMutation(page.request, 'reaction.toggle', {
-        entityId: post!.id,
-        entityType: 'post',
-        reaction: 'Like',
-      }),
-      'reaction.toggle should be accepted (resolve, not throw)'
-    ).resolves.toBeUndefined();
+    // 2. React to that exact post. reaction.toggle is fire-and-forget: it resolves
+    // to null over the wire (superjson encodes the void return as json:null), so
+    // success = the call resolves without the helper throwing. A broken
+    // auth/rate-limit/dispatch path would surface as an HTTP/tRPC error here.
+    const reaction = await trpcMutation(page.request, 'reaction.toggle', {
+      entityId: post!.id,
+      entityType: 'post',
+      reaction: 'Like',
+    });
+    // `?? null` collapses null/undefined alike so the assertion is robust to the
+    // exact void encoding — the point is "it was accepted", not its serialized form.
+    expect(reaction ?? null, 'reaction.toggle should be accepted (resolve, not throw)').toBeNull();
 
     // 3. Comment on that exact post. upsert returns the created comment row, so we
     // assert it came back with a numeric id and that our token survived sanitization
