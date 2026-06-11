@@ -318,15 +318,15 @@ test.describe('SSR-injected announcements (anonymous)', () => {
     ).toHaveLength(0);
   });
 
-  test('SSR seed byte-equals a live anon fetch', async ({ page }) => {
-    await page.goto(ANON_LANDING, { waitUntil: 'domcontentloaded' });
-
-    const seed = await readPageProp(page, 'announcements');
-    expect(seed.present, 'announcements seed present in __NEXT_DATA__').toBe(true);
-
-    const live = await fetchTrpcQueryJson(page, ANNOUNCEMENTS_PROCEDURE, { domain: 'blue' });
-    assertAnnouncementsSeedEqualsLive(seed.value, live, 'anon');
-  });
+  // No anon "byte-equals a live fetch" test: the preview-auth gate blocks ALL
+  // anonymous /api/trpc/* and 302-redirects to /login, so an anonymous live
+  // fetch of announcement.getAnnouncements returns the login HTML (200), never
+  // tRPC JSON — JSON.parse then fails on "<!DOCTYPE". A live-fetch comparison is
+  // only possible with an authed session, and that byte-equality is already
+  // covered by the "announcements (logged-in) › SSR seed byte-equals a live
+  // fetch" test above. The anon coverage that matters — seed present in
+  // __NEXT_DATA__ and NO getAnnouncements request on bootstrap (the SSR-inject
+  // contract) — is asserted in the test above.
 });
 
 /**
