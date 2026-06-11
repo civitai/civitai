@@ -41,8 +41,10 @@ import { trpcMutation, trpcQuery, uniqueToken } from './preview-trpc';
  *  - collection.getUserCollectionItemsByItem  input getUserCollectionItemsByItemSchema
  *    (collection.schema.ts:191): collectionItemSchema with a refine requiring EXACTLY
  *    one resource id — we pass { type:'Post', postId }. Returns an array of the
- *    caller's collections that contain the item, each `{ id: collectionId, ... }`
- *    (collection.service.ts). We assert our collection id is in it.
+ *    caller's CollectionItem rows that contain the item, each keyed by
+ *    `collectionId` (NOT `id`) — verified against a live preview response:
+ *    [{ collectionId, addedById, tagId, collection:{...}, canRemoveItem }]. We
+ *    assert our collection id is among them.
  */
 
 const ROLE = 'tester' as const;
@@ -91,12 +93,15 @@ test.describe('tester creates a collection and saves an item into it (mutation f
     // 4. DETERMINISTIC read-back: the tester's collections containing this post must
     // include the collection we just saved into. This proves the write persisted
     // (not just 200-OK'd) — independent of saveItem's exact status string.
-    const owning = await trpcQuery<Array<{ id: number }>>(
+    const owning = await trpcQuery<Array<{ collectionId: number }>>(
       page.request,
       'collection.getUserCollectionItemsByItem',
       { type: 'Post', postId: post!.id }
     );
-    const owningIds = (owning ?? []).map((c) => c.id);
+    // Each entry is a CollectionItem row keyed by `collectionId` (NOT `id`) —
+    // verified against a live preview response:
+    // [{ collectionId, addedById, tagId, collection:{...}, canRemoveItem }].
+    const owningIds = (owning ?? []).map((c) => c.collectionId);
     expect(
       owningIds,
       `the post should now live in the seeded collection (${collection!.id}); saw: ${owningIds.join(
