@@ -28,8 +28,9 @@ import { trpcMutation, trpcQuery, uniqueToken } from './preview-trpc';
  *    recommended: boolean, details? } all required except id/details.
  *    upsertResourceReviewHandler → upsertResourceReview returns the review incl. `.id`.
  *  - resourceReview.getUserResourceReview  protected; input { modelId?, modelVersionId? }
- *    (resourceReview.schema.ts:27); returns the caller's review for that version (or
- *    null). We assert it came back with a numeric id.
+ *    (resourceReview.schema.ts:27); returns an ARRAY of the caller's reviews for the
+ *    version (verified live: [{ id, modelVersionId, ... }]), not a single object —
+ *    we read element [0]. Used both to make the upsert idempotent and to read back.
  *  - resourceReview.delete  protected; input getByIdSchema ({ id }); owner cleanup.
  */
 
@@ -62,16 +63,19 @@ test.describe('tester reviews a model (mutation flow)', () => {
     const modelVersionId = pick.modelVersions![0].id;
 
     // 2. Make the write idempotent: a review is unique per (userId, modelVersionId),
-    // and upsert WITHOUT an id always takes the create path (which would throw on a
-    // leftover/concurrent row). So look up any existing tester review for this
+    // and upsert WITHOUT an id always takes the create path (which throws a CONFLICT
+    // on a leftover/concurrent row). So look up any existing tester review for this
     // version first and pass its id (→ update path) when present; otherwise create.
-    const existing = await trpcQuery<{ id?: number } | null>(
+    // NOTE: getUserResourceReview returns an ARRAY of the caller's reviews for the
+    // version (verified live: [{ id, modelVersionId, ... }]), NOT a single object.
+    const existing = await trpcQuery<Array<{ id?: number }>>(
       page.request,
       'resourceReview.getUserResourceReview',
       { modelVersionId }
     );
+    const existingId = existing?.[0]?.id;
     const review = await trpcMutation<{ id: number } | null>(page.request, 'resourceReview.upsert', {
-      ...(typeof existing?.id === 'number' ? { id: existing.id } : {}),
+      ...(typeof existingId === 'number' ? { id: existingId } : {}),
       modelId,
       modelVersionId,
       rating: 5, // a consistent positive review (recommended:true)
@@ -81,14 +85,17 @@ test.describe('tester reviews a model (mutation flow)', () => {
     expect(typeof review?.id, 'resourceReview.upsert should return a numeric review id').toBe('number');
 
     // 3. DETERMINISTIC read-back: the tester now has a review for this version.
-    // Assert only that A review exists (numeric id) — NOT its exact contents — so a
-    // concurrent run reviewing the same version can't flake this.
-    const mine = await trpcQuery<{ id?: number } | null>(
+    // getUserResourceReview returns an ARRAY — assert at least one entry has a numeric
+    // id (a review EXISTS), NOT its exact contents, so a concurrent run reviewing the
+    // same version can't flake this.
+    const mine = await trpcQuery<Array<{ id?: number }>>(
       page.request,
       'resourceReview.getUserResourceReview',
       { modelVersionId }
     );
-    expect(typeof mine?.id, 'getUserResourceReview should return the tester review id').toBe('number');
+    expect(typeof mine?.[0]?.id, 'getUserResourceReview should return the tester review').toBe(
+      'number'
+    );
 
     // 4. Best-effort cleanup: delete our review so it doesn't pollute the model's
     // aggregates on the shared dev clone. Non-fatal — the assertions above are the point.
