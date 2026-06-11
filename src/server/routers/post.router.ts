@@ -7,6 +7,7 @@ import {
   addPostTagHandler,
   addResourceToPostImageHandler,
   createPostHandler,
+  createPostWithImagesHandler,
   deletePostHandler,
   getPostContestCollectionDetailsHandler,
   getPostHandler,
@@ -25,6 +26,7 @@ import { getByIdSchema } from './../schema/base.schema';
 import {
   addPostTagSchema,
   addResourceToPostImageInput,
+  createPostWithImagesSchema,
   getPostTagsSchema,
   postCreateSchema,
   postsQuerySchema,
@@ -106,6 +108,10 @@ export const postRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postCreateSchema)
     .mutation(createPostHandler),
+  createWithImages: guardedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(createPostWithImagesSchema)
+    .mutation(createPostWithImagesHandler),
   update: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postUpdateSchema)
