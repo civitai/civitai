@@ -350,10 +350,15 @@ export async function runWarmup(): Promise<void> {
   }
 
   const port = process.env.PORT ?? '3000';
-  // Always self-call over loopback regardless of the bind HOSTNAME (the
-  // standalone server binds 0.0.0.0 by default; 127.0.0.1 is always reachable
-  // in-pod and avoids any external DNS/hostname resolution).
-  const baseUrl = `http://127.0.0.1:${port}`;
+  // Self-call the host the standalone server ACTUALLY binds to. Next's
+  // server.js listens on `process.env.HOSTNAME || '0.0.0.0'`, and Kubernetes
+  // sets HOSTNAME to the POD NAME — so the server binds the pod-name interface
+  // ONLY and 127.0.0.1 is REFUSED (verified on a live preview pod: loopback →
+  // ECONNREFUSED, $HOSTNAME → 200). Mirror that bind: use HOSTNAME when set
+  // (k8s/standalone), fall back to loopback for local/dev where HOSTNAME is
+  // unset and the server binds 0.0.0.0. WARM_HOST overrides if ever needed.
+  const host = process.env.WARM_HOST || process.env.HOSTNAME || '127.0.0.1';
+  const baseUrl = `http://${host}:${port}`;
   const timeoutMs = intFromEnv('WARMUP_TIMEOUT_MS', 60_000);
   const startedAt = Date.now();
 
