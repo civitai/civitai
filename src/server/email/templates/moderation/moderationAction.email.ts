@@ -1,3 +1,4 @@
+import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
 import { simpleEmailWithTemplate } from '~/server/email/templates/util';
 
@@ -83,13 +84,16 @@ export const moderationActionEmail = createEmail({
   html({ username, kind, reason, ctaUrl }: ModerationActionEmailData) {
     const { heading, intro, positive } = moderationActionConfig[kind];
 
+    // Escape user/moderator-supplied text before interpolating into HTML —
+    // prevents markup injection and stray characters (e.g. `<`, `&`) from
+    // breaking email rendering. `intro`/`heading` are static config, no escape.
     const reasonBlock = reason
-      ? `<p><strong>Reason:</strong><br/>${reason}</p>`
+      ? `<p><strong>Reason:</strong><br/>${escapeHtml(reason)}</p>`
       : '';
     const supportLine = positive ? '' : `<p>${SUPPORT_LINE}</p>`;
 
     const body = `
-      <p>Hi ${username},</p>
+      <p>Hi ${escapeHtml(username)},</p>
       <p>${intro}</p>
       ${reasonBlock}
       ${supportLine}
@@ -100,7 +104,7 @@ export const moderationActionEmail = createEmail({
       body,
       ...(positive
         ? {}
-        : { btnUrl: ctaUrl ?? SUPPORT_URL, btnLabel: 'Contact Support' }),
+        : { btnUrl: escapeHtml(ctaUrl ?? SUPPORT_URL), btnLabel: 'Contact Support' }),
     });
   },
 

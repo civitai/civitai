@@ -17,11 +17,11 @@ and strike-void has an in-app notification. This task adds the missing surfaces.
 
 | # | Event | Tone | Hook | Today |
 |---|-------|------|------|-------|
-| 1 | Account banned | negative | `toggleBan()` `services/user.service.ts:1571` | nothing |
+| 1 | Account banned | negative | `toggleBan()` `services/user.service.ts` | nothing |
 | 2 | Ban lifted (overturn) | positive | `toggleBan()` (same) | nothing |
-| 3 | Generation restriction **upheld** | negative | `routers/user-restriction.router.ts:119` | in-app notif |
-| 4 | Generation restriction **overturned** | positive | same `:127` | in-app notif |
-| 5 | Entity appeal **rejected** (= moderation upheld) | negative | `resolveEntityAppeal()` `services/report.service.ts:578` loop | in-app notif |
+| 3 | Generation restriction **upheld** | negative | `routers/user-restriction.router.ts` | in-app notif |
+| 4 | Generation restriction **overturned** | positive | same | in-app notif |
+| 5 | Entity appeal **rejected** (= moderation upheld) | negative | `resolveEntityAppeal()` `services/report.service.ts` loop | in-app notif |
 | 6 | Entity appeal **approved** (= overturned) | positive | same | in-app notif |
 
 **"Upheld" mapping:** moderator decides to keep the restriction → email the user the
@@ -69,7 +69,7 @@ export { moderationActionEmail } from './moderation/moderationAction.email';
 
 ### Copy
 - **account-banned** — "Your Civitai account has been banned." + `publicBanReasonLabel`
-  (`banReasonDetails`, `server/common/constants.ts:1496`) + `detailsExternal` free text.
+  (`banReasonDetails`, `server/common/constants.ts`) + `detailsExternal` free text.
   **Use `publicBanReasonLabel`, never `privateBanReasonLabel`.**
 - **account-unbanned** — standard reinstatement wording, no stored reason (`banDetails` is
   wiped on unban): "Your account has been reinstated and full access restored."
@@ -78,10 +78,10 @@ export { moderationActionEmail } from './moderation/moderationAction.email';
 
 ## Hook changes
 
-### 1. Ban — `toggleBan()` `services/user.service.ts:1571`
+### 1. Ban — `toggleBan()` `services/user.service.ts`
 Single choke point — the `mod/ban-user.ts` webhook routes through this service fn too.
-- Line 1581: add `email: true` to the `getUserById` select.
-- After `updatedUser` (line 1605) + cleanup, branch:
+- Add `email: true` to the `getUserById` select.
+- After `updatedUser` + cleanup, branch:
   - just-banned (`!bannedAt`) → `kind: 'account-banned'`,
     `reason = publicBanReasonLabel + detailsExternal`.
   - just-lifted → `kind: 'account-unbanned'`.
@@ -89,16 +89,16 @@ Single choke point — the `mod/ban-user.ts` webhook routes through this service
   overturn).
 - Wrap send in `try/catch` → `logToAxiom`; never block the ban.
 
-### 2. Restriction — `routers/user-restriction.router.ts` `resolve` (~after line 150)
+### 2. Restriction — `routers/user-restriction.router.ts` `resolve`
 - `restriction` select only has `userId` → add a `{ email, username }` fetch.
 - `Upheld` → `restriction-upheld`; `Overturned` → `restriction-overturned`;
   `reason = resolvedMessage`.
 - try/catch → logToAxiom.
 
-### 3. Appeals — `resolveEntityAppeal()` `services/report.service.ts:548` (bulk)
+### 3. Appeals — `resolveEntityAppeal()` `services/report.service.ts` (bulk)
 - Batch-fetch `{ id, email, username }` for all `appeal.userId`s **once** before the loop
   (avoid N+1).
-- In the existing per-appeal loop (~line 645): `Rejected` → `appeal-rejected`,
+- In the existing per-appeal loop: `Rejected` → `appeal-rejected`,
   `Approved` → `appeal-approved`, `reason = resolvedMessage`.
 - Send to all appeal users regardless of `entityType` (matches the existing notification,
   which fires for every appeal even though the entity switch only handles `Image`).

@@ -116,4 +116,20 @@ describe('moderationActionEmail', () => {
     expect(html).toContain('https://civitai.com/appeal/123');
     expect(html).not.toContain(SUPPORT_URL);
   });
+
+  it('escapes HTML in username and reason to prevent markup injection', () => {
+    const html = moderationActionEmail.getHtml({
+      to: 'user@example.com',
+      username: '<script>alert(1)</script>',
+      kind: 'account-banned',
+      reason: 'Used <b>blocked</b> content & violated ToS',
+    });
+    // raw markup must not survive
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).not.toContain('<b>blocked</b>');
+    // escaped entities are present instead
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).toContain('&lt;b&gt;blocked&lt;/b&gt;');
+    expect(html).toContain('&amp;');
+  });
 });
