@@ -452,11 +452,14 @@ export abstract class BlobData {
 
 export class ImageBlob extends BlobData {
   readonly type = 'image' as const;
-  width!: number;
-  height!: number;
-  aspect!: number;
-  previewUrl?: string | null;
-  previewUrlExpiresAt?: string | null;
+  // `declare` — these are populated by `BlobData`'s `Object.assign(this, data)`. Without it,
+  // under `useDefineForClassFields` (SWC/Next default) the field declarations would re-run
+  // after `super()` and reset the assigned values to `undefined`.
+  declare width: number;
+  declare height: number;
+  declare aspect: number;
+  declare previewUrl?: string | null;
+  declare previewUrlExpiresAt?: string | null;
   constructor(args: BlobConstructorArgs & { data: NormalizedImageOutput }) {
     super(args);
   }
@@ -464,9 +467,10 @@ export class ImageBlob extends BlobData {
 
 export class VideoBlob extends BlobData {
   readonly type = 'video' as const;
-  width!: number;
-  height!: number;
-  aspect!: number;
+  // `declare` — see ImageBlob; assigned by the base, must not be re-initialized here.
+  declare width: number;
+  declare height: number;
+  declare aspect: number;
   constructor(args: BlobConstructorArgs & { data: NormalizedVideoOutput }) {
     super(args);
   }
@@ -478,7 +482,8 @@ export class AudioBlob extends BlobData {
   /** Audio has no intrinsic dimensions — these defaults size the card layout uniformly with image/video. */
   readonly width = 512;
   readonly height = 512;
-  duration?: number | null;
+  // `declare` — assigned by the base `Object.assign`; see ImageBlob.
+  declare duration?: number | null;
   constructor(args: BlobConstructorArgs & { data: NormalizedAudioOutput }) {
     super(args);
   }
