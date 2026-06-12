@@ -15,6 +15,8 @@ import { MentionNode } from '~/components/TipTap/MentionNode';
 import { InstagramNode } from '~/components/TipTap/InstagramNode';
 import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
+import { TimestampNode } from '~/shared/tiptap/timestamp.node';
+import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 
 const extensions = [
   StarterKit.configure({ heading: false }),
@@ -26,6 +28,7 @@ const extensions = [
   InstagramNode,
   MentionNode,
   StrawPollNode,
+  TimestampNode,
 ];
 
 export function RenderRichText({ content }: { content: Record<string, any> }) {
@@ -37,6 +40,9 @@ export function RenderRichText({ content }: { content: Record<string, any> }) {
       options: {
         nodeMapping: {
           media: ({ node }) => <EdgeMediaComponent {...(node.attrs as any)} />,
+          timestamp: ({ node }) => (
+            <LocalTimestamp value={node.attrs.value} style={node.attrs.style} />
+          ),
           // For unconsented CA visitors, replace third-party embed nodes with a
           // placeholder so the iframe is never inserted in the DOM.
           ...(!allowed && {

@@ -316,6 +316,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'video',
                 'polls',
                 'colors',
+                'timestamp',
               ]}
               withAsterisk
               stickyToolbar

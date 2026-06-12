@@ -1,6 +1,7 @@
 import type { TypographyStylesProviderProps } from '@mantine/core';
 import { useComputedColorScheme, lighten, darken } from '@mantine/core';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import { formatDiscordTimestamp, normalizeTimestampStyle } from '~/utils/timestamp-helpers';
 
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { needsColorSwap } from '~/utils/html-helpers';
@@ -43,6 +44,7 @@ export function RenderHtml({
   const colorScheme = useComputedColorScheme('dark');
   const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
   const { allowed: thirdPartyAllowed } = useThirdPartyConsent();
+  const contentRef = useRef<HTMLDivElement>(null);
 
   html = useMemo(() => {
     let processedHtml = html;
@@ -190,9 +192,25 @@ export function RenderHtml({
     thirdPartyAllowed,
   ]);
 
+  // RenderHtml injects a raw HTML string, so Discord-style `<t:...>` timestamps
+  // arrive as `<time data-type="timestamp">` elements carrying a UTC fallback.
+  // Rewrite them to the viewer's local time once mounted on the client.
+  useEffect(() => {
+    const container = contentRef.current;
+    if (!container) return;
+    const nodes = container.querySelectorAll<HTMLTimeElement>('time[data-type="timestamp"]');
+    nodes.forEach((node) => {
+      const seconds = parseInt(node.getAttribute('data-value') ?? '', 10);
+      if (!Number.isFinite(seconds)) return;
+      const style = normalizeTimestampStyle(node.getAttribute('data-style'));
+      node.textContent = formatDiscordTimestamp(seconds, style);
+      node.title = formatDiscordTimestamp(seconds, 'F');
+    });
+  }, [html]);
+
   return (
     <TypographyStylesWrapper {...props} className={clsx(classes.htmlRenderer, className)}>
-      <div dangerouslySetInnerHTML={{ __html: html }} />
+      <div ref={contentRef} dangerouslySetInnerHTML={{ __html: html }} />
     </TypographyStylesWrapper>
   );
 }
