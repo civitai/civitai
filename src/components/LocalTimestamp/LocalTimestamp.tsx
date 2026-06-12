@@ -1,11 +1,7 @@
 import { Tooltip } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import type { DiscordTimestampStyle } from '~/utils/timestamp-helpers';
-import {
-  DEFAULT_TIMESTAMP_STYLE,
-  formatDiscordTimestamp,
-  normalizeTimestampStyle,
-} from '~/utils/timestamp-helpers';
+import { formatDiscordTimestamp, normalizeTimestampStyle } from '~/utils/timestamp-helpers';
 
 type Props = {
   /** Unix timestamp in seconds. */
@@ -54,5 +50,3 @@ export function LocalTimestamp({ value, style, className }: Props) {
     </Tooltip>
   );
 }
-
-LocalTimestamp.defaultStyle = DEFAULT_TIMESTAMP_STYLE;

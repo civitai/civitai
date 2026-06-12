@@ -61,9 +61,3 @@ export function formatDiscordTimestamp(
   if (style === 'R') return base.fromNow();
   return base.format(STYLE_FORMAT[style]);
 }
-
-/** Build a canonical `<t:UNIX:STYLE>` tag from a date + style. */
-export function buildDiscordTimestampTag(date: Date, style: DiscordTimestampStyle): string {
-  const seconds = Math.floor(date.getTime() / 1000);
-  return `<t:${seconds}:${style}>`;
-}
