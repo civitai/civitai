@@ -34,6 +34,8 @@ import {
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { moderationActionEmail } from '~/server/email/templates';
+import { logToAxiom } from '~/server/logging/client';
 import { addTagVotes } from '~/server/services/tag.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -575,6 +577,17 @@ export async function resolveEntityAppeal({
   });
 
   const approved = status === AppealStatus.Approved;
+
+  // Batch-fetch recipients once to avoid N+1 lookups inside the loop.
+  const recipientIds = [...new Set(appeals.map((a) => a.userId))];
+  const recipients = await dbRead.user.findMany({
+    where: { id: { in: recipientIds } },
+    select: { id: true, email: true, username: true },
+  });
+  const recipientMap = new Map(recipients.map((u) => [u.id, u]));
+  // Dedupe emails: a user who appealed many entities at once gets one email.
+  const emailedUserIds = new Set<number>();
+
   for (const appeal of appeals) {
     switch (appeal.entityType) {
       case EntityType.Image:
@@ -655,6 +668,29 @@ export async function resolveEntityAppeal({
         resolvedMessage,
       },
     });
+
+    // Email the user once per resolution (deduped across their appeals).
+    if (!emailedUserIds.has(appeal.userId)) {
+      emailedUserIds.add(appeal.userId);
+      const recipient = recipientMap.get(appeal.userId);
+      if (recipient?.email) {
+        try {
+          await moderationActionEmail.send({
+            to: recipient.email,
+            username: recipient.username ?? 'User',
+            kind: approved ? 'appeal-approved' : 'appeal-rejected',
+            reason: resolvedMessage || undefined,
+          });
+        } catch (error) {
+          logToAxiom({
+            type: 'error',
+            name: 'appeal-email-failed',
+            message: (error as Error).message,
+            error,
+          });
+        }
+      }
+    }
   }
 
   return appeals;
