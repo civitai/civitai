@@ -14,15 +14,30 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { isDefined } from '~/utils/type-guards';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
+
+// Single chokepoint every endpoint wrapper funnels through (in place of a bare
+// `withAxiom`). Records a `civitai_app_http_errors_total` sample for any 5xx
+// response — however it's produced — by attaching one `finish` listener. Steady-
+// state cost is one listener registration + an int compare; the route
+// normalization runs only on 5xx. See src/server/prom/http-errors.ts.
+function withApiMetrics(
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void | NextApiResponse>
+) {
+  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    instrumentApiResponse(req, res);
+    return handler(req, res);
+  });
+}
 
 export function TokenSecuredEndpoint(
   token: string,
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
-  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (req.query.token !== token) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
@@ -86,7 +101,7 @@ export function PublicEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET']
 ) {
-  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const shouldStop = addCorsHeaders(req, res, allowedMethods);
     addPublicCacheHeaders(req, res);
     if (shouldStop) return;
@@ -102,7 +117,7 @@ export function AuthedEndpoint(
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET']
 ) {
-  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const shouldStop = addCorsHeaders(req, res, allowedMethods, { allowCredentials: true });
     if (shouldStop) return;
 
@@ -123,7 +138,7 @@ export function MixedAuthEndpoint(
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET']
 ) {
-  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
@@ -159,7 +174,7 @@ export function PartnerEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse, partner: Partner) => Promise<void>,
   allowedMethods: string[] = ['GET']
 ) {
-  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
@@ -177,7 +192,7 @@ export function ModEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse, user: SessionUser) => Promise<void>,
   allowedMethods: string[] = ['GET']
 ) {
-  return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (!req.method || !allowedMethods.includes(req.method)) {
       res.setHeader('Allow', allowedMethods);
       return res.status(405).json({ error: 'Method not allowed' });
