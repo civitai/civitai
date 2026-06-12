@@ -1,4 +1,4 @@
-import { mergeAttributes, Node, nodeInputRule, nodePasteRule } from '@tiptap/core';
+import { InputRule, mergeAttributes, Node, nodePasteRule } from '@tiptap/core';
 import {
   DEFAULT_TIMESTAMP_STYLE,
   formatDiscordTimestamp,
@@ -92,14 +92,20 @@ export const TimestampNode = Node.create({
   },
 
   addInputRules() {
+    // NB: tiptap's `nodeInputRule` offsets the replacement to the first capture
+    // group, so it would only swap the digits and leave the surrounding `<t:`
+    // and `:t>` behind. Use a plain InputRule that replaces the whole match.
+    const type = this.type;
     return [
-      nodeInputRule({
+      new InputRule({
         find: inputRegex,
-        type: this.type,
-        getAttributes: (match) => ({
-          value: match[1],
-          style: normalizeTimestampStyle(match[2]),
-        }),
+        handler: ({ state, range, match }) => {
+          state.tr.replaceWith(
+            range.from,
+            range.to,
+            type.create({ value: match[1], style: normalizeTimestampStyle(match[2]) })
+          );
+        },
       }),
     ];
   },

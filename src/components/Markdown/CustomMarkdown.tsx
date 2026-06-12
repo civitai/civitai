@@ -22,6 +22,7 @@ export function CustomMarkdown({
   components,
   className,
   remarkPlugins,
+  allowedElements,
   ...options
 }: CustomOptions) {
   const user = useCurrentUser();
@@ -29,6 +30,14 @@ export function CustomMarkdown({
   // Discord-style `<t:UNIX:STYLE>` timestamp support is available in every
   // markdown surface. Caller-provided remark plugins still run alongside it.
   const mergedRemarkPlugins = [remarkTimestamp, ...(remarkPlugins ?? [])];
+
+  // Many callers restrict `allowedElements` (e.g. `['a']`); with `unwrapDisallowed`
+  // that would strip the rendered `<time>` element and fall back to its raw UTC
+  // text. Always permit `time` so timestamps render in local time everywhere.
+  // When no allowlist is set, everything is allowed already, so leave it undefined.
+  const mergedAllowedElements = allowedElements
+    ? Array.from(new Set([...allowedElements, 'time']))
+    : undefined;
 
   const mergedComponents: Options['components'] = {
     ...components,
@@ -103,6 +112,7 @@ export function CustomMarkdown({
       <ReactMarkdown
         {...options}
         remarkPlugins={mergedRemarkPlugins}
+        allowedElements={mergedAllowedElements}
         className={clsx(className, 'markdown-content')}
         components={mergedComponents}
       />
