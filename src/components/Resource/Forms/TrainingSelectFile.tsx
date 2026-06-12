@@ -471,7 +471,9 @@ export default function TrainingSelectFile({
 
     try {
       const mediaType = thisTrainingDetails.mediaType ?? 'image';
-      const baseType = (thisTrainingDetails.baseModelType ?? 'sdxl') as TrainingBaseModelType;
+      // 'sd15' matches the server-side default in createTrainingWorkflow for versions
+      // that predate baseModelType.
+      const baseType = (thisTrainingDetails.baseModelType ?? 'sd15') as TrainingBaseModelType;
 
       // The orchestrator expects `continueFrom` as an AIR referencing the LoRA — the same
       // orchestrator-sourced AIR generation builds for epoch resources — not a file URL.

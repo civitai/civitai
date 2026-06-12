@@ -173,9 +173,9 @@ const aiToolkitTrainingDetailsParams = z.object({
   // Steps-based pricing: `steps` is the primary length knob (drives pricing);
   // `epochs` is the number of saved checkpoints. `epochs`-only (no `steps`) keeps
   // the legacy flat per-epoch pricing for back-compat.
-  epochs: z.number().optional(),
-  steps: z.number().optional(),
-  batchSize: z.number().optional(),
+  epochs: z.number().int().min(1).optional(),
+  steps: z.number().int().min(1).optional(),
+  batchSize: z.number().int().min(1).optional(),
   sampleCfgScale: z.number().optional(),
   sampleStrength: z.number().optional(),
   /** AIR of a previously-trained LoRA to continue training from. */
