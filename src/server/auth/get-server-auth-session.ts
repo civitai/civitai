@@ -8,6 +8,7 @@ import { getSessionFromBearerToken } from './bearer-token';
 import { SESSION_REFRESH_HEADER, SESSION_REFRESH_COOKIE } from '~/shared/constants/auth.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { callbackCookieName } from '~/libs/auth';
+import { USE_HUB_SESSION, getHubSession } from './session-client';
 
 function isValidCallbackUrl(value: string | undefined): boolean {
   if (!value) return false;
@@ -88,6 +89,18 @@ export const getServerAuthSession = async ({
     }
     return req.context.session as Session | null;
   }
+
+  // Thin-session cutover (flag, default OFF): resolve the cookie session via the centralized hub
+  // (verify → shared cache → hub on miss) instead of next-auth. Fails closed to null on any error — the
+  // legacy next-auth path below is the fallback whenever the flag is off. See docs/main-app-auth-cutover.md.
+  if (USE_HUB_SESSION) {
+    const session = await getHubSession(req as { cookies?: Partial<Record<string, string>> }).catch(
+      () => null
+    );
+    req.context.session = session;
+    return session;
+  }
+
   try {
     // Strip any malformed next-auth.callback-url cookie before next-auth's
     // assertConfig rejects the request with INVALID_CALLBACK_URL_ERROR.
