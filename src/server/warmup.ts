@@ -290,8 +290,10 @@ async function warmRoute(baseUrl: string, route: string): Promise<void> {
       const res = await fetch(url, { method: 'GET', headers: WARM_HEADERS, signal });
       lastStatus = res.status;
       // Read the body so the handler runs to completion (the response stream is
-      // part of the hot path we want JIT-compiled) and the socket frees up.
-      await res.text().catch(() => undefined);
+      // part of the hot path we want JIT-compiled) and the socket frees up. If
+      // the body stream hangs and the shared signal aborts, let it throw to the
+      // outer catch (LOW-2) so the route is logged errored, not a false success.
+      await res.text();
     } catch (err) {
       errored = true;
       // AbortSignal.timeout aborts with a TimeoutError DOMException; surface it
@@ -357,7 +359,14 @@ export async function runWarmup(): Promise<void> {
   // ECONNREFUSED, $HOSTNAME → 200). Mirror that bind: use HOSTNAME when set
   // (k8s/standalone), fall back to loopback for local/dev where HOSTNAME is
   // unset and the server binds 0.0.0.0. WARM_HOST overrides if ever needed.
-  const host = process.env.WARM_HOST || process.env.HOSTNAME || '127.0.0.1';
+  const rawHost = process.env.WARM_HOST || process.env.HOSTNAME || '127.0.0.1';
+  // Self-defend against the wildcard-bind case: if HOSTNAME is set to a wildcard
+  // (`0.0.0.0`/`::`) — e.g. someone adds the common `HOSTNAME=0.0.0.0` Next-k8s
+  // bind workaround — the server binds all interfaces (loopback included) but a
+  // wildcard is NOT a valid CONNECT target on Linux/undici. Normalize it to
+  // loopback so the warmer can't silently revert to the inert-ECONNREFUSED bug.
+  const host =
+    rawHost === '0.0.0.0' || rawHost === '::' || rawHost === '[::]' ? '127.0.0.1' : rawHost;
   const baseUrl = `http://${host}:${port}`;
   const timeoutMs = intFromEnv('WARMUP_TIMEOUT_MS', 60_000);
   const startedAt = Date.now();
