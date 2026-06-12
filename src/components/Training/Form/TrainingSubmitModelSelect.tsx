@@ -58,6 +58,8 @@ import {
 import { getAirModelLink, stringifyAIR } from '~/shared/utils/air';
 import {
   type AudioSampleOverride,
+  AI_TOOLKIT_EPOCHS,
+  aiToolkitStepDefault,
   getDefaultEngine,
   isSamplePromptsRequired,
   parseAudioCaption,
@@ -265,12 +267,22 @@ export const ModelSelect = ({
     // uses the static trainingSettings default of 'kohya' for the engine field itself)
     defaultParams.engine = engineToUse;
 
-    defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
+    if (features.trainingStepsPricing && engineToUse === 'ai-toolkit') {
+      // Steps-based pricing: steps is the primary length knob (prefilled per ecosystem),
+      // epochs = saved checkpoints (default 10), batchSize defaults to 1.
+      defaultParams.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
+      defaultParams.trainBatchSize = 1;
+      defaultParams.targetSteps = aiToolkitStepDefault(
+        (data.baseType ?? selectedRun.baseType) as TrainingBaseModelType
+      );
+    } else {
+      defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
 
-    defaultParams.targetSteps = Math.ceil(
-      ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
-        defaultParams.trainBatchSize
-    );
+      defaultParams.targetSteps = Math.ceil(
+        ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
+          defaultParams.trainBatchSize
+      );
+    }
 
     // Pre-fill sample prompts if required (AI Toolkit mandatory models or Flux2)
     const samplePrompts = data.samplePrompts || selectedRun.samplePrompts || ['', '', ''];
@@ -578,7 +590,6 @@ export const ModelSelect = ({
                       baseType="hidream-o1"
                       makeDefaultParams={makeDefaultParams}
                       isNew={new Date() < new Date('2026-06-15')}
-
                     />
                   )}
                   {features.animaTraining && (
