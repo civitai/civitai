@@ -45,10 +45,11 @@ const RenderFilters = () => {
         ]}
       />
       <ChipRefinementList title="Filter by type" attribute="type" sortBy={['name']} />
-      <ChipRefinementList
+      <SearchableMultiSelectRefinementList
         title="Filter by Base Model"
         attribute="details.baseModel"
         sortBy={['name']}
+        searchable
       />
       <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
       <SearchableMultiSelectRefinementList title="Tags" attribute="tags.name" searchable />
