@@ -577,9 +577,18 @@ export default function ModelDetailsV2({
     // Change the selected modelVersion based on querystring param
     if (loadingModel) return;
     const queryVersion = publishedVersions.find((v) => v.id === modelVersionId);
-    const hasSelected = publishedVersions.some((v) => v.id === selectedVersion?.id);
-    if (!hasSelected) setSelectedVersion(queryVersion ?? publishedVersions[0] ?? null);
-    if (selectedVersion && queryVersion !== selectedVersion) {
+    const current = publishedVersions.find((v) => v.id === selectedVersion?.id);
+    if (!current) {
+      // Selected version is no longer present (deep-link / removed version): fall back.
+      setSelectedVersion(queryVersion ?? publishedVersions[0] ?? null);
+    } else if (current !== selectedVersion) {
+      // Re-sync the held reference to the freshly-fetched object after a refetch. This
+      // replaces the query `onSuccess` removed in the RQ v5 migration; without it, the
+      // id-based effect below would compare a stale object ref and (with `router` in deps)
+      // loop on router.replace whenever a mod action invalidates model.getById.
+      setSelectedVersion(current);
+    }
+    if (selectedVersion && queryVersion?.id !== selectedVersion.id) {
       router.replace(
         getModelUrl({
           modelId: id,

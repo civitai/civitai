@@ -78,11 +78,12 @@ const RenderFilters = () => {
           { label: 'Newest', value: ModelSearchIndexSortBy[7] as string },
         ]}
       />
-      <ChipRefinementList
+      <SearchableMultiSelectRefinementList
         title="Filter by Base Model"
         attribute="version.baseModel"
         sortBy={['name']}
         limit={100}
+        searchable
       />
       <ChipRefinementList
         title="Filter by Model Type"

@@ -16,6 +16,7 @@ import { trace } from '@opentelemetry/api';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { registerCpuProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
+import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is
@@ -32,6 +33,35 @@ registerCpuProfiler();
 // enabled by base armed mode. Independent of OTEL.
 // See src/server/eventloop-longtask.ts.
 registerEventLoopLongTaskDetector();
+
+// Write an on-the-event-loop liveness heartbeat file (epoch-seconds, every 2s)
+// for an EXEC liveness probe to read. Lets the kubelet tell a busy-but-alive
+// pinned pod (loop still flushing timers) from a truly-wedged one — retiring the
+// ~15min probe-tolerance band-aid that the httpGet `/api/live` liveness needed
+// because it's served by the same saturated loop. See liveness-heartbeat.ts and
+// the liveness history in datapacket-talos deployment-api.yaml.
+registerLivenessHeartbeat();
+
+// Kick the in-process route warmer (fire-and-forget). Next standalone
+// lazy-require()s each route on first hit; the dependency-only readiness probe
+// marks a pod Ready while every hot route is still cold, so the first real
+// /api/v1/images / tRPC / SSR request pays lazy-require + JIT on the single
+// loop thread → pin → 504/502/499 on every rollout. The warmer self-requests
+// the hot routes over localhost during startup and flips /api/ready's warm gate
+// only once warm (fail-open). It is OPT-IN via WARMUP_ENABLED (default FALSE —
+// runs ONLY when WARMUP_ENABLED='true', set on the dp-prod SSR/API/heavy pools;
+// elsewhere it no-ops + flips warm immediately). It self-imports lazily so the
+// fetch/route code isn't pulled into the boot path needlessly.
+//
+// CRITICAL: do NOT await this. register() must return so Next can start the
+// HTTP listener — the warmer needs that listener up to self-request, so
+// awaiting here would deadlock boot. Any import/throw is swallowed: warmup must
+// never block or crash boot.
+void import('~/server/warmup')
+  .then((m) => m.runWarmup())
+  .catch((err) => {
+    console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
+  });
 
 // Only enable OTEL if explicitly set AND endpoint is configured
 const OTEL_ENABLED = process.env.OTEL_ENABLED === 'true';

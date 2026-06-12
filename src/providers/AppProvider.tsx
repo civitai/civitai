@@ -6,6 +6,8 @@ import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
 import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
+import type { AnnouncementsSeed } from '~/providers/announcements-seed';
+import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -13,6 +15,15 @@ type AppProviderProps = {
   // SSR-computed `content.checkTosUpdate` result (logged-in only). Seeds the
   // query so `useToSUpdateModal` never fires it on bootstrap.
   tosUpdate?: CheckTosUpdateResult;
+  // SSR-computed `announcement.getAnnouncements` result (anon + authed). Carried
+  // down to `useGetAnnouncements`, which seeds the query under the client's
+  // `useDomainColor()` key — this provider sits above FeatureFlagsProvider so it
+  // can't compute that key itself.
+  announcements?: AnnouncementsSeed;
+  // SSR-computed `user.getFollowingUsers` result (logged-in only) — the list of
+  // followed userIds. Seeds the query directly (fixed `undefined` key) so the
+  // ambient follow/notify buttons never fire it on bootstrap.
+  following?: number[];
   seed: number;
   canIndex: boolean;
   region: RegionInfo;
@@ -33,6 +44,7 @@ type AppContext = {
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
+  announcements?: AnnouncementsSeed;
 };
 const Context = createContext<AppContext | null>(null);
 export function useAppContext() {
@@ -79,6 +91,8 @@ export function AppProvider({
   children,
   settings,
   tosUpdate,
+  announcements,
+  following,
   domain,
   host,
   serverDomains,
@@ -105,6 +119,18 @@ export function AppProvider({
     staleTime: Infinity,
     gcTime: Infinity,
   });
+  // Seed `user.getFollowingUsers` (the followed-userId list) from the SSR
+  // snapshot so the ambient follow/notify buttons read a primed cache and never
+  // fire it on bootstrap. The list only changes via the user's own follow/
+  // unfollow, which `FollowUserButton` already patches via optimistic `setData`
+  // — so the global `staleTime: Infinity` default is correct here (no external
+  // churn to refetch for). `enabled: !!following` skips the seed (and any
+  // self-heal fetch) only when there's no snapshot (anon never fires this query;
+  // a failed authed snapshot falls back to the consumers' own live fetch).
+  trpc.user.getFollowingUsers.useQuery(undefined, {
+    initialData: following,
+    enabled: !!following,
+  });
   // Populate the module-level server domain map so `syncAccount(url)` can
   // resolve hosts to colors without pulling from React context.
   setServerDomains(serverDomains);
@@ -120,6 +146,7 @@ export function AppProvider({
     serverDomains,
     availableOAuthProviders,
     verifiedBot,
+    announcements: reviveAnnouncementsSeed(announcements),
   }));
 
   return <Context.Provider value={state}>{children}</Context.Provider>;

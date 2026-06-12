@@ -67,6 +67,7 @@ export default defineNextConfig(
     // emits those warnings — an empty config just acknowledges we're on Turbopack
     // and silences Next's "webpack config with no turbopack config" build error.
     turbopack: {},
+    allowedDevOrigins: ['civitai-dev.green', 'civitai-dev.blue', 'civitai-dev.red'],
     // Retained for the `next build --webpack` fallback path; ignored under Turbopack.
     webpack: (config) => {
       config.ignoreWarnings = [
@@ -86,7 +87,8 @@ export default defineNextConfig(
     // flag below only matters for the `next build --webpack` fallback path.
     //
     // Maps are inert at runtime: the Node server never loads a `.js.map` unless an
-    // inspector / error-stack resolver reads it, so there is NO request-path perf cost.
+    // inspector / error-stack resolver reads it, so there is NO
+    //  request-path perf cost.
     // They are NOT served to browsers for server chunks (those live in `.next/server`,
     // which is not a static-served directory). Cost is build time + image size only.
     //

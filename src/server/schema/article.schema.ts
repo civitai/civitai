@@ -29,16 +29,21 @@ export const articleRateLimits: RateLimit[] = [
     errorMessage: 'You need to wait 24 hours after creating your account to create articles.',
   },
   {
-    limit: 1,
+    limit: 3,
     period: CacheTTL.day,
   },
   {
-    limit: 2,
+    limit: 5,
     period: CacheTTL.day,
     userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 1000,
   },
   {
     limit: 10,
+    period: CacheTTL.day,
+    userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 5000,
+  },
+  {
+    limit: 20,
     period: CacheTTL.day,
     userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 10000,
   },
