@@ -1120,7 +1120,16 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // Happy path — validation + rate-limit both clear. Emit Generator_Submit
     // BEFORE the buzz-transaction prompt so click-and-abandon (cancel at
     // confirm / insufficient-buzz) is still captured.
+    //
+    // externalId is shared between this emit AND the mutateAsync input below.
+    // Failure-path emits (validation, rate-limit) above omit it because no
+    // orchestrator workflow exists for those rows. Generated inside the try
+    // so a crypto.randomUUID() throw (non-secure-context fallback) can't
+    // break the submit — externalId stays undefined and the path degrades
+    // to pre-PR behavior (no idempotency, no exact-join).
+    let externalId: string | undefined;
     try {
+      externalId = crypto.randomUUID();
       const submitSnapshot = graph.getSnapshot() as ResourceSnapshot;
       trackAction({
         type: 'Generator_Submit',
@@ -1130,6 +1139,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
           hasRemixOfId: !!remixOfId,
           formVersion: 'new',
           isValid: true,
+          externalId,
         },
       }).catch(() => undefined);
     } catch {
@@ -1210,6 +1220,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
+        externalId,
       });
 
       if (hasEarlyAccess) {

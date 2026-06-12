@@ -394,6 +394,7 @@ export const orchestratorRouter = router({
         sourceMetadataMap,
         remixOfId,
         buzzType,
+        externalId,
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
@@ -433,6 +434,7 @@ export const orchestratorRouter = router({
         sourceMetadata,
         sourceMetadataMap,
         remixOfId,
+        externalId,
       });
 
       // Bust the short-TTL queryGeneratedImages cache so a concurrent tab or an
