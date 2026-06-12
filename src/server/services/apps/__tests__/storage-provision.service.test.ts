@@ -97,7 +97,11 @@ describe('AppStorageProvisioner.provision', () => {
     let nth = 0;
     mockClient.query.mockImplementation(async (sql: string) => {
       nth++;
-      if (sql.startsWith('CREATE TABLE IF NOT EXISTS "app_generate_from_model".kv')) {
+      // The service emits this DDL as an indented template literal, so the SQL
+      // string has leading whitespace — match on the trimmed text, not startsWith
+      // on the raw string (which silently never matched, so the mock never threw
+      // and provision() wrongly resolved instead of rejecting).
+      if (sql.trimStart().startsWith('CREATE TABLE IF NOT EXISTS "app_generate_from_model".kv')) {
         throw new Error('boom');
       }
       capturedQueries.push({ sql });
