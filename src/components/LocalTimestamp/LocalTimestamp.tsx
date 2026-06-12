@@ -23,6 +23,16 @@ export function LocalTimestamp({ value, style, className }: Props) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  // The relative style (`R`) is the only one that drifts over time, so tick it
+  // every 15s (matching DaysFromNow) to keep "in 2 hours" / "5 minutes ago"
+  // fresh. Other styles are static and set no timer.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (resolvedStyle !== 'R') return;
+    const id = setInterval(() => tick((n) => n + 1), 15_000);
+    return () => clearInterval(id);
+  }, [resolvedStyle]);
+
   if (!Number.isFinite(seconds)) return null;
 
   const display = formatDiscordTimestamp(seconds, resolvedStyle, { utc: !mounted });
