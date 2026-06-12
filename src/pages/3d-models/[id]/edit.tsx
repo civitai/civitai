@@ -10,17 +10,20 @@ import {
   Group,
   Select,
   Stack,
+  Switch,
   Text,
   TextInput,
   Title,
   Tooltip,
 } from '@mantine/core';
 import {
-  IconArchive,
   IconArrowLeft,
+  IconBrush,
   IconCube,
+  IconCurrencyDollar,
+  IconGitMerge,
   IconPencil,
-  IconUpload,
+  IconUser,
 } from '@tabler/icons-react';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
@@ -33,9 +36,10 @@ import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
+import { TagsInput } from '~/components/Tags/TagsInput';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { Model3DStatus } from '~/shared/utils/prisma/enums';
+import { Model3DStatus, TagTarget } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -99,6 +103,7 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [licenseId, setLicenseId] = useState<number | null>(null);
+  const [tags, setTags] = useState<Array<{ id?: number; name: string }>>([]);
   // Seed local state once the query lands. We don't reset on subsequent
   // refetches so an in-progress edit isn't clobbered by a background refresh.
   const [seeded, setSeeded] = useState(false);
@@ -107,6 +112,12 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
       setName(model3d.name);
       setDescription(model3d.description ?? '');
       setLicenseId(model3d.licenseId);
+      setTags(
+        ((model3d.tags ?? []) as Array<{ id: number; name: string }>).map((t) => ({
+          id: t.id,
+          name: t.name,
+        }))
+      );
       setSeeded(true);
     }
   }, [seeded, model3d]);
@@ -165,6 +176,16 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
 
   const trimmedName = name.trim();
   const canSave = trimmedName.length > 0 && !mutate.isPending;
+  const selectedLicense =
+    (licenses as Array<{
+      id: number;
+      name: string;
+      description: string | null;
+      allowCommercialUse: boolean;
+      allowDerivatives: boolean;
+      allowRedistribution: boolean;
+      requireAttribution: boolean;
+    }> | undefined)?.find((l) => l.id === licenseId) ?? null;
 
   // RichTextEditor returns HTML. Empty content commonly serializes to `<p></p>`
   // — strip tags and treat as null so the DB doesn't see noisy "empty" markup.
@@ -173,22 +194,23 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
     return stripped.length === 0 ? null : html.trim();
   };
 
-  const handleSave = (chainedAction?: 'publish' | 'unpublish') => {
+  const handleSave = () => {
     if (!canSave) return;
-    mutate.mutate(
-      {
-        id: model3d.id,
-        name: trimmedName,
-        description: normalizeDescription(description),
-        licenseId: licenseId ?? model3d.licenseId,
-      },
-      {
-        onSuccess: () => {
-          if (chainedAction === 'publish') publishMutation.mutate({ id: model3d.id });
-          if (chainedAction === 'unpublish') unpublishMutation.mutate({ id: model3d.id });
-        },
-      }
-    );
+    // Split TagsInput output into ids (existing tags) + names (freshly typed
+    // tags). The service creates missing ones under TagTarget.Model3D, so
+    // forwarding both fields covers the full attach set in one call.
+    const tagIdsToSave = tags
+      .map((t) => t.id)
+      .filter((id): id is number => typeof id === 'number');
+    const tagNamesToSave = tags.filter((t) => t.id === undefined).map((t) => t.name);
+    mutate.mutate({
+      id: model3d.id,
+      name: trimmedName,
+      description: normalizeDescription(description),
+      licenseId: licenseId ?? model3d.licenseId,
+      tagIds: tagIdsToSave,
+      tagNames: tagNamesToSave,
+    });
   };
 
   return (
@@ -210,14 +232,46 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
             <Title order={2} className="flex-1">
               Edit 3D Model
             </Title>
-            <Badge
-              color={STATUS_COLOR[model3d.status] ?? 'gray'}
-              variant="light"
-              size="lg"
-              radius="sm"
-            >
-              {model3d.status}
-            </Badge>
+            {/* Published toggle — replaces the bottom Save&Publish /
+                Save&Unpublish buttons. Switch fires the publish/unpublish
+                mutation directly; the bottom Save only persists name /
+                description / license. Deleted state renders a read-only
+                Badge — restore happens via mod tools. */}
+            {model3d.status === Model3DStatus.Deleted ? (
+              <Badge color={STATUS_COLOR[model3d.status]} variant="light" size="lg" radius="sm">
+                {model3d.status}
+              </Badge>
+            ) : (
+              <Tooltip
+                label="A thumbnail image is required before publishing."
+                withinPortal
+                disabled={
+                  !!model3d.thumbnailImageId || model3d.status === Model3DStatus.Published
+                }
+              >
+                <div>
+                  <Switch
+                    size="md"
+                    label="Published"
+                    labelPosition="left"
+                    checked={model3d.status === Model3DStatus.Published}
+                    disabled={
+                      (model3d.status !== Model3DStatus.Published &&
+                        !model3d.thumbnailImageId) ||
+                      publishMutation.isPending ||
+                      unpublishMutation.isPending
+                    }
+                    onChange={(e) => {
+                      if (e.currentTarget.checked) {
+                        publishMutation.mutate({ id: model3d.id });
+                      } else {
+                        unpublishMutation.mutate({ id: model3d.id });
+                      }
+                    }}
+                  />
+                </div>
+              </Tooltip>
+            )}
           </Group>
 
           {/* Read-only summary — thumbnail + files + license + tags. These
@@ -352,68 +406,93 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
                 stickyToolbar
               />
 
-              <Select
-                label="License"
-                description="The license governs how others can use this 3D model."
-                data={
-                  licenses?.map((l) => ({ value: String(l.id), label: l.name })) ?? []
-                }
-                value={licenseId != null ? String(licenseId) : null}
-                onChange={(v) => setLicenseId(v ? Number(v) : null)}
-                searchable
-                allowDeselect={false}
-                disabled={!licenses}
-                placeholder={licenses ? undefined : 'Loading…'}
+              <Stack gap={4}>
+                <Select
+                  label="License"
+                  description="The license governs how others can use this 3D model."
+                  data={
+                    licenses?.map((l) => ({ value: String(l.id), label: l.name })) ?? []
+                  }
+                  value={licenseId != null ? String(licenseId) : null}
+                  onChange={(v) => setLicenseId(v ? Number(v) : null)}
+                  searchable
+                  allowDeselect={false}
+                  disabled={!licenses}
+                  placeholder={licenses ? undefined : 'Loading…'}
+                />
+                {/* Contextual permission icons — mirror the model page
+                    PermissionIndicator. Each icon tooltips the underlying
+                    permission so the owner can see at a glance what their
+                    chosen license actually allows. */}
+                {selectedLicense && (
+                  <Group gap={6} mt={4}>
+                    {[
+                      {
+                        allowed: selectedLicense.allowCommercialUse,
+                        label: selectedLicense.allowCommercialUse
+                          ? 'Commercial use allowed'
+                          : 'No commercial use',
+                        icon: <IconCurrencyDollar size={14} stroke={1.5} />,
+                      },
+                      {
+                        allowed: selectedLicense.allowDerivatives,
+                        label: selectedLicense.allowDerivatives
+                          ? 'Derivatives allowed'
+                          : 'No derivatives',
+                        icon: <IconGitMerge size={14} stroke={1.5} />,
+                      },
+                      {
+                        allowed: selectedLicense.allowRedistribution,
+                        label: selectedLicense.allowRedistribution
+                          ? 'Redistribution allowed'
+                          : 'No redistribution',
+                        icon: <IconBrush size={14} stroke={1.5} />,
+                      },
+                      {
+                        allowed: !selectedLicense.requireAttribution,
+                        label: selectedLicense.requireAttribution
+                          ? 'Attribution required'
+                          : 'No attribution required',
+                        icon: <IconUser size={14} stroke={1.5} />,
+                      },
+                    ].map(({ allowed, label, icon }) => (
+                      <Tooltip key={label} label={label} withArrow withinPortal>
+                        <Box
+                          className="flex size-6 items-center justify-center rounded"
+                          style={{
+                            backgroundColor: allowed
+                              ? 'rgba(64, 192, 87, 0.2)'
+                              : 'rgba(250, 82, 82, 0.2)',
+                            color: allowed ? '#40c057' : '#fa5252',
+                          }}
+                        >
+                          {icon}
+                        </Box>
+                      </Tooltip>
+                    ))}
+                    {selectedLicense.description && (
+                      <Text size="xs" c="dimmed" ml="xs" style={{ flex: 1 }}>
+                        {selectedLicense.description}
+                      </Text>
+                    )}
+                  </Group>
+                )}
+              </Stack>
+
+              <TagsInput
+                label="Tags"
+                description="Type to add. Pick any existing tag or type a new one — new tags are created automatically."
+                value={tags}
+                onChange={setTags}
+                target={[TagTarget.Model3D]}
               />
 
-              {/* Single action row. Publish never happens silently from a Save click —
-                  it's always an explicit "Save & Publish" choice. */}
+              {/* Single Save button — publish/unpublish lives in the top-right
+                  Switch above. */}
               <Group justify="flex-end" gap="sm">
-                <Button
-                  onClick={() => handleSave()}
-                  loading={
-                    mutate.isPending &&
-                    !publishMutation.isPending &&
-                    !unpublishMutation.isPending
-                  }
-                  disabled={!canSave}
-                  variant="default"
-                >
+                <Button onClick={() => handleSave()} loading={mutate.isPending} disabled={!canSave}>
                   Save
                 </Button>
-
-                {(model3d.status === Model3DStatus.Draft ||
-                  model3d.status === Model3DStatus.Unpublished) && (
-                  <Tooltip
-                    label="A thumbnail image is required before publishing."
-                    withinPortal
-                    disabled={!!model3d.thumbnailImageId}
-                  >
-                    <Button
-                      onClick={() => handleSave('publish')}
-                      loading={publishMutation.isPending}
-                      disabled={!canSave || !model3d.thumbnailImageId}
-                      color="green"
-                      leftSection={<IconUpload size={14} />}
-                    >
-                      {model3d.status === Model3DStatus.Unpublished
-                        ? 'Save & Republish'
-                        : 'Save & Publish'}
-                    </Button>
-                  </Tooltip>
-                )}
-
-                {model3d.status === Model3DStatus.Published && (
-                  <Button
-                    onClick={() => handleSave('unpublish')}
-                    loading={unpublishMutation.isPending}
-                    disabled={!canSave}
-                    color="yellow"
-                    leftSection={<IconArchive size={14} />}
-                  >
-                    Save & Unpublish
-                  </Button>
-                )}
               </Group>
 
               {model3d.status === Model3DStatus.Deleted && (

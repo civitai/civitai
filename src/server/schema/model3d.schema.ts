@@ -49,6 +49,9 @@ export const upsertModel3DSchema = z.object({
   nsfw: z.boolean().optional(),
   unlisted: z.boolean().optional(),
   tagIds: z.array(z.number().int().positive()).optional(),
+  // Free-form tag names — created on the fly server-side under
+  // TagTarget.Model3D and attached. Mirrors article upsert tag handling.
+  tagNames: z.array(z.string().trim().min(1).max(50)).optional(),
   lockedProperties: z.array(z.string()).optional(),
   meta: z.unknown().nullish(),
 });

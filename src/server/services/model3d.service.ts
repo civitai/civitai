@@ -10,7 +10,7 @@ import {
   getUploadS3Client,
   isB2Url,
 } from '~/utils/s3-utils';
-import { MetricTimeframe, Model3DStatus } from '~/shared/utils/prisma/enums';
+import { MetricTimeframe, Model3DStatus, TagTarget } from '~/shared/utils/prisma/enums';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -522,7 +522,44 @@ export const upsertModel3D = async ({
   user: SessionUser;
 }) => {
   const isModerator = !!user.isModerator;
-  const { id, tagIds, generationParams, meta, ...data } = input;
+  const { id, tagIds, tagNames, generationParams, meta, ...data } = input;
+
+  // Resolve free-form tag names (creating any that don't exist yet under
+  // TagTarget.Model3D) and merge with `tagIds`. Mirrors the article-form
+  // tag flow so the edit page can ship a TagsInput with on-the-fly
+  // tag creation. We dedupe per (lowercased) name + per id so a payload
+  // mixing both sources yields a clean attach set.
+  let resolvedTagIds: number[] | undefined = tagIds;
+  if (tagNames?.length || tagIds) {
+    const normalized = Array.from(
+      new Set((tagNames ?? []).map((n) => n.trim().toLowerCase()).filter(Boolean))
+    );
+    let nameIds: number[] = [];
+    if (normalized.length) {
+      const existingByName = await dbWrite.tag.findMany({
+        where: { name: { in: normalized } },
+        select: { id: true, name: true },
+      });
+      const found = new Set(existingByName.map((t) => t.name));
+      const toCreate = normalized.filter((n) => !found.has(n));
+      let createdRows: { id: number; name: string }[] = [];
+      if (toCreate.length) {
+        await dbWrite.tag.createMany({
+          // `TagTarget.Model3D` isn't in the generated Prisma client until the
+          // hackathon migration is applied to dev — cast keeps the type
+          // checker quiet while runtime still receives the correct enum value.
+          data: toCreate.map((name) => ({ name, target: ['Model3D'] as TagTarget[] })),
+          skipDuplicates: true,
+        });
+        createdRows = await dbWrite.tag.findMany({
+          where: { name: { in: toCreate } },
+          select: { id: true, name: true },
+        });
+      }
+      nameIds = [...existingByName, ...createdRows].map((t) => t.id);
+    }
+    resolvedTagIds = Array.from(new Set([...(tagIds ?? []), ...nameIds]));
+  }
 
   // Visibility changes (`status`) must go through the dedicated `publish` /
   // `unpublish` / moderation endpoints — those gate on thumbnail presence,
@@ -567,11 +604,11 @@ export const upsertModel3D = async ({
           select: model3dDetailSelect,
         });
 
-        if (tagIds) {
+        if (resolvedTagIds !== undefined) {
           await tx.tagsOnModel3D.deleteMany({ where: { model3dId: id } });
-          if (tagIds.length) {
+          if (resolvedTagIds.length) {
             await tx.tagsOnModel3D.createMany({
-              data: tagIds.map((tagId) => ({ model3dId: id, tagId })),
+              data: resolvedTagIds.map((tagId) => ({ model3dId: id, tagId })),
               skipDuplicates: true,
             });
           }
@@ -589,9 +626,9 @@ export const upsertModel3D = async ({
         select: model3dDetailSelect,
       });
 
-      if (tagIds?.length) {
+      if (resolvedTagIds?.length) {
         await tx.tagsOnModel3D.createMany({
-          data: tagIds.map((tagId) => ({ model3dId: row.id, tagId })),
+          data: resolvedTagIds.map((tagId) => ({ model3dId: row.id, tagId })),
           skipDuplicates: true,
         });
       }

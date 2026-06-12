@@ -170,10 +170,15 @@ export function HomeTabs() {
             {value.icon({ size: 16 })}
             <span className="text-base font-medium capitalize">{getDisplayName(key)}</span>
             {key === 'updates' && (latestChangelog ?? 0) > lastSeenChangelog && (
-              <IconPointFilled color="green" size={20} />
+              <IconPointFilled color="green" size={10} className="-ml-1 -mr-2" />
             )}
             {!!value.new && value.new > new Date() && (
-              <IconPointFilled color="green" size={14} aria-label="New" />
+              <IconPointFilled
+                color="green"
+                size={10}
+                aria-label="New"
+                className="-ml-1 -mr-2"
+              />
             )}
           </Button>
         );
@@ -211,14 +216,14 @@ export function HomeTabs() {
                       .filter(isDefined)
                   )}
                 >
-                  <Group gap={8} wrap="nowrap">
+                  <Group gap={4} wrap="nowrap">
                     <Text tt="capitalize">{getDisplayName(value.key)}</Text>
                     {value.key === 'updates' && (latestChangelog ?? 0) > lastSeenChangelog && (
-                      <IconPointFilled color="green" size={20} />
+                      <IconPointFilled color="green" size={10} />
                     )}
                     {!!value.new && value.new > new Date() && (
-              <IconPointFilled color="green" size={14} aria-label="New" />
-            )}
+                      <IconPointFilled color="green" size={10} aria-label="New" />
+                    )}
                   </Group>
                 </Menu.Item>
               </Link>

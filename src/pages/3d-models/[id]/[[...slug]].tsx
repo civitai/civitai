@@ -1,4 +1,5 @@
 import {
+  Accordion,
   Anchor,
   Badge,
   Box,
@@ -14,7 +15,9 @@ import {
   Stack,
   Text,
   Title,
+  Tooltip,
   useComputedColorScheme,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   IconBolt,
@@ -22,9 +25,7 @@ import {
   IconCube,
   IconCurrencyDollar,
   IconDownload,
-  IconForms,
   IconGitMerge,
-  IconHeart,
   IconLicense,
   IconMessageCircle2,
   IconShare3,
@@ -35,7 +36,7 @@ import {
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import type { InferGetServerSidePropsType } from 'next';
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
@@ -49,7 +50,6 @@ import { Collection } from '~/components/Collection/Collection';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -130,6 +130,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   useFeatureFlags();
   const currentUser = useCurrentUser();
   const colorScheme = useComputedColorScheme('dark');
+  const theme = useMantineTheme();
 
   const { data: model3d, isLoading, isRefetching } = trpc.model3d.getById.useQuery({ id });
   const { data: filesData } = trpc.model3d.getFiles.useQuery({ id }, { enabled: !!model3d });
@@ -312,24 +313,20 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <Title order={1} lineClamp={2} className="break-words">
                   {model3d.name}
                 </Title>
-                {/* Top-left summary stat: thumbs-up % chip. Hidden until there
-                    is at least one review so we don't surface a misleading
-                    "0%" before any community signal exists. */}
-                {recommendPct !== null && (
-                  <IconBadge
-                    radius="sm"
-                    size="lg"
-                    color="green"
-                    icon={<IconThumbUp size={18} />}
-                  >
-                    <Text size="sm">{recommendPct}%</Text>
-                  </IconBadge>
-                )}
+                {/* Stat row mirrors models/[id]: ThumbsUp · Download · Comments
+                    · Buzz. The thumbs-up badge surfaces positive-review count
+                    (`recommendedCount`); the % chip is folded into the Details
+                    card so we don't double-surface the same signal. */}
+                <IconBadge
+                  radius="sm"
+                  size="lg"
+                  color="green"
+                  icon={<IconThumbUp size={18} />}
+                >
+                  <Text size="sm">{abbreviateNumber(recommendedCount)}</Text>
+                </IconBadge>
                 <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                   <Text size="sm">{abbreviateNumber(model3d.metric?.downloadCount ?? 0)}</Text>
-                </IconBadge>
-                <IconBadge radius="sm" size="lg" icon={<IconHeart size={18} />}>
-                  <Text size="sm">{abbreviateNumber(model3d.metric?.reactionCount ?? 0)}</Text>
                 </IconBadge>
                 <IconBadge radius="sm" size="lg" icon={<IconMessageCircle2 size={18} />}>
                   <Text size="sm">{abbreviateNumber(model3d.metric?.commentCount ?? 0)}</Text>
@@ -358,8 +355,8 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
               <Group gap={4} align="center" wrap="nowrap">
                 <ShareButton url={`/3d-models/${model3d.id}`} title={model3d.name}>
-                  <LegacyActionIcon variant="subtle" color="gray" aria-label="Share">
-                    <IconShare3 />
+                  <LegacyActionIcon variant="light" size="lg" aria-label="Share">
+                    <IconShare3 size={20} />
                   </LegacyActionIcon>
                 </ShareButton>
                 {/* Single menu trigger — Report is folded into this menu for
@@ -452,14 +449,15 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   </ContentClamp>
                 )}
 
-                <Divider />
-
                 {/* Comments — limited to 5 initial entries with the
                     Load-More CTA already rendered by RootThreadProvider when
-                    the page count exceeds `limit`. */}
-                <div id="comments">
+                    the page count exceeds `limit`. Negative top margin pulls
+                    the divider+comments up so the divider+section start sit
+                    closer to the description than the default Stack-gap-md. */}
+                <Box id="comments" style={{ marginTop: -8 }}>
+                  <Divider mb="sm" />
                   <Model3DComments model3dId={id} userId={model3d.user.id} />
-                </div>
+                </Box>
               </Stack>
             </ContainerGrid2.Col>
 
@@ -502,54 +500,170 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   )}
                 </Card>
 
-                {/* Generation Data — image-detail card pattern. Body is a
-                    DescriptionTable instead of the prior badge-chip layout. */}
-                {hasGenerationData && (
-                  <Card withBorder radius="md" p="md">
-                    <Stack gap="sm">
-                      <Group gap="xs">
-                        <IconForms size={20} />
-                        <Text className="text-xl" fw={600}>
-                          Generation Data
-                        </Text>
-                      </Group>
-                      {model3d.sourceImage && (
-                        <Box>
-                          <Text size="sm" fw={500} mb={4}>
-                            Source image
-                          </Text>
-                          <Link
-                            href={`/images/${model3d.sourceImage.id}`}
-                            className="block w-full max-w-[240px] overflow-hidden rounded-md border border-solid border-dark-4"
+                {/* Details — single Accordion mirroring model-detail
+                    sidebar. Edge-to-edge rows: Reviews, Source image (if
+                    any), then generation params. Reviews fold in here so we
+                    don't need a standalone Reviews card. */}
+                {(hasGenerationData || reviewSummary) && (
+                  <Accordion
+                    variant="separated"
+                    multiple
+                    defaultValue={['details']}
+                    styles={(t) => ({
+                      content: { padding: 0 },
+                      label: { padding: 0 },
+                      item: {
+                        overflow: 'hidden',
+                        borderColor:
+                          colorScheme === 'dark' ? t.colors.dark[4] : t.colors.gray[3],
+                        boxShadow: t.shadows.sm,
+                      },
+                      control: {
+                        padding: t.spacing.sm,
+                        gap: t.spacing.md,
+                      },
+                    })}
+                  >
+                    <Accordion.Item value="details">
+                      <Accordion.Control>
+                        <Group justify="space-between">
+                          Details
+                          <Button
+                            size="compact-xs"
+                            variant="light"
+                            leftSection={<IconWand size={12} />}
+                            onClick={(e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              openReviewModal();
+                            }}
                           >
-                            <EdgeMedia
-                              src={model3d.sourceImage.url}
-                              name={model3d.sourceImage.name ?? undefined}
-                              type={
-                                (model3d.sourceImage.type as
-                                  | 'image'
-                                  | 'video'
-                                  | 'audio'
-                                  | undefined) ?? undefined
-                              }
-                              width={320}
-                              anim={false}
-                              className="size-full object-cover"
-                            />
-                          </Link>
-                        </Box>
-                      )}
-                      {generationDetailItems.length > 0 && (
-                        <DescriptionTable
-                          items={generationDetailItems.map(([label, value]) => ({
-                            label,
-                            value: <Text size="sm">{value}</Text>,
-                          }))}
-                          labelWidth="35%"
-                        />
-                      )}
-                    </Stack>
-                  </Card>
+                            Write a review
+                          </Button>
+                        </Group>
+                      </Accordion.Control>
+                      <Accordion.Panel p={0}>
+                        <Stack
+                          gap={0}
+                          style={{
+                            backgroundColor:
+                              colorScheme === 'dark' ? '#1f2023' : theme.colors.gray[0],
+                          }}
+                        >
+                          {/* Reviews row */}
+                          <Group
+                            justify="space-between"
+                            px="md"
+                            py={10}
+                            style={{
+                              borderBottom: `1px solid ${
+                                colorScheme === 'dark'
+                                  ? theme.colors.dark[4]
+                                  : theme.colors.gray[3]
+                              }`,
+                            }}
+                          >
+                            <Text size="sm" c="dimmed">
+                              Reviews
+                            </Text>
+                            {recommendPct !== null ? (
+                              <Anchor
+                                component={Link}
+                                href={`/3d-models/${id}/reviews`}
+                                underline="hover"
+                              >
+                                <Group gap={6} wrap="nowrap" align="center">
+                                  {recommendPct >= 50 ? (
+                                    <IconThumbUp size={14} />
+                                  ) : (
+                                    <IconThumbDown size={14} />
+                                  )}
+                                  <Text size="sm" fw={500}>
+                                    {sentimentLabel(recommendPct, ratingCount)}
+                                  </Text>
+                                  <Badge size="sm" variant="light" color="gray">
+                                    {recommendPct}% · {abbreviateNumber(ratingCount)}
+                                  </Badge>
+                                </Group>
+                              </Anchor>
+                            ) : (
+                              <Anchor
+                                component={Link}
+                                href={`/3d-models/${id}/reviews`}
+                                size="sm"
+                              >
+                                No reviews yet
+                              </Anchor>
+                            )}
+                          </Group>
+
+                          {model3d.sourceImage && (
+                            <Group
+                              align="flex-start"
+                              justify="space-between"
+                              px="md"
+                              py={10}
+                              style={{
+                                borderBottom: `1px solid ${
+                                  colorScheme === 'dark'
+                                    ? theme.colors.dark[4]
+                                    : theme.colors.gray[3]
+                                }`,
+                              }}
+                            >
+                              <Text size="sm" c="dimmed">
+                                Source image
+                              </Text>
+                              <Link
+                                href={`/images/${model3d.sourceImage.id}`}
+                                className="block w-[120px] overflow-hidden rounded-md border border-solid border-dark-4"
+                              >
+                                <EdgeMedia
+                                  src={model3d.sourceImage.url}
+                                  name={model3d.sourceImage.name ?? undefined}
+                                  type={
+                                    (model3d.sourceImage.type as
+                                      | 'image'
+                                      | 'video'
+                                      | 'audio'
+                                      | undefined) ?? undefined
+                                  }
+                                  width={240}
+                                  anim={false}
+                                  className="size-full object-cover"
+                                />
+                              </Link>
+                            </Group>
+                          )}
+
+                          {generationDetailItems.map(([label, value], i) => (
+                            <Group
+                              key={label}
+                              justify="space-between"
+                              px="md"
+                              py={10}
+                              style={{
+                                borderBottom:
+                                  i === generationDetailItems.length - 1
+                                    ? 'none'
+                                    : `1px solid ${
+                                        colorScheme === 'dark'
+                                          ? theme.colors.dark[4]
+                                          : theme.colors.gray[3]
+                                      }`,
+                              }}
+                            >
+                              <Text size="sm" c="dimmed">
+                                {label}
+                              </Text>
+                              <Text size="sm" ta="right" style={{ wordBreak: 'break-word' }}>
+                                {value}
+                              </Text>
+                            </Group>
+                          ))}
+                        </Stack>
+                      </Accordion.Panel>
+                    </Accordion.Item>
+                  </Accordion>
                 )}
 
                 {/* Creator card */}
@@ -559,117 +673,58 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   tipBuzzEntityType="Model3D"
                 />
 
-                {/* Reviews preview — sentiment label + count chip, click
-                    through to the full reviews page. No inline review rows. */}
-                <Card withBorder radius="md" p="md">
-                  <Stack gap="sm">
-                    <Group justify="space-between" wrap="nowrap">
-                      <Group gap="xs">
-                        <IconThumbUp size={18} />
-                        <Text className="text-lg" fw={600}>
-                          Reviews
-                        </Text>
-                      </Group>
-                      <Button
-                        size="xs"
-                        onClick={openReviewModal}
-                        leftSection={<IconWand size={12} />}
-                      >
-                        Write a review
-                      </Button>
-                    </Group>
-                    {recommendPct !== null ? (
-                      <Anchor
-                        component={Link}
-                        href={`/3d-models/${id}/reviews`}
-                        underline="hover"
-                      >
-                        <Group gap="xs" align="center" wrap="nowrap">
-                          {recommendPct >= 50 ? (
-                            <IconThumbUp size={16} />
-                          ) : (
-                            <IconThumbDown size={16} />
-                          )}
-                          <Text size="sm" fw={600}>
-                            {sentimentLabel(recommendPct, ratingCount)}
-                          </Text>
-                          <Badge size="sm" variant="light" color="gray">
-                            {recommendPct}% · {abbreviateNumber(ratingCount)}{' '}
-                            {ratingCount === 1 ? 'review' : 'reviews'}
-                          </Badge>
-                        </Group>
-                      </Anchor>
-                    ) : (
-                      <Group justify="space-between" align="center">
-                        <Text size="sm" c="dimmed">
-                          No reviews yet — be the first.
-                        </Text>
-                        <Anchor
-                          component={Link}
-                          href={`/3d-models/${id}/reviews`}
-                          size="sm"
-                        >
-                          See all reviews
-                        </Anchor>
-                      </Group>
-                    )}
-                  </Stack>
-                </Card>
-
-                {/* License — name as heading + feature-allowed badges.
-                    Lives at the bottom of the sidebar, just under the
-                    creator card, mirroring the model page permissions
-                    surface. */}
+                {/* Compact license footer — mirrors the model page footer:
+                    inline license name (small dimmed text) + tooltipped
+                    permission icons. No card wrapper. */}
                 {license && (
-                  <Card withBorder radius="md" p="md">
-                    <Stack gap="sm">
-                      <Group gap="xs">
-                        <IconLicense size={18} />
-                        <Text className="text-lg" fw={600}>
-                          {license.name}
-                        </Text>
-                      </Group>
-                      <Stack gap={4}>
-                        {licenseFeatures.map(({ allowed, label, icon }) => (
-                          <Group key={label} gap={6} wrap="nowrap">
-                            <Box
-                              className="flex h-5 w-5 items-center justify-center rounded"
-                              style={{
-                                backgroundColor: allowed
-                                  ? 'rgba(64, 192, 87, 0.2)'
-                                  : 'rgba(250, 82, 82, 0.2)',
-                                color: allowed ? '#40c057' : '#fa5252',
-                              }}
-                            >
-                              {icon}
-                            </Box>
-                            <Text size="xs">{label}</Text>
-                          </Group>
-                        ))}
-                      </Stack>
-                      {model3d.licenseDetails && (
-                        <Text size="xs" c="dimmed">
-                          {model3d.licenseDetails}
-                        </Text>
-                      )}
-                    </Stack>
-                  </Card>
+                  <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
+                    <Group gap={4} wrap="wrap" align="center" style={{ flex: 1, minWidth: 0 }}>
+                      <IconLicense size={16} />
+                      <Text size="xs" c="dimmed" style={{ lineHeight: 1.1 }}>
+                        License:
+                      </Text>
+                      <Text size="xs" c="dimmed" style={{ lineHeight: 1.1 }}>
+                        {license.name}
+                      </Text>
+                    </Group>
+                    <Group gap={4} wrap="nowrap">
+                      {licenseFeatures.map(({ allowed, label, icon }) => (
+                        <Tooltip key={label} label={label} withArrow withinPortal position="top">
+                          <Box
+                            className="flex size-6 items-center justify-center rounded"
+                            style={{
+                              backgroundColor: allowed
+                                ? 'rgba(64, 192, 87, 0.2)'
+                                : 'rgba(250, 82, 82, 0.2)',
+                              color: allowed ? '#40c057' : '#fa5252',
+                            }}
+                          >
+                            {icon}
+                          </Box>
+                        </Tooltip>
+                      ))}
+                    </Group>
+                  </Group>
+                )}
+                {license && model3d.licenseDetails && (
+                  <Text size="xs" c="dimmed">
+                    {model3d.licenseDetails}
+                  </Text>
                 )}
               </Stack>
             </ContainerGrid2.Col>
           </ContainerGrid2>
 
-          {/* Community gallery — posts linked to this Model3D. Lifted out of
-              the right column and rendered at the bottom of the page as a
-              full-width section, matching the model-detail page's bottom
-              gallery. */}
-          <Box id="gallery" mt="md">
-            <Model3DGallery
-              model3d={{ id, userId: model3d.userId, minor: model3d.minor }}
-            />
-          </Box>
         </Stack>
       </Container>
+      {/* Community gallery — rendered OUTSIDE the size="xl" Container so the
+          masonry can claim the full page width and pack 6–7 cards across on
+          wide screens (matching the model-detail page bottom gallery). */}
+      <Box id="gallery" mt="md">
+        <Model3DGallery
+          model3d={{ id, userId: model3d.userId, minor: model3d.minor }}
+        />
+      </Box>
     </>
   );
 }

@@ -1,8 +1,6 @@
 import {
   Button,
   Center,
-  Chip,
-  Group,
   Loader,
   LoadingOverlay,
   Stack,
@@ -20,13 +18,11 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 import { Model3DSort } from '~/server/schema/model3d.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -54,18 +50,6 @@ export const getServerSideProps = createServerSideProps({
     return { props: {} };
   },
 });
-
-const sortOptions = [
-  { label: Model3DSort.Newest, value: Model3DSort.Newest },
-  { label: Model3DSort.MostDownloaded, value: Model3DSort.MostDownloaded },
-  { label: Model3DSort.HighestRated, value: Model3DSort.HighestRated },
-  { label: Model3DSort.MostLiked, value: Model3DSort.MostLiked },
-];
-
-const periodOptions = (Object.values(MetricTimeframe) as MetricTimeframe[]).map((p) => ({
-  label: getDisplayName(p),
-  value: p,
-}));
 
 const SORT_VALUES = new Set<string>(Object.values(Model3DSort));
 const PERIOD_VALUES = new Set<string>(Object.values(MetricTimeframe));
@@ -139,27 +123,9 @@ function Model3DsPage() {
 
       <MasonryContainer>
         <Stack gap="md">
-          {/* Sort + Period dropdowns sit on a single row above the tag chips. */}
-          <Group gap="md" align="center" wrap="wrap" justify="flex-end">
-            <SelectMenu
-              label={sort}
-              value={sort}
-              options={sortOptions}
-              onClick={(value) =>
-                setQuery({ sort: value === Model3DSort.Newest ? undefined : value })
-              }
-            />
-            <SelectMenu
-              label={getDisplayName(period)}
-              value={period}
-              options={periodOptions}
-              onClick={(value) =>
-                setQuery({ period: value === MetricTimeframe.AllTime ? undefined : value })
-              }
-            />
-          </Group>
-
-          {/* Tag row — popular Model3D tags, click to filter, click again to clear. */}
+          {/* Tag row — popular Model3D tags, click to filter, click again to
+              clear. Sort / Period / Rigged / Animated live in the sub-nav
+              filter row (Model3DFeedFilters) so this page just owns tags. */}
           {tags.length > 0 && (
             <TwScrollX className="flex gap-1">
               <Button
@@ -188,22 +154,6 @@ function Model3DsPage() {
               })}
             </TwScrollX>
           )}
-
-          {/* PolyGen generation-param toggle chips. */}
-          <Group gap={8}>
-            <Chip
-              checked={rigged}
-              onChange={(checked) => setQuery({ rigged: checked ? 'true' : undefined })}
-            >
-              Rigged
-            </Chip>
-            <Chip
-              checked={animated}
-              onChange={(checked) => setQuery({ animated: checked ? 'true' : undefined })}
-            >
-              Animated
-            </Chip>
-          </Group>
 
           {isLoading ? (
             <Center p="xl">

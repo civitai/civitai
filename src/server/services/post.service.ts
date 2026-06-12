@@ -76,6 +76,7 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   MediaType,
+  Model3DStatus,
   ModelHashType,
   TagTarget,
   TagType,
@@ -817,19 +818,20 @@ export const createPost = async ({
     availability = modelVersion?.model.availability ?? Availability.Public;
   }
 
-  // If linking to a Model3D, verify ownership so users can't claim someone
-  // else's draft. The queue-card flow only ever passes the user's own
-  // workflowId-keyed draft so this is defense-in-depth.
+  // Anyone can post to any published 3D model (mirrors Models). Non-owners are
+  // still blocked from attaching to a draft/unpublished/deleted 3D model so a
+  // queue-card draft can't be hijacked before its owner ships it.
   if (data.model3dId) {
     const model3d = await dbWrite.model3D.findUnique({
       where: { id: data.model3dId },
-      select: { id: true, userId: true, deletedAt: true },
+      select: { id: true, userId: true, status: true, deletedAt: true },
     });
     if (!model3d || model3d.deletedAt) {
       throw throwNotFoundError(`No 3D model with id ${data.model3dId}`);
     }
-    if (model3d.userId !== userId) {
-      throw throwAuthorizationError('You can only attach posts to your own 3D models.');
+    const isOwner = model3d.userId === userId;
+    if (!isOwner && model3d.status !== Model3DStatus.Published) {
+      throw throwAuthorizationError('This 3D model is not available for posting.');
     }
   }
 
