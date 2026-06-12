@@ -3223,6 +3223,7 @@ enum CsamReportType {
   Image
   TrainingData
   GeneratedImage
+  ExternalLink
 }
 
 model CsamReport {

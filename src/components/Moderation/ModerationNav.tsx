@@ -100,6 +100,11 @@ export function ModerationNav() {
           hidden: !features.csamReports,
         },
         {
+          label: 'External CSAM Report',
+          href: '/moderator/csam/external',
+          hidden: !features.csamReports,
+        },
+        {
           label: 'Scanner Audit',
           href: '/moderator/scanner-audit',
         },
