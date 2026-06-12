@@ -162,7 +162,11 @@ const checkFns: Record<string, CancellableCheckFn> = {
     }
   },
 };
-type CheckKey =
+// Exported because it appears in the public signature of `runHealthChecks`
+// below (its `results` return type), which /api/ready imports. A module-private
+// name in an exported signature compiles under `next build` but errors under
+// `--declaration` and is fragile.
+export type CheckKey =
   | 'write'
   | 'read'
   | 'pgWrite'
@@ -290,6 +294,17 @@ export async function runHealthChecks(
       await Promise.race([configPromise, deadlinePromise]);
     }
 
+    // Mid-run abort short-circuit (client disconnected during the config-fetch
+    // leg). origin/main's handler had this guard inline; the extraction dropped
+    // it, so on the probe path — which fires every few seconds — a disconnect no
+    // longer stopped the (expensive) DB/Redis/Meili/CH check phase from running
+    // to completion. Bail before the checks run. The caller already treats
+    // `signal.aborted` after the call as "don't send a response", so the exact
+    // values here are inert — return the contract shape with empty results.
+    if (signal.aborted) {
+      return { healthy: false, results: {} as Record<CheckKey, boolean>, deadlineTimedOut };
+    }
+
     const activeChecks = Object.entries(checkFns).filter(
       ([name]) => !disabledChecks.includes(name as CheckKey)
     );
@@ -323,6 +338,14 @@ export async function runHealthChecks(
 
     // Race the check phase against the SAME overall deadline.
     await Promise.race([checksPromise, deadlinePromise]);
+
+    // Mid-run abort short-circuit (client disconnected during the check race) —
+    // the second of origin/main's two inline guards. Skip the deadline-fill +
+    // healthy computation + metric bookkeeping; the caller won't send a response
+    // anyway. Return whatever has resolved so far in the contract shape.
+    if (signal.aborted) {
+      return { healthy: false, results, deadlineTimedOut };
+    }
 
     if (deadlineTimedOut) {
       for (const [name] of activeChecks) {

@@ -21,7 +21,7 @@
 // bounded, and a hard overall timeout guarantees `warmReady` is set no matter
 // what (success, per-route errors, or timeout). A fail-open timeout still
 // flips warmReady=true (the pod becomes Ready) — it is made VISIBLE via the
-// `civitai_warmup_state` gauge + /api/ready body so an operator can tell a
+// `civitai_app_warmup_state` gauge + /api/ready body so an operator can tell a
 // truly-warmed pod from one that just timed out, not blocked.
 //
 // OPT-IN: WARMUP_ENABLED defaults to FALSE. The warmer no-ops + flips
@@ -37,20 +37,48 @@ import { env } from '~/env/server';
 import { registerInstrumentationMetric, instrumentationRegistry } from '~/server/prom/client';
 import client from 'prom-client';
 
-let warmReady = false;
-
-export const isWarm = () => warmReady;
-
-// Observable warm state — exposed both via Prometheus (civitai_warmup_state)
+// Observable warm state — exposed both via Prometheus (civitai_app_warmup_state)
 // and the /api/ready JSON body. These let an operator SEE whether a pod truly
 // warmed or just fail-open-timed-out, and how long warming took.
 export type WarmState = 'disabled' | 'in-progress' | 'warmed-ok' | 'failopen-timeout';
-let warmState: WarmState = 'in-progress';
-let warmDurationMs: number | null = null;
 
-export const getWarmState = (): WarmState => warmState;
-export const getWarmDurationMs = (): number | null => warmDurationMs;
-export const didFailOpenTimeout = (): boolean => warmState === 'failopen-timeout';
+// ---------------------------------------------------------------------------
+// Cross-graph shared warm state (CRITICAL — see prom/client.ts header)
+// ---------------------------------------------------------------------------
+//
+// WHY: Next.js compiles `instrumentation.ts` into a SEPARATE webpack bundle from
+// the API-route/pages bundle, so each graph gets its OWN copy of this module —
+// and thus its own module-level `let`. `runWarmup()` is invoked ONLY from the
+// instrumentation graph (instrumentation.node.ts), so it flips the warm flag in
+// the INSTRUMENTATION graph's copy. But `/api/ready`'s `isWarm()` reads the
+// REQUEST graph's copy — where a plain module-`let` would stay `false` FOREVER,
+// so /api/ready would return 503 permanently and repointing probes at it would
+// wedge every rollout. (Exactly the bug the metrics-pin in prom/client.ts was
+// added to fix — see registerInstrumentationMetric / __civitaiInstrumentationRegistry.)
+//
+// FIX: pin the warm state on `globalThis` (the real V8 global, shared across all
+// webpack bundles in the same Node process). Every reader (`isWarm`, `/api/ready`)
+// and every writer (`runWarmup` success/timeout, the disabled early-return,
+// `setWarmState`) goes through this ONE pinned object, so a flip in the
+// instrumentation graph is visible from the request graph.
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiWarmState:
+    | { ready: boolean; state: WarmState; durationMs: number | null }
+    | undefined;
+}
+
+const warm = (globalThis.__civitaiWarmState ??= {
+  ready: false,
+  state: 'in-progress',
+  durationMs: null,
+});
+
+export const isWarm = () => warm.ready;
+
+export const getWarmState = (): WarmState => warm.state;
+export const getWarmDurationMs = (): number | null => warm.durationMs;
+export const didFailOpenTimeout = (): boolean => warm.state === 'failopen-timeout';
 
 const LOG_PREFIX = '[warmup]';
 
@@ -70,34 +98,36 @@ const WARM_STATE_CODE: Record<WarmState, number> = {
 // visible from /metrics (scraped in the request graph). registerInstrumentationMetric
 // is HMR/dual-graph idempotent — it short-circuits to the existing instance
 // before re-constructing. See src/server/prom/client.ts.
+// Metric names use the shared PROM_PREFIX (civitai_app_*) like every other
+// instrumentation metric (see prom/client.ts PROM_PREFIX + eventloop-longtask.ts).
 const warmStateGauge = registerInstrumentationMetric(
-  'civitai_warmup_state',
+  'civitai_app_warmup_state',
   () =>
     new client.Gauge({
-      name: 'civitai_warmup_state',
+      name: 'civitai_app_warmup_state',
       help: 'In-process route-warmer state (0=disabled,1=in-progress,2=warmed-ok,3=failopen-timeout)',
       registers: [instrumentationRegistry],
     })
 );
 
 const warmDurationGauge = registerInstrumentationMetric(
-  'civitai_warmup_duration_seconds',
+  'civitai_app_warmup_duration_seconds',
   () =>
     new client.Gauge({
-      name: 'civitai_warmup_duration_seconds',
+      name: 'civitai_app_warmup_duration_seconds',
       help: 'Wall-clock seconds the in-process route warmer took to complete (or to fail-open timeout)',
       registers: [instrumentationRegistry],
     })
 );
 
 function setWarmState(state: WarmState) {
-  warmState = state;
+  warm.state = state;
   warmStateGauge.set(WARM_STATE_CODE[state]);
 }
 
-// Reflect the initial in-progress state on the gauge at module init so a scrape
-// before runWarmup() resolves still reports a value (not absent).
-warmStateGauge.set(WARM_STATE_CODE[warmState]);
+// Reflect the initial state on the gauge at module init so a scrape before
+// runWarmup() resolves still reports a value (not absent).
+warmStateGauge.set(WARM_STATE_CODE[warm.state]);
 
 // WebhookEndpoint/-style routes are token-gated; /api/live + /api/health use
 // env.WEBHOOK_TOKEN. Use the validated env accessor (same one health.ts /
@@ -189,7 +219,16 @@ const WARM_ITERATIONS = intFromEnv('WARM_ITERATIONS', 1);
 // hit the shared DB-replica / Meili in lockstep. Both an initial random delay
 // and a small inter-route delay are applied. Math.random is fine here (no
 // security/uniqueness requirement — just load smearing).
-const WARM_INITIAL_JITTER_MAX_MS = intFromEnv('WARM_INITIAL_JITTER_MAX_MS', 500);
+//
+// The INITIAL jitter ceiling is the load-smearing knob that matters: a ~75-pod
+// fleet all becoming listener-ready within ~1s of each other during a rollout
+// would, at a 500ms ceiling, fire their first HEAVY warm read (the feed query)
+// at the shared DB-replica / Meili inside a 500ms window — a pulse on backends
+// that are ALREADY stressed by the rollout. Default the ceiling to 10s so the
+// fleet spreads its first heavy hit over ~10s instead. Env-overridable per pool
+// (WARM_INITIAL_JITTER_MAX_MS). Inter-route jitter stays modest. (Open: the real
+// pulse must be validated on a canary rollout before fleet-wide enable.)
+const WARM_INITIAL_JITTER_MAX_MS = intFromEnv('WARM_INITIAL_JITTER_MAX_MS', 10_000);
 const WARM_INTER_ROUTE_JITTER_MAX_MS = intFromEnv('WARM_INTER_ROUTE_JITTER_MAX_MS', 500);
 const randomJitter = (maxMs: number) => (maxMs > 0 ? Math.floor(Math.random() * maxMs) : 0);
 
@@ -241,6 +280,12 @@ async function warmRoute(baseUrl: string, route: string): Promise<void> {
   );
 }
 
+// Double-run guard. Left module-local (NOT globalThis-pinned) deliberately:
+// runWarmup() is invoked ONLY from the instrumentation graph
+// (instrumentation.node.ts), so there is a single copy that matters. Even if a
+// second graph ever called it, both writes go through the shared globalThis
+// `warm` object, so a duplicate run is at worst a harmless extra warm pass — it
+// cannot corrupt the readiness state.
 let started = false;
 
 export async function runWarmup(): Promise<void> {
@@ -254,10 +299,19 @@ export async function runWarmup(): Promise<void> {
   // gate). This keeps the warmer (which executes the heavy feed query and could
   // hit a DEV DB on previews) off the pools it has no business warming.
   if (process.env.WARMUP_ENABLED !== 'true') {
-    console.log(
-      `${LOG_PREFIX} disabled (WARMUP_ENABLED!=='true') — marking warm immediately, no warm run`
+    // WARN (not log) + a distinct, alertable gauge value (state=disabled → 0).
+    // This is the silent-cold footgun guard: if a manifest repoints startup/
+    // readiness probes at /api/ready but FORGETS WARMUP_ENABLED=true on a
+    // warming pool, the warmer no-ops and /api/ready returns 200 on a COLD pod.
+    // The greppable per-pod WARN below + the disabled gauge value let an
+    // operator (and a Prometheus alert scoped to the SSR/API/heavy pools)
+    // detect that misconfig. Setting WARMUP_ENABLED=true and repointing the
+    // probes MUST be ONE atomic manifest change.
+    console.warn(
+      `${LOG_PREFIX} DISABLED (WARMUP_ENABLED!=='true') — no warm run; /api/ready will 200 on a COLD pod. ` +
+        `This is correct for non-warming pools (jobs/next/stage/app/previews); on an SSR/API/heavy pool it means a missed WARMUP_ENABLED=true.`
     );
-    warmReady = true;
+    warm.ready = true;
     setWarmState('disabled');
     return;
   }
@@ -276,13 +330,13 @@ export async function runWarmup(): Promise<void> {
   let timedOut = false;
   const timeoutId = setTimeout(() => {
     timedOut = true;
-    if (!warmReady) {
-      warmReady = true;
+    if (!warm.ready) {
+      warm.ready = true;
       // Record the fail-open: the pod IS now Ready (so a slow backend can't
       // wedge the rollout), but the warm path was NOT confirmed. This is the
-      // alertable state — visible on civitai_warmup_state=3 and /api/ready.
-      warmDurationMs = Date.now() - startedAt;
-      warmDurationGauge.set(warmDurationMs / 1000);
+      // alertable state — visible on civitai_app_warmup_state=3 and /api/ready.
+      warm.durationMs = Date.now() - startedAt;
+      warmDurationGauge.set(warm.durationMs / 1000);
       setWarmState('failopen-timeout');
       console.warn(`${LOG_PREFIX} hard timeout after ${timeoutMs}ms — marking warm (fail-open)`);
     }
@@ -333,18 +387,18 @@ export async function runWarmup(): Promise<void> {
     // Fail-open: flip warm at the end no matter what — success, per-route
     // errors, or partial completion. (If the hard timeout already flipped it,
     // this is a harmless no-op.)
-    warmReady = true;
+    warm.ready = true;
     // Record duration + final state. If the hard timeout already fired, leave
     // the failopen-timeout state/duration it set (don't overwrite with the
     // later natural-completion time). Otherwise the warm pass completed → mark
     // warmed-ok with its wall-clock.
     if (!timedOut) {
-      warmDurationMs = Date.now() - startedAt;
-      warmDurationGauge.set(warmDurationMs / 1000);
+      warm.durationMs = Date.now() - startedAt;
+      warmDurationGauge.set(warm.durationMs / 1000);
       setWarmState('warmed-ok');
     }
     console.log(
-      `${LOG_PREFIX} complete in ${Date.now() - startedAt}ms — warmReady=true, state=${warmState}${
+      `${LOG_PREFIX} complete in ${Date.now() - startedAt}ms — warmReady=true, state=${warm.state}${
         timedOut ? ' (via timeout)' : ''
       }`
     );
