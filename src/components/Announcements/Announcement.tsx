@@ -70,7 +70,7 @@ export function Announcement({
           <Title order={4}>{announcement.title}</Title>
           {moderatorActions}
         </div>
-        <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
+        <CustomMarkdown allowedElements={['a', 'time']} unwrapDisallowed>
           {announcement.content}
         </CustomMarkdown>
         {actions && (

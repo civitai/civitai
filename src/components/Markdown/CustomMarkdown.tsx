@@ -4,6 +4,8 @@ import ReactMarkdown from 'react-markdown';
 import type { Options } from 'react-markdown';
 import clsx from 'clsx';
 import ContentErrorBoundary from '~/components/ErrorBoundary/ContentErrorBoundary';
+import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
+import { remarkTimestamp } from '~/components/Markdown/remark-timestamp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type CustomOptions = Options & {
@@ -19,12 +21,27 @@ export function CustomMarkdown({
   allowExternalVideo,
   components,
   className,
+  remarkPlugins,
   ...options
 }: CustomOptions) {
   const user = useCurrentUser();
 
+  // Discord-style `<t:UNIX:STYLE>` timestamp support is available in every
+  // markdown surface. Caller-provided remark plugins still run alongside it.
+  const mergedRemarkPlugins = [remarkTimestamp, ...(remarkPlugins ?? [])];
+
   const mergedComponents: Options['components'] = {
     ...components,
+    time: ({ node, ...props }) => {
+      const properties = (node?.properties ?? {}) as Record<string, unknown>;
+      if (properties.dataType !== 'timestamp') return <time {...props}>{props.children}</time>;
+      return (
+        <LocalTimestamp
+          value={String(properties.dataValue ?? '')}
+          style={properties.dataStyle as string | undefined}
+        />
+      );
+    },
     a: ({ node, href, ...props }) => {
       if (!href) return <a {...props}>{props.children}</a>;
       if (
@@ -85,6 +102,7 @@ export function CustomMarkdown({
     <ContentErrorBoundary>
       <ReactMarkdown
         {...options}
+        remarkPlugins={mergedRemarkPlugins}
         className={clsx(className, 'markdown-content')}
         components={mergedComponents}
       />
