@@ -45,33 +45,56 @@ test.describe('remix image (gold)', () => {
     // once is the safe baseline — mirrors the other mutation specs).
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    // 1. DISCOVER candidate images that carry generation meta. withMeta=true biases
-    //    the public gallery toward on-site-generated images; we still filter
-    //    client-side for a populated meta object so a no-meta upload can't sneak in.
-    // (no nsfw param → defaults to the public/SFW browsing level, which is what we
-    // want; an unauthenticated-level gallery avoids gold's sfwOnly filtering edge.)
-    const res = await page.request.get(
-      '/api/v1/images?limit=200&withMeta=true&sort=Most%20Reactions&period=AllTime'
+    // DISCOVERY — must avoid Meilisearch: the preview pod can't reach the search
+    // index (MeiliSearchCommunicationError), so a plain `/api/v1/images?sort=Most
+    // Reactions` 500s there (it routes through getAllImagesIndex). Passing `modelId`
+    // (without modelVersionId) forces /api/v1/images through the DB path getAllImages
+    // — see src/pages/api/v1/images/index.ts `useLegacyMethod`. So: pick models via
+    // /api/v1/models (DB-backed; proven in preview by preview-resource-review), then
+    // pull each model's gallery images (DB path) and keep the meta-bearing ones.
+    // A 5xx on these *generic read* endpoints = the preview pod is unhealthy (cold/
+    // contended), NOT a remix regression → skip (report-only), don't hard-fail.
+
+    const modelsRes = await page.request.get('/api/v1/models?limit=20');
+    test.skip(
+      modelsRes.status() >= 500,
+      `models discovery infra 5xx (${modelsRes.status()}) — preview unhealthy, not a remix bug`
     );
-    expect(res.ok(), `/api/v1/images -> HTTP ${res.status()}`).toBeTruthy();
-    const body = (await res.json()) as {
-      items?: Array<{ id?: number; meta?: Record<string, unknown> | null }>;
-    };
-    const candidates = (body.items ?? [])
-      .filter((it) => typeof it?.id === 'number' && it.meta && Object.keys(it.meta).length > 0)
-      .map((it) => it.id as number);
+    expect(modelsRes.ok(), `/api/v1/models -> HTTP ${modelsRes.status()}`).toBeTruthy();
+    const modelIds = (((await modelsRes.json()) as { items?: Array<{ id?: number }> }).items ?? [])
+      .map((m) => m?.id)
+      .filter((n): n is number => typeof n === 'number');
+
+    const candidates: number[] = [];
+    for (const modelId of modelIds) {
+      if (candidates.length >= 15) break;
+      const imgRes = await page.request.get(
+        `/api/v1/images?modelId=${modelId}&withMeta=true&limit=20`
+      );
+      if (!imgRes.ok()) continue; // skip an individual model that errors
+      const items =
+        ((await imgRes.json()) as {
+          items?: Array<{ id?: number; meta?: Record<string, unknown> | null }>;
+        }).items ?? [];
+      for (const it of items) {
+        if (typeof it?.id === 'number' && it.meta && Object.keys(it.meta).length > 0) {
+          candidates.push(it.id);
+        }
+      }
+    }
 
     test.skip(
       candidates.length === 0,
-      'no meta-bearing image in the shared dev DB to remix (report-only skip)'
+      'no meta-bearing model-gallery image in the shared dev DB to remix (report-only skip)'
     );
 
-    // 2. Walk candidates until one resolves to a NON-EMPTY remix graph. An image can
-    //    carry partial meta that doesn't map to a generation graph; accept the first
-    //    that does. (generation.getGenerationData is a query; the helper unwraps the
-    //    superjson `{ result: { data: { json } } }` envelope to the GenerationData.)
+    // Walk candidates until one resolves to a NON-EMPTY remix graph. Track whether
+    // getGenerationData ever returned cleanly: if EVERY call 5xx'd, that's a real
+    // remix-endpoint regression (surface it), not a "no data" skip.
     let resolved: GenerationData | null = null;
     let sourceId = -1;
+    let any2xx = false;
+    let lastErr: unknown = null;
     for (const id of candidates.slice(0, 12)) {
       let data: GenerationData;
       try {
@@ -79,8 +102,10 @@ test.describe('remix image (gold)', () => {
           type: 'image',
           id,
         });
-      } catch {
-        continue; // a single un-resolvable image shouldn't fail the spec
+        any2xx = true;
+      } catch (err) {
+        lastErr = err; // a single un-resolvable image shouldn't fail the spec…
+        continue;
       }
       if (data && data.params && Object.keys(data.params).length > 0) {
         resolved = data;
@@ -89,6 +114,11 @@ test.describe('remix image (gold)', () => {
       }
     }
 
+    // …but if NOT ONE getGenerationData call succeeded, the remix endpoint itself is
+    // broken — fail loudly rather than masking it as a skip.
+    if (resolved === null && !any2xx && lastErr) {
+      throw lastErr;
+    }
     test.skip(
       resolved === null,
       'meta-bearing images exist but none resolved to a generation graph (report-only skip)'
