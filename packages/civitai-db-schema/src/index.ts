@@ -9,5 +9,12 @@
 // which fails. It resolves via root hoisting today; the proper fix is a custom generator
 // output (output = "../generated/client") so this barrel re-exports from ./generated and
 // the lint exception below can be removed.
+//
+// NB: we do NOT `export *` from the CJS `@prisma/client` — Turbopack can't statically enumerate a
+// CommonJS module's exports through a runtime `export *`, so it warns on every import. The bare index is
+// only consumed for the runtime `Prisma` + `PrismaClient` (everything else is types), so re-export those
+// explicitly and all types via `export type *` (zero runtime code) — same surface, no warning.
 // eslint-disable-next-line import/no-extraneous-dependencies
-export * from '@prisma/client';
+export { Prisma, PrismaClient } from '@prisma/client';
+// eslint-disable-next-line import/no-extraneous-dependencies
+export type * from '@prisma/client';
