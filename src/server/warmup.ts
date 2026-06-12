@@ -232,6 +232,23 @@ const WARM_INITIAL_JITTER_MAX_MS = intFromEnv('WARM_INITIAL_JITTER_MAX_MS', 10_0
 const WARM_INTER_ROUTE_JITTER_MAX_MS = intFromEnv('WARM_INTER_ROUTE_JITTER_MAX_MS', 500);
 const randomJitter = (maxMs: number) => (maxMs > 0 ? Math.floor(Math.random() * maxMs) : 0);
 
+// Per-request hard timeout for a single warm fetch (MEDIUM-1). Without it a warm
+// read that hangs (a brown dependency that accepts the connection but never
+// responds) would leak its loopback socket for the pod's life and strand
+// warmState='in-progress' on that route forever — the per-route `await` would
+// never resolve. Readiness itself is NOT wedged (the independent fail-open
+// setTimeout(WARMUP_TIMEOUT_MS) still flips ready=true), so this is robustness,
+// not correctness. We bound EACH fetch with AbortSignal.timeout(perRouteMs)
+// (Node 20+) so a hung route is abandoned and the loop CONTINUES to the next.
+// 0 disables the per-request bound (falls back to no AbortSignal). Env-overridable
+// via WARM_PER_REQUEST_TIMEOUT_MS (default 10s).
+const WARM_PER_REQUEST_TIMEOUT_MS = intFromEnv('WARM_PER_REQUEST_TIMEOUT_MS', 10_000);
+
+// Build the AbortSignal for a single warm fetch. Returns undefined when the
+// per-request timeout is disabled (<=0) so we pass no signal in that case.
+const warmAbortSignal = (): AbortSignal | undefined =>
+  WARM_PER_REQUEST_TIMEOUT_MS > 0 ? AbortSignal.timeout(WARM_PER_REQUEST_TIMEOUT_MS) : undefined;
+
 // Poll /api/live until the HTTP listener answers 200, so self-requests don't
 // race the server coming up. Bounded — never block boot forever.
 async function waitForListener(baseUrl: string): Promise<boolean> {
@@ -263,14 +280,30 @@ async function warmRoute(baseUrl: string, route: string): Promise<void> {
   let errored = false;
   for (let i = 0; i < WARM_ITERATIONS; i++) {
     try {
-      const res = await fetch(url, { method: 'GET', headers: WARM_HEADERS });
+      // Per-request AbortSignal.timeout (MEDIUM-1): a hung warm read is aborted
+      // after WARM_PER_REQUEST_TIMEOUT_MS so it can't leak a socket or strand
+      // this route's await forever. The abort surfaces as a throw from fetch (or
+      // from res.text() if the body hangs) — caught below — and the caller's
+      // loop CONTINUES to the next route. Body drain shares the same signal so a
+      // hung body stream is also abandoned.
+      const signal = warmAbortSignal();
+      const res = await fetch(url, { method: 'GET', headers: WARM_HEADERS, signal });
       lastStatus = res.status;
       // Read the body so the handler runs to completion (the response stream is
       // part of the hot path we want JIT-compiled) and the socket frees up.
       await res.text().catch(() => undefined);
     } catch (err) {
       errored = true;
-      console.error(`${LOG_PREFIX} route warm error ${route}:`, (err as Error)?.message ?? err);
+      // AbortSignal.timeout aborts with a TimeoutError DOMException; surface it
+      // concisely so an operator can tell a per-request timeout from a real
+      // connection error. Either way we swallow it and continue.
+      const e = err as Error;
+      const aborted = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+      console.warn(
+        `${LOG_PREFIX} route warm ${aborted ? 'timeout' : 'error'} ${route}` +
+          `${aborted ? ` (>${WARM_PER_REQUEST_TIMEOUT_MS}ms)` : ''}:`,
+        e?.message ?? err
+      );
     }
   }
   console.log(
