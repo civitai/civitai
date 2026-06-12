@@ -81,7 +81,7 @@ const featureFlags = createFeatureFlags({
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
-  trainingStepsPricing: { availability: ['public'], fliptKey: 'training-steps-pricing' },
+  trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
   trainingAutoLabelOrchestrator: {
     availability: ['mod'],
     fliptKey: 'training-auto-label-orchestrator',
