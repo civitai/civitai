@@ -167,6 +167,31 @@ export const getModel3DReviewSummarySchema = z.object({
   model3dId: z.number().int().positive(),
 });
 
+// Gallery moderation — creator/mod hide images, users, tags from the
+// per-Model3D community gallery. Shape mirrors `model.updateGallerySettings`
+// but without a version dimension.
+export type Model3DGallerySettingsSchema = {
+  users?: number[] | undefined;
+  tags?: number[] | undefined;
+  images?: number[] | undefined;
+};
+
+export type UpdateModel3DGallerySettingsInput = z.infer<
+  typeof updateModel3DGallerySettingsSchema
+>;
+export const updateModel3DGallerySettingsSchema = z.object({
+  id: z.number().int().positive(),
+  gallerySettings: z
+    .object({
+      hiddenUsers: z
+        .object({ id: z.number(), username: z.string().nullable() })
+        .array(),
+      hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
+      hiddenImages: z.number().int().positive().array(),
+    })
+    .nullable(),
+});
+
 // ---------------------------------------------------------------------------
 // Reviews
 // ---------------------------------------------------------------------------

@@ -28,7 +28,10 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SortFilter } from '~/components/Filters';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
+import {
+  useGallerySettings,
+  useModel3DGallerySettings,
+} from '~/components/Image/AsPosts/gallery.utils';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import {
   ImagesAsPostsInfiniteProvider,
@@ -119,17 +122,28 @@ export function ImagesAsPostsInfinite({
     ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
     : rawBrowsingLevel;
   // model.getGallerySettings is Model-only; pass undefined on other sources
-  // so the underlying query is disabled cleanly.
+  // so the underlying query is disabled cleanly. The parallel Model3D hook
+  // covers `source.kind === 'model3d'` with a flat hidden-image list.
   const settingsModelId = source.kind === 'model' ? source.model.id : undefined;
+  const settingsModel3DId = source.kind === 'model3d' ? source.id : undefined;
   const { gallerySettings } = useGallerySettings({ modelId: settingsModelId });
+  const { gallerySettings: model3dGallerySettings } = useModel3DGallerySettings({
+    model3dId: settingsModel3DId,
+  });
   let intersection = browsingLevel;
   if (gallerySettings?.level) {
     intersection = Flags.intersection(browsingLevel, gallerySettings.level);
   }
-  // Model galleries gate on the settings response (so the level override
-  // is applied first); other sources can start fetching immediately.
+  // Both Model + Model3D galleries gate on the settings response (so
+  // hidden ids/level are applied before the first page request); other
+  // sources can start fetching immediately.
   const enabled =
-    intersection > 0 && (source.kind === 'model' ? !!gallerySettings : true);
+    intersection > 0 &&
+    (source.kind === 'model'
+      ? !!gallerySettings
+      : source.kind === 'model3d'
+      ? !!model3dGallerySettings
+      : true);
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
       { ...filters, limit, browsingLevel: intersection },
@@ -143,21 +157,29 @@ export function ImagesAsPostsInfinite({
     );
 
   const hiddenUsers = useMemo(
-    () => gallerySettings?.hiddenUsers.map((x) => x.id),
-    [gallerySettings?.hiddenUsers]
+    () =>
+      source.kind === 'model3d'
+        ? model3dGallerySettings?.hiddenUsers.map((x) => x.id)
+        : gallerySettings?.hiddenUsers.map((x) => x.id),
+    [source.kind, gallerySettings?.hiddenUsers, model3dGallerySettings?.hiddenUsers]
   );
   const hiddenTags = useMemo(
-    () => gallerySettings?.hiddenTags.map((x) => x.id),
-    [gallerySettings?.hiddenTags]
+    () =>
+      source.kind === 'model3d'
+        ? model3dGallerySettings?.hiddenTags.map((x) => x.id)
+        : gallerySettings?.hiddenTags.map((x) => x.id),
+    [source.kind, gallerySettings?.hiddenTags, model3dGallerySettings?.hiddenTags]
   );
 
-  const hiddenImageIds = useMemo(
-    () =>
-      selectedVersionId && gallerySettings
-        ? gallerySettings.hiddenImages?.[selectedVersionId] ?? []
-        : [],
-    [selectedVersionId, gallerySettings]
-  );
+  // Model: hidden images are keyed by modelVersionId. Model3D: flat list
+  // (no version dimension). Both collapse to a `number[]` for the
+  // `useApplyHiddenPreferences` consumer below.
+  const hiddenImageIds = useMemo(() => {
+    if (source.kind === 'model3d') return model3dGallerySettings?.hiddenImages ?? [];
+    return selectedVersionId && gallerySettings
+      ? gallerySettings.hiddenImages?.[selectedVersionId] ?? []
+      : [];
+  }, [source.kind, selectedVersionId, gallerySettings, model3dGallerySettings]);
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
   const { items } = useApplyHiddenPreferences({
@@ -190,9 +212,13 @@ export function ImagesAsPostsInfinite({
 
   const isMuted = currentUser?.muted ?? false;
   const hasModerationPreferences =
-    !!hiddenImageIds.length ||
-    !!gallerySettings?.hiddenUsers.length ||
-    !!gallerySettings?.hiddenTags.length;
+    source.kind === 'model3d'
+      ? !!hiddenImageIds.length ||
+        !!model3dGallerySettings?.hiddenUsers.length ||
+        !!model3dGallerySettings?.hiddenTags.length
+      : !!hiddenImageIds.length ||
+        !!gallerySettings?.hiddenUsers.length ||
+        !!gallerySettings?.hiddenTags.length;
 
   const providerValue = useMemo(
     () => ({ filters, modelVersions, showModerationOptions, source }),
@@ -242,36 +268,45 @@ export function ImagesAsPostsInfinite({
               <Group ml="auto" gap={8}>
                 <SortFilter type="modelImages" />
                 <MediaFiltersDropdown filterType="modelImages" size="compact-sm" hideBaseModels />
-                {showModerationOptions && source.kind === 'model' && (
-                  <>
-                    {!!hiddenImageIds.length && (
-                      <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
-                        <LegacyActionIcon
-                          variant="light"
-                          radius="xl"
-                          color="red"
-                          onClick={() => setShowHidden((h) => !h)}
+                {showModerationOptions &&
+                  (source.kind === 'model' || source.kind === 'model3d') && (
+                    <>
+                      {!!hiddenImageIds.length && (
+                        <ButtonTooltip
+                          label={`${showHidden ? 'Hide' : 'Show'} hidden images`}
                         >
-                          {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
-                        </LegacyActionIcon>
-                      </ButtonTooltip>
-                    )}
-                    <ButtonTooltip label="Gallery Moderation Preferences">
-                      <LegacyActionIcon
-                        variant="filled"
-                        radius="xl"
-                        onClick={() =>
-                          dialogStore.trigger({
-                            component: GalleryModerationModal,
-                            props: { modelId: source.model.id },
-                          })
-                        }
-                      >
-                        <IconSettings size={16} />
-                      </LegacyActionIcon>
-                    </ButtonTooltip>
-                  </>
-                )}
+                          <LegacyActionIcon
+                            variant="light"
+                            radius="xl"
+                            color="red"
+                            onClick={() => setShowHidden((h) => !h)}
+                          >
+                            {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+                          </LegacyActionIcon>
+                        </ButtonTooltip>
+                      )}
+                      {/* GalleryModerationModal (browsing-level + tag/user
+                          pickers) is Model-only — it pivots on Model
+                          versions. For Model3D we surface only the
+                          per-image hide via the post card context menu. */}
+                      {source.kind === 'model' && (
+                        <ButtonTooltip label="Gallery Moderation Preferences">
+                          <LegacyActionIcon
+                            variant="filled"
+                            radius="xl"
+                            onClick={() =>
+                              dialogStore.trigger({
+                                component: GalleryModerationModal,
+                                props: { modelId: source.model.id },
+                              })
+                            }
+                          >
+                            <IconSettings size={16} />
+                          </LegacyActionIcon>
+                        </ButtonTooltip>
+                      )}
+                    </>
+                  )}
               </Group>
             </Group>
             {showPOIWarning && (

@@ -34,9 +34,17 @@ export function Model3DGallery({
     triggerOnce: true,
   });
 
+  // Surface gallery moderation controls (hide image / hide user via the
+  // post card menu + the show/hide-hidden eye toggle) when the viewer is the
+  // creator or a moderator. Mirrors ModelGallery's `showModerationOptions`.
+  const showModerationOptions =
+    !!currentUser &&
+    (currentUser.id === model3d.userId || currentUser.isModerator === true);
+
   const content = inView && (
     <ImagesAsPostsInfinite
       source={{ kind: 'model3d', id: model3d.id, creatorUserId: model3d.userId }}
+      showModerationOptions={showModerationOptions}
     />
   );
   const forceMinorLevel = !!model3d.minor && !currentUser?.isModerator;

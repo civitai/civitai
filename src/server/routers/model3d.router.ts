@@ -29,6 +29,7 @@ import {
   setModel3DNsfwLevelSchema,
   toggleModel3DFlagSchema,
   restoreModel3DSchema,
+  updateModel3DGallerySettingsSchema,
 } from '~/server/schema/model3d.schema';
 import {
   upsertModel3D,
@@ -38,6 +39,7 @@ import {
   getModel3DByPostId,
   getModel3DByThumbnailImageId,
   getModel3DByWorkflowId,
+  getModel3DGallerySettings,
   getModel3DsInfinite,
   getModel3DTags,
   publishModel3D,
@@ -49,6 +51,7 @@ import {
   setModel3DNsfwLevel,
   toggleModel3DFlag,
   restoreModel3D,
+  updateModel3DGallerySettings,
 } from '~/server/services/model3d.service';
 import {
   upsertModel3DReview,
@@ -189,6 +192,24 @@ export const model3dRouter = router({
   getByThumbnailImageId: moderatorProcedure
     .input(getModel3DByThumbnailImageIdSchema)
     .query(({ input }) => getModel3DByThumbnailImageId(input)),
+
+  // Per-Model3D gallery moderation. Public read (the masonry needs hidden
+  // ids before it can apply them via `useApplyHiddenPreferences`); update is
+  // owner-or-mod gated inside the service.
+  getGallerySettings: publicProcedure
+    .use(isFlagProtected('model3dFeed'))
+    .input(getModel3DByIdSchema)
+    .query(({ input }) => getModel3DGallerySettings({ id: input.id })),
+  updateGallerySettings: guardedProcedure
+    .use(isFlagProtected('model3dFeed'))
+    .input(updateModel3DGallerySettingsSchema)
+    .mutation(({ input, ctx }) =>
+      updateModel3DGallerySettings({
+        input,
+        userId: ctx.user.id,
+        isModerator: !!ctx.user.isModerator,
+      })
+    ),
 
   // Sub-routers
   reviews: reviewsRouter,

@@ -5809,6 +5809,9 @@ model Model3D {
   availability     Availability   @default(Public)
   nsfwLevel        Int            @default(0)
   meta             Json           @default("{}")
+  // Per-Model3D gallery moderation (creator/mod hide image/user/tag). No
+  // version dimension — `images` is a flat list of hidden image ids.
+  gallerySettings  Json           @default("{\"users\":[],\"tags\":[],\"images\":[]}")
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   publishedAt      DateTime?

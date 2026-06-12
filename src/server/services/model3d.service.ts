@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userContentOverviewCache } from '~/server/redis/caches';
@@ -31,11 +31,13 @@ import type {
   GetModel3DReviewSummaryInput,
   GetModel3DsInfiniteInput,
   GetModel3DTagsInput,
+  Model3DGallerySettingsSchema,
   PublishModel3DInput,
   RestoreModel3DInput,
   SetModel3DNsfwLevelInput,
   ToggleModel3DFlagInput,
   UnpublishModel3DInput,
+  UpdateModel3DGallerySettingsInput,
   UpsertModel3DInput,
 } from '~/server/schema/model3d.schema';
 import { Model3DSort } from '~/server/schema/model3d.schema';
@@ -1054,6 +1056,76 @@ export const getModel3DByPostId = async ({
     name: model3d.name,
     thumbnailImage: model3d.thumbnailImage,
   };
+};
+
+// ---------------------------------------------------------------------------
+// Per-Model3D gallery moderation. Mirrors `model.gallerySettings` minus
+// `pinnedPosts` + `level` (no version dimension, no level override for v1).
+// Read returns expanded `{hiddenUsers, hiddenTags, hiddenImages}` so the
+// existing `useApplyHiddenPreferences` consumer doesn't need a separate
+// shape for model3d.
+// ---------------------------------------------------------------------------
+export const getModel3DGallerySettings = async ({ id }: { id: number }) => {
+  const row = await dbRead.model3D.findUnique({
+    where: { id },
+    select: { id: true, userId: true, gallerySettings: true },
+  });
+  if (!row) return null;
+  const settings = (row.gallerySettings ?? {}) as Model3DGallerySettingsSchema;
+  const { tags, users, images } = settings;
+  const hiddenTags =
+    tags && tags.length
+      ? await dbRead.tag.findMany({
+          where: { id: { in: tags } },
+          select: { id: true, name: true },
+        })
+      : [];
+  const hiddenUsers =
+    users && users.length
+      ? await dbRead.user.findMany({
+          where: { id: { in: users } },
+          select: { id: true, username: true },
+        })
+      : [];
+  return {
+    hiddenTags,
+    hiddenUsers,
+    hiddenImages: images ?? [],
+  };
+};
+
+export const updateModel3DGallerySettings = async ({
+  input,
+  userId,
+  isModerator = false,
+}: {
+  input: UpdateModel3DGallerySettingsInput;
+  userId: number;
+  isModerator?: boolean;
+}) => {
+  const row = await dbWrite.model3D.findUnique({
+    where: { id: input.id },
+    select: { id: true, userId: true },
+  });
+  if (!row) throw throwNotFoundError(`No 3D model with id ${input.id}`);
+  if (row.userId !== userId && !isModerator) throw throwAuthorizationError();
+
+  const next: Model3DGallerySettingsSchema | null = input.gallerySettings
+    ? {
+        users: input.gallerySettings.hiddenUsers.map((u) => u.id),
+        tags: input.gallerySettings.hiddenTags.map((t) => t.id),
+        images: input.gallerySettings.hiddenImages,
+      }
+    : null;
+
+  await dbWrite.model3D.update({
+    where: { id: input.id },
+    data: {
+      gallerySettings: (next as Prisma.InputJsonValue | null) ?? Prisma.JsonNull,
+    },
+  });
+
+  return { id: input.id, gallerySettings: input.gallerySettings };
 };
 
 // ---------------------------------------------------------------------------
