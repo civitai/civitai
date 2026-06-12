@@ -169,19 +169,6 @@ export async function processImageScanWorkflow({
   startedAt?: Date | string | null;
   completedAt?: Date | string | null;
 }) {
-  logToAxiom(
-    {
-      name: 'image-scan-workflow-received',
-      type: 'info',
-      message: 'Processing image scan workflow',
-      source: 'image-scan-result.service',
-      imageId,
-      workflowId,
-      status,
-    },
-    'webhooks'
-  ).catch(() => null);
-
   if (status !== 'succeeded') {
     const retryCount = await markImageScanError({ workflowId, imageId });
     // This branch is otherwise silent: it flips the image to `Error` and burns a
@@ -610,11 +597,7 @@ async function processTags({
     .map((tag) => {
       const match = normalized.find((x) => x.name === tag.name);
       if (!match) return null;
-      return {
-        ...tag,
-        source: match.source,
-        confidence: match.confidence,
-      };
+      return { ...tag, source: match.source, confidence: match.confidence };
     })
     .filter(isDefined);
 

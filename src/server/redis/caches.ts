@@ -429,6 +429,9 @@ export const tagCacheByName = {
 
   async setMany(entries: Array<{ key: string; data: TagLookup }>) {
     if (entries.length === 0) return;
+    // packed.mSet is intentionally disabled in client.ts (CROSSSLOT / format complexity),
+    // so we fan out individual SETs in parallel. Tag writes are infrequent (cache-miss
+    // backfill only), so the extra roundtrips are acceptable.
     await Promise.all(
       entries.map(({ key, data }) =>
         redis.packed.set(
