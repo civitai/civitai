@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { maybeCreateSessionSigner } from '@civitai/auth';
 
-// Public JWKS endpoint — spokes fetch + cache this app's RS256 public key(s) from here to verify
+// Public JWKS endpoint — spokes fetch + cache this app's ES256 public key(s) from here to verify
 // id_tokens / session tokens locally (Path C). Returns 404 until the keys are configured. This is
 // the canonical path: the OIDC discovery doc advertises `jwks_uri: /api/auth/jwks` directly, so no
 // /.well-known rewrite is needed (the SvelteKit hub additionally serves /.well-known/jwks.json).

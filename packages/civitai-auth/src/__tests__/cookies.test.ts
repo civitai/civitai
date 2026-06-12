@@ -8,7 +8,7 @@ describe('cookies', () => {
   });
 
   it('builds the session cookie name (matches main app libs/auth.ts)', () => {
-    expect(sessionCookieName(true)).toBe('__Secure-civitai-token');
-    expect(sessionCookieName(false)).toBe('civitai-token');
+    expect(sessionCookieName(true)).toBe('__Secure-civ-token');
+    expect(sessionCookieName(false)).toBe('civ-token');
   });
 });

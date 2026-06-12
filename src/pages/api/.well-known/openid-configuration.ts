@@ -23,7 +23,8 @@ export default function handler(_req: NextApiRequest, res: NextApiResponse) {
     ...(oidcSigningEnabled
       ? {
           jwks_uri: `${issuer}/api/auth/jwks`,
-          id_token_signing_alg_values_supported: ['RS256'],
+          // Must match the hub signer's algorithm (@civitai/auth sign.ts → ES256 / EC P-256).
+          id_token_signing_alg_values_supported: ['ES256'],
         }
       : {}),
     response_types_supported: ['code'],

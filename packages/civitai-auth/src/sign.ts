@@ -1,5 +1,5 @@
 // HUB sign side (Path C). The hub is the ONLY minter. This overrides next-auth's default
-// symmetric JWT (JWE/hkdf) with an RS256-signed JWS, so spokes verify with the public key
+// symmetric JWT (JWE/hkdf) with an ES256-signed JWS, so spokes verify with the public key
 // (see verify.ts) — no shared secret leaves the hub.
 //
 // Wire into next-auth options:
@@ -19,7 +19,11 @@ import type { JWTEncodeParams, JWTDecodeParams, JWT } from 'next-auth/jwt';
 import { loadAuthEnv } from './env';
 import { createAuthVerifier } from './verify';
 
-const ALG = 'RS256';
+// ES256 (ECDSA P-256): asymmetric + JWKS-publishable like RS256, but ~64-byte signatures (vs RS256's
+// 256), so the session cookie + OIDC id_tokens are much smaller — and still broadly supported by OIDC
+// relying parties. The same hub key signs both, so EC P-256 keys are required (AUTH_JWT_PRIVATE_KEY /
+// AUTH_JWT_PUBLIC_KEY must be an EC keypair).
+const ALG = 'ES256';
 
 export interface SessionSignerConfig {
   privateKeyPem?: string; // PKCS8
@@ -43,7 +47,7 @@ export interface SessionSigner {
    */
   mintSwapToken: (userId: number) => Promise<string>;
   /**
-   * Framework-agnostic session minter: sign an RS256 session JWT from a claims object
+   * Framework-agnostic session minter: sign an ES256 session JWT from a claims object
    * (e.g. `{ user, id, signedAt }`). Used by non-next-auth hubs (the SvelteKit login app)
    * to issue the session cookie directly; `encode` is a next-auth-shaped wrapper around it.
    */
@@ -91,13 +95,13 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
   let _priv: ReturnType<typeof importPKCS8> | undefined;
   const privateKey = () => (_priv ??= importPKCS8(normalizePem(cfg.privateKeyPem!), ALG));
 
-  // Decode reuses the spoke verifier so the hub accepts both new RS256 and (during the
+  // Decode reuses the spoke verifier so the hub accepts both new ES256 and (during the
   // migration window) legacy tokens it previously issued. Built lazily so a mint-only hub
   // (e.g. the SvelteKit login app) never needs verify config.
   let _verifier: ReturnType<typeof createAuthVerifier> | undefined;
   const getVerifier = () => (_verifier ??= createAuthVerifier());
 
-  // Framework-agnostic session minter — sign an RS256 session JWT from a claims object.
+  // Framework-agnostic session minter — sign an ES256 session JWT from a claims object.
   // The SvelteKit hub calls this directly after login; next-auth's `encode` wraps it.
   async function mintSessionToken(
     payload: Record<string, unknown>,
@@ -107,14 +111,14 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
     // Strip reserved claims the setters own; keep everything else (notably `user`,
     // `id`, `signedAt`).
     const { iat, exp, nbf, jti, iss, aud, ...rest } = payload as Record<string, unknown>;
-    return new SignJWT(rest)
+    const builder = new SignJWT(rest)
       .setProtectedHeader({ alg: ALG, kid: cfg.kid, typ: 'JWT' })
       .setIssuedAt()
       .setExpirationTime(Math.floor(Date.now() / 1000) + ttl)
       .setJti(String(opts?.jti ?? (jti as string | undefined) ?? randomUUID()))
-      .setIssuer(cfg.issuer ?? '')
-      .setAudience(cfg.audience ?? '')
-      .sign(await privateKey());
+      .setIssuer(cfg.issuer ?? '');
+    if (cfg.audience) builder.setAudience(cfg.audience); // omit an empty `aud` to keep the token small
+    return builder.sign(await privateKey());
   }
 
   async function encode({ token, maxAge }: JWTEncodeParams): Promise<string> {
@@ -139,15 +143,15 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
   }
 
   async function mintSwapToken(userId: number): Promise<string> {
-    return new SignJWT({ purpose: 'swap' })
+    const builder = new SignJWT({ purpose: 'swap' })
       .setProtectedHeader({ alg: ALG, kid: cfg.kid, typ: 'JWT' })
       .setSubject(String(userId))
       .setIssuedAt()
       .setExpirationTime(Math.floor(Date.now() / 1000) + (env.AUTH_SWAP_MAX_AGE ?? 60))
       .setJti(randomUUID())
-      .setIssuer(cfg.issuer ?? '')
-      .setAudience(cfg.audience ?? '')
-      .sign(await privateKey());
+      .setIssuer(cfg.issuer ?? '');
+    if (cfg.audience) builder.setAudience(cfg.audience);
+    return builder.sign(await privateKey());
   }
 
   async function mintIdToken(params: {
@@ -187,7 +191,7 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
 }
 
 /**
- * Opt-in constructor: returns a signer only when the RS256 keys are configured, else
+ * Opt-in constructor: returns a signer only when the ES256 keys are configured, else
  * undefined. Lets the hub wire `jwt.encode/decode` without breaking when the keys aren't
  * set yet (Path A / pre-cutover) — behavior falls back to next-auth's default JWE.
  */

@@ -42,8 +42,8 @@ export interface SessionUser {
 /** The decoded JWT payload. `user` is the SessionUser; the rest are next-auth/JWT fields. */
 export interface SessionClaims {
   sub?: string;
-  /** token id (next-auth `token.id`); also used as the JWS `jti`. */
-  id?: string;
+  /** Standard JWS token id — the session id (single-session logout). */
+  jti?: string;
   /** epoch ms the token was (re)signed — existing `token.signedAt`. */
   signedAt?: number;
   user?: SessionUser;

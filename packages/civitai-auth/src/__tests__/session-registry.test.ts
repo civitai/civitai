@@ -45,10 +45,10 @@ describe('createSessionRegistry', () => {
     const redis = makeRedis();
     const reg = createSessionRegistry({ redis, keys: KEYS });
     await reg.trackToken('tok-1', 5);
-    expect(await reg.isRevoked({ id: 'tok-1', signedAt: 1 })).toBe(false);
+    expect(await reg.isRevoked({ jti: 'tok-1', signedAt: 1 })).toBe(false);
 
     await reg.invalidateToken('tok-1', 5);
-    expect(await reg.isRevoked({ id: 'tok-1', signedAt: 1 })).toBe(true);
+    expect(await reg.isRevoked({ jti: 'tok-1', signedAt: 1 })).toBe(true);
     // removed from the user's tracking hash
     expect(redis._hashes.get('session:user-tokens2:5')?.has('tok-1')).toBe(false);
   });
@@ -59,27 +59,27 @@ describe('createSessionRegistry', () => {
     await reg.trackToken('a', 9);
     await reg.trackToken('b', 9);
     await reg.invalidateUserSessions(9);
-    expect(await reg.isRevoked({ id: 'a', signedAt: 1 })).toBe(true);
-    expect(await reg.isRevoked({ id: 'b', signedAt: 1 })).toBe(true);
+    expect(await reg.isRevoked({ jti: 'a', signedAt: 1 })).toBe(true);
+    expect(await reg.isRevoked({ jti: 'b', signedAt: 1 })).toBe(true);
   });
 
   it('global invalidateAll revokes tokens signed before the cutoff', async () => {
     let clock = 1000;
     const redis = makeRedis();
     const reg = createSessionRegistry({ redis, keys: KEYS, now: () => clock });
-    expect(await reg.isRevoked({ id: 'x', signedAt: 1000 })).toBe(false);
+    expect(await reg.isRevoked({ jti: 'x', signedAt: 1000 })).toBe(false);
 
     clock = 2000;
     await reg.invalidateAll();
-    expect(await reg.isRevoked({ id: 'x', signedAt: 1000 })).toBe(true); // signed before cutoff
-    expect(await reg.isRevoked({ id: 'y', signedAt: 3000 })).toBe(false); // signed after
+    expect(await reg.isRevoked({ jti: 'x', signedAt: 1000 })).toBe(true); // signed before cutoff
+    expect(await reg.isRevoked({ jti: 'y', signedAt: 3000 })).toBe(false); // signed after
   });
 
   it('markForRefresh does not revoke', async () => {
     const redis = makeRedis();
     const reg = createSessionRegistry({ redis, keys: KEYS });
     await reg.markForRefresh('r');
-    expect(await reg.isRevoked({ id: 'r', signedAt: 1 })).toBe(false);
+    expect(await reg.isRevoked({ jti: 'r', signedAt: 1 })).toBe(false);
   });
 
   it('fires onInvalidate with scope info', async () => {

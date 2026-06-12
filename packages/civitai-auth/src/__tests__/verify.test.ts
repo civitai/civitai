@@ -11,8 +11,8 @@ let jwks: { keys: Record<string, unknown>[] };
 let publicKeyPem: string;
 
 beforeAll(async () => {
-  const kp = generateKeyPairSync('rsa', {
-    modulusLength: 2048,
+  const kp = generateKeyPairSync('ec', {
+    namedCurve: 'P-256', // ES256
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
@@ -44,22 +44,22 @@ function stubJwks() {
 const cfg = { jwksUri, issuer, audience };
 
 describe('createAuthVerifier', () => {
-  it('verifies an RS256 session token via JWKS', async () => {
+  it('verifies an ES256 session token via JWKS', async () => {
     stubJwks();
-    const token = await signer.mintSessionToken({ user: { id: 7 }, id: 't7', signedAt: 1 });
+    const token = await signer.mintSessionToken({ user: { id: 7 }, signedAt: 1 }, { jti: 't7' });
     const claims = await createAuthVerifier(cfg).verifyToken(token);
     expect(claims?.user).toMatchObject({ id: 7 });
-    expect(claims?.id).toBe('t7');
+    expect(claims?.jti).toBe('t7');
   });
 
-  it('verifies an RS256 token with a LOCAL public key (no JWKS fetch)', async () => {
+  it('verifies an ES256 token with a LOCAL public key (no JWKS fetch)', async () => {
     // No stubJwks() here: a local public key must verify WITHOUT any network. If it fell through to
     // JWKS, global fetch is unstubbed and this would reject.
-    const token = await signer.mintSessionToken({ user: { id: 7 }, id: 't7', signedAt: 1 });
+    const token = await signer.mintSessionToken({ user: { id: 7 }, signedAt: 1 }, { jti: 't7' });
     const verifier = createAuthVerifier({ issuer, audience, publicKeyPem });
     const claims = await verifier.verifyToken(token);
     expect(claims?.user).toMatchObject({ id: 7 });
-    expect(claims?.id).toBe('t7');
+    expect(claims?.jti).toBe('t7');
   });
 
   it('local-key verifier still rejects a wrong-issuer token', async () => {
@@ -111,14 +111,14 @@ describe('createAuthVerifier', () => {
   it('getSession reads the token out of a parsed cookie map', async () => {
     stubJwks();
     const token = await signer.mintSessionToken({ user: { id: 7 }, id: 't7' });
-    const verifier = createAuthVerifier({ ...cfg, cookieName: 'civitai-token' });
-    const claims = await verifier.getSession({ other: '1', 'civitai-token': token });
+    const verifier = createAuthVerifier({ ...cfg, cookieName: 'civ-token' });
+    const claims = await verifier.getSession({ other: '1', 'civ-token': token });
     expect(claims?.user).toMatchObject({ id: 7 });
   });
 
   it('getSession returns null when the cookie is absent', async () => {
     stubJwks();
-    const verifier = createAuthVerifier({ ...cfg, cookieName: 'civitai-token' });
+    const verifier = createAuthVerifier({ ...cfg, cookieName: 'civ-token' });
     expect(await verifier.getSession('unrelated=1; other=2')).toBeNull();
   });
 
@@ -137,13 +137,13 @@ describe('createAuthVerifier', () => {
   it('getSession reads the token out of a cookie header', async () => {
     stubJwks();
     const token = await signer.mintSessionToken({ user: { id: 7 }, id: 't7' });
-    const verifier = createAuthVerifier({ ...cfg, cookieName: 'civitai-token' });
-    const claims = await verifier.getSession(`other=1; civitai-token=${token}; x=2`);
+    const verifier = createAuthVerifier({ ...cfg, cookieName: 'civ-token' });
+    const claims = await verifier.getSession(`other=1; civ-token=${token}; x=2`);
     expect(claims?.user).toMatchObject({ id: 7 });
   });
 
   it('requireAuth returns a login redirect when there is no session', async () => {
-    const verifier = createAuthVerifier({ ...cfg, cookieName: 'civitai-token' });
+    const verifier = createAuthVerifier({ ...cfg, cookieName: 'civ-token' });
     const result = await verifier.requireAuth('', 'https://moderator.civitai.com/x');
     expect(result).toHaveProperty('redirect');
     if ('redirect' in result) {

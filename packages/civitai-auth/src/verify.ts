@@ -1,5 +1,5 @@
 // SPOKE verify side (Path C). Verifies a session token LOCALLY — no per-request hop:
-//  1. RS256 JWS  → jose `jwtVerify` against the hub's cached JWKS (refetched only on an
+//  1. ES256 JWS  → jose `jwtVerify` against the hub's cached JWKS (refetched only on an
 //                  unknown `kid`, i.e. key rotation). This is the steady state.
 //  2. legacy JWE → next-auth's own `decode` with NEXTAUTH_SECRET, ONLY during the
 //                  HS256->RS256 migration window (parent doc: "token-format migration").
@@ -12,7 +12,7 @@ import { sessionCookieName } from './cookies';
 import { loadAuthEnv } from './env';
 import type { SessionClaims } from './types';
 
-const ALG = 'RS256';
+const ALG = 'ES256'; // matches the signer (sign.ts) — EC P-256 keys, smaller signatures than RS256
 // Accept a multiline PEM or a single-line value with literal `\n` escapes (matches sign.ts).
 const normalizePem = (pem: string) => pem.replace(/\\n/g, '\n');
 
@@ -26,7 +26,7 @@ export interface AuthVerifierConfig {
   audience?: string;
   cookieName?: string;
   /**
-   * Verify RS256 tokens LOCALLY with this SPKI public key instead of fetching JWKS. The hub uses
+   * Verify ES256 tokens LOCALLY with this SPKI public key instead of fetching JWKS. The hub uses
    * this to verify its OWN cookies — it already holds the key, so no self-HTTP-fetch to its JWKS
    * endpoint (which is fragile behind a misconfigured proxy). Defaults to env.AUTH_JWT_PUBLIC_KEY,
    * so a hub (which sets it) verifies locally while spokes (which only set AUTH_JWKS_URI) use JWKS.
@@ -76,14 +76,14 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
 
   // Verification key. Prefer a LOCAL public key (no network) when configured — the hub verifying its
   // own tokens. Otherwise a memoized remote JWKS (caches keys, refetches on an unknown kid for
-  // rotation) — the spoke path. At least one must be present to verify RS256.
+  // rotation) — the spoke path. At least one must be present to verify ES256.
   let _localKey: ReturnType<typeof importSPKI> | undefined;
   const localKey = () => (_localKey ??= importSPKI(normalizePem(cfg.publicKeyPem!), ALG));
   const jwks = !cfg.publicKeyPem && cfg.jwksUri ? createRemoteJWKSet(new URL(cfg.jwksUri)) : undefined;
   const canVerify = () => !!cfg.publicKeyPem || !!jwks;
 
   // Branch so each jwtVerify call matches a single jose overload (KeyLike vs JWKS-getter).
-  async function verifyRS256(token: string) {
+  async function verifyAsymmetric(token: string) {
     const opts = { issuer: cfg.issuer, audience: cfg.audience };
     return cfg.publicKeyPem ? jwtVerify(token, await localKey(), opts) : jwtVerify(token, jwks!, opts);
   }
@@ -98,20 +98,20 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
       alg = undefined;
     }
 
-    if (alg === 'RS256') {
+    if (alg === ALG) {
       if (!canVerify())
         throw new Error(
-          '[@civitai/auth] no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI configured for RS256 verification'
+          `[@civitai/auth] no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI configured for ${ALG} verification`
         );
       try {
-        const { payload } = await verifyRS256(token);
+        const { payload } = await verifyAsymmetric(token);
         claims = payload as SessionClaims;
       } catch {
         return null; // bad signature / expired / wrong issuer
       }
     } else if (cfg.legacySecret) {
       // Legacy next-auth JWE (encrypted, hkdf from secret). Drop this branch post-cutover.
-      // Catch like the RS256 branch: a corrupt/foreign cookie must resolve to null (no session),
+      // Catch like the ES256 branch: a corrupt/foreign cookie must resolve to null (no session),
       // not throw — callers (next-auth decode override, hub hooks) expect null on a bad token.
       try {
         const { decode: nextAuthDecode } = await import('next-auth/jwt');
@@ -150,7 +150,7 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
         '[@civitai/auth] no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI configured for swap verification'
       );
     try {
-      const { payload } = await verifyRS256(token);
+      const { payload } = await verifyAsymmetric(token);
       if (payload.purpose !== 'swap') return null;
       const userId = Number(payload.sub);
       return Number.isFinite(userId) ? { userId } : null;

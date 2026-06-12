@@ -10,14 +10,14 @@ import {
 } from '@civitai/auth';
 import { sessions } from './registry';
 
-// THE session cookie — a shared contract: every app must use this exact name for SSO to work, so
+// THE thin-session cookie — a shared contract: every app must use this exact name for SSO to work, so
 // it's a hardcoded constant (via the package's single-source-of-truth helper), NOT configurable.
-// `civitai-token` in dev, `__Secure-civitai-token` in prod. The verifier decodes both RS256 (hub)
-// and legacy NextAuth JWE (main app), so one cookie + one read covers the whole migration.
+// `civ-token` in dev, `__Secure-civ-token` in prod. DISTINCT from the legacy next-auth `civitai-token`
+// cookie, so the two never collide during the cutover.
 export const SESSION_COOKIE = sessionCookieName(!dev);
 
 let _signer: SessionSigner | null | undefined;
-/** The hub RS256 signer. Throws a clear error if the keys aren't configured. */
+/** The hub ES256 signer. Throws a clear error if the keys aren't configured. */
 export function getSigner(): SessionSigner {
   if (_signer === undefined) _signer = maybeCreateSessionSigner();
   if (!_signer) {
@@ -64,13 +64,15 @@ export function toSessionUser(row: {
   };
 }
 
-/** Mint the RS256 session JWT for `user` and set it as the cross-subdomain cookie. */
+/** Mint the THIN ES256 session JWT (identity only — `sub`/`jti`/`signedAt`, NO embedded user) and set it as
+ *  the cross-subdomain cookie. The rich user is resolved per-request from the shared cache (the hub
+ *  produces it), so the cookie stays small and every root resolves from one source. */
 export async function establishSession(cookies: Cookies, user: SessionUser): Promise<void> {
   const signer = getSigner();
   const tokenId = randomUUID();
   const token = await signer.mintSessionToken(
-    { user, id: tokenId, signedAt: Date.now(), sub: String(user.id) },
-    { jti: tokenId }
+    { signedAt: Date.now(), sub: String(user.id) },
+    { jti: tokenId } // the session/token id is the standard `jti` claim — no duplicate `id`
   );
   cookies.set(SESSION_COOKIE, token, {
     path: '/',

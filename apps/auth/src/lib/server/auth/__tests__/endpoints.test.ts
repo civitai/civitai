@@ -16,7 +16,7 @@ vi.mock('$lib/server/auth/session-producer', () => ({
   produceSessionUser: h.produce,
 }));
 vi.mock('$lib/server/auth/session', () => ({
-  SESSION_COOKIE: 'civitai-token',
+  SESSION_COOKIE: 'civ-token',
   getSigner: () => ({ mintSessionToken: h.mintSessionToken }),
 }));
 
@@ -31,7 +31,7 @@ const ev = (opts: { method?: string; auth?: string; cookie?: string; body?: unkn
     headers: opts.auth ? { authorization: opts.auth, 'content-type': 'application/json' } : {},
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   }),
-  cookies: { get: (n: string) => (n === 'civitai-token' ? opts.cookie : undefined) },
+  cookies: { get: (n: string) => (n === 'civ-token' ? opts.cookie : undefined) },
 });
 
 beforeEach(() => {

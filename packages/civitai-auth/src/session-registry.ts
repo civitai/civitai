@@ -100,7 +100,7 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
   }
 
   async function isRevoked(claims: SessionClaims): Promise<boolean> {
-    const tokenId = claims.id;
+    const tokenId = claims.jti;
     if (!tokenId) return false;
     const [state, allStr] = await Promise.all([
       redis.hGet(keys.tokenState, tokenId),

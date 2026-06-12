@@ -4,7 +4,7 @@
 //  SPOKE (every app):   createAuthVerifier — local verify, no per-request hop.
 //                       createAccountSwitchProvider — cross-root session receiver.
 //                       createAuthMiddleware — edge route guard.
-//  HUB   (apps/auth):    createSessionSigner / maybeCreateSessionSigner — RS256 issuance,
+//  HUB   (apps/auth):    createSessionSigner / maybeCreateSessionSigner — ES256 issuance,
 //                       JWKS endpoint, swap-token + id_token minting.
 //  SHARED CONTRACTS:    cookie naming, the returnUrl/sync redirect contract, constants, and the
 //                       session-revocation marker protocol (createSessionRegistry).

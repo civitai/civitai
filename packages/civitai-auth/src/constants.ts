@@ -2,8 +2,10 @@
 // spoke reference identical names. Drift here = silent auth breakage (the cookie-name collision
 // that broke local sessions was exactly this class of bug).
 
-// Session cookie naming (mirrors the main app's libs/auth.ts).
-export const SESSION_COOKIE_BASE = 'civitai-token';
+// The thin-session cookie. Deliberately DISTINCT from the legacy next-auth cookie (`civitai-token`, still
+// set by the main app's libs/auth.ts) so the hub (thin ES256) and a still-live next-auth never share — and
+// stomp — the same cookie during cutover. Existing next-auth sessions simply re-login at the hub.
+export const SESSION_COOKIE_BASE = 'civ-token';
 export const SECURE_COOKIE_PREFIX = '__Secure-';
 
 // Cross-domain account sync query param (preferred + legacy).

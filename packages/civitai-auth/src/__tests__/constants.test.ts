@@ -5,7 +5,7 @@ import * as C from '../constants';
 // shared/constants/auth.constants.ts, and REDIS_(SYS_)KEYS.SESSION.*.
 describe('constants', () => {
   it('matches the main app contract values', () => {
-    expect(C.SESSION_COOKIE_BASE).toBe('civitai-token');
+    expect(C.SESSION_COOKIE_BASE).toBe('civ-token');
     expect(C.SECURE_COOKIE_PREFIX).toBe('__Secure-');
     expect(C.SESSION_REFRESH_HEADER).toBe('x-session-refresh');
     expect(C.SESSION_REFRESH_COOKIE).toBe('civ-session-refresh');

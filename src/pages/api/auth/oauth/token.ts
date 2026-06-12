@@ -13,7 +13,7 @@ import { consumeOidcContext } from '~/server/oauth/oidc-nonce';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-// OIDC id_token signer (opt-in). Constructed once; undefined unless the hub RS256 keys are
+// OIDC id_token signer (opt-in). Constructed once; undefined unless the hub ES256 keys are
 // set, in which case authorization_code grants that carry the UserRead (identity) scope also
 // receive a signed `id_token` — "Sign in with Civitai". Verified by RPs via /api/auth/jwks.
 const idTokenSigner = maybeCreateSessionSigner();

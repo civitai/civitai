@@ -28,7 +28,7 @@ export const GET: RequestHandler = async ({ request, cookies }) => {
   if (!token) return json({ error: 'unauthorized' }, { status: 401 });
 
   const claims = await verifier.verifyToken(token).catch(() => null);
-  const userId = Number(claims?.sub ?? claims?.id);
+  const userId = Number(claims?.sub);
   if (!claims || !Number.isFinite(userId)) return json({ error: 'unauthorized' }, { status: 401 });
 
   const user = await getOrProduceSessionUser(userId);

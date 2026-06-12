@@ -9,8 +9,8 @@ let signer: SessionSigner;
 let publicKeyPem: string;
 
 beforeAll(() => {
-  const kp = generateKeyPairSync('rsa', {
-    modulusLength: 2048,
+  const kp = generateKeyPairSync('ec', {
+    namedCurve: 'P-256', // ES256
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
@@ -25,20 +25,20 @@ beforeAll(() => {
   });
 });
 
-const pub = () => importSPKI(publicKeyPem, 'RS256') as Promise<CryptoKey>;
+const pub = () => importSPKI(publicKeyPem, 'ES256') as Promise<CryptoKey>;
 
 describe('mintSessionToken', () => {
-  it('signs an RS256 session JWT verifiable by the public key', async () => {
+  it('signs an ES256 session JWT verifiable by the public key', async () => {
     const token = await signer.mintSessionToken(
-      { user: { id: 5, username: 'bob' }, id: 'tok-1', signedAt: 123 },
+      { user: { id: 5, username: 'bob' }, signedAt: 123 },
       { jti: 'tok-1' }
     );
-    expect(decodeProtectedHeader(token)).toMatchObject({ alg: 'RS256', kid: 'test-1' });
+    expect(decodeProtectedHeader(token)).toMatchObject({ alg: 'ES256', kid: 'test-1' });
 
     const { payload } = await jwtVerify(token, await pub(), { issuer, audience });
     expect(payload.user).toMatchObject({ id: 5, username: 'bob' });
-    expect(payload.id).toBe('tok-1'); // the claim createSessionRegistry/isRevoked reads
-    expect(payload.jti).toBe('tok-1');
+    expect(payload.jti).toBe('tok-1'); // the session id — the claim createSessionRegistry/isRevoked reads
+    expect(payload.id).toBeUndefined(); // no duplicate `id`
     expect(payload.signedAt).toBe(123);
     expect(payload.iss).toBe(issuer);
   });
@@ -91,6 +91,6 @@ describe('publicJwks', () => {
   it('exports a JWK with kid/use/alg', async () => {
     const jwks = await signer.publicJwks();
     expect(jwks.keys).toHaveLength(1);
-    expect(jwks.keys[0]).toMatchObject({ kid: 'test-1', use: 'sig', alg: 'RS256', kty: 'RSA' });
+    expect(jwks.keys[0]).toMatchObject({ kid: 'test-1', use: 'sig', alg: 'ES256', kty: 'EC' });
   });
 });

@@ -24,7 +24,7 @@ export const POST: RequestHandler = async ({ request }) => {
   // same hub verifier that GET /api/auth/identity uses.
   const tokenId = randomUUID();
   const token = await getSigner().mintSessionToken(
-    { sub: String(userId), id: tokenId, signedAt: Date.now() },
+    { sub: String(userId), signedAt: Date.now() },
     { jti: tokenId }
   );
   return json({ token, userId });

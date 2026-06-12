@@ -148,7 +148,7 @@ const jwtSessionWarnCodes = new Set(['JWT_SESSION_ERROR']);
 const sessionSigner = maybeCreateSessionSigner();
 
 // Verify-only hub interop (opt-in). When the hub's JWKS is configured but this app holds NO
-// private key, decode the hub's RS256 cookie via the public key (JWKS) — and still decode this
+// private key, decode the hub's ES256 cookie via the public key (JWKS) — and still decode this
 // app's own legacy JWE via NEXTAUTH_SECRET. This is the verify-only spoke path: the hub is the
 // issuer; this app keeps next-auth's default JWE encode for any sessions it still issues.
 // Requires AUTH_JWKS_URI + AUTH_JWT_ISSUER (must match the hub's issuer). See @civitai/auth.
@@ -171,8 +171,8 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
       maxAge: 30 * 24 * 60 * 60, // 30 days
     },
     // Path C (opt-in). Three modes, by env:
-    //  - PRIVATE key set  → this app signs + reads RS256 (transitional dual-issuer): encode+decode.
-    //  - only JWKS set    → verify-only spoke: override decode to read RS256 (public key) + legacy
+    //  - PRIVATE key set  → this app signs + reads ES256 (transitional dual-issuer): encode+decode.
+    //  - only JWKS set    → verify-only spoke: override decode to read ES256 (public key) + legacy
     //                       JWE; keep next-auth's default JWE encode (the hub is the issuer).
     //  - neither          → unchanged next-auth symmetric JWE (current behavior).
     // The jwt()/session() callbacks below are unchanged; only (de)serialization differs.
