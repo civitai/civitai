@@ -80,6 +80,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
+import { ModelTensorMetadata } from '~/components/Model/ModelVersions/ModelTensorMetadata';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
@@ -224,6 +225,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ...groupedFiles.otherFormatVariants,
     ];
   }, [groupedFiles]);
+  const tensorMetadataEnabled = detailAccordions.includes('tensor-metadata');
 
   // Check if this is a component-only model (no model files, only components)
   const isComponentOnlyModel =
@@ -1210,6 +1212,14 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   </Accordion.Panel>
                 </Accordion.Item>
               )}
+            {isDownloadable && modelFilesVisible.length > 0 && (
+              <ModelTensorMetadata
+                files={modelFilesVisible}
+                modelType={model.type}
+                userPreferences={user?.filePreferences}
+                enabled={tensorMetadataEnabled}
+              />
+            )}
             <Accordion.Item value="version-details">
               <Accordion.Control>
                 <Group justify="space-between">
