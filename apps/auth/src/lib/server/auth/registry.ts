@@ -3,8 +3,8 @@ import {
   type SessionRegistry,
   type SessionRegistryRedis,
 } from '@civitai/auth';
-import { createRedisClients, REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
-import { env } from '$env/dynamic/private';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
+import { getSysRedis } from '../redis';
 
 // Cross-app session revocation. The redis CLIENT is built from @civitai/redis; the KEY STRINGS
 // come from @civitai/redis's registry — so a logout/ban here is seen by every app on the same
@@ -29,8 +29,8 @@ const noop: SessionRegistry = {
 let _registry: SessionRegistry | undefined;
 function registry(): SessionRegistry {
   if (_registry) return _registry;
-  if (!env.REDIS_URL || !env.REDIS_SYS_URL) return (_registry = noop);
-  const { sysRedis } = createRedisClients();
+  const sysRedis = getSysRedis(); // the hub's single shared sys client (null when REDIS_SYS_URL is unset)
+  if (!sysRedis) return (_registry = noop);
   return (_registry = createSessionRegistry({
     // sysRedis's methods are typed to the known-key union; the registry is namespace-agnostic
     // (plain string keys), so cast at this boundary — the main app does the same on these calls.

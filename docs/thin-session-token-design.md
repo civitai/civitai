@@ -3,6 +3,107 @@
 Status: **decided** (supersedes the "keep fat token" framing in [auth-hub-launch-checklist.md](./auth-hub-launch-checklist.md)
 #8/#11). This is the target model for the auth hub + every consumer.
 
+---
+
+## ⮕ LOCKED ARCHITECTURE (2026-06-11) — read this first; supersedes the injected-compute model lower in this doc
+
+The design evolved past "package owns the cache, the main app injects the compute." Final model:
+
+**One producer: the auth hub.** `auth.civitai.com` is the **sole** producer of session-user data — nothing
+else computes it. The hub:
+- Queries Postgres via **Kysely** — `jsonObjectFrom`/`jsonArrayFrom` collapse `User` + `profilePicture` +
+  `referral` + `customerSubscription→product→price` into one shaped read.
+- Ports the **derivation** SQL can't do: tier ranking (`tierOrder`, highest-active, `memberInBadState`,
+  `subscriptionsByBuzzType`), `getUserBanDetails(meta)`, `userSettings`→`allowAds`/`redBrowsingLevel`. These
+  are pure functions of the queried rows (clean ports; ban/settings are candidates for a tiny ORM-agnostic
+  shared util so they're not forked).
+- Reads `permissions` from the **system-permissions sysRedis cache** (today's `getSystemPermissions`) — the
+  one non-DB input — with the **degraded-skip** rule (never cache a permissions-less user; re-derive).
+- Writes the rich `SessionUser` to the **shared cache** `session:data2:{userId}` and owns the
+  `invalidateCivitaiUser` side-effect.
+- Exposes **`GET /api/auth/identity`** — verify the caller's Bearer session token (the hub is the issuer) →
+  userId → **read-through** (return the shared-cache entry when warm, produce fresh on a miss) → JSON,
+  **revocation enforced in the same call** (the hub owns the registry). Read-through so HTTP-only consumers
+  get the same caching as shared-redis ones.
+- **Invalidation — `POST /api/auth/identity`** (same path, write side). **Service-authed** (`AUTH_INTERNAL_TOKEN`,
+  not a user token — it targets an arbitrary `userId`: a mod banning user X, a subscription webhook). Body
+  `{ userId, refresh? }`: busts `session:data2:{userId}` (lazy — next read re-produces); `refresh:true` also
+  re-produces now and returns the fresh user. This is the single invalidation primitive — "refresh" reduces
+  to it. Consumers call it via `@civitai/auth`'s `createSessionClient().invalidate(userId)` /
+  `.refresh(userId)` (zero-config: hub URL from `AUTH_JWT_ISSUER`, token from `AUTH_INTERNAL_TOKEN`). So
+  every cache write/delete is owned by the hub.
+
+**Everyone else is a zero-config consumer** — main app, moderator, every spoke. One builder,
+`createSessionClient()`, is the whole consumer session surface (read + write); **no injectable config**:
+```
+const session = createSessionClient();              // no args
+const user = await session.getSessionUser(token);   // read
+await session.invalidate(userId);                   // write: bust
+const fresh = await session.refresh(userId);        // write: bust + re-produce
+// getSessionUser: verify → read shared redis (session:data2) → on miss GET {iss}/api/auth/identity → return.
+```
+**Most requests hit redis; only a cache miss falls back to the hub's API endpoint.** Redis is auto-wired;
+the lookup URL is **self-describing** (the token's `iss` claim = the hub base, `AUTH_JWT_ISSUER`). No
+injection, no per-app config — production lives in exactly one place, so `.com`/`.red` can never compute
+divergent answers (single source of truth).
+
+**The main app NEVER produces.** Today's `src/server/auth/session-user.ts` derivation **relocates into the
+hub**; the main app becomes a reader like every other consumer. (This reverses the "main app stays the
+producer / injects `computeUser`" framing in the lower sections.)
+
+### Supersedes (now stale lower in this doc)
+- **"Auto-wiring: owns redis + db (no injection)"** → consumers own **redis + an HTTP fetch**, NOT `@civitai/db`.
+  Only the **hub** touches the DB (Kysely); `@civitai/auth`'s consumer side does not depend on `@civitai/db`.
+- **"Resolution model — rich compute INJECTED"** → no injection; the built-in miss-handler is the hub fetch.
+- **"Implementation — main civitai app: session() always-resolve via the existing rich resolver"** → the main
+  app calls the zero-config package resolver (which falls back to the hub fetch); it keeps no local rich resolver.
+
+### Status — package + hub BUILT (2026-06-11, uncommitted, all checks green)
+
+**`@civitai/auth` (consumer side) — DONE.**
+- `createSessionClient()` ([session-client.ts](../packages/civitai-auth/src/session-client.ts)) — ONE
+  zero-config builder for the whole consumer surface: `getSessionUser` (read) + `invalidate`/`refresh`
+  (write). **NO injectable options**: verifier, cache client, hub URL, and service secret all come from env /
+  the verified token's `iss`, so a consumer can't repoint verification, the identity fetch, or invalidation.
+  `getSessionUser(token)` → verify → shared-cache read (fail-open) → single-flight → on miss
+  `GET {iss}/api/auth/identity` → return. No `computeUser`, no write-through (the producer owns the cache
+  write); a hub-unreachable cold miss → null. Tests mock the module boundaries (verify / redis / env / fetch).
+- `SessionUser` contract ([types.ts](../packages/civitai-auth/src/types.ts)) **unchanged** (frozen by
+  decision — no `name`/extra fields right now).
+
+**`apps/auth` (the sole producer) — DONE.**
+- `produceSessionUser(userId)` ([session-producer.ts](../apps/auth/src/lib/server/auth/session-producer.ts)):
+  Kysely query (`jsonObjectFrom` profilePicture + product) → tier/subscription derivation → `permissions`
+  from the system-permissions sysRedis cache (degraded-skip) → `allowAds`/`redBrowsingLevel` → assemble
+  `SessionUser` → write the shared `session:data2:{userId}` cache (packed, real Dates).
+- Ban util ([ban.ts](../apps/auth/src/lib/server/auth/ban.ts)) — vendored `BanReasonCode` + public-label map
+  + `getUserBanDetails`.
+- `GET /api/auth/identity` ([+server.ts](../apps/auth/src/routes/api/auth/identity/+server.ts)) — verify
+  Bearer (revocation enforced) → **read-through** (`getOrProduceSessionUser`: cache when warm, produce on
+  miss) → JSON; 401/404 = "no session".
+
+**Checks:** `@civitai/auth` 52 tests green; hub `svelte-check` 0; main app `typecheck` 0. Sub-agent reviewed
+for parity vs the main app's `getSessionUser` (tier loop, permissions/degraded, cache key/TTL, ban map,
+single-flight all confirmed sound; the `allowAds`/`redBrowsingLevel` `safeParse`-gating quirk reproduced).
+
+**Known parity notes for the main-app phase:**
+- `allowAds`/`redBrowsingLevel`: the main app gates these on `userSettingsSchema.safeParse` succeeding,
+  which (due to non-coerced `z.date()` TOS fields stored as strings) fails for ~all active users → defaults.
+  The producer reproduces that dominant behavior; a user with no stored TOS dates + explicit values is the
+  rare divergent case. Decide whether to keep the quirk or read settings directly when `getSessionUser` is
+  rewritten.
+- Omitted from the produced user (not in the frozen contract): `name`, `autoplayGifs`, `leaderboardShowcase`,
+  `referral`. Add to the contract + producer if a consumer needs them.
+- `TIER_METADATA_KEY` must be set in the hub env for tier derivation.
+- Date fields are real `Date`s on a cache hit, ISO strings on the rare cold-miss HTTP path — consumers coerce.
+
+### Deferred — the main civitai app phase + cutover
+- **Main app = consumer:** replace `getSessionUser`'s Prisma compute with `createSessionClient().getSessionUser`;
+  `session()` resolves from cache/hub every request; delete the refresh/re-mint path + `needsCookieRefresh`.
+- **Hub mints thin:** `establishSession` drops the embedded user from the token.
+- **Middleware** guard → `getSessionUser` (proxy already on the Node.js runtime — a real build still needs to
+  confirm whether `experimental.nodeMiddleware` is also required in `next.config.mjs`).
+
 ## Decision
 
 The session **cookie carries identity only** (`userId`, `signedAt`, `jti`). The session **user is resolved
@@ -67,22 +168,29 @@ uses them automatically rather than via constructor injection:
 
 ## Resolution model (the crux)
 
-`getSessionUser` resolves the **lean** session user (identity + authz set — `id`, `username`, `email`,
-`isModerator`, `muted`, `bannedAt`, `browsingLevel`, `onboarding`, …; the `toSessionUser` shape the hub
-already mints): **read the user cache → on miss, query the DB (Kysely via `@civitai/db`) → write cache →
-return**, plus the revocation check.
+> **SCOPING FINDING (implementation):** the existing `src/server/auth/session-user.ts` `getSessionUser`
+> is **heavily main-app-coupled** — the *compute* pulls in Prisma `user` includes, `customerSubscription`
+> + tier logic, `getSystemPermissions` (system-cache), `getUserBanDetails`, `userSettingsSchema`, and
+> `invalidateCivitaiUser` (orchestrator). Moving it **wholesale** into `@civitai/auth` would drag that
+> whole domain in — wrong. BUT the *cache orchestration* (read → single-flight → write, with the
+> `degraded`-skip-cache rule and the `clearedAt` check) is generic. **Decomposition (refines decision #3):**
+> the **package owns the cache + single-flight + degraded-skip contract**; the **rich compute is INJECTED**.
 
-- **One shared source of truth = the user cache** (today `REDIS_KEYS.USER.SESSION`). Every root/spoke reads
-  it → cross-root consistency on the lean set.
-- **Rich/derived fields** (permissions, subscriptions, cosmetics) stay the **main app's** concern, resolved
-  separately where a feature needs them — *not* dragged into the package (that logic is large and
-  main-app-coupled).
-- **[OPEN] cache shape + ownership:** standardize what's stored under the user-session key so the package's
-  resolve and the main app's populate agree (avoids "missing field" bugs). Decide whether the main app's
-  `session.user` stays **rich** (keeps its own `getSessionUser`, augmenting the lean base) or goes **lean**
-  too (bigger blast radius — lots of code reads `session.user.permissions` etc.). Default plan: **keep
-  `session.user` rich in the main app**; the package's lean `getSessionUser` serves the hub + spokes +
-  external.
+- **`@civitai/auth` `createSessionUserResolver({ computeUser })`** → `getSessionUser(userId)` that does:
+  cache read (auto `@civitai/redis`) → `clearedAt` guard → single-flight per pod → on miss call the
+  **injected** `computeUser(userId)` → cache write (4h, **skipped when `degraded`**). This is the package
+  half of build-step 2 and is fully testable in isolation (mock `computeUser` + mock redis).
+- **The rich compute stays in the main app** (the current `session-user.ts` body, lightly refactored to
+  return `{ user, degraded }` and drop its own cache read/write — the resolver owns those). The main app
+  injects it. So `session.user` stays **rich**, unchanged for callers.
+- **One shared cache key (`REDIS_KEYS.USER.SESSION:{userId}`), rich shape** — every consumer reads/writes
+  the same key → cross-root consistency. (Confirmed: cache stays the existing rich shape.)
+- **Cold-miss for spoke-only users (sub-detail to settle at app-wiring):** the hub/spokes don't have the
+  main app's rich compute. Options: (i) they inject a *leaner* compute (identity-level) but must **not**
+  write a lean shape to the rich key (cache-write only the rich shape, or don't cache lean) to avoid
+  "missing field" bugs; or (ii) on a spoke cold-miss, call the main app / a shared resolve. Default: the
+  resolver's `computeUser` injection makes this each consumer's choice; the main app's traffic keeps the
+  cache warm so spoke cold-misses are rare.
 
 ---
 

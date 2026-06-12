@@ -12,6 +12,12 @@ export { loadAuthEnv } from './env';
 export type { AuthEnv } from './env';
 export { createAuthVerifier } from './verify';
 export type { AuthVerifier, AuthVerifierConfig } from './verify';
+// Consumer SESSION CLIENT (server side — pulls @civitai/redis + fetch). Zero-config, one builder for the
+// whole consumer session surface: getSessionUser (read: verify → shared cache → hub on miss) +
+// invalidate/refresh (write: routed through the hub). The hub is the sole producer; nothing is injectable.
+// See docs/thin-session-token-design.md ("LOCKED ARCHITECTURE").
+export { createSessionClient } from './session-client';
+export type { SessionClient } from './session-client';
 export { createSessionSigner, maybeCreateSessionSigner } from './sign';
 export type { SessionSigner, SessionSignerConfig } from './sign';
 export { createAccountSwitchProvider } from './account-switch';

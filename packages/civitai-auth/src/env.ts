@@ -17,6 +17,9 @@ const schema = z.object({
   // Legacy symmetric secret — kept ONLY for the migration window so spokes can still
   // decode pre-cutover next-auth JWE cookies. Drop after the max old-token TTL.
   NEXTAUTH_SECRET: z.string().optional(),
+  // Shared service secret for trusted server-to-server calls — the session-invalidator presents it to the
+  // hub's `POST /api/auth/identity` (cache bust/refresh). Set on the hub AND any app that invalidates.
+  AUTH_INTERNAL_TOKEN: z.string().optional(),
 
   // --- hub: sign side (all optional; only the hub sets them) ---
   AUTH_JWT_PRIVATE_KEY: z.string().optional(), // PKCS8 PEM (or a KMS handle — see open questions)

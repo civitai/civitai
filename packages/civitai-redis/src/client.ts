@@ -664,6 +664,11 @@ function getSysClient() {
 
 export type RedisClients = { redis: CustomRedisClientCache; sysRedis: CustomRedisClientSys };
 
+/** The cache / system Redis client instance types (the values `createRedisClients()` returns). Exported
+ *  so consumers can hold a lazily-built client in a typed variable without re-declaring its surface. */
+export type RedisCacheClient = RedisClients['redis'];
+export type RedisSysClient = RedisClients['sysRedis'];
+
 export type CreateRedisClientsOptions = Partial<RedisConfig> & {
   /** Debug logger (app-defined). Defaults to a no-op. */
   log?: RedisLogFn;
@@ -680,12 +685,31 @@ export type CreateRedisClientsOptions = Partial<RedisConfig> & {
  * policy) is injected. HMR/global singleton caching and the Next build guard live in
  * the app shim that calls this. See the `~/server/redis/client` shim.
  */
-export function createRedisClients(options: CreateRedisClientsOptions = {}): RedisClients {
+function applyOptions(options: CreateRedisClientsOptions) {
   const { log: logOption, isEnhancedFailoverEnabled: failoverOption, ...envOverrides } = options;
   config = { ...loadRedisEnv(), ...envOverrides };
   if (logOption) log = logOption;
   if (failoverOption) isEnhancedFailoverEnabled = failoverOption;
+}
 
+/**
+ * Build ONLY the cache Redis client (no sys client). Prefer this over `createRedisClients().redis` when an
+ * app needs just the cache: `createRedisClients` builds AND eagerly connects BOTH clients, so taking one
+ * field off it leaks a live connection to the other. Each client is fresh per call — the caller memoizes.
+ */
+export function createCacheRedis(options: CreateRedisClientsOptions = {}): RedisCacheClient {
+  applyOptions(options);
+  return getCacheClient();
+}
+
+/** Build ONLY the system Redis client (no cache client). The sys-only counterpart to `createCacheRedis`. */
+export function createSysRedis(options: CreateRedisClientsOptions = {}): RedisSysClient {
+  applyOptions(options);
+  return getSysClient();
+}
+
+export function createRedisClients(options: CreateRedisClientsOptions = {}): RedisClients {
+  applyOptions(options);
   return { redis: getCacheClient(), sysRedis: getSysClient() };
 }
 
