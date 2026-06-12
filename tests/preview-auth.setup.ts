@@ -39,7 +39,7 @@ const PREVIEW_URL = process.env.PREVIEW_URL;
 const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https preview => __Secure- prefix
 const MAX_AGE_S = 30 * 24 * 60 * 60;
 
-async function mintStorageState(role: PreviewRole) {
+async function mintStorageState(role: PreviewRole): Promise<string> {
   const u = PREVIEW_USERS[role];
 
   // token.user shape (ExtendedUser, src/types/next-auth.d.ts). id + isModerator
@@ -80,19 +80,102 @@ async function mintStorageState(role: PreviewRole) {
 
   fs.mkdirSync('tests/auth', { recursive: true });
   fs.writeFileSync(storageStatePath(role), JSON.stringify(storageState, null, 2));
+  return value;
 }
 
 setup('mint preview sessions', async ({ request }) => {
+  // This setup runs the cold-pod warm-up below: ~9 SEQUENTIAL heavy-SSR GETs (each
+  // capped at 60s) so one route compiles at a time (parallel heavy renders OOM the
+  // single-replica pod). On a genuinely cold pod the cumulative warm-up can exceed
+  // the suite's 90s per-test timeout — and a setup timeout SKIPS every dependent
+  // smoke test (worse than the flake we're fixing). So give just this setup a large
+  // ceiling. It's a CEILING, not the runtime: the setup still finishes as fast as
+  // the warm-ups actually take (~2s when the pod is already warm from verify-preview).
+  setup.setTimeout(480_000);
   if (!SECRET) throw new Error('NEXTAUTH_SECRET is required to mint preview sessions');
   if (!PREVIEW_URL) throw new Error('PREVIEW_URL is required for preview smoke tests');
+  const jwts: Partial<Record<PreviewRole, string>> = {};
   for (const role of Object.keys(PREVIEW_USERS) as PreviewRole[]) {
-    await mintStorageState(role);
+    jwts[role] = await mintStorageState(role);
   }
 
-  // Warm the freshly-deployed preview before the suite runs so the first real
-  // test doesn't eat the full cold-SSR cost (Next server warm-up + JIT + DB pool
-  // open can push the homepage past the per-test timeout on a cold preview). An
-  // unauthenticated GET (which the gate 307s to /login) is enough to warm the
-  // server process; failures here are non-fatal — the suite + retries cover it.
-  await request.get('/', { timeout: 60_000, maxRedirects: 0 }).catch(() => {});
+  // Warm the freshly-deployed preview before the suite so the first real test
+  // doesn't pay the full cold-SSR cost (Next warm-up + JIT + DB pools). Each route
+  // JIT-compiles on its first hit, so we warm EVERY heavy SSR page the suite then
+  // navigates — cold-page timeouts were the dominant smoke flake (a slow-window
+  // page.goto exceeding the nav budget, then passing on retry once warm). They must
+  // be warmed AUTHENTICATED: on a preview the gate 307s an UNauthenticated request
+  // to /login, so an anon GET wouldn't touch the real render path. Sequential (one
+  // concurrent heavy SSR at a time — the single-replica pod OOM'd under parallel
+  // heavy loads) + non-fatal (.catch): a slow warm-up GET still triggers the
+  // server-side compile even if the client times out, and the suite + retries
+  // cover any miss.
+  const gold = jwts.gold;
+  if (gold) {
+    const headers = { cookie: `${COOKIE_NAME}=${gold}` };
+    // gold (gate-passing paid member) reaches all non-mod heavy pages the suite hits.
+    for (const path of [
+      '/',
+      '/models',
+      '/images',
+      '/user/membership',
+      '/generate',
+      '/purchase/buzz',
+      '/pricing',
+    ]) {
+      await request.get(path, { timeout: 60_000, headers }).catch(() => {});
+    }
+  }
+  const mod = jwts.mod;
+  if (mod) {
+    // /moderator/* render only for a moderator (gold would be bounced), so warm the
+    // moderation-spec pages with the mod cookie.
+    const headers = { cookie: `${COOKIE_NAME}=${mod}` };
+    for (const path of ['/moderator/reports', '/moderator/images']) {
+      await request.get(path, { timeout: 60_000, headers }).catch(() => {});
+    }
+  }
+
+  // Search-readiness gate. The warm-up GETs above only trigger a route compile —
+  // they're fire-and-forget and don't ensure the SEARCH backend is actually
+  // serving. The image-search path (getAllImagesIndex -> the in-cluster feeds-proxy
+  // via METRICS_SEARCH_HOST) is intermittently flaky under concurrent preview-build
+  // load and 5xx's, which is what hard-fails /moderator/images (and the image feed).
+  // So before the suite runs, POLL a representative search-backed request until it
+  // serves 2xx, with real spacing to outlast a transient spike. Non-fatal: if it
+  // never readies we proceed and let the specs report honestly (a sustained search
+  // outage is a real signal, not something to hide). When search is healthy this
+  // returns on the first probe, so it adds ~nothing to a warm run.
+  async function waitForOk(path: string, cookie: string): Promise<boolean> {
+    const attempts = 12;
+    for (let i = 1; i <= attempts; i++) {
+      try {
+        const r = await request.get(path, { timeout: 20_000, headers: { cookie } });
+        if (r.ok()) return true;
+      } catch {
+        // network/timeout — treat as not-ready and keep polling
+      }
+      if (i < attempts) await new Promise((resolve) => setTimeout(resolve, 6_000));
+    }
+    return false;
+  }
+
+  if (gold) {
+    // The exact image-search path the image-feed + /moderator/images depend on
+    // (engagement sort routes through the search index).
+    const ready = await waitForOk(
+      '/api/v1/images?sort=Most%20Reactions&limit=1',
+      `${COOKIE_NAME}=${gold}`
+    );
+    if (!ready) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[preview-setup] image-search path not ready after polling — search-backed specs may flake'
+      );
+    }
+  }
+  if (mod) {
+    // Directly ready the /moderator/images render (mod-only, search-backed).
+    await waitForOk('/moderator/images', `${COOKIE_NAME}=${mod}`);
+  }
 });

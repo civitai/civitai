@@ -32,6 +32,21 @@ export const trainingBaseModelType = [
 ] as const;
 export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 
+// AI Toolkit steps-based pricing UI bounds (ClickUp 868k02ygt).
+// `steps` is the primary length knob (drives pricing); `epochs` = number of saved
+// checkpoints (1–20); `batchSize` defaults to 1, capped per ecosystem. The orchestrator
+// clamps these server-side, so these are UX guard rails rather than the source of truth.
+export const AI_TOOLKIT_EPOCHS = { default: 10, min: 1, max: 20 } as const;
+
+export const aiToolkitStepDefault = (baseType: TrainingBaseModelType): number =>
+  baseType === 'ltx2' || baseType === 'ltx23' ? 3000 : baseType === 'anima' ? 1500 : 2000;
+
+export const aiToolkitBatchMax = (baseType: TrainingBaseModelType): number => {
+  if (baseType === 'sdxl' || baseType === 'sd15') return 4;
+  if (baseType === 'zimage' || baseType === 'ernie' || baseType === 'flux2klein') return 2;
+  return 1;
+};
+
 export const engineTypes = [
   'kohya',
   'rapid',

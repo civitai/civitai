@@ -32,7 +32,12 @@ function isSafeCrossOriginRedirect(url: string): boolean {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ session, ctx }) => {
-    if (session) {
+    // Only bounce genuinely-authenticated users away from the login page. The
+    // session callback returns a truthy-but-userless object ({} / { needsCookieRefresh })
+    // for invalidated/expired tokens (next-auth-options.ts session()), so a plain
+    // `if (session)` would redirect a logged-out user to their returnUrl — and any
+    // page gating on `!session?.user` redirects right back here → infinite login loop.
+    if (session?.user) {
       const { callbackUrl, returnUrl, error, reason } = ctx.query;
       if (reason !== 'switch-accounts') {
         const rawCallback =

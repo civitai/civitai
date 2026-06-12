@@ -303,13 +303,20 @@ describe('audit matching equivalence (gate vs brute-force)', () => {
     }
   });
 
-  it('includesPoi returns the same matched name as the reference', () => {
-    for (const p of corpus) {
-      expect(includesPoi(p), `includesPoi mismatch for: ${JSON.stringify(p)}`).toEqual(
-        refIncludesPoi(p)
-      );
-    }
-  });
+  // Brute-force POI equivalence over the full corpus is CPU-bound (the POI
+  // reference set is large); it correctly asserts but can exceed the 10s global
+  // testTimeout on a loaded CI runner. Give it room — logic is unchanged.
+  it(
+    'includesPoi returns the same matched name as the reference',
+    () => {
+      for (const p of corpus) {
+        expect(includesPoi(p), `includesPoi mismatch for: ${JSON.stringify(p)}`).toEqual(
+          refIncludesPoi(p)
+        );
+      }
+    },
+    60000
+  );
 
   it('getTagsFromPrompt returns the same tag set as the reference', () => {
     for (const p of corpus) {
@@ -351,12 +358,18 @@ describe('audit matching equivalence (gate vs brute-force)', () => {
     }
   });
 
-  it('highlight: poi gated highlight equals the un-gated reference', () => {
-    const poiRefRegexList = poiRefRegexes.map((x) => x.regex);
-    for (const p of [...corpus, ...youngCorpus]) {
-      const gated = poiCheckable.highlight(p, highlightFn);
-      const reference = refHighlight(p, poiRefRegexList, poiPreprocess, highlightFn);
-      expect(gated, `poi highlight mismatch for: ${JSON.stringify(p)}`).toBe(reference);
-    }
-  });
+  // Same CPU-bound POI brute-force shape as above — generous per-test timeout
+  // so a loaded runner does not flake it. Assertions are unchanged.
+  it(
+    'highlight: poi gated highlight equals the un-gated reference',
+    () => {
+      const poiRefRegexList = poiRefRegexes.map((x) => x.regex);
+      for (const p of [...corpus, ...youngCorpus]) {
+        const gated = poiCheckable.highlight(p, highlightFn);
+        const reference = refHighlight(p, poiRefRegexList, poiPreprocess, highlightFn);
+        expect(gated, `poi highlight mismatch for: ${JSON.stringify(p)}`).toBe(reference);
+      }
+    },
+    60000
+  );
 });

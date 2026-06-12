@@ -2,7 +2,7 @@ import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
-import { imageMetaSchema } from '~/server/schema/image.schema';
+import { imageMetaSchema, imageSchema } from '~/server/schema/image.schema';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -72,6 +72,30 @@ export const postUpdateSchema = z.object({
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
   collectionTagId: z.number().nullish(),
+});
+
+// Composite create-with-images input for headless/agent (MCP) use. Each image
+// reuses the shared imageSchema shape (without postId — the server fills it in
+// after creating the post) and requires an explicit ordering index. The post is
+// created, images are attached in order, and the post is optionally published in
+// a single server-side round-trip.
+export type CreatePostWithImagesInput = z.infer<typeof createPostWithImagesSchema>;
+export const createPostWithImagesSchema = z.object({
+  title: z.string().trim().nullish(),
+  detail: z.string().nullish(),
+  modelVersionId: z.number().nullish(),
+  tag: z.number().nullish(),
+  tags: commaDelimitedStringArray().optional(),
+  collectionId: z.number().optional(),
+  publish: z.boolean().optional(),
+  images: z
+    .array(
+      // Omit `id` as well: this is a create path, so a caller-supplied Image PK
+      // would be forwarded into createImage and fail (or clobber). The server
+      // fills postId, and index is required for explicit ordering.
+      imageSchema.omit({ postId: true, index: true, id: true }).extend({ index: z.number().min(0) })
+    )
+    .min(1, 'At least one image must be provided'),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;

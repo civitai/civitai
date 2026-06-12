@@ -79,6 +79,9 @@ const featureFlags = createFeatureFlags({
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
+  // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
+  // Public availability so it can be rolled out to a tester segment via Flipt; default off.
+  trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
   trainingAutoLabelOrchestrator: {
     availability: ['mod'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -576,6 +579,49 @@ export const domainRestrictedToggleableKeys = new Set(
     })
     .map(([key]) => key as FeatureFlagKey)
 );
+
+export const defaultToggleableFeatures = toggleableFeatures.reduce(
+  (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
+  {} as FeatureAccess
+);
+
+/**
+ * Pure computation of the per-user toggleable-feature overlay returned by
+ * `user.getFeatureFlags`. Single source of truth shared by the tRPC resolver
+ * (`getUserFeatureFlagsHandler`) and the SSR seed in `_app` getInitialProps —
+ * keeping the SSR-injected `initialData` byte-identical to a live fetch.
+ *
+ * @param userFeatures the stored `settings.features` JSON record (toggle choices)
+ * @param hostFeatures the request's already-resolved host-level FeatureAccess
+ *   (the controller's `ctx.features`) — used to enforce domain restrictions.
+ */
+export function computeUserFeatureFlagsOverlay(
+  userFeatures: Record<string, boolean> | undefined,
+  hostFeatures: FeatureAccess
+): FeatureAccess {
+  const features = userFeatures ?? {};
+
+  // filter toggleable features from user settings
+  const filteredUserFeatures = Object.keys(features).reduce(
+    (acc, key) =>
+      toggleableFeatures.some((x) => x.key === key) ? { ...acc, [key]: features[key] } : acc,
+    {} as FeatureAccess
+  );
+
+  const result = {
+    ...defaultToggleableFeatures,
+    ...filteredUserFeatures,
+  } as FeatureAccess;
+
+  // Don't let toggleable defaults override domain restrictions
+  for (const key of domainRestrictedToggleableKeys) {
+    if (key in result && !hostFeatures[key]) {
+      delete result[key];
+    }
+  }
+
+  return result;
+}
 
 type FeatureAvailability = (typeof featureAvailability)[number];
 export type FeatureFlagKey = keyof typeof featureFlags;

@@ -31,6 +31,16 @@
  *   POST /api/admin/temp/clamp-publishedat-bumps?token=$WEBHOOK_TOKEN&dryRun=false&action=apply
  *   POST /api/admin/temp/clamp-publishedat-bumps?token=$WEBHOOK_TOKEN&dryRun=false&action=rollback
  *
+ * Optional `modelIds` query param (comma-delimited Model.id list) scopes
+ * the run to a subset of models. When provided, every op is filtered to
+ * those models' versions (op1a/op1b/op4_versions/rb_versions), the models
+ * themselves (op4_models/rb_models), and posts attached to those models'
+ * versions via Post.modelVersionId (op3_posts/rb_posts). Missing/empty
+ * runs the original global migration.
+ *
+ *   POST /api/admin/temp/clamp-publishedat-bumps?token=$WEBHOOK_TOKEN&dryRun=true&modelIds=123,456,789
+ *   POST /api/admin/temp/clamp-publishedat-bumps?token=$WEBHOOK_TOKEN&dryRun=false&action=rollback&modelIds=123,456
+ *
  * `dryRun=true` (the default) runs the SQL inside a transaction then aborts
  * it via thrown sentinel — DB writes roll back, side-effects (search-index
  * queue, cache refresh) are skipped, response includes the same `ops` counts
@@ -57,6 +67,7 @@
  */
 
 import type { NextApiResponse } from 'next';
+import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -70,11 +81,16 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { bustMvCache } from '~/server/services/model-version.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { booleanString } from '~/utils/zod-helpers';
+import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
+// `modelIds` accepts a comma-delimited list of Model.id values. When
+// provided, every clamp/rollback op is scoped to those models (and their
+// owned versions + posts attached to those versions). Empty/missing =
+// global migration, preserving the original behavior.
 const schema = z.object({
   dryRun: booleanString().default(true),
   action: z.enum(['apply', 'rollback']).default('apply'),
+  modelIds: commaDelimitedNumberArray(z.array(z.number().int().positive())).default([]),
 });
 
 // Stash keys live alongside the columns we mutate so a rollback can find
@@ -124,7 +140,48 @@ class DryRunRollback extends Error {
   }
 }
 
-async function runApply(dryRun: boolean): Promise<{ ops: Ops; affected: AffectedIds }> {
+// SQL fragments that narrow each op to `modelIds` when provided. Each
+// fragment is appended to the WHERE clause of its temp table; when no
+// modelIds are passed, the fragments are `Prisma.empty` and the queries
+// degenerate to the original global form.
+function buildScope(modelIds: number[]) {
+  const hasScope = modelIds.length > 0;
+  return {
+    hasScope,
+    // ModelVersion temp tables (op1a, op4_versions) — direct column.
+    versionScope: hasScope
+      ? Prisma.sql`AND "modelId" = ANY(${modelIds}::int[])`
+      : Prisma.empty,
+    // op1b uses the `mv` alias.
+    versionScopeMv: hasScope
+      ? Prisma.sql`AND mv."modelId" = ANY(${modelIds}::int[])`
+      : Prisma.empty,
+    // Model temp tables (op4_models, rb_models) — direct column.
+    modelScope: hasScope
+      ? Prisma.sql`AND id = ANY(${modelIds}::int[])`
+      : Prisma.empty,
+    // Post temp tables need a join to ModelVersion to reach modelId.
+    // LEFT JOIN keeps the global path identical (no row drops when
+    // unscoped); when scoped, the filter `mv."modelId" = ANY(...)` drops
+    // posts whose modelVersionId is NULL because `NULL = ANY(...)` is
+    // NULL (excluded), which matches "this post isn't tied to one of the
+    // requested models".
+    postScopeJoin: hasScope
+      ? Prisma.sql`LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"`
+      : Prisma.empty,
+    postScopeFilter: hasScope
+      ? Prisma.sql`AND mv."modelId" = ANY(${modelIds}::int[])`
+      : Prisma.empty,
+  };
+}
+
+async function runApply(
+  dryRun: boolean,
+  scopeModelIds: number[]
+): Promise<{ ops: Ops; affected: AffectedIds }> {
+  const { versionScope, versionScopeMv, modelScope, postScopeJoin, postScopeFilter } =
+    buildScope(scopeModelIds);
+
   return dbWrite.$transaction(
     async (tx) => {
       // ---- Snapshot bump-evidence rowsets BEFORE any clamp runs ----
@@ -143,6 +200,7 @@ async function runApply(dryRun: boolean): Promise<{ ops: Ops; affected: Affected
           AND status = 'Published'
           AND meta->>'unpublishedAt' IS NOT NULL
           AND (meta->>'unpublishedAt')::timestamptz < "publishedAt"
+          ${versionScope}
       `;
 
       await tx.$executeRaw`
@@ -157,6 +215,7 @@ async function runApply(dryRun: boolean): Promise<{ ops: Ops; affected: Affected
           AND p.metadata->>'unpublishedAt' IS NOT NULL
           AND p."publishedAt" IS NOT NULL
           AND p."publishedAt" < mv."publishedAt"
+          ${versionScopeMv}
       `;
 
       // Excludes scheduled-future posts: clamping a future `publishedAt`
@@ -165,12 +224,14 @@ async function runApply(dryRun: boolean): Promise<{ ops: Ops; affected: Affected
       // republish bump pattern this migration targets.
       await tx.$executeRaw`
         CREATE TEMP TABLE op3_posts ON COMMIT DROP AS
-        SELECT id
-        FROM "Post"
-        WHERE metadata->>'prevPublishedAt' IS NOT NULL
-          AND "publishedAt" IS NOT NULL
-          AND "publishedAt" <= NOW()
-          AND "publishedAt" > (metadata->>'prevPublishedAt')::timestamptz
+        SELECT p.id
+        FROM "Post" p
+        ${postScopeJoin}
+        WHERE p.metadata->>'prevPublishedAt' IS NOT NULL
+          AND p."publishedAt" IS NOT NULL
+          AND p."publishedAt" <= NOW()
+          AND p."publishedAt" > (p.metadata->>'prevPublishedAt')::timestamptz
+          ${postScopeFilter}
       `;
 
       // Op 4 reclass scope is captured upfront too. Without this the
@@ -187,6 +248,7 @@ async function runApply(dryRun: boolean): Promise<{ ops: Ops; affected: Affected
         WHERE status = 'Draft'::"ModelStatus"
           AND meta->>'unpublishedAt'     IS NOT NULL
           AND meta->>'unpublishedReason' IN ('no-files', 'no-posts')
+          ${versionScope}
       `;
 
       await tx.$executeRaw`
@@ -196,6 +258,7 @@ async function runApply(dryRun: boolean): Promise<{ ops: Ops; affected: Affected
         WHERE status = 'Draft'::"ModelStatus"
           AND meta->>'unpublishedAt'     IS NOT NULL
           AND meta->>'unpublishedReason' = 'no-versions'
+          ${modelScope}
       `;
 
       // ---- 1a) clamp ModelVersion.publishedAt via version meta breadcrumb ----
@@ -367,8 +430,11 @@ async function runApply(dryRun: boolean): Promise<{ ops: Ops; affected: Affected
 }
 
 async function runRollback(
-  dryRun: boolean
+  dryRun: boolean,
+  scopeModelIds: number[]
 ): Promise<{ ops: RollbackOps; affected: AffectedIds }> {
+  const { versionScope, modelScope, postScopeJoin, postScopeFilter } = buildScope(scopeModelIds);
+
   return dbWrite.$transaction(
     async (tx) => {
       // Snapshot IDs that carry a stash BEFORE we strip the keys — we'll
@@ -377,25 +443,34 @@ async function runRollback(
         CREATE TEMP TABLE rb_versions ON COMMIT DROP AS
         SELECT id, "modelId"
         FROM "ModelVersion"
-        WHERE meta->>${STASH.prevPublishedAt} IS NOT NULL
-           OR meta->>${STASH.prevStatus}      IS NOT NULL
+        WHERE (meta->>${STASH.prevPublishedAt} IS NOT NULL
+            OR meta->>${STASH.prevStatus}      IS NOT NULL)
+          ${versionScope}
       `;
 
       await tx.$executeRaw`
         CREATE TEMP TABLE rb_models ON COMMIT DROP AS
         SELECT id
         FROM "Model"
-        WHERE meta->>${STASH.prevPublishedAt}    IS NOT NULL
-           OR meta->>${STASH.prevLastVersionAt}  IS NOT NULL
-           OR meta->>${STASH.prevStatus}         IS NOT NULL
+        WHERE (meta->>${STASH.prevPublishedAt}    IS NOT NULL
+            OR meta->>${STASH.prevLastVersionAt}  IS NOT NULL
+            OR meta->>${STASH.prevStatus}         IS NOT NULL)
+          ${modelScope}
       `;
 
       await tx.$executeRaw`
         CREATE TEMP TABLE rb_posts ON COMMIT DROP AS
-        SELECT id
-        FROM "Post"
-        WHERE metadata->>${STASH.prevPublishedAt} IS NOT NULL
+        SELECT p.id
+        FROM "Post" p
+        ${postScopeJoin}
+        WHERE p.metadata->>${STASH.prevPublishedAt} IS NOT NULL
+          ${postScopeFilter}
       `;
+
+      // All UPDATEs below are scoped to the rb_* temp tables so that
+      // passing `modelIds` narrows the rollback to only those models'
+      // versions/posts (and Models themselves). Unscoped runs include
+      // every stashed row, matching the original global behavior.
 
       // ---- Restore ModelVersion.publishedAt + strip stash ----
       const restoredVersionPublishedAt = await tx.$executeRaw`
@@ -404,6 +479,7 @@ async function runRollback(
           "publishedAt" = (meta->>${STASH.prevPublishedAt})::timestamptz,
           meta = meta - ${STASH.prevPublishedAt}
         WHERE meta->>${STASH.prevPublishedAt} IS NOT NULL
+          AND id IN (SELECT id FROM rb_versions)
       `;
 
       // ---- Restore ModelVersion.status (reclass step 4 reversal) ----
@@ -413,6 +489,7 @@ async function runRollback(
           status = (meta->>${STASH.prevStatus})::"ModelStatus",
           meta = meta - ${STASH.prevStatus}
         WHERE meta->>${STASH.prevStatus} IS NOT NULL
+          AND id IN (SELECT id FROM rb_versions)
       `;
 
       // ---- Restore Model.publishedAt + strip stash ----
@@ -422,6 +499,7 @@ async function runRollback(
           "publishedAt" = (meta->>${STASH.prevPublishedAt})::timestamptz,
           meta = meta - ${STASH.prevPublishedAt}
         WHERE meta->>${STASH.prevPublishedAt} IS NOT NULL
+          AND id IN (SELECT id FROM rb_models)
       `;
 
       // ---- Restore Model.lastVersionAt + strip stash ----
@@ -431,6 +509,7 @@ async function runRollback(
           "lastVersionAt" = (meta->>${STASH.prevLastVersionAt})::timestamptz,
           meta = meta - ${STASH.prevLastVersionAt}
         WHERE meta->>${STASH.prevLastVersionAt} IS NOT NULL
+          AND id IN (SELECT id FROM rb_models)
       `;
 
       // ---- Restore Model.status (reclass step 4 reversal) ----
@@ -440,6 +519,7 @@ async function runRollback(
           status = (meta->>${STASH.prevStatus})::"ModelStatus",
           meta = meta - ${STASH.prevStatus}
         WHERE meta->>${STASH.prevStatus} IS NOT NULL
+          AND id IN (SELECT id FROM rb_models)
       `;
 
       // ---- Restore Post.publishedAt + strip stash ----
@@ -449,6 +529,7 @@ async function runRollback(
           "publishedAt" = (metadata->>${STASH.prevPublishedAt})::timestamptz,
           metadata = metadata - ${STASH.prevPublishedAt}
         WHERE metadata->>${STASH.prevPublishedAt} IS NOT NULL
+          AND id IN (SELECT id FROM rb_posts)
       `;
 
       // ---- collect affected IDs for side-effects ----
@@ -526,19 +607,28 @@ async function queueSearchIndexUpdates(affected: AffectedIds) {
 async function refreshCaches(affected: AffectedIds) {
   const { modelIds, versionIds } = affected;
 
-  // dataForModelsCache.refresh is per-id; bound concurrency so we don't
-  // hammer Redis when there are ~1800 models to invalidate.
-  if (modelIds.length > 0) {
-    const tasks = modelIds.map((id) => async () => dataForModelsCache.refresh(id));
-    await limitConcurrency(tasks, 10);
-  }
-
+  // Version busts first so we can derive which parent modelIds already get
+  // their dataForModelsCache refreshed transitively (bustMvCache calls
+  // dataForModelsCache.refresh for each (version, parentModelId) pair it
+  // receives).
+  let modelsCoveredByVersionBust = new Set<number>();
   if (versionIds.length > 0) {
     const versionRows = await dbWrite.modelVersion.findMany({
       where: { id: { in: versionIds } },
       select: { id: true, modelId: true },
     });
+    modelsCoveredByVersionBust = new Set(versionRows.map((v) => v.modelId));
     const tasks = versionRows.map((v) => async () => bustMvCache(v.id, v.modelId));
+    await limitConcurrency(tasks, 10);
+  }
+
+  // Only refresh dataForModelsCache for models NOT already covered above.
+  // In practice this is just op4_models (Draft models with no versions) —
+  // the rest of the modelIds overlap with versionModelIds and would
+  // duplicate the refreshes bustMvCache just did.
+  const modelsToRefresh = modelIds.filter((id) => !modelsCoveredByVersionBust.has(id));
+  if (modelsToRefresh.length > 0) {
+    const tasks = modelsToRefresh.map((id) => async () => dataForModelsCache.refresh(id));
     await limitConcurrency(tasks, 10);
   }
 }
@@ -548,15 +638,21 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
   if (!parsed.success) {
     return res.status(400).json({ error: z.treeifyError(parsed.error) });
   }
-  const { dryRun, action } = parsed.data;
+  const { dryRun, action, modelIds } = parsed.data;
 
-  console.log(`[clamp-publishedat-bumps] action=${action} dryRun=${dryRun} starting`);
+  const scopeDesc = modelIds.length > 0 ? `modelIds=[${modelIds.join(',')}]` : 'scope=global';
+  console.log(
+    `[clamp-publishedat-bumps] action=${action} dryRun=${dryRun} ${scopeDesc} starting`
+  );
   const startTime = Date.now();
 
   let ops: Ops | RollbackOps;
   let affected: AffectedIds;
   try {
-    const result = action === 'apply' ? await runApply(dryRun) : await runRollback(dryRun);
+    const result =
+      action === 'apply'
+        ? await runApply(dryRun, modelIds)
+        : await runRollback(dryRun, modelIds);
     ops = result.ops;
     affected = result.affected;
   } catch (error) {
