@@ -3,6 +3,7 @@ import {
   DEFAULT_TIMESTAMP_STYLE,
   formatDiscordTimestamp,
   normalizeTimestampStyle,
+  unixSecondsToISO,
 } from '~/utils/timestamp-helpers';
 
 export interface TimestampAttributes {
@@ -21,8 +22,8 @@ declare module '@tiptap/core' {
 
 // Anchored variant for input rules (fires as the closing `>` is typed) and a
 // global variant for paste rules.
-const inputRegex = /<t:(-?\d{1,14})(?::([tTdDfFR]))?>$/;
-const pasteRegex = /<t:(-?\d{1,14})(?::([tTdDfFR]))?>/g;
+const inputRegex = /<t:(-?\d{1,12})(?::([tTdDfFR]))?>$/;
+const pasteRegex = /<t:(-?\d{1,12})(?::([tTdDfFR]))?>/g;
 
 /**
  * Tiptap node for Discord-style `<t:UNIX:STYLE>` timestamps. It serializes to a
@@ -63,7 +64,7 @@ export const TimestampNode = Node.create({
     const fallback = Number.isFinite(seconds)
       ? formatDiscordTimestamp(seconds, style, { utc: true })
       : '';
-    const dateTime = Number.isFinite(seconds) ? new Date(seconds * 1000).toISOString() : undefined;
+    const dateTime = unixSecondsToISO(seconds);
     return [
       'time',
       mergeAttributes(HTMLAttributes, { 'data-type': 'timestamp', datetime: dateTime }),

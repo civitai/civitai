@@ -1,7 +1,11 @@
 import { Tooltip } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import type { DiscordTimestampStyle } from '~/utils/timestamp-helpers';
-import { formatDiscordTimestamp, normalizeTimestampStyle } from '~/utils/timestamp-helpers';
+import {
+  formatDiscordTimestamp,
+  normalizeTimestampStyle,
+  unixSecondsToISO,
+} from '~/utils/timestamp-helpers';
 
 type Props = {
   /** Unix timestamp in seconds. */
@@ -37,7 +41,7 @@ export function LocalTimestamp({ value, style, className }: Props) {
 
   const display = formatDiscordTimestamp(seconds, resolvedStyle, { utc: !mounted });
   const fullLabel = formatDiscordTimestamp(seconds, 'F', { utc: !mounted });
-  const iso = new Date(seconds * 1000).toISOString();
+  const iso = unixSecondsToISO(seconds);
 
   return (
     <Tooltip label={fullLabel} withArrow withinPortal>

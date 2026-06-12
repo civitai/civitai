@@ -33,8 +33,10 @@ const STYLE_FORMAT: Record<Exclude<DiscordTimestampStyle, 'R'>, string> = {
 };
 
 // Global (with /g) for scanning, anchored variants built where needed. Unix
-// seconds: 1-14 digits, optional leading minus for pre-epoch dates.
-export const DISCORD_TIMESTAMP_REGEX = /<t:(-?\d{1,14})(?::([tTdDfFR]))?>/g;
+// seconds: 1-12 digits, optional leading minus for pre-epoch dates. 12 digits
+// keeps `seconds * 1000` inside JS's valid Date range (±8.64e15 ms), so a tag
+// can never produce an out-of-range date that throws in `new Date().toISOString()`.
+export const DISCORD_TIMESTAMP_REGEX = /<t:(-?\d{1,12})(?::([tTdDfFR]))?>/g;
 
 export function isDiscordTimestampStyle(value: unknown): value is DiscordTimestampStyle {
   return (
@@ -60,4 +62,16 @@ export function formatDiscordTimestamp(
   const base = opts.utc ? dayjs.utc(seconds * 1000) : dayjs(seconds * 1000);
   if (style === 'R') return base.fromNow();
   return base.format(STYLE_FORMAT[style]);
+}
+
+/**
+ * ISO-8601 string for a unix-seconds value, or `undefined` when the value is
+ * outside JS's valid Date range. Guards `new Date(...).toISOString()`, which
+ * throws a RangeError on out-of-range input — important since the value comes
+ * from user-authored content.
+ */
+export function unixSecondsToISO(seconds: number): string | undefined {
+  if (!Number.isFinite(seconds)) return undefined;
+  const date = new Date(seconds * 1000);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }

@@ -31,13 +31,17 @@ export function CustomMarkdown({
   // markdown surface. Caller-provided remark plugins still run alongside it.
   const mergedRemarkPlugins = [remarkTimestamp, ...(remarkPlugins ?? [])];
 
-  // Many callers restrict `allowedElements` (e.g. `['a']`); with `unwrapDisallowed`
-  // that would strip the rendered `<time>` element and fall back to its raw UTC
-  // text. Always permit `time` so timestamps render in local time everywhere.
-  // When no allowlist is set, everything is allowed already, so leave it undefined.
-  const mergedAllowedElements = allowedElements
-    ? Array.from(new Set([...allowedElements, 'time']))
-    : undefined;
+  // Many callers restrict `allowedElements` (e.g. `['a']`), which drops the
+  // rendered `<time>` element (keeping only its raw UTC fallback text). Always
+  // permit `time` so timestamps render in local time everywhere. When no
+  // allowlist is set, everything is allowed already, so leave it undefined.
+  // react-markdown forbids passing both `allowedElements` and
+  // `disallowedElements`, so only set ours when the caller didn't opt into a
+  // denylist instead.
+  const mergedAllowedElements =
+    allowedElements && !options.disallowedElements
+      ? Array.from(new Set([...allowedElements, 'time']))
+      : undefined;
 
   const mergedComponents: Options['components'] = {
     ...components,

@@ -2,6 +2,7 @@ import {
   DISCORD_TIMESTAMP_REGEX,
   formatDiscordTimestamp,
   normalizeTimestampStyle,
+  unixSecondsToISO,
 } from '~/utils/timestamp-helpers';
 
 /**
@@ -47,7 +48,7 @@ export function remarkTimestamp() {
               dataType: 'timestamp',
               dataValue: String(seconds),
               dataStyle: style,
-              dateTime: new Date(seconds * 1000).toISOString(),
+              dateTime: unixSecondsToISO(seconds),
             },
             hChildren: [{ type: 'text', value: fallback }],
           },
