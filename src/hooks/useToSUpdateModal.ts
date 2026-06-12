@@ -13,8 +13,17 @@ export function useToSUpdateModal() {
   const shownForVersion = useRef<Date | null>(null);
 
   const queryUtils = trpc.useUtils();
+  // `content.checkTosUpdate` is SSR-seeded in AppProvider (an ancestor) as
+  // `initialData`. ToS lastmod only changes on a content deploy — never
+  // mid-session — so the per-load SSR snapshot is exactly as fresh as a live
+  // fetch. `staleTime: Infinity` keeps this observer from refetching the primed
+  // cache on mount, removing the per-bootstrap round-trip (the uncached
+  // server-side `readFile`). The accept flow's `setData` still patches
+  // `hasUpdate=false` regardless of staleTime.
   const { data: tosUpdate } = trpc.content.checkTosUpdate.useQuery(undefined, {
     enabled: !!currentUser,
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 
   useEffect(() => {

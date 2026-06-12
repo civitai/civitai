@@ -3,7 +3,7 @@
   
   & > *:nth-of-type(even) {
     background: light-dark(
-      darken(var(--mantine-color-gray-0), 0.01),
+      color-mix(in srgb, var(--mantine-color-gray-0), black 1%),
       var(--mantine-color-dark-8)
     )
   }

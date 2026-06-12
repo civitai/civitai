@@ -61,6 +61,12 @@ vi.mock('@civitai/client', () => ({
 const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   TIER_METADATA_KEY: 'tier',
   BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
+  // meilisearch/client.ts feeds this straight into pLimit() at module load —
+  // an undefined value makes p-limit throw "Expected concurrency to be a number".
+  // Mirror the production default (server-schema.ts: .default(50)).
+  MEILI_CALL_CONCURRENCY: 50,
+  // Same module-load pLimit() trap in signals/wrapper.ts (default 30).
+  SIGNALS_CALL_CONCURRENCY: 30,
   LOGGING: '',
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
   NOTIFICATION_DB_URL: 'postgres://user:pass@localhost:5432/notif',
@@ -97,28 +103,53 @@ vi.mock('~/env/server', () => ({
 }));
 
 // Prevent prom/client from initializing real DB pools at module load.
+// A metric-shaped stub covering every prom-client surface our code touches
+// (Counter.inc, Gauge.inc/dec/set, Histogram.observe, and the .labels()/.startTimer()
+// helpers) so any registered metric — named export OR built via a register* factory
+// — is safe to call without a real prom-client registry.
+const promMetricStub = () => {
+  const child = { inc: vi.fn(), dec: vi.fn(), set: vi.fn(), observe: vi.fn() };
+  return {
+    inc: vi.fn(),
+    dec: vi.fn(),
+    set: vi.fn(),
+    observe: vi.fn(),
+    startTimer: vi.fn(() => vi.fn()),
+    labels: vi.fn(() => child),
+  };
+};
+
 vi.mock('~/server/prom/client', () => ({
-  registerCounter: vi.fn(() => ({ inc: vi.fn() })),
-  registerCounterWithLabels: vi.fn(() => ({ inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) })),
-  missingSignedAtCounter: { inc: vi.fn() },
-  newUserCounter: { inc: vi.fn() },
-  loginCounter: { inc: vi.fn() },
-  onboardingCompletedCounter: { inc: vi.fn() },
-  onboardingErrorCounter: { inc: vi.fn() },
-  leakingContentCounter: { inc: vi.fn() },
-  vaultItemProcessedCounter: { inc: vi.fn() },
-  vaultItemFailedCounter: { inc: vi.fn() },
-  rewardGivenCounter: { inc: vi.fn() },
-  rewardFailedCounter: { inc: vi.fn() },
-  clavataCounter: { inc: vi.fn() },
-  cacheHitCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  cacheMissCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  cacheRevalidateCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  imagesFeedWithoutIndexCounter: { inc: vi.fn() },
-  creatorCompCreatorsPaidCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  creatorCompAmountPaidCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  userUpdateCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  dbReadFallbackCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+  // Factory functions — modules call these at import time to build their metrics
+  // (e.g. meilisearch/client.ts, eventloop-longtask.ts). Each returns a stub.
+  registerCounter: vi.fn(promMetricStub),
+  registerCounterWithLabels: vi.fn(promMetricStub),
+  registerGaugeWithLabels: vi.fn(promMetricStub),
+  registerHistogram: vi.fn(promMetricStub),
+  registerInstrumentationMetric: vi.fn(promMetricStub),
+  // Named metric exports the real module ships.
+  missingSignedAtCounter: promMetricStub(),
+  newUserCounter: promMetricStub(),
+  loginCounter: promMetricStub(),
+  onboardingCompletedCounter: promMetricStub(),
+  onboardingErrorCounter: promMetricStub(),
+  leakingContentCounter: promMetricStub(),
+  vaultItemProcessedCounter: promMetricStub(),
+  vaultItemFailedCounter: promMetricStub(),
+  rewardGivenCounter: promMetricStub(),
+  rewardFailedCounter: promMetricStub(),
+  clavataCounter: promMetricStub(),
+  cacheHitCounter: promMetricStub(),
+  cacheMissCounter: promMetricStub(),
+  cacheRevalidateCounter: promMetricStub(),
+  trpcProcedureDuration: promMetricStub(),
+  imagesFeedWithoutIndexCounter: promMetricStub(),
+  creatorCompCreatorsPaidCounter: promMetricStub(),
+  creatorCompAmountPaidCounter: promMetricStub(),
+  licenseFeeCreatorsPaidCounter: promMetricStub(),
+  licenseFeeAmountPaidCounter: promMetricStub(),
+  userUpdateCounter: promMetricStub(),
+  dbReadFallbackCounter: promMetricStub(),
 }));
 
 // Mock logging

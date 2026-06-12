@@ -3,7 +3,10 @@
   background-color: var(--discord-color);
 
   &:hover {
-    background-color: light-dark(darken(var(--discord-color), 0.05), lighten(var(--discord-color), 0.05));
+    background-color: light-dark(
+      color-mix(in srgb, var(--discord-color), black 5%),
+      color-mix(in srgb, var(--discord-color), white 5%)
+    );
   }
 }
 
@@ -13,7 +16,10 @@
   background-color: var(--google-color);
 
   &:hover {
-    background-color: light-dark(darken(var(--google-color), 0.05), lighten(var(--google-color), 0.05));
+    background-color: light-dark(
+      color-mix(in srgb, var(--google-color), black 5%),
+      color-mix(in srgb, var(--google-color), white 5%)
+    );
   }
 }
 
@@ -22,7 +28,10 @@
   background-color: var(--reddit-color);
 
   &:hover {
-    background-color: light-dark(darken(var(--reddit-color), 0.05), lighten(var(--reddit-color), 0.1));
+    background-color: light-dark(
+      color-mix(in srgb, var(--reddit-color), black 5%),
+      color-mix(in srgb, var(--reddit-color), white 10%)
+    );
   }
 }
 
@@ -31,7 +40,10 @@
   background-color: var(--email-color);
 
   &:hover {
-    background-color: light-dark(darken(var(--email-color), 0.05), lighten(var(--email-color), 0.1));
+    background-color: light-dark(
+      color-mix(in srgb, var(--email-color), black 5%),
+      color-mix(in srgb, var(--email-color), white 10%)
+    );
   }
 }
 
@@ -43,8 +55,8 @@
 
   &:hover {
     background-color: light-dark(
-      lighten(var(--mantine-color-dark-6), 0.05),
-      lighten(var(--mantine-color-dark-9), 0.02)
+      color-mix(in srgb, var(--mantine-color-dark-6), white 5%),
+      color-mix(in srgb, var(--mantine-color-dark-9), white 2%)
     );
   }
 }

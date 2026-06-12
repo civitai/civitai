@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL } from '~/server/common/constants';
-import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -43,7 +42,7 @@ async function fetchModelFilesForCache(ids: number[]) {
 export const filesForModelVersionCache = createCachedObject({
   key: REDIS_KEYS.CACHES.FILES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
-  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
+  ttl: CacheTTL.day,
   async lookupFn(ids) {
     const files = await fetchModelFilesForCache(ids);
 

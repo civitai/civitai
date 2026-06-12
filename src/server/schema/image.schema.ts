@@ -343,7 +343,6 @@ export const getInfiniteImagesSchema = baseQuerySchema
     techniques: z.number().array().optional(),
     tools: z.number().array().optional(),
     types: z.array(z.enum(MediaType)).optional(),
-    useIndex: z.boolean().nullish(),
     userId: z.number().optional(),
     username: usernameSchema.optional(),
     // view: z.enum(['categories', 'feed']),

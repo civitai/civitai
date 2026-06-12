@@ -11,6 +11,7 @@ import {
   getCreatorsHandler,
   getLeaderboardHandler,
   getNotificationSettingsHandler,
+  getSelfStatusHandler,
   getUserBookmarkCollectionsHandler,
   getUserByIdHandler,
   getUserCosmeticsHandler,
@@ -137,6 +138,9 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
     .query(getUserByIdHandler),
+  getSelfStatus: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .query(getSelfStatusHandler),
   getEngagedModels: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getUserEngagedModelsHandler),

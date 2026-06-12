@@ -35,7 +35,6 @@ export const appRouter = router({
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
   reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
-  recommenders: lazy(() => import('./recommenders.router').then((m) => m.recommendersRouter)),
   report: lazy(() => import('./report.router').then((m) => m.reportRouter)),
   resourceReview: lazy(() => import('./resourceReview.router').then((m) => m.resourceReviewRouter)),
   signals: lazy(() => import('./signals.router').then((m) => m.signalsRouter)),
