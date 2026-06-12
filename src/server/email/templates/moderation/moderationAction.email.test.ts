@@ -74,11 +74,24 @@ describe('moderationActionEmail', () => {
     expect(html).toContain('TestUser');
   });
 
-  it.each(cases)('renders reason when present for $kind', ({ kind }) => {
-    const reason = 'A specific moderator-supplied reason.';
-    const html = moderationActionEmail.getHtml(baseData(kind, reason));
-    expect(html).toContain(reason);
-  });
+  it.each(cases.filter((c) => !c.positive))(
+    'renders reason when present for negative kind $kind',
+    ({ kind }) => {
+      const reason = 'A specific moderator-supplied reason.';
+      const html = moderationActionEmail.getHtml(baseData(kind, reason));
+      expect(html).toContain(reason);
+    }
+  );
+
+  it.each(cases.filter((c) => c.positive))(
+    'never renders a reason for positive kind $kind, even when one is supplied',
+    ({ kind }) => {
+      const reason = 'A specific moderator-supplied reason.';
+      const html = moderationActionEmail.getHtml(baseData(kind, reason));
+      expect(html).not.toContain(reason);
+      expect(html).not.toContain('Reason:');
+    }
+  );
 
   it.each(cases)(
     'omits reason block when reason absent for $kind',
@@ -116,6 +129,23 @@ describe('moderationActionEmail', () => {
     expect(html).toContain('https://civitai.com/appeal/123');
     expect(html).not.toContain(SUPPORT_URL);
   });
+
+  it.each(['appeal-approved', 'appeal-rejected'] as const)(
+    'renders affected-content items (linked + label-only) for %s',
+    (kind) => {
+      const html = moderationActionEmail.getHtml({
+        ...baseData(kind),
+        items: [
+          { url: 'https://civitai.com/images/12345', label: 'Image #12345' },
+          { label: 'Image #99999' },
+        ],
+      });
+      expect(html).toContain('href="https://civitai.com/images/12345"');
+      expect(html).toContain('Image #12345');
+      // label-only item (no url) is still listed, just not linked
+      expect(html).toContain('Image #99999');
+    }
+  );
 
   it('escapes HTML in username and reason to prevent markup injection', () => {
     const html = moderationActionEmail.getHtml({

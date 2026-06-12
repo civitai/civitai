@@ -16,6 +16,9 @@ export type ModerationActionEmailData = {
   kind: ModerationActionKind;
   reason?: string; // brief explanation; rendered only when present
   ctaUrl?: string; // optional override; negative kinds default to the support site
+  // Affected content (used by appeal kinds): rendered as a list after the intro,
+  // each linked when a public `url` is available. `label` is always shown.
+  items?: { url?: string; label: string }[];
 };
 
 export const SUPPORT_URL = 'https://support.civitai.com';
@@ -47,14 +50,14 @@ export const moderationActionConfig: Record<ModerationActionKind, ModerationActi
     subject: 'Civitai - Account restriction upheld',
     heading: 'Account Restriction Upheld',
     intro:
-      'After reviewing your account, we have decided to keep the restriction in place. It remains active on your account.',
+      'After reviewing your account, we have decided to keep the restriction that was applied to it in place. The restriction is still active.',
     positive: false,
   },
   'restriction-overturned': {
     subject: 'Civitai - Account restriction lifted',
     heading: 'Account Restriction Lifted',
     intro:
-      'After reviewing your account, we have reversed the restriction. It is no longer active on your account.',
+      'After reviewing your account, we have removed the restriction that was applied to it. Your account is in good standing and you can use it normally again.',
     positive: true,
   },
   'appeal-rejected': {
@@ -68,7 +71,7 @@ export const moderationActionConfig: Record<ModerationActionKind, ModerationActi
     subject: 'Civitai - Appeal approved',
     heading: 'Appeal Approved',
     intro:
-      'We have reviewed your appeal and approved it. The affected content and your account standing have been restored.',
+      'We have reviewed your appeal and approved it. Any affected content and your account standing have been restored.',
     positive: true,
   },
 };
@@ -76,27 +79,52 @@ export const moderationActionConfig: Record<ModerationActionKind, ModerationActi
 const SUPPORT_LINE =
   'If you believe this was a mistake, contact our support team.';
 
+// Closing signature appended to every moderation email.
+const SIGNATURE = 'The Civitai Moderation Team';
+
+// Lead-in line shown above the affected-content list.
+const itemsLeadIn = (positive: boolean) =>
+  positive ? 'This applies to the following:' : 'This decision applies to the following:';
+
 export const moderationActionEmail = createEmail({
   header: ({ to, kind }: ModerationActionEmailData) => ({
     subject: moderationActionConfig[kind].subject,
     to,
   }),
-  html({ username, kind, reason, ctaUrl }: ModerationActionEmailData) {
+  html({ username, kind, reason, ctaUrl, items }: ModerationActionEmailData) {
     const { heading, intro, positive } = moderationActionConfig[kind];
 
     // Escape user/moderator-supplied text before interpolating into HTML —
     // prevents markup injection and stray characters (e.g. `<`, `&`) from
     // breaking email rendering. `intro`/`heading` are static config, no escape.
-    const reasonBlock = reason
-      ? `<p><strong>Reason:</strong><br/>${escapeHtml(reason)}</p>`
-      : '';
+    // Positive outcomes (reinstated / overturned / approved) are good news and
+    // never carry a reason — suppress the block even if a caller passes one.
+    const reasonBlock =
+      !positive && reason
+        ? `<p><strong>Reason:</strong><br/>${escapeHtml(reason)}</p>`
+        : '';
     const supportLine = positive ? '' : `<p>${SUPPORT_LINE}</p>`;
+
+    // Affected-content list. Each label/url is user-adjacent data, so escape both.
+    const itemsBlock =
+      items && items.length
+        ? `<p>${itemsLeadIn(positive)}</p><ul>${items
+            .map(
+              ({ url, label }) =>
+                `<li>${
+                  url ? `<a href="${escapeHtml(url)}">${escapeHtml(label)}</a>` : escapeHtml(label)
+                }</li>`
+            )
+            .join('')}</ul>`
+        : '';
 
     const body = `
       <p>Hi ${escapeHtml(username)},</p>
       <p>${intro}</p>
+      ${itemsBlock}
       ${reasonBlock}
       ${supportLine}
+      <p>&mdash; ${SIGNATURE}</p>
     `;
 
     return simpleEmailWithTemplate({
@@ -109,20 +137,43 @@ export const moderationActionEmail = createEmail({
   },
 
   /** Plain-text fallback for clients that don't render HTML. */
-  text({ username, kind, reason }: ModerationActionEmailData) {
+  text({ username, kind, reason, items }: ModerationActionEmailData) {
     const { heading, intro, positive } = moderationActionConfig[kind];
 
     const lines = [heading, '', `Hi ${username},`, '', intro];
-    if (reason) lines.push('', `Reason:`, reason);
+    if (items?.length) {
+      lines.push('', itemsLeadIn(positive));
+      for (const { url, label } of items) lines.push(url ? `- ${label}: ${url}` : `- ${label}`);
+    }
+    if (!positive && reason) lines.push('', `Reason:`, reason);
     if (!positive) lines.push('', SUPPORT_LINE);
+    lines.push('', `— ${SIGNATURE}`);
 
     return lines.join('\n') + '\n';
   },
 
-  testData: async () => ({
-    to: 'test@test.com',
-    username: 'testuser',
-    kind: 'account-banned' as const,
-    reason: 'Repeated violations of our Terms of Service.',
-  }),
+  // Debug-only (email previewer at /api/testing/email/[template]). Reads query
+  // params so every kind can be previewed: ?kind=appeal-approved&reason=...&username=...
+  // Debug-only data for the previewer. A reason is always supplied; the template
+  // itself decides whether to render it (positive kinds never show one). Appeal
+  // kinds get sample linked items so the affected-content list is previewable.
+  testData: async (
+    input: Partial<ModerationActionEmailData> = {}
+  ): Promise<ModerationActionEmailData> => {
+    const kind = (input.kind as ModerationActionKind) ?? 'account-banned';
+    const isAppeal = kind === 'appeal-approved' || kind === 'appeal-rejected';
+    return {
+      to: 'test@test.com',
+      username: input.username ?? 'testuser',
+      kind,
+      reason: input.reason ?? 'Repeated violations of our Terms of Service.',
+      ctaUrl: input.ctaUrl,
+      items: isAppeal
+        ? [
+            { url: 'https://civitai.com/images/12345', label: 'Image #12345' },
+            { url: 'https://civitai.com/images/12346', label: 'Image #12346' },
+          ]
+        : undefined,
+    };
+  },
 });
