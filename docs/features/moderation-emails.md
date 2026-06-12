@@ -51,7 +51,7 @@ type ModerationActionEmailData = {
   username: string;
   kind: ModerationActionKind;
   reason?: string;   // brief explanation (publicBanReasonLabel + detailsExternal / resolvedMessage)
-  ctaUrl?: string;   // defaults to mailto:support@civitai.com on negative kinds
+  ctaUrl?: string;   // defaults to https://support.civitai.com on negative kinds
 };
 ```
 
@@ -59,7 +59,7 @@ type ModerationActionEmailData = {
 - `header` → subject per `kind`.
 - `html` → `simpleEmailWithTemplate()` with per-kind heading, reason block (rendered only
   when `reason` present), and CTA button.
-- Negative kinds → **Contact Support** button (`mailto:support@civitai.com`).
+- Negative kinds → **Contact Support** button (`https://support.civitai.com`).
 - Positive kinds → reinstatement copy, no CTA (or a link back to the site).
 
 **Edit** `src/server/email/templates/index.ts`:
@@ -115,7 +115,7 @@ Single choke point — the `mod/ban-user.ts` webhook routes through this service
 - **CTA caveat** — there's no self-serve appeal *page* for account bans/strikes; users
   appeal via support email. Entity appeals happen in-app (`AppealDialog.tsx`) and a
   rejected appeal can't be re-appealed. So the CTA is **Contact Support**
-  (`mailto:support@civitai.com`). Add a real Appeal deep-link only if/when an appeal
+  (`https://support.civitai.com`). Add a real Appeal deep-link only if/when an appeal
   surface exists.
 
 ## Build sequence
@@ -129,4 +129,4 @@ Single choke point — the `mod/ban-user.ts` webhook routes through this service
 ## Resolved decisions
 - Unban / overturn copy → standard reinstatement wording (overturns include `resolvedMessage`).
 - `force` unban → **skip** email.
-- Negative emails → **Contact Support** CTA (`mailto:support@civitai.com`); no dead appeal link.
+- Negative emails → **Contact Support** CTA (`https://support.civitai.com`); no dead appeal link.

@@ -14,10 +14,10 @@ export type ModerationActionEmailData = {
   username: string;
   kind: ModerationActionKind;
   reason?: string; // brief explanation; rendered only when present
-  ctaUrl?: string; // optional override; negative kinds default to mailto:support@civitai.com
+  ctaUrl?: string; // optional override; negative kinds default to the support site
 };
 
-export const SUPPORT_MAILTO = 'mailto:support@civitai.com';
+export const SUPPORT_URL = 'https://support.civitai.com';
 
 type ModerationActionConfig = {
   subject: string;
@@ -100,7 +100,7 @@ export const moderationActionEmail = createEmail({
       body,
       ...(positive
         ? {}
-        : { btnUrl: ctaUrl ?? SUPPORT_MAILTO, btnLabel: 'Contact Support' }),
+        : { btnUrl: ctaUrl ?? SUPPORT_URL, btnLabel: 'Contact Support' }),
     });
   },
 

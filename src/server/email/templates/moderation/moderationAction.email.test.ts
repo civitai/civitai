@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   moderationActionEmail,
-  SUPPORT_MAILTO,
+  SUPPORT_URL,
   type ModerationActionEmailData,
   type ModerationActionKind,
 } from '~/server/email/templates/moderation/moderationAction.email';
@@ -93,10 +93,10 @@ describe('moderationActionEmail', () => {
     ({ kind, positive }) => {
       const html = moderationActionEmail.getHtml(baseData(kind));
       if (positive) {
-        expect(html).not.toContain(SUPPORT_MAILTO);
+        expect(html).not.toContain(SUPPORT_URL);
         expect(html).not.toContain('Contact Support');
       } else {
-        expect(html).toContain(SUPPORT_MAILTO);
+        expect(html).toContain(SUPPORT_URL);
         expect(html).toContain('Contact Support');
       }
     }
@@ -114,6 +114,6 @@ describe('moderationActionEmail', () => {
       ctaUrl: 'https://civitai.com/appeal/123',
     });
     expect(html).toContain('https://civitai.com/appeal/123');
-    expect(html).not.toContain(SUPPORT_MAILTO);
+    expect(html).not.toContain(SUPPORT_URL);
   });
 });
