@@ -48,9 +48,10 @@ registerLivenessHeartbeat();
 // /api/v1/images / tRPC / SSR request pays lazy-require + JIT on the single
 // loop thread → pin → 504/502/499 on every rollout. The warmer self-requests
 // the hot routes over localhost during startup and flips /api/ready's warm gate
-// only once warm (fail-open). It is gated by WARMUP_ENABLED (default true) and
-// uses the listener (so it self-imports lazily to avoid pulling fetch/route
-// code into the boot path needlessly).
+// only once warm (fail-open). It is OPT-IN via WARMUP_ENABLED (default FALSE —
+// runs ONLY when WARMUP_ENABLED='true', set on the dp-prod SSR/API/heavy pools;
+// elsewhere it no-ops + flips warm immediately). It self-imports lazily so the
+// fetch/route code isn't pulled into the boot path needlessly.
 //
 // CRITICAL: do NOT await this. register() must return so Next can start the
 // HTTP listener — the warmer needs that listener up to self-request, so

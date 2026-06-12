@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isProd } from '~/env/other';
-import { isWarm } from '~/server/warmup';
+import { isWarm, getWarmState, getWarmDurationMs, didFailOpenTimeout } from '~/server/warmup';
 import { runHealthChecks } from '~/pages/api/health';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -30,6 +30,14 @@ import { getRandomInt } from '~/utils/number-helpers';
 export default WebhookEndpoint(async (_req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
   const warm = isWarm();
+  // Surface warm observability in the body so an operator can tell a pod that
+  // truly warmed (warmState='warmed-ok') from one that only fail-open-timed-out
+  // (warmState='failopen-timeout', failOpenTimedOut=true) or one where the
+  // warmer is disabled on this pool (warmState='disabled'). Mirrors the
+  // civitai_warmup_state gauge.
+  const warmState = getWarmState();
+  const warmDurationMs = getWarmDurationMs();
+  const failOpenTimedOut = didFailOpenTimeout();
 
   // Skip the (relatively expensive) dependency checks until the pod is warm —
   // a not-yet-warm pod is never Ready regardless of dependency state, and we
@@ -41,6 +49,9 @@ export default WebhookEndpoint(async (_req: NextApiRequest, res: NextApiResponse
       version: process.env.version,
       ready: false,
       warm,
+      warmState,
+      warmDurationMs,
+      failOpenTimedOut,
     });
   }
 
@@ -71,6 +82,9 @@ export default WebhookEndpoint(async (_req: NextApiRequest, res: NextApiResponse
     version: process.env.version,
     ready,
     warm,
+    warmState,
+    warmDurationMs,
+    failOpenTimedOut,
     deps: results,
   });
 });

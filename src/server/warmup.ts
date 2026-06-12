@@ -19,23 +19,107 @@
 // FAIL-OPEN by design: a slightly-cold pod is far better than a wedged
 // rollout. Every request is wrapped in try/catch, the listener wait is
 // bounded, and a hard overall timeout guarantees `warmReady` is set no matter
-// what (success, per-route errors, or timeout). Disable entirely with
-// WARMUP_ENABLED=false (env, no code revert).
+// what (success, per-route errors, or timeout). A fail-open timeout still
+// flips warmReady=true (the pod becomes Ready) — it is made VISIBLE via the
+// `civitai_warmup_state` gauge + /api/ready body so an operator can tell a
+// truly-warmed pod from one that just timed out, not blocked.
+//
+// OPT-IN: WARMUP_ENABLED defaults to FALSE. The warmer no-ops + flips
+// warmReady=true immediately when disabled, so /api/ready behaves like a plain
+// dependency probe everywhere it isn't explicitly enabled. It is turned on
+// (WARMUP_ENABLED=true) ONLY on the SSR/API/heavy pools via the deployment
+// manifest — never on jobs / civitai-next / -stage / civitai-app / PR previews
+// (some of which point at the DEV DB).
 //
 // Server-side (nodejs runtime) only. Never imported on the edge/client.
+
+import { env } from '~/env/server';
+import { registerInstrumentationMetric, instrumentationRegistry } from '~/server/prom/client';
+import client from 'prom-client';
 
 let warmReady = false;
 
 export const isWarm = () => warmReady;
 
+// Observable warm state — exposed both via Prometheus (civitai_warmup_state)
+// and the /api/ready JSON body. These let an operator SEE whether a pod truly
+// warmed or just fail-open-timed-out, and how long warming took.
+export type WarmState = 'disabled' | 'in-progress' | 'warmed-ok' | 'failopen-timeout';
+let warmState: WarmState = 'in-progress';
+let warmDurationMs: number | null = null;
+
+export const getWarmState = (): WarmState => warmState;
+export const getWarmDurationMs = (): number | null => warmDurationMs;
+export const didFailOpenTimeout = (): boolean => warmState === 'failopen-timeout';
+
 const LOG_PREFIX = '[warmup]';
 
+// Numeric encoding for the gauge (Prometheus gauges are numeric):
+//   0 = disabled / not-applicable, 1 = in-progress, 2 = warmed-ok,
+//   3 = fail-open timeout (warm flipped on without confirmed warm path).
+const WARM_STATE_CODE: Record<WarmState, number> = {
+  disabled: 0,
+  'in-progress': 1,
+  'warmed-ok': 2,
+  'failopen-timeout': 3,
+};
+
+// Cross-graph shared registry: this module is imported from the instrumentation
+// webpack graph (instrumentation.node.ts -> import('~/server/warmup')), so the
+// metrics MUST land in the globalThis-pinned instrumentationRegistry to be
+// visible from /metrics (scraped in the request graph). registerInstrumentationMetric
+// is HMR/dual-graph idempotent — it short-circuits to the existing instance
+// before re-constructing. See src/server/prom/client.ts.
+const warmStateGauge = registerInstrumentationMetric(
+  'civitai_warmup_state',
+  () =>
+    new client.Gauge({
+      name: 'civitai_warmup_state',
+      help: 'In-process route-warmer state (0=disabled,1=in-progress,2=warmed-ok,3=failopen-timeout)',
+      registers: [instrumentationRegistry],
+    })
+);
+
+const warmDurationGauge = registerInstrumentationMetric(
+  'civitai_warmup_duration_seconds',
+  () =>
+    new client.Gauge({
+      name: 'civitai_warmup_duration_seconds',
+      help: 'Wall-clock seconds the in-process route warmer took to complete (or to fail-open timeout)',
+      registers: [instrumentationRegistry],
+    })
+);
+
+function setWarmState(state: WarmState) {
+  warmState = state;
+  warmStateGauge.set(WARM_STATE_CODE[state]);
+}
+
+// Reflect the initial in-progress state on the gauge at module init so a scrape
+// before runWarmup() resolves still reports a value (not absent).
+warmStateGauge.set(WARM_STATE_CODE[warmState]);
+
 // WebhookEndpoint/-style routes are token-gated; /api/live + /api/health use
-// env.WEBHOOK_TOKEN, whose prod value is `letsgethookie` (set via the deployment
-// manifest, not this repo). The warmer reads it from env so it works in any
-// environment; falls back to the known prod literal so a missing env var can't
-// silently break the listener-readiness probe.
-const WEBHOOK_TOKEN = process.env.WEBHOOK_TOKEN ?? 'letsgethookie';
+// env.WEBHOOK_TOKEN. Use the validated env accessor (same one health.ts /
+// ready.ts use) rather than a hardcoded literal fallback, so a rotated token
+// can't silently break the warmer's /api/live readiness poll.
+const WEBHOOK_TOKEN = env.WEBHOOK_TOKEN;
+
+// The app warming itself from its own canonical origin is a legitimate
+// first-party request, so send the headers that satisfy the tRPC origin gate.
+// isAllowedOriginRequest (src/server/createContext.ts) compares the Origin host
+// (falling back to Referer) against allowedOriginHosts, which is built from the
+// server domains + TRPC_ORIGINS + hostFromUrl(env.NEXTAUTH_URL). Sending
+// Origin: <NEXTAUTH_URL> (= https://civitai.com) therefore makes
+// acceptableOrigin=true → isAcceptableOrigin passes → the heavy resolver runs
+// (instead of UNAUTHORIZED 401). We deliberately do NOT send `x-client: web`:
+// needsUpdate() in trpc.ts returns false unless x-client === 'web', so omitting
+// it avoids the version/x-update-required branch entirely. Applied to ALL warm
+// requests (REST + tRPC + SSR) — the REST/SSR paths don't need it but it's
+// harmless and keeps one header set.
+const WARM_HEADERS: Record<string, string> = {
+  origin: env.NEXTAUTH_URL,
+};
 
 // superjson is the app's tRPC transformer (see src/utils/trpc.ts). A tRPC v11
 // GET query batch carries each op's input as `{ "<idx>": { "json": <input> } }`
@@ -93,7 +177,21 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 const LISTENER_POLL_INTERVAL_MS = 500;
 const LISTENER_WAIT_MS = 15_000;
-const WARM_ITERATIONS = 3;
+
+// One warm pass per route by default — enough to pay the lazy-require + JIT
+// settle on the hot path without a heavy backend pulse. Env-overridable
+// (WARM_ITERATIONS) if a pool wants more JIT settling at the cost of more
+// backend load. (Open runtime question: whether 1 iteration meaningfully
+// settles the JIT vs 3 — needs a real-pod before/after.)
+const WARM_ITERATIONS = intFromEnv('WARM_ITERATIONS', 1);
+
+// Jitter so a fleet of pods warming concurrently during a surge/rollout doesn't
+// hit the shared DB-replica / Meili in lockstep. Both an initial random delay
+// and a small inter-route delay are applied. Math.random is fine here (no
+// security/uniqueness requirement — just load smearing).
+const WARM_INITIAL_JITTER_MAX_MS = intFromEnv('WARM_INITIAL_JITTER_MAX_MS', 500);
+const WARM_INTER_ROUTE_JITTER_MAX_MS = intFromEnv('WARM_INTER_ROUTE_JITTER_MAX_MS', 500);
+const randomJitter = (maxMs: number) => (maxMs > 0 ? Math.floor(Math.random() * maxMs) : 0);
 
 // Poll /api/live until the HTTP listener answers 200, so self-requests don't
 // race the server coming up. Bounded — never block boot forever.
@@ -102,7 +200,7 @@ async function waitForListener(baseUrl: string): Promise<boolean> {
   const url = `${baseUrl}/api/live?token=${encodeURIComponent(WEBHOOK_TOKEN)}`;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(url, { method: 'GET' });
+      const res = await fetch(url, { method: 'GET', headers: WARM_HEADERS });
       if (res.ok) {
         // Drain the body so the connection can be reused/closed cleanly.
         await res.text().catch(() => undefined);
@@ -117,16 +215,16 @@ async function waitForListener(baseUrl: string): Promise<boolean> {
   return false;
 }
 
-// Warm a single route a few times to settle the JIT. Every error is swallowed
-// — a bad input or a transiently-down dependency must not crash boot or abort
-// the rest of the warmup.
+// Warm a single route (WARM_ITERATIONS passes, default 1) to settle the JIT.
+// Every error is swallowed — a bad input or a transiently-down dependency must
+// not crash boot or abort the rest of the warmup.
 async function warmRoute(baseUrl: string, route: string): Promise<void> {
   const url = `${baseUrl}${route}`;
   let lastStatus = 0;
   let errored = false;
   for (let i = 0; i < WARM_ITERATIONS; i++) {
     try {
-      const res = await fetch(url, { method: 'GET' });
+      const res = await fetch(url, { method: 'GET', headers: WARM_HEADERS });
       lastStatus = res.status;
       // Read the body so the handler runs to completion (the response stream is
       // part of the hot path we want JIT-compiled) and the socket frees up.
@@ -149,11 +247,18 @@ export async function runWarmup(): Promise<void> {
   if (started) return;
   started = true;
 
-  // Disable switch — flip warm immediately so /api/ready behaves like a plain
-  // dependency probe (no warm gate) without a code change.
-  if (process.env.WARMUP_ENABLED === 'false') {
-    console.log(`${LOG_PREFIX} disabled (WARMUP_ENABLED=false) — marking warm immediately`);
+  // Default OFF (opt-in). The warmer only runs when WARMUP_ENABLED === 'true'
+  // (set on the SSR/API/heavy dp-prod deployments). Everywhere else — jobs,
+  // civitai-next, -stage, civitai-app, PR previews — it no-ops and flips warm
+  // immediately so /api/ready behaves like a plain dependency probe (no warm
+  // gate). This keeps the warmer (which executes the heavy feed query and could
+  // hit a DEV DB on previews) off the pools it has no business warming.
+  if (process.env.WARMUP_ENABLED !== 'true') {
+    console.log(
+      `${LOG_PREFIX} disabled (WARMUP_ENABLED!=='true') — marking warm immediately, no warm run`
+    );
     warmReady = true;
+    setWarmState('disabled');
     return;
   }
 
@@ -173,6 +278,12 @@ export async function runWarmup(): Promise<void> {
     timedOut = true;
     if (!warmReady) {
       warmReady = true;
+      // Record the fail-open: the pod IS now Ready (so a slow backend can't
+      // wedge the rollout), but the warm path was NOT confirmed. This is the
+      // alertable state — visible on civitai_warmup_state=3 and /api/ready.
+      warmDurationMs = Date.now() - startedAt;
+      warmDurationGauge.set(warmDurationMs / 1000);
+      setWarmState('failopen-timeout');
       console.warn(`${LOG_PREFIX} hard timeout after ${timeoutMs}ms — marking warm (fail-open)`);
     }
   }, timeoutMs);
@@ -191,11 +302,26 @@ export async function runWarmup(): Promise<void> {
       );
     }
 
+    // Randomized initial delay so a fleet of pods that all become listener-ready
+    // at roughly the same instant during a rollout don't fire their first heavy
+    // warm read at the shared DB-replica / Meili in lockstep.
+    if (!timedOut) {
+      const initialJitter = randomJitter(WARM_INITIAL_JITTER_MAX_MS);
+      if (initialJitter > 0) await sleep(initialJitter);
+    }
+
     // Warm routes sequentially so we don't pile concurrent cold lazy-requires
     // onto the single event-loop thread (that would re-create the very pin
     // we're trying to avoid). Stop early if the hard timeout already fired.
+    // Small randomized inter-route delay further smears the backend load.
+    let first = true;
     for (const route of routes) {
       if (timedOut) break;
+      if (!first) {
+        const interJitter = randomJitter(WARM_INTER_ROUTE_JITTER_MAX_MS);
+        if (interJitter > 0) await sleep(interJitter);
+      }
+      first = false;
       await warmRoute(baseUrl, route);
     }
   } catch (err) {
@@ -208,8 +334,17 @@ export async function runWarmup(): Promise<void> {
     // errors, or partial completion. (If the hard timeout already flipped it,
     // this is a harmless no-op.)
     warmReady = true;
+    // Record duration + final state. If the hard timeout already fired, leave
+    // the failopen-timeout state/duration it set (don't overwrite with the
+    // later natural-completion time). Otherwise the warm pass completed → mark
+    // warmed-ok with its wall-clock.
+    if (!timedOut) {
+      warmDurationMs = Date.now() - startedAt;
+      warmDurationGauge.set(warmDurationMs / 1000);
+      setWarmState('warmed-ok');
+    }
     console.log(
-      `${LOG_PREFIX} complete in ${Date.now() - startedAt}ms — warmReady=true${
+      `${LOG_PREFIX} complete in ${Date.now() - startedAt}ms — warmReady=true, state=${warmState}${
         timedOut ? ' (via timeout)' : ''
       }`
     );
