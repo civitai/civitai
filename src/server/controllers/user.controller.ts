@@ -129,8 +129,8 @@ import { verifyCaptchaToken } from '../recaptcha/client';
 import { createBuzzTransaction } from '../services/buzz.service';
 import type { FeatureAccess } from '../services/feature-flags.service';
 import {
-  domainRestrictedToggleableKeys,
-  toggleableFeatures,
+  computeUserFeatureFlagsOverlay,
+  defaultToggleableFeatures,
 } from '../services/feature-flags.service';
 import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -276,6 +276,41 @@ const verifyAvatar = (avatar: string) => {
     return validAvatarUrlPrefixes.some((prefix) => avatar.startsWith(prefix));
   } else if (isUUID(avatar)) return true; // Is a CF Images UUID
   return false;
+};
+
+/**
+ * Cheap "whoami" for the authenticated caller, sourced entirely from the
+ * session/JWT (ctx.user) — no DB round-trip. Works with API-key auth. Returns
+ * the fields a headless/agent (MCP) caller needs to reason about its own
+ * account: identity, onboarding state (raw bitflag + decoded steps + an
+ * isOnboarded boolean), moderation/account flags, and tier/membership when
+ * cheaply available on the session.
+ *
+ * Note: does NOT use simpleUserSelect (which omits muted / isModerator /
+ * onboarding) — these come straight off the SessionUser.
+ */
+export const getSelfStatusHandler = ({ ctx }: { ctx: ProtectedContext }) => {
+  const { user } = ctx;
+
+  const onboardingSteps = Flags.instanceToArray(user.onboarding)
+    .map((flag) => OnboardingSteps[flag] as keyof typeof OnboardingSteps | undefined)
+    .filter((name): name is keyof typeof OnboardingSteps => !!name);
+
+  return {
+    id: user.id,
+    username: user.username ?? null,
+    onboarding: {
+      raw: user.onboarding,
+      completedSteps: onboardingSteps,
+      isOnboarded: Flags.hasFlag(user.onboarding, OnboardingComplete),
+    },
+    muted: !!user.muted,
+    isModerator: !!user.isModerator,
+    bannedAt: user.bannedAt ?? null,
+    deletedAt: user.deletedAt ?? null,
+    tier: user.tier ?? null,
+    subscriptionId: user.subscriptionId ?? null,
+  };
 };
 
 export const completeOnboardingHandler = async ({
@@ -1288,35 +1323,14 @@ export const deleteUserPaymentMethodHandler = async ({
   }
 };
 
-const defaultToggleableFeatures = toggleableFeatures.reduce(
-  (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
-  {} as FeatureAccess
-);
 export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     const { id } = ctx.user;
-    const { features = {} } = await getUserSettings(id);
+    const { features } = await getUserSettings(id);
 
-    // filter toggleable features from user settings
-    const filteredUserFeatures = Object.keys(features).reduce(
-      (acc, key) =>
-        toggleableFeatures.some((x) => x.key === key) ? { ...acc, [key]: features[key] } : acc,
-      {} as FeatureAccess
-    );
-
-    const result = {
-      ...defaultToggleableFeatures,
-      ...filteredUserFeatures,
-    } as FeatureAccess;
-
-    // Don't let toggleable defaults override domain restrictions
-    for (const key of domainRestrictedToggleableKeys) {
-      if (key in result && !ctx.features[key]) {
-        delete result[key];
-      }
-    }
-
-    return result;
+    // Shared pure overlay computation — also used by the SSR seed in _app
+    // getInitialProps so the injected initialData byte-matches this response.
+    return computeUserFeatureFlagsOverlay(features, ctx.features);
   } catch (error) {
     throw throwDbError(error);
   }

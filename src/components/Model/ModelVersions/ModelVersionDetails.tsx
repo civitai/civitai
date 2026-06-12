@@ -548,27 +548,44 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   loading={publishing}
                   fullWidth
                 >
-                  Publish this version
+                  {isModelUnpublished || isVersionUnpublished
+                    ? 'Republish this version'
+                    : 'Publish this version'}
                 </Button>
-                <Tooltip label={scheduledPublishDate ? 'Reschedule' : 'Schedule publish'} withArrow>
-                  <Button
-                    color="green"
-                    variant="outline"
-                    loading={publishing}
-                    onClick={() =>
-                      dialogStore.trigger({
-                        component: SchedulePostModal,
-                        props: {
-                          onSubmit: handlePublishClick,
-                          publishedAt: version.publishedAt,
-                          publishingModel: true,
-                        },
-                      })
-                    }
+                {/*
+                  Hide the Schedule control once a model/version has been
+                  unpublished. The publish raw SQL guard
+                  (`publishedAt IS NULL OR publishedAt > NOW()`) restores
+                  the original publishedAt on republish, so any picked
+                  schedule date would silently be ignored — letting the
+                  user open a date picker that has no effect would be
+                  misleading. Same write-once-on-republish invariant we
+                  now enforce for Post.publishedAt via updatePost.
+                */}
+                {!isModelUnpublished && !isVersionUnpublished && (
+                  <Tooltip
+                    label={scheduledPublishDate ? 'Reschedule' : 'Schedule publish'}
+                    withArrow
                   >
-                    <IconClock size={20} />
-                  </Button>
-                </Tooltip>
+                    <Button
+                      color="green"
+                      variant="outline"
+                      loading={publishing}
+                      onClick={() =>
+                        dialogStore.trigger({
+                          component: SchedulePostModal,
+                          props: {
+                            onSubmit: handlePublishClick,
+                            publishedAt: version.publishedAt,
+                            publishingModel: true,
+                          },
+                        })
+                      }
+                    >
+                      <IconClock size={20} />
+                    </Button>
+                  </Tooltip>
+                )}
               </Button.Group>
 
               {scheduledPublishDate && isOwnerOrMod && (

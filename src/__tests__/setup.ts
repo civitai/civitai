@@ -80,6 +80,12 @@ const TEST_BLOCK_TOKEN_PRIVATE_PEM = _btPrivateKey.export({
 const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   TIER_METADATA_KEY: 'tier',
   BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
+  // meilisearch/client.ts feeds this straight into pLimit() at module load —
+  // an undefined value makes p-limit throw "Expected concurrency to be a number".
+  // Mirror the production default (server-schema.ts: .default(50)).
+  MEILI_CALL_CONCURRENCY: 50,
+  // Same module-load pLimit() trap in signals/wrapper.ts (default 30).
+  SIGNALS_CALL_CONCURRENCY: 30,
   LOGGING: '',
   BLOCK_TOKEN_PRIVATE_KEY: TEST_BLOCK_TOKEN_PRIVATE_PEM,
   BLOCK_TOKEN_PUBLIC_KEY: TEST_BLOCK_TOKEN_PUBLIC_PEM,
@@ -118,61 +124,58 @@ vi.mock('~/env/server', () => ({
 }));
 
 // Prevent prom/client from initializing real DB pools at module load.
-vi.mock('~/server/prom/client', () => ({
-  registerCounter: vi.fn(() => ({ inc: vi.fn() })),
-  registerCounterWithLabels: vi.fn(() => ({ inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) })),
-  // Metric-factory helpers main added for the eventloop-longtask observability
-  // pass. eventloop-longtask.ts registers a histogram + counter via
-  // registerInstrumentationMetric AT MODULE LOAD, and trpc.ts imports it — so
-  // every test that touches a router (e.g. blocks.router.*) loads this. Without
-  // these the mock returns undefined → "No <export> defined on the mock".
-  registerInstrumentationMetric: vi.fn(() => ({
-    inc: vi.fn(),
-    observe: vi.fn(),
-    set: vi.fn(),
-    startTimer: vi.fn(() => vi.fn()),
-    labels: vi.fn(() => ({ inc: vi.fn(), observe: vi.fn(), set: vi.fn() })),
-  })),
-  registerHistogram: vi.fn(() => ({
-    observe: vi.fn(),
-    startTimer: vi.fn(() => vi.fn()),
-    labels: vi.fn(() => ({ observe: vi.fn(), startTimer: vi.fn(() => vi.fn()) })),
-  })),
-  registerGaugeWithLabels: vi.fn(() => ({
-    set: vi.fn(),
+// A metric-shaped stub covering every prom-client surface our code touches
+// (Counter.inc, Gauge.inc/dec/set, Histogram.observe, and the .labels()/.startTimer()
+// helpers) so any registered metric — named export OR built via a register* factory
+// — is safe to call without a real prom-client registry.
+const promMetricStub = () => {
+  const child = { inc: vi.fn(), dec: vi.fn(), set: vi.fn(), observe: vi.fn() };
+  return {
     inc: vi.fn(),
     dec: vi.fn(),
-    labels: vi.fn(() => ({ set: vi.fn(), inc: vi.fn(), dec: vi.fn() })),
-  })),
-  missingSignedAtCounter: { inc: vi.fn() },
-  newUserCounter: { inc: vi.fn() },
-  loginCounter: { inc: vi.fn() },
-  onboardingCompletedCounter: { inc: vi.fn() },
-  onboardingErrorCounter: { inc: vi.fn() },
-  leakingContentCounter: { inc: vi.fn() },
-  vaultItemProcessedCounter: { inc: vi.fn() },
-  vaultItemFailedCounter: { inc: vi.fn() },
-  rewardGivenCounter: { inc: vi.fn() },
-  rewardFailedCounter: { inc: vi.fn() },
-  clavataCounter: { inc: vi.fn() },
-  cacheHitCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  cacheMissCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  cacheRevalidateCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  imagesFeedWithoutIndexCounter: { inc: vi.fn() },
-  creatorCompCreatorsPaidCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  creatorCompAmountPaidCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  userUpdateCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  dbReadFallbackCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  // App-Blocks W4 KV storage metrics (apps.router). These were missing from
-  // the global prom mock, so every apps.router.storage test 500'd at the first
-  // metric touch with `No "appStorageLatencyHistogram" export`.
-  appStorageOpsCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  appStorageQuotaExceededCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  appStorageLatencyHistogram: {
-    startTimer: vi.fn(() => vi.fn()),
+    set: vi.fn(),
     observe: vi.fn(),
-    labels: vi.fn(() => ({ observe: vi.fn(), startTimer: vi.fn(() => vi.fn()) })),
-  },
+    startTimer: vi.fn(() => vi.fn()),
+    labels: vi.fn(() => child),
+  };
+};
+
+vi.mock('~/server/prom/client', () => ({
+  // Factory functions — modules call these at import time to build their metrics
+  // (e.g. meilisearch/client.ts, eventloop-longtask.ts). Each returns a stub.
+  registerCounter: vi.fn(promMetricStub),
+  registerCounterWithLabels: vi.fn(promMetricStub),
+  registerGaugeWithLabels: vi.fn(promMetricStub),
+  registerHistogram: vi.fn(promMetricStub),
+  registerInstrumentationMetric: vi.fn(promMetricStub),
+  // Named metric exports the real module ships.
+  missingSignedAtCounter: promMetricStub(),
+  newUserCounter: promMetricStub(),
+  loginCounter: promMetricStub(),
+  onboardingCompletedCounter: promMetricStub(),
+  onboardingErrorCounter: promMetricStub(),
+  leakingContentCounter: promMetricStub(),
+  vaultItemProcessedCounter: promMetricStub(),
+  vaultItemFailedCounter: promMetricStub(),
+  rewardGivenCounter: promMetricStub(),
+  rewardFailedCounter: promMetricStub(),
+  clavataCounter: promMetricStub(),
+  cacheHitCounter: promMetricStub(),
+  cacheMissCounter: promMetricStub(),
+  cacheRevalidateCounter: promMetricStub(),
+  trpcProcedureDuration: promMetricStub(),
+  imagesFeedWithoutIndexCounter: promMetricStub(),
+  creatorCompCreatorsPaidCounter: promMetricStub(),
+  creatorCompAmountPaidCounter: promMetricStub(),
+  licenseFeeCreatorsPaidCounter: promMetricStub(),
+  licenseFeeAmountPaidCounter: promMetricStub(),
+  userUpdateCounter: promMetricStub(),
+  dbReadFallbackCounter: promMetricStub(),
+  // App-Blocks W4 KV storage metrics (apps.router). promMetricStub() covers the
+  // .inc()/.labels()/.observe()/.startTimer() surface these tests exercise.
+  appStorageOpsCounter: promMetricStub(),
+  appStorageQuotaExceededCounter: promMetricStub(),
+  appStorageLatencyHistogram: promMetricStub(),
 }));
 
 // Mock logging

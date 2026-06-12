@@ -17,7 +17,11 @@ import {
   getEntryById,
   upsertBountyEntry,
 } from '../services/bountyEntry.service';
-import type { UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
+import type {
+  SubmitBountyEntryInput,
+  UpsertBountyEntryInput,
+} from '~/server/schema/bounty-entry.schema';
+import { Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { getBountyById } from '../services/bounty.service';
@@ -143,6 +147,41 @@ export const upsertBountyEntryHandler = async ({
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
+};
+
+/**
+ * Headless/agent (MCP) friendly bounty-entry submission. Assembles the full
+ * `upsert` input shape from minimal, already-uploaded refs and delegates to the
+ * existing upsertBountyEntryHandler so all validation, buzz/award checks, and
+ * tracking run through the same path. Kept on guardedProcedure like upsert; no
+ * buzz is spent on submission, so it does NOT need blockApiKeys.
+ */
+export const submitBountyEntryHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SubmitBountyEntryInput;
+  ctx: ProtectedContext;
+}) => {
+  const { files, imageUuids, ...rest } = input;
+
+  const upsertInput: UpsertBountyEntryInput = {
+    ...rest,
+    files: files.map((f) => ({
+      id: f.id,
+      url: f.url,
+      name: f.name,
+      sizeKB: f.sizeKB,
+      metadata: {
+        unlockAmount: f.unlockAmount ?? 0,
+        currency: f.currency ?? Currency.BUZZ,
+        benefactorsOnly: f.benefactorsOnly ?? false,
+      },
+    })),
+    images: imageUuids.map((url) => ({ url, type: MediaType.image })),
+  };
+
+  return upsertBountyEntryHandler({ input: upsertInput, ctx });
 };
 
 export const awardBountyEntryHandler = async ({
