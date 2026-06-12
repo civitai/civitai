@@ -109,9 +109,16 @@ export type RateLimit = {
   userReq?: (user: ExtendedUser) => boolean;
   errorMessage?: string;
 };
+export type RateLimitOptions = {
+  // When true, an attempt is only counted toward the limit after the procedure
+  // succeeds. Failed calls (validation errors, server hiccups, etc.) won't burn
+  // a slot. Off by default so abuse-prevention limits still count failed tries.
+  onlyCountSuccess?: boolean;
+};
 export function rateLimit<TInput = any>(
   rateLimits?: RateLimit | RateLimit[],
-  condition?: (input: TInput) => boolean
+  condition?: (input: TInput) => boolean,
+  options?: RateLimitOptions
 ) {
   if (!rateLimits) rateLimits = { limit: 10, period: CacheTTL.md };
   if (!Array.isArray(rateLimits)) rateLimits = [rateLimits];
@@ -175,14 +182,26 @@ export function rateLimit<TInput = any>(
       });
     }
 
-    // Update user's attempts
-    attempts.push(Date.now());
-    const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
-    const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
-    await Promise.all([
-      redis.packed.hSet(cacheKey, hashKey, updatedAttempts),
-      redis.hExpire(cacheKey, hashKey, CacheTTL.day),
-    ]);
+    // Record this attempt against the user's quota
+    const recordAttempt = async () => {
+      attempts.push(Date.now());
+      const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
+      const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
+      await Promise.all([
+        redis.packed.hSet(cacheKey, hashKey, updatedAttempts),
+        redis.hExpire(cacheKey, hashKey, CacheTTL.day),
+      ]);
+    };
+
+    // When onlyCountSuccess is set, defer recording until the procedure succeeds
+    // so failed calls don't burn a slot.
+    if (options?.onlyCountSuccess) {
+      const result = await next();
+      if (result.ok) await recordAttempt();
+      return result;
+    }
+
+    await recordAttempt();
     return await next();
   });
 }
