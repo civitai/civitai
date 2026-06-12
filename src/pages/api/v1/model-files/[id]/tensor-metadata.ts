@@ -21,6 +21,8 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
+  res.setHeader('Cache-Control', 'private, no-store');
+
   const result = schema.safeParse(req.query);
   if (!result.success)
     return res.status(400).json({ error: z.prettifyError(result.error) ?? 'Invalid file id' });
@@ -45,7 +47,6 @@ export default MixedAuthEndpoint(async function handler(
     modelVersionId: file.modelVersionId,
     fileId: id,
     user,
-    resolveUrl: false,
   });
 
   if (fileResult.status !== 'success') {

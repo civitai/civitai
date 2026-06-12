@@ -157,7 +157,6 @@ export const getFileForModelVersion = async ({
   user,
   noAuth,
   fileId,
-  resolveUrl = true,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
@@ -173,7 +172,6 @@ export const getFileForModelVersion = async ({
   };
   noAuth?: boolean;
   fileId?: number;
-  resolveUrl?: boolean;
 }): Promise<ModelVersionFileResult> => {
   const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
@@ -320,20 +318,6 @@ export const getFileForModelVersion = async ({
     modelVersion,
     file,
   });
-  if (!resolveUrl) {
-    return {
-      status: 'success',
-      url: file.url,
-      fileId: file.id,
-      modelId: modelVersion.model.id,
-      modelVersionId,
-      nsfw: modelVersion.model.nsfw,
-      inEarlyAccess,
-      metadata: file.metadata as FileMetadata,
-      isDownloadable,
-    };
-  }
-
   try {
     const { url } = await resolveDownloadUrl(file.id, file.url, filename);
     return {
