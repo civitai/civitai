@@ -5,6 +5,7 @@ import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isFlipt } from '~/server/flipt/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   BlockManifestValidator,
   type AppContext,
@@ -127,6 +128,55 @@ export function parseExpectedRepo(
   return { slug };
 }
 
+// TTL on the per-delivery dedup nonce. Comfortably longer than any sane Forgejo
+// webhook retry window, short enough not to accumulate keys.
+const GITPUSH_DELIVERY_TTL_SECONDS = 600;
+
+// X-Gitea-Delivery is Forgejo's per-delivery UUID. Bound the value we accept
+// into a Redis key (defensive — never key Redis on an unbounded attacker-
+// influenced header).
+const DELIVERY_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
+
+/**
+ * Per-delivery dedup for Forgejo push webhooks (F5). SET NX EX on
+ * `system:blocks:gitpush:delivery:<id>`: first delivery wins, a redelivery with
+ * the same id is a duplicate. Returns 'first' (proceed), 'duplicate' (reject),
+ * or 'skip' (header absent, or a Redis error — never block a legit push on a
+ * Redis blip).
+ *
+ * HONEST LIMITATION: X-Gitea-Delivery is NOT covered by the body HMAC. This
+ * catches naive duplicate re-deliveries but a determined replayer could swap
+ * the header to a fresh value and bypass it. The strong replay protection is
+ * the two `ts` legs (trigger + callback) + the callback pending-run cross-check;
+ * a git-push replay is downgrade-only — it re-applies the same already-approved
+ * sha and is org/sha-gated (parseExpectedRepo + SLUG_RE + 40-hex sha).
+ */
+export async function checkDeliveryNonce(
+  deliveryHeader: unknown
+): Promise<'first' | 'duplicate' | 'skip'> {
+  const id = Array.isArray(deliveryHeader) ? deliveryHeader[0] : deliveryHeader;
+  if (typeof id !== 'string' || !DELIVERY_ID_RE.test(id)) return 'skip';
+  const key = `${REDIS_SYS_KEYS.BLOCKS.GITPUSH_DELIVERY}:${id}` as const;
+  try {
+    // With NX, node-redis returns 'OK' when the key was set (first delivery)
+    // and null when it already existed (duplicate). The typed wrapper narrows
+    // the return to the value type, so read it back as the raw reply.
+    const result = (await sysRedis.set(key, '1', {
+      NX: true,
+      EX: GITPUSH_DELIVERY_TTL_SECONDS,
+    })) as unknown as string | null;
+    return result === 'OK' ? 'first' : 'duplicate';
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[git-push] delivery-nonce SET NX failed — skipping dedup: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
+    return 'skip';
+  }
+}
+
 export default withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -151,6 +201,18 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const sig = req.headers['x-gitea-signature'] ?? req.headers['x-forgejo-signature'];
   if (!verifyForgejoSignature(rawBody, sig)) {
     res.status(401).json({ error: 'Bad signature' });
+    return;
+  }
+
+  // F5 — per-delivery dedup nonce (after HMAC so we don't fill Redis from
+  // unauthenticated probes). A duplicate X-Gitea-Delivery → skip (idempotent
+  // with the handler's existing 200-skipped style). Header absent / Redis blip
+  // → proceed (don't break a legit push). See checkDeliveryNonce for the honest
+  // limitation: this header is NOT HMAC-covered.
+  const deliveryHeader = req.headers['x-gitea-delivery'] ?? req.headers['x-forgejo-delivery'];
+  const dedup = await checkDeliveryNonce(deliveryHeader);
+  if (dedup === 'duplicate') {
+    res.status(200).json({ skipped: 'duplicate delivery' });
     return;
   }
 

@@ -430,6 +430,13 @@ export const serverSchema = z.object({
   APPS_TEKTON_TRIGGER_SECRET: z.string().optional(),
   APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
   APPS_DOMAIN: z.string().default('civit.ai'),
+  // App Blocks F5 (build-callback replay protection). When 'true' the
+  // build-callback handler REJECTS a callback whose pending-run marker is
+  // missing (the consume-once cross-check written by triggerBuild). Default
+  // (unset / not 'true') is report-only: a missing marker logs a warning and
+  // the callback continues, so the first deploy can roll without the
+  // datapacket-talos callback-task signer's `ts`/marker counterpart in place.
+  BLOCK_CALLBACK_REQUIRE_PENDING_RUN: z.string().optional(),
 
   // App Blocks W1 (publish-request flow). S3-compatible storage for
   // dev-uploaded ZIP bundles. Production points at ssd-minio-backups

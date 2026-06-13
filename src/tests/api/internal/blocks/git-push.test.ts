@@ -9,6 +9,14 @@ vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: vi.fn(),
 }));
+vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn() }));
+
+// Mockable sysRedis.set so the F5 per-delivery dedup nonce can be exercised.
+const mockSet = vi.hoisted(() => vi.fn());
+vi.mock('~/server/redis/client', () => ({
+  sysRedis: { set: mockSet },
+  REDIS_SYS_KEYS: { BLOCKS: { GITPUSH_DELIVERY: 'system:blocks:gitpush:delivery' } },
+}));
 
 // Mutable env mock so each test can set / clear FORGEJO_WEBHOOK_SECRET[_NEXT]
 // to exercise the dual-acceptance rotation window (F6). Overrides the global
@@ -17,7 +25,11 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 const mockEnv = vi.hoisted(() => ({} as Record<string, string | undefined>));
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 
-import { parseExpectedRepo, verifyForgejoSignature } from '~/pages/api/internal/blocks/git-push';
+import {
+  checkDeliveryNonce,
+  parseExpectedRepo,
+  verifyForgejoSignature,
+} from '~/pages/api/internal/blocks/git-push';
 
 /**
  * M-WEBHOOK coverage. The git-push webhook is authenticated only by the
@@ -120,5 +132,60 @@ describe('verifyForgejoSignature dual-secret window (F6)', () => {
 
   it('fails closed when no secret is configured (no current, no NEXT)', () => {
     expect(verifyForgejoSignature(body, sign('anything'))).toBe(false);
+  });
+});
+
+/**
+ * F5 — per-delivery dedup nonce. SET NX EX on the X-Gitea-Delivery id. First
+ * delivery wins ('first'); a redelivery with the same id is a 'duplicate'.
+ * Header absent / malformed / Redis error → 'skip' (never block a legit push).
+ * NOTE (honest limitation, documented in checkDeliveryNonce): X-Gitea-Delivery
+ * is NOT HMAC-covered, so this catches naive redeliveries only.
+ */
+describe('git-push checkDeliveryNonce (F5 delivery nonce)', () => {
+  beforeEach(() => {
+    mockSet.mockReset();
+  });
+
+  it("treats a new delivery id as 'first' (NX set succeeds → 'OK')", async () => {
+    mockSet.mockResolvedValueOnce('OK');
+    await expect(checkDeliveryNonce('delivery-uuid-1')).resolves.toBe('first');
+    expect(mockSet).toHaveBeenCalledWith(
+      'system:blocks:gitpush:delivery:delivery-uuid-1',
+      '1',
+      { NX: true, EX: 600 }
+    );
+  });
+
+  it("treats a repeated delivery id as 'duplicate' (NX returns null)", async () => {
+    mockSet.mockResolvedValueOnce(null);
+    await expect(checkDeliveryNonce('delivery-uuid-1')).resolves.toBe('duplicate');
+  });
+
+  it("skips when the delivery header is absent → 'skip' (no Redis call)", async () => {
+    await expect(checkDeliveryNonce(undefined)).resolves.toBe('skip');
+    await expect(checkDeliveryNonce(null)).resolves.toBe('skip');
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it("skips a malformed / oversized delivery id → 'skip'", async () => {
+    await expect(checkDeliveryNonce('bad id with spaces')).resolves.toBe('skip');
+    await expect(checkDeliveryNonce('x'.repeat(65))).resolves.toBe('skip');
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it("uses the first element when the header arrives as an array", async () => {
+    mockSet.mockResolvedValueOnce('OK');
+    await expect(checkDeliveryNonce(['delivery-uuid-2', 'ignored'])).resolves.toBe('first');
+    expect(mockSet).toHaveBeenCalledWith(
+      'system:blocks:gitpush:delivery:delivery-uuid-2',
+      '1',
+      { NX: true, EX: 600 }
+    );
+  });
+
+  it("skips on a Redis error → 'skip' (never block a legit push)", async () => {
+    mockSet.mockRejectedValueOnce(new Error('redis down'));
+    await expect(checkDeliveryNonce('delivery-uuid-3')).resolves.toBe('skip');
   });
 });
