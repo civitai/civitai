@@ -4,6 +4,8 @@ import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import { isFlipt } from '~/server/flipt/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
 
@@ -82,6 +84,34 @@ export function expectedImageRef(slug: string, sha: string): string {
   return `ghcr.io/civitai/app-block-${slug}:${sha}`;
 }
 
+// Replay guard (audit LOW). The callback payload carries no timestamp/nonce, so
+// a captured signature-valid request could be replayed to re-trigger the apply
+// Job indefinitely. Dedup the apply path on (appBlockId, sha) for a short
+// window — long enough to outlast an in-flight apply, far shorter than a rebuild
+// interval (~15m+), so a legitimate same-sha rebuild's self-heal callback (see
+// the watchApplyJobAndRecord note below) is unaffected. Durable cross-window
+// replay protection needs a caller-supplied signed timestamp/nonce from the
+// Tekton finally task (infra follow-up).
+const APPLY_DEDUP_TTL_SECONDS = 15 * 60;
+async function markApplyTriggered(appBlockId: string, sha: string): Promise<boolean> {
+  // Reuse the block rate-limit key family (same convention as workflow-completed).
+  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:apply:${appBlockId}:${sha}` as const;
+  try {
+    const count = await redis.incrBy(key as never, 1);
+    if (count === 1) {
+      await redis.expire(key as never, APPLY_DEDUP_TTL_SECONDS);
+      return true; // first time → trigger apply
+    }
+    return false; // duplicate / replay within the window
+  } catch {
+    // Fail OPEN: unlike workflow-completed (which fails closed to avoid
+    // double-billing), a Redis incident here must not block a real deploy.
+    // The HMAC secret + imageRef↔slug/sha binding already bound the blast
+    // radius, so losing replay-dedup during an outage is the lesser evil.
+    return true;
+  }
+}
+
 export default withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -98,6 +128,15 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 
   if (!verifySignature(rawBody, req.headers['x-appblocks-signature'])) {
     res.status(401).json({ error: 'Bad signature' });
+    return;
+  }
+
+  // Kill switch: honour the appBlocks flag like the sibling webhooks
+  // (git-push, workflow-completed). When the substrate is dark, no legitimate
+  // build callback should fire — refuse so the apply/deploy chain can't run
+  // independent of the flag. Server-context Flipt eval, matching the siblings.
+  if (!(await isFlipt('app-blocks-enabled'))) {
+    res.status(503).json({ error: 'App Blocks not enabled' });
     return;
   }
 
@@ -137,6 +176,14 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       description: `Build ${body.status ?? 'failed'}`,
     });
     res.status(200).json({ ok: true, applied: false, reason: 'build failed' });
+    return;
+  }
+
+  // Replay guard: only run the apply path once per (appBlockId, sha) per
+  // window. A replayed success callback short-circuits here before triggering
+  // another apply Job or touching commit status.
+  if (!(await markApplyTriggered(body.appBlockId, body.sha))) {
+    res.status(200).json({ ok: true, applied: false, reason: 'duplicate callback (replay-guarded)' });
     return;
   }
 

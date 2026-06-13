@@ -139,3 +139,63 @@ the role list is only a Flipt-down fallback. The flag description itself documen
 **Before GA (turning it on):** H2 gate unification; iframe PII allowlist; showcase NSFW
 filter; git-push post-approval review + audit log; per-user buzz cap; rate-card sign-off
 before any payout wiring.
+
+---
+
+## Security audit (2026-06-13, dedicated security-engineer pass on shipped `5643eaba7`)
+
+A second, security-specialist audit of the **as-shipped** foundation (post-merge, live in
+prod, dark). It independently re-verified the panel audit's "hardened" claim against the
+live code and went deeper on the third-party-execution / auth / money surfaces.
+
+**Verdict: ✅ safe to remain dark · ⛔ No-Go for GA until the GA-blockers below are fixed.**
+No Critical/High issue is reachable by a non-moderator while the flag is off; the
+crypto/auth core (RS256 kid-pinned JWT, exact-origin mint, PKCE-S256 OAuth, sanitized KV
+schema isolation, lexical SSRF gate, source-window-pinned postMessage, timing-safe webhook
+HMAC) is genuinely well-built and the dark boundary holds across routers/JWKS/middleware/SSR.
+
+### Reachable while dark
+- **`build-callback` had no flag gate + no replay protection — FIXED in this change.**
+  Unlike its siblings (`git-push`, `workflow-completed`), `build-callback.ts` never checked
+  the flag, so the k8s apply/deploy path could run independent of the kill switch; and the
+  timestamp/nonce-less payload meant a captured signed callback could be replayed to
+  re-trigger applies. Added: `isFlipt('app-blocks-enabled')` 503 gate + a short-window
+  (15m) `(appBlockId, sha)` apply-path replay guard (fail-open on Redis loss). Handler-level
+  tests cover both. Durable cross-window replay protection still needs a caller-supplied
+  signed timestamp/nonce from the Tekton finally task — **infra follow-up**.
+- **INFO — H2 gate divergence confirmed** (fails safe; mod canary can't exercise the flow
+  server-side until context is threaded into the server gate — fix by threading, NOT a
+  global enable).
+
+### GA-blockers (reachable only after the flag is turned on)
+1. **🔴 HIGH — Showcase images bypass NSFW/browsing-level filtering.**
+   `showcase.service.ts` selects `nsfwLevel` but never filters on it and ignores the viewer
+   setting → explicit image URLs + prompts + seeds for an X-rated model are posted into the
+   third-party iframe (`BLOCK_INIT`) for any viewer, incl. opted-out / logged-out. Fix:
+   filter by browsing level / `viewerNsfwEnabled` (SFW-only for anon) before returning.
+2. **MEDIUM — `submit-version` CSRF (confirmed).** Prod session cookie is `sameSite:'none'`
+   (`next-auth-options.ts`) and `ModEndpoint` does no Origin/CSRF check; Next.js parses
+   `application/x-www-form-urlencoded`, so a cross-site form POST with a tricked mod's cookie
+   can submit a bundle. Pre-existing, app-wide `ModEndpoint` posture (not unique to this
+   route); dark-gated today. Fix: explicit same-origin/Origin check (ideally on `ModEndpoint`).
+3. **MEDIUM — Bundle ZIP zip-bomb.** `publish-request.service.ts` fully decompresses each
+   entry before size-checking; 2000 × 10 MiB ⇒ ~20 GiB from a 50 MiB upload → pod OOM.
+   (Zip-slip is NOT exploitable — jszip normalizes `..`, files go to Forgejo content API.)
+   Fix: running decompressed-byte ceiling.
+4. **MEDIUM — git-push trust-on-push** auto-approves + deploys live third-party code with no
+   mod re-review once a row exists (iframe.src/blockId stay pinned, but the served code
+   changes). Fix: gate post-approval pushes behind the review queue; restrict Forgejo write;
+   ship the deferred manifest/iframe.src/sha audit-log.
+5. **MEDIUM — BLOCK_INIT over-shares** `viewerNsfwEnabled`, `creatorUserId`, viewer
+   id/username/status to the publisher iframe. Transport is sound; data-minimization only.
+   Fix: allowlist-project the context before `send('BLOCK_INIT', …)`.
+6. **MEDIUM — Buzz cap is per-(user,block), not per-user aggregate**, and `recordBlockBuzzSpend`
+   can under-count on a Redis blip. Fix before wiring payouts + rate-card sign-off.
+
+### Confirmed safe (security-specialist verification)
+JWT verify (RS256 pinned, kid-scoped, iss/aud/exp/nbf/jti, strict claim typing, sub-overflow
+bounded) · token mint (exact same-origin, scope intersection, anon fail-closed strip, rate
+limits) · OAuth2/OIDC (PKCE-S256, redirect_uri exact-match, `appblk-` clients blocked from
+the interactive flow) · KV datastore (no SQLi; schema-name sanitized + re-validated;
+per-(block,user) isolation) · manifest SSRF gate · postMessage (origin + source-window
+pinned) · webhook HMAC (timing-safe, raw body).
