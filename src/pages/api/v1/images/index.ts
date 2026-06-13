@@ -20,6 +20,7 @@ import {
 import { imageMetaCache } from '~/server/redis/caches';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { isClientAbortError } from '~/server/utils/errorHandling';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import {
   acquireBulkheadSlot,
@@ -316,6 +317,14 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
       metadata,
     });
   } catch (error) {
+    if (isClientAbortError(error)) {
+      // Client disconnected mid-feed (closed tab / scrolled past / navigated). The
+      // Meili fetch's AbortSignal fired and bubbled a bare AbortError — not a server
+      // fault. 499 keeps it out of the 5xx SLO + the http-errors counter. (Was the
+      // top mislabeled-500 source on this endpoint.)
+      if (!res.headersSent) res.status(499).end();
+      return;
+    }
     const trpcError = error as TRPCError;
     const statusCode = getHTTPStatusCodeFromError(trpcError);
 
