@@ -1878,8 +1878,12 @@ export async function getPlayerHistory({
     `userId = ${playerId}`,
     `createdAt >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
   ];
-  // cursor is now guaranteed to be a Date (schema coerces); safe to ISO-format.
-  if (cursor) AND.push(`createdAt < '${cursor.toISOString()}'`);
+  // cursor is a Date (schema coerces). Wrap in parseDateTimeBestEffort() exactly
+  // like the lower bound above — ClickHouse can't implicitly coerce an ISO-8601
+  // string (with the `T`/ms/`Z`) to DateTime, so a bare `createdAt < '<iso>'`
+  // threw "Cannot convert string ... to type DateTime" and 500'd every page-2+
+  // history fetch (whenever a cursor is present).
+  if (cursor) AND.push(`createdAt < parseDateTimeBestEffort('${cursor.toISOString()}')`);
 
   const HAVING = [];
   if (status?.length) HAVING.push(`status IN ('${status.join("','")}')`);
