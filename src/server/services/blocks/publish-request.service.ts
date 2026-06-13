@@ -100,8 +100,7 @@ function stableJsonStringify(value: unknown): string {
   const keys = Object.keys(value as Record<string, unknown>).sort();
   return `{${keys
     .map(
-      (k) =>
-        `${JSON.stringify(k)}:${stableJsonStringify((value as Record<string, unknown>)[k])}`
+      (k) => `${JSON.stringify(k)}:${stableJsonStringify((value as Record<string, unknown>)[k])}`
     )
     .join(',')}}`;
 }
@@ -238,10 +237,7 @@ export function computeManifestDiff(
       fields: Object.keys(currentManifest).sort(),
     };
   }
-  const allKeys = new Set([
-    ...Object.keys(currentManifest),
-    ...Object.keys(previousManifest),
-  ]);
+  const allKeys = new Set([...Object.keys(currentManifest), ...Object.keys(previousManifest)]);
   const added: string[] = [];
   const removed: string[] = [];
   const changed: Array<{ field: string; from: unknown; to: unknown }> = [];
@@ -388,9 +384,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const { bundleBuffer, submittedByUserId } = params;
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
-    throw new Error(
-      `bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`
-    );
+    throw new Error(`bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`);
   }
   if (bundleBuffer.length === 0) {
     throw new Error('bundle is empty');
@@ -411,7 +405,11 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   if (typeof manifest.blockId !== 'string') {
     throw new Error('manifest.blockId must be a string');
   }
-  if (manifest.blockId.length < 3 || manifest.blockId.length > 40 || !SLUG_REGEX.test(manifest.blockId)) {
+  if (
+    manifest.blockId.length < 3 ||
+    manifest.blockId.length > 40 ||
+    !SLUG_REGEX.test(manifest.blockId)
+  ) {
     throw new Error(
       `manifest.blockId "${manifest.blockId}" must be 3-40 chars, lowercase a-z/0-9/hyphens, start with a letter, end with a letter or digit`
     );
@@ -860,23 +858,25 @@ export type ApproveRequestResult = {
  * Approve a pending publish request. End-to-end:
  *   1. (first version only) auto-create OauthClient owned by the submitter
  *   2. (first version only) create Forgejo repo from starter + webhook
- *   3. pre-insert app_blocks row (status='approved') so the downstream
- *      Forgejo webhook (existing git-push handler) finds it
+ *   3. pre-insert app_blocks row (status='approved')
  *   4. fetch bundle from MinIO, extract files
  *   5. commitFiles to Forgejo (single atomic commit, replaceAllFiles=true)
- *   6. update publish_request → status='approved'
+ *   6. stamp app_blocks.current_version_sha = the committed sha + finalise
+ *      publish_request → status='approved' (these are the moderator-approval
+ *      markers the git-push webhook keys its no-trust-on-push gate off)
+ *   7. trigger the Tekton build directly
  *
- * The Forgejo push webhook fires from step 5 and the existing git-push
- * handler takes over: validates manifest, updates app_blocks
- * (currentVersionSha), triggers Tekton build.
+ * NO TRUST ON PUSH: the git-push webhook fires from step 5 but no longer
+ * triggers builds. It only validates the manifest and either (a) no-ops
+ * because the sha matches the approval markers we just wrote, or (b) parks
+ * an unreviewed direct push as a pending review request. The deploy is owned
+ * entirely by this approve path (step 7).
  *
  * Partial-state risk: if step 5 fails after step 1-3 succeeded, the
  * OauthClient + app_blocks rows are orphaned. v0 surfaces this; v1
  * adds a compensation transaction.
  */
-export async function approveRequest(
-  params: ApproveRequestParams
-): Promise<ApproveRequestResult> {
+export async function approveRequest(params: ApproveRequestParams): Promise<ApproveRequestResult> {
   const [{ dbRead, dbWrite }, { newUlid }, { env }] = await Promise.all([
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
@@ -909,9 +909,7 @@ export async function approveRequest(
   }
 
   const manifest = request.manifest as Record<string, unknown>;
-  const manifestScopes = Array.isArray(manifest.scopes)
-    ? (manifest.scopes as string[])
-    : [];
+  const manifestScopes = Array.isArray(manifest.scopes) ? (manifest.scopes as string[]) : [];
   const manifestContentRating =
     typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
   const manifestRenderMode =
@@ -995,8 +993,8 @@ export async function approveRequest(
         // the ceiling we'll actually persist below (we re-cap allowedScopes to
         // the derived value on every approve — see the appBlock.update path).
         allowedScopes: derivedOauthCeiling,
-        allowedOrigins: (existingAppBlock!.app.allowedOrigins ?? []).map(
-          (o: string) => o.toLowerCase()
+        allowedOrigins: (existingAppBlock!.app.allowedOrigins ?? []).map((o: string) =>
+          o.toLowerCase()
         ),
       };
   const validation = BlockManifestValidator.validate(manifest, validationCtx);
@@ -1088,7 +1086,10 @@ export async function approveRequest(
       template: 'starter',
     });
     repoUrl = repo.html_url;
-    const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')}/api/internal/blocks/git-push`;
+    const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(
+      /\/$/,
+      ''
+    )}/api/internal/blocks/git-push`;
     await ensurePushWebhook({
       slug: request.slug,
       callbackUrl,
@@ -1148,8 +1149,8 @@ export async function approveRequest(
     appBlockId = existingAppBlock.id;
     repoUrl = existingAppBlock.repoUrl ?? '';
     // Subsequent version: refresh manifest + version + approvedScopes
-    // on the existing row. currentVersionSha is updated by the
-    // git-push webhook after the upcoming Forgejo commit.
+    // on the existing row. currentVersionSha is stamped in step (6) below,
+    // right after the Forgejo commit returns the approved sha.
     await dbWrite.appBlock.update({
       where: { id: appBlockId },
       data: {
@@ -1182,9 +1183,8 @@ export async function approveRequest(
     (f) => !isPlatformOwnedPath(f.path)
   );
 
-  // (5) Atomic single-commit replacement of the repo contents. Fires
-  // exactly one Forgejo webhook → one git-push handler invocation →
-  // one Tekton build → one apply Job.
+  // (5) Atomic single-commit replacement of the repo contents on
+  // civitai-apps/<slug>. This commit fires the git-push webhook.
   const commitMessage = `Approved publish request ${request.id} — ${request.slug} v${request.version}`;
   const { sha: forgejoCommitSha } = await commitFiles({
     slug: request.slug,
@@ -1193,7 +1193,17 @@ export async function approveRequest(
     replaceAllFiles: true,
   });
 
-  // (6) Finalise the publish request.
+  // (6) Stamp the approved sha onto the app_blocks row and finalise the
+  // publish request. These two writes are the durable proof that THIS sha
+  // went through moderator review — the git-push webhook keys its
+  // no-trust-on-push gate off `current_version_sha` (and, as a race backstop,
+  // an `approved` publish request with this `forgejoCommitSha`). Any push
+  // whose sha is NOT this approved one is treated as unreviewed and parked in
+  // the review queue instead of deploying.
+  await dbWrite.appBlock.update({
+    where: { id: appBlockId },
+    data: { currentVersionSha: forgejoCommitSha },
+  });
   await dbWrite.appBlockPublishRequest.update({
     where: { id: request.id },
     data: {
@@ -1205,6 +1215,55 @@ export async function approveRequest(
       appBlockId,
     },
   });
+
+  // (6b) Supersede any OTHER request still 'pending' for this slug. If the
+  // git-push webhook raced ahead of (6) it may have parked a duplicate
+  // pending-review row for THIS approved sha; withdraw it (and any older
+  // pending submission) so the queue reflects that the slug is now approved.
+  // Scoped to NOT touch the row we just approved.
+  await dbWrite.appBlockPublishRequest.updateMany({
+    where: { slug: request.slug, status: 'pending', NOT: { id: request.id } },
+    data: { status: 'withdrawn' },
+  });
+
+  // (7) Trigger the Tekton build directly from the moderator-approve path.
+  // This is the ONLY thing that may ship code to a live block — the webhook
+  // no longer triggers builds (no-trust-on-push). triggerBuild creates a
+  // PipelineRun named after the sha, which Tekton dedups, so a webhook
+  // re-delivery cannot double-build.
+  const { triggerBuild } = await import('./apps-pipeline.service');
+  const { setCommitStatus } = await import('./forgejo.service');
+  const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(
+    /\/$/,
+    ''
+  )}/api/internal/blocks/build-callback`;
+  try {
+    await setCommitStatus({
+      slug: request.slug,
+      sha: forgejoCommitSha,
+      state: 'pending',
+      context: 'civitai/build',
+      description: 'Build queued',
+    }).catch(() => undefined);
+    await triggerBuild({
+      slug: request.slug,
+      sha: forgejoCommitSha,
+      appBlockId,
+      callbackUrl,
+    });
+  } catch (err) {
+    await setCommitStatus({
+      slug: request.slug,
+      sha: forgejoCommitSha,
+      state: 'failure',
+      context: 'civitai/build',
+      description: `Trigger failed: ${String(err).slice(0, 80)}`,
+    }).catch(() => undefined);
+    throw new Error(
+      `approved + committed, but the build trigger failed: ${(err as Error).message}. ` +
+        `The new version will NOT deploy until the build is re-triggered (re-approve or re-push).`
+    );
+  }
 
   return {
     publishRequestId: request.id,
@@ -1284,7 +1343,10 @@ export async function backfillPublishRequest(
   for (let i = 0; i < entries.length; i += CONCURRENCY) {
     const batch = entries.slice(i, i + CONCURRENCY);
     const fetched = await Promise.all(
-      batch.map(async (e) => ({ path: e.path, content: await getBlobContent(params.slug, e.blobSha) }))
+      batch.map(async (e) => ({
+        path: e.path,
+        content: await getBlobContent(params.slug, e.blobSha),
+      }))
     );
     files.push(...fetched);
   }
@@ -1373,7 +1435,9 @@ export async function backfillPublishRequest(
       reviewedAt: new Date(),
       approvalNotes:
         params.approvalNotes ??
-        `Backfilled W1 migration from existing deployment at ${appBlock.currentVersionSha ?? '(unknown sha)'}`,
+        `Backfilled W1 migration from existing deployment at ${
+          appBlock.currentVersionSha ?? '(unknown sha)'
+        }`,
       forgejoCommitSha: appBlock.currentVersionSha ?? bundleSha256,
     },
   });
