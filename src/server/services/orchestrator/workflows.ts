@@ -30,6 +30,7 @@ import {
   throwBadRequestError,
   throwInsufficientFundsError,
   throwInternalServerError,
+  throwRateLimitError,
 } from '~/server/utils/errorHandling';
 
 export async function queryWorkflows({
@@ -159,6 +160,11 @@ export async function submitWorkflow({
         throw throwAuthorizationError(message);
       case 403:
         throw throwInsufficientFundsError(message);
+      case 429:
+        // Preserve rate-limit semantics: TOO_MANY_REQUESTS (not a flattened
+        // BAD_REQUEST), so the client can back off AND the tRPC onError Axiom-skip
+        // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
+        throw throwRateLimitError(message);
       case 500:
         throw throwInternalServerError(message);
       default:
