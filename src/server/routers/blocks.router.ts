@@ -66,9 +66,14 @@ import type { SessionUser } from 'next-auth';
  *
  * The check runs first thing so a flag flip can shut the substrate down
  * without redeploying.
+ *
+ * H2: evaluated with the request user's context (`ctx.user`) so the live
+ * `moderators`-segmented Flipt flag resolves ON for a moderator and OFF for a
+ * non-mod / anon caller — same eval the client gate uses. `ctx.user` is the
+ * server-side session user, so `isModerator` can't be spoofed by the client.
  */
-const enforceAppBlocksFlag = middleware(async ({ next, type }) => {
-  if (await isAppBlocksEnabled()) return next();
+const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
+  if (await isAppBlocksEnabled({ user: ctx.user })) return next();
   if (type === 'query') {
     // listForModel and friends — return empty rather than throw, so callers
     // that always render the slot don't surface an error.

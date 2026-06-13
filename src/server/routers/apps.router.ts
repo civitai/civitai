@@ -60,8 +60,12 @@ const APP_ROW_LIMIT = 1_000_000;
 
 const STORAGE_LOG = 'app-storage-trpc';
 
-const enforceAppBlocksFlag = middleware(async ({ next, type }) => {
-  if (await isAppBlocksEnabled()) return next();
+// H2: evaluated with the request user's context (`ctx.user`) so the live
+// `moderators`-segmented Flipt flag resolves ON for a moderator and OFF for a
+// non-mod / anon caller — same eval the client gate uses. `ctx.user` is the
+// server-side session user, so `isModerator` can't be spoofed by the client.
+const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
+  if (await isAppBlocksEnabled({ user: ctx.user })) return next();
   // Mutations + queries both refuse when the flag is dark — anything else
   // gives the block a misleading-success path. The block already gates
   // its own UI on host signals, so a clean UNAUTHORIZED is fine.
