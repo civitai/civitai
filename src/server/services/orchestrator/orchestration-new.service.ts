@@ -118,6 +118,10 @@ export type GenerationContext = {
     }
   >;
   remixOfId?: number;
+  // Forwarded to orchestrator workflow-create as `externalId`; makes the submit
+  // idempotent on retry and lets the funnel dashboard join Generator_Submit to
+  // orchestration.jobs.externalId. See civitai/civitai-orchestration#229.
+  externalId?: string;
 };
 
 /** Options for submitting a generation */
@@ -1267,6 +1271,7 @@ export async function generateFromGraph({
   sourceMetadataMap,
   remixOfId,
   track,
+  externalId,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
 
@@ -1379,6 +1384,7 @@ export async function generateFromGraph({
       allowMatureContent: isPrivateGeneration ? false : allowMatureContent,
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
+      externalId,
     },
   })) as TextToImageResponse;
 
