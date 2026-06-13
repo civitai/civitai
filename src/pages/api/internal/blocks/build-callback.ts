@@ -88,15 +88,21 @@ export function expectedImageRef(slug: string, sha: string): string {
 // a captured signature-valid request could be replayed to re-trigger the apply
 // Job. Dedup the apply path on (appBlockId, sha) with an ATOMIC set-if-absent +
 // TTL (not incrBy-then-expire, which could leave a permanent TTL-less key on a
-// failed expire and wedge the sha forever). The window only needs to cover an
-// in-flight apply — `waitForApplyJob` times out at 6m (see apps-pipeline.service)
-// — plus a small margin, so a legitimate same-sha re-deploy after the apply
-// concludes isn't blocked; the watcher additionally clears the key on a
-// DEFINITIVE apply failure (see watchApplyJobAndRecord) so a retry is never
-// suppressed. Durable cross-window replay protection still needs a
-// caller-supplied signed timestamp/nonce from the Tekton finally task (infra
-// follow-up).
-const APPLY_DEDUP_TTL_SECONDS = 7 * 60; // ≈ apply timeout (6m) + 1m margin
+// failed expire and wedge the sha forever).
+//
+// TTL must outlast the WHOLE first attempt, not just the apply: the mark is set
+// before `triggerApply` (two k8s calls, ~60s of 30s-timeouts each) and
+// `waitForApplyJob` then runs a 6m budget — worst case ~7m. We use 10m so the
+// key can't expire mid-apply and let a late duplicate re-trigger (which would
+// delete + restart the in-flight Job). The longer TTL does NOT suppress
+// legitimate retries because every failure path frees the slot explicitly: the
+// watcher clears on a DEFINITIVE apply failure, and the `triggerApply` catch
+// clears on a Job-creation failure. The TTL is only the backstop for the
+// can't-clear cases (apply 'timeout' where the Job may still run, or a
+// watcher-crash / pod-restart). Durable cross-window replay protection still
+// needs a caller-supplied signed timestamp/nonce from the Tekton finally task
+// (infra follow-up).
+const APPLY_DEDUP_TTL_SECONDS = 10 * 60; // > worst-case first attempt (~60s trigger + 6m apply)
 function applyDedupKey(appBlockId: string, sha: string): string {
   // Reuse the block rate-limit key family (same convention as workflow-completed).
   return `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:apply:${appBlockId}:${sha}`;
@@ -230,6 +236,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       imageRef: body.imageRef,
     });
   } catch (e) {
+    // Job creation failed — no watcher will run to clear the dedup mark, so
+    // free it here or a transient k8s hiccup would wedge same-sha retries for
+    // the full TTL (symmetrical with the watcher's clear-on-failed).
+    await clearApplyMark(body.appBlockId, body.sha);
     await safe(setCommitStatus, {
       slug: body.slug,
       sha: body.sha,

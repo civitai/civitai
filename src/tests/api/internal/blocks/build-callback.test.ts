@@ -249,4 +249,14 @@ describe('build-callback handler — flag gate + replay guard', () => {
     expect(mockAppBlockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: APB } }));
     expect(mockRedisDel).not.toHaveBeenCalled();
   });
+
+  it('clears the replay slot when triggerApply itself throws — no watcher runs, so the catch must free it', async () => {
+    mockTriggerApply.mockRejectedValue(new Error('k8s API down'));
+    const res = makeRes();
+    await invoke(signedReq(validSuccessBody()), res);
+    expect(res._status).toBe(500);
+    // mark was set (SET NX) then freed in the catch so a same-sha retry isn't wedged
+    expect(mockRedisSet).toHaveBeenCalledTimes(1);
+    expect(mockRedisDel).toHaveBeenCalledWith(expect.stringContaining(`apply:${APB}:${SHA}`));
+  });
 });

@@ -160,13 +160,19 @@ HMAC) is genuinely well-built and the dark boundary holds across routers/JWKS/mi
   the flag, so the k8s apply/deploy path could run independent of the kill switch; and the
   timestamp/nonce-less payload meant a captured signed callback could be replayed to
   re-trigger applies. Added: `isFlipt('app-blocks-enabled')` 503 gate + an `(appBlockId, sha)`
-  apply-path replay guard using an **atomic `SET NX EX`** (~7m, ≈ the 6m apply timeout +
-  margin — not `incrBy`+`expire`, which could leave a permanent TTL-less key and wedge a sha),
-  **fail-open** on Redis loss, with the watcher **clearing the slot on a definitive apply
-  failure** so a same-sha retry isn't suppressed. 14 handler-level tests cover the gate,
-  replay, fail-open, and clear-on-failure/timeout/success paths. Durable cross-window replay
-  protection still needs a caller-supplied signed timestamp/nonce from the Tekton finally
-  task — **infra follow-up**.
+  apply-path replay guard using an **atomic `SET NX EX`** (not `incrBy`+`expire`, which could
+  leave a permanent TTL-less key and wedge a sha), **fail-open** on Redis loss. TTL is **10m**
+  — sized to outlast the whole first attempt (~60s `triggerApply` + 6m `waitForApplyJob`) so
+  the key can't expire mid-apply and let a late duplicate delete+restart the in-flight Job.
+  The longer TTL doesn't suppress retries because **every failure path frees the slot
+  explicitly**: the watcher clears on a definitive apply failure, and the `triggerApply`
+  catch clears on a Job-creation failure (a 2nd-pass audit HIGH). TTL is only the backstop
+  for the can't-clear cases (apply `timeout` where the Job may still run; watcher-crash /
+  pod-restart). 15 handler-level tests cover the gate, replay, fail-open, trigger-throw-clear,
+  and clear-on-failure/timeout/success. Durable cross-window replay protection still needs a
+  caller-supplied signed timestamp/nonce from the Tekton finally task — **infra follow-up**.
+  **Follow-up:** sibling `workflow-completed.ts` still uses the non-atomic `incrBy`+`expire`
+  dedup this PR replaced — same wedge risk; align it for convention consistency.
 - **INFO — H2 gate divergence confirmed** (fails safe; mod canary can't exercise the flow
   server-side until context is threaded into the server gate — fix by threading, NOT a
   global enable).
