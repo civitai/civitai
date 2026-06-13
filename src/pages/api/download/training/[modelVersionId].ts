@@ -95,6 +95,11 @@ export default AuthedEndpoint(
     try {
       const resolveUrl = new URL(epochUrl);
       resolveUrl.searchParams.set('redirect', 'storage');
+      // Ask the orchestrator to bake the download filename into the presigned URL's
+      // response-content-disposition, so the browser saves it as the epoch name rather
+      // than the raw storage object key.
+      resolveUrl.searchParams.set('filename', fileName);
+      resolveUrl.searchParams.set('download', 'true');
       const probe = await fetch(resolveUrl, {
         headers: { Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}` },
         redirect: 'manual',
