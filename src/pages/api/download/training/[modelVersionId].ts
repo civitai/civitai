@@ -83,9 +83,37 @@ export default AuthedEndpoint(
       return res.status(404).json({ error: 'Epoch download URL not available' });
     }
 
-    // Abort the upstream fetch + stream when the client disconnects.
-    // Without this, a client hang or Traefik timeout leaves the pod streaming
-    // into a dead socket for minutes, holding an event-loop slot.
+    const modelName = modelVersion.model.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const fileName = `${modelName}_epoch_${epochNumber}.safetensors`;
+
+    // Prefer a direct-to-storage redirect: ask the orchestrator for a short-lived
+    // presigned object-store URL (`redirect=storage`) and hand it straight to the client,
+    // instead of proxying the (multi-GB) epoch bytes through this pod — which ties up an
+    // event-loop slot for the entire transfer and pins at the 30s gateway timeout.
+    // The orchestrator returns 302 for the storage path and 308 for the legacy content
+    // proxy, so we only follow a 302. ORCHESTRATOR_ACCESS_TOKEN never leaves the server.
+    try {
+      const resolveUrl = new URL(epochUrl);
+      resolveUrl.searchParams.set('redirect', 'storage');
+      const probe = await fetch(resolveUrl, {
+        headers: { Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}` },
+        redirect: 'manual',
+      });
+      if (probe.status === 302) {
+        const storageUrl = probe.headers.get('location');
+        if (storageUrl) {
+          return res.redirect(302, storageUrl);
+        }
+      }
+    } catch {
+      // Fall through to the streaming path below (e.g. an orchestrator build without
+      // storage-redirect support, or a transient resolve failure).
+    }
+
+    // Fallback: proxy the bytes through this pod (legacy path, used when the orchestrator
+    // does not return a storage redirect). Abort the upstream fetch + stream when the
+    // client disconnects. Without this, a client hang or Traefik timeout leaves the pod
+    // streaming into a dead socket for minutes, holding an event-loop slot.
     const abortController = new AbortController();
     const onClientClose = () => abortController.abort();
     req.on('close', onClientClose);
@@ -111,9 +139,6 @@ export default AuthedEndpoint(
         .status(orchestratorResponse.status)
         .json({ error: 'Failed to fetch epoch from storage' });
     }
-
-    const modelName = modelVersion.model.name.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const fileName = `${modelName}_epoch_${epochNumber}.safetensors`;
 
     // Stream the response to the client
     res.setHeader('Content-Type', 'application/octet-stream');
