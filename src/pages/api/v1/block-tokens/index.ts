@@ -18,7 +18,6 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import {
@@ -264,14 +263,14 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  // H-2: server-side feature-flag gate. The substrate ships dark; the UI
-  // mount + workflow callback aren't the only entry points an attacker
-  // could probe. 503 (Service Unavailable) is the right code: the surface
-  // exists but is intentionally off.
-  if (!(await isAppBlocksEnabled())) {
-    res.status(503).json({ error: 'App Blocks not enabled' });
-    return;
-  }
+  // H-2 / H2: the App Blocks feature-flag gate for this route is the PER-USER
+  // `getFeatureFlags({ user }).appBlocks` check below (after the session load).
+  // The previous GLOBAL pre-check here (`isAppBlocksEnabled()` with no user)
+  // could never match the live `moderators`-segmented flag, so it 503'd EVERY
+  // caller — including moderators — before the per-user gate ran (the H2
+  // divergence). Removing it lets the per-user gate be authoritative: a mod
+  // passes, a non-mod / anon caller is still refused (403) before any DB read.
+  // The cheap per-IP rate limit below still runs first to throttle probing.
 
   const parsed = requestSchema.safeParse(req.body ?? {});
   if (!parsed.success) {

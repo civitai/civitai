@@ -31,7 +31,10 @@ export const config = {
 
 export default ModEndpoint(
   async (req, res: NextApiResponse, user) => {
-    if (!(await isAppBlocksEnabled())) {
+    // H2: evaluate with the authenticated mod's context so the
+    // `moderators`-segmented flag resolves ON for them (ModEndpoint has already
+    // proven `user.isModerator` above). Mirrors enforceAppBlocksFlag.
+    if (!(await isAppBlocksEnabled({ user }))) {
       res.status(503).json({ message: 'App Blocks is not enabled' });
       return;
     }
