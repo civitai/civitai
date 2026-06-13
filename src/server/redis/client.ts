@@ -923,6 +923,29 @@ export const REDIS_SYS_KEYS = {
      * on first write so the per-window key self-expires.
      */
     BUZZ_CAP: 'system:blocks:buzz-cap',
+    /**
+     * Build-chain replay protection (audit F5).
+     *
+     * CALLBACK_PENDING — consume-once marker for an outstanding Tekton build.
+     * Written `1` by triggerBuild() right after a successful trigger POST,
+     * keyed `system:blocks:callback:pending:${slug}:${sha}:${appBlockId}` with
+     * an 1800s TTL (> the 20m pipeline timeout). The build-callback handler
+     * GETDELs it (consume-once) once HMAC + ts checks pass: present → genuine
+     * outstanding run; missing → replay / out-of-band callback. This is the
+     * real replay teeth for the public-edge callback leg; enforcement is gated
+     * behind BLOCK_CALLBACK_REQUIRE_PENDING_RUN (report-only first deploy).
+     *
+     * GITPUSH_DELIVERY — per-delivery dedup nonce for Forgejo push webhooks,
+     * keyed `system:blocks:gitpush:delivery:${X-Gitea-Delivery}` via SET NX EX
+     * 600. A second delivery with the same id is rejected as a duplicate. NOTE:
+     * X-Gitea-Delivery is NOT covered by the body HMAC, so this catches naive
+     * duplicate re-deliveries but not a determined header-swapping replayer; the
+     * strong protection is the two `ts` legs + the callback cross-check, and a
+     * git-push replay is downgrade-only (re-applies the same already-approved,
+     * org/sha-gated sha).
+     */
+    CALLBACK_PENDING: 'system:blocks:callback:pending',
+    GITPUSH_DELIVERY: 'system:blocks:gitpush:delivery',
   },
 } as const;
 
