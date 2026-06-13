@@ -18,6 +18,11 @@ export const SEMVER_REGEX = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 export const MAX_BUNDLE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MiB
 export const MAX_FILES_IN_BUNDLE = 2000;
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MiB per file
+// Ceiling on TOTAL decompressed bytes across all entries in a bundle.
+// Defends against zip bombs: MAX_FILES_IN_BUNDLE * MAX_FILE_SIZE_BYTES is
+// ~20 GiB, far past what a pod can hold. 4x the 50 MiB upload cap is well
+// above any legitimate web bundle's decompressed size yet bounds memory.
+export const MAX_TOTAL_DECOMPRESSED_BYTES = 200 * 1024 * 1024; // 200 MiB
 
 export const submitVersionSchema = z.object({
   // Base64-encoded ZIP bytes. Server decodes, validates size, then
