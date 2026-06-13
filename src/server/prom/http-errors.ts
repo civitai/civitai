@@ -48,7 +48,7 @@ export const httpErrorCounter: client.Counter<string> =
   globalThis.__civitaiHttpErrorCounter ??
   (globalThis.__civitaiHttpErrorCounter = new client.Counter({
     name: NAME,
-    help: 'Count of APP-EMITTED 5xx (~500-class) responses by normalized route, status, and kind (api|trpc). Unsampled. Does NOT include edge/Traefik 502/504 (the app never runs for those) — use Traefik code=~"5.." for the full floor. Per-route source of truth for the app-500 slice.',
+    help: 'Count of APP-EMITTED 5xx responses by normalized route, status, kind. UNSAMPLED. kind=api increments per RESPONSE (once per 5xx); kind=trpc increments per PROCEDURE-error (a batched request can increment several times) — account for this when summing. EDGE-generated 502/504 (event-loop pin, liveness SIGKILL, gateway timeout) are NOT counted: the app never runs for those — use Traefik code=~"5.." for the full floor. App-THROWN 5xx (incl. a TRPCError mapping to 502/503/504) ARE counted. Per-route source of truth for the app-emitted 5xx slice.',
     labelNames: ['route', 'status', 'kind'],
   }));
 
@@ -81,7 +81,11 @@ function bounded(route: string, kind: Kind): string {
 
 function collapseSegment(seg: string): string {
   if (/^\d+$/.test(seg)) return ':id';
-  if (/^[0-9a-f]{16,}$/i.test(seg)) return ':hash';
+  // 8+ hex (was 16+) so short hashes — e.g. the 10-char AutoV2 model hash — that
+  // slip past `[key]` replacement on a route-param/query-key collision collapse to
+  // :hash instead of leaking verbatim into a label. No static API route segment is
+  // 8+ pure-hex, so legit routes are unaffected.
+  if (/^[0-9a-f]{8,}$/i.test(seg)) return ':hash';
   if (seg.length > 40) return ':long';
   // Defense-in-depth (M2): a leftover segment here SHOULD be a static route word —
   // matched routes reach this code only for their literal path parts; dynamic
