@@ -29,6 +29,7 @@
     "build": "next build",
     "build:dev": "pnpm build:workers && cross-env NODE_OPTIONS=\"--max_old_space_size=16384\" next build",
     "build:analyze": "cross-env NODE_OPTIONS=\"--max_old_space_size=16384\" ANALYZE=true next build",
+    "size": "node scripts/bundle-budget.mjs",
     "deploy": "pnpm run build && pnpm run db:deploy",
     "postinstall": "pnpm run db:generate",
     "typecheck": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192\" tsc --noEmit",
