@@ -906,6 +906,24 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
+  BLOCKS: {
+    /**
+     * Emergency kill list — Redis SET of `block_id` strings that
+     * BlockRegistry excludes from every listForModel response. Lets ops
+     * disable a runaway block without a deploy.
+     */
+    EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
+    /**
+     * Cumulative Buzz-spend cap counter (audit A7 / design-gaps H1). The
+     * per-call `claims.buzzBudget` only bounds a SINGLE submitWorkflow; a
+     * block holding a valid token can issue unlimited sequential capped
+     * submits and drain the whole balance. This is an integer counter, keyed
+     * `system:blocks:buzz-cap:${userId}:${appBlockId}:${UTC-day}`, INCRBY'd by
+     * the cost of each successful submit and checked before submit. TTL is set
+     * on first write so the per-window key self-expires.
+     */
+    BUZZ_CAP: 'system:blocks:buzz-cap',
+  },
 } as const;
 
 // Cached data
@@ -1082,6 +1100,25 @@ export const REDIS_KEYS = {
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
+  },
+  BLOCKS: {
+    REGISTRY: 'packed:caches:block-registry',
+    TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
+    /**
+     * Per-blockInstanceId revocation marker. Writers (uninstall,
+     * toggleEnabled(false), publisher ban) set this key with a 15-minute
+     * TTL — the worst-case remaining lifetime of any token issued for the
+     * instance just before revocation. The block-scope middleware checks
+     * existence on every request; missing key → allowed, present → 403.
+     */
+    REVOKED_INSTANCE: 'blocks:revoked-instance',
+    /**
+     * Per-ecosystem-key most-popular-Checkpoint cache. Resolves to a
+     * JSON-encoded ValidatedCheckpoint. 1h TTL — popularity changes
+     * slowly and we'd rather serve a stale-by-an-hour Checkpoint than
+     * pay a multi-join query on every block submit.
+     */
+    POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
   },
 } as const;
 

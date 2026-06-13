@@ -5,6 +5,8 @@ import { router } from '~/server/trpc';
 // instead of recompiling the entire /api/trpc/[trpc] route. See
 // docs/trpc-router-dev-recompile-and-v11-notes.md.
 export const appRouter = router({
+  blocks: lazy(() => import('~/server/routers/blocks.router').then((m) => m.blocksRouter)),
+  apps: lazy(() => import('~/server/routers/apps.router').then((m) => m.appsRouter)),
   account: lazy(() => import('./account.router').then((m) => m.accountRouter)),
   announcement: lazy(() => import('./announcement.router').then((m) => m.announcementRouter)),
   answer: lazy(() => import('./answer.router').then((m) => m.answerRouter)),

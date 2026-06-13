@@ -27,6 +27,7 @@ import {
   getMultipliersForUser,
 } from './buzz.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
+import { validateBuzzPurchaseAttribution } from '~/server/services/blocks/attribution-validator.service';
 import { sleep } from '~/server/utils/concurrency-helpers';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
@@ -981,6 +982,20 @@ export const getPaymentIntent = async ({
     throw new Error('There was an error while creating your order. Please try again later.');
   }
 
+  // FIN-1: App Blocks revenue attribution is client-forgeable end-to-end —
+  // the browser stamps blockAppId/blockInstanceId/blockScope/etc into this
+  // metadata, and the Stripe webhook later credits a publisher's revenue
+  // share off those fields. This is the only server chokepoint that still
+  // holds the authenticated session (`user.id`), so we re-validate /
+  // re-derive every block-attribution field here against the real buyer.
+  // Forged attributions are STRIPPED (purchase proceeds un-attributed);
+  // a spender spoof (metadata.userId != session user) is rejected. See
+  // attribution-validator.service.ts for the full threat model.
+  const validatedMetadata = await validateBuzzPurchaseAttribution({
+    metadata,
+    sessionUserId: user.id,
+  });
+
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
   const paymentIntent = await stripe.paymentIntents.create({
@@ -993,7 +1008,7 @@ export const getPaymentIntent = async ({
           }
         : undefined,
     customer: customerId,
-    metadata: metadata as MetadataParam,
+    metadata: validatedMetadata as MetadataParam,
     payment_method_types: setupFuturePayment
       ? paymentMethodTypes || undefined
       : futureUsageNotSupportedPaymentMethods,

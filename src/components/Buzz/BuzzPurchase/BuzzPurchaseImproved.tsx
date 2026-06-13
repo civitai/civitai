@@ -35,6 +35,7 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { buzzBulkBonusMultipliers } from '~/server/common/constants';
 import type { Price } from '~/shared/utils/prisma/models';
+import type { BlockAttribution } from '~/server/schema/blocks/attribution.schema';
 import {
   formatCurrencyForDisplay,
   formatPriceForDisplay,
@@ -91,6 +92,13 @@ export type BuzzPurchaseImprovedProps = {
   onCancel?: () => void;
   initialBuzzType?: BuzzSpendType;
   onSelectedUnitAmountChange?: (unitAmount: number | undefined) => void;
+  /**
+   * App Blocks attribution — populated by IframeHost when the purchase
+   * is initiated from inside a block iframe. Pass-through only: stamped
+   * into the payment-provider metadata so the webhook can write a
+   * block_buzz_attribution row. Undefined for all non-block purchases.
+   */
+  attribution?: BlockAttribution;
 };
 
 const BuzzPurchasePaymentButton = ({
@@ -101,7 +109,11 @@ const BuzzPurchasePaymentButton = ({
   purchaseSuccessMessage,
   disabled,
   buzzType,
-}: Pick<BuzzPurchaseImprovedProps, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
+  attribution,
+}: Pick<
+  BuzzPurchaseImprovedProps,
+  'onPurchaseSuccess' | 'purchaseSuccessMessage' | 'attribution'
+> & {
   disabled: boolean;
   unitAmount: number;
   buzzAmount: number;
@@ -139,12 +151,29 @@ const BuzzPurchasePaymentButton = ({
       return;
     }
 
+    // App Blocks revenue-share attribution. The spread is a no-op for
+    // non-block purchases (attribution undefined). Stripe stringifies
+    // everything for the wire — the schema's z.coerce.number on
+    // blockModelId will parse it back on the way out.
     const metadata: PaymentIntentMetadataSchema = {
       type: 'buzzPurchase',
       unitAmount,
       buzzAmount,
       userId: currentUser.id as number,
       buzzType: buzzType,
+      ...(attribution
+        ? {
+            blockAppId: attribution.appId,
+            blockAppBlockId: attribution.appBlockId,
+            blockInstanceId: attribution.blockInstanceId,
+            blockScope: attribution.scope,
+            ...(attribution.modelId != null ? { blockModelId: attribution.modelId } : {}),
+            // FIN-1: slot id lets the server re-validate the install. The
+            // server re-derives every block field from the resolved row;
+            // these are sent for resolution only, never trusted as-is.
+            ...(attribution.slotId != null ? { blockSlotId: attribution.slotId } : {}),
+          }
+        : {}),
     };
 
     // Open Stripe payment modal which will handle captcha and payment intent creation
@@ -270,6 +299,7 @@ export const BuzzPurchaseImproved = ({
   purchaseSuccessMessage,
   initialBuzzType,
   onSelectedUnitAmountChange,
+  attribution,
 }: BuzzPurchaseImprovedProps) => {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
@@ -892,6 +922,7 @@ export const BuzzPurchaseImproved = ({
                             disabled={!ctaEnabled}
                             purchaseSuccessMessage={purchaseSuccessMessage}
                             buzzType={selectedBuzzType}
+                            attribution={attribution}
                           />
                         ) : (
                           features.coinbasePayments && (

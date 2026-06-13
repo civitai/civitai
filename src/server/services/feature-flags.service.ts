@@ -219,6 +219,10 @@ const featureFlags = createFeatureFlags({
   // in sync with the camelCase flag key here.
   retoolUpdateIdentity: ['granted'],
   retoolToggleModerator: ['granted'],
+  // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
+  // default until we ship publisher install UX + moderator approval workflow.
+  // When off, BlockSlot renders nothing and no token-issuance traffic fires.
+  appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

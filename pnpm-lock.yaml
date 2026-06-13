@@ -25,6 +25,12 @@ importers:
       '@axiomhq/axiom-node':
         specifier: ^0.12.0
         version: 0.12.0
+      '@civitai/app-sdk':
+        specifier: ^0.6.0
+        version: 0.6.0
+      '@civitai/blocks-react':
+        specifier: ^0.4.0
+        version: 0.4.2(@civitai/app-sdk@0.6.0)(react@18.3.1)
       '@civitai/client':
         specifier: 0.2.0-beta.71
         version: 0.2.0-beta.71
@@ -589,6 +595,9 @@ importers:
       xml2js:
         specifier: ^0.6.2
         version: 0.6.2
+      yaml:
+        specifier: ^2.8.1
+        version: 2.8.1
       zod:
         specifier: ^4.0.17
         version: 4.0.17
@@ -599,6 +608,9 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.6
         version: 0.2.6(zod@4.0.17)
+      '@electric-sql/pglite':
+        specifier: ^0.4.6
+        version: 0.4.6
       '@faker-js/faker':
         specifier: ^9.0.3
         version: 9.9.0
@@ -1181,6 +1193,17 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
+  '@civitai/app-sdk@0.6.0':
+    resolution: {integrity: sha512-+qTWLzI0oYmeZuvlaZmy1EqjmrfkADZVNeqsfU0cF58B5MLvopufU6yKlpGdnMfVzjVX9YzlvW3QTOzSgug9IQ==}
+    engines: {node: '>=20'}
+
+  '@civitai/blocks-react@0.4.2':
+    resolution: {integrity: sha512-vv0WTxmGewy1hZH75xcFd+YreMPxO/5csBA1zjAHsDY/+Bu/FDGMgWwyBNcdoFS3WW8EKoi/jS69PBW2kEK+Pg==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@civitai/app-sdk': ^0.6.0
+      react: ^18.0.0 || ^19.0.0
+
   '@civitai/client@0.2.0-beta.71':
     resolution: {integrity: sha512-80FYKe0RiK0a6g41HFujVi8dgi5JOWEJ8ZYh/8e2gq3sUdtHFYeWDVMPcfSXntwLabtLf5LMRT+sDaV+lCjnpA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
@@ -1306,6 +1329,9 @@ packages:
     resolution: {integrity: sha512-+MKAJEOfaBe5SmV6t34p80MMKhjvUz0vRrvVJbPT0WElzaOJ/1xs+D+KDv+tD/NE5ujfrChEcshd4fLn0wpiqg==}
     peerDependencies:
       react: '>=16.8.0'
+
+  '@electric-sql/pglite@0.4.6':
+    resolution: {integrity: sha512-qmlmfN8UyKCee35qkV0r/MBp+Znl8FjBz7OpoglNvww3GJpw0/DLP0o1ZymvLNmcD5DTLOQdzKPtF8Hd3mdl1w==}
 
   '@emnapi/core@1.8.1':
     resolution: {integrity: sha512-AvT9QFpxK0Zd8J0jopedNm+w/2fIzvtPKPjqyw9jwvBaReTTqPBk9Hixaz7KbjimP+QNz605/XnjFcDAL2pqBg==}
@@ -11381,6 +11407,13 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
+  '@civitai/app-sdk@0.6.0': {}
+
+  '@civitai/blocks-react@0.4.2(@civitai/app-sdk@0.6.0)(react@18.3.1)':
+    dependencies:
+      '@civitai/app-sdk': 0.6.0
+      react: 18.3.1
+
   '@civitai/client@0.2.0-beta.71':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
@@ -11536,6 +11569,8 @@ snapshots:
     dependencies:
       react: 18.3.1
       tslib: 2.8.1
+
+  '@electric-sql/pglite@0.4.6': {}
 
   '@emnapi/core@1.8.1':
     dependencies:

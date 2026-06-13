@@ -72,7 +72,8 @@ type ClientInstanceType =
   | 'primaryReadLong'
   | 'notification'
   | 'notificationRead'
-  | 'datapacketRead';
+  | 'datapacketRead'
+  | 'apps';
 const instanceUrlMap: Record<ClientInstanceType, string> = {
   notification: env.NOTIFICATION_DB_URL,
   notificationRead: env.NOTIFICATION_DB_REPLICA_URL ?? env.NOTIFICATION_DB_URL,
@@ -80,6 +81,10 @@ const instanceUrlMap: Record<ClientInstanceType, string> = {
   primaryRead: env.DATABASE_REPLICA_URL ?? env.DATABASE_URL,
   primaryReadLong: env.DATABASE_REPLICA_LONG_URL ?? env.DATABASE_URL,
   datapacketRead: env.DATAPACKET_DATABASE_RO_URL ?? env.DATABASE_URL,
+  // App Blocks KV datastore — empty string sentinel when unset. appsDb
+  // never calls getClient unless APPS_DATABASE_URL is configured (see
+  // src/server/db/appsDb.ts).
+  apps: env.APPS_DATABASE_URL ?? '',
 };
 
 export function getClient(
@@ -99,6 +104,8 @@ export function getClient(
     ? 'notif-pg'
     : instance === 'datapacketRead'
     ? 'dp-read-pg'
+    : instance === 'apps'
+    ? 'apps-pg'
     : 'node-pg';
 
   // DO managed Postgres PgBouncer rejects statement_timeout as a startup parameter.

@@ -21,6 +21,12 @@ export const serverSchema = z.object({
   NOTIFICATION_DB_URL: z.url(),
   NOTIFICATION_DB_REPLICA_URL: z.url(),
   DATAPACKET_DATABASE_RO_URL: z.url().optional(),
+  // App Blocks W4-KV-v0 — connection to cnpg-cluster-apps (`apps` DB) where
+  // each approved app block gets an isolated schema. civitai-web is the only
+  // service with these creds; apps never see DB credentials directly. Optional
+  // so PR previews + dev environments that haven't provisioned the apps DB
+  // yet keep starting (the storage tRPC procedures throw cleanly when unset).
+  APPS_DATABASE_URL: z.url().optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
@@ -367,4 +373,66 @@ export const serverSchema = z.object({
   SERVER_DOMAIN_BLUE_ALIASES: z.string().optional(),
   SERVER_DOMAIN_RED: z.string().optional(),
   SERVER_DOMAIN_RED_ALIASES: z.string().optional(),
+
+  // App Blocks (Phase 1) — RSA keypair for block-scoped JWT issuance + JWKS.
+  // BLOCK_TOKEN_PRIVATE_KEY signs tokens; BLOCK_TOKEN_PUBLIC_KEY is served via
+  // /api/v1/block-tokens/jwks. BLOCK_TOKEN_PUBLIC_KEY_NEXT is set during the
+  // rotation window so the JWKS endpoint publishes both keys (and verifyBlockToken
+  // accepts signatures from either) for one full token lifetime. BLOCK_ALLOWED_ORIGINS
+  // is the CORS allow-list (comma-separated). All optional so the app boots before
+  // App Blocks rolls out; the token endpoints fail-closed if the signing key is missing.
+  BLOCK_TOKEN_PRIVATE_KEY: z.string().optional(),
+  BLOCK_TOKEN_PUBLIC_KEY: z.string().optional(),
+  BLOCK_TOKEN_PUBLIC_KEY_NEXT: z.string().optional(),
+  BLOCK_ALLOWED_ORIGINS: z.string().optional(),
+
+  // App Blocks W2 (apps-as-repos). Optional so envs that don't run the
+  // platform layer (PR previews without apps-pipeline wiring) still boot.
+  //
+  // FORGEJO_BASE_URL          public root, e.g. https://forgejo.civitai.com
+  // FORGEJO_ADMIN_TOKEN       Forgejo personal access token (admin) — used
+  //                           by civitai-web to create repos / webhooks
+  // FORGEJO_WEBHOOK_SECRET    HMAC shared secret between Forgejo → webhook
+  // BLOCK_BUILD_CALLBACK_SECRET   HMAC shared secret between Tekton → callback
+  // APPS_TEKTON_TRIGGER_URL   HTTP endpoint that creates PipelineRuns on
+  //                           dc-02-a (the app-blocks-trigger receiver,
+  //                           reached via the VPN proxy on dp-1). Example:
+  //                           http://wireguard-proxy-service.civitai-submodel-proxy.svc.cluster.local:8088/trigger-build
+  // APPS_TEKTON_TRIGGER_SECRET   HMAC shared secret between civitai-web and
+  //                           the app-blocks-trigger receiver. 32-byte hex.
+  // APPS_KUBE_NAMESPACE       civitai-apps (where apply Jobs are created
+  //                           on dp-1). Defaults to civitai-apps.
+  // APPS_DOMAIN               public per-app subdomain root, e.g.
+  //                           civit.ai — used to build iframe.src
+  //                           validation in the webhook. Defaults to civit.ai
+  //                           since CF universal SSL covers *.civit.ai
+  //                           single-level wildcard for free.
+  FORGEJO_BASE_URL: z.string().url().optional(),
+  // Browser-facing public URL for Forgejo — distinct from FORGEJO_BASE_URL
+  // because the latter points at the cluster-internal service so civitai-web's
+  // API + webhook calls don't loop through Cloudflare + oauth2-proxy. The
+  // mod-review UI link in /apps/review uses this one. Defaults to the
+  // production hostname; PR previews can override but won't normally need to.
+  FORGEJO_PUBLIC_URL: z.string().url().default('https://forgejo.civitai.com'),
+  FORGEJO_ADMIN_TOKEN: z.string().optional(),
+  FORGEJO_WEBHOOK_SECRET: z.string().optional(),
+  BLOCK_BUILD_CALLBACK_SECRET: z.string().optional(),
+  APPS_TEKTON_TRIGGER_URL: z.string().url().optional(),
+  APPS_TEKTON_TRIGGER_SECRET: z.string().optional(),
+  APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
+  APPS_DOMAIN: z.string().default('civit.ai'),
+
+  // App Blocks W1 (publish-request flow). S3-compatible storage for
+  // dev-uploaded ZIP bundles. Production points at ssd-minio-backups
+  // MinIO with credentials scoped to the app-block-bundles bucket only.
+  // All optional so envs without the publish-request feature still boot.
+  //
+  // BUNDLE_S3_ENDPOINT             e.g. http://minio.minio-ssd-backups.svc.cluster.local
+  // BUNDLE_S3_BUCKET               e.g. app-block-bundles
+  // BUNDLE_S3_ACCESS_KEY_ID        scoped service-account key
+  // BUNDLE_S3_SECRET_ACCESS_KEY    matching secret
+  BUNDLE_S3_ENDPOINT: z.string().url().optional(),
+  BUNDLE_S3_BUCKET: z.string().optional(),
+  BUNDLE_S3_ACCESS_KEY_ID: z.string().optional(),
+  BUNDLE_S3_SECRET_ACCESS_KEY: z.string().optional(),
 });

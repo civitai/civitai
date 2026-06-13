@@ -9,6 +9,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { PublicEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { withBlockScope } from '~/server/middleware/block-scope.middleware';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import {
@@ -26,7 +27,10 @@ const schema = z.object({ id: z.coerce.number() });
 
 const baseUrl = getBaseUrl();
 
-export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
+const baseHandler = PublicEndpoint(async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
   const parsedParams = schema.safeParse(req.query);
   if (!parsedParams.success)
     return res.status(400).json({
@@ -132,3 +136,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     return handleEndpointError(res, error);
   }
 });
+
+// App Blocks: allow this route to be called with an RS256 block JWT carrying
+// the `models:read:self` scope. When no block JWT is present the call falls
+// through to the existing PublicEndpoint path, so legacy callers are unaffected.
+export default withBlockScope(baseHandler, { requiredScope: 'models:read:self' });
