@@ -661,7 +661,12 @@ function FallbackCard() {
         }}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={`${baseUrl}/images/logo_dark_mode.png`} height={60} alt="" />
+        {/* satori requires an explicit width+height on remote <img> or it throws
+            "Image size cannot be determined" — which made FallbackCard itself 500,
+            so any missing entity (or any OgCard render error) hit the catch's
+            fallback and STILL returned 500. logo_dark_mode.png is 142x30 (≈4.733),
+            so width 284 keeps aspect at height 60. */}
+        <img src={`${baseUrl}/images/logo_dark_mode.png`} width={284} height={60} alt="" />
         <div style={{ display: 'flex', fontSize: 16, color: colors.textSecondary }}>
           The Home of Open-Source Generative AI
         </div>
