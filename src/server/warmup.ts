@@ -215,6 +215,16 @@ const LISTENER_WAIT_MS = 15_000;
 // settles the JIT vs 3 — needs a real-pod before/after.)
 const WARM_ITERATIONS = intFromEnv('WARM_ITERATIONS', 1);
 
+// After the GET passes, warm each route ONCE with HEAD. Page SSR runs the same
+// `getInitialProps` graph on HEAD as GET — including the server-side self-fetch
+// in `_app.tsx` — and earlier warm/verify was GET-ONLY. That blind spot let a
+// HEAD-specific SSR 500 (the self-fetch throwing on a churning apex-Service
+// endpoint) reach prod undetected. Exercising HEAD here makes the warm matrix
+// cover the path real link-preview / monitoring crawlers actually drive. The
+// HEAD pass shares the same per-request timeout + swallow-and-continue semantics
+// as the GET pass. Disable via WARM_HEAD_PASS=false.
+const WARM_HEAD_PASS = process.env.WARM_HEAD_PASS !== 'false';
+
 // Jitter so a fleet of pods warming concurrently during a surge/rollout doesn't
 // hit the shared DB-replica / Meili in lockstep. Both an initial random delay
 // and a small inter-route delay are applied. Math.random is fine here (no
@@ -308,10 +318,34 @@ async function warmRoute(baseUrl: string, route: string): Promise<void> {
       );
     }
   }
+  // One HEAD pass per route — covers the SSR HEAD path (same getInitialProps
+  // graph, incl. the _app self-fetch) that GET-only warming missed. Same
+  // timeout + swallow-and-continue semantics; a HEAD failure flags the route
+  // errored but never aborts warmup.
+  let headStatus = 0;
+  let headErrored = false;
+  if (WARM_HEAD_PASS) {
+    try {
+      const signal = warmAbortSignal();
+      const res = await fetch(url, { method: 'HEAD', headers: WARM_HEADERS, signal });
+      headStatus = res.status;
+      // Drain any body so the socket frees up (HEAD bodies are normally empty).
+      await res.text().catch(() => undefined);
+    } catch (err) {
+      headErrored = true;
+      const e = err as Error;
+      const aborted = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+      console.warn(
+        `${LOG_PREFIX} route warm HEAD ${aborted ? 'timeout' : 'error'} ${route}` +
+          `${aborted ? ` (>${WARM_PER_REQUEST_TIMEOUT_MS}ms)` : ''}:`,
+        e?.message ?? err
+      );
+    }
+  }
   console.log(
     `${LOG_PREFIX} warmed ${route} (${WARM_ITERATIONS}x, lastStatus=${lastStatus}${
       errored ? ', errored' : ''
-    })`
+    }${WARM_HEAD_PASS ? `, head=${headStatus}${headErrored ? ' errored' : ''}` : ''})`
   );
 }
 

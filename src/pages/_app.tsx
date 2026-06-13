@@ -312,6 +312,10 @@ function MyApp(props: CustomAppProps) {
 //   };
 // };
 const baseUrl = process.env.NEXTAUTH_URL_INTERNAL ?? env.NEXT_PUBLIC_BASE_URL;
+// Bound the server-side self-fetch to `/api/user/settings` so a slow/hung apex
+// Service endpoint can't stall every SSR render's critical path. Server-render
+// hot path, so keep it tight.
+const SETTINGS_FETCH_TIMEOUT_MS = Number(process.env.APP_SETTINGS_FETCH_TIMEOUT_MS) || 3000;
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
   const { req: request } = appContext.ctx;
@@ -343,21 +347,52 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // Read the verified-bot header set by botDetectionMiddleware.
   const verifiedBot = parseVerifiedBotHeader(request.headers[VERIFIED_BOT_HEADER]);
 
-  const { settings, session, tosUpdate, announcements, following } = await fetch(
-    `${baseUrl as string}/api/user/settings`,
-    {
+  // Self-fetch the pod's own apex Service for the per-user settings bootstrap.
+  // This sits on EVERY SSR page render's critical path with no resolver behind
+  // it, so any failure here (fetch reject — ECONNREFUSED/ECONNRESET from a
+  // churning keep-alive socket — timeout/abort, non-OK status, or a `res.json()`
+  // reject) must NOT throw out of `getInitialProps`: that would surface a
+  // user-facing 500 with no app error log. Degrade to the anonymous/no-settings
+  // shape instead; the downstream consumers already tolerate it (`settings`
+  // undefined → the client `user.getSettings` query self-heals; `session` null →
+  // anon render; the optional seeds are `enabled: !!x` gated).
+  // The success-path shape is identical to before; on failure we fall back to
+  // the anonymous/no-settings shape. `settings` keeps its original
+  // `UserContentSettings` type (downstream consumers already treat an undefined
+  // runtime value as "no snapshot" — see the `if (session?.user && settings)`
+  // gate and `initialData: settings` below), so the fallback `undefined` matches
+  // the documented failed-snapshot path without widening any downstream type.
+  type SettingsBootstrap = {
+    settings: UserContentSettings;
+    tosUpdate?: CheckTosUpdateResult;
+    announcements?: AnnouncementsSeed;
+    following?: number[];
+    session: Session | null;
+  };
+  let settingsBootstrap: SettingsBootstrap;
+  try {
+    const res = await fetch(`${baseUrl as string}/api/user/settings`, {
       headers: { ...request.headers } as HeadersInit,
-    }
-  ).then(async (res) => {
-    const data: {
-      settings: UserContentSettings;
-      tosUpdate?: CheckTosUpdateResult;
-      announcements?: AnnouncementsSeed;
-      following?: number[];
-      session: Session | null;
-    } = await res.json();
-    return data;
-  });
+      signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`settings fetch returned ${res.status}`);
+    settingsBootstrap = (await res.json()) as SettingsBootstrap;
+  } catch (e) {
+    // Observable but non-fatal: log concisely and fall through to a safe render.
+    console.warn(
+      `[_app] settings bootstrap fetch failed, rendering without it: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
+    settingsBootstrap = {
+      settings: undefined as unknown as UserContentSettings,
+      tosUpdate: undefined,
+      announcements: undefined,
+      following: undefined,
+      session: null,
+    };
+  }
+  const { settings, session, tosUpdate, announcements, following } = settingsBootstrap;
   // Pass these via the request so we can use them in SSR. Resolve the per-user
   // feature flags and the global (redis-cached, identical-for-all-users) browsing
   // setting addons in PARALLEL — neither depends on the other and both sit on
