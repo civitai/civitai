@@ -12,7 +12,10 @@ RUN apk add --no-cache libc6-compat && corepack enable && corepack prepare pnpm@
 WORKDIR /app
 
 # Workspace manifests + the packages the hub depends on, so the filtered frozen install resolves.
+# patches/ is required because the root package.json declares pnpm.patchedDependencies — pnpm hashes
+# the patch file during install (even with --ignore-scripts), so it must be in the build context.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY patches ./patches
 COPY packages ./packages
 COPY apps/auth/package.json ./apps/auth/package.json
 
@@ -24,6 +27,12 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
 ##### build — vite build → apps/auth/build (adapter-node output) #################
 FROM deps AS build
 WORKDIR /app
+# Build-only placeholder: db.ts builds its pg.Pool at module load (new URL(env.DATABASE_URL)),
+# so SvelteKit's `analyse` postbuild step — which imports the server modules — throws
+# ERR_INVALID_URL when DATABASE_URL is unset. The pool never connects during build; this dummy
+# only satisfies the URL parse. It lives ONLY in this stage and is NOT carried into `runtime`
+# (separate FROM), so the real value comes from the k8s secret at run time.
+ENV DATABASE_URL=postgres://build:build@localhost:5432/build
 COPY packages ./packages
 COPY apps/auth ./apps/auth
 RUN pnpm --filter @civitai/auth-app build
@@ -34,7 +43,7 @@ RUN pnpm --filter @civitai/auth-app build
 FROM deps AS prod-deps
 WORKDIR /app
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
-    pnpm --filter @civitai/auth-app deploy --prod /app/deploy
+    pnpm --filter @civitai/auth-app deploy --prod --legacy --ignore-scripts /app/deploy
 
 ##### runtime ###################################################################
 FROM node:22-alpine AS runtime
