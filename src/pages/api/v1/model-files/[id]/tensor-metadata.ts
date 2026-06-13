@@ -15,6 +15,7 @@ const schema = z.object({
   id: z.preprocess((val) => Number(val), z.number()),
   summaryOnly: z.preprocess((val) => val === 'true' || val === true, z.boolean().optional()),
 });
+const TENSOR_METADATA_CACHE_CONTROL = 'public, max-age=31536000, s-maxage=31536000, immutable';
 
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
@@ -71,6 +72,7 @@ export default MixedAuthEndpoint(async function handler(
       fileSizeBytes: file.sizeKB * 1024,
       estimateVram,
     });
+    res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
 
     if (summaryOnly) {
       const { tensors, ...summary } = analysis;
