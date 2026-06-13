@@ -6,64 +6,60 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * 72mb upload route that replaced the `blocks.submitVersion` tRPC mutation (so
  * the shared tRPC route could revert to 17mb). The route is a thin auth/flag/
  * validation shell over the well-tested `submitVersion` service
- * (publish-request.orchestration.test.ts), so this exercises only the shell:
- * the ModEndpoint moderator gate, the appBlocks flag (503), the bundle-storage
- * precondition (412), schema validation (400), and the success/error mapping.
+ * (publish-request.orchestration.test.ts), so this exercises only the shell.
  *
- * We drive the REAL ModEndpoint wrapper (mocking only getServerAuthSession +
- * withAxiom) so the moderator/method gate is genuinely tested, and mock the
- * flag, env, and service so the handler runs end-to-end in unit scope.
+ * Following the repo's `retool-endpoint.test.ts` convention, we mock
+ * `~/server/utils/endpoint-helpers` rather than drive the real `withAxiom`
+ * wrapper (heavy, and its closure is captured at module-load so a per-file
+ * vi.mock of withAxiom is unreliable in the full-suite run). The `ModEndpoint`
+ * stub below reproduces the REAL gate logic verbatim (method allowlist → 405;
+ * session + isModerator + not-banned → 401), so the 405/401 cases stay
+ * faithful; the flag/storage/validation/decode/service branches run the real
+ * handler body.
  */
 
 const { mockSession, mockEnv, mockIsAppBlocksEnabled, mockSubmitVersion } = vi.hoisted(() => ({
   mockSession: {
     value: null as { user: { id: number; isModerator?: boolean; bannedAt: Date | null } } | null,
   },
-  mockEnv: {
-    BUNDLE_S3_ENDPOINT: 'https://s3.example',
-    BUNDLE_S3_BUCKET: 'bundles',
-    // Read at endpoint-helpers module load (allowedOrigins computation).
-    NEXTAUTH_URL: 'https://civitai.com',
-    TRPC_ORIGINS: [] as string[],
-  } as {
+  mockEnv: { BUNDLE_S3_ENDPOINT: 'https://s3.example', BUNDLE_S3_BUCKET: 'bundles' } as {
     BUNDLE_S3_ENDPOINT?: string;
     BUNDLE_S3_BUCKET?: string;
-    NEXTAUTH_URL?: string;
-    TRPC_ORIGINS?: string[];
   },
   mockIsAppBlocksEnabled: vi.fn<() => Promise<boolean>>(async () => true),
   mockSubmitVersion: vi.fn<(...args: any[]) => Promise<any>>(),
 }));
 
-vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-// Mirror the global setup's Proxy approach: serve our explicit BUNDLE_S3_* keys
-// (mutable per-test), a benign LOGGING default for module-load consumers
-// (createLogger), and undefined for everything else.
-vi.mock('~/env/server', () => ({
-  env: new Proxy(mockEnv as Record<string, unknown>, {
-    get(target, prop: string) {
-      if (prop in target) return target[prop];
-      if (prop === 'LOGGING') return '';
-      return undefined;
-    },
-  }),
-}));
-// endpoint-helpers imports `dbRead` at module load → the real db/client would
-// run createPrismaClient against our partial env mock. Stub it; the route under
-// test never touches the DB directly (the service does, and that's mocked).
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-// endpoint-helpers also imports getOrchestratorToken, which eagerly builds a
-// redis client at module load. The route never uses it — stub to cut the chain.
-vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({ getOrchestratorToken: vi.fn() }));
-vi.mock('~/server/utils/server-domain', () => ({ getAllServerHosts: () => ['civitai.com'] }));
-vi.mock('~/server/auth/get-server-auth-session', () => ({
-  getServerAuthSession: vi.fn(async () => mockSession.value),
-}));
+vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
 }));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   submitVersion: mockSubmitVersion,
+}));
+// Faithful ModEndpoint reproduction (mirrors endpoint-helpers.ts) — avoids the
+// real withAxiom + db/orchestrator import chain while keeping the auth gate's
+// behaviour identical. Reads mockSession.value the same way the real wrapper
+// reads getServerAuthSession().
+vi.mock('~/server/utils/endpoint-helpers', () => ({
+  ModEndpoint:
+    (
+      handler: (req: NextApiRequest, res: NextApiResponse, user: { id: number }) => Promise<void>,
+      allowedMethods: string[] = ['GET']
+    ) =>
+    async (req: NextApiRequest, res: NextApiResponse) => {
+      if (!req.method || !allowedMethods.includes(req.method)) {
+        res.setHeader('Allow', allowedMethods.join(', '));
+        res.status(405).json({ error: 'Method not allowed' });
+        return;
+      }
+      const session = mockSession.value;
+      if (!session || !session.user?.isModerator || !!session.user.bannedAt) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      await handler(req, res, session.user);
+    },
 }));
 
 function makeReq(opts: { method?: string; body?: unknown } = {}): NextApiRequest {
@@ -72,17 +68,14 @@ function makeReq(opts: { method?: string; body?: unknown } = {}): NextApiRequest
     headers: {},
     body: opts.body,
     query: {},
-    socket: { remoteAddress: '127.0.0.1' },
   } as unknown as NextApiRequest;
 }
 
-function makeRes(): NextApiResponse & { _status: number; _body: any; _headers: Record<string, string> } {
+function makeRes(): NextApiResponse & { _status: number; _body: any } {
   const res = {
     _status: 0,
-    _body: null,
-    _headers: {} as Record<string, string>,
-    setHeader: vi.fn(function (this: any, name: string, value: string) {
-      this._headers[String(name).toLowerCase()] = value;
+    _body: null as any,
+    setHeader: vi.fn(function (this: any) {
       return this;
     }),
     status: vi.fn(function (this: any, n: number) {
@@ -97,7 +90,7 @@ function makeRes(): NextApiResponse & { _status: number; _body: any; _headers: R
       return this;
     }),
   };
-  return res as unknown as NextApiResponse & { _status: number; _body: any; _headers: Record<string, string> };
+  return res as unknown as NextApiResponse & { _status: number; _body: any };
 }
 
 async function invoke(req: NextApiRequest, res: NextApiResponse) {
