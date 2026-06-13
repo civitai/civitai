@@ -33,6 +33,7 @@
 import { createHmac } from 'crypto';
 import { readFile } from 'node:fs/promises';
 import { env } from '~/env/server';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 // ---------- shared HTTP helpers --------------------------------------------
 
@@ -96,6 +97,32 @@ export type TriggerBuildArgs = {
   callbackUrl: string;
 };
 
+// TTL on the build-callback pending-run marker (F5-C). The marker is written
+// when triggerBuild POSTs (PipelineRun *created*), so worst-case wall time =
+// queue/PVC-provision latency + the per-run pipeline timeout. That per-run
+// timeout is 20m (datapacket-talos app-blocks-trigger.py PipelineRun spec
+// `timeouts.pipeline: 20m`). The previous 1800s (30m) left only ~10m of headroom
+// for queue/provision — a queued-but-SUCCESSFUL build whose callback arrives
+// after expiry would 409 under enforce. 3600s (1h) gives comfortable margin over
+// (queue + 20m) while still letting a far-future replay find the marker expired.
+// See callbackPendingRedisKey.
+const CALLBACK_PENDING_TTL_SECONDS = 3600;
+
+/**
+ * Redis key for the consume-once build-callback pending-run marker (F5).
+ * Written by triggerBuild() after a successful trigger, GETDEL'd by the
+ * build-callback handler. WIRE CONTRACT — the datapacket-talos reviewer + the
+ * callback handler must use the identical
+ * `system:blocks:callback:pending:${slug}:${sha}:${appBlockId}` shape.
+ */
+export function callbackPendingRedisKey(
+  slug: string,
+  sha: string,
+  appBlockId: string
+): `${typeof REDIS_SYS_KEYS.BLOCKS.CALLBACK_PENDING}:${string}` {
+  return `${REDIS_SYS_KEYS.BLOCKS.CALLBACK_PENDING}:${slug}:${sha}:${appBlockId}`;
+}
+
 export async function triggerBuild(args: TriggerBuildArgs): Promise<{ name: string }> {
   const url = env.APPS_TEKTON_TRIGGER_URL;
   const secret = env.APPS_TEKTON_TRIGGER_SECRET;
@@ -103,11 +130,18 @@ export async function triggerBuild(args: TriggerBuildArgs): Promise<{ name: stri
     throw new Error('APPS_TEKTON_TRIGGER_URL / APPS_TEKTON_TRIGGER_SECRET not configured');
   }
 
+  // F5 — replay tolerance. Stamp an integer unix-second `ts` INTO the body
+  // BEFORE signing so the datapacket-talos trigger.py receiver can reject a
+  // captured-and-replayed trigger by skew (|now - ts| > 300). Because `ts` is
+  // inside the signed bytes, a replay carries its original old `ts` and is
+  // caught — an attacker can't bump it without invalidating the HMAC.
+  const ts = Math.floor(Date.now() / 1000);
   const body = JSON.stringify({
     slug: args.slug,
     sha: args.sha,
     appBlockId: args.appBlockId,
     callbackUrl: args.callbackUrl,
+    ts,
   });
   const sig = createHmac('sha256', secret).update(body).digest('hex');
 
@@ -133,6 +167,28 @@ export async function triggerBuild(args: TriggerBuildArgs): Promise<{ name: stri
     // Receiver should always return JSON; if not, surface a clear error.
     throw new Error(`trigger response was not JSON: ${text.slice(0, 240)}`);
   }
+
+  // F5 — record the expected (slug, sha, appBlockId) so the eventual
+  // build-callback can prove it corresponds to an outstanding run (consume-once
+  // cross-check). Fire-and-forget: a Redis blip must NOT fail a legit build
+  // trigger — log + continue. The marker simply won't exist, which (with the
+  // default report-only gate) degrades to a warning on the callback side.
+  try {
+    await sysRedis.set(
+      callbackPendingRedisKey(args.slug, args.sha, args.appBlockId),
+      '1',
+      { EX: CALLBACK_PENDING_TTL_SECONDS }
+    );
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[apps-pipeline] failed to write callback pending-run marker for ${args.slug}@${args.sha.slice(
+        0,
+        8
+      )}: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+
   return { name: parsed.pipelineRun ?? '' };
 }
 

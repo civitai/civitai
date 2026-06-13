@@ -4,8 +4,13 @@ import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import { sysRedis } from '~/server/redis/client';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
-import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
+import {
+  callbackPendingRedisKey,
+  triggerApply,
+  waitForApplyJob,
+} from '~/server/services/blocks/apps-pipeline.service';
 
 /**
  * POST /api/internal/blocks/build-callback
@@ -48,7 +53,76 @@ type CallbackBody = {
   appBlockId?: string;
   imageRef?: string;
   status?: string; // "Succeeded" / "Failed" / "Cancelled" / ... per Tekton
+  // F5 — integer unix-second timestamp the SIGNER (datapacket-talos callback
+  // task) stamps into the body before HMAC. Validated for skew here. ABSENT is
+  // allowed (rollout tolerance — the signer adds it in its own PR).
+  ts?: unknown;
 };
+
+// F5 — allowed clock skew between the callback signer and this receiver, in
+// seconds. A replayed callback carries its original (now-stale) `ts` inside the
+// signed body, so it fails this window. 5 minutes mirrors the trigger leg.
+const TS_TOLERANCE_SECONDS = 300;
+
+/**
+ * Replay-tolerance decision for the (verified) callback `ts` (F5).
+ *   - absent → allow (rollout tolerance: the datapacket-talos callback-task
+ *     signer adds `ts` in its own PR; enforce-if-present avoids a
+ *     deploy-ordering outage).
+ *   - present + within ±TS_TOLERANCE_SECONDS of now → allow.
+ *   - present + a non-finite / out-of-tolerance value → reject.
+ * Pure + exported so the skew window is unit-tested without driving the handler.
+ */
+export function checkCallbackTimestamp(
+  ts: unknown,
+  nowSec: number = Math.floor(Date.now() / 1000)
+): { ok: true } | { ok: false; reason: string } {
+  if (ts === undefined || ts === null) return { ok: true }; // enforce-if-present
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) {
+    return { ok: false, reason: 'ts present but not a finite number' };
+  }
+  if (Math.abs(nowSec - ts) > TS_TOLERANCE_SECONDS) {
+    return { ok: false, reason: `ts skew ${Math.abs(nowSec - ts)}s exceeds ${TS_TOLERANCE_SECONDS}s` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Consume the build-callback pending-run marker (F5 cross-check). GETDELs the
+ * `system:blocks:callback:pending:<slug>:<sha>:<appBlockId>` key written by
+ * triggerBuild — consume-once, so a replayed callback finds it already gone.
+ *
+ * Returns:
+ *   - 'consumed' — the marker existed and was deleted (genuine outstanding run).
+ *   - 'missing'  — no marker (replay, out-of-band callback, or a Redis blip on
+ *     the trigger side that never wrote it).
+ *   - 'unavailable' — Redis itself errored; the caller must NOT fail a legit
+ *     deploy on a Redis blip, so this is treated as "not enforced".
+ */
+export async function consumePendingRun(
+  slug: string,
+  sha: string,
+  appBlockId: string
+): Promise<'consumed' | 'missing' | 'unavailable'> {
+  const key = callbackPendingRedisKey(slug, sha, appBlockId);
+  try {
+    // GETDEL is atomic consume-once. The typed client wrapper doesn't expose
+    // getDel; call the underlying node-redis command (key shape is validated by
+    // callbackPendingRedisKey above).
+    const prior = await (sysRedis as unknown as {
+      getDel: (k: string) => Promise<string | null>;
+    }).getDel(key);
+    return prior == null ? 'missing' : 'consumed';
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[build-callback] pending-run GETDEL failed for ${slug}@${sha.slice(0, 8)} — treating as not-enforced: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
+    return 'unavailable';
+  }
+}
 
 function safeEqualHex(a: string, b: string): boolean {
   const A = Buffer.from(a, 'hex');
@@ -141,6 +215,45 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   if (!body.imageRef || body.imageRef !== expectedImageRef(body.slug, body.sha)) {
     res.status(400).json({ error: 'imageRef does not match slug/sha' });
     return;
+  }
+
+  // F5 — replay tolerance on the (now HMAC-verified) `ts`. The signer stamps
+  // `ts` inside the signed body, so a replay carries its original stale value
+  // and is rejected here; an absent `ts` is allowed for rollout (the
+  // datapacket-talos callback-task signer adds it in its own PR).
+  const tsCheck = checkCallbackTimestamp(body.ts);
+  if (!tsCheck.ok) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[build-callback] rejecting replayed/stale callback for ${body.slug}@${body.sha.slice(
+        0,
+        8
+      )}: ${tsCheck.reason}`
+    );
+    res.status(401).json({ error: 'Stale or invalid timestamp' });
+    return;
+  }
+
+  // F5 — consume-once pending-run cross-check. triggerBuild records an
+  // outstanding (slug, sha, appBlockId) marker; GETDEL it here. This is the
+  // real replay teeth for the public-edge callback leg (a replay finds the
+  // marker already consumed/expired). Behavior on MISSING is gated:
+  //   - BLOCK_CALLBACK_REQUIRE_PENDING_RUN === 'true' → reject (409).
+  //   - default → log + CONTINUE (report-only first deploy).
+  // A Redis error ('unavailable') is never allowed to break a legit deploy.
+  const pending = await consumePendingRun(body.slug, body.sha, body.appBlockId);
+  if (pending === 'missing') {
+    const enforce = env.BLOCK_CALLBACK_REQUIRE_PENDING_RUN === 'true';
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[build-callback] no pending-run marker for ${body.slug}@${body.sha.slice(0, 8)} (${
+        body.appBlockId
+      }) — ${enforce ? 'REJECTING (enforce on)' : 'continuing (report-only)'}`
+    );
+    if (enforce) {
+      res.status(409).json({ error: 'No outstanding build run for this callback' });
+      return;
+    }
   }
 
   const succeeded = (body.status ?? '').toLowerCase() === 'succeeded';
