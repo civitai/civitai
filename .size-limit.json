@@ -1,7 +1,0 @@
-[
-  {
-    "name": "total client JS (all .next/static/chunks)",
-    "path": ".next/static/chunks/**/*.js",
-    "limit": "42 MB"
-  }
-]

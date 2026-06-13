@@ -46,13 +46,14 @@ ARG NODE_BUILD_MEM=8192
 RUN --mount=type=cache,target=/app/.next/cache \
     SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
-# Bundle-size budget (report-only during the soak). Next 16 removed per-route
-# build stats, so size-limit over the emitted client chunks (.size-limit.json)
-# is our only bundle-regression signal. Runs here in the builder stage because
-# .next already exists and the build has already happened — no duplicate build.
-# `|| true` keeps it report-only (numbers print to the build log); to GATE,
-# drop the `|| true` so a regression fails the image build.
-RUN echo "===== bundle-size budget (size-limit) =====" && pnpm run size || true
+# Bundle-size budget (report-only during the soak). Next 16 (Turbopack) emits
+# opaque hashed chunks and removed per-route build stats, so scripts/bundle-budget.mjs
+# parses .next/build-manifest.json to reconstruct per-page First Load JS (brotli)
+# + a shared-by-all-pages figure. Runs here because .next exists in this stage
+# and the build already happened — no duplicate build. `|| true` keeps it
+# report-only (numbers print to the build log); to GATE, add `--gate` to the
+# `size` script and drop the `|| true` so a budget breach fails the image build.
+RUN pnpm run size || true
 
 # Server source maps (.next/server/**/*.js.map) are emitted by the build
 # (productionBrowserSourceMaps -> turbopackSourceMaps) but @vercel/nft does NOT

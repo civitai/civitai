@@ -1,0 +1,6 @@
+{
+  "_comment": "First Load JS budgets (brotli). Report-only during the soak: scripts/bundle-budget.mjs runs without --gate and the Dockerfile stage ends in `|| true`. Loose placeholders — tighten to (baseline + ~10% headroom) from the first build's printed numbers, then add --gate + drop the `|| true` to enforce. `routes` overrides routeMax for a specific page.",
+  "shared": "1 MB",
+  "routeMax": "3 MB",
+  "routes": {}
+}
