@@ -19,12 +19,12 @@ authenticated via short-lived RS256 JWTs scoped to a single block install.
 
 ## Tables
 
-| Table | Purpose | Notable invariants |
-|---|---|---|
-| `app_blocks` | Registry of every block across every app | `status='pending'` until moderated; `trustTier` and `renderMode` are server-controlled |
-| `model_block_installs` | Per-(model, slot) installs | Unique on `(model_id, app_block_id, slot_id)`; max 3 installs per slot |
-| `block_user_settings` | Per-(viewer, instance) prefs (Phase 2) | CASCADE on install delete + GDPR user delete |
-| `platform_default_blocks` | Promoted defaults | Filtered by `target_model_types` + content rating + ordered by `priority` |
+| Table                     | Purpose                                  | Notable invariants                                                                     |
+| ------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------- |
+| `app_blocks`              | Registry of every block across every app | `status='pending'` until moderated; `trustTier` and `renderMode` are server-controlled |
+| `model_block_installs`    | Per-(model, slot) installs               | Unique on `(model_id, app_block_id, slot_id)`; max 3 installs per slot                 |
+| `block_user_settings`     | Per-(viewer, instance) prefs (Phase 2)   | CASCADE on install delete + GDPR user delete                                           |
+| `platform_default_blocks` | Promoted defaults                        | Filtered by `target_model_types` + content rating + ordered by `priority`              |
 
 ## Tokens
 
@@ -42,28 +42,28 @@ See `src/shared/constants/block-scope.constants.ts`. Each block scope maps
 to an OAuth bitmask bit (registration-time gate), plus a context-binding
 check at request time (`enforceContextBinding`).
 
-| Scope | Bind | Notes |
-|---|---|---|
-| `models:read:self` | `query.id == ctx.modelId` | |
-| `media:read:owned` | non-anon `sub` | |
-| `buzz:read:self` | non-anon `sub` | |
-| `social:tip:self` | non-anon `sub` | |
-| `user:read:self` | non-anon `sub` | `/api/v1/blocks/me` |
-| `ai:write:budgeted` | positive `buzzBudget` | |
+| Scope                            | Bind                                              | Notes                             |
+| -------------------------------- | ------------------------------------------------- | --------------------------------- |
+| `models:read:self`               | `query.id == ctx.modelId`                         |                                   |
+| `media:read:owned`               | non-anon `sub`                                    |                                   |
+| `buzz:read:self`                 | non-anon `sub`                                    |                                   |
+| `social:tip:self`                | non-anon `sub`                                    |                                   |
+| `user:read:self`                 | non-anon `sub`                                    | `/api/v1/blocks/me`               |
+| `ai:write:budgeted`              | positive `buzzBudget`                             |                                   |
 | `block:settings:read` / `:write` | `query.blockInstanceId == claims.blockInstanceId` | + caller-is-installer at issuance |
 
 Unknown scopes are rejected at runtime (deny-by-default in middleware).
 
 ## Routes
 
-| Route | Auth | Scope required |
-|---|---|---|
-| `POST /api/v1/block-tokens` | same-origin session | — (any approved install) |
-| `GET /api/v1/block-tokens/jwks` | public | — |
-| `GET /api/v1/blocks/me` | block JWT | `user:read:self` |
-| `GET /api/v1/models/[id]` | session OR block JWT | `models:read:self` (block path) |
-| `POST /api/v1/developer/block-manifests` | `JOB_TOKEN` | — |
-| `POST /api/internal/blocks/workflow-completed` | `JOB_TOKEN` + Flipt | — |
+| Route                                          | Auth                 | Scope required                  |
+| ---------------------------------------------- | -------------------- | ------------------------------- |
+| `POST /api/v1/block-tokens`                    | same-origin session  | — (any approved install)        |
+| `GET /api/v1/block-tokens/jwks`                | public               | —                               |
+| `GET /api/v1/blocks/me`                        | block JWT            | `user:read:self`                |
+| `GET /api/v1/models/[id]`                      | session OR block JWT | `models:read:self` (block path) |
+| `POST /api/v1/developer/block-manifests`       | `JOB_TOKEN`          | —                               |
+| `POST /api/internal/blocks/workflow-completed` | `JOB_TOKEN` + Flipt  | —                               |
 
 ## Feature flag
 
@@ -148,6 +148,45 @@ out of the request path on every generation.
 
 Phase 2/3 postMessage surfaces (`PURCHASE_BUZZ`, `NAVIGATE`, `TRACK_EVENT`)
 are not implemented in v1. The SDK should detect their absence gracefully.
+
+## Publish / review / deploy lifecycle (no trust on push)
+
+The build + deploy of new iframe code is gated entirely on **moderator
+approval**, never on a git push:
+
+1. **submitVersion** (dev) — uploads a ZIP bundle. Validates the manifest,
+   inserts an `app_block_publish_requests` row `status='pending'`, pushes the
+   bundle to the _review_ org (`civitai-apps-review/<slug>`, NOT the build
+   org). Nothing builds or deploys.
+2. **approveRequest** (moderator, `/apps/review`) — re-validates the manifest,
+   creates/updates the `app_blocks` row, commits the reviewed bundle to the
+   _build_ org (`civitai-apps/<slug>:main`), **stamps the committed sha onto
+   `app_blocks.current_version_sha`**, finalises the publish request
+   (`status='approved'`, `forgejo_commit_sha=<sha>`), and **triggers the Tekton
+   build itself**. → build-callback → apply Job → deploy.
+3. **git-push webhook** (`/api/internal/blocks/git-push`) — fires on every push
+   to `civitai-apps/<slug>:main`, including the moderator's commit from (2).
+   It **never auto-approves and never triggers a build**:
+   - If the pushed sha is the moderator-approved one
+     (`sha === current_version_sha`, or an `approved` publish request matches the
+     sha as a race backstop) → no-op; the deploy is already in flight from (2).
+   - Any **other** push (a direct push to the build repo by someone with Forgejo
+     write access — a _different trust domain_ than civitai moderation) is
+     treated as unreviewed: it is recorded as a `pending` publish request for the
+     pushed sha (the same review artifact a submitVersion produces) and **does
+     not deploy**. A moderator must approve it via (2) before it ships.
+
+This closes the trust-on-push hole: a signature-valid push can no longer ship
+arbitrary iframe code to a live, mod-page-embedded block. The HMAC signature,
+the `civitai-apps` org/repo gate, the `app-blocks-enabled` flag gate, and
+manifest validation are all still enforced on the webhook.
+
+> Note: a webhook-recorded pending request has empty bundle pointers
+> (`bundle_key=''`, `bundle_sha256=''`) — the webhook only receives the push
+> event + the manifest, not the ZIP. The reviewable artifact is the Forgejo repo
+> at `forgejo_commit_sha`; mods browse it directly. `approveRequest` approves
+> against the existing `app_blocks` row + re-commits the (already-present) repo
+> contents.
 
 ## Publisher-side notes
 
