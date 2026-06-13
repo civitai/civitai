@@ -86,9 +86,14 @@ export function expectedImageRef(slug: string, sha: string): string {
 
 // Replay guard (audit LOW). The callback payload carries no timestamp/nonce, so
 // a captured signature-valid request could be replayed to re-trigger the apply
-// Job. Dedup the apply path on (appBlockId, sha) with an ATOMIC set-if-absent +
-// TTL (not incrBy-then-expire, which could leave a permanent TTL-less key on a
-// failed expire and wedge the sha forever).
+// Job. Dedup the apply path on (appBlockId, sha) with the redis client's
+// purpose-built atomic primitive `setNxKeepTtlWithEx` — a single Lua
+// `SET NX` (+`EXPIRE`) that returns a typed `boolean` (true = newly set).
+// Deliberately NOT `redis.set(..., {NX,EX})` + a return-value check: the top-
+// level `set` returns 'OK'|null but `redis.packed.set` discards its result
+// (returns void), so interpreting the return is a foot-gun (a refactor to the
+// packed variant would silently turn the guard into a no-op). A boolean
+// primitive removes that whole class of bug.
 //
 // TTL must outlast the WHOLE first attempt, not just the apply: the mark is set
 // before `triggerApply` (two k8s calls, ~60s of 30s-timeouts each) and
@@ -109,14 +114,12 @@ function applyDedupKey(appBlockId: string, sha: string): string {
 }
 async function markApplyTriggered(appBlockId: string, sha: string): Promise<boolean> {
   try {
-    const result = await redis.set(applyDedupKey(appBlockId, sha) as never, '1', {
-      NX: true,
-      EX: APPLY_DEDUP_TTL_SECONDS,
-    });
-    // NX returns the set value when newly written, null when the key already
-    // exists (replay). Test for null rather than a specific value so the
-    // wrapper's return-type quirk doesn't matter.
-    return result !== null;
+    // true = newly set (first time → apply); false = key already present (replay).
+    return await redis.setNxKeepTtlWithEx(
+      applyDedupKey(appBlockId, sha) as never,
+      '1',
+      APPLY_DEDUP_TTL_SECONDS
+    );
   } catch {
     // Fail OPEN: unlike workflow-completed (which fails closed to avoid
     // double-billing), a Redis incident here must not block a real deploy.

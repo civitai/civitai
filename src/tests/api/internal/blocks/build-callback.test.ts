@@ -18,22 +18,23 @@ const {
   SECRET,
   mockFlag,
   mockRedis,
-  mockRedisSet,
+  mockSetNx,
   mockRedisDel,
   mockTriggerApply,
   mockWaitApply,
   mockSetCommitStatus,
   mockAppBlockUpdate,
 } = vi.hoisted(() => {
-  // setResult: 'OK' = newly set (first time), null = key already present (replay).
-  const mockRedis = { setResult: 'OK' as 'OK' | null, setThrows: false };
+  // nxResult: true = newly set (first time), false = key already present (replay).
+  const mockRedis = { nxResult: true, nxThrows: false };
   return {
     SECRET: 'test-build-callback-secret',
     mockFlag: { enabled: true },
     mockRedis,
-    mockRedisSet: vi.fn(async () => {
-      if (mockRedis.setThrows) throw new Error('redis down');
-      return mockRedis.setResult;
+    // mirrors redis.setNxKeepTtlWithEx(key, value, ttl): Promise<boolean>
+    mockSetNx: vi.fn(async () => {
+      if (mockRedis.nxThrows) throw new Error('redis down');
+      return mockRedis.nxResult;
     }),
     mockRedisDel: vi.fn(async () => 1),
     mockTriggerApply: vi.fn<(...a: any[]) => Promise<{ name: string }>>(async () => ({ name: 'apply-job-1' })),
@@ -59,7 +60,7 @@ vi.mock('~/server/db/client', () => ({
 }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(async () => mockFlag.enabled) }));
 vi.mock('~/server/redis/client', () => ({
-  redis: { set: mockRedisSet, del: mockRedisDel },
+  redis: { setNxKeepTtlWithEx: mockSetNx, del: mockRedisDel },
   REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'blocks:token-rate-limit' } },
 }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
@@ -154,8 +155,8 @@ describe('build-callback handler — flag gate + replay guard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFlag.enabled = true;
-    mockRedis.setResult = 'OK'; // default: first time → apply
-    mockRedis.setThrows = false;
+    mockRedis.nxResult = true; // default: newly set → first time → apply
+    mockRedis.nxThrows = false;
     mockTriggerApply.mockResolvedValue({ name: 'apply-job-1' });
     mockWaitApply.mockResolvedValue('succeeded');
   });
@@ -187,7 +188,7 @@ describe('build-callback handler — flag gate + replay guard', () => {
   });
 
   it('triggers the apply exactly once on the first success callback', async () => {
-    mockRedis.setResult = 'OK'; // newly set → first time
+    mockRedis.nxResult = true; // newly set → first time
     const res = makeRes();
     await invoke(signedReq(validSuccessBody()), res);
     expect(res._status).toBe(200);
@@ -196,10 +197,12 @@ describe('build-callback handler — flag gate + replay guard', () => {
     expect(mockTriggerApply).toHaveBeenCalledWith(
       expect.objectContaining({ slug: SLUG, sha: SHA, appBlockId: APB })
     );
+    // Lock the dedup contract: atomic NX-set on the (appBlockId, sha) key with the TTL.
+    expect(mockSetNx).toHaveBeenCalledWith(expect.stringContaining(`apply:${APB}:${SHA}`), '1', 600);
   });
 
   it('short-circuits a replayed success callback without re-triggering apply', async () => {
-    mockRedis.setResult = null; // SET NX found the key → replay within the window
+    mockRedis.nxResult = false; // setNxKeepTtlWithEx → false (key present) → replay within the window
     const res = makeRes();
     await invoke(signedReq(validSuccessBody()), res);
     expect(res._status).toBe(200);
@@ -208,7 +211,7 @@ describe('build-callback handler — flag gate + replay guard', () => {
   });
 
   it('fails OPEN on a Redis error — apply still runs so an outage cannot block a deploy', async () => {
-    mockRedis.setThrows = true;
+    mockRedis.nxThrows = true;
     const res = makeRes();
     await invoke(signedReq(validSuccessBody()), res);
     expect(res._status).toBe(200);
@@ -222,7 +225,7 @@ describe('build-callback handler — flag gate + replay guard', () => {
     expect(res._status).toBe(200);
     expect(res._body).toMatchObject({ applied: false });
     expect(mockTriggerApply).not.toHaveBeenCalled();
-    expect(mockRedisSet).not.toHaveBeenCalled(); // dedup slot untouched by a failure callback
+    expect(mockSetNx).not.toHaveBeenCalled(); // dedup slot untouched by a failure callback
   });
 
   it('clears the replay slot on a DEFINITIVE apply failure so a same-sha retry is not blocked', async () => {
@@ -256,7 +259,7 @@ describe('build-callback handler — flag gate + replay guard', () => {
     await invoke(signedReq(validSuccessBody()), res);
     expect(res._status).toBe(500);
     // mark was set (SET NX) then freed in the catch so a same-sha retry isn't wedged
-    expect(mockRedisSet).toHaveBeenCalledTimes(1);
+    expect(mockSetNx).toHaveBeenCalledTimes(1);
     expect(mockRedisDel).toHaveBeenCalledWith(expect.stringContaining(`apply:${APB}:${SHA}`));
   });
 });

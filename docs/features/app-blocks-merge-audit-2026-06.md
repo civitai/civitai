@@ -160,8 +160,12 @@ HMAC) is genuinely well-built and the dark boundary holds across routers/JWKS/mi
   the flag, so the k8s apply/deploy path could run independent of the kill switch; and the
   timestamp/nonce-less payload meant a captured signed callback could be replayed to
   re-trigger applies. Added: `isFlipt('app-blocks-enabled')` 503 gate + an `(appBlockId, sha)`
-  apply-path replay guard using an **atomic `SET NX EX`** (not `incrBy`+`expire`, which could
-  leave a permanent TTL-less key and wedge a sha), **fail-open** on Redis loss. TTL is **10m**
+  apply-path replay guard using the redis client's **`setNxKeepTtlWithEx`** primitive (atomic
+  Lua `SET NX`+`EXPIRE` returning a typed `boolean` — chosen over `redis.set(…,{NX,EX})` whose
+  return is fragile: the top-level `set` yields `'OK'`/`null` but `redis.packed.set` discards
+  it → `void`, so a refactor to the packed variant would silently no-op the guard; a boolean
+  primitive removes that class. Also not `incrBy`+`expire`, which could leave a permanent
+  TTL-less key and wedge a sha), **fail-open** on Redis loss. TTL is **10m**
   — sized to outlast the whole first attempt (~60s `triggerApply` + 6m `waitForApplyJob`) so
   the key can't expire mid-apply and let a late duplicate delete+restart the in-flight Job.
   The longer TTL doesn't suppress retries because **every failure path frees the slot
