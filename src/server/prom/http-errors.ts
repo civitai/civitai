@@ -48,7 +48,7 @@ export const httpErrorCounter: client.Counter<string> =
   globalThis.__civitaiHttpErrorCounter ??
   (globalThis.__civitaiHttpErrorCounter = new client.Counter({
     name: NAME,
-    help: 'Count of APP-EMITTED 5xx responses by normalized route, status, kind. UNSAMPLED. kind=api increments per RESPONSE (once per 5xx); kind=trpc increments per PROCEDURE-error (a batched request can increment several times) — account for this when summing. EDGE-generated 502/504 (event-loop pin, liveness SIGKILL, gateway timeout) are NOT counted: the app never runs for those — use Traefik code=~"5.." for the full floor. App-THROWN 5xx (incl. a TRPCError mapping to 502/503/504) ARE counted. Per-route source of truth for the app-emitted 5xx slice.',
+    help: 'Count of APP-EMITTED 5xx responses by normalized route, status, kind. UNSAMPLED. kind=api increments per RESPONSE (once per 5xx); kind=trpc increments per PROCEDURE-error (a batched request can increment several times) — account for this when summing. EDGE-generated 502/504 (event-loop pin, liveness SIGKILL, gateway timeout) are NOT counted: the app never runs for those — use Traefik code=~"5.." for the full floor. App-THROWN 5xx (incl. a TRPCError mapping to 502/503/504) ARE counted. COVERAGE: only routes using the 6 endpoint-helper wrappers (Public/Authed/MixedAuth/Mod/Partner/TokenSecured→withApiMetrics) + tRPC are instrumented; bare custom handlers — notably the payment webhooks (stripe/paddle/coinbase/nowpayments/tipalti/emerchantpay), auth/[...nextauth], oauth/*, and upload/* — are NOT, so their 5xx show in Traefik only. Treat this as the app-emitted 5xx slice for WRAPPED routes, not the whole app.',
     labelNames: ['route', 'status', 'kind'],
   }));
 
