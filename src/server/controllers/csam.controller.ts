@@ -2,8 +2,12 @@ import { handleDenyTrainingData } from '~/server/controllers/training.controller
 import type { ProtectedContext } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { reviewConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
-import type { CreateCsamReportSchema } from '~/server/schema/csam.schema';
+import type {
+  CreateCsamReportSchema,
+  CreateExternalCsamReportSchema,
+} from '~/server/schema/csam.schema';
 import { createCsamReport } from '~/server/services/csam.service';
+import { createExternalCsamReport } from '~/server/services/csam.service-new';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
@@ -54,4 +58,17 @@ export async function createCsamReportHandler({
   if (userId !== -1) {
     await softDeleteUser({ id: userId, userId: reportedById });
   }
+}
+
+export async function createExternalCsamReportHandler({
+  input,
+  ctx,
+}: {
+  input: CreateExternalCsamReportSchema;
+  ctx: ProtectedContext;
+}) {
+  // No auto soft-delete/ban here: external offenders are typically already
+  // banned, and there is no on-Civitai content to remove. The report row is
+  // picked up and sent to NCMEC by the hourly send-csam-reports job.
+  await createExternalCsamReport({ ...input, reportedById: ctx.user.id });
 }

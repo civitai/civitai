@@ -57,3 +57,55 @@ export type GetImageResourcesOutput = z.output<typeof getImageResourcesSchema>;
 export const getImageResourcesSchema = z.object({
   ids: z.number().array(),
 });
+
+// #region [external link report]
+// File-level annotations the moderator can toggle for externally-sourced CSAM.
+// Unlike in-app generated content, this is usually real (non-AI) imagery, so
+// `generativeAi` is opt-in here rather than defaulted to true.
+export const externalCsamFileAnnotationsSchema = z.object({
+  generativeAi: z.boolean().optional(),
+  infant: z.boolean().optional(),
+  bestiality: z.boolean().optional(),
+  violenceGore: z.boolean().optional(),
+  physicalHarm: z.boolean().optional(),
+});
+
+export type CreateExternalCsamReportSchema = z.infer<typeof createExternalCsamReportSchema>;
+export const createExternalCsamReportSchema = z.object({
+  // required
+  userId: z.number(),
+  email: z.string().email(),
+  // optional identity
+  screenName: z.string().trim().optional(),
+  reportedName: z.string().trim().optional(),
+  // URLs are informational text in the report; kept as plain strings so a
+  // malformed link can't block a time-sensitive CSAM filing.
+  profileUrls: z.array(z.string().trim().min(1)).optional(),
+  secondaryUserId: z.number().optional(),
+  secondaryEmail: z.string().email().optional().or(z.literal('')),
+  // optional incident context
+  externalUrls: z.array(z.string().trim().min(1)).optional(),
+  incidentDateTime: z.coerce.date().optional(),
+  minorDepiction: z.enum(['real', 'non-real']).optional(),
+  contents: zodEnumFromObjKeys(csamContentsDictionary).array().optional(),
+  fileAnnotations: externalCsamFileAnnotationsSchema.optional(),
+  // chat / distribution context
+  chatPlatform: z.string().trim().optional(), // e.g. Discord, Telegram
+  chatLogs: z.string().optional(), // pasted transcript text
+  additionalInfo: z.string().optional(),
+  // uploaded CSAM evidence zip (stored in the CSAM bucket) -> reported as the abuse material
+  evidence: z
+    .object({
+      bucketKey: z.string(),
+      filename: z.string(),
+    })
+    .optional(),
+  // uploaded chat-log screenshots zip -> reported as supplemental (contextual) evidence
+  supplementalEvidence: z
+    .object({
+      bucketKey: z.string(),
+      filename: z.string(),
+    })
+    .optional(),
+});
+// #endregion

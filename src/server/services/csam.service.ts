@@ -482,6 +482,9 @@ export async function processCsamReport(report: CsamReportProps) {
     [CsamReportType.GeneratedImage]: () => {
       throw new Error('unsupported report type: "generated-image"');
     },
+    [CsamReportType.ExternalLink]: () => {
+      throw new Error('unsupported report type: "external-link"');
+    },
   };
 
   try {
