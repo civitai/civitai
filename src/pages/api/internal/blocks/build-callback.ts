@@ -4,6 +4,8 @@ import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import { isFlipt } from '~/server/flipt/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
 
@@ -82,6 +84,60 @@ export function expectedImageRef(slug: string, sha: string): string {
   return `ghcr.io/civitai/app-block-${slug}:${sha}`;
 }
 
+// Replay guard (audit LOW). The callback payload carries no timestamp/nonce, so
+// a captured signature-valid request could be replayed to re-trigger the apply
+// Job. Dedup the apply path on (appBlockId, sha) with the redis client's
+// purpose-built atomic primitive `setNxKeepTtlWithEx` — a single Lua
+// `SET NX` (+`EXPIRE`) that returns a typed `boolean` (true = newly set).
+// Deliberately NOT `redis.set(..., {NX,EX})` + a return-value check: the top-
+// level `set` returns 'OK'|null but `redis.packed.set` discards its result
+// (returns void), so interpreting the return is a foot-gun (a refactor to the
+// packed variant would silently turn the guard into a no-op). A boolean
+// primitive removes that whole class of bug.
+//
+// TTL must outlast the WHOLE first attempt, not just the apply: the mark is set
+// before `triggerApply` (two k8s calls, ~60s of 30s-timeouts each) and
+// `waitForApplyJob` then runs a 6m budget — worst case ~7m. We use 10m so the
+// key can't expire mid-apply and let a late duplicate re-trigger (which would
+// delete + restart the in-flight Job). The longer TTL does NOT suppress
+// legitimate retries because every failure path frees the slot explicitly: the
+// watcher clears on a DEFINITIVE apply failure, and the `triggerApply` catch
+// clears on a Job-creation failure. The TTL is only the backstop for the
+// can't-clear cases (apply 'timeout' where the Job may still run, or a
+// watcher-crash / pod-restart). Durable cross-window replay protection still
+// needs a caller-supplied signed timestamp/nonce from the Tekton finally task
+// (infra follow-up).
+const APPLY_DEDUP_TTL_SECONDS = 10 * 60; // > worst-case first attempt (~60s trigger + 6m apply)
+function applyDedupKey(appBlockId: string, sha: string): string {
+  // Reuse the block rate-limit key family (same convention as workflow-completed).
+  return `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:apply:${appBlockId}:${sha}`;
+}
+async function markApplyTriggered(appBlockId: string, sha: string): Promise<boolean> {
+  try {
+    // true = newly set (first time → apply); false = key already present (replay).
+    return await redis.setNxKeepTtlWithEx(
+      applyDedupKey(appBlockId, sha) as never,
+      '1',
+      APPLY_DEDUP_TTL_SECONDS
+    );
+  } catch {
+    // Fail OPEN: unlike workflow-completed (which fails closed to avoid
+    // double-billing), a Redis incident here must not block a real deploy.
+    // The HMAC secret + imageRef↔slug/sha binding already bound the blast
+    // radius, so losing replay-dedup during an outage is the lesser evil.
+    return true;
+  }
+}
+async function clearApplyMark(appBlockId: string, sha: string): Promise<void> {
+  // Free the dedup slot after a definitive apply failure so a same-sha retry
+  // isn't suppressed within the TTL window. Best-effort; the TTL is the backstop.
+  try {
+    await redis.del(applyDedupKey(appBlockId, sha) as never);
+  } catch {
+    // swallow — the TTL will release the slot regardless.
+  }
+}
+
 export default withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -98,6 +154,15 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 
   if (!verifySignature(rawBody, req.headers['x-appblocks-signature'])) {
     res.status(401).json({ error: 'Bad signature' });
+    return;
+  }
+
+  // Kill switch: honour the appBlocks flag like the sibling webhooks
+  // (git-push, workflow-completed). When the substrate is dark, no legitimate
+  // build callback should fire — refuse so the apply/deploy chain can't run
+  // independent of the flag. Server-context Flipt eval, matching the siblings.
+  if (!(await isFlipt('app-blocks-enabled'))) {
+    res.status(503).json({ error: 'App Blocks not enabled' });
     return;
   }
 
@@ -140,6 +205,14 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
+  // Replay guard: only run the apply path once per (appBlockId, sha) per
+  // window. A replayed success callback short-circuits here before triggering
+  // another apply Job or touching commit status.
+  if (!(await markApplyTriggered(body.appBlockId, body.sha))) {
+    res.status(200).json({ ok: true, applied: false, reason: 'duplicate callback (replay-guarded)' });
+    return;
+  }
+
   // Build succeeded — flip commit status to success on build, then start
   // the apply phase and pend commit status on deploy.
   await safe(setCommitStatus, {
@@ -166,6 +239,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       imageRef: body.imageRef,
     });
   } catch (e) {
+    // Job creation failed — no watcher will run to clear the dedup mark, so
+    // free it here or a transient k8s hiccup would wedge same-sha retries for
+    // the full TTL (symmetrical with the watcher's clear-on-failed).
+    await clearApplyMark(body.appBlockId, body.sha);
     await safe(setCommitStatus, {
       slug: body.slug,
       sha: body.sha,
@@ -230,7 +307,14 @@ async function watchApplyJobAndRecord(args: {
     } else {
       // Failure or timeout — leave the existing currentVersionDeployedAt
       // alone (it correctly reflects the LAST successful deploy, not the
-      // failed/in-flight one). Flip commit status so the dev sees red.
+      // failed/in-flight one). On a DEFINITIVE failure, free the replay-dedup
+      // slot so a same-sha retry isn't suppressed within the TTL window; on a
+      // 'timeout' leave it (the Job may still be running — let the TTL release
+      // it rather than race a re-trigger against an in-flight apply).
+      if (outcome === 'failed') {
+        await clearApplyMark(args.appBlockId, args.sha);
+      }
+      // Flip commit status so the dev sees red.
       await safe(setCommitStatus, {
         slug: args.slug,
         sha: args.sha,
