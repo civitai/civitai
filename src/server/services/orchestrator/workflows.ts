@@ -30,6 +30,8 @@ import {
   throwBadRequestError,
   throwInsufficientFundsError,
   throwInternalServerError,
+  throwNotFoundError,
+  throwRateLimitError,
 } from '~/server/utils/errorHandling';
 
 export async function queryWorkflows({
@@ -59,9 +61,20 @@ export async function queryWorkflows({
         throw throwAuthorizationError(error.detail);
       case 403:
         throw throwInsufficientFundsError(error.detail);
+      case 429:
+        throw throwRateLimitError(error.detail);
+      case 404:
+        // Preserve not-found semantics on the read paths (a deleted/not-owned
+        // workflowId) rather than flattening to BAD_REQUEST below.
+        throw throwNotFoundError(error.detail);
       default:
         if (error.detail?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');
+        // An unhandled 4xx is a client/validation fault (e.g. a 404 on a deleted or
+        // not-owned workflow) — surface as 4xx, not a re-thrown raw error that tRPC
+        // maps to 500. Genuine 5xx / status-less failures stay a server error.
+        if (typeof error.status === 'number' && error.status >= 400 && error.status < 500)
+          throw throwBadRequestError(error.detail);
         throw error;
     }
   }
@@ -85,9 +98,20 @@ export async function getWorkflow({
         throw throwAuthorizationError(error.detail);
       case 403:
         throw throwInsufficientFundsError(error.detail);
+      case 429:
+        throw throwRateLimitError(error.detail);
+      case 404:
+        // Preserve not-found semantics on the read paths (a deleted/not-owned
+        // workflowId) rather than flattening to BAD_REQUEST below.
+        throw throwNotFoundError(error.detail);
       default:
         if (error.detail?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');
+        // An unhandled 4xx is a client/validation fault (e.g. a 404 on a deleted or
+        // not-owned workflow) — surface as 4xx, not a re-thrown raw error that tRPC
+        // maps to 500. Genuine 5xx / status-less failures stay a server error.
+        if (typeof error.status === 'number' && error.status >= 400 && error.status < 500)
+          throw throwBadRequestError(error.detail);
         throw error;
     }
   }
@@ -159,11 +183,24 @@ export async function submitWorkflow({
         throw throwAuthorizationError(message);
       case 403:
         throw throwInsufficientFundsError(message);
+      case 429:
+        // Preserve rate-limit semantics: TOO_MANY_REQUESTS (not a flattened
+        // BAD_REQUEST), so the client can back off AND the tRPC onError Axiom-skip
+        // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
+        throw throwRateLimitError(message);
       case 500:
         throw throwInternalServerError(message);
       default:
         if (message?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');
+        // An unhandled 4xx from the orchestrator is a client/validation fault
+        // (e.g. "<resource> is not enabled for generation. Please contact …"),
+        // not a server error. Surface it as a 4xx instead of re-throwing a raw
+        // error that tRPC maps to INTERNAL_SERVER_ERROR (500) — that misclassified
+        // generate/whatIf validation rejections as the app's own 500s. Genuine
+        // upstream 5xx / status-less failures still fall through to a server error.
+        if (typeof response.status === 'number' && response.status >= 400 && response.status < 500)
+          throw throwBadRequestError(message);
         throw error;
     }
   }
