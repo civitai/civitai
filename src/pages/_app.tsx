@@ -312,6 +312,21 @@ function MyApp(props: CustomAppProps) {
 //   };
 // };
 const baseUrl = process.env.NEXTAUTH_URL_INTERNAL ?? env.NEXT_PUBLIC_BASE_URL;
+// Bound the server-side self-fetch to `/api/user/settings` so a slow/hung apex
+// Service endpoint can't stall every SSR render's critical path. The endpoint
+// does session + settings + a 3-way Promise.all (tos/announcements/follows) —
+// several DB/redis round-trips — so under rollout load it can be slow-but-
+// successful. 8s sits well under the gateway/kubelet ceilings but only trips on
+// a genuine hang (don't abort a fetch that would have succeeded → needless
+// degraded render). Env-overridable for tuning. (Confirm P99 from Tempo.)
+// Clamp to a positive floor: `AbortSignal.timeout()` throws RangeError on a
+// negative value, so a fat-fingered/negative env override (e.g. `-1`) would
+// throw on EVERY render and silently force the permanent-degrade path. Floor at
+// 1s; a too-low (but positive) value at worst over-degrades, it can't crash.
+const SETTINGS_FETCH_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.APP_SETTINGS_FETCH_TIMEOUT_MS) || 8000
+);
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
   const { req: request } = appContext.ctx;
@@ -343,21 +358,82 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // Read the verified-bot header set by botDetectionMiddleware.
   const verifiedBot = parseVerifiedBotHeader(request.headers[VERIFIED_BOT_HEADER]);
 
-  const { settings, session, tosUpdate, announcements, following } = await fetch(
-    `${baseUrl as string}/api/user/settings`,
-    {
+  // Self-fetch the pod's own apex Service for the per-user settings bootstrap.
+  // This sits on EVERY SSR page render's critical path with no resolver behind
+  // it, so any failure here (fetch reject — ECONNREFUSED/ECONNRESET from a
+  // churning keep-alive socket — timeout/abort, non-OK status, or a `res.json()`
+  // reject) must NOT throw out of `getInitialProps`: that would surface a
+  // user-facing 500 with no app error log. Degrade to the anonymous/no-settings
+  // shape instead; the downstream consumers already tolerate it (`settings`
+  // undefined → the client `user.getSettings` query self-heals; `session` null →
+  // anon render; the optional seeds are `enabled: !!x` gated).
+  // The success-path shape is identical to before; on failure we fall back to
+  // the anonymous/no-settings shape. `settings` keeps its original
+  // `UserContentSettings` type (downstream consumers already treat an undefined
+  // runtime value as "no snapshot" — see the `if (session?.user && settings)`
+  // gate and `initialData: settings` below), so the fallback `undefined` matches
+  // the documented failed-snapshot path without widening any downstream type.
+  type SettingsBootstrap = {
+    settings: UserContentSettings;
+    tosUpdate?: CheckTosUpdateResult;
+    announcements?: AnnouncementsSeed;
+    following?: number[];
+    session: Session | null;
+  };
+  let settingsBootstrap: SettingsBootstrap;
+  // True only on the DEGRADED fallback path (we couldn't reach/parse the
+  // settings endpoint). Distinct from a SUCCESSFUL fetch that returned
+  // `session: null` (genuinely expired/invalid token). The two look identical in
+  // the destructured shape below (both have `session: null`) but must be treated
+  // differently for the auth cookie — see the cookie carve-out near the return.
+  let settingsDegraded = false;
+  try {
+    const res = await fetch(`${baseUrl as string}/api/user/settings`, {
       headers: { ...request.headers } as HeadersInit,
+      signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`settings fetch returned ${res.status}`);
+    const data = (await res.json()) as SettingsBootstrap;
+    // The endpoint's OWN internal catch swallows transient errors (e.g. a DB
+    // blip on a draining pod mid-roll) into a SUCCESSFUL `200 {}` — a body with
+    // NO `session` key. That sails past the `!res.ok` guard but carries no
+    // authoritative session, so treating it as a real result would delete the
+    // auth cookie (key absent ≠ `session: null`) and log the user out — the exact
+    // vector this fix exists to kill. Distinguish on KEY PRESENCE: a genuinely
+    // logged-out user gets `session: null` (key present → not degraded, cookie
+    // cleanup is correct); an internal swallow gets `{}` (key absent → degrade,
+    // preserve the cookie). `'session' in data` is the precise discriminator.
+    if (!data || typeof data !== 'object' || !('session' in data)) {
+      throw new Error('settings fetch returned no session payload (endpoint-swallowed error)');
     }
-  ).then(async (res) => {
-    const data: {
-      settings: UserContentSettings;
-      tosUpdate?: CheckTosUpdateResult;
-      announcements?: AnnouncementsSeed;
-      following?: number[];
-      session: Session | null;
-    } = await res.json();
-    return data;
-  });
+    settingsBootstrap = data;
+  } catch (e) {
+    settingsDegraded = true;
+    // Observable but non-fatal: log concisely and fall through to a safe render.
+    // The structured marker `[_app] settings bootstrap fetch failed` is the
+    // stable greppable string and the ONLY alertable signal — a genuinely-broken
+    // settings endpoint mass-degrades every SSR render with NO 5xx spike (we
+    // swallow the throw), so it would otherwise be silent. A Loki log-rate alert
+    // on this marker is wired on the datapacket-talos side.
+    // NB: deliberately NO prom-client metric here — `_app.tsx` runs in BOTH the
+    // client and server bundles, and importing `~/server/prom/client` (even
+    // dynamically) pulls `prom-client` → Node built-ins (`tls`/`v8`) into the
+    // CLIENT bundle and breaks `next build` ("Can't resolve 'tls'/'v8'"). The
+    // greppable warn + Loki alert is the agreed signal.
+    console.warn(
+      `[_app] settings bootstrap fetch failed, rendering without it: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
+    settingsBootstrap = {
+      settings: undefined as unknown as UserContentSettings,
+      tosUpdate: undefined,
+      announcements: undefined,
+      following: undefined,
+      session: null,
+    };
+  }
+  const { settings, session, tosUpdate, announcements, following } = settingsBootstrap;
   // Pass these via the request so we can use them in SSR. Resolve the per-user
   // feature flags and the global (redis-cached, identical-for-all-users) browsing
   // setting addons in PARALLEL — neither depends on the other and both sit on
@@ -403,7 +479,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
-  } else if (hasAuthCookie) {
+  } else if (hasAuthCookie && !settingsDegraded) {
+    // Only clear the auth cookie when the settings fetch SUCCEEDED and authoritatively
+    // returned no session — i.e. the token is genuinely expired/invalid, so cleaning up
+    // the stale cookie is correct. On the DEGRADED path we never reached the endpoint, so
+    // we DON'T KNOW the session: deleting the cookie here would durably log out a
+    // valid user (worse than the retryable failure this fix exists to soften). Don't
+    // conflate "couldn't reach settings" with "token invalid" — preserve the cookie and
+    // let the client refetch (the SessionProvider seed below already yields `undefined`
+    // → client refetch when hasAuthCookie is true and session is null).
     deleteCookie(civitaiTokenCookieName, appContext.ctx);
     hasAuthCookie = false;
   }
