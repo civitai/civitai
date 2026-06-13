@@ -29,7 +29,10 @@ function withApiMetrics(
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     instrumentApiResponse(req, res);
-    return handler(req, res);
+    // `await` without returning so this closure is Promise<void> — withAxiom's
+    // AxiomApiHandler overload requires that, and withAxiom already discards a
+    // handler's return value (same shape the 6 wrappers below rely on).
+    await handler(req, res);
   });
 }
 
