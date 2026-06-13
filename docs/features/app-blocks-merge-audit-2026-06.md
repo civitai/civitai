@@ -98,8 +98,11 @@ the role list is only a Flipt-down fallback. The flag description itself documen
   `db:generate` and commit.
 - `invalidateModelCache` uses `scanIterator` (the #2434 SCAN-bust pattern) — but only on
   mod write paths, ≤3 keys. Prefer a deterministic multi-DEL of the known slot keys.
-- Global change: tRPC body limit raised 17mb → 72mb for all requests (W1 ZIP uploads);
-  server-side cap enforced separately. Note for memory budget.
+- ~~Global change: tRPC body limit raised 17mb → 72mb for all requests~~ — **RESOLVED**:
+  the W1 bundle upload moved to a dedicated `POST /api/blocks/submit-version` route
+  (72mb, ModEndpoint mod-gated + appBlocks-flag-gated); the shared `/api/trpc/[trpc]`
+  route is back to 17mb. `submitVersion` was the only tRPC path needing >17mb (KV
+  `storage.set` is capped at 64KB).
 - Dead deps: `@civitai/app-sdk`, `@civitai/blocks-react` declared but never imported
   (comment references only) — no bundle impact; confirm intentional.
 - Smaller: `git-push` `sha` lacks hex-shape validation; `workflow-completed` returns 200

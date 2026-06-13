@@ -22,6 +22,7 @@ import {
 } from '@tabler/icons-react';
 import JSZip from 'jszip';
 import Link from 'next/link';
+import { useMutation } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
@@ -208,7 +209,27 @@ export default function SubmitAppPage() {
   );
   const existingPending = pendingQuery.data?.pending ?? null;
 
-  const submitMutation = trpc.blocks.submitVersion.useMutation({
+  // The bundle upload goes to the dedicated /api/blocks/submit-version route
+  // (72mb body limit) rather than tRPC, so the shared tRPC route stays at
+  // 17mb. The route is moderator-gated + appBlocks-flag-gated server-side.
+  const submitMutation = useMutation({
+    mutationFn: async (input: { bundleBase64: string }) => {
+      const res = await fetch('/api/blocks/submit-version', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        publishRequestId?: string;
+        slug?: string;
+        version?: string;
+        message?: string;
+      };
+      if (!res.ok || !data.publishRequestId || !data.slug || !data.version) {
+        throw new Error(data.message ?? `Submission failed (${res.status})`);
+      }
+      return { publishRequestId: data.publishRequestId, slug: data.slug, version: data.version };
+    },
     onSuccess: (result) => {
       setSubmitted({
         publishRequestId: result.publishRequestId,
@@ -217,7 +238,7 @@ export default function SubmitAppPage() {
       });
     },
     onError: (err) => {
-      showErrorNotification({ title: 'Submission failed', error: new Error(err.message) });
+      showErrorNotification({ title: 'Submission failed', error: err as Error });
     },
   });
 
