@@ -1,17 +1,33 @@
 import { createHmac } from 'crypto';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// withAxiom is a passthrough in tests.
+vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
+
 // The handler module imports ~/server/db/client (Prisma init at module load).
-// We only exercise the pure expectedImageRef + verifySignature helpers, so stub
-// the db + pipeline deps to keep the import side-effect-free.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
+// The pure helper tests don't touch the db; the handler-level tests below need
+// dbWrite.appBlock.update, so give it a mockable surface.
+const mockUpdate = vi.hoisted(() => vi.fn());
+vi.mock('~/server/db/client', () => ({
+  dbRead: {},
+  dbWrite: { appBlock: { update: mockUpdate } },
+}));
 // callbackPendingRedisKey is a pure key builder used by consumePendingRun; the
 // real module pulls in env at import, so stub it with a deterministic key shape.
+const mockTriggerApply = vi.hoisted(() => vi.fn());
+const mockWaitForApplyJob = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
-  triggerApply: vi.fn(),
-  waitForApplyJob: vi.fn(),
+  triggerApply: mockTriggerApply,
+  waitForApplyJob: mockWaitForApplyJob,
   callbackPendingRedisKey: (slug: string, sha: string, appBlockId: string) =>
     `system:blocks:callback:pending:${slug}:${sha}:${appBlockId}`,
+}));
+
+const mockSetCommitStatus = vi.hoisted(() => vi.fn());
+vi.mock('~/server/services/blocks/forgejo.service', () => ({
+  setCommitStatus: mockSetCommitStatus,
 }));
 
 // Mockable sysRedis.getDel so the consume-once cross-check can be exercised.
@@ -29,7 +45,7 @@ vi.mock('~/server/redis/client', () => ({
 const mockEnv = vi.hoisted(() => ({} as Record<string, string | undefined>));
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 
-import {
+import handler, {
   checkCallbackTimestamp,
   consumePendingRun,
   expectedImageRef,
@@ -217,5 +233,130 @@ describe('build-callback consumePendingRun (F5 cross-check)', () => {
     mockGetDel.mockResolvedValueOnce('1').mockResolvedValueOnce(null);
     await expect(consumePendingRun('slug-a', SHA, APB)).resolves.toBe('consumed');
     await expect(consumePendingRun('slug-a', SHA, APB)).resolves.toBe('missing');
+  });
+});
+
+/**
+ * F5-T — HANDLER-LEVEL coverage that the pure-function tests can't reach: the
+ * enforce-vs-report-only branch on a MISSING pending-run marker, and the
+ * double-callback (consume-once) outcome. These drive the real handler so the
+ * 409-under-enforce and the GETDEL-consume path are exercised end to end.
+ */
+describe('build-callback handler — F5 pending-run enforcement', () => {
+  const SECRET = 'callback-secret';
+  const SLUG = 'generate-from-model';
+  const SHA = 'a'.repeat(40);
+  const APB = 'apb_01JABCDEFGHJKMNPQRSTVWXYZ0';
+  const PENDING_KEY = `system:blocks:callback:pending:${SLUG}:${SHA}:${APB}`;
+
+  function callbackBody(over: Record<string, unknown> = {}): Buffer {
+    return Buffer.from(
+      JSON.stringify({
+        slug: SLUG,
+        sha: SHA,
+        appBlockId: APB,
+        imageRef: expectedImageRef(SLUG, SHA),
+        status: 'Succeeded',
+        ...over,
+      })
+    );
+  }
+
+  function makeReq(raw: Buffer): NextApiRequest {
+    const stream = Readable.from([raw]) as unknown as NextApiRequest;
+    const sig = createHmac('sha256', SECRET).update(raw).digest('hex');
+    stream.method = 'POST';
+    stream.headers = { 'x-appblocks-signature': sig };
+    return stream;
+  }
+
+  function makeRes(): NextApiResponse & { _status: number; _body: unknown } {
+    const res = {
+      _status: 0,
+      _body: null as unknown,
+      status(this: any, n: number) {
+        this._status = n;
+        return this;
+      },
+      json(this: any, b: unknown) {
+        this._body = b;
+        return this;
+      },
+      setHeader: vi.fn(),
+      end: vi.fn(),
+    };
+    return res as unknown as NextApiResponse & { _status: number; _body: unknown };
+  }
+
+  // In-memory store so GETDEL round-trips (present → consumed → missing).
+  let store: Set<string>;
+
+  beforeEach(() => {
+    store = new Set<string>();
+    mockEnv.BLOCK_BUILD_CALLBACK_SECRET = SECRET;
+    mockEnv.BLOCK_BUILD_CALLBACK_SECRET_NEXT = undefined;
+    mockEnv.BLOCK_CALLBACK_REQUIRE_PENDING_RUN = undefined;
+
+    mockGetDel.mockReset();
+    mockGetDel.mockImplementation(async (key: string) => {
+      if (store.has(key)) {
+        store.delete(key);
+        return '1';
+      }
+      return null;
+    });
+
+    mockTriggerApply.mockReset();
+    mockTriggerApply.mockResolvedValue({ name: 'apply-job-1' });
+    mockWaitForApplyJob.mockReset();
+    // Background watcher: resolve fast so no unhandled rejection escapes.
+    mockWaitForApplyJob.mockResolvedValue('succeeded');
+    mockUpdate.mockReset();
+    mockUpdate.mockResolvedValue({});
+    mockSetCommitStatus.mockReset();
+    mockSetCommitStatus.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    mockEnv.BLOCK_BUILD_CALLBACK_SECRET = undefined;
+    mockEnv.BLOCK_BUILD_CALLBACK_SECRET_NEXT = undefined;
+    mockEnv.BLOCK_CALLBACK_REQUIRE_PENDING_RUN = undefined;
+  });
+
+  it('REJECTS a missing-marker callback with 409 when enforce is on', async () => {
+    mockEnv.BLOCK_CALLBACK_REQUIRE_PENDING_RUN = 'true';
+    // store is empty → marker missing.
+    const res = makeRes();
+    await handler(makeReq(callbackBody()), res);
+    expect(res._status).toBe(409);
+    expect(mockTriggerApply).not.toHaveBeenCalled();
+  });
+
+  it('CONTINUES (report-only) on a missing marker when enforce is unset', async () => {
+    // store empty → missing, but enforce flag unset → proceed to apply.
+    const res = makeRes();
+    await handler(makeReq(callbackBody()), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ ok: true, applied: true });
+    expect(mockTriggerApply).toHaveBeenCalledTimes(1);
+  });
+
+  it('double-callback: first consumes the marker + applies; second is missing → 409 under enforce', async () => {
+    mockEnv.BLOCK_CALLBACK_REQUIRE_PENDING_RUN = 'true';
+    store.add(PENDING_KEY); // genuine outstanding run from triggerBuild.
+
+    // First callback: marker present → consumed → applies.
+    const res1 = makeRes();
+    await handler(makeReq(callbackBody()), res1);
+    expect(res1._status).toBe(200);
+    expect(res1._body).toMatchObject({ ok: true, applied: true });
+    expect(store.has(PENDING_KEY)).toBe(false); // consume-once.
+    expect(mockTriggerApply).toHaveBeenCalledTimes(1);
+
+    // Second callback for the same (slug,sha,appBlockId): marker gone → 409.
+    const res2 = makeRes();
+    await handler(makeReq(callbackBody()), res2);
+    expect(res2._status).toBe(409);
+    expect(mockTriggerApply).toHaveBeenCalledTimes(1); // no second apply.
   });
 });

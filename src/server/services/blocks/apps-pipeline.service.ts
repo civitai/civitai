@@ -97,10 +97,16 @@ export type TriggerBuildArgs = {
   callbackUrl: string;
 };
 
-// TTL on the build-callback pending-run marker. Comfortably exceeds the ~20m
-// pipeline timeout so a slow-but-legit build's callback still finds its marker,
-// while a far-future replay finds it expired. See callbackPendingRedisKey.
-const CALLBACK_PENDING_TTL_SECONDS = 1800;
+// TTL on the build-callback pending-run marker (F5-C). The marker is written
+// when triggerBuild POSTs (PipelineRun *created*), so worst-case wall time =
+// queue/PVC-provision latency + the per-run pipeline timeout. That per-run
+// timeout is 20m (datapacket-talos app-blocks-trigger.py PipelineRun spec
+// `timeouts.pipeline: 20m`). The previous 1800s (30m) left only ~10m of headroom
+// for queue/provision — a queued-but-SUCCESSFUL build whose callback arrives
+// after expiry would 409 under enforce. 3600s (1h) gives comfortable margin over
+// (queue + 20m) while still letting a far-future replay find the marker expired.
+// See callbackPendingRedisKey.
+const CALLBACK_PENDING_TTL_SECONDS = 3600;
 
 /**
  * Redis key for the consume-once build-callback pending-run marker (F5).

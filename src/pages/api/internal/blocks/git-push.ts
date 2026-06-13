@@ -138,11 +138,33 @@ const GITPUSH_DELIVERY_TTL_SECONDS = 600;
 const DELIVERY_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
 
 /**
+ * Build the Redis key for a delivery id, or null if the id is absent/malformed.
+ * Shared by checkDeliveryNonce (claim) and releaseDeliveryNonce (release). The
+ * templated return type narrows to the sysRedis key union so .set/.del typecheck.
+ */
+function deliveryNonceKey(
+  deliveryHeader: unknown
+): `${typeof REDIS_SYS_KEYS.BLOCKS.GITPUSH_DELIVERY}:${string}` | null {
+  const id = Array.isArray(deliveryHeader) ? deliveryHeader[0] : deliveryHeader;
+  if (typeof id !== 'string' || !DELIVERY_ID_RE.test(id)) return null;
+  return `${REDIS_SYS_KEYS.BLOCKS.GITPUSH_DELIVERY}:${id}`;
+}
+
+/**
  * Per-delivery dedup for Forgejo push webhooks (F5). SET NX EX on
  * `system:blocks:gitpush:delivery:<id>`: first delivery wins, a redelivery with
  * the same id is a duplicate. Returns 'first' (proceed), 'duplicate' (reject),
  * or 'skip' (header absent, or a Redis error — never block a legit push on a
  * Redis blip).
+ *
+ * F5-A — RETRY SAFETY: the nonce is CLAIMED here BEFORE downstream processing,
+ * but the handler RELEASES it (releaseDeliveryNonce) on every non-2xx response
+ * AFTER the claim, so a transient downstream failure (manifest fetch 400,
+ * triggerBuild 500, DB blip) that Forgejo re-delivers with the SAME id is
+ * retryable rather than permanently swallowed as a "duplicate". The nonce is
+ * KEPT on the success path so a duplicate of a *completed* delivery is still
+ * deduped, and on terminal legit-skip 200s (e.g. non-main ref) which Forgejo
+ * does not retry.
  *
  * HONEST LIMITATION: X-Gitea-Delivery is NOT covered by the body HMAC. This
  * catches naive duplicate re-deliveries but a determined replayer could swap
@@ -154,9 +176,8 @@ const DELIVERY_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
 export async function checkDeliveryNonce(
   deliveryHeader: unknown
 ): Promise<'first' | 'duplicate' | 'skip'> {
-  const id = Array.isArray(deliveryHeader) ? deliveryHeader[0] : deliveryHeader;
-  if (typeof id !== 'string' || !DELIVERY_ID_RE.test(id)) return 'skip';
-  const key = `${REDIS_SYS_KEYS.BLOCKS.GITPUSH_DELIVERY}:${id}` as const;
+  const key = deliveryNonceKey(deliveryHeader);
+  if (key === null) return 'skip';
   try {
     // With NX, node-redis returns 'OK' when the key was set (first delivery)
     // and null when it already existed (duplicate). The typed wrapper narrows
@@ -174,6 +195,28 @@ export async function checkDeliveryNonce(
       }`
     );
     return 'skip';
+  }
+}
+
+/**
+ * F5-A — release a previously-claimed delivery nonce so Forgejo's retry of a
+ * transiently-failed delivery (same X-Gitea-Delivery id) is allowed to process
+ * instead of being swallowed as a duplicate. Best-effort: a Redis error here is
+ * swallowed (the worst case degrades to the pre-fix behavior — the retry is
+ * deduped — never a hard failure of the response path).
+ */
+export async function releaseDeliveryNonce(deliveryHeader: unknown): Promise<void> {
+  const key = deliveryNonceKey(deliveryHeader);
+  if (key === null) return;
+  try {
+    await sysRedis.del(key);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[git-push] delivery-nonce DEL failed — retry of this delivery may be deduped: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
   }
 }
 
@@ -209,6 +252,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // with the handler's existing 200-skipped style). Header absent / Redis blip
   // → proceed (don't break a legit push). See checkDeliveryNonce for the honest
   // limitation: this header is NOT HMAC-covered.
+  //
+  // F5-A — the nonce is CLAIMED here but RELEASED (releaseDeliveryNonce) on every
+  // genuine non-2xx failure path below, so a transient downstream failure that
+  // Forgejo re-delivers with the same id is retryable rather than permanently
+  // swallowed. It is KEPT on success and on terminal legit-skip 200s.
   const deliveryHeader = req.headers['x-gitea-delivery'] ?? req.headers['x-forgejo-delivery'];
   const dedup = await checkDeliveryNonce(deliveryHeader);
   if (dedup === 'duplicate') {
@@ -220,10 +268,14 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   try {
     payload = JSON.parse(rawBody.toString('utf8')) as ForgejoPushPayload;
   } catch {
+    // Genuine failure response (4xx) — release the nonce so a Forgejo retry of
+    // the same delivery id is allowed (F5-A).
+    await releaseDeliveryNonce(deliveryHeader);
     res.status(400).json({ error: 'Invalid JSON' });
     return;
   }
   if (payload.ref !== 'refs/heads/main') {
+    // Terminal legit-skip 200 — Forgejo will NOT retry this; KEEP the nonce.
     res.status(200).json({ skipped: 'non-main branch', ref: payload.ref });
     return;
   }
@@ -233,6 +285,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // validated together — don't trust `repository.name` alone (M-WEBHOOK).
   const expectedRepo = parseExpectedRepo(payload.repository?.full_name, FORGEJO_ORG);
   if (!expectedRepo) {
+    await releaseDeliveryNonce(deliveryHeader);
     res.status(403).json({
       error: 'Unexpected or missing repository org',
       fullName: payload.repository?.full_name ?? null,
@@ -242,10 +295,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const slug = expectedRepo.slug;
   const sha = payload.after;
   if (!slug || !SLUG_RE.test(slug)) {
+    await releaseDeliveryNonce(deliveryHeader);
     res.status(400).json({ error: 'Invalid repo slug', slug });
     return;
   }
   if (!sha || sha.length < 40) {
+    await releaseDeliveryNonce(deliveryHeader);
     res.status(400).json({ error: 'Invalid commit sha' });
     return;
   }
@@ -264,6 +319,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     },
   });
   if (!appBlock) {
+    // The Forgejo commit raced ahead of the approve flow's DB insert — this is
+    // genuinely retryable once the row lands, so release the nonce (F5-A).
+    await releaseDeliveryNonce(deliveryHeader);
     res.status(404).json({ error: 'app_blocks row not found — re-run submitApp' });
     return;
   }
@@ -290,6 +348,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       stage: 'fetch-manifest',
       details: `block.manifest.json missing or unreachable: ${String(e).slice(0, 200)}`,
     });
+    // Forgejo unreachable / transient fetch failure is the canonical F5-A case —
+    // release the nonce so the redelivery can re-fetch.
+    await releaseDeliveryNonce(deliveryHeader);
     res.status(400).json({ error: 'Cannot fetch manifest', detail: String(e).slice(0, 240) });
     return;
   }
@@ -311,6 +372,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       stage: 'parse-manifest',
       details: 'block.manifest.json is not valid JSON',
     });
+    await releaseDeliveryNonce(deliveryHeader);
     res.status(400).json({ error: 'Invalid manifest JSON' });
     return;
   }
@@ -334,6 +396,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       stage: 'manifest-validation',
       details: validation.errors.slice(0, 5).join('; '),
     });
+    await releaseDeliveryNonce(deliveryHeader);
     res.status(400).json({ error: 'Invalid manifest', details: validation.errors });
     return;
   }
@@ -356,6 +419,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       stage: 'blockId-slug-mismatch',
       details: `manifest.blockId="${parsedManifest.blockId}" but repo slug="${slug}"`,
     });
+    await releaseDeliveryNonce(deliveryHeader);
     res.status(400).json({ error: 'blockId / slug mismatch' });
     return;
   }
@@ -376,6 +440,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       stage: 'iframe-src-mismatch',
       details: `manifest.iframe.src="${parsedManifest.iframe?.src ?? ''}" but expected "${expectedSrc}"`,
     });
+    await releaseDeliveryNonce(deliveryHeader);
     res.status(400).json({ error: 'iframe.src mismatch' });
     return;
   }
@@ -422,10 +487,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       stage: 'trigger-build',
       details: `triggerBuild() failed: ${String(e).slice(0, 200)}`,
     });
+    // Headline F5-A case: triggerBuild threw (Tekton receiver down, HMAC drift,
+    // network). The build never started, so Forgejo's redelivery MUST be able to
+    // retry — release the nonce before the 5xx.
+    await releaseDeliveryNonce(deliveryHeader);
     res.status(500).json({ error: 'Build trigger failed', detail: String(e).slice(0, 240) });
     return;
   }
 
+  // SUCCESS — keep the nonce so a duplicate of this *completed* delivery is
+  // deduped (the build is already in flight).
   res.status(200).json({ ok: true, slug, sha });
 });
 
