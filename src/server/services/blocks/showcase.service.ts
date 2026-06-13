@@ -4,6 +4,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Flags } from '~/shared/utils/flags';
 import {
   onlySelectableLevels,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 
@@ -20,15 +21,16 @@ const MAX_SHOWCASE_IMAGES = 6;
  * `BLOCK_INIT.context.showcaseImages` (IframeHost.tsx). Without this gate an
  * X-rated model would leak explicit image URLs + full prompts/seeds to
  * untrusted publisher code AND to viewers who opted out of NSFW (including
- * logged-out viewers). Anon viewers are forced to SFW server-side; the
- * caller-supplied `browsingLevel` is never trusted to widen an anon view.
+ * logged-out viewers). Anon viewers are forced to the platform's public (PG)
+ * level server-side; the caller-supplied `browsingLevel` is never trusted to
+ * widen an anon view.
  */
 export interface ShowcaseViewer {
   /** The viewer's user id, or null/undefined for anonymous / logged-out. */
   userId?: number | null;
   /**
    * The viewer's requested browsing-level flags (bitwise `NsfwLevel`), as the
-   * model-page gallery sends them. Ignored for anon viewers (forced to SFW).
+   * model-page gallery sends them. Ignored for anon viewers (forced to public).
    * When omitted for a logged-in viewer we fall back to SFW (safe default).
    */
   browsingLevel?: number;
@@ -37,14 +39,17 @@ export interface ShowcaseViewer {
 /**
  * Resolve the bitwise browsing-level flags a viewer is actually allowed to
  * see, mirroring the model-page feed's gating but fail-closed:
- *   - anonymous / logged-out  → SFW only (PG + PG13), regardless of what was
- *     requested. Untrusted callers (and the iframe) can't widen this.
+ *   - anonymous / logged-out  → public only (PG), regardless of what was
+ *     requested. This matches the platform's anon gate (`applyDomainFeature`
+ *     caps anon to `publicBrowsingLevelsFlag`), so the showcase can't surface
+ *     a level the model-page gallery wouldn't show that same anon viewer.
+ *     Untrusted callers (and the iframe) can't widen this.
  *   - logged-in               → the requested level, with unselectable bits
  *     (Blocked) stripped via `onlySelectableLevels`. Missing / zero falls back
  *     to SFW so a viewer with no settings yet never gets NSFW by default.
  */
 function resolveAllowedBrowsingLevel(viewer?: ShowcaseViewer): number {
-  if (!viewer?.userId) return sfwBrowsingLevelsFlag;
+  if (!viewer?.userId) return publicBrowsingLevelsFlag;
   const requested = onlySelectableLevels(viewer.browsingLevel ?? 0);
   return requested > 0 ? requested : sfwBrowsingLevelsFlag;
 }

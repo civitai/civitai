@@ -118,7 +118,8 @@ describe('getModelShowcaseImages', () => {
 
   // NsfwLevel bitwise flags (mirrors src/server/common/enums.ts):
   //   PG = 1, PG13 = 2, R = 4, X = 8, XXX = 16, Blocked = 32.
-  // SFW (the anon-forced level) = PG | PG13 = 3.
+  // Anon is forced to the platform public level = PG = 1 (matches the model-page
+  // gallery's anon gate); SFW (the logged-in fallback) = PG | PG13 = 3.
   const PG = 1;
   const PG13 = 2;
   const R = 4;
@@ -127,7 +128,7 @@ describe('getModelShowcaseImages', () => {
   const Blocked = 32;
 
   describe('browsing-level filtering (security: NSFW leak into publisher iframe)', () => {
-    it('anon viewer (no viewer arg) gets only SFW images — NSFW dropped', async () => {
+    it('anon viewer (no viewer arg) gets only public (PG) images — PG13+NSFW dropped', async () => {
       mockDbRead.imageResourceNew.findMany.mockResolvedValue([
         imageRow(1, 100, {}, { nsfwLevel: PG }),
         imageRow(2, 90, {}, { nsfwLevel: PG13 }),
@@ -135,18 +136,21 @@ describe('getModelShowcaseImages', () => {
         imageRow(4, 70, {}, { nsfwLevel: X }),
         imageRow(5, 60, {}, { nsfwLevel: XXX }),
       ]);
-      // No viewer → anon → SFW only (PG + PG13).
+      // No viewer → anon → public only (PG). PG13 is excluded too — anon must
+      // not see in the iframe a level the model-page gallery wouldn't show them.
       const result = await getModelShowcaseImages(99);
-      expect(result.map((i) => i.id)).toEqual([1, 2]);
+      expect(result.map((i) => i.id)).toEqual([1]);
     });
 
-    it('anon viewer cannot widen via a passed browsingLevel (forced SFW)', async () => {
+    it('anon viewer cannot widen via a passed browsingLevel (forced public/PG)', async () => {
       mockDbRead.imageResourceNew.findMany.mockResolvedValue([
         imageRow(1, 100, {}, { nsfwLevel: PG }),
-        imageRow(2, 90, {}, { nsfwLevel: X }),
-        imageRow(3, 80, {}, { nsfwLevel: XXX }),
+        imageRow(2, 95, {}, { nsfwLevel: PG13 }),
+        imageRow(3, 90, {}, { nsfwLevel: X }),
+        imageRow(4, 80, {}, { nsfwLevel: XXX }),
       ]);
-      // userId null but a wide browsingLevel requested — must be ignored.
+      // userId null but a wide browsingLevel requested — must be ignored; even
+      // PG13 is dropped (anon is capped to public/PG, not SFW).
       const result = await getModelShowcaseImages(99, {
         userId: null,
         browsingLevel: PG | PG13 | R | X | XXX,
@@ -244,12 +248,14 @@ describe('getModelShowcaseImages', () => {
         imageRow(107, 994, {}, { nsfwLevel: X }),
         imageRow(1, 50, {}, { nsfwLevel: PG }),
         imageRow(2, 40, {}, { nsfwLevel: PG }),
-        imageRow(3, 30, {}, { nsfwLevel: PG13 }),
+        imageRow(3, 30, {}, { nsfwLevel: PG }),
         imageRow(4, 20, {}, { nsfwLevel: PG }),
-        imageRow(5, 10, {}, { nsfwLevel: PG13 }),
+        imageRow(5, 10, {}, { nsfwLevel: PG }),
         imageRow(6, 5, {}, { nsfwLevel: PG }),
       ]);
-      const result = await getModelShowcaseImages(99); // anon → SFW
+      // anon → public (PG). The 7 high-reaction X images must be filtered out
+      // BEFORE the 6-image cap, so the lower-reaction PG images aren't starved.
+      const result = await getModelShowcaseImages(99);
       expect(result.map((i) => i.id)).toEqual([1, 2, 3, 4, 5, 6]);
     });
   });
