@@ -164,6 +164,14 @@ export async function submitWorkflow({
       default:
         if (message?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');
+        // An unhandled 4xx from the orchestrator is a client/validation fault
+        // (e.g. "<resource> is not enabled for generation. Please contact …"),
+        // not a server error. Surface it as a 4xx instead of re-throwing a raw
+        // error that tRPC maps to INTERNAL_SERVER_ERROR (500) — that misclassified
+        // generate/whatIf validation rejections as the app's own 500s. Genuine
+        // upstream 5xx / status-less failures still fall through to a server error.
+        if (typeof response.status === 'number' && response.status >= 400 && response.status < 500)
+          throw throwBadRequestError(message);
         throw error;
     }
   }
