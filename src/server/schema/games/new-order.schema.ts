@@ -77,10 +77,24 @@ export const getHistorySchema = z.object({
   limit: z.number().optional().default(DEFAULT_PAGE_SIZE),
   cursor: z
     .object({
-      createdAt: z.coerce.date(),
+      // ClickHouse (JSONEachRow) serializes this DateTime as a bare
+      // "YYYY-MM-DD HH:MM:SS" with no zone; coercing that with `new Date()` would
+      // parse it as POD-LOCAL time. Force UTC so the keyset boundary is exact
+      // regardless of pod TZ (pods are UTC today — don't silently depend on it).
+      // An ISO/Z string or a Date instance passes through unchanged; anything
+      // unparseable fails z.coerce.date() → .catch() below → page 1.
+      createdAt: z.preprocess(
+        (v) =>
+          typeof v === 'string' && !/[zZ]|[+-]\d\d:?\d\d$/.test(v) ? `${v.replace(' ', 'T')}Z` : v,
+        z.coerce.date()
+      ),
       imageId: z.number(),
     })
-    .optional(),
+    .optional()
+    // A legacy (pre-deploy, Date-shaped) or otherwise-invalid cursor degrades to
+    // page 1 instead of a hard 400 — graceful across the canary window — and a
+    // crafted cursor can never reach the query (dropped here, never interpolated).
+    .catch(undefined),
   status: z
     .enum(NewOrderImageRatingStatus)
     .transform((val) => {
