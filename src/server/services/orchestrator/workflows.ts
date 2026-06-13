@@ -30,6 +30,7 @@ import {
   throwBadRequestError,
   throwInsufficientFundsError,
   throwInternalServerError,
+  throwNotFoundError,
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
 
@@ -62,6 +63,10 @@ export async function queryWorkflows({
         throw throwInsufficientFundsError(error.detail);
       case 429:
         throw throwRateLimitError(error.detail);
+      case 404:
+        // Preserve not-found semantics on the read paths (a deleted/not-owned
+        // workflowId) rather than flattening to BAD_REQUEST below.
+        throw throwNotFoundError(error.detail);
       default:
         if (error.detail?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');
@@ -95,6 +100,10 @@ export async function getWorkflow({
         throw throwInsufficientFundsError(error.detail);
       case 429:
         throw throwRateLimitError(error.detail);
+      case 404:
+        // Preserve not-found semantics on the read paths (a deleted/not-owned
+        // workflowId) rather than flattening to BAD_REQUEST below.
+        throw throwNotFoundError(error.detail);
       default:
         if (error.detail?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');
