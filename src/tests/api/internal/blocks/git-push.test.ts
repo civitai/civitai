@@ -361,6 +361,49 @@ describe('git-push handler — F5-A nonce release on downstream failure', () => 
     expect(store.has(DELIVERY_KEY)).toBe(true);
   });
 
+  it('releases the nonce when dbWrite.appBlock.update throws (R2-F5-A1), then re-processes on retry', async () => {
+    // R2-F5-A1 (the exact gap the per-path releases missed): the
+    // dbWrite.appBlock.update is reached AFTER the nonce is claimed and BEFORE
+    // triggerBuild. If it throws (DB blip / pool exhaustion / replica
+    // promotion), withAxiom returns a 500 — and without the outer try/catch the
+    // nonce stays held, so Forgejo's same-id retry is swallowed as a duplicate
+    // and the build is permanently lost. The handler must release the nonce on
+    // this throw too. This is the test that would have caught R2-F5-A1.
+    process.env.NEXTAUTH_URL = 'https://civitai.test';
+
+    // --- Delivery #1: the DB update throws (transient DB failure) -------------
+    mockUpdate.mockRejectedValueOnce(new Error('connection pool exhausted'));
+    const res1 = makeRes();
+    // withAxiom is a passthrough in tests, so the throw propagates out of the
+    // handler (in prod withAxiom turns it into a 500). Assert it's non-2xx by
+    // confirming the success/skip responses were NOT sent AND the throw escaped.
+    await expect(handler(makeReq(pushBody()), res1)).rejects.toThrow(
+      'connection pool exhausted'
+    );
+    // Non-2xx: the success 200 body was never written.
+    expect(res1._status).not.toBe(200);
+    expect(res1._body).toBeNull();
+    // The DB update threw before triggerBuild ran.
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+    // ... AND the nonce key was released so a retry is allowed.
+    expect(mockDel).toHaveBeenCalledWith(DELIVERY_KEY);
+    expect(store.has(DELIVERY_KEY)).toBe(false);
+
+    // --- Delivery #2: SAME id, DB recovered → must PROCESS (not skip) ---------
+    mockUpdate.mockResolvedValueOnce({});
+    mockTriggerBuild.mockResolvedValueOnce({ name: 'pr-3' });
+    const res2 = makeRes();
+    await handler(makeReq(pushBody()), res2);
+
+    expect(res2._status).toBe(200);
+    expect(res2._body).toMatchObject({ ok: true, slug: SLUG, sha: SHA });
+    // The retry actually drove the build (NOT swallowed as a duplicate).
+    expect(mockTriggerBuild).toHaveBeenCalledTimes(1);
+    // The nonce is now held (success keeps it) so a 3rd identical delivery
+    // WOULD be deduped.
+    expect(store.has(DELIVERY_KEY)).toBe(true);
+  });
+
   it('KEEPS the nonce on success so a duplicate of a completed delivery is deduped', async () => {
     process.env.NEXTAUTH_URL = 'https://civitai.test';
     mockTriggerBuild.mockResolvedValue({ name: 'pr-2' });

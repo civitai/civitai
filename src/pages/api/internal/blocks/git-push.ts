@@ -264,240 +264,263 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  let payload: ForgejoPushPayload;
+  // F5-A (robust, future-proof): once the nonce is CLAIMED ('first'), ANY throw
+  // before we respond — the dbWrite.appBlock.update, triggerBuild, or any future
+  // un-awaited error — would otherwise return a 500 with the nonce still held,
+  // so Forgejo's same-X-Gitea-Delivery retry is swallowed as a "duplicate" and
+  // the build is permanently lost. Wrap the whole remaining handler body so a
+  // throw releases the nonce before propagating to withAxiom's 500. This
+  // replaces the brittle per-path releaseDeliveryNonce-on-throw approach that
+  // already missed the DB-update path once. The explicit releases that remain
+  // below are on transient EARLY-RETURN (non-throwing) 4xx paths so their
+  // redelivery can succeed; SUCCESS / duplicate-skip / non-main-ref deliberately
+  // KEEP the nonce.
   try {
-    payload = JSON.parse(rawBody.toString('utf8')) as ForgejoPushPayload;
-  } catch {
-    // Genuine failure response (4xx) — release the nonce so a Forgejo retry of
-    // the same delivery id is allowed (F5-A).
-    await releaseDeliveryNonce(deliveryHeader);
-    res.status(400).json({ error: 'Invalid JSON' });
-    return;
-  }
-  if (payload.ref !== 'refs/heads/main') {
-    // Terminal legit-skip 200 — Forgejo will NOT retry this; KEEP the nonce.
-    res.status(200).json({ skipped: 'non-main branch', ref: payload.ref });
-    return;
-  }
+    let payload: ForgejoPushPayload;
+    try {
+      payload = JSON.parse(rawBody.toString('utf8')) as ForgejoPushPayload;
+    } catch {
+      // Genuine failure response (4xx) — release the nonce so a Forgejo retry of
+      // the same delivery id is allowed (F5-A).
+      await releaseDeliveryNonce(deliveryHeader);
+      res.status(400).json({ error: 'Invalid JSON' });
+      return;
+    }
+    if (payload.ref !== 'refs/heads/main') {
+      // Terminal legit-skip 200 — Forgejo will NOT retry this; KEEP the nonce.
+      res.status(200).json({ skipped: 'non-main branch', ref: payload.ref });
+      return;
+    }
 
-  // Verify the push came from the canonical build-trigger org and derive the
-  // slug from `repository.full_name` (`<org>/<slug>`) so org + slug are
-  // validated together — don't trust `repository.name` alone (M-WEBHOOK).
-  const expectedRepo = parseExpectedRepo(payload.repository?.full_name, FORGEJO_ORG);
-  if (!expectedRepo) {
-    await releaseDeliveryNonce(deliveryHeader);
-    res.status(403).json({
-      error: 'Unexpected or missing repository org',
-      fullName: payload.repository?.full_name ?? null,
+    // Verify the push came from the canonical build-trigger org and derive the
+    // slug from `repository.full_name` (`<org>/<slug>`) so org + slug are
+    // validated together — don't trust `repository.name` alone (M-WEBHOOK).
+    const expectedRepo = parseExpectedRepo(payload.repository?.full_name, FORGEJO_ORG);
+    if (!expectedRepo) {
+      await releaseDeliveryNonce(deliveryHeader);
+      res.status(403).json({
+        error: 'Unexpected or missing repository org',
+        fullName: payload.repository?.full_name ?? null,
+      });
+      return;
+    }
+    const slug = expectedRepo.slug;
+    const sha = payload.after;
+    if (!slug || !SLUG_RE.test(slug)) {
+      await releaseDeliveryNonce(deliveryHeader);
+      res.status(400).json({ error: 'Invalid repo slug', slug });
+      return;
+    }
+    if (!sha || sha.length < 40) {
+      await releaseDeliveryNonce(deliveryHeader);
+      res.status(400).json({ error: 'Invalid commit sha' });
+      return;
+    }
+
+    // Look up the app_blocks row by (appId, blockId). Under W1 the row is
+    // pre-created in `approveRequest` before this webhook fires; if it's
+    // missing the Forgejo commit raced ahead of the approve flow's DB
+    // insert, so bail with 404 and the mod can re-approve.
+    const appBlock = await dbRead.appBlock.findFirst({
+      where: { blockId: slug },
+      select: {
+        id: true,
+        appId: true,
+        blockId: true,
+        app: { select: { id: true, allowedScopes: true, allowedOrigins: true } },
+      },
     });
-    return;
-  }
-  const slug = expectedRepo.slug;
-  const sha = payload.after;
-  if (!slug || !SLUG_RE.test(slug)) {
-    await releaseDeliveryNonce(deliveryHeader);
-    res.status(400).json({ error: 'Invalid repo slug', slug });
-    return;
-  }
-  if (!sha || sha.length < 40) {
-    await releaseDeliveryNonce(deliveryHeader);
-    res.status(400).json({ error: 'Invalid commit sha' });
-    return;
-  }
+    if (!appBlock) {
+      // The Forgejo commit raced ahead of the approve flow's DB insert — this is
+      // genuinely retryable once the row lands, so release the nonce (F5-A).
+      await releaseDeliveryNonce(deliveryHeader);
+      res.status(404).json({ error: 'app_blocks row not found — re-run submitApp' });
+      return;
+    }
 
-  // Look up the app_blocks row by (appId, blockId). Under W1 the row is
-  // pre-created in `approveRequest` before this webhook fires; if it's
-  // missing the Forgejo commit raced ahead of the approve flow's DB
-  // insert, so bail with 404 and the mod can re-approve.
-  const appBlock = await dbRead.appBlock.findFirst({
-    where: { blockId: slug },
-    select: {
-      id: true,
-      appId: true,
-      blockId: true,
-      app: { select: { id: true, allowedScopes: true, allowedOrigins: true } },
-    },
-  });
-  if (!appBlock) {
-    // The Forgejo commit raced ahead of the approve flow's DB insert — this is
-    // genuinely retryable once the row lands, so release the nonce (F5-A).
-    await releaseDeliveryNonce(deliveryHeader);
-    res.status(404).json({ error: 'app_blocks row not found — re-run submitApp' });
-    return;
-  }
+    // Fetch the manifest at the new commit.
+    let manifestRaw: string;
+    try {
+      manifestRaw = await getRawFile({
+        slug,
+        ref: sha,
+        path: 'block.manifest.json',
+      });
+    } catch (e) {
+      await setCommitStatusSafe({
+        slug,
+        sha,
+        state: 'failure',
+        context: 'civitai/manifest-validation',
+        description: 'block.manifest.json missing or unreachable',
+      });
+      notifyModsOfWebhookFailure({
+        slug,
+        sha,
+        stage: 'fetch-manifest',
+        details: `block.manifest.json missing or unreachable: ${String(e).slice(0, 200)}`,
+      });
+      // Forgejo unreachable / transient fetch failure is the canonical F5-A case —
+      // release the nonce so the redelivery can re-fetch.
+      await releaseDeliveryNonce(deliveryHeader);
+      res.status(400).json({ error: 'Cannot fetch manifest', detail: String(e).slice(0, 240) });
+      return;
+    }
 
-  // Fetch the manifest at the new commit.
-  let manifestRaw: string;
-  try {
-    manifestRaw = await getRawFile({
-      slug,
-      ref: sha,
-      path: 'block.manifest.json',
+    let manifest: unknown;
+    try {
+      manifest = JSON.parse(manifestRaw);
+    } catch {
+      await setCommitStatusSafe({
+        slug,
+        sha,
+        state: 'failure',
+        context: 'civitai/manifest-validation',
+        description: 'block.manifest.json is not valid JSON',
+      });
+      notifyModsOfWebhookFailure({
+        slug,
+        sha,
+        stage: 'parse-manifest',
+        details: 'block.manifest.json is not valid JSON',
+      });
+      await releaseDeliveryNonce(deliveryHeader);
+      res.status(400).json({ error: 'Invalid manifest JSON' });
+      return;
+    }
+
+    const appContext: AppContext = {
+      allowedScopes: appBlock.app.allowedScopes ?? 0,
+      allowedOrigins: (appBlock.app.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
+    };
+    const validation = BlockManifestValidator.validate(manifest, appContext);
+    if (!validation.valid) {
+      await setCommitStatusSafe({
+        slug,
+        sha,
+        state: 'failure',
+        context: 'civitai/manifest-validation',
+        description: validation.errors.slice(0, 3).join('; '),
+      });
+      notifyModsOfWebhookFailure({
+        slug,
+        sha,
+        stage: 'manifest-validation',
+        details: validation.errors.slice(0, 5).join('; '),
+      });
+      await releaseDeliveryNonce(deliveryHeader);
+      res.status(400).json({ error: 'Invalid manifest', details: validation.errors });
+      return;
+    }
+
+    // Cross-check the manifest blockId matches the repo slug — guards a
+    // typo where the developer renames the repo without updating the
+    // manifest (or vice-versa).
+    const parsedManifest = manifest as { blockId?: string; iframe?: { src?: string } };
+    if (parsedManifest.blockId !== slug) {
+      await setCommitStatusSafe({
+        slug,
+        sha,
+        state: 'failure',
+        context: 'civitai/manifest-validation',
+        description: `blockId in manifest (${parsedManifest.blockId}) must equal repo slug (${slug})`,
+      });
+      notifyModsOfWebhookFailure({
+        slug,
+        sha,
+        stage: 'blockId-slug-mismatch',
+        details: `manifest.blockId="${parsedManifest.blockId}" but repo slug="${slug}"`,
+      });
+      await releaseDeliveryNonce(deliveryHeader);
+      res.status(400).json({ error: 'blockId / slug mismatch' });
+      return;
+    }
+
+    // Require canonical iframe.src host — must match <slug>.<APPS_DOMAIN>/
+    const expectedSrc = `https://${slug}.${env.APPS_DOMAIN}/`;
+    if (parsedManifest.iframe?.src !== expectedSrc) {
+      await setCommitStatusSafe({
+        slug,
+        sha,
+        state: 'failure',
+        context: 'civitai/manifest-validation',
+        description: `iframe.src must equal ${expectedSrc}`,
+      });
+      notifyModsOfWebhookFailure({
+        slug,
+        sha,
+        stage: 'iframe-src-mismatch',
+        details: `manifest.iframe.src="${parsedManifest.iframe?.src ?? ''}" but expected "${expectedSrc}"`,
+      });
+      await releaseDeliveryNonce(deliveryHeader);
+      res.status(400).json({ error: 'iframe.src mismatch' });
+      return;
+    }
+
+    // Upsert app_blocks with the new manifest + sha. v0 auto-approves on
+    // valid push; v1 (W1 mod review) gates this behind a queue.
+    await dbWrite.appBlock.update({
+      where: { id: appBlock.id },
+      data: {
+        manifest: manifest as object,
+        status: 'approved',
+        // The migration that adds current_version_sha / current_version_deployed_at
+        // / repo_url ships alongside this handler (Phase 4 SQL); these field
+        // names match the @map directives that get added.
+        currentVersionSha: sha,
+        version: (parsedManifest as { version?: string }).version ?? sha.slice(0, 7),
+      },
     });
-  } catch (e) {
+
+    // Pending status on Forgejo while Tekton runs.
     await setCommitStatusSafe({
       slug,
       sha,
-      state: 'failure',
-      context: 'civitai/manifest-validation',
-      description: 'block.manifest.json missing or unreachable',
-    });
-    notifyModsOfWebhookFailure({
-      slug,
-      sha,
-      stage: 'fetch-manifest',
-      details: `block.manifest.json missing or unreachable: ${String(e).slice(0, 200)}`,
-    });
-    // Forgejo unreachable / transient fetch failure is the canonical F5-A case —
-    // release the nonce so the redelivery can re-fetch.
-    await releaseDeliveryNonce(deliveryHeader);
-    res.status(400).json({ error: 'Cannot fetch manifest', detail: String(e).slice(0, 240) });
-    return;
-  }
-
-  let manifest: unknown;
-  try {
-    manifest = JSON.parse(manifestRaw);
-  } catch {
-    await setCommitStatusSafe({
-      slug,
-      sha,
-      state: 'failure',
-      context: 'civitai/manifest-validation',
-      description: 'block.manifest.json is not valid JSON',
-    });
-    notifyModsOfWebhookFailure({
-      slug,
-      sha,
-      stage: 'parse-manifest',
-      details: 'block.manifest.json is not valid JSON',
-    });
-    await releaseDeliveryNonce(deliveryHeader);
-    res.status(400).json({ error: 'Invalid manifest JSON' });
-    return;
-  }
-
-  const appContext: AppContext = {
-    allowedScopes: appBlock.app.allowedScopes ?? 0,
-    allowedOrigins: (appBlock.app.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
-  };
-  const validation = BlockManifestValidator.validate(manifest, appContext);
-  if (!validation.valid) {
-    await setCommitStatusSafe({
-      slug,
-      sha,
-      state: 'failure',
-      context: 'civitai/manifest-validation',
-      description: validation.errors.slice(0, 3).join('; '),
-    });
-    notifyModsOfWebhookFailure({
-      slug,
-      sha,
-      stage: 'manifest-validation',
-      details: validation.errors.slice(0, 5).join('; '),
-    });
-    await releaseDeliveryNonce(deliveryHeader);
-    res.status(400).json({ error: 'Invalid manifest', details: validation.errors });
-    return;
-  }
-
-  // Cross-check the manifest blockId matches the repo slug — guards a
-  // typo where the developer renames the repo without updating the
-  // manifest (or vice-versa).
-  const parsedManifest = manifest as { blockId?: string; iframe?: { src?: string } };
-  if (parsedManifest.blockId !== slug) {
-    await setCommitStatusSafe({
-      slug,
-      sha,
-      state: 'failure',
-      context: 'civitai/manifest-validation',
-      description: `blockId in manifest (${parsedManifest.blockId}) must equal repo slug (${slug})`,
-    });
-    notifyModsOfWebhookFailure({
-      slug,
-      sha,
-      stage: 'blockId-slug-mismatch',
-      details: `manifest.blockId="${parsedManifest.blockId}" but repo slug="${slug}"`,
-    });
-    await releaseDeliveryNonce(deliveryHeader);
-    res.status(400).json({ error: 'blockId / slug mismatch' });
-    return;
-  }
-
-  // Require canonical iframe.src host — must match <slug>.<APPS_DOMAIN>/
-  const expectedSrc = `https://${slug}.${env.APPS_DOMAIN}/`;
-  if (parsedManifest.iframe?.src !== expectedSrc) {
-    await setCommitStatusSafe({
-      slug,
-      sha,
-      state: 'failure',
-      context: 'civitai/manifest-validation',
-      description: `iframe.src must equal ${expectedSrc}`,
-    });
-    notifyModsOfWebhookFailure({
-      slug,
-      sha,
-      stage: 'iframe-src-mismatch',
-      details: `manifest.iframe.src="${parsedManifest.iframe?.src ?? ''}" but expected "${expectedSrc}"`,
-    });
-    await releaseDeliveryNonce(deliveryHeader);
-    res.status(400).json({ error: 'iframe.src mismatch' });
-    return;
-  }
-
-  // Upsert app_blocks with the new manifest + sha. v0 auto-approves on
-  // valid push; v1 (W1 mod review) gates this behind a queue.
-  await dbWrite.appBlock.update({
-    where: { id: appBlock.id },
-    data: {
-      manifest: manifest as object,
-      status: 'approved',
-      // The migration that adds current_version_sha / current_version_deployed_at
-      // / repo_url ships alongside this handler (Phase 4 SQL); these field
-      // names match the @map directives that get added.
-      currentVersionSha: sha,
-      version: (parsedManifest as { version?: string }).version ?? sha.slice(0, 7),
-    },
-  });
-
-  // Pending status on Forgejo while Tekton runs.
-  await setCommitStatusSafe({
-    slug,
-    sha,
-    state: 'pending',
-    context: 'civitai/build',
-    description: 'Build queued',
-  });
-
-  // Trigger the cross-cluster Tekton build.
-  try {
-    const callbackUrl = buildCallbackUrl();
-    await triggerBuild({ slug, sha, appBlockId: appBlock.id, callbackUrl });
-  } catch (e) {
-    await setCommitStatusSafe({
-      slug,
-      sha,
-      state: 'failure',
+      state: 'pending',
       context: 'civitai/build',
-      description: `Trigger failed: ${String(e).slice(0, 80)}`,
+      description: 'Build queued',
     });
-    notifyModsOfWebhookFailure({
-      slug,
-      sha,
-      stage: 'trigger-build',
-      details: `triggerBuild() failed: ${String(e).slice(0, 200)}`,
-    });
-    // Headline F5-A case: triggerBuild threw (Tekton receiver down, HMAC drift,
-    // network). The build never started, so Forgejo's redelivery MUST be able to
-    // retry — release the nonce before the 5xx.
-    await releaseDeliveryNonce(deliveryHeader);
-    res.status(500).json({ error: 'Build trigger failed', detail: String(e).slice(0, 240) });
-    return;
-  }
 
-  // SUCCESS — keep the nonce so a duplicate of this *completed* delivery is
-  // deduped (the build is already in flight).
-  res.status(200).json({ ok: true, slug, sha });
+    // Trigger the cross-cluster Tekton build.
+    try {
+      const callbackUrl = buildCallbackUrl();
+      await triggerBuild({ slug, sha, appBlockId: appBlock.id, callbackUrl });
+    } catch (e) {
+      await setCommitStatusSafe({
+        slug,
+        sha,
+        state: 'failure',
+        context: 'civitai/build',
+        description: `Trigger failed: ${String(e).slice(0, 80)}`,
+      });
+      notifyModsOfWebhookFailure({
+        slug,
+        sha,
+        stage: 'trigger-build',
+        details: `triggerBuild() failed: ${String(e).slice(0, 200)}`,
+      });
+      // Headline F5-A case: triggerBuild threw (Tekton receiver down, HMAC drift,
+      // network). The build never started, so Forgejo's redelivery MUST be able to
+      // retry — release the nonce before the 5xx.
+      await releaseDeliveryNonce(deliveryHeader);
+      res.status(500).json({ error: 'Build trigger failed', detail: String(e).slice(0, 240) });
+      return;
+    }
+
+    // SUCCESS — keep the nonce so a duplicate of this *completed* delivery is
+    // deduped (the build is already in flight).
+    res.status(200).json({ ok: true, slug, sha });
+  } catch (err) {
+    // F5-A robustness: any throw after the nonce was claimed — the
+    // dbWrite.appBlock.update (DB blip / pool exhaustion / replica promotion),
+    // or any future un-awaited error between the claim and the success response
+    // — would otherwise leave the nonce held while withAxiom returns a 500,
+    // permanently swallowing Forgejo's same-id retry as a duplicate. Release the
+    // nonce before re-throwing so the retry can re-process. Best-effort release
+    // (swallows its own Redis errors), awaited before the throw propagates.
+    await releaseDeliveryNonce(deliveryHeader);
+    throw err;
+  }
 });
 
 function buildCallbackUrl(): string {
