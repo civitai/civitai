@@ -67,14 +67,20 @@ const transformStatus = {
 
 export type GetHistoryInput = z.input<typeof getHistorySchema>;
 export type GetHistorySchema = z.infer<typeof getHistorySchema>;
-// Cursor is interpolated into a ClickHouse query downstream — must coerce to a
-// real Date so a crafted string cannot inject SQL. Previously any authed user
-// could read all KoNo players' rating history by sending a cursor like
-// `' OR 1=1 --` which would round-trip through `.union([..., z.string(), ...])`
-// untouched and land inside the `createdAt < '${cursor}'` template.
+// Keyset-pagination cursor: composite (createdAt, imageId) on the aggregated sort
+// key. Both fields are typed/validated before they're interpolated into the
+// ClickHouse query downstream — createdAt coerces to a real Date, imageId to a
+// number — so a crafted string cannot inject SQL. (Prior bug: a `' OR 1=1 --`
+// string cursor round-tripped untouched into the `createdAt < '${cursor}'`
+// template, letting any authed user read every KoNo player's history.)
 export const getHistorySchema = z.object({
   limit: z.number().optional().default(DEFAULT_PAGE_SIZE),
-  cursor: z.coerce.date().optional(),
+  cursor: z
+    .object({
+      createdAt: z.coerce.date(),
+      imageId: z.number(),
+    })
+    .optional(),
   status: z
     .enum(NewOrderImageRatingStatus)
     .transform((val) => {
