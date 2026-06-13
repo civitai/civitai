@@ -57,13 +57,30 @@ function safeEqualHex(a: string, b: string): boolean {
   return timingSafeEqual(A, B);
 }
 
-function verifySignature(rawBody: Buffer, header: unknown): boolean {
-  const secret = env.BLOCK_BUILD_CALLBACK_SECRET;
-  if (!secret) return false;
+export function verifySignature(rawBody: Buffer, header: unknown): boolean {
+  // Dual-acceptance rotation window (audit F6): accept a signature that matches
+  // EITHER the current secret OR an optional BLOCK_BUILD_CALLBACK_SECRET_NEXT.
+  // To rotate with zero downtime: set _NEXT to the new secret, flip the Tekton
+  // callback signer to the new secret, then move the new value into
+  // BLOCK_BUILD_CALLBACK_SECRET and clear _NEXT. When _NEXT is unset this is
+  // identical to single-secret behavior (fail-closed: no secret → false).
   if (typeof header !== 'string' || header.length === 0) return false;
-  const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
   const provided = header.replace(/^sha256=/, '');
-  return safeEqualHex(provided, expected);
+
+  const secrets = [
+    env.BLOCK_BUILD_CALLBACK_SECRET,
+    env.BLOCK_BUILD_CALLBACK_SECRET_NEXT,
+  ].filter((s): s is string => typeof s === 'string' && s.length > 0);
+  if (secrets.length === 0) return false;
+
+  // Compute every candidate comparison (no boolean short-circuit) so we don't
+  // leak via timing which secret — current vs NEXT — was the matching one.
+  let matched = false;
+  for (const secret of secrets) {
+    const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+    if (safeEqualHex(provided, expected)) matched = true;
+  }
+  return matched;
 }
 
 const SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
