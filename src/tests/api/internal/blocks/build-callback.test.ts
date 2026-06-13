@@ -1,5 +1,5 @@
 import { createHmac } from 'crypto';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 /**
@@ -14,16 +14,34 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * it, so the handler tests build a real signed body and drive the default export.
  */
 
-const { SECRET, mockFlag, mockRedis, mockTriggerApply, mockWaitApply, mockSetCommitStatus, mockAppBlockUpdate } =
-  vi.hoisted(() => ({
+const {
+  SECRET,
+  mockFlag,
+  mockRedis,
+  mockRedisSet,
+  mockRedisDel,
+  mockTriggerApply,
+  mockWaitApply,
+  mockSetCommitStatus,
+  mockAppBlockUpdate,
+} = vi.hoisted(() => {
+  // setResult: 'OK' = newly set (first time), null = key already present (replay).
+  const mockRedis = { setResult: 'OK' as 'OK' | null, setThrows: false };
+  return {
     SECRET: 'test-build-callback-secret',
     mockFlag: { enabled: true },
-    mockRedis: { incrByValue: 1 },
+    mockRedis,
+    mockRedisSet: vi.fn(async () => {
+      if (mockRedis.setThrows) throw new Error('redis down');
+      return mockRedis.setResult;
+    }),
+    mockRedisDel: vi.fn(async () => 1),
     mockTriggerApply: vi.fn<(...a: any[]) => Promise<{ name: string }>>(async () => ({ name: 'apply-job-1' })),
     mockWaitApply: vi.fn<(...a: any[]) => Promise<string>>(async () => 'succeeded'),
     mockSetCommitStatus: vi.fn(async () => undefined),
     mockAppBlockUpdate: vi.fn(async () => undefined),
-  }));
+  };
+});
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/env/server', () => ({
@@ -41,10 +59,7 @@ vi.mock('~/server/db/client', () => ({
 }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(async () => mockFlag.enabled) }));
 vi.mock('~/server/redis/client', () => ({
-  redis: {
-    incrBy: vi.fn(async () => mockRedis.incrByValue),
-    expire: vi.fn(async () => true),
-  },
+  redis: { set: mockRedisSet, del: mockRedisDel },
   REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'blocks:token-rate-limit' } },
 }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
@@ -131,12 +146,22 @@ async function invoke(req: NextApiRequest, res: NextApiResponse) {
   await handler(req, res);
 }
 
+// Drain the fire-and-forget watchApplyJobAndRecord promise so it can't bleed
+// into the next test's mock assertions.
+const flush = () => new Promise((r) => setTimeout(r, 10));
+
 describe('build-callback handler — flag gate + replay guard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFlag.enabled = true;
-    mockRedis.incrByValue = 1;
+    mockRedis.setResult = 'OK'; // default: first time → apply
+    mockRedis.setThrows = false;
     mockTriggerApply.mockResolvedValue({ name: 'apply-job-1' });
+    mockWaitApply.mockResolvedValue('succeeded');
+  });
+
+  afterEach(async () => {
+    await flush();
   });
 
   it('503s when the appBlocks flag is off — apply path never runs (kill switch)', async () => {
@@ -162,7 +187,7 @@ describe('build-callback handler — flag gate + replay guard', () => {
   });
 
   it('triggers the apply exactly once on the first success callback', async () => {
-    mockRedis.incrByValue = 1; // first time
+    mockRedis.setResult = 'OK'; // newly set → first time
     const res = makeRes();
     await invoke(signedReq(validSuccessBody()), res);
     expect(res._status).toBe(200);
@@ -174,12 +199,21 @@ describe('build-callback handler — flag gate + replay guard', () => {
   });
 
   it('short-circuits a replayed success callback without re-triggering apply', async () => {
-    mockRedis.incrByValue = 2; // duplicate within the dedup window
+    mockRedis.setResult = null; // SET NX found the key → replay within the window
     const res = makeRes();
     await invoke(signedReq(validSuccessBody()), res);
     expect(res._status).toBe(200);
     expect(res._body).toMatchObject({ applied: false, reason: 'duplicate callback (replay-guarded)' });
     expect(mockTriggerApply).not.toHaveBeenCalled();
+  });
+
+  it('fails OPEN on a Redis error — apply still runs so an outage cannot block a deploy', async () => {
+    mockRedis.setThrows = true;
+    const res = makeRes();
+    await invoke(signedReq(validSuccessBody()), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ applied: true });
+    expect(mockTriggerApply).toHaveBeenCalledTimes(1);
   });
 
   it('does not consume the replay slot for a build-failure callback (no apply path)', async () => {
@@ -188,5 +222,31 @@ describe('build-callback handler — flag gate + replay guard', () => {
     expect(res._status).toBe(200);
     expect(res._body).toMatchObject({ applied: false });
     expect(mockTriggerApply).not.toHaveBeenCalled();
+    expect(mockRedisSet).not.toHaveBeenCalled(); // dedup slot untouched by a failure callback
+  });
+
+  it('clears the replay slot on a DEFINITIVE apply failure so a same-sha retry is not blocked', async () => {
+    mockWaitApply.mockResolvedValue('failed');
+    const res = makeRes();
+    await invoke(signedReq(validSuccessBody()), res);
+    await flush(); // let the fire-and-forget watcher run
+    expect(mockRedisDel).toHaveBeenCalledWith(expect.stringContaining(`apply:${APB}:${SHA}`));
+  });
+
+  it('does NOT clear the slot on apply timeout (the Job may still be running)', async () => {
+    mockWaitApply.mockResolvedValue('timeout');
+    const res = makeRes();
+    await invoke(signedReq(validSuccessBody()), res);
+    await flush();
+    expect(mockRedisDel).not.toHaveBeenCalled();
+  });
+
+  it('records the deploy and keeps the slot on apply success', async () => {
+    mockWaitApply.mockResolvedValue('succeeded');
+    const res = makeRes();
+    await invoke(signedReq(validSuccessBody()), res);
+    await flush();
+    expect(mockAppBlockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: APB } }));
+    expect(mockRedisDel).not.toHaveBeenCalled();
   });
 });

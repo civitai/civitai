@@ -86,29 +86,46 @@ export function expectedImageRef(slug: string, sha: string): string {
 
 // Replay guard (audit LOW). The callback payload carries no timestamp/nonce, so
 // a captured signature-valid request could be replayed to re-trigger the apply
-// Job indefinitely. Dedup the apply path on (appBlockId, sha) for a short
-// window — long enough to outlast an in-flight apply, far shorter than a rebuild
-// interval (~15m+), so a legitimate same-sha rebuild's self-heal callback (see
-// the watchApplyJobAndRecord note below) is unaffected. Durable cross-window
-// replay protection needs a caller-supplied signed timestamp/nonce from the
-// Tekton finally task (infra follow-up).
-const APPLY_DEDUP_TTL_SECONDS = 15 * 60;
-async function markApplyTriggered(appBlockId: string, sha: string): Promise<boolean> {
+// Job. Dedup the apply path on (appBlockId, sha) with an ATOMIC set-if-absent +
+// TTL (not incrBy-then-expire, which could leave a permanent TTL-less key on a
+// failed expire and wedge the sha forever). The window only needs to cover an
+// in-flight apply — `waitForApplyJob` times out at 6m (see apps-pipeline.service)
+// — plus a small margin, so a legitimate same-sha re-deploy after the apply
+// concludes isn't blocked; the watcher additionally clears the key on a
+// DEFINITIVE apply failure (see watchApplyJobAndRecord) so a retry is never
+// suppressed. Durable cross-window replay protection still needs a
+// caller-supplied signed timestamp/nonce from the Tekton finally task (infra
+// follow-up).
+const APPLY_DEDUP_TTL_SECONDS = 7 * 60; // ≈ apply timeout (6m) + 1m margin
+function applyDedupKey(appBlockId: string, sha: string): string {
   // Reuse the block rate-limit key family (same convention as workflow-completed).
-  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:apply:${appBlockId}:${sha}` as const;
+  return `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:apply:${appBlockId}:${sha}`;
+}
+async function markApplyTriggered(appBlockId: string, sha: string): Promise<boolean> {
   try {
-    const count = await redis.incrBy(key as never, 1);
-    if (count === 1) {
-      await redis.expire(key as never, APPLY_DEDUP_TTL_SECONDS);
-      return true; // first time → trigger apply
-    }
-    return false; // duplicate / replay within the window
+    const result = await redis.set(applyDedupKey(appBlockId, sha) as never, '1', {
+      NX: true,
+      EX: APPLY_DEDUP_TTL_SECONDS,
+    });
+    // NX returns the set value when newly written, null when the key already
+    // exists (replay). Test for null rather than a specific value so the
+    // wrapper's return-type quirk doesn't matter.
+    return result !== null;
   } catch {
     // Fail OPEN: unlike workflow-completed (which fails closed to avoid
     // double-billing), a Redis incident here must not block a real deploy.
     // The HMAC secret + imageRef↔slug/sha binding already bound the blast
     // radius, so losing replay-dedup during an outage is the lesser evil.
     return true;
+  }
+}
+async function clearApplyMark(appBlockId: string, sha: string): Promise<void> {
+  // Free the dedup slot after a definitive apply failure so a same-sha retry
+  // isn't suppressed within the TTL window. Best-effort; the TTL is the backstop.
+  try {
+    await redis.del(applyDedupKey(appBlockId, sha) as never);
+  } catch {
+    // swallow — the TTL will release the slot regardless.
   }
 }
 
@@ -277,7 +294,14 @@ async function watchApplyJobAndRecord(args: {
     } else {
       // Failure or timeout — leave the existing currentVersionDeployedAt
       // alone (it correctly reflects the LAST successful deploy, not the
-      // failed/in-flight one). Flip commit status so the dev sees red.
+      // failed/in-flight one). On a DEFINITIVE failure, free the replay-dedup
+      // slot so a same-sha retry isn't suppressed within the TTL window; on a
+      // 'timeout' leave it (the Job may still be running — let the TTL release
+      // it rather than race a re-trigger against an in-flight apply).
+      if (outcome === 'failed') {
+        await clearApplyMark(args.appBlockId, args.sha);
+      }
+      // Flip commit status so the dev sees red.
       await safe(setCommitStatus, {
         slug: args.slug,
         sha: args.sha,

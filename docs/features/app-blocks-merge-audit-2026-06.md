@@ -159,10 +159,14 @@ HMAC) is genuinely well-built and the dark boundary holds across routers/JWKS/mi
   Unlike its siblings (`git-push`, `workflow-completed`), `build-callback.ts` never checked
   the flag, so the k8s apply/deploy path could run independent of the kill switch; and the
   timestamp/nonce-less payload meant a captured signed callback could be replayed to
-  re-trigger applies. Added: `isFlipt('app-blocks-enabled')` 503 gate + a short-window
-  (15m) `(appBlockId, sha)` apply-path replay guard (fail-open on Redis loss). Handler-level
-  tests cover both. Durable cross-window replay protection still needs a caller-supplied
-  signed timestamp/nonce from the Tekton finally task — **infra follow-up**.
+  re-trigger applies. Added: `isFlipt('app-blocks-enabled')` 503 gate + an `(appBlockId, sha)`
+  apply-path replay guard using an **atomic `SET NX EX`** (~7m, ≈ the 6m apply timeout +
+  margin — not `incrBy`+`expire`, which could leave a permanent TTL-less key and wedge a sha),
+  **fail-open** on Redis loss, with the watcher **clearing the slot on a definitive apply
+  failure** so a same-sha retry isn't suppressed. 14 handler-level tests cover the gate,
+  replay, fail-open, and clear-on-failure/timeout/success paths. Durable cross-window replay
+  protection still needs a caller-supplied signed timestamp/nonce from the Tekton finally
+  task — **infra follow-up**.
 - **INFO — H2 gate divergence confirmed** (fails safe; mod canary can't exercise the flow
   server-side until context is threaded into the server gate — fix by threading, NOT a
   global enable).
