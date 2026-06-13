@@ -15,6 +15,7 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
+import { isClientAbortError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
@@ -210,6 +211,14 @@ export function ModEndpoint(
 }
 
 export function handleEndpointError(res: NextApiResponse, e: unknown) {
+  if (isClientAbortError(e)) {
+    // Client disconnected mid-request (closed tab / scrolled the feed past /
+    // navigated away), cancelling the request signal. Not a server fault: respond
+    // 499 (client closed request) so it stays out of the 5xx SLO + the
+    // civitai_app_http_errors_total counter and isn't logged as a spurious 500.
+    if (!res.headersSent) res.status(499).end();
+    return;
+  }
   if (e instanceof TRPCError) {
     const apiError = e as TRPCError;
     const status = getHTTPStatusCodeFromError(apiError);
