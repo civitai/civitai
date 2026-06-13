@@ -313,9 +313,13 @@ function MyApp(props: CustomAppProps) {
 // };
 const baseUrl = process.env.NEXTAUTH_URL_INTERNAL ?? env.NEXT_PUBLIC_BASE_URL;
 // Bound the server-side self-fetch to `/api/user/settings` so a slow/hung apex
-// Service endpoint can't stall every SSR render's critical path. Server-render
-// hot path, so keep it tight.
-const SETTINGS_FETCH_TIMEOUT_MS = Number(process.env.APP_SETTINGS_FETCH_TIMEOUT_MS) || 3000;
+// Service endpoint can't stall every SSR render's critical path. The endpoint
+// does session + settings + a 3-way Promise.all (tos/announcements/follows) —
+// several DB/redis round-trips — so under rollout load it can be slow-but-
+// successful. 8s sits well under the gateway/kubelet ceilings but only trips on
+// a genuine hang (don't abort a fetch that would have succeeded → needless
+// degraded render). Env-overridable for tuning. (Confirm P99 from Tempo.)
+const SETTINGS_FETCH_TIMEOUT_MS = Number(process.env.APP_SETTINGS_FETCH_TIMEOUT_MS) || 8000;
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
   const { req: request } = appContext.ctx;
@@ -370,6 +374,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
+  // True only on the DEGRADED fallback path (we couldn't reach/parse the
+  // settings endpoint). Distinct from a SUCCESSFUL fetch that returned
+  // `session: null` (genuinely expired/invalid token). The two look identical in
+  // the destructured shape below (both have `session: null`) but must be treated
+  // differently for the auth cookie — see the cookie carve-out near the return.
+  let settingsDegraded = false;
   try {
     const res = await fetch(`${baseUrl as string}/api/user/settings`, {
       headers: { ...request.headers } as HeadersInit,
@@ -378,12 +388,26 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     if (!res.ok) throw new Error(`settings fetch returned ${res.status}`);
     settingsBootstrap = (await res.json()) as SettingsBootstrap;
   } catch (e) {
+    settingsDegraded = true;
     // Observable but non-fatal: log concisely and fall through to a safe render.
+    // The structured marker `[_app] settings bootstrap fetch failed` is the
+    // stable greppable string; the counter below is the alertable signal (a
+    // genuinely-broken settings endpoint mass-degrades renders with NO 5xx spike,
+    // so it would otherwise be silent).
     console.warn(
       `[_app] settings bootstrap fetch failed, rendering without it: ${
         e instanceof Error ? e.message : String(e)
       }`
     );
+    try {
+      // Increment the cross-graph instrumentation counter (visible on /api/metrics).
+      // Dynamic import so the prom-client + DB-pool graph it pulls stays out of the
+      // client bundle and only loads on this server-side failure path.
+      const { settingsBootstrapFailuresCounter } = await import('~/server/prom/client');
+      settingsBootstrapFailuresCounter.inc();
+    } catch {
+      // never let metrics emission break the degraded render
+    }
     settingsBootstrap = {
       settings: undefined as unknown as UserContentSettings,
       tosUpdate: undefined,
@@ -438,7 +462,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
-  } else if (hasAuthCookie) {
+  } else if (hasAuthCookie && !settingsDegraded) {
+    // Only clear the auth cookie when the settings fetch SUCCEEDED and authoritatively
+    // returned no session — i.e. the token is genuinely expired/invalid, so cleaning up
+    // the stale cookie is correct. On the DEGRADED path we never reached the endpoint, so
+    // we DON'T KNOW the session: deleting the cookie here would durably log out a
+    // valid user (worse than the retryable failure this fix exists to soften). Don't
+    // conflate "couldn't reach settings" with "token invalid" — preserve the cookie and
+    // let the client refetch (the SessionProvider seed below already yields `undefined`
+    // → client refetch when hasAuthCookie is true and session is null).
     deleteCookie(civitaiTokenCookieName, appContext.ctx);
     hasAuthCookie = false;
   }

@@ -223,6 +223,24 @@ export const trpcProcedureDuration = registerHistogram({
   buckets: [0.05, 0.25, 1, 2, 5, 10, 30],
 });
 
+// SSR settings-bootstrap degradation counter. Incremented from
+// `_app.getInitialProps` (request graph) when the server-side self-fetch to
+// `/api/user/settings` fails and the render degrades to the anonymous/no-settings
+// shape. A genuinely-broken settings endpoint mass-degrades every SSR render with
+// NO 5xx spike (the fix swallows the throw), so this is the ONLY alertable signal
+// — wire a Prometheus alert on its rate(). Registered into the cross-graph shared
+// `instrumentationRegistry` so it's visible on `/api/metrics` regardless of which
+// webpack graph emits it (see the WHY note on instrumentationRegistry above).
+export const settingsBootstrapFailuresCounter = registerInstrumentationMetric(
+  PROM_PREFIX + 'settings_bootstrap_failures_total',
+  () =>
+    new client.Counter({
+      name: PROM_PREFIX + 'settings_bootstrap_failures_total',
+      help: 'SSR _app self-fetch to /api/user/settings failed and the page degraded to a no-settings render',
+      registers: [instrumentationRegistry],
+    })
+);
+
 // Image feed metrics
 export const imagesFeedWithoutIndexCounter = registerCounter({
   name: 'images_feed_without_index_total',

@@ -83,7 +83,6 @@ const ENV_KEYS = [
   'WARM_INITIAL_JITTER_MAX_MS',
   'WARM_INTER_ROUTE_JITTER_MAX_MS',
   'WARM_PER_REQUEST_TIMEOUT_MS',
-  'WARM_HEAD_PASS',
   'PORT',
 ];
 
@@ -145,9 +144,6 @@ describe('warmup: state machine', () => {
     // 2 explicit routes + 1 iteration each. Plus the waitForListener /api/live poll.
     process.env.WARMUP_ROUTES = '/api/v1/images?limit=20,/';
     process.env.WARM_ITERATIONS = '1';
-    // Pin the GET-only call count for this assertion; the HEAD pass is covered by
-    // its own test below.
-    process.env.WARM_HEAD_PASS = 'false';
 
     const fetchMock = vi.fn(() => Promise.resolve(okResponse(200)));
     vi.stubGlobal('fetch', fetchMock);
@@ -172,8 +168,6 @@ describe('warmup: state machine', () => {
     process.env.WARMUP_ENABLED = 'true';
     process.env.WARMUP_ROUTES = '/a,/b';
     process.env.WARM_ITERATIONS = '2';
-    // GET-only count assertion; the HEAD pass has its own test below.
-    process.env.WARM_HEAD_PASS = 'false';
 
     const fetchMock = vi.fn(() => Promise.resolve(okResponse(200)));
     vi.stubGlobal('fetch', fetchMock);
@@ -186,49 +180,6 @@ describe('warmup: state machine', () => {
       .map((c) => String(c[0]))
       .filter((u) => !u.includes('/api/live')).length;
     expect(routeWarms).toBe(4); // 2 routes × 2 iterations
-  });
-
-  it('HEAD coverage: each route is also warmed once with HEAD (the GET-only gap that let the SSR HEAD 500 reach prod)', async () => {
-    process.env.WARMUP_ENABLED = 'true';
-    process.env.WARMUP_ROUTES = '/api/v1/images?limit=20,/';
-    process.env.WARM_ITERATIONS = '1';
-    // WARM_HEAD_PASS defaults on — assert the default behavior.
-
-    const fetchMock = vi.fn(() => Promise.resolve(okResponse(200)));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const warmup = await loadWarmup();
-    await warmup.runWarmup();
-
-    expect(warmup.getWarmState()).toBe('warmed-ok');
-
-    // Per route: 1 GET (×1 iteration) + 1 HEAD. The /api/live listener poll is GET.
-    const routeCalls = fetchMock.mock.calls.filter((c) => !String(c[0]).includes('/api/live'));
-    const methodOf = (c: unknown[]) =>
-      (c[1] as { method?: string } | undefined)?.method ?? 'GET';
-    const getWarms = routeCalls.filter((c) => methodOf(c) === 'GET').length;
-    const headWarms = routeCalls.filter((c) => methodOf(c) === 'HEAD').length;
-    expect(getWarms).toBe(2); // 2 routes × 1 GET iteration
-    expect(headWarms).toBe(2); // 2 routes × 1 HEAD pass
-  });
-
-  it('HEAD coverage: WARM_HEAD_PASS=false disables the HEAD pass (GET only)', async () => {
-    process.env.WARMUP_ENABLED = 'true';
-    process.env.WARMUP_ROUTES = '/a,/b';
-    process.env.WARM_ITERATIONS = '1';
-    process.env.WARM_HEAD_PASS = 'false';
-
-    const fetchMock = vi.fn(() => Promise.resolve(okResponse(200)));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const warmup = await loadWarmup();
-    await warmup.runWarmup();
-
-    const routeCalls = fetchMock.mock.calls.filter((c) => !String(c[0]).includes('/api/live'));
-    const headWarms = routeCalls.filter(
-      (c) => ((c[1] as { method?: string } | undefined)?.method ?? 'GET') === 'HEAD'
-    ).length;
-    expect(headWarms).toBe(0);
   });
 
   it('fail-open timeout path: a hung warm fetch + timer past WARMUP_TIMEOUT_MS → isWarm()=true, state=failopen-timeout', async () => {
