@@ -116,6 +116,150 @@ describe('getModelShowcaseImages', () => {
     expect(result).toEqual([]);
   });
 
+  // NsfwLevel bitwise flags (mirrors src/server/common/enums.ts):
+  //   PG = 1, PG13 = 2, R = 4, X = 8, XXX = 16, Blocked = 32.
+  // Anon is forced to the platform public level = PG = 1 (matches the model-page
+  // gallery's anon gate); SFW (the logged-in fallback) = PG | PG13 = 3.
+  const PG = 1;
+  const PG13 = 2;
+  const R = 4;
+  const X = 8;
+  const XXX = 16;
+  const Blocked = 32;
+
+  describe('browsing-level filtering (security: NSFW leak into publisher iframe)', () => {
+    it('anon viewer (no viewer arg) gets only public (PG) images — PG13+NSFW dropped', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([
+        imageRow(1, 100, {}, { nsfwLevel: PG }),
+        imageRow(2, 90, {}, { nsfwLevel: PG13 }),
+        imageRow(3, 80, {}, { nsfwLevel: R }),
+        imageRow(4, 70, {}, { nsfwLevel: X }),
+        imageRow(5, 60, {}, { nsfwLevel: XXX }),
+      ]);
+      // No viewer → anon → public only (PG). PG13 is excluded too — anon must
+      // not see in the iframe a level the model-page gallery wouldn't show them.
+      const result = await getModelShowcaseImages(99);
+      expect(result.map((i) => i.id)).toEqual([1]);
+    });
+
+    it('anon viewer cannot widen via a passed browsingLevel (forced public/PG)', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([
+        imageRow(1, 100, {}, { nsfwLevel: PG }),
+        imageRow(2, 95, {}, { nsfwLevel: PG13 }),
+        imageRow(3, 90, {}, { nsfwLevel: X }),
+        imageRow(4, 80, {}, { nsfwLevel: XXX }),
+      ]);
+      // userId null but a wide browsingLevel requested — must be ignored; even
+      // PG13 is dropped (anon is capped to public/PG, not SFW).
+      const result = await getModelShowcaseImages(99, {
+        userId: null,
+        browsingLevel: PG | PG13 | R | X | XXX,
+      });
+      expect(result.map((i) => i.id)).toEqual([1]);
+    });
+
+    it('NSFW-disabled logged-in viewer (SFW level) is filtered to SFW only', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([
+        imageRow(1, 100, {}, { nsfwLevel: PG }),
+        imageRow(2, 90, {}, { nsfwLevel: PG13 }),
+        imageRow(3, 80, {}, { nsfwLevel: R }),
+        imageRow(4, 70, {}, { nsfwLevel: X }),
+      ]);
+      const result = await getModelShowcaseImages(99, {
+        userId: 42,
+        browsingLevel: PG | PG13,
+      });
+      expect(result.map((i) => i.id)).toEqual([1, 2]);
+    });
+
+    it('logged-in viewer with higher browsing levels gets the NSFW images', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([
+        imageRow(1, 100, {}, { nsfwLevel: PG }),
+        imageRow(2, 90, {}, { nsfwLevel: R }),
+        imageRow(3, 80, {}, { nsfwLevel: X }),
+        imageRow(4, 70, {}, { nsfwLevel: XXX }),
+      ]);
+      const result = await getModelShowcaseImages(99, {
+        userId: 42,
+        browsingLevel: PG | PG13 | R | X | XXX,
+      });
+      // All intersect the requested level → all returned (reaction order).
+      expect(result.map((i) => i.id)).toEqual([1, 2, 3, 4]);
+    });
+
+    it('logged-in viewer sees only the levels they requested (R but not X)', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([
+        imageRow(1, 100, {}, { nsfwLevel: PG }),
+        imageRow(2, 90, {}, { nsfwLevel: R }),
+        imageRow(3, 80, {}, { nsfwLevel: X }),
+      ]);
+      const result = await getModelShowcaseImages(99, {
+        userId: 42,
+        browsingLevel: PG | PG13 | R,
+      });
+      expect(result.map((i) => i.id)).toEqual([1, 2]);
+    });
+
+    it('logged-in viewer with no/empty browsingLevel falls back to SFW (safe default)', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([
+        imageRow(1, 100, {}, { nsfwLevel: PG13 }),
+        imageRow(2, 90, {}, { nsfwLevel: X }),
+      ]);
+      const result = await getModelShowcaseImages(99, { userId: 42 });
+      expect(result.map((i) => i.id)).toEqual([1]);
+    });
+
+    it('Blocked is stripped from a requested level (onlySelectableLevels)', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([
+        imageRow(1, 100, {}, { nsfwLevel: PG }),
+        imageRow(2, 90, {}, { nsfwLevel: Blocked }),
+      ]);
+      // Even if a caller requests Blocked, it must not surface Blocked content.
+      const result = await getModelShowcaseImages(99, {
+        userId: 42,
+        browsingLevel: PG | Blocked,
+      });
+      expect(result.map((i) => i.id)).toEqual([1]);
+    });
+
+    it('unrated images (nsfwLevel = 0) are never surfaced, even to a wide viewer', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([
+        imageRow(1, 100, {}, { nsfwLevel: 0 }),
+        imageRow(2, 90, {}, { nsfwLevel: PG }),
+      ]);
+      const result = await getModelShowcaseImages(99, {
+        userId: 42,
+        browsingLevel: PG | PG13 | R | X | XXX,
+      });
+      expect(result.map((i) => i.id)).toEqual([2]);
+    });
+
+    it('filters by nsfwLevel BEFORE the MAX cap so SFW images are not starved', async () => {
+      // 7 NSFW images with the highest reactions, then 6 SFW ones. A naive
+      // "slice then filter" would return [] for a SFW viewer; filtering first
+      // must yield the 6 SFW images.
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([
+        imageRow(101, 1000, {}, { nsfwLevel: X }),
+        imageRow(102, 999, {}, { nsfwLevel: X }),
+        imageRow(103, 998, {}, { nsfwLevel: X }),
+        imageRow(104, 997, {}, { nsfwLevel: X }),
+        imageRow(105, 996, {}, { nsfwLevel: X }),
+        imageRow(106, 995, {}, { nsfwLevel: X }),
+        imageRow(107, 994, {}, { nsfwLevel: X }),
+        imageRow(1, 50, {}, { nsfwLevel: PG }),
+        imageRow(2, 40, {}, { nsfwLevel: PG }),
+        imageRow(3, 30, {}, { nsfwLevel: PG }),
+        imageRow(4, 20, {}, { nsfwLevel: PG }),
+        imageRow(5, 10, {}, { nsfwLevel: PG }),
+        imageRow(6, 5, {}, { nsfwLevel: PG }),
+      ]);
+      // anon → public (PG). The 7 high-reaction X images must be filtered out
+      // BEFORE the 6-image cap, so the lower-reaction PG images aren't starved.
+      const result = await getModelShowcaseImages(99);
+      expect(result.map((i) => i.id)).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+  });
+
   describe('meta extraction', () => {
     async function getFirstMeta(meta: unknown) {
       mockDbRead.imageResourceNew.findMany.mockResolvedValue([imageRow(1, 10, meta)]);

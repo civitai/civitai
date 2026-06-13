@@ -182,11 +182,23 @@ HMAC) is genuinely well-built and the dark boundary holds across routers/JWKS/mi
   global enable).
 
 ### GA-blockers (reachable only after the flag is turned on)
-1. **🔴 HIGH — Showcase images bypass NSFW/browsing-level filtering.**
-   `showcase.service.ts` selects `nsfwLevel` but never filters on it and ignores the viewer
-   setting → explicit image URLs + prompts + seeds for an X-rated model are posted into the
-   third-party iframe (`BLOCK_INIT`) for any viewer, incl. opted-out / logged-out. Fix:
-   filter by browsing level / `viewerNsfwEnabled` (SFW-only for anon) before returning.
+1. **🔴 HIGH — Showcase images bypass NSFW/browsing-level filtering — ✅ FIXED (PR #2517).**
+   `getModelShowcaseImages` now filters `nsfwLevel` against the viewer's allowed browsing
+   level (reusing the feed's `onlySelectableLevels` + `Flags.intersects` pattern), threading
+   viewer context from the router (`{ userId: ctx.user?.id, browsingLevel }`). Anon is
+   forced server-side to the platform's **public (PG)** level (`publicBrowsingLevelsFlag`,
+   matching `applyDomainFeature`), and the caller-supplied `browsingLevel` can't widen an
+   anon view. Audited; cache path verified leak-free (no server cache; anon responses are
+   identical so the edge cache can't replay NSFW to a SFW anon).
+   - **Follow-up (LOW, fail-safe):** the query fetches `take: 50` by reactions then filters
+     `nsfwLevel` in JS before the 6-image cap, so a SFW viewer on a model whose top-50 are
+     all NSFW can get an under-filled showcase even though SFW images exist past row 50.
+     Under-shows, never over-shows. Fix later: filter `nsfwLevel` in-query (`$queryRaw`
+     bitwise) or raise `take`.
+   - **Follow-up (LOW, cleanliness):** the service re-derives the level instead of trusting
+     the already-`applyDomainFeature`-capped `input.browsingLevel` — two gates to keep in
+     sync. Consider passing the capped input through, keeping the `userId`-null force as
+     defense-in-depth.
 2. **MEDIUM — `submit-version` CSRF (confirmed).** Prod session cookie is `sameSite:'none'`
    (`next-auth-options.ts`) and `ModEndpoint` does no Origin/CSRF check; Next.js parses
    `application/x-www-form-urlencoded`, so a cross-site form POST with a tricked mod's cookie

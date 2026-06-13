@@ -20,6 +20,7 @@ import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-s
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). SSR-disabled to match
@@ -289,8 +290,14 @@ export function IframeHost({
   // a 5-min staleTime is fine since reactions move slowly within a session.
   const modelVersionId =
     typeof modelCtx.modelVersionId === 'number' ? modelCtx.modelVersionId : null;
+  // Send the viewer's current browsing level so the server only returns
+  // showcase images (URLs + gen-meta) the viewer is allowed to see. The
+  // server forces anon viewers to public (PG) and never trusts this to widen
+  // an anon view — this just lets a logged-in NSFW-opted-in viewer see the
+  // same NSFW showcase the model-page gallery would show them.
+  const browsingLevel = useBrowsingLevelDebounced();
   const showcaseQuery = trpc.blocks.getShowcaseImages.useQuery(
-    { modelVersionId: modelVersionId ?? 0 },
+    { modelVersionId: modelVersionId ?? 0, browsingLevel },
     { enabled: modelVersionId != null, staleTime: 5 * 60_000 }
   );
   const showcaseImages = showcaseQuery.data ?? [];
