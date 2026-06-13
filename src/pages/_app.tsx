@@ -319,7 +319,14 @@ const baseUrl = process.env.NEXTAUTH_URL_INTERNAL ?? env.NEXT_PUBLIC_BASE_URL;
 // successful. 8s sits well under the gateway/kubelet ceilings but only trips on
 // a genuine hang (don't abort a fetch that would have succeeded → needless
 // degraded render). Env-overridable for tuning. (Confirm P99 from Tempo.)
-const SETTINGS_FETCH_TIMEOUT_MS = Number(process.env.APP_SETTINGS_FETCH_TIMEOUT_MS) || 8000;
+// Clamp to a positive floor: `AbortSignal.timeout()` throws RangeError on a
+// negative value, so a fat-fingered/negative env override (e.g. `-1`) would
+// throw on EVERY render and silently force the permanent-degrade path. Floor at
+// 1s; a too-low (but positive) value at worst over-degrades, it can't crash.
+const SETTINGS_FETCH_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.APP_SETTINGS_FETCH_TIMEOUT_MS) || 8000
+);
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
   const { req: request } = appContext.ctx;
@@ -386,28 +393,38 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`settings fetch returned ${res.status}`);
-    settingsBootstrap = (await res.json()) as SettingsBootstrap;
+    const data = (await res.json()) as SettingsBootstrap;
+    // The endpoint's OWN internal catch swallows transient errors (e.g. a DB
+    // blip on a draining pod mid-roll) into a SUCCESSFUL `200 {}` — a body with
+    // NO `session` key. That sails past the `!res.ok` guard but carries no
+    // authoritative session, so treating it as a real result would delete the
+    // auth cookie (key absent ≠ `session: null`) and log the user out — the exact
+    // vector this fix exists to kill. Distinguish on KEY PRESENCE: a genuinely
+    // logged-out user gets `session: null` (key present → not degraded, cookie
+    // cleanup is correct); an internal swallow gets `{}` (key absent → degrade,
+    // preserve the cookie). `'session' in data` is the precise discriminator.
+    if (!data || typeof data !== 'object' || !('session' in data)) {
+      throw new Error('settings fetch returned no session payload (endpoint-swallowed error)');
+    }
+    settingsBootstrap = data;
   } catch (e) {
     settingsDegraded = true;
     // Observable but non-fatal: log concisely and fall through to a safe render.
     // The structured marker `[_app] settings bootstrap fetch failed` is the
-    // stable greppable string; the counter below is the alertable signal (a
-    // genuinely-broken settings endpoint mass-degrades renders with NO 5xx spike,
-    // so it would otherwise be silent).
+    // stable greppable string and the ONLY alertable signal — a genuinely-broken
+    // settings endpoint mass-degrades every SSR render with NO 5xx spike (we
+    // swallow the throw), so it would otherwise be silent. A Loki log-rate alert
+    // on this marker is wired on the datapacket-talos side.
+    // NB: deliberately NO prom-client metric here — `_app.tsx` runs in BOTH the
+    // client and server bundles, and importing `~/server/prom/client` (even
+    // dynamically) pulls `prom-client` → Node built-ins (`tls`/`v8`) into the
+    // CLIENT bundle and breaks `next build` ("Can't resolve 'tls'/'v8'"). The
+    // greppable warn + Loki alert is the agreed signal.
     console.warn(
       `[_app] settings bootstrap fetch failed, rendering without it: ${
         e instanceof Error ? e.message : String(e)
       }`
     );
-    try {
-      // Increment the cross-graph instrumentation counter (visible on /api/metrics).
-      // Dynamic import so the prom-client + DB-pool graph it pulls stays out of the
-      // client bundle and only loads on this server-side failure path.
-      const { settingsBootstrapFailuresCounter } = await import('~/server/prom/client');
-      settingsBootstrapFailuresCounter.inc();
-    } catch {
-      // never let metrics emission break the degraded render
-    }
     settingsBootstrap = {
       settings: undefined as unknown as UserContentSettings,
       tosUpdate: undefined,
