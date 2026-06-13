@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { storageStatePath } from './preview-fixtures';
 import { trpcQuery } from './preview-trpc';
+import { retryFlaky } from './preview-retry';
 
 /**
  * Image-feed content smoke: the real /images browse feed actually renders content.
@@ -57,10 +58,16 @@ test.describe('images browse feed renders real content (tester)', () => {
     // background traffic never idles, so a networkidle nav hangs to timeout.
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    const data = await trpcQuery<{ items: Array<{ id: number }> }>(
-      page.request,
-      'image.getInfinite',
-      { limit: FEED_LIMIT }
+    // image.getInfinite is meili-backed via the shared in-cluster feeds-proxy, which
+    // intermittently returns HTTP 408 ("Image search is temporarily overloaded —
+    // please retry") under concurrent preview-build load. The app's own error tells
+    // us to retry; Playwright's whole-test retries fire within seconds (all <5s) so
+    // they don't outlast the overload. retryFlaky spaces the retries with backoff to
+    // ride it out — honest: a sustained overload still fails after the attempts.
+    const data = await retryFlaky('image.getInfinite feed', () =>
+      trpcQuery<{ items: Array<{ id: number }> }>(page.request, 'image.getInfinite', {
+        limit: FEED_LIMIT,
+      })
     );
 
     const items = data?.items ?? [];
