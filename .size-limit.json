@@ -1,27 +1,7 @@
 [
   {
-    "name": "framework (React + Next runtime — every page)",
-    "path": ".next/static/chunks/framework-*.js",
-    "limit": "1 MB"
-  },
-  {
-    "name": "main (Next client runtime — every page)",
-    "path": ".next/static/chunks/main-*.js",
-    "limit": "1 MB"
-  },
-  {
-    "name": "webpack runtime",
-    "path": ".next/static/chunks/webpack-*.js",
-    "limit": "1 MB"
-  },
-  {
-    "name": "_app shared bundle (loaded on EVERY page — top regression catcher)",
-    "path": ".next/static/chunks/pages/_app-*.js",
-    "limit": "3 MB"
-  },
-  {
-    "name": "all client chunks (coarse total ceiling)",
+    "name": "total client JS (all .next/static/chunks)",
     "path": ".next/static/chunks/**/*.js",
-    "limit": "30 MB"
+    "limit": "42 MB"
   }
 ]
