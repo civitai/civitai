@@ -52,8 +52,12 @@ RUN --mount=type=cache,target=/app/.next/cache \
 # + a shared-by-all-pages figure. Runs here because .next exists in this stage
 # and the build already happened — no duplicate build. `|| true` keeps it
 # report-only (numbers print to the build log); to GATE, add `--gate` to the
-# `size` script and drop the `|| true` so a budget breach fails the image build.
-RUN pnpm run size || true
+# `size` script and replace `|| true; cat ...` with `; rc=$?; cat ...; exit $rc`
+# so a budget breach fails the image build.
+# The report is also written to /app/bundle-budget.txt and COPYied into the
+# runner image so the Tekton bundle-comment task can surface it on the PR
+# (kubectl exec ... cat) without a duplicate build.
+RUN pnpm run size > /app/bundle-budget.txt 2>&1 || true; cat /app/bundle-budget.txt
 
 # Server source maps (.next/server/**/*.js.map) are emitted by the build
 # (productionBrowserSourceMaps -> turbopackSourceMaps) but @vercel/nft does NOT
@@ -103,6 +107,9 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/next.config.mjs ./
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
+# Bundle-budget report (report-only) — surfaced on the PR by the Tekton
+# bundle-comment task via `kubectl exec ... cat /app/bundle-budget.txt`.
+COPY --from=builder /app/bundle-budget.txt ./bundle-budget.txt
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
