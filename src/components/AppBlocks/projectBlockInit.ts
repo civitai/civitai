@@ -15,8 +15,10 @@
  *   - `viewerNsfwEnabled` — the viewer's NSFW preference (privacy-sensitive; no
  *      block renders against it).
  *   - `creatorUserId` — the model owner's internal numeric user id.
- *   - `viewerUserId` / `viewerStatus` / `viewerUsername` — duplicated, in raw
- *      form, fields already carried (intentionally) by the `viewer` object.
+ *   - `viewerUserId` / `viewerUsername` — duplicated in raw form (the `viewer`
+ *      object carries id/username intentionally).
+ *   - `viewerStatus` — viewer ban/mute moderation state; not forwarded to the
+ *      iframe at all (dropped from both context and the `viewer` object).
  *
  * The fix is an explicit ALLOWLIST: only the contract fields below are copied
  * into the projected context; everything else is dropped. Default-to-drop — a
@@ -46,7 +48,7 @@ import type {
  *   creatorUserId       internal owner user id, no block needs it
  *   viewerNsfwEnabled   viewer privacy preference
  *   viewerUserId        duplicate of viewer.id
- *   viewerStatus        duplicate of viewer.status (internal moderation state)
+ *   viewerStatus        viewer ban/mute state — not sent to the iframe at all
  *   viewerUsername      duplicate of viewer.username
  */
 const CONTEXT_ALLOWLIST = [
@@ -94,11 +96,11 @@ export function projectBlockInitContext(
  * Build the BLOCK_INIT `viewer` object from the slot context.
  *
  * `id` and `username` are documented contract fields blocks use for
- * personalization. `status` is a coarse, intentionally non-authoritative
- * moderation surface that IS part of the v1 contract (the block is told to
- * re-check via /api/v1/blocks/me) — kept for contract stability, but flagged
- * for review: if blocks don't actually consume it, it can be dropped as
- * internal moderation state.
+ * personalization. The viewer's `status` (ban/mute moderation state) is
+ * intentionally NOT sent: no block consumes it, and exposing a viewer's
+ * moderation state to untrusted third-party publisher code is a privacy leak
+ * with no benefit — a block's authoritative check is its own
+ * `/api/v1/blocks/me` call.
  *
  * Returns `null` for anonymous viewers (no numeric viewer id).
  */
@@ -110,6 +112,5 @@ export function projectBlockInitViewer(
   return {
     id: source.viewerUserId,
     username: source.viewerUsername ?? null,
-    status: source.viewerStatus ?? 'active',
   };
 }

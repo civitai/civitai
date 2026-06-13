@@ -143,19 +143,20 @@ describe('projectBlockInitContext (BLOCK_INIT context allowlist)', () => {
 });
 
 describe('projectBlockInitViewer (BLOCK_INIT viewer allowlist)', () => {
-  it('builds the viewer from id/username/status only — no nsfw pref or creator id leak', () => {
+  it('builds the viewer from id/username only — no nsfw pref, creator id, or moderation status leak', () => {
     const viewer = projectBlockInitViewer(fullContext);
-    expect(viewer).toEqual({ id: 8888, username: 'alice', status: 'active' });
-    // the viewer object exposes exactly these three keys
-    expect(Object.keys(viewer ?? {}).sort()).toEqual(['id', 'status', 'username']);
+    expect(viewer).toEqual({ id: 8888, username: 'alice' });
+    // the viewer object exposes exactly id + username; status (ban/mute) is dropped
+    expect(Object.keys(viewer ?? {}).sort()).toEqual(['id', 'username']);
+    expect(viewer).not.toHaveProperty('status');
   });
 
-  it('defaults username to null and status to active when absent', () => {
+  it('defaults username to null when absent (and never adds status)', () => {
     const viewer = projectBlockInitViewer({
       slotId: 'model.sidebar_top',
       viewerUserId: 1,
     } as ModelSlotContext);
-    expect(viewer).toEqual({ id: 1, username: null, status: 'active' });
+    expect(viewer).toEqual({ id: 1, username: null });
   });
 
   it('returns null for anonymous viewers (no numeric viewerUserId)', () => {

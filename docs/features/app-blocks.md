@@ -119,7 +119,9 @@ the token endpoint has resolved. Matches `@civitai/app-sdk/blocks` v1:
   viewer: {
     id: number;
     username: string | null;
-    status: 'active' | 'banned' | 'muted';
+    // NOTE: moderation `status` (ban/mute) is intentionally NOT sent to the
+    // iframe — no block consumes it and it's a viewer-privacy leak. A block's
+    // authoritative check is its own /api/v1/blocks/me call.
   } | null;                            // null for anon viewers
   theme: 'light' | 'dark';             // matches host color scheme
   renderMode: 'iframe' | 'inline';     // always 'iframe' in v1
