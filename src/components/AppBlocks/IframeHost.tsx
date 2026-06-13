@@ -292,8 +292,8 @@ export function IframeHost({
     typeof modelCtx.modelVersionId === 'number' ? modelCtx.modelVersionId : null;
   // Send the viewer's current browsing level so the server only returns
   // showcase images (URLs + gen-meta) the viewer is allowed to see. The
-  // server forces SFW for anon viewers and never trusts this to widen an
-  // anon view — this just lets a logged-in NSFW-opted-in viewer see the
+  // server forces anon viewers to public (PG) and never trusts this to widen
+  // an anon view — this just lets a logged-in NSFW-opted-in viewer see the
   // same NSFW showcase the model-page gallery would show them.
   const browsingLevel = useBrowsingLevelDebounced();
   const showcaseQuery = trpc.blocks.getShowcaseImages.useQuery(

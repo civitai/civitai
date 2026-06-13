@@ -1284,9 +1284,9 @@ export const blocksRouter = router({
       z.object({
         modelVersionId: z.number().int().positive(),
         // Viewer's requested browsing-level flags (bitwise NsfwLevel), as the
-        // model-page gallery sends them. Optional; the service forces SFW for
-        // anon viewers and never trusts this to widen an anon view. Logged-in
-        // viewers with no value fall back to SFW server-side.
+        // model-page gallery sends them. Optional; the service forces anon
+        // viewers to public (PG) and never trusts this to widen an anon view.
+        // Logged-in viewers with no value fall back to SFW server-side.
         browsingLevel: z.number().int().min(0).optional(),
       })
     )
@@ -1303,7 +1303,7 @@ export const blocksRouter = router({
       // Thread the viewer's browsing context so NSFW image URLs + their full
       // gen-meta (prompt/seed) aren't leaked into the third-party publisher
       // iframe for NSFW-opted-out or logged-out viewers. Anon (no ctx.user)
-      // is forced to SFW inside the service.
+      // is forced to public (PG) inside the service.
       return getModelShowcaseImages(input.modelVersionId, {
         userId: ctx.user?.id ?? null,
         browsingLevel: input.browsingLevel,
