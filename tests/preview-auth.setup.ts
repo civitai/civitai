@@ -136,46 +136,21 @@ setup('mint preview sessions', async ({ request }) => {
     }
   }
 
-  // Search-readiness gate. The warm-up GETs above only trigger a route compile —
-  // they're fire-and-forget and don't ensure the SEARCH backend is actually
-  // serving. The image-search path (getAllImagesIndex -> the in-cluster feeds-proxy
-  // via METRICS_SEARCH_HOST) is intermittently flaky under concurrent preview-build
-  // load and 5xx's, which is what hard-fails /moderator/images (and the image feed).
-  // So before the suite runs, POLL a representative search-backed request until it
-  // serves 2xx, with real spacing to outlast a transient spike. Non-fatal: if it
-  // never readies we proceed and let the specs report honestly (a sustained search
-  // outage is a real signal, not something to hide). When search is healthy this
-  // returns on the first probe, so it adds ~nothing to a warm run.
-  async function waitForOk(path: string, cookie: string): Promise<boolean> {
-    const attempts = 12;
-    for (let i = 1; i <= attempts; i++) {
-      try {
-        const r = await request.get(path, { timeout: 20_000, headers: { cookie } });
-        if (r.ok()) return true;
-      } catch {
-        // network/timeout — treat as not-ready and keep polling
-      }
-      if (i < attempts) await new Promise((resolve) => setTimeout(resolve, 6_000));
-    }
-    return false;
-  }
-
+  // Best-effort search warm-up (NOT a blocking readiness gate). The image-search
+  // path (getAllImagesIndex -> the in-cluster feeds-proxy via METRICS_SEARCH_HOST)
+  // can be cold/overloaded; fire ONE GET to warm the connection. We deliberately do
+  // NOT poll-until-ready: the earlier 12x6s gate wasted up to ~72s when search was
+  // overloaded for the whole window, and it was never the load-bearing fix anyway —
+  // each search-dependent spec (whatIf, /moderator/images, image-feed) wraps its
+  // query in retryFlaky (preview-retry.ts), which rides out a transient 408/5xx with
+  // backoff. So a single fire-and-forget warm-up is all that's useful here.
+  // (/moderator/images is already warmed by the mod loop above.)
   if (gold) {
-    // The exact image-search path the image-feed + /moderator/images depend on
-    // (engagement sort routes through the search index).
-    const ready = await waitForOk(
-      '/api/v1/images?sort=Most%20Reactions&limit=1',
-      `${COOKIE_NAME}=${gold}`
-    );
-    if (!ready) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        '[preview-setup] image-search path not ready after polling — search-backed specs may flake'
-      );
-    }
-  }
-  if (mod) {
-    // Directly ready the /moderator/images render (mod-only, search-backed).
-    await waitForOk('/moderator/images', `${COOKIE_NAME}=${mod}`);
+    await request
+      .get('/api/v1/images?sort=Most%20Reactions&limit=1', {
+        timeout: 20_000,
+        headers: { cookie: `${COOKIE_NAME}=${gold}` },
+      })
+      .catch(() => {});
   }
 });
