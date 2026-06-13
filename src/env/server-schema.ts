@@ -393,7 +393,14 @@ export const serverSchema = z.object({
   // FORGEJO_ADMIN_TOKEN       Forgejo personal access token (admin) — used
   //                           by civitai-web to create repos / webhooks
   // FORGEJO_WEBHOOK_SECRET    HMAC shared secret between Forgejo → webhook
+  // FORGEJO_WEBHOOK_SECRET_NEXT   optional second secret accepted during a
+  //                           zero-downtime rotation (set NEXT to the new
+  //                           secret, flip the Forgejo signer to it, then
+  //                           drop the old from FORGEJO_WEBHOOK_SECRET).
   // BLOCK_BUILD_CALLBACK_SECRET   HMAC shared secret between Tekton → callback
+  // BLOCK_BUILD_CALLBACK_SECRET_NEXT  optional second secret accepted during a
+  //                           zero-downtime rotation (same OLD-or-NEW window
+  //                           as FORGEJO_WEBHOOK_SECRET_NEXT).
   // APPS_TEKTON_TRIGGER_URL   HTTP endpoint that creates PipelineRuns on
   //                           dc-02-a (the app-blocks-trigger receiver,
   //                           reached via the VPN proxy on dp-1). Example:
@@ -416,7 +423,9 @@ export const serverSchema = z.object({
   FORGEJO_PUBLIC_URL: z.string().url().default('https://forgejo.civitai.com'),
   FORGEJO_ADMIN_TOKEN: z.string().optional(),
   FORGEJO_WEBHOOK_SECRET: z.string().optional(),
+  FORGEJO_WEBHOOK_SECRET_NEXT: z.string().optional(),
   BLOCK_BUILD_CALLBACK_SECRET: z.string().optional(),
+  BLOCK_BUILD_CALLBACK_SECRET_NEXT: z.string().optional(),
   APPS_TEKTON_TRIGGER_URL: z.string().url().optional(),
   APPS_TEKTON_TRIGGER_SECRET: z.string().optional(),
   APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
