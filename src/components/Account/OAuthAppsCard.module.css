@@ -1,0 +1,23 @@
+.typeCard {
+  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+  transition: border-color 100ms ease, background-color 100ms ease;
+
+  &:hover {
+    background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+  }
+
+  &[data-checked] {
+    border-color: var(--mantine-color-blue-filled);
+    background-color: light-dark(
+      alpha(var(--mantine-color-blue-6), 0.06),
+      alpha(var(--mantine-color-blue-9), 0.2)
+    );
+  }
+
+  /* Term chip (<Code>) defaults to a solid gray that collides with the card's
+     hover/selected backgrounds. Use a translucent overlay so it reads on any
+     card background. */
+  code {
+    background-color: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.12));
+  }
+}
