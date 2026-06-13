@@ -67,14 +67,34 @@ const transformStatus = {
 
 export type GetHistoryInput = z.input<typeof getHistorySchema>;
 export type GetHistorySchema = z.infer<typeof getHistorySchema>;
-// Cursor is interpolated into a ClickHouse query downstream — must coerce to a
-// real Date so a crafted string cannot inject SQL. Previously any authed user
-// could read all KoNo players' rating history by sending a cursor like
-// `' OR 1=1 --` which would round-trip through `.union([..., z.string(), ...])`
-// untouched and land inside the `createdAt < '${cursor}'` template.
+// Keyset-pagination cursor: composite (createdAt, imageId) on the aggregated sort
+// key. Both fields are typed/validated before they're interpolated into the
+// ClickHouse query downstream — createdAt coerces to a real Date, imageId to a
+// number — so a crafted string cannot inject SQL. (Prior bug: a `' OR 1=1 --`
+// string cursor round-tripped untouched into the `createdAt < '${cursor}'`
+// template, letting any authed user read every KoNo player's history.)
 export const getHistorySchema = z.object({
   limit: z.number().optional().default(DEFAULT_PAGE_SIZE),
-  cursor: z.coerce.date().optional(),
+  cursor: z
+    .object({
+      // ClickHouse (JSONEachRow) serializes this DateTime as a bare
+      // "YYYY-MM-DD HH:MM:SS" with no zone; coercing that with `new Date()` would
+      // parse it as POD-LOCAL time. Force UTC so the keyset boundary is exact
+      // regardless of pod TZ (pods are UTC today — don't silently depend on it).
+      // An ISO/Z string or a Date instance passes through unchanged; anything
+      // unparseable fails z.coerce.date() → .catch() below → page 1.
+      createdAt: z.preprocess(
+        (v) =>
+          typeof v === 'string' && !/[zZ]|[+-]\d\d:?\d\d$/.test(v) ? `${v.replace(' ', 'T')}Z` : v,
+        z.coerce.date()
+      ),
+      imageId: z.number(),
+    })
+    .optional()
+    // A legacy (pre-deploy, Date-shaped) or otherwise-invalid cursor degrades to
+    // page 1 instead of a hard 400 — graceful across the canary window — and a
+    // crafted cursor can never reach the query (dropped here, never interpolated).
+    .catch(undefined),
   status: z
     .enum(NewOrderImageRatingStatus)
     .transform((val) => {
