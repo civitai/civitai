@@ -60,9 +60,16 @@ export async function queryWorkflows({
         throw throwAuthorizationError(error.detail);
       case 403:
         throw throwInsufficientFundsError(error.detail);
+      case 429:
+        throw throwRateLimitError(error.detail);
       default:
         if (error.detail?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');
+        // An unhandled 4xx is a client/validation fault (e.g. a 404 on a deleted or
+        // not-owned workflow) — surface as 4xx, not a re-thrown raw error that tRPC
+        // maps to 500. Genuine 5xx / status-less failures stay a server error.
+        if (typeof error.status === 'number' && error.status >= 400 && error.status < 500)
+          throw throwBadRequestError(error.detail);
         throw error;
     }
   }
@@ -86,9 +93,16 @@ export async function getWorkflow({
         throw throwAuthorizationError(error.detail);
       case 403:
         throw throwInsufficientFundsError(error.detail);
+      case 429:
+        throw throwRateLimitError(error.detail);
       default:
         if (error.detail?.startsWith('<!DOCTYPE'))
           throw throwInternalServerError('Generation services down');
+        // An unhandled 4xx is a client/validation fault (e.g. a 404 on a deleted or
+        // not-owned workflow) — surface as 4xx, not a re-thrown raw error that tRPC
+        // maps to 500. Genuine 5xx / status-less failures stay a server error.
+        if (typeof error.status === 'number' && error.status >= 400 && error.status < 500)
+          throw throwBadRequestError(error.detail);
         throw error;
     }
   }
