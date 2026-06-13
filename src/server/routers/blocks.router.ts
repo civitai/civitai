@@ -1280,7 +1280,16 @@ export const blocksRouter = router({
    */
   getShowcaseImages: publicProcedure
     .use(enforceAppBlocksFlag)
-    .input(z.object({ modelVersionId: z.number().int().positive() }))
+    .input(
+      z.object({
+        modelVersionId: z.number().int().positive(),
+        // Viewer's requested browsing-level flags (bitwise NsfwLevel), as the
+        // model-page gallery sends them. Optional; the service forces SFW for
+        // anon viewers and never trusts this to widen an anon view. Logged-in
+        // viewers with no value fall back to SFW server-side.
+        browsingLevel: z.number().int().min(0).optional(),
+      })
+    )
     .query(({ input, ctx }) => {
       // Gated by the `appBlocks` feature flag (availability ['mod'] in prod
       // today, 'public' once GA'd / on the anon-conversion preview), mirroring
@@ -1291,7 +1300,14 @@ export const blocksRouter = router({
       // a "no preview images" state) when the flag is off, so a non-eligible
       // caller leaks nothing and the slot degrades gracefully.
       if (!ctx.features.appBlocks) return [];
-      return getModelShowcaseImages(input.modelVersionId);
+      // Thread the viewer's browsing context so NSFW image URLs + their full
+      // gen-meta (prompt/seed) aren't leaked into the third-party publisher
+      // iframe for NSFW-opted-out or logged-out viewers. Anon (no ctx.user)
+      // is forced to SFW inside the service.
+      return getModelShowcaseImages(input.modelVersionId, {
+        userId: ctx.user?.id ?? null,
+        browsingLevel: input.browsingLevel,
+      });
     }),
 
   /**

@@ -1,8 +1,53 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { Flags } from '~/shared/utils/flags';
+import {
+  onlySelectableLevels,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 const MAX_SHOWCASE_IMAGES = 6;
+
+/**
+ * Viewer browsing context, used to gate which showcase images (and their
+ * gen-meta) are surfaced to the block. Mirrors how the model-page image feed
+ * filters by `nsfwLevel` against the viewer's allowed browsing levels
+ * (see `getAllImages` in `src/server/services/image.service.ts`, which does
+ * `(i."nsfwLevel" & ${browsingLevel}) != 0` after `onlySelectableLevels`).
+ *
+ * SECURITY: this output is posted into the third-party publisher iframe via
+ * `BLOCK_INIT.context.showcaseImages` (IframeHost.tsx). Without this gate an
+ * X-rated model would leak explicit image URLs + full prompts/seeds to
+ * untrusted publisher code AND to viewers who opted out of NSFW (including
+ * logged-out viewers). Anon viewers are forced to SFW server-side; the
+ * caller-supplied `browsingLevel` is never trusted to widen an anon view.
+ */
+export interface ShowcaseViewer {
+  /** The viewer's user id, or null/undefined for anonymous / logged-out. */
+  userId?: number | null;
+  /**
+   * The viewer's requested browsing-level flags (bitwise `NsfwLevel`), as the
+   * model-page gallery sends them. Ignored for anon viewers (forced to SFW).
+   * When omitted for a logged-in viewer we fall back to SFW (safe default).
+   */
+  browsingLevel?: number;
+}
+
+/**
+ * Resolve the bitwise browsing-level flags a viewer is actually allowed to
+ * see, mirroring the model-page feed's gating but fail-closed:
+ *   - anonymous / logged-out  → SFW only (PG + PG13), regardless of what was
+ *     requested. Untrusted callers (and the iframe) can't widen this.
+ *   - logged-in               → the requested level, with unselectable bits
+ *     (Blocked) stripped via `onlySelectableLevels`. Missing / zero falls back
+ *     to SFW so a viewer with no settings yet never gets NSFW by default.
+ */
+function resolveAllowedBrowsingLevel(viewer?: ShowcaseViewer): number {
+  if (!viewer?.userId) return sfwBrowsingLevelsFlag;
+  const requested = onlySelectableLevels(viewer.browsingLevel ?? 0);
+  return requested > 0 ? requested : sfwBrowsingLevelsFlag;
+}
 
 /**
  * Bounded, public-safe view of a showcase image the block displays to
@@ -39,11 +84,20 @@ export interface ShowcaseImage {
  *   - tosViolation: false (defense in depth — Scanned alone is supposed
  *     to drop these, but enforce here too).
  *   - postId IS NOT NULL (orphaned images shouldn't show up).
+ *   - nsfwLevel intersects the viewer's allowed browsing levels (see
+ *     `resolveAllowedBrowsingLevel` / `ShowcaseViewer`). Anon → SFW only.
+ *     Images with `nsfwLevel = 0` (unrated / pending) never intersect and are
+ *     therefore excluded — the same fail-closed stance the feed takes for
+ *     non-own unrated content.
  *
  * Returns an empty array when the version has no images yet — block UI
  * renders a "no preview images" state rather than crashing.
  */
-export async function getModelShowcaseImages(modelVersionId: number): Promise<ShowcaseImage[]> {
+export async function getModelShowcaseImages(
+  modelVersionId: number,
+  viewer?: ShowcaseViewer
+): Promise<ShowcaseImage[]> {
+  const allowedBrowsingLevel = resolveAllowedBrowsingLevel(viewer);
   // ImageResourceNew is the live table; the legacy ImageResource was fully
   // migrated and is now empty (verified 2026-05-25: 0 rows vs 417M).
   const rows = await dbRead.imageResourceNew.findMany({
@@ -105,6 +159,11 @@ export async function getModelShowcaseImages(modelVersionId: number): Promise<Sh
     const img = row.image;
     if (!img || seen.has(img.id)) continue;
     seen.add(img.id);
+    // Browsing-level gate: drop any image whose nsfwLevel isn't in the
+    // viewer's allowed levels BEFORE the MAX cap, so a wall of NSFW top
+    // images doesn't starve a SFW viewer of the SFW ones further down.
+    // `Flags.intersects(0, …)` is false → unrated (nsfwLevel = 0) is excluded.
+    if (!Flags.intersects(img.nsfwLevel, allowedBrowsingLevel)) continue;
     const reactions = reactionByImage.get(img.id) ?? 0;
     flat.push({ img, reactions });
   }
