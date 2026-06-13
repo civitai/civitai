@@ -164,6 +164,13 @@ export function instrumentApiResponse(req: NextApiRequest, res: NextApiResponse)
  * that map to >= 500 count — 4xx-class errors and any non-TRPCError cause passed by
  * tRPC's streaming/jsonl error paths are ignored (the latter would otherwise be
  * miscounted as 500 by getHTTPStatusCodeFromError's undefined→500 fallback).
+ *
+ * KNOWN DIVERGENCE FROM TRAEFIK on the tRPC path: client aborts are skipped here
+ * (see the isClientAbortError guard in the tRPC onError), but tRPC's onError can't
+ * set an HTTP status, so the aborted procedure still returns 500 to the edge and
+ * Traefik DOES count it in `code=~"5.."`. So for aborts, kind=trpc reads slightly
+ * LOWER than Traefik (~0.07/s) — that's intentional, not a counter bug. The REST
+ * paths don't diverge (they emit a real 499). Don't "reconcile" this away.
  */
 export function recordTrpcError(error: unknown, path?: string): void {
   try {
