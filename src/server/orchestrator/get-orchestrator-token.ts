@@ -50,6 +50,16 @@ export async function getOrchestratorToken(userId: number, ctx: Context) {
     // 60s TTL the worst-case DB rate is bounded by (active-users / 60s)
     // per pod, regardless of request volume. See
     // orchestrator-token-cache.ts for the full rationale.
+    //
+    // KNOWN BEHAVIOR: see orchestrator-token-cache.ts docstring — this
+    // cache is NOT invalidated by ban / logout / API-key-rotation. A
+    // revoked user keeps minting/using a valid orchestrator token for
+    // up to ORCHESTRATOR_TOKEN_CACHE_TTL_MS per pod across all ~220
+    // pods (api + jobs + ssr). The 401 handlers in
+    // src/server/services/orchestrator/{workflows,imageUpload,
+    // consumerBlobUpload,videoEnhancement}.ts only `throw` — they do
+    // not invalidate this cache or the sysRedis hash. Future
+    // moderation features must NOT assume cache-coherent revocation.
     token = await getOrMintCachedToken(userId, () =>
       getTemporaryUserApiKey({
         name: generationServiceCookie.name,

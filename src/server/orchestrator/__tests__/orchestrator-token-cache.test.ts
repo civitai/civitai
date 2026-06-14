@@ -149,6 +149,119 @@ describe('orchestrator-token-cache — env-driven module init', () => {
     mod.__testing.clear();
   });
 
+  it('rejects with timeout error when mint never settles (default behaviour with short MINT_TIMEOUT_MS)', async () => {
+    // 50ms timeout: tight enough to keep the test fast, long enough to
+    // be deterministic on CI even under jitter. We deliberately don't
+    // use vi.useFakeTimers() — the existing TTL test above documents
+    // that fake timers don't intercept lru-cache's perf source, and
+    // mixing real + fake timers makes the race semantics nondeterministic.
+    process.env.ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS = '50';
+    vi.resetModules();
+    const mod = await import('../orchestrator-token-cache');
+
+    // A mint that NEVER resolves — simulates a stuck Postgres failover
+    // or PgBouncer reserve_pool exhaustion. Without the timeout, the
+    // inflight slot would be held forever and same-user callers would
+    // attach to a dead promise.
+    const neverResolves = vi.fn(() => new Promise<string>(() => undefined));
+
+    const userId = 1;
+    await expect(mod.getOrMintCachedToken(userId, neverResolves)).rejects.toThrow(
+      /mint timed out after 50ms for user 1/
+    );
+
+    // The inflight slot MUST be empty after the timeout fired — the
+    // .finally() should have run regardless of which arm of the race won.
+    expect(mod.__testing.size()).toEqual({ cache: 0, inflight: 0 });
+
+    mod.__testing.clear();
+  });
+
+  it('clears the in-flight slot after a timeout so the next caller gets a fresh mint', async () => {
+    process.env.ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS = '50';
+    vi.resetModules();
+    const mod = await import('../orchestrator-token-cache');
+
+    const neverResolves = vi.fn(() => new Promise<string>(() => undefined));
+    const mintFast = vi.fn(async () => 'fresh-token');
+
+    const userId = 2;
+    // First call times out.
+    await expect(mod.getOrMintCachedToken(userId, neverResolves)).rejects.toThrow(
+      /mint timed out after 50ms/
+    );
+    // Second call must NOT be attached to the (still-pending) neverResolves
+    // promise — it must enter a fresh inflight with the fast mint.
+    const recovered = await mod.getOrMintCachedToken(userId, mintFast);
+    expect(recovered).toBe('fresh-token');
+    expect(mintFast).toHaveBeenCalledTimes(1);
+
+    mod.__testing.clear();
+  });
+
+  it('awaits a slow mint with no timeout when ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS=0', async () => {
+    // 0 = timeout disabled (pre-this-PR behaviour). Even a mint slower
+    // than the default 10s timeout must be awaited to completion.
+    process.env.ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS = '0';
+    vi.resetModules();
+    const mod = await import('../orchestrator-token-cache');
+
+    // Mint takes 100ms — far longer than the 50ms used in the timeout
+    // tests above. If the default-10s timeout were still active this
+    // would still pass; the load-bearing assertion is that 0 truly
+    // disables the wrapping (no Promise.race overhead, no setTimeout).
+    const mintSlow = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 100));
+      return 'slow-token';
+    });
+
+    const userId = 3;
+    const result = await mod.getOrMintCachedToken(userId, mintSlow);
+
+    expect(result).toBe('slow-token');
+    expect(mintSlow).toHaveBeenCalledTimes(1);
+
+    mod.__testing.clear();
+  });
+
+  it('rejects all coalesced concurrent callers on timeout, then accepts a fresh inflight', async () => {
+    process.env.ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS = '50';
+    vi.resetModules();
+    const mod = await import('../orchestrator-token-cache');
+
+    // Single neverResolves mint shared across 10 coalesced callers. Only
+    // the first caller actually invokes mint(); the other 9 attach to the
+    // inflight promise. When the timeout fires, ALL 10 must reject (they
+    // share the same rejected race-promise), and the inflight slot must
+    // be cleared so a subsequent caller mints fresh.
+    const neverResolves = vi.fn(() => new Promise<string>(() => undefined));
+
+    const userId = 4;
+    const N = 10;
+    const results = await Promise.allSettled(
+      Array.from({ length: N }, () => mod.getOrMintCachedToken(userId, neverResolves))
+    );
+
+    // All 10 rejected with the timeout error.
+    expect(results.every((r) => r.status === 'rejected')).toBe(true);
+    for (const r of results) {
+      if (r.status === 'rejected')
+        expect(String(r.reason)).toMatch(/mint timed out after 50ms for user 4/);
+    }
+    // mint() was only invoked once thanks to coalescing.
+    expect(neverResolves).toHaveBeenCalledTimes(1);
+    // Inflight slot is clean.
+    expect(mod.__testing.size()).toEqual({ cache: 0, inflight: 0 });
+
+    // Subsequent caller hits a brand-new inflight with a healthy mint.
+    const mintFast = vi.fn(async () => 'after-timeout-token');
+    const recovered = await mod.getOrMintCachedToken(userId, mintFast);
+    expect(recovered).toBe('after-timeout-token');
+    expect(mintFast).toHaveBeenCalledTimes(1);
+
+    mod.__testing.clear();
+  });
+
   it('disables cache + coalescing when ORCHESTRATOR_TOKEN_CACHE_MAX=0', async () => {
     process.env.ORCHESTRATOR_TOKEN_CACHE_MAX = '0';
     vi.resetModules();

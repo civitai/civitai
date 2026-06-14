@@ -59,11 +59,45 @@
  *    only an amplification dampener while sysRedis is degraded. Per-pod
  *    isolation also caps blast radius (a poisoned cache entry can only
  *    affect one pod's traffic).
- *  - No cache invalidation API. Eviction is implicit-via-TTL. If a token
- *    is revoked mid-cache-window the worst case is one stale token until
- *    the entry expires; the orchestrator will reject it and the next
- *    request mints fresh.
+ *  - No cache invalidation API. Eviction is implicit-via-TTL.
  *  - Bounded memory: `max` entries × ~40 bytes/token ≈ 2 MB worst case.
+ *
+ * KNOWN BEHAVIOR (ban / logout / API-key rotation)
+ * ------------------------------------------------
+ * This cache is NOT invalidated by any of the auth-revocation paths in
+ * `src/server/services/orchestrator/`. The 401 handlers at
+ *   - workflows.ts:58, workflows.ts:84, workflows.ts:154
+ *   - imageUpload.ts:30
+ *   - consumerBlobUpload.ts:27
+ *   - videoEnhancement.ts:27
+ * all `throw throwAuthorizationError(...)` and do nothing to either this
+ * in-memory cache or the underlying sysRedis hash. A user banned, logged
+ * out, or whose API key has been rotated at T0 will therefore keep
+ * minting/holding a valid orchestrator token for up to
+ * `ORCHESTRATOR_TOKEN_CACHE_TTL_MS` on any pod whose cache they touched
+ * — and this is per-pod across all ~220 pods (api ~80 + jobs ~10 + ssr
+ * ~130). Worst-case fleet-wide window: TTL_MS × per-pod-staggered cache
+ * lifetime. The previously claimed "orchestrator rejects, next request
+ * mints fresh" self-healing behaviour does NOT exist — a 401 from the
+ * orchestrator surfaces to the user as an auth error and the cache
+ * entry is left in place until natural TTL eviction.
+ *
+ * If invalidation latency matters for your use case, EITHER:
+ *   - add an explicit `invalidate(userId)` call (export to be added)
+ *     alongside the revocation, OR
+ *   - shorten `ORCHESTRATOR_TOKEN_CACHE_TTL_MS` to the maximum tolerable
+ *     stale-window.
+ *
+ * KNOWN BEHAVIOR (mint timeout)
+ * -----------------------------
+ * `mint()` is wrapped in `Promise.race` against a configurable timeout
+ * (`ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS`, default 10s; 0 disables).
+ * Without a timeout, a Postgres failover or PgBouncer reserve_pool
+ * exhaustion could leave the `inflight` Map slot held by a promise that
+ * never settles. Subsequent same-user callers would attach to that dead
+ * promise forever. The timeout rejects the awaiting promise, which fires
+ * the `.finally()` that clears the inflight slot so the next caller gets
+ * a fresh attempt.
  */
 
 import { LRUCache } from 'lru-cache';
@@ -94,6 +128,18 @@ function readNonNegativeInt(envName: string, fallback: number): number {
 
 const MAX_ENTRIES = readNonNegativeInt('ORCHESTRATOR_TOKEN_CACHE_MAX', DEFAULT_MAX);
 const TTL_MS = readNonNegativeInt('ORCHESTRATOR_TOKEN_CACHE_TTL_MS', DEFAULT_TTL_MS);
+
+// Hard upper bound on how long we will await a `mint()` call before
+// rejecting and freeing the inflight slot. `0` disables the timeout
+// entirely (mint is awaited indefinitely — pre-this-PR behaviour). The
+// default (10s) is well above any healthy ApiKey INSERT P99 but well
+// below the kubelet liveness probe timeout, so a stalled mint won't
+// wedge the inflight slot past one health-check window.
+const DEFAULT_MINT_TIMEOUT_MS = 10_000;
+const MINT_TIMEOUT_MS = readNonNegativeInt(
+  'ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS',
+  DEFAULT_MINT_TIMEOUT_MS
+);
 
 // Kill-switch. Computed once at module load so the hot path is a single
 // boolean check, not a per-call env read. To disable the cache in
@@ -157,14 +203,44 @@ export async function getOrMintCachedToken(
   cacheMissCounter.inc({ cache_name: CACHE_NAME, cache_type: CACHE_TYPE });
 
   const promise = (async () => {
+    // Track the timeout handle so we can cancel it as soon as mint()
+    // settles — otherwise a fast-resolving mint would still pin the
+    // setTimeout reference until the timeout fires (allocates a stale
+    // closure per mint, and prevents the GC from collecting the user's
+    // tail-state). `.unref()` is belt-and-suspenders for short-lived
+    // Node workers / scripts that import this module — the event loop
+    // shouldn't be held alive by an outstanding mint timeout.
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     try {
-      const token = await mint();
+      const mintPromise =
+        MINT_TIMEOUT_MS > 0
+          ? Promise.race<string>([
+              mint(),
+              new Promise<never>((_, reject) => {
+                timeoutHandle = setTimeout(
+                  () =>
+                    reject(
+                      new Error(
+                        `getOrMintCachedToken: mint timed out after ${MINT_TIMEOUT_MS}ms for user ${userId}`
+                      )
+                    ),
+                  MINT_TIMEOUT_MS
+                );
+                // Do not hold the event loop open solely for this timer.
+                timeoutHandle.unref?.();
+              }),
+            ])
+          : mint();
+
+      const token = await mintPromise;
       tokenCache.set(userId, token);
       return token;
     } finally {
-      // Always clear the in-flight slot, even on rejection — otherwise a
-      // single transient mint failure would wedge all future requests
-      // for this user behind a rejected promise.
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      // Always clear the in-flight slot, even on rejection or timeout —
+      // otherwise a single transient mint failure (or a stuck Postgres
+      // failover that hits the MINT_TIMEOUT_MS guard above) would wedge
+      // all future requests for this user behind a dead promise.
       inflight.delete(userId);
     }
   })();
