@@ -112,9 +112,31 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
 // `claims.buzzBudget` is a PER-CALL ceiling only. Without an aggregate cap, a
 // block holding a valid token (15-min lifetime, freely re-minted) can issue
 // unlimited sequential `submitWorkflow` calls each ≤ budget and drain the
-// viewer's entire Buzz balance. This adds a per-(user, app_block, UTC-day)
-// cumulative ceiling enforced server-side in submitWorkflow, backed by a Redis
-// counter that self-expires at the end of its window.
+// viewer's entire Buzz balance. This adds a per-(USER, UTC-day) cumulative
+// ceiling enforced server-side in submitWorkflow, backed by a Redis counter
+// that self-expires at the end of its window.
+//
+// PER-USER aggregate (NOT per-(user, app_block)): the key intentionally omits
+// appBlockId so EVERY block a user has installed spends against ONE shared
+// daily ceiling. A per-block key let a publisher multiply the effective cap by
+// spinning up N blocks (N × 50,000/day). One key per user closes that.
+//
+// Enforcement is an atomic RESERVE-AND-REFUND rather than read→check→record:
+//   - reserveBlockBuzzSpend INCRBYs the cost FIRST and returns the new running
+//     total. INCRBY is atomic, so two concurrent submits can't both read a
+//     stale total and both pass — the TOCTOU in the old read+record shape.
+//   - if the reservation pushes the total over the cap we REFUND (DECRBY) and
+//     reject; otherwise the reservation stands as the spend record (no separate
+//     fire-and-forget incr that could silently drop and under-count).
+//   - on a throw anywhere between reserve and a resolved submitWorkflow we
+//     refund, matching the old semantics (which only recorded after a resolved
+//     submit). A resolved submit KEEPS the reservation regardless of snapshot
+//     status (the old code recorded after submitWorkflow resolved, including a
+//     returned `failed` snapshot).
+// A failed refund slightly OVER-counts (the reservation lingers), which makes
+// the cap STRICTER, not looser — the safe direction for an abuse cap. A Redis
+// error on the reserve throws and fails the submit CLOSED, identical to the old
+// read path's fail-closed posture.
 //
 // The aggregate ceiling is a fixed platform default today. When the W5 consent
 // layer lands (app_user_scope_grants), the per-install/consent aggregate limit
@@ -129,45 +151,43 @@ function buzzCapWindowKey(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function buzzCapRedisKey(
-  userId: number,
-  appBlockId: string
-): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${string}` {
-  return `${REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${userId}:${appBlockId}:${buzzCapWindowKey()}`;
+function buzzCapRedisKey(userId: number): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${string}` {
+  // PER-USER aggregate: appBlockId is intentionally NOT part of the key so all
+  // of a user's installed blocks share ONE daily ceiling (see comment above).
+  return `${REDIS_SYS_KEYS.BLOCKS.BUZZ_CAP}:${userId}:${buzzCapWindowKey()}`;
 }
 
 /**
- * Returns the cumulative Buzz already spent by this (user, app_block) in the
- * current UTC-day window. 0 when the key is absent (fresh window / first spend).
+ * Atomically reserves `cost` against this user's cumulative UTC-day counter and
+ * returns the new running total. INCRBY is atomic, so concurrent submits
+ * accumulate correctly with no read→check→record TOCTOU. Sets the TTL on the
+ * (effectively) first write so the per-window key self-expires (the ttl<0 guard
+ * also re-arms a key that somehow lost its TTL). No try/catch: a Redis error
+ * throws and fails the submit CLOSED, identical to the old read path.
  */
-async function getBlockBuzzSpentInWindow(userId: number, appBlockId: string): Promise<number> {
-  const raw = await sysRedis.get(buzzCapRedisKey(userId, appBlockId));
-  const n = raw == null ? 0 : Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
-}
-
-/**
- * Records `cost` against the cumulative window counter after a successful
- * submit. Sets the TTL on the (effectively) first write so the per-window key
- * self-expires. INCRBY is atomic, so concurrent submits accumulate correctly.
- */
-async function recordBlockBuzzSpend(
-  userId: number,
-  appBlockId: string,
-  cost: number
-): Promise<void> {
-  if (cost <= 0) return;
-  const key = buzzCapRedisKey(userId, appBlockId);
+async function reserveBlockBuzzSpend(userId: number, cost: number): Promise<{ total: number }> {
+  const key = buzzCapRedisKey(userId);
   const total = await sysRedis.incrBy(key, Math.ceil(cost));
-  // Set expiry once: if the counter just became >= the increment, this is the
-  // first write of the window. (ttl<0 guard also re-arms a key that somehow
-  // lost its TTL.)
   if (total <= Math.ceil(cost)) {
     await sysRedis.expire(key, BLOCK_BUZZ_CAP_TTL_SECONDS);
   } else {
     const ttl = await sysRedis.ttl(key);
     if (ttl < 0) await sysRedis.expire(key, BLOCK_BUZZ_CAP_TTL_SECONDS);
   }
+  return { total };
+}
+
+/**
+ * Refunds a previously-reserved `cost` (best-effort DECRBY). Used when the
+ * reservation pushed the total over the cap, or when the submit path throws
+ * before a resolved submitWorkflow. Best-effort: a failed refund leaves the
+ * reservation in place, which OVER-counts and so only makes the cap STRICTER —
+ * the safe direction for an abuse cap. Never throws into the caller.
+ */
+async function refundBlockBuzzSpend(userId: number, cost: number): Promise<void> {
+  await sysRedis.decrBy(buzzCapRedisKey(userId), Math.ceil(cost)).catch(() => {
+    /* best-effort — see note above; a lost refund over-counts (stricter cap) */
+  });
 }
 
 // Free-form slot strings are a cache-busting surface for anon callers.
@@ -1188,61 +1208,73 @@ export const blocksRouter = router({
       }
 
       // CUMULATIVE Buzz-spend cap (audit A7 / design-gaps H1). The per-call
-      // check above only bounds THIS submit; check the running per-(user,
-      // app_block, UTC-day) total so a block can't drain the balance via many
-      // sequential ≤budget submits. Reject (without spending) when this submit
-      // would push the cumulative spend over the daily ceiling. The increment
-      // happens AFTER a successful submit below — failed/blocked submits don't
-      // consume the cap.
-      const alreadySpent = await getBlockBuzzSpentInWindow(userId, claims.appBlockId);
-      if (alreadySpent + cost > BLOCK_BUZZ_CAP_PER_DAY) {
+      // check above only bounds THIS submit; reserve `cost` against the running
+      // per-(USER, UTC-day) total so a block can't drain the balance via many
+      // sequential ≤budget submits, and so multiple installed blocks can't
+      // multiply the ceiling (the key is per-user, see buzzCapRedisKey).
+      //
+      // RESERVE FIRST (atomic INCRBY): this closes the read→check→record
+      // TOCTOU — two concurrent submits can't both read a stale total and both
+      // pass. If the reservation pushes the total over the cap, REFUND it and
+      // reject without submitting; otherwise the reservation IS the spend
+      // record (no separate fire-and-forget incr that could silently drop and
+      // under-count). A Redis error on the reserve throws → fails CLOSED,
+      // matching the old read path.
+      const { total } = await reserveBlockBuzzSpend(userId, cost);
+      if (total > BLOCK_BUZZ_CAP_PER_DAY) {
+        await refundBlockBuzzSpend(userId, cost);
         return {
           snapshot: {
             workflowId: 'failed',
             status: 'failed' as const,
             cost: { total: cost },
             error:
-              `daily Buzz cap reached for this app: ${alreadySpent} already spent today, ` +
-              `this generation costs ${cost}, daily cap is ${BLOCK_BUZZ_CAP_PER_DAY}`,
+              `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
+              `across your installed apps, this generation costs ${cost}, ` +
+              `daily cap is ${BLOCK_BUZZ_CAP_PER_DAY}`,
           },
         };
       }
 
-      // Daily-boost autoclaim. Cost cleared the install's budget cap; check
-      // whether the user's actual spendable Buzz can pay for it. If they're
-      // short AND the 25-blue daily boost would close the gap, fire the
-      // reward apply() before submitting — it's idempotent (Redis Lua dedup
-      // per UTC day) so re-entering this code path twice on the same UTC
-      // day is a no-op.
-      //
-      // Conservative rule: only claim when (current + awardAmount) >= cost.
-      // Burning a one-per-day boost on a still-hopeless submit would be
-      // worse UX than the existing "insufficient buzz" Top-Up CTA the
-      // block already renders.
-      const autoClaim = await maybeAutoClaimDailyBoost({
-        userId,
-        cost,
-        ip: ctx.ip,
-      });
+      // From here the reservation is live. If ANYTHING throws before a resolved
+      // submitWorkflow, refund the reservation and re-throw — this matches the
+      // original semantics exactly (the old code recorded the spend only after
+      // submitWorkflow RESOLVED, so a throw meant no record). A resolved submit
+      // KEEPS the reservation regardless of snapshot status (the old code
+      // recorded after submitWorkflow resolved, including a returned `failed`
+      // snapshot) — so we do NOT refund on a non-throwing failed snapshot.
+      let snapshot: ReturnType<typeof snapshotFromWorkflow>;
+      let autoClaim: Awaited<ReturnType<typeof maybeAutoClaimDailyBoost>>;
+      try {
+        // Daily-boost autoclaim. Cost cleared the install's budget cap; check
+        // whether the user's actual spendable Buzz can pay for it. If they're
+        // short AND the 25-blue daily boost would close the gap, fire the
+        // reward apply() before submitting — it's idempotent (Redis Lua dedup
+        // per UTC day) so re-entering this code path twice on the same UTC
+        // day is a no-op.
+        //
+        // Conservative rule: only claim when (current + awardAmount) >= cost.
+        // Burning a one-per-day boost on a still-hopeless submit would be
+        // worse UX than the existing "insufficient buzz" Top-Up CTA the
+        // block already renders.
+        autoClaim = await maybeAutoClaimDailyBoost({
+          userId,
+          cost,
+          ip: ctx.ip,
+        });
 
-      const step = await createTextToImageStep({ ...generateInput, user });
-      const submitted = await submitWorkflow({
-        token,
-        body: { steps: [step], tags, currencies: BLOCK_CURRENCIES },
-      });
-      const snapshot = snapshotFromWorkflow(submitted);
-
-      // Record the spend against the cumulative daily cap. Only on a real
-      // submit (this line is reached only after submitWorkflow resolved). Use
-      // the whatif estimate as the charged amount — it's what the per-call
-      // check used and what the orchestrator bills against. Fire-and-forget so
-      // a Redis blip can't poison the user-facing response, but await-able for
-      // tests; a missed increment fails OPEN (under-counts) which is the safe
-      // direction for a spend CAP only in that it never over-rejects — the
-      // per-call ceiling still bounds each individual submit.
-      await recordBlockBuzzSpend(userId, claims.appBlockId, cost).catch(() => {
-        /* swallow — see note above */
-      });
+        const step = await createTextToImageStep({ ...generateInput, user });
+        const submitted = await submitWorkflow({
+          token,
+          body: { steps: [step], tags, currencies: BLOCK_CURRENCIES },
+        });
+        snapshot = snapshotFromWorkflow(submitted);
+      } catch (e) {
+        // No resolved submit → undo the reservation (net-equivalent to the old
+        // "only record after a resolved submit" behavior) and propagate.
+        await refundBlockBuzzSpend(userId, cost);
+        throw e;
+      }
 
       // Log the workflow submission to the per-user activity feed so
       // /apps/installed → Activity shows "this app ran a workflow on
