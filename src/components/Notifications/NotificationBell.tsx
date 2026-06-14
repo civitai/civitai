@@ -44,7 +44,7 @@ export function NotificationBell() {
           disabled={count.all <= 0}
           withBorder
         >
-          <LegacyActionIcon variant="subtle" color="gray">
+          <LegacyActionIcon variant="subtle" color="gray" aria-label="Notifications">
             <IconBell />
           </LegacyActionIcon>
         </Indicator>

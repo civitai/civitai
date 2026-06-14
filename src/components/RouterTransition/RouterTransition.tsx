@@ -5,7 +5,7 @@ import { useRouter } from 'next/router';
 export function RouterTransition() {
   useIsChangingLocation();
 
-  return <NavigationProgress />;
+  return <NavigationProgress aria-label="Page loading progress" />;
 }
 
 export const useIsChangingLocation = () => {

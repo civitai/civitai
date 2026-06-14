@@ -74,7 +74,7 @@ export function Logo() {
 
   return (
     <div className={clsx(styles.logo, holidayClass)}>
-      <NextLink href="/">
+      <NextLink href="/" aria-label="Civitai home">
         {holiday === 'halloween' && (
           <img src="/images/holiday/ghost.png" alt="ghost" className={styles.flyOver} />
         )}

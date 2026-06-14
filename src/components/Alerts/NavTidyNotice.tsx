@@ -92,7 +92,12 @@ export function NavTidyNotice() {
       arrowSize={10}
     >
       <Popover.Target>
-        <div className="inline-flex cursor-help text-yellow-7" aria-label="Navigation updated">
+        <div
+          role="button"
+          tabIndex={0}
+          className="inline-flex cursor-help text-yellow-7"
+          aria-label="Navigation updated"
+        >
           <IconInfoCircle size={18} />
         </div>
       </Popover.Target>
