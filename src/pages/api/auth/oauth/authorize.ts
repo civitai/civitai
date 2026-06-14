@@ -10,6 +10,7 @@ import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-
 import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { buzzLimitSchema } from '~/server/schema/api-key.schema';
+import { redirectUriMatches } from '~/server/schema/oauth-client.schema';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'OPTIONS') {
@@ -57,9 +58,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         .json({ error: 'invalid_client', error_description: 'Unknown client_id' });
     }
 
-    // Validate redirect_uri against registered URIs
+    // Validate redirect_uri against registered URIs (exact, plus loopback port flexibility)
     const redirectUri = params.redirect_uri as string;
-    if (!redirectUri || !client.redirectUris.includes(redirectUri)) {
+    if (!redirectUri || !redirectUriMatches(client.redirectUris, redirectUri)) {
       return res.status(400).json({
         error: 'invalid_request',
         error_description: 'redirect_uri does not match any registered URI',
