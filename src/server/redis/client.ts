@@ -265,16 +265,19 @@ function getBaseClient(type: 'cache' | 'system') {
     },
     connectTimeout: env.REDIS_TIMEOUT,
     // Socket-level inactivity guard. node-redis maps this to net.Socket.setTimeout,
-    // which fires only when NO data is sent OR received for this long (reset by any
-    // traffic — including the 4-min pingInterval and normal commands), then destroys
-    // the socket with a SocketTimeoutError and triggers the reconnectStrategy above.
+    // an IDLE timer that fires when NO read OR write happens for this long (any
+    // command write or received reply resets it — verified against @redis/client@5.8.3
+    // + a real redis-server), then destroys the socket with a SocketTimeoutError and
+    // triggers the reconnectStrategy above.
     // This is the structural fix for the 504 cascade: on a SILENT half-open
-    // connection (pod reschedule/failover, no RST/FIN) commands previously parked
-    // off-CPU in the command queue until OS TCP keepalive killed the socket ~30s
-    // later (= Traefik ceiling = 504). With socketTimeout, the dead socket is torn
-    // down in ~REDIS_SOCKET_TIMEOUT_MS, parked commands reject promptly, and the
-    // client reconnects. Does NOT fire under healthy load (constant traffic keeps it
-    // reset). Tunable via REDIS_SOCKET_TIMEOUT_MS (0/unset to disable).
+    // connection (pod reschedule/failover, no RST/FIN) the in-flight command is PARKED
+    // in the node-redis queue and blocks every subsequent write (incl. the keepalive
+    // PING), so the idle timer runs to completion and tears the dead socket down in
+    // ~REDIS_SOCKET_TIMEOUT_MS instead of waiting ~30s for OS TCP keepalive (= Traefik
+    // ceiling = 504); parked commands then reject promptly and the client reconnects.
+    // On a HEALTHY idle socket the keepalive PING (pingInterval, derived below) writes
+    // every interval and keeps this timer reset, so it does NOT spuriously fire.
+    // Tunable via REDIS_SOCKET_TIMEOUT_MS (0/unset to disable).
     ...(env.REDIS_SOCKET_TIMEOUT_MS > 0
       ? { socketTimeout: env.REDIS_SOCKET_TIMEOUT_MS }
       : {}),
@@ -285,7 +288,23 @@ function getBaseClient(type: 'cache' | 'system') {
     password: url.password,
   };
 
-  const pingInterval = 4 * 60 * 1000;
+  // Keepalive PING interval. node-redis issues a PING every interval ONLY when the
+  // socket is otherwise idle (a parked/in-flight command blocks it from being written),
+  // and each PING is a write+reply that resets the socketTimeout idle timer — so it
+  // keeps a HEALTHY idle socket alive while a genuinely half-open socket (parked command
+  // blocks the PING) still trips socketTimeout. The INVARIANT pingInterval < socketTimeout
+  // is what prevents a healthy idle socket from spuriously firing socketTimeout. We CLAMP
+  // to min(env, socketTimeout/2) so the invariant holds even if REDIS_PING_INTERVAL_MS is
+  // mis-set >= socketTimeout. When socketTimeout is disabled (0) there is no idle timer
+  // to keep reset, so we just honor the configured ping interval.
+  const socketTimeoutMs = env.REDIS_SOCKET_TIMEOUT_MS;
+  const pingInterval =
+    socketTimeoutMs > 0
+      ? Math.min(env.REDIS_PING_INTERVAL_MS, Math.floor(socketTimeoutMs / 2))
+      : env.REDIS_PING_INTERVAL_MS;
+  log(
+    `Redis ping interval (${type}) = ${pingInterval}ms (env REDIS_PING_INTERVAL_MS=${env.REDIS_PING_INTERVAL_MS}, socketTimeout=${socketTimeoutMs}ms)`
+  );
 
   // System redis is always a single node
   // Cache redis can be either cluster or single node based on env.REDIS_CLUSTER

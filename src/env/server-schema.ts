@@ -40,16 +40,35 @@ export const serverSchema = z.object({
   REDIS_SYS_URL: z.url(),
   REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
   // Socket-level inactivity timeout (ms). Passed to node-redis `socket.socketTimeout`,
-  // which maps to net.Socket.setTimeout — it fires only when NO data is sent or
-  // received on the live socket for this long (reset by any traffic), so under normal
-  // command flow it never trips. Its job is to kill a SILENT half-open connection
-  // (pod reschedule/failover with no RST/FIN) instead of waiting ~30s for OS TCP
-  // keepalive, which is the root cause of the api-primary 504 cascades (commands park
-  // off-CPU in the node-redis queue until the socket is finally torn down). Set well
-  // above the ping interval (4min) is NOT required because pings count as traffic and
-  // keep it reset; 10s is comfortably above normal round-trip latency (<5ms). Tunable
-  // so it can be widened/disabled in prod without a redeploy.
+  // which maps to net.Socket.setTimeout — an IDLE timer that fires when NO read OR
+  // write activity happens on the live socket for this long (any command write or
+  // received reply resets it; verified empirically against @redis/client@5.8.3 +
+  // a real redis-server). Its job is to kill a SILENT half-open connection (pod
+  // reschedule/failover with no RST/FIN): during a real stall the in-flight command
+  // is PARKED in the node-redis queue and blocks every subsequent write (including
+  // the keepalive PING), so the idle timer runs to completion and tears the dead
+  // socket down in ~REDIS_SOCKET_TIMEOUT_MS instead of waiting ~30s for OS TCP
+  // keepalive — the root cause of the api-primary 504 cascades. 10s is comfortably
+  // above normal round-trip latency (<5ms). Tunable so it can be widened/disabled in
+  // prod without a redeploy.
+  //
+  // ⚠️ INVARIANT: REDIS_PING_INTERVAL_MS MUST stay well below this value, otherwise a
+  // HEALTHY but idle socket (off-peak, a cold slot range, a quiet pod) goes idle for
+  // > socketTimeout with no traffic and the idle timer fires on a perfectly good node
+  // → spurious reconnect churn. The keepalive PING is what keeps an idle-but-healthy
+  // socket under the timeout. client.ts derives + clamps the ping interval to enforce
+  // this even if the two envs are mis-set; see getBaseClient().
   REDIS_SOCKET_TIMEOUT_MS: z.coerce.number().default(10000),
+  // Keepalive PING interval (ms). node-redis issues a `PING` every interval ONLY when
+  // the socket is otherwise idle (a parked/in-flight command blocks it from being
+  // written). Each PING is a write+reply round-trip that resets the socketTimeout idle
+  // timer, so it keeps a HEALTHY idle socket alive while a genuinely half-open one
+  // (where the parked command blocks the PING) still trips socketTimeout. MUST be
+  // comfortably below REDIS_SOCKET_TIMEOUT_MS — client.ts additionally clamps it to
+  // min(this, socketTimeout/2) so the invariant holds even on a misconfig. Default 5s
+  // (≈ half the 10s default socketTimeout). PING load is trivial: one tiny command per
+  // idle node per interval (cluster: per node; a few nodes × pods × 0.2/s).
+  REDIS_PING_INTERVAL_MS: z.coerce.number().default(5000),
   // Per-command timeout (ms) applied ONLY to verified fail-open hot-path reads
   // (refreshToken pipeline, needsUpdate/getClientConfigCached). node-redis arms an
   // AbortSignal.timeout per command that rejects a parked/slow command with a
