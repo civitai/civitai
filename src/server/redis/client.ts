@@ -8,7 +8,14 @@ import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { redisCommandDuration, redisCommandsInflight } from '~/server/prom/client';
+// NOTE: do NOT statically import the redis prom metrics from '~/server/prom/client'.
+// This module is client-bundle-reachable (`_app.tsx` → `system-cache.ts` → here),
+// and prom-client eagerly requires `fs`/`cluster` at module load (defaultMetrics +
+// cluster aggregator), which the pages-router client webpack build cannot resolve
+// → "Module not found: Can't resolve 'cluster'/'fs'". The metrics are defined and
+// registered server-side in `~/server/prom/client` and published on `globalThis`
+// (`__civitaiRedisMetrics`); `instrumentCommands` reads that handle at command time
+// (server runtime only). See getRedisMetrics() below.
 
 export type RedisKeyStringsCache = Values<typeof REDIS_KEYS>;
 export type RedisKeyStringsSys = Values<typeof REDIS_SYS_KEYS>;
@@ -514,6 +521,23 @@ function getBaseClient(type: 'cache' | 'system') {
  * Overhead per command: one gauge inc/dec + one Date.now() delta observe. No
  * per-command allocation beyond the closure the call already pays for.
  */
+// Shape of the prom metric handles published by '~/server/prom/client' on
+// globalThis. Only the methods instrumentCommands calls are typed here.
+type RedisMetricsBridge = {
+  redisCommandsInflight: { inc: (labels: { client: string }) => void; dec: (labels: { client: string }) => void };
+  redisCommandDuration: { observe: (labels: { client: string }, value: number) => void };
+};
+
+// Server-runtime lookup of the prom metric handles WITHOUT a static import edge
+// (which would drag prom-client's fs/cluster requires into the client bundle).
+// Returns undefined until '~/server/prom/client' has loaded server-side (always
+// true by the time real redis commands run — trpc/api routes import it at startup);
+// when undefined, instrumentation simply no-ops for that command (leak-free).
+function getRedisMetrics(): RedisMetricsBridge | undefined {
+  return (globalThis as unknown as { __civitaiRedisMetrics?: RedisMetricsBridge })
+    .__civitaiRedisMetrics;
+}
+
 function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
   const self = client?._self ?? client;
   if (!self) return;
@@ -529,11 +553,16 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     return;
   }
   self[methodName] = function (this: any, ...args: any[]) {
-    redisCommandsInflight.inc(labels);
+    // Read the metric handles published by '~/server/prom/client' on globalThis
+    // (no static import — see the note on the prom import above). Capture ONCE per
+    // command so inc/dec stay balanced even if prom/client loads mid-flight (a
+    // dec without its matching inc would drive the gauge negative).
+    const metrics = getRedisMetrics();
+    metrics?.redisCommandsInflight.inc(labels);
     const start = Date.now();
     const done = () => {
-      redisCommandsInflight.dec(labels);
-      redisCommandDuration.observe(labels, (Date.now() - start) / 1000);
+      metrics?.redisCommandsInflight.dec(labels);
+      metrics?.redisCommandDuration.observe(labels, (Date.now() - start) / 1000);
     };
     let result: any;
     try {

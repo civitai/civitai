@@ -253,6 +253,20 @@ export const redisCommandDuration = registerHistogram({
   buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
 });
 
+// Bridge the redis metric handles to '~/server/redis/client' via globalThis,
+// WITHOUT that module statically importing this one. redis/client.ts is
+// client-bundle-reachable (`_app.tsx` → `system-cache.ts` → redis/client.ts) and
+// prom-client eagerly requires `fs`/`cluster` at load (defaultMetrics + cluster
+// aggregator), so a static `redis/client → prom/client` import edge breaks the
+// pages-router client webpack build. This module only ever loads server-side
+// (imported by trpc/api routes/instrumentation at startup), so publishing here is
+// safe and is in place before any real redis command runs. instrumentCommands()
+// reads `globalThis.__civitaiRedisMetrics` at command time.
+(globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
+  redisCommandsInflight,
+  redisCommandDuration,
+};
+
 // Image feed metrics
 export const imagesFeedWithoutIndexCounter = registerCounter({
   name: 'images_feed_without_index_total',
