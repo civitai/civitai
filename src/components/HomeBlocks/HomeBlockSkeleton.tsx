@@ -19,7 +19,9 @@ export function HomeBlockSkeleton({ rows = 2 }: { rows?: number }) {
   const count = ITEMS_PER_ROW * rows;
   return (
     <HomeBlockWrapper py={32}>
-      <div style={{ '--count': count, '--rows': rows } as React.CSSProperties}>
+      {/* aria-hidden: the placeholder cards are decorative; keep the empty
+          skeleton nodes out of the screen-reader tree during load. */}
+      <div aria-hidden style={{ '--count': count, '--rows': rows } as React.CSSProperties}>
         <Box mb="md">
           <Skeleton height={32} width={220} radius="sm" />
         </Box>

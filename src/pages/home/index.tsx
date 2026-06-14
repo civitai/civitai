@@ -108,7 +108,12 @@ export function Home() {
             })}
           </BrowsingLevelProvider>
         )}
-        <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>
+        {/* Gated behind !isLoading so the lazy feed's useInView ref does not
+            mount during home-block load — otherwise it can fire inView early,
+            start the infinite-feed queries concurrently, and shift when the
+            skeleton swaps to real blocks. Restores main's load sequencing. */}
+        {!isLoading && (
+          <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>
           {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
             <Box ref={ref}>
               <MasonryContainer py={32}>
@@ -226,7 +231,8 @@ export function Home() {
               </MasonryContainer>
             </Box>
           )}
-        </BrowsingLevelProvider>
+          </BrowsingLevelProvider>
+        )}
       </div>
     </>
   );
