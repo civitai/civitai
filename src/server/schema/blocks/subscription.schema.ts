@@ -182,3 +182,52 @@ export const listAvailableSchema = z.object({
   limit: z.number().int().min(1).max(50).default(20),
 });
 export type ListAvailableInput = z.infer<typeof listAvailableSchema>;
+
+/** Input for the anon-capable `blocks.getAppDetail` (F-E E2). */
+export const getAppDetailSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+});
+export type GetAppDetailInput = z.infer<typeof getAppDetailSchema>;
+
+/**
+ * PUBLIC per-app detail shape returned by the anon-capable
+ * `blocks.getAppDetail` (F-E E2 marketplace detail page).
+ *
+ * 🔒 ANON-EXPOSURE ALLOWLIST. This is shipped to a session-less caller (behind
+ * the mod-segmented flag — dark today), so it must carry ONLY public,
+ * display-safe data. It is a deliberately NARROW superset of the listing shape
+ * (`AvailableBlock`) — every added field below is publisher-display-safe:
+ *   - `manifest`     — the SAME `PublicBlockManifest` allowlist as the listing
+ *                      (via `toPublicBlockManifest`); the raw stored manifest
+ *                      (with `trustTier`, internal `iframe.src`, `renderMode`,
+ *                      settings internals, raw `scopes`) is NEVER shipped.
+ *   - `scopes`       — the app's APPROVED scope ids (`approved_scopes` column),
+ *                      surfaced so the detail page can render the permission
+ *                      disclosure via SCOPE_DESCRIPTIONS. These are plain scope
+ *                      identifier strings (e.g. `ai:write:budgeted`), not the
+ *                      manifest's internal declaration — safe to disclose since
+ *                      they describe what the app can do, which is the whole
+ *                      point of the disclosure.
+ *   - `contentRating`— the platform content-rating string (already gates which
+ *                      slots a block may mount; display-safe).
+ *   - `version`      — the approved version string.
+ *   - `installCount` — distinct-user install count (same as the listing).
+ *   - `liveUrl`      — the PUBLIC standalone block URL (`https://<slug>.<APPS_
+ *                      DOMAIN>`), the same already-public origin the host
+ *                      iframes. Built server-side from the blockId + APPS_DOMAIN
+ *                      so the client never needs the domain. No token, no scope.
+ *
+ * Add a field here ONLY after confirming it is publisher-display-safe for anon.
+ */
+export type PublicAppDetail = {
+  id: string;
+  blockId: string;
+  appId: string;
+  appName: string | null;
+  manifest: PublicBlockManifest;
+  scopes: string[];
+  contentRating: string | null;
+  version: string | null;
+  installCount: number;
+  liveUrl: string;
+};

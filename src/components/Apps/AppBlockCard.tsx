@@ -1,5 +1,6 @@
-import { Badge, Button, Card, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Button, Card, Group, Stack, Text, Title } from '@mantine/core';
 import { IconBolt, IconPlugConnected, IconSettings } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useState } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema';
@@ -55,9 +56,20 @@ export function AppBlockCard({
       <Stack gap="sm" h="100%">
         <Group justify="space-between" align="flex-start" wrap="nowrap">
           <Stack gap={2}>
-            <Title order={4} className="line-clamp-2">
-              {manifest.name ?? block.blockId}
-            </Title>
+            {/*
+              F-E E2: the card title links to the per-app detail page
+              (/apps/<appBlockId>). Install stays the secondary action below.
+            */}
+            <Anchor
+              component={Link}
+              href={`/apps/${block.id}`}
+              underline="never"
+              c="inherit"
+            >
+              <Title order={4} className="line-clamp-2">
+                {manifest.name ?? block.blockId}
+              </Title>
+            </Anchor>
             <Text size="xs" c="dimmed">
               by {block.appName ?? block.appId}
             </Text>
@@ -74,9 +86,11 @@ export function AppBlockCard({
           </Stack>
         </Group>
         {manifest.description && (
-          <Text size="sm" c="dimmed" className="line-clamp-3">
-            {manifest.description}
-          </Text>
+          <Anchor component={Link} href={`/apps/${block.id}`} underline="never" c="inherit">
+            <Text size="sm" c="dimmed" className="line-clamp-3">
+              {manifest.description}
+            </Text>
+          </Anchor>
         )}
         <Group justify="space-between" mt="auto" pt="xs">
           <Group gap={4}>
