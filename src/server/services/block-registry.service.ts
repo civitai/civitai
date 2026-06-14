@@ -1,3 +1,4 @@
+import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
@@ -2294,7 +2295,6 @@ export class BlockRegistry {
     // a non-approved row returns null exactly like a missing one — never its
     // data. (The marketplace install mutations apply the same approved gate.)
     if (!row || row.status !== 'approved') return null;
-    const { env } = await import('~/env/server');
     return {
       id: row.id,
       blockId: row.block_id,
