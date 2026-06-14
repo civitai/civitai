@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { timingSafeEqual } from 'crypto';
 import requestIp from 'request-ip';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -9,6 +10,9 @@ import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
 
   // Preflight stays permissive — we can't classify the caller until we see the

@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
@@ -7,6 +8,9 @@ import requestIp from 'request-ip';
 const DEVICE_CODE_KEY = REDIS_KEYS.OAUTH.DEVICE_CODES;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

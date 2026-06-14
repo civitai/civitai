@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { UploadType } from '~/server/common/enums';
 import { extname } from 'node:path';
@@ -11,6 +12,9 @@ import { logToAxiom } from '~/server/logging/client';
 import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id;
   if (!userId || session.user?.bannedAt) {

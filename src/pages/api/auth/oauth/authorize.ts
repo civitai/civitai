@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { Prisma } from '@prisma/client';
 import { Request, Response } from '@node-oauth/oauth2-server';
 import requestIp from 'request-ip';
@@ -13,6 +14,9 @@ import { buzzLimitSchema } from '~/server/schema/api-key.schema';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   if (req.method === 'OPTIONS') {
     addCorsHeaders(req, res, ['GET', 'POST'], { allowCredentials: true });
     return;

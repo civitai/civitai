@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { randomBytes, randomInt } from 'crypto';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { dbRead } from '~/server/db/client';
@@ -28,6 +29,9 @@ function generateUserCode(): string {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   const shouldStop = addCorsHeaders(req, res, ['POST']);
   if (shouldStop) return;
 

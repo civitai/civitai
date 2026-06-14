@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { Request, Response } from '@node-oauth/oauth2-server';
 import requestIp from 'request-ip';
 import { oauthServer } from '~/server/oauth/server';
@@ -27,6 +28,9 @@ function setPublicClientCors(res: NextApiResponse, origin: string) {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   // Preflight stays permissive — we can't classify confidential vs public
   // until we see the client_id on the actual POST.
   if (req.method === 'OPTIONS') {
