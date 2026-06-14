@@ -1,5 +1,6 @@
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { CollectionType, ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
+import { ModelSort } from '~/server/common/enums';
 import type { SearchResponse } from 'meilisearch';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
@@ -108,6 +109,19 @@ export default MixedAuthEndpoint(async function handler(
   let meiliNextCursor: string | undefined;
   if (query) {
     const browsingLevelValues = Flags.instanceToArray(browsingLevel);
+    const offset = cursor ? Number(cursor) : 0;
+    
+    const explicitSort = req.query.sort as string | undefined;
+    let meiliSort: string[] | undefined;
+    if (explicitSort) {
+      if (explicitSort === ModelSort.HighestRated || explicitSort === ModelSort.MostLiked) meiliSort = ['metrics.thumbsUpCount:desc'];
+      else if (explicitSort === ModelSort.MostDownloaded) meiliSort = ['metrics.downloadCount:desc'];
+      else if (explicitSort === ModelSort.MostDiscussed) meiliSort = ['metrics.commentCount:desc'];
+      else if (explicitSort === ModelSort.MostCollected) meiliSort = ['metrics.collectedCount:desc'];
+      else if (explicitSort === ModelSort.Newest) meiliSort = ['createdAt:desc'];
+      else if (explicitSort === ModelSort.Oldest) meiliSort = ['createdAt:asc'];
+    }
+
     // Fetch IDs from Meilisearch.
     // Wrap the SDK call under withMeili('search', ...) so a backend brownout
     // is bounded by MEILI_CALL_TIMEOUT_MS instead of bleeding the event loop
@@ -125,12 +139,10 @@ export default MixedAuthEndpoint(async function handler(
         ? await withMeili('search', () =>
             client.index(MODELS_SEARCH_INDEX).search<{ id: number }>(query, {
               limit: limit ? limit + 1 : undefined,
-              filter: [
-                cursor ? `id < ${String(cursor)}` : undefined,
-                `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
-              ].filter(isDefined),
+              offset,
+              filter: [`nsfwLevel IN [${browsingLevelValues.join(',')}]`].filter(isDefined),
               attributesToRetrieve: ['id'],
-              sort: ['id:desc'],
+              sort: meiliSort,
             })
           )
         : undefined;
@@ -149,8 +161,21 @@ export default MixedAuthEndpoint(async function handler(
       throw e;
     }
 
-    meiliNextCursor = meiliResult?.hits.pop()?.id.toString();
+    if (meiliResult && limit && meiliResult.hits.length > limit) {
+      meiliResult.hits.pop();
+      meiliNextCursor = (offset + limit).toString();
+    }
+
     searchIds = meiliResult?.hits?.map((hit: { id: number }) => hit.id) ?? [];
+    if (searchIds.length === 0) {
+      const { nextPage } = getNextPage({ req, nextCursor: undefined });
+      const metadata: Metadata = { nextCursor: undefined, nextPage };
+      if (usingPaging) {
+        metadata.currentPage = page;
+        metadata.pageSize = limit;
+      }
+      return res.status(200).json({ items: [], metadata });
+    }
   }
 
   try {
@@ -168,6 +193,10 @@ export default MixedAuthEndpoint(async function handler(
       },
       user,
     });
+
+    if (query && searchIds.length) {
+      items.sort((a, b) => searchIds.indexOf(a.id) - searchIds.indexOf(b.id));
+    }
 
     const preferredFormat = {
       type: user?.filePreferences?.size === 'pruned' ? 'Pruned Model' : undefined,
