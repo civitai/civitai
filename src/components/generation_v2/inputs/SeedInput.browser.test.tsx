@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
-import { MAX_SEED } from '~/shared/constants/generation.constants';
+import { MAX_SEED, MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 
@@ -30,17 +30,25 @@ describe('SeedInput', () => {
     await expect.element(page.getByPlaceholder('Random')).toHaveValue('42');
   });
 
-  test('switching to Custom emits a fresh numeric seed', async () => {
-    const onChange = vi.fn();
-    renderWithProviders(<SeedInput value={undefined} onChange={onChange} />);
+  test('switching to Custom emits a fresh random seed in [0, MAX_RANDOM_SEED]', async () => {
+    // Stub Math.random for a deterministic, exact-value assertion (gives the
+    // test teeth: a constant or wrong-bound emit fails). Component computes
+    // Math.floor(Math.random() * MAX_RANDOM_SEED).
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const onChange = vi.fn();
+      renderWithProviders(<SeedInput value={undefined} onChange={onChange} />);
 
-    await userEvent.click(page.getByText('Custom'));
+      await userEvent.click(page.getByText('Custom'));
 
-    expect(onChange).toHaveBeenCalledTimes(1);
-    const seed = onChange.mock.calls[0][0];
-    expect(typeof seed).toBe('number');
-    expect(seed).toBeGreaterThanOrEqual(0);
-    expect(seed).toBeLessThanOrEqual(MAX_SEED);
+      expect(onChange).toHaveBeenCalledTimes(1);
+      const seed = onChange.mock.calls[0][0];
+      expect(seed).toBe(Math.floor(0.5 * MAX_RANDOM_SEED));
+      expect(seed).toBeGreaterThanOrEqual(0);
+      expect(seed).toBeLessThanOrEqual(MAX_RANDOM_SEED);
+    } finally {
+      randomSpy.mockRestore();
+    }
   });
 
   test('switching to Random clears the seed (emits undefined)', async () => {

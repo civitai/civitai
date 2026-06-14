@@ -43,6 +43,7 @@
     "scripts/local-dev/*.ts",
     "src",
     "tests",
+    "test",
     ".next/types/**/*.ts"
   ],
   "exclude": [

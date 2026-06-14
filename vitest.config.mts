@@ -5,7 +5,7 @@ import path from 'path';
 const alias = { '~': path.resolve(__dirname, './src') };
 
 // Two Vitest projects sharing one config/runner:
-//  - `unit`      = the existing node-env suite (857 tests), unchanged.
+//  - `unit`      = the existing node-env suite, unchanged.
 //  - `component` = browser-mode (real Chromium via Playwright) for React
 //                  components/widgets. Distinct `.browser.test.tsx` glob so the
 //                  unit project never boots a browser (its include is `.test.ts`
@@ -32,6 +32,10 @@ export default defineConfig({
       },
       {
         resolve: { alias },
+        // Pre-bundle deps the component setup mocks/imports so Vitest doesn't
+        // discover them mid-run and trigger a "Vite unexpectedly reloaded a
+        // test" warning (a flake vector).
+        optimizeDeps: { include: ['next/router'] },
         test: {
           name: 'component',
           globals: true,
