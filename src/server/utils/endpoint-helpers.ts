@@ -238,6 +238,21 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     return res.status(status).json(body);
   } else {
     const error = e as Error;
+    // This branch increments the http-errors counter (via the wrapper's
+    // instrumentApiResponse) but historically logged nothing, so any
+    // non-TRPCError throw inside a wrapped handler — e.g. an unguarded
+    // TypeError — was counted yet completely un-attributable in logs (it took
+    // a live repro to find one such silent 500). Emit class + truncated message
+    // so the next one is attributable from Loki. Class + message only (no
+    // stack, query, or body) to stay PII-light + low-cardinality, and wrapped
+    // so telemetry can never break the error response.
+    try {
+      console.error(
+        `[handleEndpointError] unhandled ${error?.name ?? 'Error'}: ${String(
+          error?.message ?? ''
+        ).slice(0, 300)}`
+      );
+    } catch {}
     return res.status(500).json({ message: 'An unexpected error occurred', error: error.message });
   }
 }
