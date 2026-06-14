@@ -27,6 +27,22 @@
  * Uses HPEXPIRE for millisecond precision; supported on Redis 7.4+
  * (sysRedis is currently 7.4.5).
  *
+ * Atomicity caveat
+ * ────────────────
+ * "Atomic on the Redis server" means no other client command can
+ * interleave between the HSET and the HPEXPIRE — which is the race we
+ * cared about. It does NOT mean the script is all-or-nothing in the
+ * transactional sense: the two `redis.call` sites are independent. If
+ * HPEXPIRE raises a Lua-level error (arg-validation, KEYS mismatch in
+ * cluster mode, unsupported field type), the script aborts but HSET has
+ * already mutated state and is NOT rolled back. Net result of that
+ * failure class is "field set, no TTL" — the same failure mode as the
+ * racy pair, minus the race window. This is still strictly better than
+ * `Promise.all([hSet, hExpire])` (we eliminate the ordering race, the
+ * partial-failure-on-network-blip, and the no-op silent HEXPIRE) but
+ * callers should understand the residual risk and keep their fail-open
+ * try/catch wrappers in place.
+ *
  * Plain EVAL is intentional over `defineScript` / EVALSHA — Redis caches
  * recent scripts and re-compilation cost is negligible at our QPS.
  * Avoiding the cluster-aware SHA cache also dodges a class of NOSCRIPT
@@ -63,6 +79,11 @@ type EvalCapableClient = {
 
 /**
  * Atomically set a single hash field's value AND its TTL.
+ *
+ * Atomicity caveat: the script's HSET and HPEXPIRE are independent
+ * `redis.call` sites — a Lua-level error from HPEXPIRE leaves HSET
+ * applied (field set with no TTL). See the file-header docblock for
+ * the full rationale. Callers must keep fail-open try/catch wrappers.
  *
  * @param client - Any RedisClientType-shaped client with `.eval(...)` (cache
  *                 or sysRedis).
@@ -109,6 +130,18 @@ export async function hSetWithTTL(
  *
  * Used by session-invalidation.ts to mark a batch of token-IDs as
  * 'invalid' / 'refresh' with the same DEFAULT_EXPIRATION TTL.
+ *
+ * Atomicity caveat: HSET cannot land without HPEXPIRE *attempting* to
+ * land on the same hash key inside the same Lua script invocation. The
+ * script's two `redis.call` sites are NOT all-or-nothing — a Lua-level
+ * error from HPEXPIRE (arg-validation, KEYS mismatch in cluster mode,
+ * unsupported field type) aborts the script with HSET already applied.
+ * The result of that failure class is "fields set, no TTL" — equivalent
+ * to the racy pair, minus the interleaving race. This is still strictly
+ * better than `Promise.all([hSet, hExpire])` (no ordering race, no
+ * partial-failure-on-network-blip, no silently-zero HEXPIRE on a not-yet
+ * -created field), but callers must keep fail-open try/catch wrappers
+ * around this helper.
  *
  * @param client - Any RedisClientType-shaped client with `.eval(...)`.
  * @param key    - Hash key.
@@ -182,6 +215,11 @@ export async function hSetMultiWithTTL(
  * HPEXPIRE), so this uses PEXPIRE on the whole key. Callers that don't
  * want a TTL (e.g. counters with `ttl === 0`) must bypass this helper and
  * call `zAdd` directly — PEXPIRE with 0ms would DELETE the key.
+ *
+ * Atomicity caveat: same as hSetWithTTL — ZADD and PEXPIRE are
+ * independent `redis.call` sites; a Lua-level error from PEXPIRE leaves
+ * ZADD applied (member added, no TTL on the key). Strictly better than
+ * the racy pair, but not transactional. Keep fail-open wrappers in place.
  *
  * @param client - Any RedisClientType-shaped client with `.eval(...)`.
  * @param key    - Sorted set key.

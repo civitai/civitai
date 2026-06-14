@@ -1,6 +1,7 @@
 import type { JWT } from 'next-auth/jwt';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { hSetWithTTL } from '~/server/redis/atomic';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { User } from '~/shared/utils/prisma/models';
 import { createLogger } from '~/utils/logging';
 import { clearSessionCache } from './session-cache';
@@ -41,13 +42,33 @@ export async function invalidateToken(token: JWT) {
   // or sysRedis flap between the two awaits leaves a no-TTL field. Important
   // here because TOKEN_STATE='invalid' must reliably expire — if it sticks
   // forever a re-issued tokenId could be permanently rejected.
-  await hSetWithTTL(
-    sysRedis,
-    REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
-    token.id,
-    'invalid',
-    DEFAULT_EXPIRATION * 1000
-  );
+  //
+  // Fail-open wrapper (PR #2332 round-3 audit fix): this function is
+  // called from the next-auth `signOut` event handler, so an in-flight
+  // EVAL throw during a sysRedis sentinel failover (Phase 4) would
+  // otherwise propagate up into the callback chain and 500 the logout
+  // request. The fail-open semantic matches the read side
+  // (token-refresh.ts, refreshToken pipeline): during a sysRedis
+  // outage we don't observe the `invalid` marker on the read path
+  // anyway, so a missed write is symmetric — the active session simply
+  // continues until next-auth's own JWT exp fires. Subtype
+  // `write-degraded` mirrors session-invalidation.updateSessionState.
+  try {
+    await hSetWithTTL(
+      sysRedis,
+      REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
+      token.id,
+      'invalid',
+      DEFAULT_EXPIRATION * 1000
+    );
+  } catch (err) {
+    logSysRedisFailOpen(
+      'write-degraded',
+      'token-tracking.invalidateToken',
+      err,
+      { tokenId: token.id }
+    );
+  }
 
   // Remove from user's token hash
   if (!token.user) return;
