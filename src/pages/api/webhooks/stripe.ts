@@ -7,6 +7,7 @@ import {
   upsertSubscription,
 } from '~/server/services/stripe.service';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { env } from '~/env/server';
 import type Stripe from 'stripe';
@@ -68,6 +69,10 @@ const relevantEvents = new Set([
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Count any 5xx this webhook emits into civitai_app_http_errors_total — these
+  // handlers bypass the endpoint wrappers, so their 500s were counter-blind.
+  // Listener-only (res.once('finish')); no behavior/response change.
+  instrumentApiResponse(req, res);
   if (req.method === 'POST') {
     const stripe = await getServerStripe();
     if (!stripe) {
