@@ -165,7 +165,10 @@ function buzzCapRedisKey(userId: number): `${typeof REDIS_SYS_KEYS.BLOCKS.BUZZ_C
  * also re-arms a key that somehow lost its TTL). No try/catch: a Redis error
  * throws and fails the submit CLOSED, identical to the old read path.
  */
-async function reserveBlockBuzzSpend(userId: number, cost: number): Promise<{ total: number }> {
+async function reserveBlockBuzzSpend(
+  userId: number,
+  cost: number
+): Promise<{ total: number; key: ReturnType<typeof buzzCapRedisKey> }> {
   const key = buzzCapRedisKey(userId);
   const total = await sysRedis.incrBy(key, Math.ceil(cost));
   if (total <= Math.ceil(cost)) {
@@ -174,18 +177,31 @@ async function reserveBlockBuzzSpend(userId: number, cost: number): Promise<{ to
     const ttl = await sysRedis.ttl(key);
     if (ttl < 0) await sysRedis.expire(key, BLOCK_BUZZ_CAP_TTL_SECONDS);
   }
-  return { total };
+  // Return the resolved key so the caller refunds against the EXACT same key it
+  // reserved — see refundBlockBuzzSpend for why re-deriving is unsafe.
+  return { total, key };
 }
 
 /**
- * Refunds a previously-reserved `cost` (best-effort DECRBY). Used when the
- * reservation pushed the total over the cap, or when the submit path throws
- * before a resolved submitWorkflow. Best-effort: a failed refund leaves the
- * reservation in place, which OVER-counts and so only makes the cap STRICTER —
- * the safe direction for an abuse cap. Never throws into the caller.
+ * Refunds a previously-reserved `cost` (best-effort DECRBY) against the EXACT
+ * key returned by reserveBlockBuzzSpend. Used when the reservation pushed the
+ * total over the cap, or when the submit path throws before a resolved
+ * submitWorkflow. Best-effort: a failed refund leaves the reservation in place,
+ * which OVER-counts and so only makes the cap STRICTER — the safe direction for
+ * an abuse cap. Never throws into the caller.
+ *
+ * Takes the reserved key rather than re-deriving it from userId: the key embeds
+ * the UTC-day window, and the throw-path refund runs AFTER the (multi-second)
+ * submitWorkflow, so re-deriving could land on the NEXT day's key if the request
+ * straddled midnight UTC — decrementing an empty key to a negative, TTL-less
+ * value and handing the user a window of extra cap headroom. Pinning the key
+ * eliminates that race.
  */
-async function refundBlockBuzzSpend(userId: number, cost: number): Promise<void> {
-  await sysRedis.decrBy(buzzCapRedisKey(userId), Math.ceil(cost)).catch(() => {
+async function refundBlockBuzzSpend(
+  key: ReturnType<typeof buzzCapRedisKey>,
+  cost: number
+): Promise<void> {
+  await sysRedis.decrBy(key, Math.ceil(cost)).catch(() => {
     /* best-effort — see note above; a lost refund over-counts (stricter cap) */
   });
 }
@@ -1220,9 +1236,9 @@ export const blocksRouter = router({
       // record (no separate fire-and-forget incr that could silently drop and
       // under-count). A Redis error on the reserve throws → fails CLOSED,
       // matching the old read path.
-      const { total } = await reserveBlockBuzzSpend(userId, cost);
+      const { total, key: buzzCapKey } = await reserveBlockBuzzSpend(userId, cost);
       if (total > BLOCK_BUZZ_CAP_PER_DAY) {
-        await refundBlockBuzzSpend(userId, cost);
+        await refundBlockBuzzSpend(buzzCapKey, cost);
         return {
           snapshot: {
             workflowId: 'failed',
@@ -1271,8 +1287,9 @@ export const blocksRouter = router({
         snapshot = snapshotFromWorkflow(submitted);
       } catch (e) {
         // No resolved submit → undo the reservation (net-equivalent to the old
-        // "only record after a resolved submit" behavior) and propagate.
-        await refundBlockBuzzSpend(userId, cost);
+        // "only record after a resolved submit" behavior) and propagate. Refund
+        // against the pinned key, not a re-derived one (midnight-UTC race).
+        await refundBlockBuzzSpend(buzzCapKey, cost);
         throw e;
       }
 

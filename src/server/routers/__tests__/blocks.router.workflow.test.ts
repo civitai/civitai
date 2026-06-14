@@ -549,6 +549,10 @@ describe('blocks.submitWorkflow', () => {
     const refundArgs = mockSysRedis.decrBy.mock.calls[0];
     expect(String(refundArgs[0])).toContain('system:blocks:buzz-cap');
     expect(refundArgs[1]).toBe(25);
+    // Key-pinning: the refund must target the EXACT key the reservation used,
+    // not a re-derived one (else a midnight-UTC rollover between reserve and
+    // refund decrements the next day's key into a negative, TTL-less value).
+    expect(String(refundArgs[0])).toBe(String(mockSysRedis.incrBy.mock.calls[0][0]));
   });
 
   it('A7: a submit within the cap succeeds and reserves the spend (no refund)', async () => {
@@ -700,6 +704,8 @@ describe('blocks.submitWorkflow', () => {
     const refundArgs = mockSysRedis.decrBy.mock.calls[0];
     expect(String(refundArgs[0])).toContain('system:blocks:buzz-cap');
     expect(refundArgs[1]).toBe(25);
+    // Key-pinning: refund targets the exact reserved key (see over-cap test).
+    expect(String(refundArgs[0])).toBe(String(mockSysRedis.incrBy.mock.calls[0][0]));
   });
 
   it('A7: keeps the reservation when submitWorkflow RESOLVES with a failed snapshot', async () => {
