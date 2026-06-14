@@ -8,7 +8,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 export const HelpButton = forwardRef<HTMLButtonElement, Props>(
   ({ iconProps, tooltip, ...actionIconProps }, ref) => {
     const button = (
-      <LegacyActionIcon ref={ref} {...actionIconProps}>
+      <LegacyActionIcon ref={ref} aria-label={tooltip ?? 'Help'} {...actionIconProps}>
         <Text c="dimmed" inline>
           <IconHelpCircle {...iconProps} />
         </Text>

@@ -59,6 +59,8 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   target?: string;
   isRemix?: boolean;
   explain?: boolean;
+  /** Accessible fallback alt text when the image itself has no name (e.g. the card's title). */
+  alt?: string;
 } & ContentTypeProps;
 
 const IMAGE_CARD_WIDTH = 450;
@@ -80,6 +82,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   target,
   isRemix,
   explain,
+  alt,
 }: AspectRatioImageCardProps<T>) {
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 
@@ -147,7 +150,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                         metadata={image.metadata as MixedObject}
                         src={image.url}
                         name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
+                        alt={image.name ?? alt ?? undefined}
                         type={image.type}
                         imageId={image.id}
                         thumbnailUrl={image.thumbnailUrl}
@@ -165,7 +168,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                       metadata={image.metadata as MixedObject}
                       src={image.url}
                       name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
+                      alt={image.name ?? alt ?? undefined}
                       type={image.type}
                       imageId={image.id}
                       thumbnailUrl={image.thumbnailUrl}

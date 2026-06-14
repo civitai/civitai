@@ -93,6 +93,7 @@ export function ModelVersionList({
           variant="transparent"
           radius="xl"
           onClick={scrollLeft}
+          aria-label="Scroll versions left"
         >
           <IconChevronLeft />
         </LegacyActionIcon>
@@ -242,6 +243,7 @@ export function ModelVersionList({
           variant="transparent"
           radius="xl"
           onClick={scrollRight}
+          aria-label="Scroll versions right"
         >
           <IconChevronRight />
         </LegacyActionIcon>

@@ -649,6 +649,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             color="gray"
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
+                            aria-label="Share"
                           >
                             <IconShare3 size={18} />
                           </Button>
@@ -669,6 +670,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               color={isFavorite ? 'green' : 'gray'}
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label={isFavorite ? 'Unlike' : 'Like'}
                             >
                               <ThumbsUpIcon color="#fff" filled={isFavorite} size={18} />
                             </Button>
@@ -691,6 +693,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               variant={isInVault ? 'light' : undefined}
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label={isInVault ? 'Remove from Vault' : 'Add to Vault'}
                             >
                               {isLoading ? (
                                 <Loader size="xs" />
@@ -723,6 +726,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               variant="light"
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label={label}
                             >
                               {icon}
                             </Button>
@@ -752,6 +756,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             loading={toggleNotifyModelMutation.isPending}
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
+                            aria-label={
+                              isNotificationOn
+                                ? 'Stop getting notifications for this model'
+                                : 'Get notifications for this model'
+                            }
                           >
                             {isNotificationOn ? (
                               <IconBellCheck size={18} />
@@ -777,6 +786,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             }
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
+                            aria-label="Add to collection"
                           >
                             <IconBookmark size={18} />
                           </Button>
@@ -814,6 +824,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               }
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label="Report"
                             >
                               <IconFlag size={18} />
                             </Button>
@@ -1169,6 +1180,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                     size="md"
                                     radius="md"
                                     disabled={archived || isLoadingAccess}
+                                    aria-label={
+                                      canDownload
+                                        ? 'Download from source model'
+                                        : 'Purchase to download'
+                                    }
                                   >
                                     <IconDownload size={16} />
                                   </ActionIcon>

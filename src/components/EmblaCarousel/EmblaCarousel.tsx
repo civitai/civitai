@@ -185,6 +185,7 @@ function EmblaButton({
         className
       )}
       type="button"
+      aria-label={props['aria-label'] ?? (type === 'next' ? 'Next image' : 'Previous image')}
       tabIndex={(type === 'next' ? canScrollNext : canScrollPrevious) ? 0 : -1}
       onClick={type === 'next' ? nextClick : previousClick}
       data-disabled={disabled}
