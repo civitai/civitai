@@ -8,6 +8,7 @@ import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { redisCommandDuration, redisCommandsInflight } from '~/server/prom/client';
 
 export type RedisKeyStringsCache = Values<typeof REDIS_KEYS>;
 export type RedisKeyStringsSys = Values<typeof REDIS_SYS_KEYS>;
@@ -263,6 +264,20 @@ function getBaseClient(type: 'cache' | 'system') {
       return Math.min(retries * 100, 3000);
     },
     connectTimeout: env.REDIS_TIMEOUT,
+    // Socket-level inactivity guard. node-redis maps this to net.Socket.setTimeout,
+    // which fires only when NO data is sent OR received for this long (reset by any
+    // traffic — including the 4-min pingInterval and normal commands), then destroys
+    // the socket with a SocketTimeoutError and triggers the reconnectStrategy above.
+    // This is the structural fix for the 504 cascade: on a SILENT half-open
+    // connection (pod reschedule/failover, no RST/FIN) commands previously parked
+    // off-CPU in the command queue until OS TCP keepalive killed the socket ~30s
+    // later (= Traefik ceiling = 504). With socketTimeout, the dead socket is torn
+    // down in ~REDIS_SOCKET_TIMEOUT_MS, parked commands reject promptly, and the
+    // client reconnects. Does NOT fire under healthy load (constant traffic keeps it
+    // reset). Tunable via REDIS_SOCKET_TIMEOUT_MS (0/unset to disable).
+    ...(env.REDIS_SOCKET_TIMEOUT_MS > 0
+      ? { socketTimeout: env.REDIS_SOCKET_TIMEOUT_MS }
+      : {}),
   };
 
   const authConfig = {
@@ -455,8 +470,94 @@ function getBaseClient(type: 'cache' | 'system') {
   return baseClient;
 }
 
+/**
+ * Wrap the per-client command chokepoint so EVERY command is counted in the
+ * `redis_commands_inflight` gauge and timed into `redis_command_duration_seconds`.
+ *
+ * The chokepoint differs by client kind (verified against @redis/client@5.8.3):
+ *  - SINGLE client (sysRedis): typed methods (`get`/`hGetAll`/`set`/...) →
+ *    `_executeCommand` → `this.sendCommand`. Wrap `sendCommand` on `_self`.
+ *  - CLUSTER client (cache): typed methods route through `this._self._execute(...)`,
+ *    NOT the cluster's top-level `sendCommand` (that's only for keyless commands).
+ *    `_execute` is the per-command wrapper that picks a node and runs it. Wrap
+ *    `_execute` on `_self` so both keyed and keyless cluster commands are caught.
+ *
+ * `createCluster` returns a proxy (`Object.create(realCluster)`) and `_self` points
+ * at the real instance, so we must patch the method on `client._self` (own property),
+ * which proxies inherit through the prototype chain.
+ *
+ * NOTE: node-redis routes MULTI/pipeline sub-commands through `#queue.addCommand`
+ * directly (NOT `sendCommand`/`_execute`), so a batched `multi().exec()` is counted
+ * as ONE inflight unit, not per sub-command. Acceptable: the gauge is a
+ * stall/concurrency signal and a parked pipeline still shows as one long-lived
+ * inflight entry landing in the top duration bucket.
+ *
+ * Overhead per command: one gauge inc/dec + one Date.now() delta observe. No
+ * per-command allocation beyond the closure the call already pays for.
+ */
+function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
+  const self = client?._self ?? client;
+  if (!self) return;
+  const labels = { client: clientLabel } as const;
+  // Detect the real chokepoint by capability rather than the static label: a
+  // 'cache' client is a CLUSTER (wrap `_execute`) only when REDIS_CLUSTER is on;
+  // otherwise it's a plain single client (wrap `sendCommand`), same as sysRedis.
+  const isClusterClient = typeof self._execute === 'function';
+  const methodName = isClusterClient ? '_execute' : 'sendCommand';
+  const original = self[methodName];
+  if (typeof original !== 'function') {
+    log(`Redis instrumentation: ${methodName} not found on ${clientLabel} client`);
+    return;
+  }
+  self[methodName] = function (this: any, ...args: any[]) {
+    redisCommandsInflight.inc(labels);
+    const start = Date.now();
+    const done = () => {
+      redisCommandsInflight.dec(labels);
+      redisCommandDuration.observe(labels, (Date.now() - start) / 1000);
+    };
+    let result: any;
+    try {
+      result = original.apply(this, args);
+    } catch (err) {
+      // Synchronous throw (e.g. ClientClosedError) — still account for it.
+      done();
+      throw err;
+    }
+    return Promise.resolve(result).finally(done);
+  };
+}
+
+/**
+ * Apply the env-tunable per-command timeout to a fail-open read.
+ *
+ * Returns a node-redis command-options proxy (no new connection) whose commands
+ * carry `{ timeout: REDIS_COMMAND_TIMEOUT_MS }`. node-redis arms an
+ * `AbortSignal.timeout` per command that rejects a parked/slow command with a
+ * `TimeoutError`. ⚠️ ONLY use this on callers that catch the throw and degrade —
+ * at a non-fail-open site it would convert a 30s park into a 500.
+ *
+ * Returns the client unchanged when the timeout is disabled (env = 0).
+ *
+ * Caveat: node-redis does NOT propagate the per-command timeout into MULTI/pipeline
+ * sub-commands, so this has no effect on `client.multi()` batches (those rely on the
+ * socketTimeout structural fix instead).
+ */
+export function withRedisCommandTimeout<C>(client: C): C {
+  const timeout = env.REDIS_COMMAND_TIMEOUT_MS;
+  if (!timeout || timeout <= 0) return client;
+  const withOpts = (client as any).withCommandOptions;
+  if (typeof withOpts !== 'function') return client;
+  return withOpts.call(client, { timeout }) as C;
+}
+
 function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   const client = getBaseClient(type) as unknown as CustomRedisClient<K>;
+
+  // Wire in-flight + duration instrumentation at the per-command chokepoint.
+  // 'cache' is the cluster client (wrap `_execute`), 'system' is the single
+  // sysRedis client (wrap `sendCommand`).
+  instrumentCommands(client, type === 'cache' ? 'cluster' : 'sys');
 
   // Create a separate client instance with Buffer type mapping for packed operations
   // `withTypeMapping` creates a NEW client instance - it doesn't modify the original client.

@@ -39,6 +39,26 @@ export const serverSchema = z.object({
   REDIS_CLUSTER_REFRESH_INTERVAL: z.coerce.number().default(30000), // Topology refresh interval in ms (default 30s)
   REDIS_SYS_URL: z.url(),
   REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
+  // Socket-level inactivity timeout (ms). Passed to node-redis `socket.socketTimeout`,
+  // which maps to net.Socket.setTimeout — it fires only when NO data is sent or
+  // received on the live socket for this long (reset by any traffic), so under normal
+  // command flow it never trips. Its job is to kill a SILENT half-open connection
+  // (pod reschedule/failover with no RST/FIN) instead of waiting ~30s for OS TCP
+  // keepalive, which is the root cause of the api-primary 504 cascades (commands park
+  // off-CPU in the node-redis queue until the socket is finally torn down). Set well
+  // above the ping interval (4min) is NOT required because pings count as traffic and
+  // keep it reset; 10s is comfortably above normal round-trip latency (<5ms). Tunable
+  // so it can be widened/disabled in prod without a redeploy.
+  REDIS_SOCKET_TIMEOUT_MS: z.coerce.number().default(10000),
+  // Per-command timeout (ms) applied ONLY to verified fail-open hot-path reads
+  // (refreshToken pipeline, needsUpdate/getClientConfigCached). node-redis arms an
+  // AbortSignal.timeout per command that rejects a parked/slow command with a
+  // TimeoutError — at these call sites a TimeoutError is caught and degrades (keep
+  // session / skip update banner), so it converts a 30s park into a fast fail-open,
+  // never a 500. Default is far above normal latency (<5ms) so it only fires on a
+  // genuine stall. Set to 0 to disable the per-command layer (socketTimeout still
+  // applies). Tunable for canary rollout.
+  REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().default(2000),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(

@@ -223,6 +223,36 @@ export const trpcProcedureDuration = registerHistogram({
   buckets: [0.05, 0.25, 1, 2, 5, 10, 30],
 });
 
+// Redis client in-flight + duration instrumentation.
+//
+// WHY: api-primary 504 cascades root-cause to node-redis commands parking
+// off-CPU in the command queue against a SILENT half-open connection (no
+// RST/FIN). The event loop stays flat and every dependency server-metric is
+// clean — the stall is entirely client-side and was uninstrumented. These two
+// metrics make it visible: during a cascade `redis_commands_inflight` climbs
+// toward the concurrency ceiling and `redis_command_duration_seconds` piles
+// into the top (~30s) bucket, directly attributing the request hang to Redis
+// (and confirming/refuting the socketTimeout fix on the next event).
+//
+// Cardinality is intentionally tiny: one label `client` ∈ cluster|sys. No
+// per-key / per-command-name labels. Overhead per command is a gauge inc/dec
+// plus one histogram observe of an already-captured timestamp delta — no
+// per-command allocation beyond the closure the wrapper already creates.
+export const redisCommandsInflight = registerGaugeWithLabels({
+  name: 'redis_commands_inflight',
+  help: 'In-flight node-redis commands by client (cluster vs sys); climbs toward the queue ceiling during a half-open stall',
+  labelNames: ['client'] as const,
+});
+
+export const redisCommandDuration = registerHistogram({
+  name: 'redis_command_duration_seconds',
+  help: 'node-redis command wall-clock duration by client; the long tail (~30s bucket) is the half-open command-queue park',
+  labelNames: ['client'] as const,
+  // Up to 30s to capture the parked-command tail that maps onto the Traefik
+  // 30s ceiling → 504. Lean bucket set keeps the series count low.
+  buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
+});
+
 // Image feed metrics
 export const imagesFeedWithoutIndexCounter = registerCounter({
   name: 'images_feed_without_index_total',
