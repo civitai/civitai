@@ -13,6 +13,7 @@ import { resolveRequestConsent } from './requestConsentGate';
 import { hideBlock } from './hiddenBlocks';
 import { intersectSandbox } from './sandbox';
 import { projectBlockInitContext, projectBlockInitViewer } from './projectBlockInit';
+import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -82,8 +83,15 @@ function storageErrorMessage(err: unknown): string {
  * lifecycle. Implements the @civitai/app-sdk/blocks v1 contract — see
  * docs/features/app-blocks.md "BLOCK_INIT contract" for the payload shape.
  *
- *   1. iframe `load` event → if token already in state, send BLOCK_INIT.
- *      Otherwise wait. Both conditions must hold before BLOCK_INIT fires.
+ *   1. Once token is present AND the effective-checkpoint query has resolved,
+ *      POST BLOCK_INIT immediately and RE-POST it on a short interval until
+ *      the block acks with BLOCK_READY (or the readiness timeout fires). This
+ *      is NOT gated on the iframe's `load` event — on prod the cached block
+ *      bundle's `load` fires before React attaches `onLoad`, so a load-gated
+ *      single-shot init was being missed and the block sat blank forever
+ *      ("timed out waiting for BLOCK_INIT"). Repeated init is safe: the
+ *      block's IframeTransport origin-checks and dedupes BLOCK_INIT
+ *      (`if (!this.initResolved)`). See iframeInitController.ts.
  *   2. Wait for BLOCK_READY (≤10s). Timeout shows BlockFallback("timeout").
  *   3. BLOCK_ERROR with `fatal: true` shows BlockFallback("fatal_block_error").
  *   4. RESIZE_IFRAME updates the iframe height, clamped to manifest bounds.
@@ -191,13 +199,21 @@ export function IframeHost({
   const [iframeHeight, setIframeHeight] = useState<number>(
     install.manifest.iframe?.minHeight ?? 200
   );
-  // H-1 (audit): tracked as state, not a ref. The BLOCK_READY timeout
-  // effect's deps are [token, status, iframeLoaded] — using a ref meant the
-  // effect didn't re-run when the iframe's onLoad fired *after* the token
-  // had already resolved. That left no 10s timeout armed, so a silent block
-  // would sit on an indefinite skeleton.
-  const [iframeLoaded, setIframeLoaded] = useState<boolean>(false);
+  // The iframe's `load` event is kept as a best-effort EARLY signal (it can
+  // win the race on fresh/slow loads) but is NO LONGER the trigger for init.
+  // The prod bug was that on cached bundles `load` fires before React attaches
+  // `onLoad`, so a load-gated single-shot init was silently missed and the
+  // block sat blank forever. Init is now driven by IframeInitController
+  // (retry-until-BLOCK_READY), keyed only on token + checkpoint readiness.
   const initSentRef = useRef<boolean>(false);
+  // One controller per mount; owns the BLOCK_INIT retry interval + the
+  // readiness timeout. Created lazily in the init effect.
+  const controllerRef = useRef<IframeInitController | null>(null);
+  // Stable holder for the latest init payload so the controller's interval
+  // always posts the freshest BLOCK_INIT (token/checkpoint can resolve after
+  // the controller started — the next tick picks up the new payload) without
+  // re-creating the controller and resetting its timers.
+  const buildInitPayloadRef = useRef<() => BlockInitPayload>();
 
   const iframeSrc = install.manifest.iframe?.src ?? '';
   const expectedOrigin = useMemo(() => {
@@ -345,17 +361,23 @@ export function IframeHost({
     renderMode: install.renderMode,
   });
 
-  const sendInit = () => {
-    if (initSentRef.current) return;
-    if (!iframeLoaded || !token) return;
-    // Wait for the effective checkpoint to resolve before init — otherwise
-    // the block renders without a checkpoint label and re-mounts when the
-    // query lands. `isLoading` is false even on error; the error path
-    // still lets us init with `checkpoint: null` so the block isn't stuck.
-    if (effectiveCheckpointQuery.isLoading) return;
+  // Keep the controller's interval posting the freshest payload. buildInitPayload
+  // closes over query results that can resolve AFTER the controller started; we
+  // re-point this ref every render so the next retry tick uses the latest data
+  // without resetting the controller's timers.
+  buildInitPayloadRef.current = buildInitPayload;
+
+  // Post a single BLOCK_INIT. The IframeInitController calls this immediately
+  // on start() and then on each retry tick until BLOCK_READY. It is safe to
+  // call repeatedly: the block's IframeTransport origin-checks and dedupes
+  // BLOCK_INIT (`if (!this.initResolved)`), so extra posts are ignored
+  // block-side. `initSentRef` is flipped on the first post so the dependent
+  // flows (TOKEN_REFRESH push, REQUEST_TOKEN reply, SUSPEND-on-unmount) that
+  // key off "have we begun initing?" still fire.
+  const sendInitOnce = useCallback(() => {
     initSentRef.current = true;
-    send('BLOCK_INIT', buildInitPayload());
-  };
+    send('BLOCK_INIT', (buildInitPayloadRef.current ?? (() => undefined as never))());
+  }, [send]);
 
   // H-3: when the token rotates after BLOCK_INIT (every ~13min), send a
   // TOKEN_REFRESH message so the iframe can pick up the new credential
@@ -400,19 +422,46 @@ export function IframeHost({
     return off;
   }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage]);
 
+  // Init handshake. Start the moment we're ALLOWED to init — token present and
+  // the effective-checkpoint query resolved (`isLoading` false; the error path
+  // also resolves to false and inits with checkpoint: null, as before). NOT
+  // gated on the iframe `load` event: the controller posts BLOCK_INIT
+  // immediately and re-posts every INIT_RETRY_INTERVAL_MS until BLOCK_READY,
+  // which survives the cached-bundle race where `load` fires before React
+  // attaches `onLoad`. The readiness timeout is armed by the controller on
+  // start() (NOT inside an `iframeLoaded` gate), so a block that never acks
+  // surfaces a `timeout` fallback instead of a silent indefinite skeleton.
   useEffect(() => {
-    if (status !== 'loading') return;
-    if (!iframeLoaded || !token) return;
-    // Re-run when the effective-checkpoint query resolves so sendInit's
-    // guard releases. Without this dep the effect doesn't fire after the
-    // query lands, leaving the iframe stuck on the loading skeleton.
-    sendInit();
-    const t = setTimeout(() => {
-      setStatus((current) => (current === 'loading' ? 'timeout' : current));
-    }, BLOCK_READY_TIMEOUT_MS);
-    return () => clearTimeout(t);
+    if (
+      !shouldStartInit({
+        status,
+        hasToken: !!token,
+        checkpointLoading: effectiveCheckpointQuery.isLoading,
+      })
+    ) {
+      return;
+    }
+    if (controllerRef.current) return; // already initing — don't restart timers
+
+    const controller = new IframeInitController({
+      sendInit: sendInitOnce,
+      readyTimeoutMs: BLOCK_READY_TIMEOUT_MS,
+      onReadyTimeout: () => {
+        setStatus((current) => (current === 'loading' ? 'timeout' : current));
+      },
+    });
+    controllerRef.current = controller;
+    controller.start();
+
+    return () => {
+      controller.dispose();
+      controllerRef.current = null;
+    };
+    // sendInitOnce is stable (useCallback over `send`); buildInitPayloadRef
+    // carries the freshest payload so we intentionally do NOT re-run on
+    // payload-input changes — restarting would reset the readiness timeout.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, status, iframeLoaded, effectiveCheckpointQuery.isLoading]);
+  }, [token, status, effectiveCheckpointQuery.isLoading, sendInitOnce]);
 
   // Independent token-wait timer: catches the case where the iframe loads but
   // the token never resolves (e.g. /api/v1/block-tokens repeatedly 5xx-ing).
@@ -443,7 +492,13 @@ export function IframeHost({
         }
         return current;
       });
-      if (appliedReady) applyHeight(payload.height);
+      if (appliedReady) {
+        // Block acked — stop re-posting BLOCK_INIT and cancel the readiness
+        // timeout. One extra in-flight retry tick before this lands is fine
+        // (the block dedupes init), but we must not keep spamming.
+        controllerRef.current?.notifyReady();
+        applyHeight(payload.height);
+      }
     });
     return off;
   }, [onMessage, applyHeight]);
@@ -1099,14 +1154,13 @@ export function IframeHost({
           // there's no layout shift when it becomes interactive.
           pointerEvents: isReady ? 'auto' : 'none',
         }}
-        onLoad={() => {
-          // H-1: setState (not ref) so the BLOCK_READY timeout effect
-          // re-runs once both token AND iframeLoaded are true. sendInit
-          // still fires synchronously here for the common case where
-          // the token resolved first.
-          setIframeLoaded(true);
-          sendInit();
-        }}
+        // NOTE: no `onLoad`-driven init. The iframe `load` event is
+        // unreliable as the init trigger — on prod the cached block bundle's
+        // `load` fires before React attaches the handler, so a load-gated
+        // single-shot BLOCK_INIT was silently missed and the block sat blank
+        // ("timed out waiting for BLOCK_INIT"). Init is driven entirely by
+        // IframeInitController (retry-until-BLOCK_READY), keyed on token +
+        // checkpoint readiness. See the init effect above.
       />
       {status === 'loading' && (
         <div style={{ position: 'absolute', inset: 0 }}>
