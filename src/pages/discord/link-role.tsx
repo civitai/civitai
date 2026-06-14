@@ -12,6 +12,7 @@ import {
 import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons-react';
 import type { BuiltInProviderType } from 'next-auth/providers/index';
 import { getProviders } from 'next-auth/react';
+import { getProvidersBounded } from '~/server/auth/get-providers-bounded';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { handleSignIn } from '~/utils/auth-helpers';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -54,7 +55,10 @@ export const getServerSideProps = createServerSideProps({
         console.error(err);
       }
     }
-    const providers = !linked ? await getProviders() : null;
+    // Bounded server-side self-fetch: see ~/server/auth/get-providers-bounded.
+    // A hung /api/auth/providers self-fetch must not stall this SSR render to the
+    // 30s gateway ceiling (504) — degrade to no providers instead.
+    const providers = !linked ? await getProvidersBounded() : null;
 
     return {
       props: { providers, linked },
