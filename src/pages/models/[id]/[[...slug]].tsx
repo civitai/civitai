@@ -892,7 +892,11 @@ export default function ModelDetailsV2({
                     withinPortal
                   >
                     <Menu.Target>
-                      <LegacyActionIcon className={classes.headerButton} variant="light">
+                      <LegacyActionIcon
+                        className={classes.headerButton}
+                        variant="light"
+                        aria-label="Model options"
+                      >
                         <IconDotsVertical size={20} />
                       </LegacyActionIcon>
                     </Menu.Target>

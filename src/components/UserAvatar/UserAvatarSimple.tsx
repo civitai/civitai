@@ -89,6 +89,7 @@ export function UserAvatarSimple({
               // original={anim === false ? false : undefined}
               type="image"
               name="user avatar decoration"
+              alt=""
               className="absolute left-1/2 top-1/2 z-[2]"
               loading="lazy"
               style={{

@@ -185,6 +185,7 @@ export function UserAvatar({
                 src={decoration.data.url}
                 type="image"
                 name="user avatar decoration"
+                alt=""
                 style={{
                   position: 'absolute',
                   top: '50%',

@@ -17,7 +17,7 @@ import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar'
 import { constants, creatorCardStatsDefaults } from '~/server/common/constants';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
-import { sortDomainLinks } from '~/utils/domain-link';
+import { getDomainLinkLabel, sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import type { UserStats } from '../UserStatBadges/UserStatBadges';
 import { UserStatBadgesV2 } from '../UserStatBadges/UserStatBadges';
@@ -237,6 +237,7 @@ const CreatorCardSimpleContent = ({
                 target="_blank"
                 rel="nofollow noreferrer"
                 size={32}
+                aria-label={getDomainLinkLabel(link)}
               >
                 <DomainIcon domain={link.domain} size={20} />
               </LegacyActionIcon>
