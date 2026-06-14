@@ -105,7 +105,13 @@ vi.mock('~/server/db/client', () => ({
 vi.mock('~/server/redis/client', () => ({
   redis: mockRedis,
   sysRedis: mockSysRedis,
-  REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
+  // GENERATION.RESOURCE_DATA is read at import time by resource-data.redis (pulled
+  // in transitively); without it this suite flakily throws "Cannot read properties
+  // of undefined (reading 'RESOURCE_DATA')" depending on test-file load order.
+  REDIS_KEYS: {
+    BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' },
+    GENERATION: { RESOURCE_DATA: 'packed:generation:resource-data-3' },
+  },
   REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
