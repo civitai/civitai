@@ -2109,27 +2109,29 @@ export const getAllImagesIndex = async (
     ));
   } catch (err) {
     // Meilisearch saturation / timeout on the tRPC hot path (image.getInfinite).
-    // Surface as TRPCError TIMEOUT so the client returns 408 fast instead of
-    // bleeding until Traefik's 30s router timeout — which is what backed up
-    // the event loop and tipped api-primary into kubelet SIGKILL on 2026-05-29.
-    // tRPC v10 has no SERVICE_UNAVAILABLE / 503 code; TIMEOUT is the closest
-    // semantic match.
+    // Surface as TRPCError SERVICE_UNAVAILABLE (HTTP 503) so the client gets a
+    // fast, retryable response instead of bleeding until Traefik's 30s router
+    // timeout — which is what backed up the event loop and tipped api-primary
+    // into kubelet SIGKILL on 2026-05-29. 503 is the correct code for a
+    // transient backend brownout (was TIMEOUT/408 as a tRPC-v10 stopgap; v11
+    // has SERVICE_UNAVAILABLE).
     if (err instanceof MeiliCallTimeoutError) {
       throw new TRPCError({
-        code: 'TIMEOUT',
+        code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
         cause: err,
       });
     }
     // Upstream returned 408 (backend timeout) or 5xx (feeds-proxy shed /
-    // brownout). Same disposition as the timeout above — a retryable TIMEOUT
-    // so the client shows its retry banner with a friendly message, instead
-    // of a raw 500 ("Meilisearch fetch failed (503): ...") leaking to the UI.
+    // brownout). Same disposition as the timeout above — a retryable 503
+    // SERVICE_UNAVAILABLE so the client shows its retry banner with a friendly
+    // message, instead of a raw 500 ("Meilisearch fetch failed (503): ...")
+    // leaking to the UI.
     // Mirrors the user/model search REST handlers. 4xx-other (malformed
     // filter / auth) is NOT failfast-eligible and still bubbles as-is.
     if (err instanceof MeilisearchFetchError && isFailfastStatus(err.status)) {
       throw new TRPCError({
-        code: 'TIMEOUT',
+        code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
         cause: err,
       });
@@ -2773,23 +2775,23 @@ export async function getImagesFromFeedSearch(
     };
   } catch (err) {
     console.error('Error in getImagesFromFeedSearch:', err);
-    // Meili saturation / timeout → fail fast as TIMEOUT (HTTP 408) so the
-    // caller gets a fast, retryable response instead of bleeding 30s while
-    // Traefik gives up. tRPC v10 has no SERVICE_UNAVAILABLE / 503 code, so
-    // TIMEOUT (the closest semantic match) is used here.
+    // Meili saturation / timeout → fail fast as SERVICE_UNAVAILABLE (HTTP 503)
+    // so the caller gets a fast, retryable response instead of bleeding 30s
+    // while Traefik gives up. 503 is the correct transient-brownout code
+    // (was TIMEOUT/408 under tRPC v10, which lacked SERVICE_UNAVAILABLE).
     if (err instanceof MeiliCallTimeoutError) {
       throw new TRPCError({
-        code: 'TIMEOUT',
+        code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
         cause: err,
       });
     }
-    // 408/5xx from the upstream (or feeds-proxy) → retryable TIMEOUT, same as
+    // 408/5xx from the upstream (or feeds-proxy) → retryable 503, same as
     // the circuit-open path above. Keeps this path symmetric with
     // getAllImagesIndex even though it's REST-only and historically low-error.
     if (err instanceof MeilisearchFetchError && isFailfastStatus(err.status)) {
       throw new TRPCError({
-        code: 'TIMEOUT',
+        code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
         cause: err,
       });
@@ -4197,11 +4199,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     // makes the client treat it as end-of-feed (nextCursor undefined →
     // hasNextPage false → no retry), and during a brownout every feed does
     // the same, so switching feeds also shows "no results". Surface a
-    // retryable TIMEOUT instead so the existing SearchRetryBanner kicks in.
+    // retryable 503 instead so the existing SearchRetryBanner kicks in.
     // (A non-empty partial page still serves normally — degraded, not broken.)
     if (brokeOnUpstreamFailure && accumulatedHits.length === 0) {
       throw new TRPCError({
-        code: 'TIMEOUT',
+        code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
       });
     }
