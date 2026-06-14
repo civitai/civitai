@@ -31,10 +31,14 @@ async function markWorkflowProcessed(workflowId: string): Promise<boolean> {
     }
     return false; // already processed
   } catch {
-    // Fail closed: a Redis incident shouldn't let a retry double-bill.
-    // Returning false here makes the endpoint return 409 (or whatever the
-    // caller maps "already processed" to), which the orchestrator should
-    // retry once Redis recovers.
+    // Fail closed: a Redis incident must not let a retry double-bill, so we
+    // treat the workflow as already-processed (return false). The handler then
+    // responds 200 {ok:true, idempotent:true} and does NOT process/bill it.
+    // Trade-off: a 200 means the orchestrator won't redeliver, so the
+    // completion is effectively dropped for the duration of the outage. That's
+    // acceptable while this is a no-op scaffold (no billing yet); revisit when
+    // Phase-3 billing lands — at that point a Redis outage dropping a billable
+    // completion may warrant a 5xx-to-force-retry instead.
     return false;
   }
 }
