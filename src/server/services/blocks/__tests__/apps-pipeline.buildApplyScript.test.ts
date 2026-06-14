@@ -33,14 +33,28 @@ describe('buildApplyScript', () => {
     expect(script).toContain('set -euo pipefail');
   });
 
-  it('interpolates the namespace into every kubectl -n invocation', () => {
-    const nsInvocations = script.match(/kubectl -n \S+/g) ?? [];
-    expect(nsInvocations.length).toBeGreaterThan(0);
-    for (const inv of nsInvocations) {
-      expect(inv).toBe(`kubectl -n ${NS}`);
-    }
-    // And nothing leaked a different namespace literal.
-    expect(script).not.toMatch(/kubectl -n (?!civitai-apps\b)\S/);
+  it('namespaces every kubectl command except the manifest-scoped apply', () => {
+    // Match EVERY kubectl invocation anywhere in the script (incl. ones inside
+    // `if ! kubectl …` and `$(kubectl …)` — a `kubectl -n` regex misses those).
+    const invocations = [...script.matchAll(/kubectl\s+([^\n]*)/g)].map((m) => m[1].trim());
+    expect(invocations.length).toBeGreaterThan(0);
+
+    // The ONLY un-namespaced kubectl is the manifest-scoped `apply` — its target
+    // namespace lives inside /tmp/rendered.yaml (pinned by the app-templates
+    // ConfigMap, enforced out of scope of this unit). EVERYTHING else must be
+    // `-n ${NS}`-scoped. This catches (a) a dropped `-n` on the smoke/wait/get/
+    // describe/logs/rollout commands, (b) a NEW un-namespaced kubectl command,
+    // and (c) a wrong-namespace leak — none of which the old `-n \S+`-only
+    // regex could see (it never inspected the apply, the highest-blast command).
+    const APPLY = 'apply -f /tmp/rendered.yaml';
+    const offenders = invocations.filter(
+      (inv) => !inv.startsWith(`-n ${NS} `) && !inv.startsWith(APPLY)
+    );
+    expect(offenders).toEqual([]);
+    // …and the apply is the SOLE un-namespaced command (exactly one).
+    expect(invocations.filter((inv) => !inv.startsWith(`-n ${NS} `))).toEqual([APPLY]);
+    // Sanity: the namespaced commands really exist (run/wait/get/describe/logs/rollout).
+    expect(invocations.filter((inv) => inv.startsWith(`-n ${NS} `)).length).toBeGreaterThanOrEqual(4);
   });
 
   it('routes a distinct namespace argument through unchanged (no hardcoded ns)', () => {

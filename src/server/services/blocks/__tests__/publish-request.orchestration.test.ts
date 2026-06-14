@@ -571,10 +571,10 @@ describe('submitVersion', () => {
       submittedByUserId: 42,
     });
 
-    // fire-and-forget; give the microtask a tick
-    await new Promise((r) => setImmediate(r));
-
-    expect(fetchSpy).toHaveBeenCalled();
+    // fire-and-forget notify — poll until it lands instead of hand-timing the
+    // microtask queue (a new `await` before the fetch would silently make a
+    // single-tick wait flaky).
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
     const [url, init] = fetchSpy.mock.calls[0];
     expect(url).toBe('https://discord.example/hook');
     expect((init as RequestInit).method).toBe('POST');

@@ -219,9 +219,12 @@ describe('workflow-completed — idempotency dedup (M-6, Critical path 8)', () =
     await invoke(makeReq(), res);
     expect(res._status).toBe(200);
     expect(res._body).toEqual({ ok: true });
-    // Marker keyed on workflowId alone (audit-10 M6) and TTL set on first sight.
+    // Marker keyed on workflowId ALONE (audit-10 M6) and TTL set on first sight.
+    // Assert the EXACT key shape, not just .toContain — a composite key (e.g.
+    // accidentally folding in blockInstanceId) would still contain the workflowId
+    // yet silently break cross-call dedup.
     expect(mockIncrBy).toHaveBeenCalledTimes(1);
-    expect(mockIncrBy.mock.calls[0][0]).toContain(WORKFLOW_ID);
+    expect(mockIncrBy.mock.calls[0][0]).toBe(`blocks:token-rate-limit:wf:${WORKFLOW_ID}`);
     expect(mockExpire).toHaveBeenCalledTimes(1);
     expect(mockExpire.mock.calls[0][1]).toBe(DEDUP_TTL_SECONDS);
   });
