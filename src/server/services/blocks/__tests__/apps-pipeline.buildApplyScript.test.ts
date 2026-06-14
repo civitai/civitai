@@ -34,9 +34,16 @@ describe('buildApplyScript', () => {
   });
 
   it('namespaces every kubectl command except the manifest-scoped apply', () => {
-    // Match EVERY kubectl invocation anywhere in the script (incl. ones inside
-    // `if ! kubectl …` and `$(kubectl …)` — a `kubectl -n` regex misses those).
-    const invocations = [...script.matchAll(/kubectl\s+([^\n]*)/g)].map((m) => m[1].trim());
+    // Match EVERY kubectl invocation anywhere in the EXECUTABLE script (incl.
+    // ones inside `if ! kubectl …` and `$(kubectl …)` — a `kubectl -n` regex
+    // misses those). Strip `#` comment lines first so a future comment that
+    // happens to contain `kubectl` can't inflate the namespaced count or fake
+    // an offender.
+    const executable = script
+      .split('\n')
+      .filter((line: string) => !/^\s*#/.test(line))
+      .join('\n');
+    const invocations = [...executable.matchAll(/kubectl\s+([^\n]*)/g)].map((m) => m[1].trim());
     expect(invocations.length).toBeGreaterThan(0);
 
     // The ONLY un-namespaced kubectl is the manifest-scoped `apply` — its target
