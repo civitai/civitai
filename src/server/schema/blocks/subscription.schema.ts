@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 
 /**
  * Two user-controlled install scopes. Both live in the same
@@ -141,6 +142,17 @@ export const PUBLIC_MANIFEST_FIELDS = ['name', 'description', 'targets'] as cons
  * `manifest` is the PUBLIC allowlist subset only (see PublicBlockManifest) —
  * not the raw stored manifest. This shape is returned by the anon-capable
  * `blocks.listAvailable` (F-E E1), so it must carry no private/internal data.
+ *
+ * F-E E3 additions (still anon-safe):
+ *   - `category`      — the mod-assigned marketplace category (free-text
+ *                       `app_blocks.category` column; NULL until the E3 migration
+ *                       is applied + a mod sets one). Public, display-only.
+ *   - `scopesSummary` — the FIRST N of the app's APPROVED scope ids
+ *                       (`approved_scopes` column) — the permission-disclosure
+ *                       preview shown on the card, mirroring E2's getAppDetail
+ *                       `scopes`. These are plain scope identifier strings
+ *                       describing what the app can do (the whole point of the
+ *                       disclosure) — never the raw manifest declaration.
  */
 export type AvailableBlock = {
   id: string;
@@ -149,6 +161,8 @@ export type AvailableBlock = {
   appName: string | null;
   manifest: PublicBlockManifest;
   installCount: number;
+  category: string | null;
+  scopesSummary: string[];
 };
 
 /**
@@ -173,11 +187,28 @@ export function toPublicBlockManifest(raw: unknown): PublicBlockManifest {
   return out;
 }
 
+/**
+ * F-E E3 marketplace sort options:
+ *   - `popular` (default) — install_count DESC (distinct-user installs).
+ *   - `newest`            — current_version_deployed_at DESC, falling back to
+ *                           created_at for pre-W2 rows with no deploy timestamp.
+ *   - `name`              — manifest name ASC (case-insensitive).
+ */
+export const marketplaceSortSchema = z.enum(['popular', 'newest', 'name']);
+export type MarketplaceSort = z.infer<typeof marketplaceSortSchema>;
+
 export const listAvailableSchema = z.object({
   slotId: z
     .enum(['model.sidebar_top', 'model.below_images', 'model.actions_extra'])
     .optional(),
   query: z.string().max(200).optional(),
+  // F-E E3: mod-assigned category filter. Validated against the single-source
+  // taxonomy const (MARKETPLACE_CATEGORIES) so the schema and the UI/DB share
+  // ONE list — adding a category is a one-line const edit, no schema migration.
+  category: z.enum(MARKETPLACE_CATEGORIES).optional(),
+  // F-E E3: sort order; defaults to popular (install_count desc) — same as the
+  // pre-E3 fixed ordering, so the default behaviour is unchanged.
+  sort: marketplaceSortSchema.default('popular'),
   cursor: z.string().max(64).optional(),
   limit: z.number().int().min(1).max(50).default(20),
 });
