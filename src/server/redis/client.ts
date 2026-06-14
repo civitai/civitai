@@ -918,9 +918,11 @@ export const REDIS_SYS_KEYS = {
      * per-call `claims.buzzBudget` only bounds a SINGLE submitWorkflow; a
      * block holding a valid token can issue unlimited sequential capped
      * submits and drain the whole balance. This is an integer counter, keyed
-     * `system:blocks:buzz-cap:${userId}:${appBlockId}:${UTC-day}`, INCRBY'd by
-     * the cost of each successful submit and checked before submit. TTL is set
-     * on first write so the per-window key self-expires.
+     * per-USER (NOT per-app_block) `system:blocks:buzz-cap:${userId}:${UTC-day}`
+     * so all of a user's installed blocks share one daily ceiling. Enforcement
+     * is atomic reserve-and-refund: INCRBY by cost at the gate, DECRBY-refund if
+     * over the cap or if the submit throws before resolving. TTL is set on first
+     * write so the per-window key self-expires.
      */
     BUZZ_CAP: 'system:blocks:buzz-cap',
   },
