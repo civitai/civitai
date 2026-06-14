@@ -87,18 +87,17 @@ export default AuthedEndpoint(
     const modelName = modelVersion.model.name.replace(/[^a-zA-Z0-9_-]/g, '_');
     const fileName = `${modelName}_epoch_${epochNumber}.safetensors`;
 
-    // Prefer a direct-to-storage redirect: ask the orchestrator for a short-lived
-    // presigned object-store URL (`redirect=storage`) and hand it straight to the client,
-    // instead of proxying the (multi-GB) epoch bytes through this pod — which ties up an
-    // event-loop slot for the entire transfer and pins at the 30s gateway timeout.
-    // The orchestrator returns 302 for the storage path and 308 for the legacy content
-    // proxy, so we only follow a 302. ORCHESTRATOR_ACCESS_TOKEN never leaves the server.
+    // Prefer a direct-to-storage redirect: resolve a short-lived presigned object-store URL
+    // from the orchestrator and hand it straight to the client, instead of proxying the epoch
+    // bytes through this pod — which ties up an event-loop slot for the entire client transfer
+    // and pins at the 30s gateway timeout. A plain download (download=true, no blur/preview)
+    // is redirected by the orchestrator straight to storage (302); the legacy content proxy
+    // returns 308, so we only follow a 302. ORCHESTRATOR_ACCESS_TOKEN never leaves the server.
     try {
       const resolveUrl = new URL(epochUrl);
-      resolveUrl.searchParams.set('redirect', 'storage');
-      // Ask the orchestrator to bake the download filename into the presigned URL's
-      // response-content-disposition, so the browser saves it as the epoch name rather
-      // than the raw storage object key.
+      // download=true triggers the orchestrator's direct-to-storage redirect; filename is baked
+      // into the presigned URL's response-content-disposition so the browser saves it as the
+      // epoch name rather than the raw storage object key.
       resolveUrl.searchParams.set('filename', fileName);
       resolveUrl.searchParams.set('download', 'true');
       const probe = await fetch(resolveUrl, {
