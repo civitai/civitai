@@ -83,6 +83,7 @@ const CreateMenuButtons = forwardRef<
         radius="sm"
         className={'rounded-l-none @max-md:hidden'}
         disabled={disabled}
+        aria-label="More create options"
       >
         <IconChevronDown stroke={2} size={20} />
       </Button>

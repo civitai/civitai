@@ -50,6 +50,7 @@ export function Announcement({
           color="red"
           onClick={handleDismiss}
           className="absolute right-2 top-2"
+          aria-label="Dismiss announcement"
         >
           <IconX size={20} />
         </LegacyActionIcon>

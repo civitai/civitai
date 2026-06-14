@@ -128,6 +128,7 @@ export function AppFooter() {
             onClick={() => scrollRef?.current?.scrollTo({ top: 0, behavior: 'smooth' })}
             className={'transition-transform'}
             style={showFooter ? { transform: 'translateY(140%)' } : undefined}
+            aria-label="Scroll to top"
           >
             <IconArrowUp size={20} stroke={2.5} />
           </Button>

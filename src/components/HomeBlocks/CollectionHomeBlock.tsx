@@ -127,6 +127,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
             <Popover withArrow width={380}>
               <Popover.Target>
                 <Box
+                  role="button"
+                  tabIndex={0}
+                  aria-label="About this collection"
                   display="inline-block"
                   style={{ lineHeight: 0.3, cursor: 'pointer' }}
                   color="white"

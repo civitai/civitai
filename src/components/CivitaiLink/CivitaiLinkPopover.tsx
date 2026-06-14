@@ -69,7 +69,7 @@ export function CivitaiLinkPopover() {
       withinPortal
     >
       <Popover.Target>
-        <span>
+        <span role="button" aria-label="Civitai Link">
           <LinkButton />
         </span>
       </Popover.Target>
@@ -453,7 +453,7 @@ function LinkButton() {
   return (
     <div className="relative">
       <Indicator className="flex items-center" color={color} disabled={!color}>
-        <LegacyActionIcon variant="subtle" color="gray">
+        <LegacyActionIcon variant="subtle" color="gray" aria-label="Civitai Link">
           <IconScreenShare />
         </LegacyActionIcon>
       </Indicator>

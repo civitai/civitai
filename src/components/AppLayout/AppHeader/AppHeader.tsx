@@ -131,7 +131,12 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         <Grid.Col span="auto" className="flex items-center justify-end @md:hidden">
           <div className="flex items-center gap-1">
             <CreateMenu />
-            <LegacyActionIcon variant="subtle" color="gray" onClick={() => setShowSearch(true)}>
+            <LegacyActionIcon
+              variant="subtle"
+              color="gray"
+              onClick={() => setShowSearch(true)}
+              aria-label="Search"
+            >
               <IconSearch />
             </LegacyActionIcon>
             {currentUser && <CivitaiLinkPopover />}
