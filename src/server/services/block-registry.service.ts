@@ -1,3 +1,4 @@
+import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
@@ -20,6 +21,7 @@ import {
 import type {
   AvailableBlock,
   ListAvailableInput,
+  PublicAppDetail,
   SubscriptionRecord,
   SubscriptionScope,
 } from '~/server/schema/blocks/subscription.schema';
@@ -2233,6 +2235,85 @@ export class BlockRegistry {
         installCount: Number(r.install_count),
       })),
       nextCursor,
+    };
+  }
+
+  /**
+   * Per-app marketplace detail (F-E E2). Anon-CAPABLE, but the router gates it
+   * behind the mod-segmented appBlocks flag (dark today).
+   *
+   * 🔒 ANON-EXPOSURE — returns ONLY the PublicAppDetail allowlist for a single
+   * `status='approved'` app:
+   *   - `manifest` is projected through `toPublicBlockManifest` (name/description
+   *     /targets[].slotId only) — the raw stored manifest (trustTier, internal
+   *     iframe.src, renderMode, settings internals, raw scopes) is NEVER shipped.
+   *   - `scopes` are the APPROVED scope ids (`approved_scopes` column) — the
+   *     permission disclosure list, safe to show.
+   *   - `liveUrl` is the already-public standalone block origin, built here from
+   *     `blockId` + `env.APPS_DOMAIN` (the SAME host the webhook validates the
+   *     bundle's iframe against), so the client never needs the domain. No
+   *     token / scope is attached.
+   *
+   * Returns `null` for a missing OR non-approved (pending/rejected/withdrawn)
+   * app — the router maps that to NOT_FOUND so a non-approved app's data can
+   * never be enumerated by id.
+   */
+  static async getAppDetail(appBlockId: string): Promise<PublicAppDetail | null> {
+    type Row = {
+      id: string;
+      block_id: string;
+      app_id: string;
+      app_name: string | null;
+      manifest: unknown;
+      status: string;
+      content_rating: string | null;
+      version: string | null;
+      approved_scopes: string[] | null;
+      install_count: bigint;
+    };
+    const rows = (await dbRead.$queryRaw<Row[]>`
+      SELECT
+        ab.id,
+        ab.block_id,
+        ab.app_id,
+        oc.name AS app_name,
+        ab.manifest,
+        ab.status,
+        ab.content_rating,
+        ab.version,
+        ab.approved_scopes,
+        (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
+         WHERE bus.app_block_id = ab.id) AS install_count
+      FROM app_blocks ab
+      LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
+      WHERE ab.id = ${appBlockId}::text
+      LIMIT 1
+    `) as Row[];
+    const row = rows[0];
+    // Status check is in the application layer (not the WHERE clause) ONLY so a
+    // future caller can't accidentally reuse this method for a non-public path;
+    // a non-approved row returns null exactly like a missing one — never its
+    // data. (The marketplace install mutations apply the same approved gate.)
+    if (!row || row.status !== 'approved') return null;
+    return {
+      id: row.id,
+      blockId: row.block_id,
+      appId: row.app_id,
+      appName: row.app_name ?? null,
+      // PUBLIC allowlist projection — identical to the listing path so the two
+      // can't drift in what they expose.
+      manifest: toPublicBlockManifest(row.manifest),
+      // Approved scope ids only — the permission disclosure list. Defensive
+      // against a NULL column (pre-approval rows) → empty list.
+      scopes: Array.isArray(row.approved_scopes)
+        ? row.approved_scopes.filter((s): s is string => typeof s === 'string')
+        : [],
+      contentRating: row.content_rating ?? null,
+      version: row.version ?? null,
+      installCount: Number(row.install_count),
+      // Already-public standalone origin (no token/scope). Same host the webhook
+      // validates the submitted bundle's iframe.src against.
+      liveUrl: `https://${row.block_id}.${env.APPS_DOMAIN}`,
     };
   }
 }

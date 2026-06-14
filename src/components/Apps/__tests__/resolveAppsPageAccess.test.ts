@@ -37,3 +37,25 @@ describe('resolveAppsPageAccess — gating invariant', () => {
     expect(resolveAppsPageAccess({ features: { appBlocks: true } })).toEqual({ props: {} });
   });
 });
+
+/**
+ * F-E E2 — the per-app detail page (`/apps/<appBlockId>`) reuses the SAME
+ * `resolveAppsPageAccess` gate as the marketplace index. These cases pin that
+ * the detail page is flag-gated FIRST (no session→login redirect, no
+ * isModerator belt), so a real anon/non-mod gets `notFound` today and the page
+ * is anon-capable-but-dark — identical to the index. (Belt-and-suspenders: if
+ * the detail page ever swaps to a different/looser resolver, this fails.)
+ */
+describe('resolveAppsPageAccess — detail page (/apps/[appBlockId]) reuses the index gate', () => {
+  it('no flag + no session → notFound (the detail page stays dark for real anon)', () => {
+    expect(resolveAppsPageAccess({ features: { appBlocks: false } })).toEqual({ notFound: true });
+    expect(resolveAppsPageAccess({ features: undefined })).toEqual({ notFound: true });
+  });
+
+  it('flag granted + no session → renders (dark anon read path, never a redirect)', () => {
+    const result = resolveAppsPageAccess({ features: { appBlocks: true } });
+    expect(result).toEqual({ props: {} });
+    expect(result).not.toHaveProperty('redirect');
+    expect(result).not.toHaveProperty('notFound');
+  });
+});

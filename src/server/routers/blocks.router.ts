@@ -10,6 +10,7 @@ import { getUserBuzzAccounts } from '~/server/services/buzz.service';
 import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import {
+  getAppDetailSchema,
   listAvailableSchema,
   subscriptionScopeSchema,
 } from '~/server/schema/blocks/subscription.schema';
@@ -932,6 +933,60 @@ export const blocksRouter = router({
         return { items: [], nextCursor: undefined };
       }
       return BlockRegistry.listAvailable(input);
+    }),
+
+  /**
+   * Per-app marketplace DETAIL — one approved app block, keyed on appBlockId.
+   * Public, ANON-CAPABLE (F-E E2): backs the `/apps/<appBlockId>` detail page so
+   * a viewer can evaluate an app (description, requested scopes, slots, content
+   * rating, install count, version, live preview) before installing.
+   *
+   * GATING INVARIANT (E2) — anon-capable but DARK until launch (same as E1):
+   *   - `enforceAppBlocksFlag` runs FIRST. For a real anon / non-mod viewer the
+   *     mod-segmented `app-blocks-enabled` flag never matches → the middleware
+   *     marks `_appBlocksDisabled` → this query returns NOT_FOUND (so a dark
+   *     viewer sees the same 404 the page's SSR gate produces; no detail leaks).
+   *     The procedure only serves real anon callers once the SEGMENT is widened
+   *     at launch (a deliberate, separate Flipt change). There is intentionally
+   *     NO hardcoded isModerator belt — the flag is the gate by design, so the
+   *     eventual public launch is a pure segment-widen.
+   *
+   * EXPOSURE / SECURITY (what an anon caller can fetch once the segment widens):
+   *   - ONLY a `status='approved'` app — a missing OR non-approved (pending/
+   *     rejected/withdrawn) id returns NOT_FOUND, never its data. This blocks
+   *     id-enumeration of unapproved apps.
+   *   - ONLY the PublicAppDetail allowlist (see the type): the manifest is the
+   *     same `toPublicBlockManifest` subset as the listing (name/description/
+   *     targets[].slotId) — the raw manifest's internal fields (trustTier,
+   *     internal iframe.src, renderMode, settings internals, raw scopes) are
+   *     NEVER shipped. `scopes` are the approved scope ids (the permission
+   *     disclosure); `liveUrl` is the already-public standalone block origin
+   *     (no token / scope attached).
+   *   - No per-user data.
+   *
+   * Anon rate-limiting: same posture as `listAvailable` (keyed on IP for anon;
+   * mods/dev/test exempt by the middleware).
+   */
+  getAppDetail: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(getAppDetailSchema)
+    .query(async ({ ctx, input }) => {
+      // Dark-flag fail-closed: while the appBlocks flag is off the middleware
+      // marks the ctx and we surface NOT_FOUND (matching the page SSR gate),
+      // never the app's data.
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        throw throwNotFoundError('App block not found');
+      }
+      const detail = await BlockRegistry.getAppDetail(input.appBlockId);
+      if (!detail) throw throwNotFoundError('App block not found');
+      return detail;
     }),
 
   /**
