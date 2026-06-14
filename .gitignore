@@ -99,6 +99,9 @@ trace/types.json
 src/pages/api/dev-local/*
 /.playwright-mcp/
 
+# Vitest browser-mode failure screenshots (written next to *.browser.test.tsx)
+**/__screenshots__/
+
 # Ladle (local dev artifacts)
 .ladle/stubs/
 
