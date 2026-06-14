@@ -23,6 +23,7 @@ import type {
   SubscriptionRecord,
   SubscriptionScope,
 } from '~/server/schema/blocks/subscription.schema';
+import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
 
 const CACHE_TTL_SECONDS = 60;
 export const MAX_BLOCKS_PER_SLOT = 3;
@@ -2216,12 +2217,19 @@ export class BlockRegistry {
     const trimmed = rows.slice(0, limit);
     const nextCursor = rows.length > limit ? trimmed[trimmed.length - 1]?.id : undefined;
     return {
+      // F-E E1 anon-exposure allowlist: project the raw stored manifest down to
+      // the vetted PUBLIC subset (name/description/targets[].slotId) via
+      // toPublicBlockManifest. The raw manifest is arbitrary publisher JSON plus
+      // server-set internal fields (trustTier, internal iframe.src host) — never
+      // ship it wholesale to an anon caller. Combined with the WHERE
+      // status='approved' filter above, an anon caller can only ever see
+      // approved apps + display-safe fields.
       items: trimmed.map((r: Row) => ({
         id: r.id,
         blockId: r.block_id,
         appId: r.app_id,
         appName: r.app_name ?? null,
-        manifest: (r.manifest ?? {}) as Record<string, unknown>,
+        manifest: toPublicBlockManifest(r.manifest),
         installCount: Number(r.install_count),
       })),
       nextCursor,

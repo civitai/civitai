@@ -25,6 +25,7 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   getRecentAttributionsForOwner,
@@ -882,19 +883,114 @@ export const blocksRouter = router({
 
   /**
    * Marketplace listing — approved app blocks, optionally filtered by slot
-   * and/or a free-text query. Cursor-paginated. Public (any user can
-   * browse the marketplace; install requires auth).
+   * and/or a free-text query. Cursor-paginated. Public, ANON-CAPABLE (F-E E1):
+   * any viewer the appBlocks flag grants can browse the marketplace without a
+   * session; install requires auth (the Install CTA opens LoginModal for anon).
+   *
+   * GATING INVARIANT (E1) — this is anon-capable but stays DARK until launch:
+   *   - `enforceAppBlocksFlag` runs FIRST and evaluates `isAppBlocksEnabled`
+   *     with `ctx.user`. For a real anon / non-mod viewer the flag is the live
+   *     mod-segmented `app-blocks-enabled`, which can never match without a
+   *     moderator context → the middleware sets `_appBlocksDisabled` → we
+   *     return empty below. So removing the prior hardcoded `isModerator` gate
+   *     does NOT widen access today: the flag gate keeps it dark. The procedure
+   *     only starts serving real anon callers once the SEGMENT is widened at
+   *     launch (a deliberate, separate Flipt change). The earlier
+   *     `if (!ctx.user?.isModerator) return []` was a redundant Phase-2 belt on
+   *     top of the flag gate; it has to go for the segment-widen to actually
+   *     expose this to anon, but the flag gate is the real control.
+   *
+   * EXPOSURE / SECURITY (what an anon caller can fetch once the segment widens):
+   *   - ONLY `status='approved'` rows (the service WHERE-clause filters
+   *     pending/rejected/withdrawn apps out — never returned).
+   *   - ONLY an explicit PUBLIC-FIELD ALLOWLIST projection of each row
+   *     (id, blockId, appId, appName, installCount + a vetted manifest subset:
+   *     name/description/targets[].slotId). The full publisher-supplied
+   *     `manifest` jsonb is NOT returned — it can carry arbitrary publisher
+   *     fields plus server-set internal fields (e.g. `trustTier`, the internal
+   *     `iframe.src` host) that must not leak to anon. See
+   *     `BlockRegistry.listAvailable` for the allowlist.
+   *   - No per-user data (subscriptions / earnings / grants stay on their own
+   *     session-gated procedures).
+   *
+   * Anon rate-limiting: keyed on IP for anon (ctx.user?.id ?? ctx.ip in the
+   * rateLimit middleware), consistent with other public procedures. Mods/dev/
+   * test are exempt by the middleware itself.
    */
   listAvailable: publicProcedure
     .use(enforceAppBlocksFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
     .input(listAvailableSchema)
     .query(async ({ ctx, input }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [], nextCursor: undefined };
       }
-      // Phase 2: marketplace listing is moderator-only until GA.
-      if (!ctx.user?.isModerator) return { items: [], nextCursor: undefined };
       return BlockRegistry.listAvailable(input);
+    }),
+
+  /**
+   * Install-time config for ONE approved app block, keyed on appBlockId.
+   *
+   * Why this exists (F-E E1 regression fix): the marketplace listing
+   * (`listAvailable`) is anon-capable and so projects each manifest down to a
+   * PUBLIC allowlist (name/description/targets only) via `toPublicBlockManifest`
+   * — it deliberately drops `settings` and `scopes`. But the install modal
+   * (`AppSettingsModal`) builds its publisher-settings form from
+   * `manifest.settings` and reads `manifest.scopes`. Sourcing those from the
+   * stripped public listing meant the settings form silently vanished when a
+   * user installed a settings-declaring app FROM A MARKETPLACE CARD. This proc
+   * is the AUTHENTICATED source for ONLY those two install-needed bits, so the
+   * public listing can stay narrow (no widening of the anon-exposure allowlist).
+   *
+   * Gate: `moderatorProcedure` + appBlocks flag — the SAME audience that can
+   * actually install (`installOnModel` / `upsertSubscription` are both
+   * `moderatorProcedure`). A non-mod / anon caller is denied, so this can't be
+   * used to enumerate manifest internals ahead of the public launch. It returns
+   * ONLY for `status='approved'` apps (404 otherwise), matching the install
+   * mutations' own approved gate.
+   *
+   * This is a DISPLAY fix only: `upsertSubscription` / `installOnModel` still
+   * re-resolve settings + scopes server-side from the stored manifest by id and
+   * validate them (see upsertSubscription's `dbRead.appBlock.findUnique` +
+   * `validateBlockSettings`). The client never becomes the source of truth for
+   * what gets persisted.
+   */
+  getInstallConfig: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      // Dark-flag fail-soft, consistent with the other query procs: when the
+      // appBlocks flag is off the middleware marks the ctx and we surface no
+      // manifest data (the modal renders no settings form rather than erroring).
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return { settings: {}, scopes: [] as string[] };
+      }
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true, manifest: true },
+      });
+      if (!block || block.status !== 'approved') {
+        throw throwNotFoundError('App block not found');
+      }
+      const manifest = (block.manifest ?? {}) as Record<string, unknown>;
+      // Project ONLY the install-form inputs. `settings` is validated against
+      // manifestSettingsSchema so a malformed/absent declaration yields {} (the
+      // form renders no fields rather than throwing). `scopes` is the declared
+      // scope list the form uses to decide which `requires_scope` fields show.
+      const parsedSettings = manifestSettingsSchema.safeParse(manifest.settings ?? {});
+      const scopes = Array.isArray(manifest.scopes)
+        ? manifest.scopes.filter((s): s is string => typeof s === 'string')
+        : [];
+      return {
+        settings: parsedSettings.success ? parsedSettings.data : {},
+        scopes,
+      };
     }),
 
   /**

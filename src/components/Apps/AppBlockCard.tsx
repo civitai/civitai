@@ -1,6 +1,7 @@
 import { Badge, Button, Card, Group, Stack, Text, Title } from '@mantine/core';
 import { IconBolt, IconPlugConnected, IconSettings } from '@tabler/icons-react';
 import { useState } from 'react';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema';
 
 /**
@@ -84,17 +85,28 @@ export function AppBlockCard({
               {block.installCount.toLocaleString()} installs
             </Text>
           </Group>
-          <Button
-            size="xs"
-            variant={alreadySubscribed ? 'default' : 'filled'}
-            leftSection={
-              alreadySubscribed ? <IconSettings size={14} /> : <IconPlugConnected size={14} />
-            }
-            loading={busy}
-            onClick={() => onOpen(block)}
-          >
-            {alreadySubscribed ? 'Manage' : 'Install'}
-          </Button>
+          {/*
+            Anon-conversion CTA (F-E E1): for a session-less viewer, clicking
+            Install opens the LoginModal (via LoginRedirect → requireLogin →
+            dialogStore.trigger(LoginModal, { returnUrl })) instead of the
+            install/settings modal — installing requires auth. For a logged-in
+            viewer LoginRedirect is a pass-through and the onClick runs
+            normally. This is dark today (the page is mod-gated); it only
+            matters once the segment is widened to anon.
+          */}
+          <LoginRedirect reason="perform-action">
+            <Button
+              size="xs"
+              variant={alreadySubscribed ? 'default' : 'filled'}
+              leftSection={
+                alreadySubscribed ? <IconSettings size={14} /> : <IconPlugConnected size={14} />
+              }
+              loading={busy}
+              onClick={() => onOpen(block)}
+            >
+              {alreadySubscribed ? 'Manage' : 'Install'}
+            </Button>
+          </LoginRedirect>
         </Group>
       </Stack>
     </Card>

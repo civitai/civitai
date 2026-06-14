@@ -24,6 +24,7 @@ import { TRPCError } from '@trpc/server';
 const {
   mockIsAppBlocksEnabled,
   mockListForModel,
+  mockListAvailable,
   mockInstallOnModel,
   mockVerifyBlockToken,
   mockParseSubjectUserId,
@@ -36,6 +37,7 @@ const {
 } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(),
   mockListForModel: vi.fn(),
+  mockListAvailable: vi.fn(),
   mockInstallOnModel: vi.fn(),
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -97,6 +99,7 @@ vi.mock('~/server/logging/client', () => ({
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
     listForModel: (...a: unknown[]) => mockListForModel(...a),
+    listAvailable: (...a: unknown[]) => mockListAvailable(...a),
     installOnModel: (...a: unknown[]) => mockInstallOnModel(...a),
     updateSettings: vi.fn(),
     toggleEnabled: vi.fn(),
@@ -104,6 +107,13 @@ vi.mock('~/server/services/block-registry.service', () => ({
     resolveBlockInstance: vi.fn(),
   },
 }));
+// rateLimit pulls in redis + heavy deps; the gate under test is the flag
+// middleware, so stub rateLimit to a pass-through middleware. (The real
+// rate-limit middleware is exercised end-to-end by the live stack, not here.)
+vi.mock('~/server/middleware.trpc', async () => {
+  const { middleware } = await import('~/server/trpc');
+  return { rateLimit: () => middleware(async ({ next }) => next()) };
+});
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -139,6 +149,8 @@ beforeEach(() => {
   mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
   mockListForModel.mockReset();
   mockListForModel.mockResolvedValue([{ id: 'blk_1' }]);
+  mockListAvailable.mockReset();
+  mockListAvailable.mockResolvedValue({ items: [{ id: 'ab_1' }], nextCursor: undefined });
   mockInstallOnModel.mockReset();
   mockInstallOnModel.mockResolvedValue({ id: 'install_1' });
 });
@@ -169,6 +181,46 @@ describe('enforceAppBlocksFlag — query (listForModel)', () => {
     expect(result).toEqual([]);
     expect(mockListForModel).not.toHaveBeenCalled();
     expect(mockIsAppBlocksEnabled).toHaveBeenCalledWith({ user: undefined });
+  });
+});
+
+describe('listAvailable — anon-capable read path, dark behind the flag gate (F-E E1)', () => {
+  it('anonymous WITHOUT the flag: gate disables → empty (dark today), registry NOT consulted', async () => {
+    // Real anon today: the mod-segmented flag can never match without a mod
+    // context, so the middleware sets _appBlocksDisabled → empty. This is the
+    // "dark" invariant — removing the old hardcoded isModerator gate did NOT
+    // widen access; the flag gate is the real control.
+    const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
+    const result = await caller.listAvailable({ limit: 20 });
+    expect(result).toEqual({ items: [], nextCursor: undefined });
+    expect(mockListAvailable).not.toHaveBeenCalled();
+    expect(mockIsAppBlocksEnabled).toHaveBeenCalledWith({ user: undefined });
+  });
+
+  it('non-mod WITHOUT the flag: gate disables → empty, registry NOT consulted', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
+    const result = await caller.listAvailable({ limit: 20 });
+    expect(result).toEqual({ items: [], nextCursor: undefined });
+    expect(mockListAvailable).not.toHaveBeenCalled();
+  });
+
+  it('anonymous WITH the flag granted (the dark path, lit): registry IS consulted', async () => {
+    // Simulate the post-launch segment widen: the flag resolves ON even with no
+    // user. The procedure must then serve the anon caller (no session) — proving
+    // it is anon-CAPABLE, not just mod-only. listAvailable is publicProcedure;
+    // there is NO secondary isModerator gate left to block this.
+    mockIsAppBlocksEnabled.mockResolvedValue(true);
+    const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
+    const result = await caller.listAvailable({ limit: 20 });
+    expect(result).toEqual({ items: [{ id: 'ab_1' }], nextCursor: undefined });
+    expect(mockListAvailable).toHaveBeenCalledTimes(1);
+  });
+
+  it('moderator: gate passes, registry IS consulted (mods-only is the live state)', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.listAvailable({ limit: 20 });
+    expect(result).toEqual({ items: [{ id: 'ab_1' }], nextCursor: undefined });
+    expect(mockListAvailable).toHaveBeenCalledTimes(1);
   });
 });
 
