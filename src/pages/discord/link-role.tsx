@@ -11,8 +11,8 @@ import {
 } from '@mantine/core';
 import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons-react';
 import type { BuiltInProviderType } from 'next-auth/providers/index';
-import { getProviders } from 'next-auth/react';
-import { getProvidersBounded } from '~/server/auth/get-providers-bounded';
+import type { getProviders } from 'next-auth/react';
+import { getProvidersInProcess } from '~/server/auth/get-providers-in-process';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { handleSignIn } from '~/utils/auth-helpers';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -31,7 +31,7 @@ type Props = {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
+  resolver: async ({ session, ctx }) => {
     if (!session?.user) {
       return {
         redirect: {
@@ -55,10 +55,11 @@ export const getServerSideProps = createServerSideProps({
         console.error(err);
       }
     }
-    // Bounded server-side self-fetch: see ~/server/auth/get-providers-bounded.
-    // A hung /api/auth/providers self-fetch must not stall this SSR render to the
-    // 30s gateway ceiling (504) — degrade to no providers instead.
-    const providers = !linked ? await getProvidersBounded() : null;
+    // Build the provider list in-process instead of self-fetching
+    // /api/auth/providers — see ~/server/auth/get-providers-in-process. The
+    // un-timed self-fetch could otherwise stall this SSR render to the 30s
+    // gateway ceiling (504).
+    const providers = !linked ? getProvidersInProcess(ctx.req) : null;
 
     return {
       props: { providers, linked },
