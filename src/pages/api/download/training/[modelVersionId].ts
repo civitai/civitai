@@ -4,6 +4,7 @@ import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -103,6 +104,10 @@ export default AuthedEndpoint(
       const probe = await fetch(resolveUrl, {
         headers: { Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}` },
         redirect: 'manual',
+        // Bound the resolve: a slow/hung orchestrator must fail fast into the streaming
+        // fallback below rather than holding this request open (the probe carries no body,
+        // so this is a metadata lookup + presign — 8s is generous, well under the 30s gateway).
+        signal: AbortSignal.timeout(8000),
       });
       if (probe.status === 302) {
         const storageUrl = probe.headers.get('location');
@@ -110,9 +115,26 @@ export default AuthedEndpoint(
           return res.redirect(302, storageUrl);
         }
       }
-    } catch {
-      // Fall through to the streaming path below (e.g. an orchestrator build without
-      // storage-redirect support, or a transient resolve failure).
+      // Storage redirect unavailable (orchestrator without support → 308, or no Location).
+      // Record it so the redirect-vs-fallback rate is observable; then stream as fallback.
+      logToAxiom({
+        name: 'download-training-epoch',
+        type: 'redirect-fallback',
+        reason: probe.status === 302 ? 'no-location' : `status-${probe.status}`,
+        modelVersionId,
+        epochNumber,
+      }).catch(() => undefined);
+    } catch (error) {
+      // Probe timed out or errored — fall through to the streaming path below.
+      const err = error instanceof Error ? error : new Error(String(error));
+      logToAxiom({
+        name: 'download-training-epoch',
+        type: 'redirect-fallback',
+        reason: 'probe-error',
+        message: err.message,
+        modelVersionId,
+        epochNumber,
+      }).catch(() => undefined);
     }
 
     // Fallback: proxy the bytes through this pod (legacy path, used when the orchestrator
