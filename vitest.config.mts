@@ -31,7 +31,12 @@ export default defineConfig({
         },
       },
       {
-        resolve: { alias },
+        // dedupe React so a transitive dep can't pull a second copy — a second
+        // React makes `useContext` read a null context and crashes some Mantine
+        // components (e.g. @mantine/dropzone) in browser mode, notably on a COLD
+        // optimizeDeps cache (fresh CI runs). Canonical fix; protects every
+        // component test from this class of dual-React crash.
+        resolve: { alias, dedupe: ['react', 'react-dom'] },
         // Pre-bundle deps the component setup mocks/imports so Vitest doesn't
         // discover them mid-run and trigger a "Vite unexpectedly reloaded a
         // test" warning (a flake vector).
