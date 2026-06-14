@@ -102,4 +102,13 @@ describe('instrumentApiResponse', () => {
     instrumentApiResponse(badReq, res);
     expect(() => emitFinish()).not.toThrow(); // telemetry failure can't break the response
   });
+
+  it('no-ops (never throws) on a non-EventEmitter res double without .once', () => {
+    // Handler unit tests often pass a partial res mock (status/json/setHeader)
+    // with no .once. The helper must not throw — else it breaks the handler in
+    // every such test (regression caught in oauth/token-endpoint.test.ts).
+    const fakeRes = { statusCode: 200, status: () => fakeRes, json: () => fakeRes };
+    const req = { method: 'POST', url: '/api/auth/oauth/token', query: {} } as unknown as NextApiRequest;
+    expect(() => instrumentApiResponse(req, fakeRes as unknown as NextApiResponse)).not.toThrow();
+  });
 });

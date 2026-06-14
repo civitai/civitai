@@ -146,6 +146,11 @@ function reconstructApiRoute(req: NextApiRequest): string {
  * break the response.
  */
 export function instrumentApiResponse(req: NextApiRequest, res: NextApiResponse): void {
+  // Honor the "can never break the response" contract for ALL inputs: a real
+  // Node ServerResponse is always an EventEmitter, but a handler unit-test may
+  // pass a partial `res` double without `.once`. No-op rather than throw — the
+  // worst case is a missing metric in a test, never a broken handler.
+  if (typeof res.once !== 'function') return;
   res.once('finish', () => {
     const status = res.statusCode;
     if (status < 500) return; // hot-path: 2xx/3xx/4xx do zero normalization work
