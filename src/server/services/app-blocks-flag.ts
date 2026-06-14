@@ -37,16 +37,23 @@ export const APP_BLOCKS_PIPELINE_FLAG = 'app-blocks-pipeline-enabled';
  *
  * ## Why a GLOBAL runtime flag is correct AND safe (no widening)
  *
- * Block JWTs are only ever MINTED for an AUTHORIZED user: the mint path
- * (`POST /api/v1/block-tokens`) gates per-user on the `app-blocks-enabled`
- * feature flag WITH the request user's context (`getFeatureFlags({ user })`),
- * and refuses (403) any caller the flag is off for. Today the flag is
- * `availability: ['mod']`, so a non-mod / anon caller cannot obtain a minted
- * block JWT at all. Therefore a non-mod never holds a block JWT, and gating
- * VERIFICATION on a global runtime flag does NOT widen visibility — there is
- * nothing to verify for an unauthorized user. The runtime flag only says "the
- * block-JWT verification subsystem is active." (Premise verified by reading the
- * mint path in `block-tokens/index.ts` — the per-user gate is authoritative.)
+ * VERIFICATION confers NO authority — it only re-validates a token the
+ * independently-gated MINT endpoint already issued, reproducing exactly the
+ * scopes mint embedded (after the manifest / approved-snapshot / consent /
+ * anon-strip pipeline). `verifyBlockToken` is kid-pinned, RS256-only,
+ * iss/aud-checked, max-age-bounded, and the signing key is server-private, so a
+ * token cannot be forged or scope-inflated. The ONLY production caller of the
+ * signer is the mint endpoint (`POST /api/v1/block-tokens`), which is the real
+ * authorization boundary: it gates per-user on `app-blocks-enabled` WITH the
+ * request user's context and decides which scopes (if any) a caller gets.
+ * Therefore turning verification on globally CANNOT let an unauthorized party in
+ * — there is no unauthorized path to obtain ANY verifiable token in the first
+ * place. The runtime flag only says "the block-JWT verification subsystem is
+ * active." (NB: do NOT rely on "only mods can mint" — the mint path has an
+ * anonymous-conversion branch that issues a `sub:'anon'` token with the
+ * consent-EXEMPT scope subset when the mint flag is on for anon. The safety
+ * property is "verification grants nothing mint didn't already grant," NOT
+ * "mod-only minting" — keep that distinction if the mint flag is ever widened.)
  *
  * ## Why NOT reuse the pipeline (build) flag
  *
@@ -185,10 +192,19 @@ export async function isAppBlocksPipelineEnabled(): Promise<boolean> {
  *   - the `withBlockScope` middleware (block-JWT verification on scoped routes).
  *
  * Safe to be global because block JWTs are only ever MINTED for an authorized
- * user (the mint path is per-user-gated on `app-blocks-enabled`), so a non-mod
- * never holds a token to verify — gating verification globally does not widen
- * visibility. Decoupled from `app-blocks-pipeline-enabled` so pausing builds
- * does not kill live blocks' runtime verification. See APP_BLOCKS_RUNTIME_FLAG.
+ * verification confers no authority — it only re-validates a token the
+ * independently-gated mint endpoint already issued (mint is per-user-gated on
+ * `app-blocks-enabled` and is the real authorization boundary), so gating
+ * verification globally does not widen visibility. (See APP_BLOCKS_RUNTIME_FLAG
+ * for the full reasoning + the anon-mint caveat — do NOT rely on "mod-only
+ * minting.") Decoupled from `app-blocks-pipeline-enabled` so pausing builds does
+ * not kill live blocks' runtime verification.
+ *
+ * OPERATOR NOTE: create `app-blocks-runtime-enabled` in Flipt as a PLAIN GLOBAL
+ * BOOLEAN (base `enabled`, NO segment) — this helper evals globally
+ * (`entityId='global'`, empty context), so a segment-targeted flag would never
+ * match and resolve `false`, silently leaving runtime DARK (blocks mysteriously
+ * fail to verify). Fail-safe direction, but a confusing misconfig.
  *
  * Fail-safe: if `app-blocks-runtime-enabled` does not exist (it is created in
  * Flipt only AFTER this merges) or Flipt is unreachable, `isFlipt` returns

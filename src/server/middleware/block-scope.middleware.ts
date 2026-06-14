@@ -506,10 +506,15 @@ export function withBlockScope(
     // mod-segmented user flag (which could never resolve true without a user
     // context, leaving verification permanently dark even after deploys were
     // lit). Decoupled from the build pipeline flag so pausing builds doesn't
-    // kill live runtime verification. Safe to be global because a block JWT is
-    // only ever MINTED for an authorized user (the mint path is per-user-gated
-    // on `app-blocks-enabled`) — a non-mod never holds a token to verify, so
-    // gating verification globally does not widen visibility.
+    // kill live runtime verification. Safe to be global because VERIFICATION
+    // confers no authority — it only re-validates a token the independently-
+    // gated mint endpoint already issued (mint, per-user-gated on
+    // `app-blocks-enabled`, is the real authorization boundary). The token is
+    // kid-pinned/RS256/iss-aud/max-age-checked + server-private-signed, so it
+    // can't be forged or scope-inflated; there is no unauthorized path to ANY
+    // verifiable token. So gating verification globally does not widen
+    // visibility. (Do NOT rely on "mod-only minting" — mint has an anon-
+    // conversion branch; the property is "verify grants nothing mint didn't.")
     //
     // Fail-safe / fall-through: when the runtime flag is off (or absent / Flipt
     // down → isFlipt false), the wrapper falls through to the legacy auth path
