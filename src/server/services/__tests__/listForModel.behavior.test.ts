@@ -11,6 +11,15 @@ import {
   truncateAll,
 } from './listForModel.harness';
 
+// Spinning up the in-process PGlite (WASM Postgres) + schema in beforeAll, and
+// the second PGlite in the bridge sanity test, can exceed the default 10s
+// hook/test timeout on a slow / heavily-contended CI node (observed: the
+// beforeAll hook timing out on the Tekton preview build pool, where this suite
+// was the lone unit-test failure while it passes on faster GitHub runners).
+// Generous, env-agnostic timeouts for this one PGlite-backed file — relaxing a
+// timeout can only help a slow runner, never mask a real failure.
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
 /**
  * Behavioral tests for BlockRegistry.listForModel that run the REAL UNION-ALL
  * query against an in-process Postgres (PGlite). See listForModel.harness.ts
