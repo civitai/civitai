@@ -322,7 +322,7 @@ export const getModelsRaw = async ({
     } catch (err) {
       if (err instanceof MeiliCallTimeoutError) {
         throw new TRPCError({
-          code: 'TIMEOUT',
+          code: 'SERVICE_UNAVAILABLE',
           message: 'Model search is temporarily overloaded — please retry.',
           cause: err,
         });
