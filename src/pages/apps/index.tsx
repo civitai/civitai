@@ -18,6 +18,7 @@ import { useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppBlockCard } from '~/components/Apps/AppBlockCard';
+import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -27,33 +28,31 @@ import type {
   SubscriptionScope,
 } from '~/server/schema/blocks/subscription.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getLoginLink } from '~/utils/login-helpers';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { trpc } from '~/utils/trpc';
 
 type SlotFilter = 'model.sidebar_top' | 'model.below_images' | 'model.actions_extra';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ features, session, ctx }) => {
-    if (!features?.appBlocks) return { notFound: true };
-    if (!session?.user) {
-      return {
-        redirect: {
-          destination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
-          permanent: false,
-        },
-      };
-    }
-    return { props: {} };
-  },
+  // GATING INVARIANT (F-E E1): the flag gate is the ONLY access control; no
+  // session→login redirect, so the marketplace renders for a session-less
+  // request BEHIND the flag (dark today; lit when the segment widens). See
+  // resolveAppsPageAccess for the full invariant + `deIndex` note.
+  resolver: async ({ features }) => resolveAppsPageAccess({ features }),
 });
 
 export default function AppsPage() {
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const [slotFilter, setSlotFilter] = useState<SlotFilter | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch] = useDebouncedValue(searchInput, 300);
 
+  // The marketplace listing is anon-CAPABLE (publicProcedure) — it fires for
+  // any viewer who has the appBlocks flag, including a session-less one once
+  // the segment widens (dark today). It returns only approved apps + a public
+  // field allowlist.
   const { data: availableData, isLoading } = trpc.blocks.listAvailable.useQuery(
     {
       slotId: slotFilter ?? undefined,
@@ -62,14 +61,18 @@ export default function AppsPage() {
     },
     { enabled: !!features.appBlocks }
   );
+  // The per-user queries below are protectedProcedure — they 401 for an anon
+  // viewer. Guard on a logged-in user so the dark anon read path doesn't fire
+  // them. (`features.appBlocks` alone isn't enough: behind a widened segment an
+  // anon viewer would still hit these.)
   const { data: mySubs } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
-    enabled: !!features.appBlocks,
+    enabled: !!features.appBlocks && !!currentUser,
   });
   // Lifetime earnings per owned app — feeds the "Earning $X" chip on
   // marketplace cards owned by the viewer. Visible only to the owner;
   // the trPC procedure is guarded so other users get nothing back.
   const { data: myAppsRaw } = trpc.blocks.getMyApps.useQuery(undefined, {
-    enabled: !!features.appBlocks,
+    enabled: !!features.appBlocks && !!currentUser,
   });
   const earningsByAppBlockId = useMemo(() => {
     type AppRow = { id: string; lifetimeShareCents: number };

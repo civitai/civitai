@@ -110,18 +110,68 @@ export type SubscriptionRecord = {
 };
 
 /**
+ * PUBLIC marketplace manifest subset (F-E E1 anon-exposure allowlist).
+ *
+ * The stored `app_blocks.manifest` jsonb is arbitrary publisher-supplied JSON
+ * plus server-SET internal fields (e.g. `trustTier`, the internal `iframe.src`
+ * host, `renderMode`). It must NEVER be shipped wholesale to an anon caller.
+ * The marketplace listing is anon-capable, so we project ONLY this vetted,
+ * display-safe subset:
+ *   - `name`        — the human display name (already shown on the card).
+ *   - `description` — the short marketing blurb (shown on the card).
+ *   - `targets`     — only the `slotId` of each declared target (drives the
+ *                     slot badge + slot filter). Any other per-target field is
+ *                     dropped so config details can't leak.
+ * Add a field here ONLY after confirming it is publisher-display-safe for anon.
+ */
+export type PublicBlockManifest = {
+  name?: string;
+  description?: string;
+  targets?: Array<{ slotId?: string }>;
+};
+
+/** Field names projected from the raw manifest into PublicBlockManifest. */
+export const PUBLIC_MANIFEST_FIELDS = ['name', 'description', 'targets'] as const;
+
+/**
  * Marketplace listing shape. install_count includes per-model installs and
  * (someday) subscription rows — for v1 it's the per-model installs only;
  * subscriptions land later in the same column with a small SQL change.
+ *
+ * `manifest` is the PUBLIC allowlist subset only (see PublicBlockManifest) —
+ * not the raw stored manifest. This shape is returned by the anon-capable
+ * `blocks.listAvailable` (F-E E1), so it must carry no private/internal data.
  */
 export type AvailableBlock = {
   id: string;
   blockId: string;
   appId: string;
   appName: string | null;
-  manifest: Record<string, unknown>;
+  manifest: PublicBlockManifest;
   installCount: number;
 };
+
+/**
+ * Projects a raw stored manifest down to the public allowlist subset. Defensive
+ * against arbitrary publisher JSON: reads only the allowlisted fields, coerces
+ * each to its expected display type, and drops everything else. Centralised so
+ * the listing + (future E2 detail) paths share ONE projection and can't drift.
+ */
+export function toPublicBlockManifest(raw: unknown): PublicBlockManifest {
+  const m = (raw ?? {}) as Record<string, unknown>;
+  const out: PublicBlockManifest = {};
+  if (typeof m.name === 'string') out.name = m.name;
+  if (typeof m.description === 'string') out.description = m.description;
+  if (Array.isArray(m.targets)) {
+    out.targets = m.targets
+      .map((t) => {
+        const slotId = (t as { slotId?: unknown } | null | undefined)?.slotId;
+        return typeof slotId === 'string' ? { slotId } : null;
+      })
+      .filter((t): t is { slotId: string } => t !== null);
+  }
+  return out;
+}
 
 export const listAvailableSchema = z.object({
   slotId: z

@@ -25,6 +25,7 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   getRecentAttributionsForOwner,
@@ -882,18 +883,54 @@ export const blocksRouter = router({
 
   /**
    * Marketplace listing — approved app blocks, optionally filtered by slot
-   * and/or a free-text query. Cursor-paginated. Public (any user can
-   * browse the marketplace; install requires auth).
+   * and/or a free-text query. Cursor-paginated. Public, ANON-CAPABLE (F-E E1):
+   * any viewer the appBlocks flag grants can browse the marketplace without a
+   * session; install requires auth (the Install CTA opens LoginModal for anon).
+   *
+   * GATING INVARIANT (E1) — this is anon-capable but stays DARK until launch:
+   *   - `enforceAppBlocksFlag` runs FIRST and evaluates `isAppBlocksEnabled`
+   *     with `ctx.user`. For a real anon / non-mod viewer the flag is the live
+   *     mod-segmented `app-blocks-enabled`, which can never match without a
+   *     moderator context → the middleware sets `_appBlocksDisabled` → we
+   *     return empty below. So removing the prior hardcoded `isModerator` gate
+   *     does NOT widen access today: the flag gate keeps it dark. The procedure
+   *     only starts serving real anon callers once the SEGMENT is widened at
+   *     launch (a deliberate, separate Flipt change). The earlier
+   *     `if (!ctx.user?.isModerator) return []` was a redundant Phase-2 belt on
+   *     top of the flag gate; it has to go for the segment-widen to actually
+   *     expose this to anon, but the flag gate is the real control.
+   *
+   * EXPOSURE / SECURITY (what an anon caller can fetch once the segment widens):
+   *   - ONLY `status='approved'` rows (the service WHERE-clause filters
+   *     pending/rejected/withdrawn apps out — never returned).
+   *   - ONLY an explicit PUBLIC-FIELD ALLOWLIST projection of each row
+   *     (id, blockId, appId, appName, installCount + a vetted manifest subset:
+   *     name/description/targets[].slotId). The full publisher-supplied
+   *     `manifest` jsonb is NOT returned — it can carry arbitrary publisher
+   *     fields plus server-set internal fields (e.g. `trustTier`, the internal
+   *     `iframe.src` host) that must not leak to anon. See
+   *     `BlockRegistry.listAvailable` for the allowlist.
+   *   - No per-user data (subscriptions / earnings / grants stay on their own
+   *     session-gated procedures).
+   *
+   * Anon rate-limiting: keyed on IP for anon (ctx.user?.id ?? ctx.ip in the
+   * rateLimit middleware), consistent with other public procedures. Mods/dev/
+   * test are exempt by the middleware itself.
    */
   listAvailable: publicProcedure
     .use(enforceAppBlocksFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
     .input(listAvailableSchema)
     .query(async ({ ctx, input }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [], nextCursor: undefined };
       }
-      // Phase 2: marketplace listing is moderator-only until GA.
-      if (!ctx.user?.isModerator) return { items: [], nextCursor: undefined };
       return BlockRegistry.listAvailable(input);
     }),
 
