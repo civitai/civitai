@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { env } from '~/env/server';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import client from '~/server/http/nowpayments/nowpayments.caller';
@@ -17,6 +18,10 @@ const log = (data: MixedObject) => {
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Count any 5xx this webhook emits into civitai_app_http_errors_total — these
+  // handlers bypass the endpoint wrappers, so their 500s were counter-blind.
+  // Listener-only (res.once('finish')); no behavior/response change.
+  instrumentApiResponse(req, res);
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).end('Method Not Allowed');
