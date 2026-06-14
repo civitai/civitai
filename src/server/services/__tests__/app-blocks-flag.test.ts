@@ -109,3 +109,30 @@ describe('isAppBlocksEnabled — machine/anonymous gates stay global (H2 scope)'
     await expect(isAppBlocksEnabled()).resolves.toBe(true);
   });
 });
+
+describe('isAppBlocksEnabled — no accidental repoint to the pipeline flag (Decision 1 regression)', () => {
+  // The user-facing gate MUST keep reading `app-blocks-enabled`. Decision 1 added
+  // a separate `app-blocks-pipeline-enabled` flag for the machine webhooks; this
+  // pins that the USER gate never silently moved onto the pipeline key (which
+  // would widen the user feature to whatever the global pipeline flag is set to).
+  it('per-user mod eval reads ONLY app-blocks-enabled, never app-blocks-pipeline-enabled', async () => {
+    const user = makeUser({ isModerator: true });
+    await expect(isAppBlocksEnabled({ user })).resolves.toBe(true);
+    // The only flag key the user gate ever evaluates is the user-facing one.
+    for (const call of mockIsFlipt.mock.calls) {
+      expect(call[0]).toBe('app-blocks-enabled');
+    }
+    expect(mockIsFlipt).not.toHaveBeenCalledWith(
+      'app-blocks-pipeline-enabled',
+      expect.anything(),
+      expect.anything()
+    );
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-pipeline-enabled');
+  });
+
+  it('no-arg machine eval reads ONLY app-blocks-enabled (JWKS / withBlockScope path unchanged)', async () => {
+    await isAppBlocksEnabled();
+    expect(mockIsFlipt).toHaveBeenCalledWith('app-blocks-enabled');
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-pipeline-enabled');
+  });
+});

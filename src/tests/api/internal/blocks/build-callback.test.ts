@@ -64,7 +64,16 @@ vi.mock('~/server/db/client', () => ({
   dbRead: {},
   dbWrite: { appBlock: { update: mockAppBlockUpdate } },
 }));
-vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(async () => mockFlag.enabled) }));
+// Per-key Flipt mock: the build-callback gate now reads the dedicated
+// `app-blocks-pipeline-enabled` PIPELINE flag (Decision 1), NOT the user-facing
+// `app-blocks-enabled`. Only the pipeline key reflects `mockFlag.enabled`; the
+// user flag is hard-false so a regression that repoints back to it would 503
+// even with the pipeline "on".
+vi.mock('~/server/flipt/client', () => ({
+  isFlipt: vi.fn(async (flag: string) =>
+    flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
+  ),
+}));
 vi.mock('~/server/redis/client', () => ({
   redis: { setNxKeepTtlWithEx: mockSetNx, del: mockRedisDel },
   REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'blocks:token-rate-limit' } },
@@ -80,6 +89,9 @@ import {
   expectedImageRef,
   verifySignature,
 } from '~/pages/api/internal/blocks/build-callback';
+import { isFlipt } from '~/server/flipt/client';
+
+const mockedIsFlipt = vi.mocked(isFlipt);
 
 /**
  * L-CALLBACK coverage. The handler binds the accepted `imageRef` to ITS OWN
@@ -279,6 +291,21 @@ describe('build-callback handler — flag gate + replay guard', () => {
     await invoke(signedReq(validSuccessBody()), res);
     expect(res._status).toBe(503);
     expect(mockTriggerApply).not.toHaveBeenCalled();
+  });
+
+  it('gates on the PIPELINE flag key, not the user-facing flag (Decision 1)', async () => {
+    // pipeline flag on → proceeds; assert the gate evaluated the pipeline key
+    // and NEVER the user-facing `app-blocks-enabled`.
+    mockFlag.enabled = true;
+    const res = makeRes();
+    await invoke(signedReq(validSuccessBody()), res);
+    expect(mockedIsFlipt).toHaveBeenCalledWith('app-blocks-pipeline-enabled');
+    expect(mockedIsFlipt).not.toHaveBeenCalledWith(
+      'app-blocks-enabled',
+      expect.anything(),
+      expect.anything()
+    );
+    expect(mockedIsFlipt).not.toHaveBeenCalledWith('app-blocks-enabled');
   });
 
   it('401s on a bad signature before checking the flag', async () => {

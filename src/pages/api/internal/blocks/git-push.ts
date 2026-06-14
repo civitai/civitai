@@ -4,7 +4,7 @@ import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { isFlipt } from '~/server/flipt/client';
+import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
 import {
   BlockManifestValidator,
   type AppContext,
@@ -146,8 +146,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  // Kill switch — block all platform mutations when the feature is off.
-  const enabled = await isFlipt('app-blocks-enabled');
+  // Kill switch — block all platform mutations when the pipeline is off.
+  // Decision 1: gated on the dedicated global `app-blocks-pipeline-enabled` flag
+  // (NOT the mod-segmented user flag) so the publish pipeline can run.
+  const enabled = await isAppBlocksPipelineEnabled();
   if (!enabled) {
     res.status(503).json({ error: 'App Blocks not enabled' });
     return;

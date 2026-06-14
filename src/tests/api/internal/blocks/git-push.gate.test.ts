@@ -97,7 +97,15 @@ vi.mock('~/env/server', () => ({
     }
   ),
 }));
-vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(async () => mockFlag.enabled) }));
+// Per-key Flipt mock: git-push now gates on the dedicated
+// `app-blocks-pipeline-enabled` PIPELINE flag (Decision 1), NOT the user-facing
+// `app-blocks-enabled`. Only the pipeline key reflects the toggle; the user flag
+// is hard-false so a regression that repointed back to it would 503.
+vi.mock('~/server/flipt/client', () => ({
+  isFlipt: vi.fn(async (flag: string) =>
+    flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
+  ),
+}));
 vi.mock('~/server/db/client', () => ({
   dbRead: {
     appBlock: { findFirst: mockAppBlockFindFirst, findUnique: mockAppBlockFindUnique },
@@ -125,6 +133,10 @@ vi.mock('~/server/utils/app-block-ids', () => ({ newUlid: mockNewUlid }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: mockTriggerBuild,
 }));
+
+import { isFlipt } from '~/server/flipt/client';
+
+const mockedIsFlipt = vi.mocked(isFlipt);
 
 function validManifest(sha = NEW_SHA) {
   return {
@@ -302,13 +314,31 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     expect(mockTriggerBuild).not.toHaveBeenCalled();
   });
 
-  it('503s when the app-blocks-enabled flag is off (kill switch) before any DB work', async () => {
+  it('503s when the pipeline flag is off (kill switch) before any DB work', async () => {
     state.flagEnabled = false;
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
     expect(res._status).toBe(503);
     expect(mockAppBlockFindFirst).not.toHaveBeenCalled();
     expect(mockPubReqCreate).not.toHaveBeenCalled();
+  });
+
+  it('gates on the PIPELINE flag key, not the user-facing flag (Decision 1)', async () => {
+    // flag on → proceeds past the gate (reaches DB / pending-review path).
+    state.flagEnabled = true;
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    // Proceeded past the gate (no 503).
+    expect(res._status).not.toBe(503);
+    expect(mockAppBlockFindFirst).toHaveBeenCalled();
+    // Evaluated the dedicated pipeline key, never the user-facing one.
+    expect(mockedIsFlipt).toHaveBeenCalledWith('app-blocks-pipeline-enabled');
+    expect(mockedIsFlipt).not.toHaveBeenCalledWith(
+      'app-blocks-enabled',
+      expect.anything(),
+      expect.anything()
+    );
+    expect(mockedIsFlipt).not.toHaveBeenCalledWith('app-blocks-enabled');
   });
 
   it('rejects an invalid manifest (400) — no pending row, no build (manifest validation preserved)', async () => {
