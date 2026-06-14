@@ -168,7 +168,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                       metadata={image.metadata as MixedObject}
                       src={image.url}
                       name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
+                      alt={image.name ?? alt ?? undefined}
                       type={image.type}
                       imageId={image.id}
                       thumbnailUrl={image.thumbnailUrl}
