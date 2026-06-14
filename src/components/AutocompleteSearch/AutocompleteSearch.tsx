@@ -624,6 +624,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               <HoverCard.Target>
                 <Text
                   component="div"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Quick search keyboard shortcut"
                   fw="bold"
                   style={{
                     border: `1px solid ${

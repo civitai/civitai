@@ -79,70 +79,72 @@ export default function TosModal({
   };
 
   return (
-    <Modal
-      {...dialog}
-      size="lg"
-      withCloseButton={false}
-      closeOnClickOutside={false}
-      closeOnEscape={false}
-      radius="md"
-    >
-      {isLoading || !data?.content ? (
-        <Center>
-          <Loader />
-        </Center>
-      ) : (
-        <Stack gap="md">
-          {data?.title && (
-            <>
-              <Stack ref={headerRef} gap={0}>
-                <Title order={2}>{data?.title}</Title>
-                {data.lastmod ? (
-                  <Text size="sm" c="dimmed">
-                    Last modified: {formatDate(data.lastmod, undefined, true)}
-                  </Text>
-                ) : null}
-              </Stack>
-              <Divider mx="-lg" />
-            </>
-          )}
-          <ScrollArea.Autosize mah={`calc(90dvh - ${getScrollAreaMaxHeight()}px`}>
-            <Stack>
-              <CustomMarkdown
-                // allowedElements={['p', 'a', 'strong', 'h1', 'h2', 'ul', 'ol', 'li']}
-                rehypePlugins={[rehypeRaw]}
-                remarkPlugins={[remarkBreaks, remarkGfm]}
-                unwrapDisallowed
-                className="markdown-content-spaced"
-              >
-                {data.content}
-              </CustomMarkdown>
-            </Stack>
-          </ScrollArea.Autosize>
-          <Stack ref={footerRef} gap="md">
-            <Checkbox
-              checked={acceptedCoC}
-              onChange={(event) => setAcceptedCoC(event.currentTarget.checked)}
-              label="I have read and agree to the Terms of Service"
-              size="sm"
-            />
-            <Group ml="auto">
-              {showBackButton && (
-                <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isPending}>
-                  Go back
-                </Button>
+    <Modal.Root {...dialog} size="lg" closeOnClickOutside={false} closeOnEscape={false} radius="md">
+      <Modal.Overlay />
+      <Modal.Content radius="md" aria-label="Terms of Service">
+        <Modal.Body>
+          {isLoading || !data?.content ? (
+            <Center>
+              <Loader />
+            </Center>
+          ) : (
+            <Stack gap="md">
+              {data?.title && (
+                <>
+                  <Stack ref={headerRef} gap={0}>
+                    <Title order={2}>{data?.title}</Title>
+                    {data.lastmod ? (
+                      <Text size="sm" c="dimmed">
+                        Last modified: {formatDate(data.lastmod, undefined, true)}
+                      </Text>
+                    ) : null}
+                  </Stack>
+                  <Divider mx="-lg" />
+                </>
               )}
-              <Button
-                onClick={handleConfirm}
-                disabled={!acceptedCoC}
-                loading={updateUserSettings.isPending || loading}
-              >
-                Accept
-              </Button>
-            </Group>
-          </Stack>
-        </Stack>
-      )}
-    </Modal>
+              <ScrollArea.Autosize mah={`calc(90dvh - ${getScrollAreaMaxHeight()}px`}>
+                <Stack>
+                  <CustomMarkdown
+                    // allowedElements={['p', 'a', 'strong', 'h1', 'h2', 'ul', 'ol', 'li']}
+                    rehypePlugins={[rehypeRaw]}
+                    remarkPlugins={[remarkBreaks, remarkGfm]}
+                    unwrapDisallowed
+                    className="markdown-content-spaced"
+                  >
+                    {data.content}
+                  </CustomMarkdown>
+                </Stack>
+              </ScrollArea.Autosize>
+              <Stack ref={footerRef} gap="md">
+                <Checkbox
+                  checked={acceptedCoC}
+                  onChange={(event) => setAcceptedCoC(event.currentTarget.checked)}
+                  label="I have read and agree to the Terms of Service"
+                  size="sm"
+                />
+                <Group ml="auto">
+                  {showBackButton && (
+                    <Button
+                      onClick={handleClose}
+                      color="gray"
+                      disabled={updateUserSettings.isPending}
+                    >
+                      Go back
+                    </Button>
+                  )}
+                  <Button
+                    onClick={handleConfirm}
+                    disabled={!acceptedCoC}
+                    loading={updateUserSettings.isPending || loading}
+                  >
+                    Accept
+                  </Button>
+                </Group>
+              </Stack>
+            </Stack>
+          )}
+        </Modal.Body>
+      </Modal.Content>
+    </Modal.Root>
   );
 }
