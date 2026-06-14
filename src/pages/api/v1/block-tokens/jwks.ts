@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
 import { BlockTokenService } from '~/server/services/block-token.service';
 
 /**
@@ -24,10 +24,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(503).json({ error: 'Block tokens not configured' });
     return;
   }
-  // H-2: while the substrate is dark, don't expose the public key surface
-  // either — anything downstream that decides to call /jwks before launch
-  // gets the same 503 as the issuance endpoint.
-  if (!(await isAppBlocksEnabled())) {
+  // Decision 4: gate the public-key surface on the dedicated GLOBAL runtime
+  // flag (`app-blocks-runtime-enabled`) rather than the global eval of the
+  // mod-segmented user flag (which could never resolve true without a user
+  // context, leaving JWKS permanently dark even after deploys were lit). The
+  // runtime flag is the "block-JWT verification subsystem is active" switch; it
+  // is decoupled from the build pipeline flag so pausing builds doesn't kill
+  // verification. Fail-safe: absent flag / Flipt-down → false → 503 (same dark
+  // behaviour as before — no widening, since unauthorized callers never hold a
+  // block JWT to verify in the first place).
+  if (!(await isAppBlocksRuntimeEnabled())) {
     res.status(503).json({ error: 'App Blocks not enabled' });
     return;
   }
