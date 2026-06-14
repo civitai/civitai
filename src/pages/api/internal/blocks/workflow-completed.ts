@@ -4,8 +4,8 @@ import * as z from 'zod';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
-import { isFlipt } from '~/server/flipt/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
 
 // H2 (audit-10): cap the orchestrator callback body. Realistic payloads are
 // a few hundred bytes (workflowId + blockInstanceId + buzzSpent).
@@ -56,9 +56,10 @@ function safeEqualHeader(provided: unknown, expected: string): boolean {
  * actual developer-revenue attribution and ClickHouse `block_workflows`
  * emission on top of this scaffold.
  *
- * L12 kill switch: a Flipt flag `app-blocks-enabled` gates this endpoint.
- * If the orchestrator ships callbacks before Phase 3 billing lands, the
- * flag stays off and we return 503 — no phantom completion records.
+ * L12 kill switch: the Flipt flag `app-blocks-pipeline-enabled` gates this
+ * endpoint (Decision 1 — the dedicated pipeline flag, not the mod-segmented
+ * user flag). If the orchestrator ships callbacks before Phase 3 billing lands,
+ * the flag stays off and we return 503 — no phantom completion records.
  */
 
 const BLOCK_INSTANCE_ID_RE = /^bki_[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -79,10 +80,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
-  // L12: kill switch via Flipt. While the substrate is gated off in prod,
+  // L12: kill switch via Flipt. While the pipeline is gated off in prod,
   // refuse to record completions even if the orchestrator ships callbacks
-  // ahead of Phase 3. Prevents phantom rows.
-  const enabled = await isFlipt('app-blocks-enabled');
+  // ahead of Phase 3. Prevents phantom rows. Decision 1: gated on the dedicated
+  // global `app-blocks-pipeline-enabled` flag (NOT the mod-segmented user flag).
+  const enabled = await isAppBlocksPipelineEnabled();
   if (!enabled) {
     res.status(503).json({ error: 'App Blocks not enabled' });
     return;

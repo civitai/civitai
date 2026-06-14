@@ -4,8 +4,8 @@ import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import { isFlipt } from '~/server/flipt/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
 
@@ -225,11 +225,13 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  // Kill switch: honour the appBlocks flag like the sibling webhooks
-  // (git-push, workflow-completed). When the substrate is dark, no legitimate
+  // Kill switch: honour the PIPELINE flag like the sibling webhooks
+  // (git-push, workflow-completed). When the pipeline is dark, no legitimate
   // build callback should fire — refuse so the apply/deploy chain can't run
-  // independent of the flag. Server-context Flipt eval, matching the siblings.
-  if (!(await isFlipt('app-blocks-enabled'))) {
+  // independent of the flag. Decision 1: gated on the dedicated global
+  // `app-blocks-pipeline-enabled` flag (NOT the mod-segmented user flag), so the
+  // pipeline can run for mod-approved blocks without enabling the user feature.
+  if (!(await isAppBlocksPipelineEnabled())) {
     res.status(503).json({ error: 'App Blocks not enabled' });
     return;
   }

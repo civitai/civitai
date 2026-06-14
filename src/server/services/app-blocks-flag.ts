@@ -5,6 +5,24 @@ import { buildFliptContext } from '~/server/services/feature-flags.service';
 const APP_BLOCKS_FLAG = 'app-blocks-enabled';
 
 /**
+ * Dedicated GLOBAL flag for the build/publish/deploy PIPELINE (Decision 1).
+ *
+ * The user-facing `app-blocks-enabled` flag is base `enabled: false` with a
+ * `moderators` segment, so it only ever resolves `true` when evaluated WITH a
+ * moderator's context. The machine/pipeline webhooks have no user context and
+ * eval globally, so they could never pass that flag — the build/publish chain
+ * was permanently dark (build-callback 503, no mod-approved block could deploy).
+ *
+ * This separate global flag lets "can the pipeline run" move independently of
+ * "can users see blocks". It is evaluated globally (entityId='global', empty
+ * context), so it must be a plain base-`enabled` boolean (NOT segmented) to turn
+ * on. The flag does not exist yet — it is created in Flipt AFTER this merges, so
+ * the as-merged behaviour is unchanged: a missing flag → `isFlipt` returns
+ * `false` → the pipeline stays dark (the fail-safe invariant below).
+ */
+export const APP_BLOCKS_PIPELINE_FLAG = 'app-blocks-pipeline-enabled';
+
+/**
  * Server-side check for the App Blocks feature flag.
  *
  * The UI mount, the workflow-completed callback, every write endpoint, every
@@ -35,17 +53,26 @@ const APP_BLOCKS_FLAG = 'app-blocks-enabled';
  *   the SERVER-side `user.isModerator`, never a client-supplied value).
  *
  * - **Machine-to-machine / anonymous gates have NO user** and genuinely cannot
- *   evaluate a mod-segmented flag. The internal webhooks (`build-callback`,
- *   `git-push`, `workflow-completed`, the JOB_TOKEN-authed manifest registrar)
- *   and the JWKS public-key endpoint call this with no argument → the original
- *   GLOBAL eval (`entityId='global'`, empty context). They are deliberately
- *   left on the global path: the build/publish PIPELINE therefore still
- *   requires a GLOBAL enable of `app-blocks-enabled` to run. That is an
- *   intentional, separate decision — a future dedicated
- *   `app-blocks-pipeline-enabled` global flag should own the pipeline so the
- *   mod-segmented user flag and the machine pipeline flag can move
- *   independently. Until then, do NOT fabricate user context for the machine
- *   gates (the no-arg overload below preserves their existing behaviour).
+ *   evaluate a mod-segmented flag. They eval globally (`entityId='global'`,
+ *   empty context), which can never match the `moderators` segment. They split
+ *   into two groups:
+ *
+ *   1. The build/publish **PIPELINE** webhooks (`build-callback`, `git-push`,
+ *      `workflow-completed`) gate on the dedicated global
+ *      `app-blocks-pipeline-enabled` flag via `isAppBlocksPipelineEnabled()`
+ *      (Decision 1). This decouples "can the pipeline run" from the
+ *      mod-segmented user flag, so a mod-approved block can actually build and
+ *      deploy without globally enabling the user-facing feature.
+ *
+ *   2. The JWKS public-key endpoint and the `withBlockScope` token-verification
+ *      middleware (runtime, not build) still call the no-arg `isAppBlocksEnabled()`
+ *      → the original GLOBAL eval of `app-blocks-enabled`. Repointing those is a
+ *      separate decision (Decision 4); they are intentionally left as-is here.
+ *      The JOB_TOKEN-authed manifest registrar (`block-manifests`) likewise
+ *      stays on `isAppBlocksEnabled()` for now (out of this change's scope).
+ *
+ *   For all machine gates, do NOT fabricate user context (the no-arg overload
+ *   below, and the pipeline helper, preserve the global-eval behaviour).
  *
  * The FLAG_OVERRIDE/local-overrides env exists for unit tests + local dev that
  * need to flip the flag without standing up Flipt.
@@ -63,4 +90,24 @@ export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise
   // server-side `isModerator` that the `moderators` segment keys on.
   const user = opts.user;
   return isFlipt(APP_BLOCKS_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * GLOBAL gate for the build/publish/deploy PIPELINE webhooks (Decision 1).
+ *
+ * Evaluates the dedicated `app-blocks-pipeline-enabled` flag with no user
+ * context (entityId='global', empty context), mirroring how the machine
+ * webhooks have always called Flipt — only the flag KEY changes. This is
+ * decoupled from the mod-segmented user-facing `app-blocks-enabled` flag so the
+ * pipeline can run for mod-approved blocks without enabling the feature for
+ * users.
+ *
+ * Fail-safe: if `app-blocks-pipeline-enabled` does not exist (it is created in
+ * Flipt only AFTER this merges) or Flipt is unreachable, `isFlipt` returns
+ * `false` → the pipeline webhooks REFUSE (503) → the pipeline stays dark. So
+ * this change is a no-op on as-merged behaviour and cannot regress the gate
+ * open.
+ */
+export async function isAppBlocksPipelineEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_PIPELINE_FLAG);
 }
