@@ -45,18 +45,22 @@ export default defineConfig({
           setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
           browser: {
             enabled: true,
+            // `--no-sandbox` + `--disable-dev-shm-usage`: required to launch
+            // Chromium as root inside the Tekton CI container (node:20 pod runs
+            // as UID 0; without --no-sandbox Chromium refuses to start, and the
+            // container's small /dev/shm crashes it without --disable-dev-shm-usage).
+            // Harmless locally.
             // CI uses Playwright's bundled Chromium (env unset). NixOS can't run
             // that generic binary; point this at a system Chromium, e.g.
             // `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$(command -v chromium)`.
-            provider: playwright(
-              process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-                ? {
-                    launchOptions: {
-                      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
-                    },
-                  }
-                : undefined
-            ),
+            provider: playwright({
+              launchOptions: {
+                args: ['--no-sandbox', '--disable-dev-shm-usage'],
+                ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+                  ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+                  : {}),
+              },
+            }),
             headless: true,
             instances: [{ browser: 'chromium' }],
           },
