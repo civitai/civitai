@@ -1,7 +1,9 @@
 import type { NextApiResponse } from 'next';
+import { isProd } from '~/env/other';
 import { submitVersionSchema } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 
 /**
  * Dedicated upload route for the App Blocks W1 publish-request flow.
@@ -31,6 +33,20 @@ export const config = {
 
 export default ModEndpoint(
   async (req, res: NextApiResponse, user) => {
+    // CSRF guard. This raw route is wrapped in ModEndpoint (cookie-only auth)
+    // and bypasses the tRPC pipeline, so it never gets createContext's
+    // same-origin check. With the prod session cookie set to sameSite:'none',
+    // a cross-site HTML form POST in a logged-in mod's browser would otherwise
+    // submit a bundle with their cookie. Mirror createContext's posture: in
+    // prod, require the request to originate from an allowed host (no bearer
+    // exemption needed — ModEndpoint is cookie-only). The !isProd exemption
+    // keeps local dev and tests (which send no Origin) working, identical to
+    // createContext.
+    if (isProd && !isAllowedOriginRequest(req)) {
+      res.status(403).json({ message: 'Cross-origin request blocked' });
+      return;
+    }
+
     // H2: evaluate with the authenticated mod's context so the
     // `moderators`-segmented flag resolves ON for them (ModEndpoint has already
     // proven `user.isModerator` above). Mirrors enforceAppBlocksFlag.
@@ -58,7 +74,9 @@ export default ModEndpoint(
     try {
       bundleBuffer = Buffer.from(parsed.data.bundleBase64, 'base64');
     } catch (err) {
-      res.status(400).json({ message: `bundleBase64 is not valid base64: ${(err as Error).message}` });
+      res
+        .status(400)
+        .json({ message: `bundleBase64 is not valid base64: ${(err as Error).message}` });
       return;
     }
 
