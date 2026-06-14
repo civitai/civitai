@@ -106,3 +106,53 @@ jobs:
       # the install postinstall, same as the typecheck job.
       - name: Run unit tests
         run: pnpm run test:unit:run
+
+  component-tests:
+    name: Component Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH for submodules
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SUBMODULE_SSH_KEY }}
+
+      - name: Checkout submodules
+        run: git submodule update --init --recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Enable corepack and install pnpm
+        run: corepack enable && corepack prepare pnpm@10.28.1 --activate
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Vitest browser mode runs real Chromium via Playwright (vitest.config.mts
+      # `component` project). Pin the version to the installed `playwright` so the
+      # bundled binary matches.
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Component/widget tests with mocked hooks (src/**/*.browser.test.tsx).
+      # Report-only for now (not a required check) — same rollout discipline as
+      # `unit-tests`; promote to a required check on `main` after a soak.
+      - name: Run component tests
+        run: pnpm run test:component
