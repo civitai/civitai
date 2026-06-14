@@ -562,7 +562,7 @@ describe('submitVersion', () => {
 
   it('Discord notify is invoked with the right shape on submission', async () => {
     const { submitVersion } = await import('../publish-request.service');
-    const fetchSpy = vi.fn(async () => ({ ok: true, status: 200 } as Response));
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, status: 200 } as Response));
     vi.stubGlobal('fetch', fetchSpy);
 
     const buf = await makeValidBundle();
@@ -766,7 +766,7 @@ describe('listPendingRequests', () => {
       row({ id: 'pubreq_2', submittedAt: new Date('2026-05-28T12:00:00Z') }),
     ]);
     const result = await listPendingRequests({});
-    expect(result.items.map((r) => r.id)).toEqual(['pubreq_1', 'pubreq_2']);
+    expect(result.items.map((r: { id: string }) => r.id)).toEqual(['pubreq_1', 'pubreq_2']);
     expect(result.nextCursor).toBeNull();
     // findMany should have been called with orderBy submittedAt asc.
     const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
@@ -792,7 +792,7 @@ describe('listPendingRequests', () => {
       row({ id: 'pubreq_3' }), // third row is the "has next" indicator
     ]);
     const result = await listPendingRequests({ limit: 2 });
-    expect(result.items.map((r) => r.id)).toEqual(['pubreq_1', 'pubreq_2']);
+    expect(result.items.map((r: { id: string }) => r.id)).toEqual(['pubreq_1', 'pubreq_2']);
     expect(result.nextCursor).toBe('pubreq_2');
   });
 
@@ -853,7 +853,7 @@ describe('listApprovedRequests', () => {
       row({ id: 'pubreq_b', reviewedAt: new Date('2026-05-28T10:00:00Z') }),
     ]);
     const result = await listApprovedRequests({});
-    expect(result.items.map((r) => r.id)).toEqual(['pubreq_a', 'pubreq_b']);
+    expect(result.items.map((r: { id: string }) => r.id)).toEqual(['pubreq_a', 'pubreq_b']);
     const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
     expect(arg.orderBy).toEqual({ reviewedAt: 'desc' });
     expect(arg.where).toEqual({ status: 'approved' });
@@ -890,7 +890,7 @@ describe('listApprovedRequests', () => {
       row({ id: 'pubreq_3' }), // limit+1 — the trailing "has next" indicator
     ]);
     const result = await listApprovedRequests({ limit: 2 });
-    expect(result.items.map((r) => r.id)).toEqual(['pubreq_1', 'pubreq_2']);
+    expect(result.items.map((r: { id: string }) => r.id)).toEqual(['pubreq_1', 'pubreq_2']);
     expect(result.nextCursor).toBe('pubreq_2');
   });
 
@@ -942,7 +942,7 @@ describe('listRejectedRequests', () => {
       row({ id: 'pubreq_b', reviewedAt: new Date('2026-05-28T10:00:00Z') }),
     ]);
     const result = await listRejectedRequests({});
-    expect(result.items.map((r) => r.id)).toEqual(['pubreq_a', 'pubreq_b']);
+    expect(result.items.map((r: { id: string }) => r.id)).toEqual(['pubreq_a', 'pubreq_b']);
     const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
     expect(arg.orderBy).toEqual({ reviewedAt: 'desc' });
     expect(arg.where).toEqual({ status: 'rejected' });
@@ -981,7 +981,7 @@ describe('listRejectedRequests', () => {
       row({ id: 'pubreq_3' }), // trailing has-next indicator
     ]);
     const result = await listRejectedRequests({ limit: 2 });
-    expect(result.items.map((r) => r.id)).toEqual(['pubreq_1', 'pubreq_2']);
+    expect(result.items.map((r: { id: string }) => r.id)).toEqual(['pubreq_1', 'pubreq_2']);
     expect(result.nextCursor).toBe('pubreq_2');
   });
 
