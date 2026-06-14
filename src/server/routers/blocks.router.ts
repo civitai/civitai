@@ -935,6 +935,65 @@ export const blocksRouter = router({
     }),
 
   /**
+   * Install-time config for ONE approved app block, keyed on appBlockId.
+   *
+   * Why this exists (F-E E1 regression fix): the marketplace listing
+   * (`listAvailable`) is anon-capable and so projects each manifest down to a
+   * PUBLIC allowlist (name/description/targets only) via `toPublicBlockManifest`
+   * — it deliberately drops `settings` and `scopes`. But the install modal
+   * (`AppSettingsModal`) builds its publisher-settings form from
+   * `manifest.settings` and reads `manifest.scopes`. Sourcing those from the
+   * stripped public listing meant the settings form silently vanished when a
+   * user installed a settings-declaring app FROM A MARKETPLACE CARD. This proc
+   * is the AUTHENTICATED source for ONLY those two install-needed bits, so the
+   * public listing can stay narrow (no widening of the anon-exposure allowlist).
+   *
+   * Gate: `moderatorProcedure` + appBlocks flag — the SAME audience that can
+   * actually install (`installOnModel` / `upsertSubscription` are both
+   * `moderatorProcedure`). A non-mod / anon caller is denied, so this can't be
+   * used to enumerate manifest internals ahead of the public launch. It returns
+   * ONLY for `status='approved'` apps (404 otherwise), matching the install
+   * mutations' own approved gate.
+   *
+   * This is a DISPLAY fix only: `upsertSubscription` / `installOnModel` still
+   * re-resolve settings + scopes server-side from the stored manifest by id and
+   * validate them (see upsertSubscription's `dbRead.appBlock.findUnique` +
+   * `validateBlockSettings`). The client never becomes the source of truth for
+   * what gets persisted.
+   */
+  getInstallConfig: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      // Dark-flag fail-soft, consistent with the other query procs: when the
+      // appBlocks flag is off the middleware marks the ctx and we surface no
+      // manifest data (the modal renders no settings form rather than erroring).
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return { settings: {}, scopes: [] as string[] };
+      }
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true, manifest: true },
+      });
+      if (!block || block.status !== 'approved') {
+        throw throwNotFoundError('App block not found');
+      }
+      const manifest = (block.manifest ?? {}) as Record<string, unknown>;
+      // Project ONLY the install-form inputs. `settings` is validated against
+      // manifestSettingsSchema so a malformed/absent declaration yields {} (the
+      // form renders no fields rather than throwing). `scopes` is the declared
+      // scope list the form uses to decide which `requires_scope` fields show.
+      const parsedSettings = manifestSettingsSchema.safeParse(manifest.settings ?? {});
+      const scopes = Array.isArray(manifest.scopes)
+        ? manifest.scopes.filter((s): s is string => typeof s === 'string')
+        : [];
+      return {
+        settings: parsedSettings.success ? parsedSettings.data : {},
+        scopes,
+      };
+    }),
+
+  /**
    * Create or update the user's subscription for a (appBlockId, scope)
    * pair. Toggling a scope on writes a row; toggling off uses
    * deleteSubscription instead. Settings are validated against the app's

@@ -16,7 +16,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { baseModels as ALL_BASE_MODELS } from '~/shared/constants/base-model.constants';
 import type {
@@ -100,15 +100,36 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
     scopes?: string[];
   };
 
+  // `block.manifest` may be the PUBLIC marketplace allowlist (F-E E1) —
+  // name/description/targets only, with `settings`/`scopes` deliberately
+  // stripped so anon callers never see manifest internals. When this modal is
+  // opened from a marketplace card (install path), reading the settings form
+  // from `block.manifest.settings` would therefore render NO fields. Fetch the
+  // install-needed bits (settings meta + declared scopes) from the
+  // authenticated `getInstallConfig` procedure instead, keyed on appBlockId.
+  // The "Manage" path (/apps/installed) passes the FULL manifest, so its
+  // `manifest.settings` is already populated; the fetched value matches it.
+  const { data: installConfig } = trpc.blocks.getInstallConfig.useQuery(
+    { appBlockId: block.id },
+    { staleTime: 60_000 }
+  );
+
   // Manifest-driven settings (W3 Phase 4). Fields without an explicit
   // `scope:` declaration are treated as 'publisher' for back-compat with
   // pre-W3 manifests (the gate that produced them only required type +
   // label + description). New manifests should declare scope explicitly.
+  //
+  // Source precedence: the authenticated install config (always carries
+  // settings/scopes, regardless of whether `block.manifest` was the public
+  // subset) wins; fall back to `block.manifest.settings` while it loads (the
+  // Manage path already has the full manifest, so the form is correct
+  // immediately there).
+  const settingsSource = installConfig?.settings ?? manifest.settings;
   const manifestSettings = useMemo<ManifestSettings>(
-    () => normalizeManifestSettings(manifest.settings),
-    [manifest.settings]
+    () => normalizeManifestSettings(settingsSource),
+    [settingsSource]
   );
-  const declaredScopes = manifest.scopes ?? [];
+  const declaredScopes = installConfig?.scopes ?? manifest.scopes ?? [];
 
   // Initialise the form from existing subscriptions when present. Settings
   // are read from whichever scope has them set — they're meant to be
@@ -141,6 +162,27 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
   const [settingsValues, setSettingsValues] = useState<Record<string, unknown>>(() =>
     seedSettingsValues(manifestSettings, initialSettings)
   );
+
+  // Re-seed when the manifest settings schema becomes available. On the install
+  // path `manifestSettings` is empty on first render (getInstallConfig hasn't
+  // resolved yet) so the initial seed has no field defaults; once the schema
+  // arrives we merge in any declared defaults for keys the user hasn't touched.
+  // Existing-subscription values (initialSettings) and user edits always win,
+  // so this never clobbers what the user already has/typed.
+  const seededKeysRef = useRef<string>('');
+  useEffect(() => {
+    const keysSig = Object.keys(manifestSettings).sort().join(',');
+    if (keysSig === seededKeysRef.current) return;
+    seededKeysRef.current = keysSig;
+    setSettingsValues((prev) => {
+      const reseeded = seedSettingsValues(manifestSettings, initialSettings);
+      // Preserve any value the user already set / that was already present.
+      return { ...reseeded, ...prev };
+    });
+    // initialSettings is derived from props (existing subscriptions) and is
+    // stable for the modal's lifetime; depend only on the schema shape.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manifestSettings]);
 
   const handleSettingChange = (key: string, value: unknown) => {
     setSettingsValues((prev) => ({ ...prev, [key]: value }));

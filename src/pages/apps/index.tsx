@@ -28,7 +28,6 @@ import type {
   SubscriptionScope,
 } from '~/server/schema/blocks/subscription.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { trpc } from '~/utils/trpc';
 
 type SlotFilter = 'model.sidebar_top' | 'model.below_images' | 'model.actions_extra';
@@ -176,7 +175,7 @@ export default function AppsPage() {
             </Center>
           ) : (
             <Grid gutter="md">
-              {(availableData?.items ?? []).map((block) => (
+              {(availableData?.items ?? []).map((block: AvailableBlock) => (
                 <Grid.Col key={block.id} span={{ base: 12, sm: 6, md: 4, lg: 3 }}>
                   <AppBlockCard
                     block={block}
