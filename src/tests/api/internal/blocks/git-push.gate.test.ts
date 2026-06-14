@@ -76,7 +76,7 @@ const {
       if (where.status === 'pending') return state.pendingPubReqForSha;
       return null;
     }),
-    mockPubReqCreate: vi.fn(async () => undefined),
+    mockPubReqCreate: vi.fn(async (_args: { data: Record<string, unknown> }) => undefined),
     mockPubReqUpdate: vi.fn(async () => undefined),
     mockPubReqUpdateMany: vi.fn(async () => ({ count: 0 })),
     mockNewUlid: vi.fn(() => '0123456789ABCDEFGHJKMNPQRS'),
