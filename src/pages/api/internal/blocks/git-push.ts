@@ -9,29 +9,37 @@ import {
   BlockManifestValidator,
   type AppContext,
 } from '~/server/services/block-manifest-validator.service';
-import {
-  FORGEJO_ORG,
-  getRawFile,
-  setCommitStatus,
-} from '~/server/services/blocks/forgejo.service';
-import { triggerBuild } from '~/server/services/blocks/apps-pipeline.service';
+import { FORGEJO_ORG, getRawFile, setCommitStatus } from '~/server/services/blocks/forgejo.service';
 
 /**
  * POST /api/internal/blocks/git-push
  *
  * Forgejo push-event webhook for `civitai-apps/*`. Verifies the HMAC
  * signature (FORGEJO_WEBHOOK_SECRET), pulls the block.manifest.json out
- * of the just-pushed commit, validates it against the canonical schema,
- * and (on success) upserts the app_blocks row + kicks off the Tekton
- * build pipeline on dc-02-a.
+ * of the just-pushed commit, and validates it against the canonical schema.
+ *
+ * NO TRUST ON PUSH (v1 mod-review gate): a signature-valid push does NOT
+ * by itself approve or deploy anything. The build + deploy is triggered by
+ * `approveRequest` (the moderator path) when a mod approves a publish
+ * request; that approve stamps the approved sha onto
+ * `app_blocks.current_version_sha` BEFORE its commit fires this webhook, so:
+ *   - sha === app_blocks.current_version_sha → the moderator-approved,
+ *     in-flight deploy → no-op here (approveRequest already triggered it).
+ *   - any other sha → an UNREVIEWED direct push to civitai-apps/<slug> →
+ *     recorded as a `pending` publish request and left for moderator review.
+ *     It never auto-approves and never deploys.
+ *
+ * Forgejo write access is a different trust domain than civitai moderation,
+ * so this gate is what stops anyone with repo write from shipping arbitrary
+ * iframe code to a live, mod-page-embedded block.
  *
  * Manifest validation failures surface as commit-status `failure` on
  * Forgejo so the developer sees the error in the repo view, no email
  * trip-wire needed.
  *
  * Idempotency: re-deliveries of the same (slug, sha) are safe — the
- * upsert is by (appId, blockId) primary key, and triggerBuild creates
- * a PipelineRun named after the SHA, which Tekton dedups.
+ * approved-deploy case is a stable no-op, and the pending-review case
+ * refreshes the existing (slug, sha) pending row rather than stacking.
  */
 
 // HMAC verification requires raw request bytes — Forgejo signs the exact
@@ -75,14 +83,38 @@ function safeEqualHex(a: string, b: string): boolean {
   return timingSafeEqual(A, B);
 }
 
-function verifyForgejoSignature(rawBody: Buffer, signatureHeader: unknown): boolean {
-  const secret = env.FORGEJO_WEBHOOK_SECRET;
-  if (!secret) return false;
+export function verifyForgejoSignature(rawBody: Buffer, signatureHeader: unknown): boolean {
+  // F6 — dual-secret HMAC rotation window. Accept a signature that matches
+  // EITHER the current secret OR an optional FORGEJO_WEBHOOK_SECRET_NEXT. To
+  // rotate with zero downtime: set _NEXT to the new secret, flip the Forgejo
+  // signer to the new secret, then move the new value into FORGEJO_WEBHOOK_SECRET
+  // and clear _NEXT. When _NEXT is unset this is byte-identical to the prior
+  // single-secret behaviour (fail-closed: no secret configured → false).
+  //
+  // This is the civitai-web leg of the three-secret zero-downtime rotation; the
+  // app-blocks-trigger receiver already dual-accepts APPS_TEKTON_TRIGGER_SECRET
+  // + _NEXT on the talos side (see HMAC-SECRET-ROTATION.md). Mirrors the
+  // BLOCK_TOKEN_PUBLIC_KEY_NEXT precedent in block-token.service.ts.
   if (typeof signatureHeader !== 'string' || signatureHeader.length === 0) return false;
-  const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
   // Forgejo sends the header bare (no `sha256=` prefix); be tolerant either way.
   const provided = signatureHeader.replace(/^sha256=/, '');
-  return safeEqualHex(provided, expected);
+
+  // Filter empty/undefined BEFORE createHmac so we never compute an empty-key
+  // HMAC (which would be a usable, attacker-known key). No secret set at all →
+  // reject (fail-closed).
+  const secrets = [env.FORGEJO_WEBHOOK_SECRET, env.FORGEJO_WEBHOOK_SECRET_NEXT].filter(
+    (s): s is string => typeof s === 'string' && s.length > 0
+  );
+  if (secrets.length === 0) return false;
+
+  // Compute every candidate comparison (no boolean short-circuit) so timing
+  // doesn't leak which secret — current vs NEXT — was the matching one.
+  let matched = false;
+  for (const secret of secrets) {
+    const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+    if (safeEqualHex(provided, expected)) matched = true;
+  }
+  return matched;
 }
 
 const SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
@@ -99,10 +131,7 @@ const SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
  * others. Without this gate a signature-valid push to a same-slug repo in a
  * different org would drive a build + auto-approve of the canonical row.
  */
-export function parseExpectedRepo(
-  fullName: unknown,
-  expectedOrg: string
-): { slug: string } | null {
+export function parseExpectedRepo(fullName: unknown, expectedOrg: string): { slug: string } | null {
   if (typeof fullName !== 'string' || !fullName.includes('/')) return null;
   const [org, ...slugParts] = fullName.split('/');
   if (org !== expectedOrg) return null;
@@ -182,11 +211,48 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       id: true,
       appId: true,
       blockId: true,
+      currentVersionSha: true,
       app: { select: { id: true, allowedScopes: true, allowedOrigins: true } },
     },
   });
   if (!appBlock) {
     res.status(404).json({ error: 'app_blocks row not found — re-run submitApp' });
+    return;
+  }
+
+  // SECURITY (no trust-on-push): `approveRequest` is the ONLY path that may
+  // ship new iframe code to a live block. When a moderator approves a publish
+  // request it commits the reviewed bundle to civitai-apps/<slug>, stamps the
+  // resulting sha onto app_blocks.current_version_sha, AND triggers the Tekton
+  // build itself. The push it makes lands here too — but it is already the
+  // approved, in-flight deploy, so this webhook treats `sha ===
+  // appBlock.currentVersionSha` as a no-op (the build is already running).
+  //
+  // ANY OTHER push to civitai-apps/<slug>:main is, by construction, NOT
+  // moderator-approved (Forgejo write access is a different trust domain than
+  // civitai moderation). Such a push must NEVER auto-approve and NEVER deploy:
+  // we record it as a `pending` publish request — the same review artifact a
+  // submitVersion produces — and stop. A moderator then approves the new sha
+  // through the existing approveRequest → build → deploy path. This is the v1
+  // mod-review gate the original handler comment promised ("v0 auto-approves on
+  // valid push; v1 gates this behind a queue").
+  if (sha === appBlock.currentVersionSha) {
+    res.status(200).json({ ok: true, slug, sha, deploy: 'already-approved' });
+    return;
+  }
+  // Race backstop: approveRequest stamps current_version_sha and finalises the
+  // publish request (status='approved', forgejoCommitSha=sha) right after its
+  // commit — but its commit fires THIS webhook, so the webhook can in principle
+  // arrive in the narrow window before those writes land. An `approved` publish
+  // request for (slug, sha) is the same durable proof of moderator approval, so
+  // treat it as the in-flight approved deploy too (no-op). A direct attacker
+  // push has neither marker.
+  const approvedForThisSha = await dbRead.appBlockPublishRequest.findFirst({
+    where: { slug, status: 'approved', forgejoCommitSha: sha },
+    select: { id: true },
+  });
+  if (approvedForThisSha) {
+    res.status(200).json({ ok: true, slug, sha, deploy: 'already-approved' });
     return;
   }
 
@@ -296,68 +362,160 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       slug,
       sha,
       stage: 'iframe-src-mismatch',
-      details: `manifest.iframe.src="${parsedManifest.iframe?.src ?? ''}" but expected "${expectedSrc}"`,
+      details: `manifest.iframe.src="${
+        parsedManifest.iframe?.src ?? ''
+      }" but expected "${expectedSrc}"`,
     });
     res.status(400).json({ error: 'iframe.src mismatch' });
     return;
   }
 
-  // Upsert app_blocks with the new manifest + sha. v0 auto-approves on
-  // valid push; v1 (W1 mod review) gates this behind a queue.
-  await dbWrite.appBlock.update({
-    where: { id: appBlock.id },
-    data: {
+  // We only reach here for a push whose sha is NOT the moderator-approved,
+  // in-flight deploy (that case returned above). By construction this is an
+  // UNREVIEWED push straight to civitai-apps/<slug>:main. Do NOT touch
+  // app_blocks.status and do NOT trigger a build/deploy. Instead record (or
+  // refresh) a `pending` publish request for this sha so a moderator can
+  // review it via the existing /apps/review → approveRequest path, which is
+  // the only thing that may ship it to the live block.
+  //
+  // The manifest validated above is the source of truth for slug / version.
+  const reviewVersion = (parsedManifest as { version?: string }).version ?? sha.slice(0, 7);
+  try {
+    await recordPendingFromPush({
+      slug,
+      sha,
+      appBlockId: appBlock.id,
       manifest: manifest as object,
-      status: 'approved',
-      // The migration that adds current_version_sha / current_version_deployed_at
-      // / repo_url ships alongside this handler (Phase 4 SQL); these field
-      // names match the @map directives that get added.
-      currentVersionSha: sha,
-      version: (parsedManifest as { version?: string }).version ?? sha.slice(0, 7),
-    },
-  });
+      version: reviewVersion,
+    });
+  } catch (e) {
+    notifyModsOfWebhookFailure({
+      slug,
+      sha,
+      stage: 'record-pending-review',
+      details: `could not record pending review request: ${String(e).slice(0, 200)}`,
+    });
+    res
+      .status(500)
+      .json({ error: 'Could not record pending review request', detail: String(e).slice(0, 240) });
+    return;
+  }
 
-  // Pending status on Forgejo while Tekton runs.
+  // Surface the gate in Forgejo's commit view so a developer who pushed
+  // directly sees WHY nothing deployed.
   await setCommitStatusSafe({
     slug,
     sha,
     state: 'pending',
-    context: 'civitai/build',
-    description: 'Build queued',
+    context: 'civitai/review',
+    description: 'Awaiting moderator review — not deployed',
   });
 
-  // Trigger the cross-cluster Tekton build.
-  try {
-    const callbackUrl = buildCallbackUrl();
-    await triggerBuild({ slug, sha, appBlockId: appBlock.id, callbackUrl });
-  } catch (e) {
-    await setCommitStatusSafe({
-      slug,
-      sha,
-      state: 'failure',
-      context: 'civitai/build',
-      description: `Trigger failed: ${String(e).slice(0, 80)}`,
+  // Ping mods that an unreviewed push is waiting in the queue.
+  notifyModsOfWebhookFailure({
+    slug,
+    sha,
+    stage: 'unreviewed-push',
+    details:
+      'Direct push to the canonical build repo recorded as a PENDING review request. ' +
+      'It will NOT build or deploy until a moderator approves it via /apps/review.',
+  });
+
+  res.status(202).json({ ok: true, slug, sha, status: 'pending-review', deployed: false });
+});
+
+/**
+ * Record (or refresh) a `pending` publish request for an unreviewed push to
+ * civitai-apps/<slug>:main. This is the no-trust-on-push gate: a direct push
+ * cannot auto-approve or deploy, so we capture it as the same kind of review
+ * artifact a submitVersion produces and leave it for a moderator.
+ *
+ * The bundle bytes are NOT available to the webhook (Forgejo only hands us the
+ * push event + the manifest at the sha), so this row's bundle pointers are left
+ * empty and a `forgejoCommitSha` is stored instead — a moderator reviews the
+ * code in the Forgejo repo directly. `approveRequest` already supports
+ * approving a `pending` request against the existing app_blocks row.
+ *
+ * Idempotent at the (slug, sha) level: a re-delivery of the same push event
+ * refreshes the existing pending row rather than stacking duplicates. Only ONE
+ * pending request per slug is allowed (matches the submitVersion invariant +
+ * the partial unique index), so a newer unreviewed sha supersedes an older
+ * still-pending one.
+ */
+async function recordPendingFromPush(args: {
+  slug: string;
+  sha: string;
+  appBlockId: string;
+  manifest: object;
+  version: string;
+}): Promise<void> {
+  const { newUlid } = await import('~/server/utils/app-block-ids');
+
+  // Already captured this exact (slug, sha) as pending? Refresh + done.
+  const existingForSha = await dbWrite.appBlockPublishRequest.findFirst({
+    where: { slug: args.slug, status: 'pending', forgejoCommitSha: args.sha },
+    select: { id: true },
+  });
+  if (existingForSha) {
+    await dbWrite.appBlockPublishRequest.update({
+      where: { id: existingForSha.id },
+      data: { manifest: args.manifest, version: args.version, appBlockId: args.appBlockId },
     });
-    notifyModsOfWebhookFailure({
-      slug,
-      sha,
-      stage: 'trigger-build',
-      details: `triggerBuild() failed: ${String(e).slice(0, 200)}`,
-    });
-    res.status(500).json({ error: 'Build trigger failed', detail: String(e).slice(0, 240) });
     return;
   }
 
-  res.status(200).json({ ok: true, slug, sha });
-});
+  // Supersede any OTHER still-pending request for this slug (older sha or a
+  // dev submitVersion) so the partial unique index (one pending per slug)
+  // doesn't reject the insert and the queue shows the newest unreviewed sha.
+  await dbWrite.appBlockPublishRequest.updateMany({
+    where: { slug: args.slug, status: 'pending' },
+    data: { status: 'withdrawn' },
+  });
 
-function buildCallbackUrl(): string {
-  // The callback URL must be reachable from dc-02-a Tekton — that's the
-  // public civitai-web URL of the env civitai-web is currently running in.
-  // Use NEXTAUTH_URL (already in env, kept current per deployment).
-  const base = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '');
-  if (!base) throw new Error('NEXTAUTH_URL not configured — cannot build callback URL');
-  return `${base}/api/internal/blocks/build-callback`;
+  const ownerUserId = await resolvePushOwnerUserId(args.appBlockId);
+  const emptyFileSummary = { files: [], added: [], removed: [], changed: [] };
+  const manifestDiffSummary = {
+    kind: 'first-version' as const,
+    fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
+  };
+
+  await dbWrite.appBlockPublishRequest.create({
+    data: {
+      id: `pubreq_${newUlid()}`,
+      appBlockId: args.appBlockId,
+      slug: args.slug,
+      submittedByUserId: ownerUserId,
+      version: args.version,
+      manifest: args.manifest,
+      // No bundle: the webhook doesn't receive the ZIP. The Forgejo repo at
+      // forgejoCommitSha IS the reviewable artifact; mods browse it directly.
+      bundleKey: '',
+      bundleSha256: '',
+      bundleSizeBytes: BigInt(0),
+      fileSummary: emptyFileSummary,
+      manifestDiffSummary,
+      status: 'pending',
+      forgejoCommitSha: args.sha,
+    },
+  });
+}
+
+/**
+ * Attribute the pending-review row to the app owner (the OauthClient.userId),
+ * falling back to the app block's own app relation. submittedByUserId is a
+ * required, FK-constrained column — we can't leave it null — and the app owner
+ * is the most meaningful actor for an unreviewed push to their repo.
+ */
+async function resolvePushOwnerUserId(appBlockId: string): Promise<number> {
+  const row = await dbRead.appBlock.findUnique({
+    where: { id: appBlockId },
+    select: { app: { select: { userId: true } } },
+  });
+  const userId = row?.app?.userId;
+  if (typeof userId !== 'number') {
+    throw new Error(`could not resolve owner userId for appBlock ${appBlockId}`);
+  }
+  return userId;
 }
 
 async function setCommitStatusSafe(args: Parameters<typeof setCommitStatus>[0]): Promise<void> {

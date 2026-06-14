@@ -12,6 +12,7 @@ import { resolveRequestSignIn } from './requestSignInGate';
 import { resolveRequestConsent } from './requestConsentGate';
 import { hideBlock } from './hiddenBlocks';
 import { intersectSandbox } from './sandbox';
+import { projectBlockInitContext, projectBlockInitViewer } from './projectBlockInit';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -20,6 +21,7 @@ import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-s
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). SSR-disabled to match
@@ -289,8 +291,14 @@ export function IframeHost({
   // a 5-min staleTime is fine since reactions move slowly within a session.
   const modelVersionId =
     typeof modelCtx.modelVersionId === 'number' ? modelCtx.modelVersionId : null;
+  // Send the viewer's current browsing level so the server only returns
+  // showcase images (URLs + gen-meta) the viewer is allowed to see. The
+  // server forces anon viewers to public (PG) and never trusts this to widen
+  // an anon view — this just lets a logged-in NSFW-opted-in viewer see the
+  // same NSFW showcase the model-page gallery would show them.
+  const browsingLevel = useBrowsingLevelDebounced();
   const showcaseQuery = trpc.blocks.getShowcaseImages.useQuery(
-    { modelVersionId: modelVersionId ?? 0 },
+    { modelVersionId: modelVersionId ?? 0, browsingLevel },
     { enabled: modelVersionId != null, staleTime: 5 * 60_000 }
   );
   const showcaseImages = showcaseQuery.data ?? [];
@@ -305,8 +313,14 @@ export function IframeHost({
       expiresAt,
       ...(buzzBudget !== undefined ? { buzzBudget } : {}),
     },
-    context: {
-      ...context,
+    // Data-minimization (security audit — MEDIUM): project the slot context
+    // to an explicit contract allowlist before posting it to the untrusted
+    // publisher iframe, instead of spreading the whole context. This drops
+    // PII / internal fields no block needs — viewerNsfwEnabled, creatorUserId,
+    // and the viewer id/status/username that are duplicated (intentionally) in
+    // the `viewer` object below. projectBlockInitContext also layers in the
+    // host-resolved checkpoint + showcase images. See projectBlockInit.ts.
+    context: projectBlockInitContext(context, {
       // Merge in the resolved checkpoint so the block can render its
       // header ("Generating with: NAME") without an extra round-trip.
       checkpoint: effectiveCheckpoint,
@@ -315,7 +329,7 @@ export function IframeHost({
       // showcase the way we do on checkpoint; the carousel can re-render
       // later when the query lands).
       showcaseImages,
-    },
+    }),
     settings: {
       publisherSettings: install.publisherSettings,
       // v1 has no per-viewer settings yet (Phase 2 wires the
@@ -323,14 +337,10 @@ export function IframeHost({
       // stable across versions.
       userSettings: {},
     },
-    viewer:
-      typeof modelCtx.viewerUserId === 'number'
-        ? {
-            id: modelCtx.viewerUserId,
-            username: modelCtx.viewerUsername ?? null,
-            status: modelCtx.viewerStatus ?? 'active',
-          }
-        : null,
+    // Contract `viewer` object (null for anon) — the only place viewer
+    // id/username/status are exposed to the iframe. Built via the same pure
+    // projection module so the allowlist lives in one tested place.
+    viewer: projectBlockInitViewer(context),
     theme: modelCtx.theme ?? 'light',
     renderMode: install.renderMode,
   });

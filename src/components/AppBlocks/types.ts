@@ -62,7 +62,11 @@ export interface ModelSlotContext extends SlotContext {
   viewerUserId: number | null;
   viewerNsfwEnabled: boolean;
   viewerUsername?: string | null;
-  /** Coarse status surface for the iframe — authoritative re-check is /api/v1/blocks/me. */
+  /**
+   * Host-internal viewer moderation state. Intentionally NOT forwarded to the
+   * iframe (see projectBlockInitViewer) — exposing ban/mute to untrusted
+   * publisher code is a privacy leak with no consumer.
+   */
   viewerStatus?: 'active' | 'banned' | 'muted';
   /** Host-page color scheme — lets the iframe match without a flicker. */
   theme?: 'light' | 'dark';
@@ -106,7 +110,6 @@ export interface BlockInitPayload {
   viewer: {
     id: number;
     username: string | null;
-    status: 'active' | 'banned' | 'muted';
   } | null;
   theme: 'light' | 'dark';
   renderMode: 'iframe' | 'inline';

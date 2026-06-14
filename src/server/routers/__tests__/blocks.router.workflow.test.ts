@@ -56,6 +56,7 @@ const {
   mockSysRedis: {
     get: vi.fn(async () => null),
     incrBy: vi.fn(async () => 0),
+    decrBy: vi.fn(async () => 0),
     expire: vi.fn(async () => true),
     ttl: vi.fn(async () => -1),
   },
@@ -251,15 +252,19 @@ beforeEach(() => {
     mockLogToAxiom,
     mockSysRedis.get,
     mockSysRedis.incrBy,
+    mockSysRedis.decrBy,
     mockSysRedis.expire,
     mockSysRedis.ttl,
   ]) {
     fn.mockReset();
   }
   // Buzz-cap (audit A7): default to an empty window so the cap is non-binding
-  // unless a test seeds prior spend via mockSysRedis.get.
+  // unless a test seeds prior spend. The cap is now an atomic reserve (INCRBY
+  // returns the new running total) + refund (DECRBY); default incrBy → cost so
+  // the reservation stays under the 50,000 cap unless a test overrides it.
   mockSysRedis.get.mockResolvedValue(null);
   mockSysRedis.incrBy.mockResolvedValue(0);
+  mockSysRedis.decrBy.mockResolvedValue(0);
   mockSysRedis.expire.mockResolvedValue(true);
   mockSysRedis.ttl.mockResolvedValue(-1);
   // Defaults — every test starts with the flag on, a valid claim, an
@@ -514,15 +519,18 @@ describe('blocks.submitWorkflow', () => {
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
-  // ---- A7 cumulative Buzz-spend cap --------------------------------------
-  it('A7: rejects (no real submit) when prior spend + cost would exceed the daily cap', async () => {
-    // Per-call budget high enough to clear the per-call check; the cumulative
-    // window counter already at 49,990 so a 25-cost submit (→ 50,015) trips the
-    // 50,000 daily cap.
+  // ---- A7 cumulative Buzz-spend cap (atomic reserve-and-refund) -----------
+  // The cap is now a per-USER (NOT per-app_block) daily aggregate enforced by
+  // an atomic reserve: INCRBY returns the new running total; if it exceeds the
+  // 50,000 cap we DECRBY-refund and reject. Prior spend is therefore seeded via
+  // incrBy's RESOLVED TOTAL (the post-increment running counter), not a get().
+  it('A7: rejects (no real submit) when the reservation would exceed the daily cap', async () => {
+    // Per-call budget high enough to clear the per-call check; the reservation
+    // (prior 49,990 + this 25) returns 50,015, tripping the 50,000 daily cap.
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
     happyVersionLookup();
     happyUser();
-    mockSysRedis.get.mockResolvedValue('49990');
+    mockSysRedis.incrBy.mockResolvedValue(50015);
     mockSubmitWorkflow.mockResolvedValueOnce({
       id: '',
       status: 'succeeded',
@@ -535,40 +543,60 @@ describe('blocks.submitWorkflow', () => {
     expect(result.snapshot.error).toMatch(/daily Buzz cap/i);
     // The whatif ran (1 call) but the REAL submit must NOT have fired.
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
-    // A blocked submit must not consume the cap.
-    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    // The over-cap reservation must be REFUNDED (DECRBY) so a blocked submit
+    // doesn't permanently consume the cap.
+    expect(mockSysRedis.decrBy).toHaveBeenCalledTimes(1);
+    const refundArgs = mockSysRedis.decrBy.mock.calls[0];
+    expect(String(refundArgs[0])).toContain('system:blocks:buzz-cap');
+    expect(refundArgs[1]).toBe(25);
+    // Key-pinning: the refund must target the EXACT key the reservation used,
+    // not a re-derived one (else a midnight-UTC rollover between reserve and
+    // refund decrements the next day's key into a negative, TTL-less value).
+    expect(String(refundArgs[0])).toBe(String(mockSysRedis.incrBy.mock.calls[0][0]));
   });
 
-  it('A7: a submit within the cap succeeds and records the spend', async () => {
+  it('A7: a submit within the cap succeeds and reserves the spend (no refund)', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
     happyVersionLookup();
     happyUser();
-    // Window already has 100 spent; a 25-cost submit → 125, well under 50,000.
-    mockSysRedis.get.mockResolvedValue('100');
+    // Reservation returns 125 (prior 100 + this 25), well under 50,000.
     mockSysRedis.incrBy.mockResolvedValue(125);
     mockSubmitWorkflow
       .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
-      .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      .mockResolvedValueOnce({
+        id: 'wf_real',
+        status: 'unassigned',
+        cost: { total: 25 },
+        steps: [],
+      });
 
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
     expect(result.snapshot.workflowId).toBe('wf_real');
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
-    // The successful spend is recorded against the cumulative counter.
+    // The spend is reserved against the cumulative counter exactly once.
     expect(mockSysRedis.incrBy).toHaveBeenCalledTimes(1);
     const incrArgs = mockSysRedis.incrBy.mock.calls[0];
-    expect(String(incrArgs[0])).toContain('system:blocks:buzz-cap');
+    // PER-USER key shape: system:blocks:buzz-cap:<userId>:<day> — and it must
+    // NOT contain the appBlockId segment (ab_x from the resolveBlockInstance
+    // mock). A per-app key would let a publisher multiply the ceiling.
+    const incrKey = String(incrArgs[0]);
+    expect(incrKey).toContain('system:blocks:buzz-cap');
+    expect(incrKey).toMatch(/^system:blocks:buzz-cap:42:\d{4}-\d{2}-\d{2}$/);
+    expect(incrKey).not.toContain('ab_x');
     expect(incrArgs[1]).toBe(25);
+    // A within-cap submit keeps its reservation — no refund.
+    expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
   });
 
-  it('A7: cap counts cumulatively — N submits at budget each still trip the cap', async () => {
+  it('A7: cap counts cumulatively — once the running total tops the cap, submits are rejected', async () => {
     // Simulate the drain attack: per-call budget=1000 (each submit passes the
-    // per-call check), but the window counter is already at 50,000 — the very
-    // next submit is rejected.
+    // per-call check), but the reservation pushes the running total to 50,001 —
+    // this submit is rejected and refunded.
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
     happyVersionLookup();
     happyUser();
-    mockSysRedis.get.mockResolvedValue('50000');
+    mockSysRedis.incrBy.mockResolvedValue(50001);
     mockSubmitWorkflow.mockResolvedValueOnce({
       id: '',
       status: 'succeeded',
@@ -580,6 +608,123 @@ describe('blocks.submitWorkflow', () => {
     expect(result.snapshot.status).toBe('failed');
     expect(result.snapshot.error).toMatch(/daily Buzz cap/i);
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockSysRedis.decrBy).toHaveBeenCalledTimes(1);
+  });
+
+  it('A7: per-USER key is independent of appBlockId (two blocks share one ceiling)', async () => {
+    // Two different appBlockIds for the same user must hit the SAME redis key,
+    // so all of a user's blocks accumulate against ONE daily ceiling. Assert
+    // the key the reservation uses excludes the appBlockId value entirely.
+    happyVersionLookup();
+    happyUser();
+    mockSysRedis.incrBy.mockResolvedValue(25);
+    function happySubmit() {
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+    }
+
+    // First block.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000, blockId: 'blk_A' }));
+    (BlockRegistry.resolveBlockInstance as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      source: 'install',
+      modelId: 7,
+      slotId: 'model.sidebar_top',
+      enabled: true,
+      settings: {},
+      installedByUserId: 42,
+      appBlock: {
+        id: 'ab_AAA',
+        blockId: 'gen-from-model',
+        appId: 'app',
+        status: 'approved',
+        manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 33554431 },
+      },
+    });
+    happySubmit();
+    let caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    const keyA = String(mockSysRedis.incrBy.mock.calls[0][0]);
+
+    // Second block — different appBlockId, same user.
+    mockSubmitWorkflow.mockReset();
+    mockSysRedis.incrBy.mockClear();
+    mockSysRedis.incrBy.mockResolvedValue(50);
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000, blockId: 'blk_B' }));
+    (BlockRegistry.resolveBlockInstance as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      source: 'install',
+      modelId: 7,
+      slotId: 'model.sidebar_top',
+      enabled: true,
+      settings: {},
+      installedByUserId: 42,
+      appBlock: {
+        id: 'ab_BBB',
+        blockId: 'gen-from-model',
+        appId: 'app',
+        status: 'approved',
+        manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 33554431 },
+      },
+    });
+    happySubmit();
+    caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    const keyB = String(mockSysRedis.incrBy.mock.calls[0][0]);
+
+    // Same per-user key for both blocks, and neither carries an appBlock id.
+    expect(keyA).toBe(keyB);
+    expect(keyA).not.toContain('ab_AAA');
+    expect(keyB).not.toContain('ab_BBB');
+  });
+
+  it('A7: refunds the reservation when the real submit throws (and propagates)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    mockSysRedis.incrBy.mockResolvedValue(125);
+    // whatif resolves; the REAL submit rejects.
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+      .mockRejectedValueOnce(new Error('orchestrator 500'));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(caller.submitWorkflow({ blockToken: 'tok', body: validBody() })).rejects.toThrow(
+      'orchestrator 500'
+    );
+    // The reservation must be refunded since no submit resolved.
+    expect(mockSysRedis.decrBy).toHaveBeenCalledTimes(1);
+    const refundArgs = mockSysRedis.decrBy.mock.calls[0];
+    expect(String(refundArgs[0])).toContain('system:blocks:buzz-cap');
+    expect(refundArgs[1]).toBe(25);
+    // Key-pinning: refund targets the exact reserved key (see over-cap test).
+    expect(String(refundArgs[0])).toBe(String(mockSysRedis.incrBy.mock.calls[0][0]));
+  });
+
+  it('A7: keeps the reservation when submitWorkflow RESOLVES with a failed snapshot', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    mockSysRedis.incrBy.mockResolvedValue(125);
+    // whatif resolves; the REAL submit RESOLVES (no throw) with a failed-status
+    // snapshot. The old code recorded the spend after a resolved submit
+    // regardless of status, so we must KEEP the reservation here — no refund.
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+      .mockResolvedValueOnce({ id: 'wf_real', status: 'failed', cost: { total: 25 }, steps: [] });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect(result.snapshot.status).toBe('failed');
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+    // Resolved submit → reservation stands → no refund.
+    expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
   });
 
   it('rejects when the token has no buzzBudget claim', async () => {

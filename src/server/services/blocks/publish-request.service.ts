@@ -5,6 +5,7 @@ import {
   MAX_BUNDLE_SIZE_BYTES,
   MAX_FILES_IN_BUNDLE,
   MAX_FILE_SIZE_BYTES,
+  MAX_TOTAL_DECOMPRESSED_BYTES,
 } from '~/server/schema/blocks/publish-request.schema';
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
@@ -100,8 +101,7 @@ function stableJsonStringify(value: unknown): string {
   const keys = Object.keys(value as Record<string, unknown>).sort();
   return `{${keys
     .map(
-      (k) =>
-        `${JSON.stringify(k)}:${stableJsonStringify((value as Record<string, unknown>)[k])}`
+      (k) => `${JSON.stringify(k)}:${stableJsonStringify((value as Record<string, unknown>)[k])}`
     )
     .join(',')}}`;
 }
@@ -123,40 +123,127 @@ function summariseValue(value: unknown): unknown {
 }
 
 /**
- * Extract every file in the ZIP as { path, sha256, sizeBytes }. Validates
- * file-count, per-file size, and that block.manifest.json is present and
- * parseable. Returns the parsed manifest alongside the file map so the
- * caller doesn't re-scan the ZIP.
+ * Stream-decompress a single jszip entry to a Buffer while enforcing both
+ * a per-file cap AND a running global-budget cap. `entry.async('nodebuffer')`
+ * fully materialises the decompressed bytes BEFORE any length check runs, so a
+ * single entry that inflates to many GiB OOMs the pod before a post-hoc guard
+ * can fire. Streaming via `entry.nodeStream` lets us abort the instant either
+ * cap is breached, bounding resident memory to ~one per-file cap.
  *
- * Throws on: too many files, file too large, missing manifest, manifest
- * not valid JSON, directory-traversal paths.
+ * `remainingTotalBytes` is the caller's running global budget (total cap minus
+ * what earlier entries already consumed); the entry is rejected if its size
+ * passes that too, which is the aggregate zip-bomb defense.
+ *
+ * Error messages preserve the existing per-file wording (`max <bytes>`) that a
+ * test asserts; the aggregate breach uses a distinct, clear message.
  */
-export async function extractBundleMetadata(bundleBuffer: Buffer): Promise<{
+function readZipEntryCapped(
+  entry: JSZip.JSZipObject,
+  opts: { maxFileSizeBytes: number; remainingTotalBytes: number; maxTotalBytes: number; path: string }
+): Promise<Buffer> {
+  const { maxFileSizeBytes, remainingTotalBytes, maxTotalBytes, path } = opts;
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let aborted = false;
+    // data events emit Buffer chunks for the 'nodebuffer' type.
+    const stream = entry.nodeStream('nodebuffer');
+    stream.on('data', (chunk: Buffer) => {
+      if (aborted) return; // ignore late chunks after a cap breach
+      size += chunk.length;
+      if (size > maxFileSizeBytes) {
+        aborted = true;
+        // pause() halts the jszip/pako worker via upstream backpressure; the
+        // `aborted` flag drops any already-in-flight chunk. We deliberately do
+        // NOT use destroy(): jszip's NodejsStreamOutputAdapter doesn't override
+        // _destroy, so destroy() only push(null)s — it does NOT stop the worker
+        // (it keeps inflating) and floods swallowed "push after EOF" errors.
+        // pause() is also the only one of the two declared on jszip's
+        // NodeJS.ReadableStream type, so destroy() fails the typecheck.
+        stream.pause();
+        reject(
+          new Error(
+            `bundle file ${path} is over ${maxFileSizeBytes} bytes (max ${maxFileSizeBytes})`
+          )
+        );
+        return;
+      }
+      if (size > remainingTotalBytes) {
+        aborted = true;
+        stream.pause();
+        reject(
+          new Error(
+            `bundle decompresses to more than ${maxTotalBytes} bytes (zip bomb?)`
+          )
+        );
+        return;
+      }
+      chunks.push(chunk);
+    });
+    stream.on('error', (err: Error) => {
+      if (aborted) return;
+      aborted = true;
+      reject(err);
+    });
+    stream.on('end', () => {
+      if (aborted) return;
+      resolve(Buffer.concat(chunks, size));
+    });
+  });
+}
+
+/**
+ * Extract every file in the ZIP as { path, sha256, sizeBytes }. Validates
+ * file-count, per-file size, the cumulative decompressed-byte ceiling, and
+ * that block.manifest.json is present and parseable. Returns the parsed
+ * manifest alongside the file map so the caller doesn't re-scan the ZIP.
+ *
+ * Each entry is decompressed via a streaming reader (readZipEntryCapped)
+ * that aborts the instant the per-file OR running-aggregate cap is exceeded,
+ * so a zip bomb can never be fully materialised in memory.
+ *
+ * Caps are injectable (opts) so unit tests can exercise the aggregate-abort
+ * path with tiny ZIPs; every existing call site passes just the buffer and
+ * inherits the schema-constant defaults.
+ *
+ * Throws on: too many files, file too large, cumulative decompressed size
+ * over cap, missing manifest, manifest not valid JSON.
+ */
+export async function extractBundleMetadata(
+  bundleBuffer: Buffer,
+  opts: { maxFiles?: number; maxFileSizeBytes?: number; maxTotalBytes?: number } = {}
+): Promise<{
   files: FileMeta[];
   manifest: unknown;
 }> {
+  const maxFiles = opts.maxFiles ?? MAX_FILES_IN_BUNDLE;
+  const maxFileSizeBytes = opts.maxFileSizeBytes ?? MAX_FILE_SIZE_BYTES;
+  const maxTotalBytes = opts.maxTotalBytes ?? MAX_TOTAL_DECOMPRESSED_BYTES;
+
   const zip = await JSZip.loadAsync(bundleBuffer);
   const entries = Object.entries(zip.files).filter(([, entry]) => !entry.dir);
   if (entries.length === 0) {
     throw new Error('bundle is empty (no files)');
   }
-  if (entries.length > MAX_FILES_IN_BUNDLE) {
-    throw new Error(`bundle contains ${entries.length} files (max ${MAX_FILES_IN_BUNDLE})`);
+  if (entries.length > maxFiles) {
+    throw new Error(`bundle contains ${entries.length} files (max ${maxFiles})`);
   }
 
   const files: FileMeta[] = [];
   let manifestRaw: string | null = null;
+  let totalBytes = 0;
 
   for (const [rawPath, entry] of entries) {
     // No filesystem-traversal guard needed: jszip normalises `..`
     // segments out of entry paths, and the approve flow uploads files
     // via the Forgejo content API (repo-relative paths, no fs writes).
-    const contents = await entry.async('nodebuffer');
-    if (contents.length > MAX_FILE_SIZE_BYTES) {
-      throw new Error(
-        `bundle file ${rawPath} is ${contents.length} bytes (max ${MAX_FILE_SIZE_BYTES})`
-      );
-    }
+    const contents = await readZipEntryCapped(entry, {
+      maxFileSizeBytes,
+      remainingTotalBytes: maxTotalBytes - totalBytes,
+      maxTotalBytes,
+      path: rawPath,
+    });
+    totalBytes += contents.length;
     files.push({
       path: rawPath,
       sha256: createHash('sha256').update(contents).digest('hex'),
@@ -238,10 +325,7 @@ export function computeManifestDiff(
       fields: Object.keys(currentManifest).sort(),
     };
   }
-  const allKeys = new Set([
-    ...Object.keys(currentManifest),
-    ...Object.keys(previousManifest),
-  ]);
+  const allKeys = new Set([...Object.keys(currentManifest), ...Object.keys(previousManifest)]);
   const added: string[] = [];
   const removed: string[] = [];
   const changed: Array<{ field: string; from: unknown; to: unknown }> = [];
@@ -388,9 +472,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const { bundleBuffer, submittedByUserId } = params;
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
-    throw new Error(
-      `bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`
-    );
+    throw new Error(`bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`);
   }
   if (bundleBuffer.length === 0) {
     throw new Error('bundle is empty');
@@ -411,7 +493,11 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   if (typeof manifest.blockId !== 'string') {
     throw new Error('manifest.blockId must be a string');
   }
-  if (manifest.blockId.length < 3 || manifest.blockId.length > 40 || !SLUG_REGEX.test(manifest.blockId)) {
+  if (
+    manifest.blockId.length < 3 ||
+    manifest.blockId.length > 40 ||
+    !SLUG_REGEX.test(manifest.blockId)
+  ) {
     throw new Error(
       `manifest.blockId "${manifest.blockId}" must be 3-40 chars, lowercase a-z/0-9/hyphens, start with a letter, end with a letter or digit`
     );
@@ -532,9 +618,21 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     const { commitFiles, ensureReviewRepo } = await import('./forgejo.service');
     const reviewZip = await JSZip.loadAsync(bundleBuffer);
     const reviewFiles: Array<{ path: string; content: Buffer }> = [];
+    // Defense-in-depth: this loop materialises every entry buffer into one
+    // in-memory array, so re-apply the same per-file + running-aggregate caps
+    // (the bundle was already validated by extractBundleMetadata above; this
+    // closes the gap if that's ever bypassed and bounds the resident bytes).
+    let reviewTotalBytes = 0;
     for (const [path, entry] of Object.entries(reviewZip.files)) {
       if (entry.dir) continue;
-      reviewFiles.push({ path, content: await entry.async('nodebuffer') });
+      const content = await readZipEntryCapped(entry, {
+        maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
+        remainingTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES - reviewTotalBytes,
+        maxTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES,
+        path,
+      });
+      reviewTotalBytes += content.length;
+      reviewFiles.push({ path, content });
     }
     await ensureReviewRepo(slug);
     await commitFiles({
@@ -693,9 +791,20 @@ async function fetchAndExtractBundleFiles(
 
   const zip = await JSZip.loadAsync(bundleBuffer);
   const out: Array<{ path: string; content: Buffer }> = [];
+  // Defense-in-depth: re-apply per-file + running-aggregate caps via the same
+  // streaming reader. This reads our own already-validated stored bundle so
+  // it's lower-risk, but it bounds the all-files-in-memory array all the same.
+  let totalBytes = 0;
   for (const [path, entry] of Object.entries(zip.files)) {
     if (entry.dir) continue;
-    out.push({ path, content: await entry.async('nodebuffer') });
+    const content = await readZipEntryCapped(entry, {
+      maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
+      remainingTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES - totalBytes,
+      maxTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES,
+      path,
+    });
+    totalBytes += content.length;
+    out.push({ path, content });
   }
   return out;
 }
@@ -860,23 +969,25 @@ export type ApproveRequestResult = {
  * Approve a pending publish request. End-to-end:
  *   1. (first version only) auto-create OauthClient owned by the submitter
  *   2. (first version only) create Forgejo repo from starter + webhook
- *   3. pre-insert app_blocks row (status='approved') so the downstream
- *      Forgejo webhook (existing git-push handler) finds it
+ *   3. pre-insert app_blocks row (status='approved')
  *   4. fetch bundle from MinIO, extract files
  *   5. commitFiles to Forgejo (single atomic commit, replaceAllFiles=true)
- *   6. update publish_request → status='approved'
+ *   6. stamp app_blocks.current_version_sha = the committed sha + finalise
+ *      publish_request → status='approved' (these are the moderator-approval
+ *      markers the git-push webhook keys its no-trust-on-push gate off)
+ *   7. trigger the Tekton build directly
  *
- * The Forgejo push webhook fires from step 5 and the existing git-push
- * handler takes over: validates manifest, updates app_blocks
- * (currentVersionSha), triggers Tekton build.
+ * NO TRUST ON PUSH: the git-push webhook fires from step 5 but no longer
+ * triggers builds. It only validates the manifest and either (a) no-ops
+ * because the sha matches the approval markers we just wrote, or (b) parks
+ * an unreviewed direct push as a pending review request. The deploy is owned
+ * entirely by this approve path (step 7).
  *
  * Partial-state risk: if step 5 fails after step 1-3 succeeded, the
  * OauthClient + app_blocks rows are orphaned. v0 surfaces this; v1
  * adds a compensation transaction.
  */
-export async function approveRequest(
-  params: ApproveRequestParams
-): Promise<ApproveRequestResult> {
+export async function approveRequest(params: ApproveRequestParams): Promise<ApproveRequestResult> {
   const [{ dbRead, dbWrite }, { newUlid }, { env }] = await Promise.all([
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
@@ -909,9 +1020,7 @@ export async function approveRequest(
   }
 
   const manifest = request.manifest as Record<string, unknown>;
-  const manifestScopes = Array.isArray(manifest.scopes)
-    ? (manifest.scopes as string[])
-    : [];
+  const manifestScopes = Array.isArray(manifest.scopes) ? (manifest.scopes as string[]) : [];
   const manifestContentRating =
     typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
   const manifestRenderMode =
@@ -995,8 +1104,8 @@ export async function approveRequest(
         // the ceiling we'll actually persist below (we re-cap allowedScopes to
         // the derived value on every approve — see the appBlock.update path).
         allowedScopes: derivedOauthCeiling,
-        allowedOrigins: (existingAppBlock!.app.allowedOrigins ?? []).map(
-          (o: string) => o.toLowerCase()
+        allowedOrigins: (existingAppBlock!.app.allowedOrigins ?? []).map((o: string) =>
+          o.toLowerCase()
         ),
       };
   const validation = BlockManifestValidator.validate(manifest, validationCtx);
@@ -1088,7 +1197,10 @@ export async function approveRequest(
       template: 'starter',
     });
     repoUrl = repo.html_url;
-    const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')}/api/internal/blocks/git-push`;
+    const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(
+      /\/$/,
+      ''
+    )}/api/internal/blocks/git-push`;
     await ensurePushWebhook({
       slug: request.slug,
       callbackUrl,
@@ -1148,8 +1260,8 @@ export async function approveRequest(
     appBlockId = existingAppBlock.id;
     repoUrl = existingAppBlock.repoUrl ?? '';
     // Subsequent version: refresh manifest + version + approvedScopes
-    // on the existing row. currentVersionSha is updated by the
-    // git-push webhook after the upcoming Forgejo commit.
+    // on the existing row. currentVersionSha is stamped in step (6) below,
+    // right after the Forgejo commit returns the approved sha.
     await dbWrite.appBlock.update({
       where: { id: appBlockId },
       data: {
@@ -1182,9 +1294,8 @@ export async function approveRequest(
     (f) => !isPlatformOwnedPath(f.path)
   );
 
-  // (5) Atomic single-commit replacement of the repo contents. Fires
-  // exactly one Forgejo webhook → one git-push handler invocation →
-  // one Tekton build → one apply Job.
+  // (5) Atomic single-commit replacement of the repo contents on
+  // civitai-apps/<slug>. This commit fires the git-push webhook.
   const commitMessage = `Approved publish request ${request.id} — ${request.slug} v${request.version}`;
   const { sha: forgejoCommitSha } = await commitFiles({
     slug: request.slug,
@@ -1193,7 +1304,17 @@ export async function approveRequest(
     replaceAllFiles: true,
   });
 
-  // (6) Finalise the publish request.
+  // (6) Stamp the approved sha onto the app_blocks row and finalise the
+  // publish request. These two writes are the durable proof that THIS sha
+  // went through moderator review — the git-push webhook keys its
+  // no-trust-on-push gate off `current_version_sha` (and, as a race backstop,
+  // an `approved` publish request with this `forgejoCommitSha`). Any push
+  // whose sha is NOT this approved one is treated as unreviewed and parked in
+  // the review queue instead of deploying.
+  await dbWrite.appBlock.update({
+    where: { id: appBlockId },
+    data: { currentVersionSha: forgejoCommitSha },
+  });
   await dbWrite.appBlockPublishRequest.update({
     where: { id: request.id },
     data: {
@@ -1205,6 +1326,55 @@ export async function approveRequest(
       appBlockId,
     },
   });
+
+  // (6b) Supersede any OTHER request still 'pending' for this slug. If the
+  // git-push webhook raced ahead of (6) it may have parked a duplicate
+  // pending-review row for THIS approved sha; withdraw it (and any older
+  // pending submission) so the queue reflects that the slug is now approved.
+  // Scoped to NOT touch the row we just approved.
+  await dbWrite.appBlockPublishRequest.updateMany({
+    where: { slug: request.slug, status: 'pending', NOT: { id: request.id } },
+    data: { status: 'withdrawn' },
+  });
+
+  // (7) Trigger the Tekton build directly from the moderator-approve path.
+  // This is the ONLY thing that may ship code to a live block — the webhook
+  // no longer triggers builds (no-trust-on-push). triggerBuild creates a
+  // PipelineRun named after the sha, which Tekton dedups, so a webhook
+  // re-delivery cannot double-build.
+  const { triggerBuild } = await import('./apps-pipeline.service');
+  const { setCommitStatus } = await import('./forgejo.service');
+  const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(
+    /\/$/,
+    ''
+  )}/api/internal/blocks/build-callback`;
+  try {
+    await setCommitStatus({
+      slug: request.slug,
+      sha: forgejoCommitSha,
+      state: 'pending',
+      context: 'civitai/build',
+      description: 'Build queued',
+    }).catch(() => undefined);
+    await triggerBuild({
+      slug: request.slug,
+      sha: forgejoCommitSha,
+      appBlockId,
+      callbackUrl,
+    });
+  } catch (err) {
+    await setCommitStatus({
+      slug: request.slug,
+      sha: forgejoCommitSha,
+      state: 'failure',
+      context: 'civitai/build',
+      description: `Trigger failed: ${String(err).slice(0, 80)}`,
+    }).catch(() => undefined);
+    throw new Error(
+      `approved + committed, but the build trigger failed: ${(err as Error).message}. ` +
+        `The new version will NOT deploy until the build is re-triggered (re-approve or re-push).`
+    );
+  }
 
   return {
     publishRequestId: request.id,
@@ -1284,7 +1454,10 @@ export async function backfillPublishRequest(
   for (let i = 0; i < entries.length; i += CONCURRENCY) {
     const batch = entries.slice(i, i + CONCURRENCY);
     const fetched = await Promise.all(
-      batch.map(async (e) => ({ path: e.path, content: await getBlobContent(params.slug, e.blobSha) }))
+      batch.map(async (e) => ({
+        path: e.path,
+        content: await getBlobContent(params.slug, e.blobSha),
+      }))
     );
     files.push(...fetched);
   }
@@ -1373,7 +1546,9 @@ export async function backfillPublishRequest(
       reviewedAt: new Date(),
       approvalNotes:
         params.approvalNotes ??
-        `Backfilled W1 migration from existing deployment at ${appBlock.currentVersionSha ?? '(unknown sha)'}`,
+        `Backfilled W1 migration from existing deployment at ${
+          appBlock.currentVersionSha ?? '(unknown sha)'
+        }`,
       forgejoCommitSha: appBlock.currentVersionSha ?? bundleSha256,
     },
   });

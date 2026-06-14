@@ -33,6 +33,7 @@ const {
   mockS3Send,
   mockBundleBuffer,
   mockForgejo,
+  mockTriggerBuild,
   mockUlidSeq,
   mockNewUlid,
 } = vi.hoisted(() => {
@@ -52,7 +53,10 @@ const {
       oauthClient: { findUnique: vi.fn() },
     },
     mockDbWrite: {
-      appBlockPublishRequest: { create: vi.fn(), update: vi.fn() },
+      // `updateMany` added (no-trust-on-push fix): approveRequest now supersedes
+      // any stray pending review request the git-push webhook may have parked for
+      // the slug while racing the approve commit.
+      appBlockPublishRequest: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
       appBlock: { create: vi.fn(), update: vi.fn() },
       // `update` added 2026-06-02 (audit A1 fix): approveRequest now re-caps
       // the app-block OauthClient's allowedScopes to the manifest-derived
@@ -70,8 +74,15 @@ const {
       getBlobContent: vi.fn(),
       getRepo: vi.fn(),
       ensureReviewRepo: vi.fn(),
+      // setCommitStatus added (no-trust-on-push fix): approveRequest now drives
+      // the build trigger itself + pends/marks the commit status.
+      setCommitStatus: vi.fn(),
       reviewRepoUrl: vi.fn((slug: string) => `https://forgejo.example/civitai-apps-review/${slug}`),
     },
+    // apps-pipeline.service.triggerBuild — approveRequest now triggers the
+    // Tekton build directly (the git-push webhook no longer does). Mocked so
+    // approve tests don't reach the real cross-cluster HTTP client.
+    mockTriggerBuild: vi.fn(async () => ({ name: 'pipelinerun-mock' })),
     mockUlidSeq: ulidSeq,
     mockNewUlid: vi.fn(() => {
       ulidSeq.i += 1;
@@ -96,6 +107,13 @@ vi.mock('~/utils/bundle-s3', () => ({
 // resolves the path relative to the IMPORTING module, so we mock the resolved
 // absolute id that the service sees.
 vi.mock('~/server/services/blocks/forgejo.service', () => mockForgejo);
+
+// approveRequest does `await import('./apps-pipeline.service')` to trigger the
+// Tekton build directly (no-trust-on-push: the git-push webhook no longer
+// triggers builds). Mock the resolved absolute id the service sees.
+vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
+  triggerBuild: mockTriggerBuild,
+}));
 
 vi.mock('~/server/utils/app-block-ids', () => ({
   newUlid: mockNewUlid,
@@ -164,7 +182,7 @@ async function makeValidBundle(over: Record<string, unknown> = {}): Promise<Buff
   return makeBundle({
     [MANIFEST_PATH]: JSON.stringify(manifest(over)),
     'index.html': '<!doctype html><html><body>hi</body></html>',
-    'Dockerfile': 'FROM node:20',
+    Dockerfile: 'FROM node:20',
   });
 }
 
@@ -193,6 +211,15 @@ beforeEach(() => {
   mockS3Send.mockReset();
   mockBundleBuffer.current = null;
   mockNewUlid.mockClear();
+
+  // Defaults for the no-trust-on-push surfaces approveRequest now drives.
+  // (The reset loop above strips implementations, so these would otherwise
+  // return undefined and break `await`/`.catch()` chains in the service.)
+  mockForgejo.setCommitStatus.mockResolvedValue(undefined);
+  mockTriggerBuild.mockClear();
+  mockTriggerBuild.mockResolvedValue({ name: 'pipelinerun-mock' });
+  mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
+  mockDbWrite.appBlock.update.mockResolvedValue(undefined);
 
   // Default: no pending conflict, no existing app block, user lookup OK.
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
@@ -357,9 +384,9 @@ describe('submitVersion', () => {
   it('rejects when iframe.src is missing', async () => {
     const { submitVersion } = await import('../publish-request.service');
     const buf = await makeValidBundle({ iframe: { minHeight: 300 } });
-    await expect(
-      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
-    ).rejects.toThrow(/manifest\.iframe\.src must be a string/);
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
+      /manifest\.iframe\.src must be a string/
+    );
   });
 
   it('rejects HTTP iframe.src as mixed content', async () => {
@@ -367,9 +394,9 @@ describe('submitVersion', () => {
     const buf = await makeValidBundle({
       iframe: { src: 'http://hello.civit.ai/', minHeight: 300 },
     });
-    await expect(
-      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
-    ).rejects.toThrow(/must use https.*mixed content/i);
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
+      /must use https.*mixed content/i
+    );
   });
 
   it('rejects malformed iframe.src URL', async () => {
@@ -377,19 +404,19 @@ describe('submitVersion', () => {
     const buf = await makeValidBundle({
       iframe: { src: 'not a url', minHeight: 300 },
     });
-    await expect(
-      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
-    ).rejects.toThrow(/is not a valid URL/);
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
+      /is not a valid URL/
+    );
   });
 
-  it('rejects iframe.src hostname that doesn\'t match the per-app subdomain', async () => {
+  it("rejects iframe.src hostname that doesn't match the per-app subdomain", async () => {
     const { submitVersion } = await import('../publish-request.service');
     const buf = await makeValidBundle({
       iframe: { src: 'https://attacker.example/', minHeight: 300 },
     });
-    await expect(
-      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
-    ).rejects.toThrow(/host must be "hello\.civit\.ai"/);
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
+      /host must be "hello\.civit\.ai"/
+    );
   });
 
   it('rejects leftover hackathon block-host URL pattern', async () => {
@@ -403,9 +430,9 @@ describe('submitVersion', () => {
         minHeight: 300,
       },
     });
-    await expect(
-      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
-    ).rejects.toThrow(/host must be "hello\.civit\.ai"/);
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
+      /host must be "hello\.civit\.ai"/
+    );
   });
 
   it('rejects iframe.src with a non-root pathname', async () => {
@@ -416,9 +443,9 @@ describe('submitVersion', () => {
     const buf = await makeValidBundle({
       iframe: { src: 'https://hello.civit.ai/hello/', minHeight: 300 },
     });
-    await expect(
-      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
-    ).rejects.toThrow(/must point at the subdomain root.*pathname "\/hello\/"/);
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
+      /must point at the subdomain root.*pathname "\/hello\/"/
+    );
   });
 
   it('accepts the canonical iframe.src shape (https + matching subdomain + root path)', async () => {
@@ -535,7 +562,7 @@ describe('submitVersion', () => {
 
   it('Discord notify is invoked with the right shape on submission', async () => {
     const { submitVersion } = await import('../publish-request.service');
-    const fetchSpy = vi.fn(async () => ({ ok: true, status: 200 }) as Response);
+    const fetchSpy = vi.fn(async () => ({ ok: true, status: 200 } as Response));
     vi.stubGlobal('fetch', fetchSpy);
 
     const buf = await makeValidBundle();
@@ -608,9 +635,9 @@ describe('withdrawRequest', () => {
       status: 'pending',
       submittedByUserId: 1,
     });
-    await expect(
-      withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })
-    ).rejects.toThrow(/can only withdraw your own/);
+    await expect(withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })).rejects.toThrow(
+      /can only withdraw your own/
+    );
   });
 
   it('throws for already-approved', async () => {
@@ -620,9 +647,9 @@ describe('withdrawRequest', () => {
       status: 'approved',
       submittedByUserId: 42,
     });
-    await expect(
-      withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })
-    ).rejects.toThrow(/cannot withdraw a request in status approved/);
+    await expect(withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })).rejects.toThrow(
+      /cannot withdraw a request in status approved/
+    );
   });
 
   it('throws for already-rejected', async () => {
@@ -632,17 +659,17 @@ describe('withdrawRequest', () => {
       status: 'rejected',
       submittedByUserId: 42,
     });
-    await expect(
-      withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })
-    ).rejects.toThrow(/cannot withdraw a request in status rejected/);
+    await expect(withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })).rejects.toThrow(
+      /cannot withdraw a request in status rejected/
+    );
   });
 
   it('throws when the request is not found', async () => {
     const { withdrawRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(null);
-    await expect(
-      withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })
-    ).rejects.toThrow(/not found/);
+    await expect(withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })).rejects.toThrow(
+      /not found/
+    );
   });
 
   // H-2 regression — withdraw does NOT delete the S3 bundle. Long-tail
@@ -869,9 +896,7 @@ describe('listApprovedRequests', () => {
 
   it('attaches reviewRepoUrl per row so the read-only modal can link to Forgejo', async () => {
     const { listApprovedRequests } = await import('../publish-request.service');
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
-      row({ slug: 'hello-world' }),
-    ]);
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([row({ slug: 'hello-world' })]);
     const result = await listApprovedRequests({});
     expect(result.items[0].reviewRepoUrl).toBe(
       'https://forgejo.example/civitai-apps-review/hello-world'
@@ -962,9 +987,7 @@ describe('listRejectedRequests', () => {
 
   it('attaches reviewRepoUrl per row so the read-only modal can link to Forgejo', async () => {
     const { listRejectedRequests } = await import('../publish-request.service');
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
-      row({ slug: 'spammy' }),
-    ]);
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([row({ slug: 'spammy' })]);
     const result = await listRejectedRequests({});
     expect(result.items[0].reviewRepoUrl).toBe(
       'https://forgejo.example/civitai-apps-review/spammy'
@@ -1027,6 +1050,26 @@ describe('approveRequest', () => {
     expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
     expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
     expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledOnce();
+
+    // no-trust-on-push: the FIRST DEPLOY is unaffected, but the build is now
+    // triggered by approveRequest itself (the git-push webhook no longer
+    // triggers builds). The committed sha is stamped onto current_version_sha
+    // (the webhook's approval marker) and the Tekton build is kicked.
+    expect(mockDbWrite.appBlock.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { currentVersionSha: 'commit_sha_abc' } })
+    );
+    expect(mockTriggerBuild).toHaveBeenCalledTimes(1);
+    expect(mockTriggerBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'hello', sha: 'commit_sha_abc' })
+    );
+    // Any stray pending review request the webhook may have parked for the slug
+    // while racing this approve is superseded (withdrawn).
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ slug: 'hello', status: 'pending' }),
+        data: { status: 'withdrawn' },
+      })
+    );
 
     // OauthClient gets the slug-scoped allowedOrigins + a deterministic id
     // (post C-2 fix). The deterministic id is what makes retries idempotent.
@@ -1114,8 +1157,23 @@ describe('approveRequest', () => {
     expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
     expect(mockForgejo.createRepoFromTemplate).not.toHaveBeenCalled();
     expect(mockForgejo.ensurePushWebhook).not.toHaveBeenCalled();
-    expect(mockDbWrite.appBlock.update).toHaveBeenCalledOnce();
+    // Two appBlock.update calls now: (1) refresh manifest/version/scopes, then
+    // (2) stamp current_version_sha = the committed sha (no-trust-on-push: this
+    // is the moderator-approval marker the git-push webhook keys its gate off).
+    expect(mockDbWrite.appBlock.update).toHaveBeenCalledTimes(2);
+    const shaStamp = mockDbWrite.appBlock.update.mock.calls.find(
+      (c: any[]) => c[0]?.data?.currentVersionSha !== undefined
+    );
+    expect(shaStamp?.[0]).toMatchObject({
+      where: { id: 'apb_existing' },
+      data: { currentVersionSha: 'commit_sha_abc' },
+    });
     expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
+    // approveRequest now triggers the Tekton build itself (the webhook no
+    // longer does) with the committed sha + the existing app block id.
+    expect(mockTriggerBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'hello', sha: 'commit_sha_abc', appBlockId: 'apb_existing' })
+    );
 
     // A1 fix: the existing OauthClient's ceiling is re-capped to the derived
     // bitmask + forced to grants:[] on every subsequent approve — self-heals
@@ -1134,7 +1192,9 @@ describe('approveRequest', () => {
     const { approveRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);
-    mockForgejo.createRepoFromTemplate.mockRejectedValue(new Error('Forgejo 500 Internal Server Error'));
+    mockForgejo.createRepoFromTemplate.mockRejectedValue(
+      new Error('Forgejo 500 Internal Server Error')
+    );
 
     await expect(
       approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
@@ -1337,10 +1397,21 @@ describe('approveRequest', () => {
 
     expect(result.isFirstVersion).toBe(true);
     expect(result.appBlockId).toBe('apb_collision');
-    // The recovery path refreshes the existing AppBlock's manifest so the
-    // row converges to the new content.
-    expect(mockDbWrite.appBlock.update).toHaveBeenCalledOnce();
+    // Two appBlock.update calls: (1) the P2002 recovery path refreshes the
+    // existing AppBlock's manifest so the row converges to the new content,
+    // then (2) step 6 stamps current_version_sha = the committed sha.
+    expect(mockDbWrite.appBlock.update).toHaveBeenCalledTimes(2);
+    const shaStamp = mockDbWrite.appBlock.update.mock.calls.find(
+      (c: any[]) => c[0]?.data?.currentVersionSha !== undefined
+    );
+    expect(shaStamp?.[0]).toMatchObject({
+      where: { id: 'apb_collision' },
+      data: { currentVersionSha: 'commit_sha_abc' },
+    });
     expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
+    expect(mockTriggerBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ sha: 'commit_sha_abc', appBlockId: 'apb_collision' })
+    );
   });
 
   // C-2 fix verification — non-P2002 errors are NOT swallowed. If the
@@ -1586,9 +1657,7 @@ describe('backfillPublishRequest', () => {
       appBlockId: 'apb_existing',
       bundleSizeBytes: 12345n,
     });
-    mockForgejo.listRepoTree.mockResolvedValue(
-      new Map([['block.manifest.json', 'blob1']])
-    );
+    mockForgejo.listRepoTree.mockResolvedValue(new Map([['block.manifest.json', 'blob1']]));
     mockForgejo.getBlobContent.mockResolvedValue(Buffer.from(JSON.stringify(manifest())));
 
     const result = await backfillPublishRequest({
@@ -1603,9 +1672,9 @@ describe('backfillPublishRequest', () => {
   it('throws when the AppBlock row is missing', async () => {
     const { backfillPublishRequest } = await import('../publish-request.service');
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);
-    await expect(
-      backfillPublishRequest({ slug: 'hello', reviewerUserId: 999 })
-    ).rejects.toThrow(/nothing to backfill/);
+    await expect(backfillPublishRequest({ slug: 'hello', reviewerUserId: 999 })).rejects.toThrow(
+      /nothing to backfill/
+    );
   });
 
   // M-4 regression — empty Forgejo repo throws the opaque "bundle is empty"
@@ -1624,8 +1693,8 @@ describe('backfillPublishRequest', () => {
     mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
     mockForgejo.listRepoTree.mockResolvedValue(new Map());
 
-    await expect(
-      backfillPublishRequest({ slug: 'hello', reviewerUserId: 999 })
-    ).rejects.toThrow(/empty/);
+    await expect(backfillPublishRequest({ slug: 'hello', reviewerUserId: 999 })).rejects.toThrow(
+      /empty/
+    );
   });
 });

@@ -209,18 +209,45 @@ describe('POST /api/v1/block-tokens', () => {
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
-  it('H-2: returns 503 when the appBlocks flag is off', async () => {
-    const flagMod = await import('~/server/services/app-blocks-flag');
-    (flagMod.isAppBlocksEnabled as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      false
-    );
+  it('H2: refused (403) when appBlocks is unavailable to the caller — the PER-USER gate is authoritative', async () => {
+    // H2 fix: the route's App Blocks gate is now the per-user
+    // `getFeatureFlags({ user }).appBlocks` check, NOT a global
+    // `isAppBlocksEnabled()` pre-check (which 503'd everyone, incl. mods, because
+    // the global eval can't match the `moderators` segment). A caller for whom
+    // appBlocks is unavailable (here: anon / non-mod via the mock) is refused
+    // with 403 before any resolve/sign — and the now-removed global pre-check is
+    // not consulted.
+    const flagMod = await import('~/server/services/feature-flags.service');
+    (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      appBlocks: false,
+    });
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const req = makeReq({ origin: 'https://civitai.com', body: validBody() });
     const res = makeRes();
     await handler(req, res);
-    expect(res._status).toBe(503);
+    expect(res._status).toBe(403);
     expect(mockTokenService.sign).not.toHaveBeenCalled();
     expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
+  });
+
+  it('H2: a MODERATOR is granted the feature server-side (per-user gate ON) — mod canary works', async () => {
+    // The crux of the H2 fix: with the mod-segmented flag, a moderator must be
+    // able to mint server-side. getFeatureFlags resolves appBlocks:true for a
+    // mod (the mock mirrors the live flag). The handler then proceeds past the
+    // gate (it may still fail downstream on resolveBlockInstance, but it must
+    // NOT 403/503 at the flag gate).
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const req = makeReq({ origin: 'https://civitai.com', body: validBody() });
+    const res = makeRes();
+    await handler(req, res);
+    // Not refused at the flag gate (403 'not available' / 503 'not enabled').
+    expect(res._status).not.toBe(503);
+    if (res._status === 403) {
+      expect((res._body as { error: string }).error).not.toMatch(/not available/i);
+    }
+    // The per-user gate let it through to the resolve step.
+    expect(mockBlockRegistry.resolveBlockInstance).toHaveBeenCalled();
   });
 
   it('H1: rejects cross-origin requests via exact-host match (no startsWith bypass)', async () => {

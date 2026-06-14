@@ -18,7 +18,14 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * handler body.
  */
 
-const { mockSession, mockEnv, mockIsAppBlocksEnabled, mockSubmitVersion } = vi.hoisted(() => ({
+const {
+  mockSession,
+  mockEnv,
+  mockOther,
+  mockIsAllowedOrigin,
+  mockIsAppBlocksEnabled,
+  mockSubmitVersion,
+} = vi.hoisted(() => ({
   mockSession: {
     value: null as { user: { id: number; isModerator?: boolean; bannedAt: Date | null } } | null,
   },
@@ -26,11 +33,22 @@ const { mockSession, mockEnv, mockIsAppBlocksEnabled, mockSubmitVersion } = vi.h
     BUNDLE_S3_ENDPOINT?: string;
     BUNDLE_S3_BUCKET?: string;
   },
+  // Toggle the isProd branch of the CSRF guard per-test.
+  mockOther: { isProd: false },
+  mockIsAllowedOrigin: vi.fn<(req: unknown) => boolean>(() => true),
   mockIsAppBlocksEnabled: vi.fn<() => Promise<boolean>>(async () => true),
   mockSubmitVersion: vi.fn<(...args: any[]) => Promise<any>>(),
 }));
 
 vi.mock('~/env/server', () => ({ env: mockEnv }));
+vi.mock('~/env/other', () => ({
+  get isProd() {
+    return mockOther.isProd;
+  },
+}));
+vi.mock('~/server/utils/origin-helpers', () => ({
+  isAllowedOriginRequest: mockIsAllowedOrigin,
+}));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
 }));
@@ -108,6 +126,8 @@ describe('POST /api/blocks/submit-version', () => {
     mockSession.value = MOD;
     mockEnv.BUNDLE_S3_ENDPOINT = 'https://s3.example';
     mockEnv.BUNDLE_S3_BUCKET = 'bundles';
+    mockOther.isProd = false;
+    mockIsAllowedOrigin.mockReturnValue(true);
     mockIsAppBlocksEnabled.mockResolvedValue(true);
     mockSubmitVersion.mockReset();
     mockSubmitVersion.mockResolvedValue(SERVICE_RESULT);
@@ -150,6 +170,25 @@ describe('POST /api/blocks/submit-version', () => {
     await invoke(makeReq({ body: { bundleBase64 } }), res);
     expect(res._status).toBe(503);
     expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('403s a prod cross-origin POST and does not call the service (CSRF guard)', async () => {
+    mockOther.isProd = true;
+    mockIsAllowedOrigin.mockReturnValue(false);
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(403);
+    expect(res._body).toEqual({ message: 'Cross-origin request blocked' });
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('lets a prod same-origin POST through to the service (CSRF guard)', async () => {
+    mockOther.isProd = true;
+    mockIsAllowedOrigin.mockReturnValue(true);
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(200);
+    expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
   });
 
   it('412s when bundle storage is not configured', async () => {

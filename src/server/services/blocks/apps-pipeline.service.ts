@@ -103,11 +103,19 @@ export async function triggerBuild(args: TriggerBuildArgs): Promise<{ name: stri
     throw new Error('APPS_TEKTON_TRIGGER_URL / APPS_TEKTON_TRIGGER_SECRET not configured');
   }
 
+  // F5 — replay-protection timestamp. Integer unix-epoch SECONDS, placed INSIDE
+  // the JSON body BEFORE the HMAC so it is covered by the signature and sent
+  // verbatim. The app-blocks-trigger receiver on talos ALREADY validates
+  // |now-ts| <= 300 ENFORCE-IF-PRESENT (app-blocks-trigger.py TS_SKEW_SECONDS),
+  // so adding it here activates that already-live (currently inert) check. Must
+  // match the receiver's contract exactly: field name `ts`, integer seconds.
+  const ts = Math.floor(Date.now() / 1000);
   const body = JSON.stringify({
     slug: args.slug,
     sha: args.sha,
     appBlockId: args.appBlockId,
     callbackUrl: args.callbackUrl,
+    ts,
   });
   const sig = createHmac('sha256', secret).update(body).digest('hex');
 
