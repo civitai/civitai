@@ -5,6 +5,7 @@ import {
   MAX_BUNDLE_SIZE_BYTES,
   MAX_FILES_IN_BUNDLE,
   MAX_FILE_SIZE_BYTES,
+  MAX_TOTAL_DECOMPRESSED_BYTES,
 } from '~/server/schema/blocks/publish-request.schema';
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
@@ -122,40 +123,127 @@ function summariseValue(value: unknown): unknown {
 }
 
 /**
- * Extract every file in the ZIP as { path, sha256, sizeBytes }. Validates
- * file-count, per-file size, and that block.manifest.json is present and
- * parseable. Returns the parsed manifest alongside the file map so the
- * caller doesn't re-scan the ZIP.
+ * Stream-decompress a single jszip entry to a Buffer while enforcing both
+ * a per-file cap AND a running global-budget cap. `entry.async('nodebuffer')`
+ * fully materialises the decompressed bytes BEFORE any length check runs, so a
+ * single entry that inflates to many GiB OOMs the pod before a post-hoc guard
+ * can fire. Streaming via `entry.nodeStream` lets us abort the instant either
+ * cap is breached, bounding resident memory to ~one per-file cap.
  *
- * Throws on: too many files, file too large, missing manifest, manifest
- * not valid JSON, directory-traversal paths.
+ * `remainingTotalBytes` is the caller's running global budget (total cap minus
+ * what earlier entries already consumed); the entry is rejected if its size
+ * passes that too, which is the aggregate zip-bomb defense.
+ *
+ * Error messages preserve the existing per-file wording (`max <bytes>`) that a
+ * test asserts; the aggregate breach uses a distinct, clear message.
  */
-export async function extractBundleMetadata(bundleBuffer: Buffer): Promise<{
+function readZipEntryCapped(
+  entry: JSZip.JSZipObject,
+  opts: { maxFileSizeBytes: number; remainingTotalBytes: number; maxTotalBytes: number; path: string }
+): Promise<Buffer> {
+  const { maxFileSizeBytes, remainingTotalBytes, maxTotalBytes, path } = opts;
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let aborted = false;
+    // data events emit Buffer chunks for the 'nodebuffer' type.
+    const stream = entry.nodeStream('nodebuffer');
+    stream.on('data', (chunk: Buffer) => {
+      if (aborted) return; // ignore late chunks after a cap breach
+      size += chunk.length;
+      if (size > maxFileSizeBytes) {
+        aborted = true;
+        // pause() halts the jszip/pako worker via upstream backpressure; the
+        // `aborted` flag drops any already-in-flight chunk. We deliberately do
+        // NOT use destroy(): jszip's NodejsStreamOutputAdapter doesn't override
+        // _destroy, so destroy() only push(null)s — it does NOT stop the worker
+        // (it keeps inflating) and floods swallowed "push after EOF" errors.
+        // pause() is also the only one of the two declared on jszip's
+        // NodeJS.ReadableStream type, so destroy() fails the typecheck.
+        stream.pause();
+        reject(
+          new Error(
+            `bundle file ${path} is over ${maxFileSizeBytes} bytes (max ${maxFileSizeBytes})`
+          )
+        );
+        return;
+      }
+      if (size > remainingTotalBytes) {
+        aborted = true;
+        stream.pause();
+        reject(
+          new Error(
+            `bundle decompresses to more than ${maxTotalBytes} bytes (zip bomb?)`
+          )
+        );
+        return;
+      }
+      chunks.push(chunk);
+    });
+    stream.on('error', (err: Error) => {
+      if (aborted) return;
+      aborted = true;
+      reject(err);
+    });
+    stream.on('end', () => {
+      if (aborted) return;
+      resolve(Buffer.concat(chunks, size));
+    });
+  });
+}
+
+/**
+ * Extract every file in the ZIP as { path, sha256, sizeBytes }. Validates
+ * file-count, per-file size, the cumulative decompressed-byte ceiling, and
+ * that block.manifest.json is present and parseable. Returns the parsed
+ * manifest alongside the file map so the caller doesn't re-scan the ZIP.
+ *
+ * Each entry is decompressed via a streaming reader (readZipEntryCapped)
+ * that aborts the instant the per-file OR running-aggregate cap is exceeded,
+ * so a zip bomb can never be fully materialised in memory.
+ *
+ * Caps are injectable (opts) so unit tests can exercise the aggregate-abort
+ * path with tiny ZIPs; every existing call site passes just the buffer and
+ * inherits the schema-constant defaults.
+ *
+ * Throws on: too many files, file too large, cumulative decompressed size
+ * over cap, missing manifest, manifest not valid JSON.
+ */
+export async function extractBundleMetadata(
+  bundleBuffer: Buffer,
+  opts: { maxFiles?: number; maxFileSizeBytes?: number; maxTotalBytes?: number } = {}
+): Promise<{
   files: FileMeta[];
   manifest: unknown;
 }> {
+  const maxFiles = opts.maxFiles ?? MAX_FILES_IN_BUNDLE;
+  const maxFileSizeBytes = opts.maxFileSizeBytes ?? MAX_FILE_SIZE_BYTES;
+  const maxTotalBytes = opts.maxTotalBytes ?? MAX_TOTAL_DECOMPRESSED_BYTES;
+
   const zip = await JSZip.loadAsync(bundleBuffer);
   const entries = Object.entries(zip.files).filter(([, entry]) => !entry.dir);
   if (entries.length === 0) {
     throw new Error('bundle is empty (no files)');
   }
-  if (entries.length > MAX_FILES_IN_BUNDLE) {
-    throw new Error(`bundle contains ${entries.length} files (max ${MAX_FILES_IN_BUNDLE})`);
+  if (entries.length > maxFiles) {
+    throw new Error(`bundle contains ${entries.length} files (max ${maxFiles})`);
   }
 
   const files: FileMeta[] = [];
   let manifestRaw: string | null = null;
+  let totalBytes = 0;
 
   for (const [rawPath, entry] of entries) {
     // No filesystem-traversal guard needed: jszip normalises `..`
     // segments out of entry paths, and the approve flow uploads files
     // via the Forgejo content API (repo-relative paths, no fs writes).
-    const contents = await entry.async('nodebuffer');
-    if (contents.length > MAX_FILE_SIZE_BYTES) {
-      throw new Error(
-        `bundle file ${rawPath} is ${contents.length} bytes (max ${MAX_FILE_SIZE_BYTES})`
-      );
-    }
+    const contents = await readZipEntryCapped(entry, {
+      maxFileSizeBytes,
+      remainingTotalBytes: maxTotalBytes - totalBytes,
+      maxTotalBytes,
+      path: rawPath,
+    });
+    totalBytes += contents.length;
     files.push({
       path: rawPath,
       sha256: createHash('sha256').update(contents).digest('hex'),
@@ -530,9 +618,21 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     const { commitFiles, ensureReviewRepo } = await import('./forgejo.service');
     const reviewZip = await JSZip.loadAsync(bundleBuffer);
     const reviewFiles: Array<{ path: string; content: Buffer }> = [];
+    // Defense-in-depth: this loop materialises every entry buffer into one
+    // in-memory array, so re-apply the same per-file + running-aggregate caps
+    // (the bundle was already validated by extractBundleMetadata above; this
+    // closes the gap if that's ever bypassed and bounds the resident bytes).
+    let reviewTotalBytes = 0;
     for (const [path, entry] of Object.entries(reviewZip.files)) {
       if (entry.dir) continue;
-      reviewFiles.push({ path, content: await entry.async('nodebuffer') });
+      const content = await readZipEntryCapped(entry, {
+        maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
+        remainingTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES - reviewTotalBytes,
+        maxTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES,
+        path,
+      });
+      reviewTotalBytes += content.length;
+      reviewFiles.push({ path, content });
     }
     await ensureReviewRepo(slug);
     await commitFiles({
@@ -691,9 +791,20 @@ async function fetchAndExtractBundleFiles(
 
   const zip = await JSZip.loadAsync(bundleBuffer);
   const out: Array<{ path: string; content: Buffer }> = [];
+  // Defense-in-depth: re-apply per-file + running-aggregate caps via the same
+  // streaming reader. This reads our own already-validated stored bundle so
+  // it's lower-risk, but it bounds the all-files-in-memory array all the same.
+  let totalBytes = 0;
   for (const [path, entry] of Object.entries(zip.files)) {
     if (entry.dir) continue;
-    out.push({ path, content: await entry.async('nodebuffer') });
+    const content = await readZipEntryCapped(entry, {
+      maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
+      remainingTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES - totalBytes,
+      maxTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES,
+      path,
+    });
+    totalBytes += content.length;
+    out.push({ path, content });
   }
   return out;
 }

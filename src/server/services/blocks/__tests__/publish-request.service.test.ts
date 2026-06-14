@@ -10,6 +10,7 @@ import {
   MAX_BUNDLE_SIZE_BYTES,
   MAX_FILES_IN_BUNDLE,
   MAX_FILE_SIZE_BYTES,
+  MAX_TOTAL_DECOMPRESSED_BYTES,
 } from '~/server/schema/blocks/publish-request.schema';
 
 /**
@@ -62,10 +63,7 @@ describe('computeFileDiff', () => {
 
   it('handles a mix of add/remove/change in one diff', () => {
     const prev = [makeFile('Dockerfile', '1'), makeFile('old.tsx', '2')];
-    const curr = [
-      makeFile('Dockerfile', '1-changed'),
-      makeFile('new.tsx', '3'),
-    ];
+    const curr = [makeFile('Dockerfile', '1-changed'), makeFile('new.tsx', '3')];
     const result = computeFileDiff(curr, prev);
     expect(result.added).toEqual(['new.tsx']);
     expect(result.removed).toEqual(['old.tsx']);
@@ -129,10 +127,10 @@ describe('computeManifestDiff', () => {
 
   it('detects deep object changes via stable hash (key order independence)', () => {
     const prev = { iframe: { src: 'a', minHeight: 200 } };
-    const curr = { iframe: { minHeight: 200, src: 'a' } };  // same content, different key order
+    const curr = { iframe: { minHeight: 200, src: 'a' } }; // same content, different key order
     const result = computeManifestDiff(curr, prev);
     if (result.kind !== 'update') throw new Error('expected update');
-    expect(result.changed).toEqual([]);  // semantically equal
+    expect(result.changed).toEqual([]); // semantically equal
   });
 
   it('detects deep object changes when content differs', () => {
@@ -183,7 +181,9 @@ describe('extractBundleMetadata', () => {
     const buf = await makeBundle({
       'index.html': '<!doctype html>',
     });
-    await expect(extractBundleMetadata(buf)).rejects.toThrow(/missing required file: block.manifest.json/);
+    await expect(extractBundleMetadata(buf)).rejects.toThrow(
+      /missing required file: block.manifest.json/
+    );
   });
 
   it('rejects an empty bundle', async () => {
@@ -223,12 +223,7 @@ describe('extractBundleMetadata', () => {
       'm.txt': 'm',
     });
     const { files } = await extractBundleMetadata(buf);
-    expect(files.map((f) => f.path)).toEqual([
-      'a.txt',
-      'block.manifest.json',
-      'm.txt',
-      'z.txt',
-    ]);
+    expect(files.map((f) => f.path)).toEqual(['a.txt', 'block.manifest.json', 'm.txt', 'z.txt']);
   });
 
   it('rejects when a single file exceeds 10 MiB cap', async () => {
@@ -278,11 +273,12 @@ describe('extractBundleMetadata', () => {
     expect(files.length).toBe(MAX_FILES_IN_BUNDLE);
   });
 
-  // H-1 lock-in — extractBundleMetadata does NOT track the cumulative
-  // extracted size, so a small ZIP with highly-compressible content can
-  // expand to ~10 MiB without tripping any guard. Flip when a total-size
-  // running counter lands in the service.
-  it('REGRESSION (H-1): does not guard against cumulative decompression expansion', async () => {
+  // H-1 fix — extractBundleMetadata NOW tracks the cumulative decompressed
+  // size and aborts the streaming read the instant a bundle's total exceeds
+  // the cap, so a small ZIP of highly-compressible content can no longer
+  // inflate past the running-aggregate ceiling. Uses an injected small cap so
+  // the test ZIP stays tiny while still exercising the aggregate-abort path.
+  it('guards against cumulative decompression expansion (H-1 fix)', async () => {
     // 5 MiB of zeroes per file, two files = ~10 MiB extracted.
     // Force DEFLATE so the compressed ZIP is much smaller than the
     // extracted total (default jszip behavior is STORE).
@@ -300,12 +296,45 @@ describe('extractBundleMetadata', () => {
     );
     // Compressed buffer is well under 1 MiB; extracted total is ~10 MiB.
     expect(buf.length).toBeLessThan(1 * 1024 * 1024);
-    const { files } = await extractBundleMetadata(buf);
+    // Inject a 6 MiB total cap: the two 5 MiB files sum past it, so the
+    // running-aggregate guard rejects the bundle instead of materialising it.
+    await expect(extractBundleMetadata(buf, { maxTotalBytes: 6 * 1024 * 1024 })).rejects.toThrow(
+      /zip bomb|decompress/i
+    );
+  });
+
+  it('aggregate cap boundary: total exactly at cap passes, one byte over rejects', async () => {
+    // Two 1 MiB zero-filled DEFLATE files = 2 MiB decompressed total. With a
+    // 2 MiB total cap the bundle is exactly at the ceiling and must pass; with
+    // a one-byte-smaller cap it must reject. The manifest's own bytes count
+    // toward the total, so cap = files + manifest length for the pass case.
+    const oneMiB = 1024 * 1024;
+    const manifestJson = '{"blockId":"x"}';
+    const filesTotal = 2 * oneMiB;
+    const exactCap = filesTotal + Buffer.byteLength(manifestJson);
+
+    async function makeZeroBundle(): Promise<Buffer> {
+      const zip = new JSZip();
+      zip.file('block.manifest.json', manifestJson);
+      zip.file('a.bin', Buffer.alloc(oneMiB, 0));
+      zip.file('b.bin', Buffer.alloc(oneMiB, 0));
+      return Buffer.from(
+        await zip.generateAsync({
+          type: 'nodebuffer',
+          compression: 'DEFLATE',
+          compressionOptions: { level: 9 },
+        })
+      );
+    }
+
+    const buf = await makeZeroBundle();
+    // Exactly at the cap: passes.
+    const { files } = await extractBundleMetadata(buf, { maxTotalBytes: exactCap });
     expect(files.length).toBe(3);
-    // No total-size guard exists today; extraction succeeded despite the
-    // 10:1+ inflation ratio across the bundle.
-    const total = files.reduce((s, f) => s + f.sizeBytes, 0);
-    expect(total).toBeGreaterThan(buf.length * 10);
+    // One byte under the needed budget: rejects.
+    await expect(extractBundleMetadata(buf, { maxTotalBytes: exactCap - 1 })).rejects.toThrow(
+      /zip bomb|decompress/i
+    );
   });
 });
 
@@ -321,6 +350,11 @@ describe('schema boundary caps', () => {
 
   it('MAX_FILE_SIZE_BYTES is 10 MiB', () => {
     expect(MAX_FILE_SIZE_BYTES).toBe(10 * 1024 * 1024);
+  });
+
+  it('MAX_TOTAL_DECOMPRESSED_BYTES is 200 MiB and is 4x the upload cap', () => {
+    expect(MAX_TOTAL_DECOMPRESSED_BYTES).toBe(200 * 1024 * 1024);
+    expect(MAX_TOTAL_DECOMPRESSED_BYTES).toBe(MAX_BUNDLE_SIZE_BYTES * 4);
   });
 
   // L-1 lock-in — the bundleBase64 zod cap formula is slightly over-permissive
