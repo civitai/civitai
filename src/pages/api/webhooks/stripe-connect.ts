@@ -32,7 +32,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const buf = await buffer(req);
     const rawPayload = buf.toString('utf8');
-    console.log(req.headers, req.env);
     const sig = req.headers['stripe-signature'];
     const webhookSecret = env.STRIPE_CONNECT_WEBHOOK_SECRET;
     let event: Stripe.Event;
