@@ -33,12 +33,16 @@ const BASE_URL = process.env.BASE_URL;
 const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https => __Secure- prefix
 const MAX_AGE_S = 30 * 24 * 60 * 60;
 
-// Representative authed routes. Kept small (3) so 5 runs x 3 routes stays inside
-// the build pool's time budget. All are reachable by ci-smoke-gold and are
-// present regardless of the preview's DB content (they don't depend on a
-// specific seeded entity). `/` = SSR home, `/models` = heavy list/feed,
-// `/generate` = client-heavy generator. Edit here to change what's measured.
-const ROUTES = ['/', '/models', '/generate'];
+// Representative authed routes (kept small so 5 runs x N routes stays inside the
+// build pool's time budget). All reachable by ci-smoke-gold. `/` = SSR home,
+// `/models` = heavy list/feed, `/generate` = client-heavy generator, and
+// `/models/4201` = a model DETAIL page (the highest-traffic entrypoint — search
+// /social land here). 4201 (Realistic Vision V6.0, a foundational SD1.5 base
+// model) is a deliberately stable pin: long-standing, SFW, present in prod AND
+// the weekly cnpg-cluster-dev clone, so it resolves on either DB profile. The
+// other 3 routes need no seeded entity; this one depends on 4201 existing — if
+// it's ever unpublished, swap for another evergreen base model. Edit to change.
+const ROUTES = ['/', '/models', '/generate', '/models/4201'];
 
 // ci-smoke-gold — must mirror tests/preview-fixtures.ts PREVIEW_USERS.gold.
 const GOLD = {
