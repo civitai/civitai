@@ -83,14 +83,38 @@ function safeEqualHex(a: string, b: string): boolean {
   return timingSafeEqual(A, B);
 }
 
-function verifyForgejoSignature(rawBody: Buffer, signatureHeader: unknown): boolean {
-  const secret = env.FORGEJO_WEBHOOK_SECRET;
-  if (!secret) return false;
+export function verifyForgejoSignature(rawBody: Buffer, signatureHeader: unknown): boolean {
+  // F6 — dual-secret HMAC rotation window. Accept a signature that matches
+  // EITHER the current secret OR an optional FORGEJO_WEBHOOK_SECRET_NEXT. To
+  // rotate with zero downtime: set _NEXT to the new secret, flip the Forgejo
+  // signer to the new secret, then move the new value into FORGEJO_WEBHOOK_SECRET
+  // and clear _NEXT. When _NEXT is unset this is byte-identical to the prior
+  // single-secret behaviour (fail-closed: no secret configured → false).
+  //
+  // This is the civitai-web leg of the three-secret zero-downtime rotation; the
+  // app-blocks-trigger receiver already dual-accepts APPS_TEKTON_TRIGGER_SECRET
+  // + _NEXT on the talos side (see HMAC-SECRET-ROTATION.md). Mirrors the
+  // BLOCK_TOKEN_PUBLIC_KEY_NEXT precedent in block-token.service.ts.
   if (typeof signatureHeader !== 'string' || signatureHeader.length === 0) return false;
-  const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
   // Forgejo sends the header bare (no `sha256=` prefix); be tolerant either way.
   const provided = signatureHeader.replace(/^sha256=/, '');
-  return safeEqualHex(provided, expected);
+
+  // Filter empty/undefined BEFORE createHmac so we never compute an empty-key
+  // HMAC (which would be a usable, attacker-known key). No secret set at all →
+  // reject (fail-closed).
+  const secrets = [env.FORGEJO_WEBHOOK_SECRET, env.FORGEJO_WEBHOOK_SECRET_NEXT].filter(
+    (s): s is string => typeof s === 'string' && s.length > 0
+  );
+  if (secrets.length === 0) return false;
+
+  // Compute every candidate comparison (no boolean short-circuit) so timing
+  // doesn't leak which secret — current vs NEXT — was the matching one.
+  let matched = false;
+  for (const secret of secrets) {
+    const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+    if (safeEqualHex(provided, expected)) matched = true;
+  }
+  return matched;
 }
 
 const SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
