@@ -1,9 +1,10 @@
-# App Blocks — GA Burndown Handoff (2026-06-13)
+# App Blocks — GA Burndown Handoff (updated 2026-06-14)
 
 Continuity doc for the App Blocks initiative. The **foundation is merged and live in
-production, fully dark**; this session burned down several GA-blockers. This doc captures
-what's done, what remains before GA (turning the flag on), the open decisions, and how to
-proceed next session.
+production, fully dark**. The 2026-06-13 session burned down the security GA-blockers; the
+2026-06-14 session closed the **three remaining code GA-blockers** (zip-bomb cap,
+submit-version CSRF, per-user buzz cap). This doc captures what's done, what remains before
+GA (turning the flag on), the open decisions, and how to proceed next session.
 
 **Companion docs:**
 - `docs/features/app-blocks-merge-audit-2026-06.md` — the canonical audit + GA-blocker list (read this).
@@ -22,6 +23,13 @@ proceed next session.
 | #2519 | **H2** — server/client flag-gate context unified (`buildFliptContext`) |
 | #2521 | `BLOCK_INIT` payload minimized to an allowlist; `viewer.status` dropped |
 | #2524 | `git-push` no longer auto-approves/deploys — gated behind moderator review |
+| #2528 | **ZIP zip-bomb cap** — streaming per-entry decompression + running aggregate ceiling |
+| #2529 | **submit-version CSRF** — shared same-origin allowlist applied to the raw route |
+| #2530 | **per-user buzz cap** — per-user-per-day aggregate via atomic reserve-and-refund |
+| #2532 | test-only typecheck fix (a pre-existing red `main` was failing every PR's preview) |
+
+All shipped in release **5.0.1830**. The three GA-blocker PRs are **code/Redis-only — no new DB
+migrations to hand-apply.**
 
 **Flag state (verified against live Flipt GitOps `civitai/flipt-state`):** `app-blocks-enabled`
 = base `enabled: false` + a `moderators` segment (`isModerator == "true"`). So the feature is
@@ -38,6 +46,33 @@ proceed next session.
   `approveRequest` (the moderator path). Unreviewed pushes become `pending` review (202).
 - Showcase + `BLOCK_INIT` no longer leak NSFW content/prompts/PII/moderation-state to the
   third-party iframe.
+- **Bundle ingest is OOM-safe:** `extractBundleMetadata` streams each ZIP entry
+  (`entry.nodeStream`) and aborts the moment a per-file (10 MiB) or running-aggregate
+  (`MAX_TOTAL_DECOMPRESSED_BYTES` = 200 MiB) cap is exceeded — resident memory is bounded to
+  ~one per-file cap regardless of compression ratio. Same helper guards the review-push and
+  approve-fetch loops.
+- **submit-version is CSRF-safe:** the raw `ModEndpoint` route (which bypasses tRPC's
+  same-origin check; prod cookie is `sameSite:'none'`) now calls the shared
+  `isAllowedOriginRequest` and 403s cross-origin POSTs in prod.
+- **Buzz cap is a per-USER-per-day aggregate** (not per-`(user, app_block)`), enforced by an
+  atomic INCRBY reservation at the gate with a DECRBY refund on over-cap / pre-resolve throw.
+  Closes both the N-blocks × cap multiplication and the old read→record TOCTOU/under-count;
+  fails closed on Redis loss; a lost refund over-counts (stricter, safe). The refund is pinned
+  to the reserved key so a midnight-UTC rollover can't decrement the next day's key.
+
+---
+
+## GA-blockers — status
+
+**DONE this session (merged, deployed dark):**
+- ✅ **ZIP zip-bomb cap** (#2528).
+- ✅ **submit-version CSRF** (#2529).
+- ✅ **per-user buzz cap** (#2530).
+
+**STILL OPEN before GA:**
+- **Money — do NOT wire payouts** until rate-card sign-off + `internalAppOwnerUserIds` is
+  populated. `mintPayoutForOwner` is a deliberate stub; keep it inert until then. The per-user
+  buzz cap (#2530) was the spend-side prerequisite and is now in place.
 
 ---
 
@@ -59,25 +94,26 @@ proceed next session.
 
 ---
 
-## Remaining GA-blockers (before turning the flag on)
-
-From `app-blocks-merge-audit-2026-06.md`, still open:
-
-- **MEDIUM — ZIP zip-bomb cap.** `publish-request.service.ts` fully decompresses each bundle
-  entry before size-checking (no aggregate cap): ~2000 × 10 MiB ⇒ ~20 GiB from a 50 MiB upload →
-  pod OOM. Mod-gated. Fix: running decompressed-byte ceiling. *(Recommended next.)*
-- **MEDIUM — `submit-version` CSRF.** Prod session cookie is `sameSite:'none'` and `ModEndpoint`
-  has no Origin check; Next.js parses urlencoded bodies, so a cross-site form POST with a tricked
-  mod's cookie can submit a bundle. Pre-existing app-wide `ModEndpoint` posture; fix with an
-  explicit same-origin/Origin check (ideally on `ModEndpoint`).
-- **MEDIUM — per-user buzz cap.** `BLOCK_BUZZ_CAP_PER_DAY` is per-`(user, app_block)` (N blocks ⇒
-  N× exposure) and the Redis counter under-counts on a blip. Make it a per-user aggregate.
-- **Money — do NOT wire payouts** until rate-card sign-off + `internalAppOwnerUserIds` is
-  populated. `mintPayoutForOwner` is a deliberate stub; keep it inert until then.
-
----
-
 ## Lower-priority / tracked follow-ups
+
+**New (from the #2528–2530 adversarial audits):**
+- **Wildcard-set zip-bomb (separate feature).** `src/server/services/wildcard-set-provisioning.service.ts:260`
+  uses `entry.async('uint8array')` on user-uploaded ZIPs; it's only mitigated by an
+  announced-uncompressed-size pre-sum cap, which trusts the attacker-controlled ZIP central
+  directory (a lying entry can still OOM). Apply the same streaming-cap pattern as #2528. Lower
+  risk than App Blocks was, but real.
+- **Other cookie-auth POST routes still bypass the CSRF check.** #2529 was deliberately
+  route-scoped. Other state-changing `ModEndpoint`/`AuthedEndpoint` POST/PUT routes that bypass
+  `createContext`'s same-origin check include (HTTP method verified): `mod/set-image-nsfw-level`,
+  `mod/csam-upload`, `mod/clavata-image-process`, `mod/scanner-policies/export-dataset`,
+  `mod/new-order/rate-limit-config` (PUT), `admin/manage-sanity-checks`,
+  `admin/temp/membership-buzz-backfill`. One-place fix: add
+  `if (isProd && !isAllowedOriginRequest(req)) return 403` to `ModEndpoint`/`AuthedEndpoint` in
+  `endpoint-helpers.ts` with a bearer/API-key exemption mirroring `createContext`. (GET-with-
+  side-effects routes like `auth/impersonate` are a separate, non-Origin-allowlist concern.)
+- **Buzz-cap LOWs (non-blocking):** the over-cap error's "already spent" value can momentarily
+  overstate under concurrency (display only); `decrBy` lacks the templated-key typing `incrBy`
+  has (cosmetic).
 
 **Showcase LOWs (fail-safe):**
 - `take:50`-then-JS-filter starvation: a SFW viewer can get an under-filled showcase on an
@@ -104,7 +140,7 @@ From `app-blocks-merge-audit-2026-06.md`, still open:
 1. Run the **`kill_per_model_installs` migration pre-flight per environment** (the join-count must
    be 0 — query is in the audit doc) and confirm all app-blocks migrations are applied.
 2. Resolve **Decision 1 (pipeline gate)** and **Decision 2 (git-push update path)**.
-3. Close the **MEDIUM GA-blockers** above.
+3. ~~Close the MEDIUM GA-blockers~~ — **done** (#2528/#2529/#2530).
 4. Keep payouts inert until rate-card sign-off.
 5. Configure the Flipt rollout deliberately (mod-segment → wider) — remember a *global* `enabled:
    true` exposes everyone (the H1 risk); widen via segments.
@@ -113,16 +149,31 @@ From `app-blocks-merge-audit-2026-06.md`, still open:
 
 ## How to proceed next session
 
-- **Next GA-blocker: ZIP zip-bomb cap**, then `submit-version` CSRF, then per-user buzz cap.
-- **Working pattern that converged well this session:** dispatch a subagent with
-  `isolation: "worktree"` to implement (PR + tests), then dispatch read-only audit subagent(s)
-  for *risks/regressions/leaks/second-order*; iterate until the audit converges (it took 2–4
-  passes on the gnarly ones, e.g. the build-callback replay guard). Verify subagent claims
-  directly — several were wrong on first pass (e.g. a flag-eval that "worked" only by luck, a
-  redis return-value misread). Run tests via a `node_modules` symlink in the worktree
-  (`ln -s /home/zach/workspace/civit/civitai/node_modules ./node_modules`); full `tsc` is
-  unreliable in worktrees (stale Prisma) — CI is authoritative.
-- Each PR: `gh pr create --base main`, stack independently on `main`.
+- **The code GA-blocker queue is clear.** Remaining GA work is the **open decisions** (pipeline
+  gate, git-push update path), the **payout/rate-card** sign-off, and the **flag rollout** itself
+  — these are product/eng calls, not code tasks. The lower-priority follow-ups above are
+  opportunistic.
+- **Working pattern that converged well:** dispatch a subagent with `isolation: "worktree"` to
+  implement (PR + tests), then dispatch read-only audit subagent(s) for
+  *risks/regressions/leaks/second-order*; iterate until the audit converges. **Run a SECOND
+  audit round against the post-fix state** — this session's 2nd round caught a regression a fix
+  had introduced (a `stream.destroy()` "polish" that failed CI typecheck and didn't even work,
+  reverted to `pause()`).
+- **Verify subagent claims directly — several were wrong on first pass** (a flag-eval that
+  "worked" only by luck; a redis return-value misread; an audit citing a GET-only route as a
+  POST-CSRF hole; an audit citing the wrong file path for a real finding).
+- **Tests in a worktree:** `ln -s /home/zach/workspace/civit/civitai/node_modules ./node_modules`,
+  then run the single target file. Full `tsc` in a worktree is noisy (stale Prisma client in
+  unrelated files) — but you CAN validate a specific file with
+  `npx tsc --noEmit -p tsconfig.json 2>&1 | grep <file>` (the stale-Prisma errors are in OTHER
+  files; CI generates a fresh client). **Do not trust vitest-green alone** — esbuild strips
+  types, so a real type error (e.g. a method not on the declared interface) passes vitest but
+  fails CI's `tsc`. CI is authoritative.
+- **If PR previews fail across unrelated PRs, suspect a red `main` first:** the Tekton
+  `preview / deploy` is gated on Type Check, so one pre-existing typecheck error on `main` fails
+  EVERY PR's preview. `gh pr checks <pr>` → look at Type Check before assuming it's your change.
+- **No stacked PRs** (see CLAUDE.md): base every PR directly on `main`; if a change depends on an
+  unmerged fix, wait for it to merge then merge `main` in (or fold into one PR).
 
 ## Key files
 - **Flag gates:** `src/server/services/app-blocks-flag.ts`, `feature-flags.service.ts`
@@ -131,7 +182,8 @@ From `app-blocks-merge-audit-2026-06.md`, still open:
 - **Iframe payload:** `src/components/AppBlocks/IframeHost.tsx`, `projectBlockInit.ts`.
 - **Publish/build pipeline:** `src/pages/api/internal/blocks/{git-push,build-callback,workflow-completed}.ts`,
   `src/server/services/blocks/{publish-request,apps-pipeline,forgejo}.service.ts`.
-- **Bundle upload:** `src/pages/api/blocks/submit-version.ts`.
+- **Bundle upload + CSRF:** `src/pages/api/blocks/submit-version.ts`, `src/server/utils/origin-helpers.ts`
+  (shared same-origin allowlist, used by `createContext` and the route).
 - **Buzz/money:** `src/server/services/blocks/buzz-attribution.service.ts`, `rate-card.ts`,
-  `blocks.router.ts` (`BLOCK_BUZZ_CAP_PER_DAY`).
+  `blocks.router.ts` (`BLOCK_BUZZ_CAP_PER_DAY`, `reserveBlockBuzzSpend`/`refundBlockBuzzSpend`).
 - **Tracking:** `docs/features/app-blocks-merge-audit-2026-06.md`.
