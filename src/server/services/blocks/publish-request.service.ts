@@ -153,9 +153,14 @@ function readZipEntryCapped(
       size += chunk.length;
       if (size > maxFileSizeBytes) {
         aborted = true;
-        // destroy (not just pause) so the jszip/pako worker is torn down
-        // immediately rather than relying on backpressure to halt inflation.
-        stream.destroy();
+        // pause() halts the jszip/pako worker via upstream backpressure; the
+        // `aborted` flag drops any already-in-flight chunk. We deliberately do
+        // NOT use destroy(): jszip's NodejsStreamOutputAdapter doesn't override
+        // _destroy, so destroy() only push(null)s — it does NOT stop the worker
+        // (it keeps inflating) and floods swallowed "push after EOF" errors.
+        // pause() is also the only one of the two declared on jszip's
+        // NodeJS.ReadableStream type, so destroy() fails the typecheck.
+        stream.pause();
         reject(
           new Error(
             `bundle file ${path} is over ${maxFileSizeBytes} bytes (max ${maxFileSizeBytes})`
@@ -165,7 +170,7 @@ function readZipEntryCapped(
       }
       if (size > remainingTotalBytes) {
         aborted = true;
-        stream.destroy();
+        stream.pause();
         reject(
           new Error(
             `bundle decompresses to more than ${maxTotalBytes} bytes (zip bomb?)`
