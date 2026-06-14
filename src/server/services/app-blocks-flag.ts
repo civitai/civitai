@@ -23,7 +23,64 @@ const APP_BLOCKS_FLAG = 'app-blocks-enabled';
 export const APP_BLOCKS_PIPELINE_FLAG = 'app-blocks-pipeline-enabled';
 
 /**
+ * Dedicated GLOBAL flag for the RUNTIME token-verification surface (Decision 4).
+ *
+ * Two runtime sites verify ALREADY-MINTED block JWTs for *deployed* blocks:
+ *   - the JWKS public-key endpoint (`/api/v1/block-tokens/jwks`), and
+ *   - the `withBlockScope` middleware (verifies a block JWT on scoped REST calls).
+ *
+ * Both used to call the no-arg (global) `isAppBlocksEnabled()` → the GLOBAL eval
+ * of the mod-segmented `app-blocks-enabled` user flag, which can never match the
+ * `moderators` segment without a user context → resolves `false` globally → the
+ * verification surface was permanently dark. So even with builds/deploys lit, a
+ * deployed block's issued JWTs could not be verified at runtime.
+ *
+ * ## Why a GLOBAL runtime flag is correct AND safe (no widening)
+ *
+ * Block JWTs are only ever MINTED for an AUTHORIZED user: the mint path
+ * (`POST /api/v1/block-tokens`) gates per-user on the `app-blocks-enabled`
+ * feature flag WITH the request user's context (`getFeatureFlags({ user })`),
+ * and refuses (403) any caller the flag is off for. Today the flag is
+ * `availability: ['mod']`, so a non-mod / anon caller cannot obtain a minted
+ * block JWT at all. Therefore a non-mod never holds a block JWT, and gating
+ * VERIFICATION on a global runtime flag does NOT widen visibility — there is
+ * nothing to verify for an unauthorized user. The runtime flag only says "the
+ * block-JWT verification subsystem is active." (Premise verified by reading the
+ * mint path in `block-tokens/index.ts` — the per-user gate is authoritative.)
+ *
+ * ## Why NOT reuse the pipeline (build) flag
+ *
+ * Pausing builds — flipping `app-blocks-pipeline-enabled` off — must NOT kill
+ * live blocks' runtime token verification. Decoupling runtime onto its own flag
+ * means "stop the build/publish machine" and "stop verifying deployed blocks'
+ * tokens" are independent levers.
+ *
+ * Fail-safe: if `app-blocks-runtime-enabled` does not exist (it is created in
+ * Flipt only AFTER this merges) or Flipt is unreachable, `isFlipt` returns
+ * `false` → the runtime sites stay dark (JWKS 503; `withBlockScope` treats a
+ * present block JWT as ABSENT and falls through to legacy auth). That is the
+ * SAME dark behaviour these sites already have on the user flag today, so the
+ * as-merged change cannot regress the gate open.
+ */
+export const APP_BLOCKS_RUNTIME_FLAG = 'app-blocks-runtime-enabled';
+
+/**
  * Server-side check for the App Blocks feature flag.
+ *
+ * ## Three-axis flag model
+ *
+ * App Blocks is gated by THREE independent flags, each for a different surface:
+ *   - `app-blocks-enabled` — USER VISIBILITY. Base `enabled: false` with a
+ *     `moderators` segment; resolves `true` only when evaluated WITH a mod's
+ *     context. Governs the UI mount, the tRPC gates, token ISSUANCE (mint), and
+ *     listForModel. (This function — `isAppBlocksEnabled`.)
+ *   - `app-blocks-pipeline-enabled` — BUILD/PUBLISH PIPELINE (Decision 1, #2536).
+ *     Global flag for the machine webhooks (`build-callback`, `git-push`,
+ *     `workflow-completed`). (`isAppBlocksPipelineEnabled`.)
+ *   - `app-blocks-runtime-enabled` — RUNTIME TOKEN VERIFICATION (Decision 4).
+ *     Global flag for verifying ALREADY-MINTED block JWTs for deployed blocks:
+ *     the JWKS endpoint and the `withBlockScope` middleware.
+ *     (`isAppBlocksRuntimeEnabled`.)
  *
  * The UI mount, the workflow-completed callback, every write endpoint, every
  * token-issuance path, and listForModel all gate on this flag. When the flag
@@ -65,11 +122,14 @@ export const APP_BLOCKS_PIPELINE_FLAG = 'app-blocks-pipeline-enabled';
  *      deploy without globally enabling the user-facing feature.
  *
  *   2. The JWKS public-key endpoint and the `withBlockScope` token-verification
- *      middleware (runtime, not build) still call the no-arg `isAppBlocksEnabled()`
- *      → the original GLOBAL eval of `app-blocks-enabled`. Repointing those is a
- *      separate decision (Decision 4); they are intentionally left as-is here.
- *      The JOB_TOKEN-authed manifest registrar (`block-manifests`) likewise
- *      stays on `isAppBlocksEnabled()` for now (out of this change's scope).
+ *      middleware (RUNTIME, not build) gate on the dedicated global
+ *      `app-blocks-runtime-enabled` flag via `isAppBlocksRuntimeEnabled()`
+ *      (Decision 4). This decouples "verify deployed blocks' tokens" from both
+ *      the mod-segmented user flag AND the build pipeline flag, so pausing
+ *      builds can't kill live runtime verification.
+ *      The JOB_TOKEN-authed manifest registrar (`block-manifests`) is DORMANT
+ *      (no live caller) and stays on the no-arg `isAppBlocksEnabled()` for now
+ *      (publish-adjacent, not runtime — out of Decision 4's scope).
  *
  *   For all machine gates, do NOT fabricate user context (the no-arg overload
  *   below, and the pipeline helper, preserve the global-eval behaviour).
@@ -110,4 +170,32 @@ export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise
  */
 export async function isAppBlocksPipelineEnabled(): Promise<boolean> {
   return isFlipt(APP_BLOCKS_PIPELINE_FLAG);
+}
+
+/**
+ * GLOBAL gate for the RUNTIME token-verification surface (Decision 4).
+ *
+ * Evaluates the dedicated `app-blocks-runtime-enabled` flag with no user
+ * context (entityId='global', empty context), mirroring how the runtime sites
+ * have always called Flipt — only the flag KEY changes from the mod-segmented
+ * `app-blocks-enabled` to this dedicated global flag.
+ *
+ * Used by:
+ *   - the JWKS public-key endpoint (`/api/v1/block-tokens/jwks`), and
+ *   - the `withBlockScope` middleware (block-JWT verification on scoped routes).
+ *
+ * Safe to be global because block JWTs are only ever MINTED for an authorized
+ * user (the mint path is per-user-gated on `app-blocks-enabled`), so a non-mod
+ * never holds a token to verify — gating verification globally does not widen
+ * visibility. Decoupled from `app-blocks-pipeline-enabled` so pausing builds
+ * does not kill live blocks' runtime verification. See APP_BLOCKS_RUNTIME_FLAG.
+ *
+ * Fail-safe: if `app-blocks-runtime-enabled` does not exist (it is created in
+ * Flipt only AFTER this merges) or Flipt is unreachable, `isFlipt` returns
+ * `false` → the runtime sites stay dark (JWKS 503; withBlockScope treats a
+ * present block JWT as absent). No-op on as-merged behaviour; cannot regress
+ * the gate open.
+ */
+export async function isAppBlocksRuntimeEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_RUNTIME_FLAG);
 }

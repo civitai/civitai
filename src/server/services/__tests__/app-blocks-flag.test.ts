@@ -130,9 +130,14 @@ describe('isAppBlocksEnabled — no accidental repoint to the pipeline flag (Dec
     expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-pipeline-enabled');
   });
 
-  it('no-arg machine eval reads ONLY app-blocks-enabled (JWKS / withBlockScope path unchanged)', async () => {
+  it('no-arg eval reads ONLY app-blocks-enabled (never the pipeline / runtime keys)', async () => {
+    // The no-arg `isAppBlocksEnabled()` itself still evaluates the user flag.
+    // (Decision 4 moved the JWKS / withBlockScope CALLERS onto the dedicated
+    // `app-blocks-runtime-enabled` flag — see app-blocks-runtime-flag.test.ts;
+    // this asserts the user-flag helper itself never drifts onto another key.)
     await isAppBlocksEnabled();
     expect(mockIsFlipt).toHaveBeenCalledWith('app-blocks-enabled');
     expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-pipeline-enabled');
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-runtime-enabled');
   });
 });

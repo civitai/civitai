@@ -1,7 +1,7 @@
 import { decodeProtectedHeader, jwtVerify } from 'jose';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
-import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   BLOCK_TOKEN_AUDIENCE,
@@ -501,10 +501,22 @@ export function withBlockScope(
       return handler(req, res);
     }
 
-    // H-2: when App Blocks is dark, the wrapper falls through to the legacy
-    // auth path even if a block JWT is present. Callers see the same
-    // response as if they hadn't sent a block token — no information leak.
-    if (!(await isAppBlocksEnabled())) {
+    // Decision 4: gate block-JWT verification on the dedicated GLOBAL runtime
+    // flag (`app-blocks-runtime-enabled`) rather than the global eval of the
+    // mod-segmented user flag (which could never resolve true without a user
+    // context, leaving verification permanently dark even after deploys were
+    // lit). Decoupled from the build pipeline flag so pausing builds doesn't
+    // kill live runtime verification. Safe to be global because a block JWT is
+    // only ever MINTED for an authorized user (the mint path is per-user-gated
+    // on `app-blocks-enabled`) — a non-mod never holds a token to verify, so
+    // gating verification globally does not widen visibility.
+    //
+    // Fail-safe / fall-through: when the runtime flag is off (or absent / Flipt
+    // down → isFlipt false), the wrapper falls through to the legacy auth path
+    // even if a block JWT is present. The caller sees the SAME response as if it
+    // hadn't sent a block token (no 401, no block scope granted) — no info leak,
+    // and identical to the prior dark behaviour on the user flag.
+    if (!(await isAppBlocksRuntimeEnabled())) {
       return handler(req, res);
     }
 
