@@ -1186,6 +1186,119 @@ describe('approveRequest', () => {
     expect(ocUpdateArg.data.allowedScopes).toBe(0);
   });
 
+  // ---- C1: trust-tier self-escalation (the most security-critical contract) ----
+  //
+  // The fix at publish-request.service.ts:1050-1062: trust tier is
+  // moderator-controlled, NEVER publisher-declared. `internal`/`verified`
+  // grant `allow-same-origin`, which defeats the iframe sandbox. A manifest
+  // that declares a raised trustTier must be IGNORED:
+  //   - new app  → always persisted as `unverified`
+  //   - existing → keeps whatever tier is on the DB row
+  // and the normalised manifest (which the sandbox-allowlist validator reads)
+  // must carry the resolved tier too, so the validator can't be tricked.
+  describe('C1: trust-tier is resolved from DB, never raised by the manifest', () => {
+    it('NEW app: a manifest declaring trustTier:internal is persisted as unverified', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      const evilManifest = manifest({ trustTier: 'internal' });
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: evilManifest })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ trustTier: 'internal' });
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      const createArg = mockDbWrite.appBlock.create.mock.calls[0][0].data;
+      // The column the live host reads to decide the sandbox allowlist.
+      expect(createArg.trustTier).toBe('unverified');
+      expect(createArg.trustTier).not.toBe('internal');
+      // The normalised manifest persisted on the row must ALSO be downgraded,
+      // so a later reader keying off manifest.trustTier can't be escalated.
+      expect((createArg.manifest as { trustTier?: string }).trustTier).toBe('unverified');
+    });
+
+    it('NEW app: a manifest declaring trustTier:verified is persisted as unverified', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ trustTier: 'verified' }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ trustTier: 'verified' });
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      const createArg = mockDbWrite.appBlock.create.mock.calls[0][0].data;
+      expect(createArg.trustTier).toBe('unverified');
+      expect((createArg.manifest as { trustTier?: string }).trustTier).toBe('unverified');
+    });
+
+    it('NEW app: a manifest with NO trustTier field still resolves to unverified (no default-to-internal regression)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      // The pre-fix bug DEFAULTED a missing manifest.trustTier to `internal`.
+      const noTierManifest = manifest();
+      delete (noTierManifest as Record<string, unknown>).trustTier;
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: noTierManifest })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      const createArg = mockDbWrite.appBlock.create.mock.calls[0][0].data;
+      expect(createArg.trustTier).toBe('unverified');
+    });
+
+    it('EXISTING app: keeps the DB trust tier even when the new manifest declares internal', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ version: '0.2.0', trustTier: 'internal' }) })
+      );
+      // Existing row is `verified` (a deliberate out-of-band moderator action).
+      // The manifest declaring `internal` must NOT change it (neither up nor down).
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        trustTier: 'verified',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      });
+      mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0', trustTier: 'internal' });
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // The manifest-refresh update (NOT the currentVersionSha stamp) carries
+      // the trust tier. It must equal the DB tier, not the manifest's claim.
+      const tierUpdate = mockDbWrite.appBlock.update.mock.calls.find(
+        (c: any[]) => c[0]?.data?.trustTier !== undefined
+      );
+      expect(tierUpdate?.[0]?.data?.trustTier).toBe('verified');
+      expect((tierUpdate?.[0]?.data?.manifest as { trustTier?: string }).trustTier).toBe('verified');
+    });
+
+    it('EXISTING unverified app: a manifest declaring internal stays unverified', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ version: '0.2.0', trustTier: 'internal' }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        trustTier: 'unverified',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      });
+      mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0', trustTier: 'internal' });
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      const tierUpdate = mockDbWrite.appBlock.update.mock.calls.find(
+        (c: any[]) => c[0]?.data?.trustTier !== undefined
+      );
+      expect(tierUpdate?.[0]?.data?.trustTier).toBe('unverified');
+    });
+  });
+
   // C-2 regression — failure at step 2 (Forgejo repo create) leaves the
   // OauthClient INSERT in place with no compensation.
   it('REGRESSION (C-2): Forgejo repo create failure leaves orphaned OauthClient', async () => {
