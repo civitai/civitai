@@ -148,9 +148,13 @@ function reconstructApiRoute(req: NextApiRequest): string {
 export function instrumentApiResponse(req: NextApiRequest, res: NextApiResponse): void {
   // Honor the "can never break the response" contract for ALL inputs: a real
   // Node ServerResponse is always an EventEmitter, but a handler unit-test may
-  // pass a partial `res` double without `.once`. No-op rather than throw — the
-  // worst case is a missing metric in a test, never a broken handler.
-  if (typeof res.once !== 'function') return;
+  // pass a partial `res` double without `.once` (and a null res is cheap to
+  // guard too). No-op rather than throw — worst case is a missing metric, never
+  // a broken handler. NOTE: this also silently no-ops on the Edge runtime (a Web
+  // Response has no `.once`); there are no edge API routes today, but a future
+  // edge route would need different instrumentation — a finish-listener can't
+  // see it (same class as the edge-502/504 SCOPE caveat above).
+  if (!res || typeof res.once !== 'function') return;
   res.once('finish', () => {
     const status = res.statusCode;
     if (status < 500) return; // hot-path: 2xx/3xx/4xx do zero normalization work

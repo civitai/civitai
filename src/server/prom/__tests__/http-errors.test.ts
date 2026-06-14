@@ -110,5 +110,9 @@ describe('instrumentApiResponse', () => {
     const fakeRes = { statusCode: 200, status: () => fakeRes, json: () => fakeRes };
     const req = { method: 'POST', url: '/api/auth/oauth/token', query: {} } as unknown as NextApiRequest;
     expect(() => instrumentApiResponse(req, fakeRes as unknown as NextApiResponse)).not.toThrow();
+    // and a null/undefined res must not throw either (total "never break" contract)
+    expect(() =>
+      instrumentApiResponse(req, undefined as unknown as NextApiResponse)
+    ).not.toThrow();
   });
 });
