@@ -139,9 +139,9 @@ function summariseValue(value: unknown): unknown {
  */
 function readZipEntryCapped(
   entry: JSZip.JSZipObject,
-  opts: { maxFileSizeBytes: number; remainingTotalBytes: number; path: string }
+  opts: { maxFileSizeBytes: number; remainingTotalBytes: number; maxTotalBytes: number; path: string }
 ): Promise<Buffer> {
-  const { maxFileSizeBytes, remainingTotalBytes, path } = opts;
+  const { maxFileSizeBytes, remainingTotalBytes, maxTotalBytes, path } = opts;
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -153,7 +153,9 @@ function readZipEntryCapped(
       size += chunk.length;
       if (size > maxFileSizeBytes) {
         aborted = true;
-        stream.pause();
+        // destroy (not just pause) so the jszip/pako worker is torn down
+        // immediately rather than relying on backpressure to halt inflation.
+        stream.destroy();
         reject(
           new Error(
             `bundle file ${path} is over ${maxFileSizeBytes} bytes (max ${maxFileSizeBytes})`
@@ -163,10 +165,10 @@ function readZipEntryCapped(
       }
       if (size > remainingTotalBytes) {
         aborted = true;
-        stream.pause();
+        stream.destroy();
         reject(
           new Error(
-            `bundle decompresses to more than ${MAX_TOTAL_DECOMPRESSED_BYTES} bytes (zip bomb?)`
+            `bundle decompresses to more than ${maxTotalBytes} bytes (zip bomb?)`
           )
         );
         return;
@@ -233,6 +235,7 @@ export async function extractBundleMetadata(
     const contents = await readZipEntryCapped(entry, {
       maxFileSizeBytes,
       remainingTotalBytes: maxTotalBytes - totalBytes,
+      maxTotalBytes,
       path: rawPath,
     });
     totalBytes += contents.length;
@@ -620,6 +623,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       const content = await readZipEntryCapped(entry, {
         maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
         remainingTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES - reviewTotalBytes,
+        maxTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES,
         path,
       });
       reviewTotalBytes += content.length;
@@ -791,6 +795,7 @@ async function fetchAndExtractBundleFiles(
     const content = await readZipEntryCapped(entry, {
       maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
       remainingTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES - totalBytes,
+      maxTotalBytes: MAX_TOTAL_DECOMPRESSED_BYTES,
       path,
     });
     totalBytes += content.length;
