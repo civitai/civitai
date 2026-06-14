@@ -16,6 +16,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 const {
   SECRET,
+  mockEnvStore,
   mockFlag,
   mockRedis,
   mockSetNx,
@@ -27,8 +28,13 @@ const {
 } = vi.hoisted(() => {
   // nxResult: true = newly set (first time), false = key already present (replay).
   const mockRedis = { nxResult: true, nxThrows: false };
+  const SECRET = 'test-build-callback-secret';
   return {
-    SECRET: 'test-build-callback-secret',
+    SECRET,
+    // Mutable env backing store so dual-secret (F6) tests can set/clear
+    // BLOCK_BUILD_CALLBACK_SECRET[_NEXT] per case. Defaults to the single
+    // current secret so the existing handler tests are unchanged.
+    mockEnvStore: { BLOCK_BUILD_CALLBACK_SECRET: SECRET } as Record<string, unknown>,
     mockFlag: { enabled: true },
     mockRedis,
     // mirrors redis.setNxKeepTtlWithEx(key, value, ttl): Promise<boolean>
@@ -46,7 +52,7 @@ const {
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/env/server', () => ({
-  env: new Proxy({ BLOCK_BUILD_CALLBACK_SECRET: SECRET } as Record<string, unknown>, {
+  env: new Proxy(mockEnvStore, {
     get(t, p: string) {
       if (p in t) return t[p];
       if (p === 'LOGGING') return '';
@@ -69,7 +75,11 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 vi.mock('~/server/services/blocks/forgejo.service', () => ({ setCommitStatus: mockSetCommitStatus }));
 
-import { expectedImageRef } from '~/pages/api/internal/blocks/build-callback';
+import {
+  checkCallbackTimestamp,
+  expectedImageRef,
+  verifySignature,
+} from '~/pages/api/internal/blocks/build-callback';
 
 /**
  * L-CALLBACK coverage. The handler binds the accepted `imageRef` to ITS OWN
@@ -94,6 +104,104 @@ describe('build-callback imageRef binding', () => {
   });
   it('rejects a prefix-matching but unrelated repo', () => {
     expect(`ghcr.io/civitai/app-block-slug-a-evil:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(false);
+  });
+});
+
+/**
+ * F6 — dual-secret HMAC rotation window. verifySignature must accept a
+ * signature computed under the CURRENT secret OR the optional *_NEXT secret, so
+ * the secret rotates without an outage. With _NEXT unset the behaviour is
+ * byte-identical to the prior single-secret implementation (fail-closed when no
+ * secret is configured / never an empty-key HMAC).
+ */
+describe('build-callback verifySignature dual-secret window (F6)', () => {
+  const body = Buffer.from('{"slug":"x","status":"Succeeded"}', 'utf8');
+  const sign = (secret: string) => createHmac('sha256', secret).update(body).digest('hex');
+
+  beforeEach(() => {
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = undefined;
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET_NEXT = undefined;
+  });
+  afterEach(() => {
+    // Restore the default single-secret env for the handler tests below.
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = SECRET;
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET_NEXT = undefined;
+  });
+
+  it('accepts a signature valid under the current secret', () => {
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = 'current-secret';
+    expect(verifySignature(body, sign('current-secret'))).toBe(true);
+    expect(verifySignature(body, `sha256=${sign('current-secret')}`)).toBe(true);
+  });
+
+  it('accepts BOTH old and NEXT during rotation', () => {
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = 'old-secret';
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET_NEXT = 'new-secret';
+    expect(verifySignature(body, sign('new-secret'))).toBe(true);
+    expect(verifySignature(body, sign('old-secret'))).toBe(true);
+  });
+
+  it('rejects a signature under neither secret', () => {
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = 'old-secret';
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET_NEXT = 'new-secret';
+    expect(verifySignature(body, sign('attacker'))).toBe(false);
+  });
+
+  it('NEXT unset → identical single-secret behaviour', () => {
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = 'only';
+    expect(verifySignature(body, sign('only'))).toBe(true);
+    expect(verifySignature(body, sign('other'))).toBe(false);
+  });
+
+  it('fails closed when NO secret is configured (never an empty-key HMAC)', () => {
+    expect(verifySignature(body, sign(''))).toBe(false);
+    expect(verifySignature(body, sign('anything'))).toBe(false);
+  });
+
+  it('ignores an empty-string secret (does not compute an empty-key HMAC)', () => {
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET = '';
+    mockEnvStore.BLOCK_BUILD_CALLBACK_SECRET_NEXT = 'real-next';
+    expect(verifySignature(body, sign(''))).toBe(false);
+    expect(verifySignature(body, sign('real-next'))).toBe(true);
+  });
+});
+
+/**
+ * F5 — callback `ts` replay-freshness window (pure helper). The signer stamps an
+ * integer unix-epoch-seconds `ts` inside the HMAC-signed body; this check is
+ * enforce-if-present (absent → allow for rollout) and rejects a stale/future or
+ * non-finite ts. HMAC-bound defence-in-depth on top of the #2510 redis dedup,
+ * which fails OPEN and is single-window only.
+ */
+describe('checkCallbackTimestamp (F5)', () => {
+  const NOW = 1_700_000_000; // fixed reference now (unix seconds)
+
+  it('allows an absent ts (enforce-if-present rollout tolerance)', () => {
+    expect(checkCallbackTimestamp(undefined, NOW)).toEqual({ ok: true });
+    expect(checkCallbackTimestamp(null, NOW)).toEqual({ ok: true });
+  });
+
+  it('allows a fresh ts within ±300s', () => {
+    expect(checkCallbackTimestamp(NOW, NOW)).toEqual({ ok: true });
+    expect(checkCallbackTimestamp(NOW - 299, NOW)).toEqual({ ok: true });
+    expect(checkCallbackTimestamp(NOW + 299, NOW)).toEqual({ ok: true });
+    expect(checkCallbackTimestamp(NOW - 300, NOW)).toEqual({ ok: true });
+  });
+
+  it('rejects a stale ts beyond -300s (the replay case)', () => {
+    const r = checkCallbackTimestamp(NOW - 301, NOW);
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects a future ts beyond +300s', () => {
+    const r = checkCallbackTimestamp(NOW + 301, NOW);
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects a present-but-non-finite ts', () => {
+    expect(checkCallbackTimestamp('1700000000', NOW).ok).toBe(false);
+    expect(checkCallbackTimestamp(NaN, NOW).ok).toBe(false);
+    expect(checkCallbackTimestamp(Infinity, NOW).ok).toBe(false);
   });
 });
 
@@ -261,5 +369,42 @@ describe('build-callback handler — flag gate + replay guard', () => {
     // mark was set (SET NX) then freed in the catch so a same-sha retry isn't wedged
     expect(mockSetNx).toHaveBeenCalledTimes(1);
     expect(mockRedisDel).toHaveBeenCalledWith(expect.stringContaining(`apply:${APB}:${SHA}`));
+  });
+
+  // ---- F5: callback `ts` replay-freshness through the handler ----------------
+
+  it('applies on a fresh ts (present + within skew)', async () => {
+    const fresh = Math.floor(Date.now() / 1000);
+    const res = makeRes();
+    await invoke(signedReq({ ...validSuccessBody(), ts: fresh }), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ ok: true, applied: true });
+    expect(mockTriggerApply).toHaveBeenCalledTimes(1);
+  });
+
+  it('401s a stale (replayed) ts and never reaches the apply path', async () => {
+    const stale = Math.floor(Date.now() / 1000) - 3600; // 1h old → way outside 300s
+    const res = makeRes();
+    await invoke(signedReq({ ...validSuccessBody(), ts: stale }), res);
+    expect(res._status).toBe(401);
+    expect(mockTriggerApply).not.toHaveBeenCalled();
+    // dedup slot untouched — the ts gate is upstream of the redis mark.
+    expect(mockSetNx).not.toHaveBeenCalled();
+  });
+
+  it('applies when ts is absent (enforce-if-present rollout tolerance)', async () => {
+    const res = makeRes();
+    // validSuccessBody() carries no ts at all.
+    await invoke(signedReq(validSuccessBody()), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ applied: true });
+    expect(mockTriggerApply).toHaveBeenCalledTimes(1);
+  });
+
+  it('401s a present-but-non-finite ts', async () => {
+    const res = makeRes();
+    await invoke(signedReq({ ...validSuccessBody(), ts: 'not-a-number' }), res);
+    expect(res._status).toBe(401);
+    expect(mockTriggerApply).not.toHaveBeenCalled();
   });
 });

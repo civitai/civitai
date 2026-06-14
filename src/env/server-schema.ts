@@ -416,7 +416,14 @@ export const serverSchema = z.object({
   FORGEJO_PUBLIC_URL: z.string().url().default('https://forgejo.civitai.com'),
   FORGEJO_ADMIN_TOKEN: z.string().optional(),
   FORGEJO_WEBHOOK_SECRET: z.string().optional(),
+  // F6 — optional second HMAC secret accepted during a zero-downtime rotation.
+  // verifyForgejoSignature (git-push.ts) / verifySignature (build-callback.ts)
+  // accept a signature valid under EITHER the current or the _NEXT secret. When
+  // unset, behaviour is identical to single-secret. Pairs with the talos-side
+  // APPS_TEKTON_TRIGGER_SECRET_NEXT to complete the three-secret rotation.
+  FORGEJO_WEBHOOK_SECRET_NEXT: z.string().optional(),
   BLOCK_BUILD_CALLBACK_SECRET: z.string().optional(),
+  BLOCK_BUILD_CALLBACK_SECRET_NEXT: z.string().optional(),
   APPS_TEKTON_TRIGGER_URL: z.string().url().optional(),
   APPS_TEKTON_TRIGGER_SECRET: z.string().optional(),
   APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),

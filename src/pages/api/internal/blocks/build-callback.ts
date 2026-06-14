@@ -50,7 +50,56 @@ type CallbackBody = {
   appBlockId?: string;
   imageRef?: string;
   status?: string; // "Succeeded" / "Failed" / "Cancelled" / ... per Tekton
+  // F5 — integer unix-epoch-SECONDS timestamp the SIGNER (the datapacket-talos
+  // app-blocks-callback Tekton task) stamps INSIDE the body BEFORE the HMAC, so
+  // it is covered by the signature. Validated for skew below. ABSENT/non-finite
+  // is ALLOWED (enforce-if-present rollout tolerance).
+  ts?: unknown;
 };
+
+// F5 — allowed clock skew between the callback signer and this receiver, in
+// seconds. The live talos callback task (app-blocks-pipeline.yaml) ALREADY
+// signs `ts`; this check activates that signal. A replayed callback carries its
+// original (now-stale) `ts` inside the signed body, so it fails this window.
+// 300s mirrors the trigger leg (app-blocks-trigger.py TS_SKEW_SECONDS=300).
+const TS_TOLERANCE_SECONDS = 300;
+
+/**
+ * Replay-freshness decision for the (already HMAC-verified) callback `ts` (F5).
+ *
+ * Reconciliation with the #2510 redis dedup: #2510 dedups the apply path on
+ * (appBlockId, sha) but (a) FAILS OPEN on a Redis error and (b) only covers a
+ * single 10-minute window — it is replay-de-dup, NOT cross-window freshness, and
+ * the #2510 comment itself flags "durable cross-window replay protection still
+ * needs a caller-supplied signed timestamp/nonce" as a follow-up. This is that
+ * follow-up: an HMAC-BOUND freshness check that does NOT fail open and bounds
+ * the replay window to ±300s regardless of Redis health. The two are
+ * complementary, not redundant.
+ *
+ *   - absent / null → allow (rollout tolerance — the signer leg is independent;
+ *     the live talos task already emits ts, so this is effectively always on in
+ *     prod, but enforce-if-present avoids a deploy-ordering outage).
+ *   - present + a finite number within ±TS_TOLERANCE_SECONDS of now → allow.
+ *   - present + non-finite / out-of-tolerance → reject.
+ *
+ * Pure + exported so the skew window is unit-tested without driving the handler.
+ */
+export function checkCallbackTimestamp(
+  ts: unknown,
+  nowSec: number = Math.floor(Date.now() / 1000)
+): { ok: true } | { ok: false; reason: string } {
+  if (ts === undefined || ts === null) return { ok: true }; // enforce-if-present
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) {
+    return { ok: false, reason: 'ts present but not a finite number' };
+  }
+  if (Math.abs(nowSec - ts) > TS_TOLERANCE_SECONDS) {
+    return {
+      ok: false,
+      reason: `ts skew ${Math.abs(nowSec - ts)}s exceeds ${TS_TOLERANCE_SECONDS}s`,
+    };
+  }
+  return { ok: true };
+}
 
 function safeEqualHex(a: string, b: string): boolean {
   const A = Buffer.from(a, 'hex');
@@ -59,13 +108,32 @@ function safeEqualHex(a: string, b: string): boolean {
   return timingSafeEqual(A, B);
 }
 
-function verifySignature(rawBody: Buffer, header: unknown): boolean {
-  const secret = env.BLOCK_BUILD_CALLBACK_SECRET;
-  if (!secret) return false;
+export function verifySignature(rawBody: Buffer, header: unknown): boolean {
+  // F6 — dual-secret HMAC rotation window. Accept a signature that matches
+  // EITHER the current secret OR an optional BLOCK_BUILD_CALLBACK_SECRET_NEXT.
+  // To rotate with zero downtime: set _NEXT to the new secret, flip the Tekton
+  // callback signer to the new secret, then move the new value into
+  // BLOCK_BUILD_CALLBACK_SECRET and clear _NEXT. When _NEXT is unset this is
+  // byte-identical to the prior single-secret behaviour (fail-closed: no secret
+  // configured → false). Mirrors the BLOCK_TOKEN_PUBLIC_KEY_NEXT precedent.
   if (typeof header !== 'string' || header.length === 0) return false;
-  const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
   const provided = header.replace(/^sha256=/, '');
-  return safeEqualHex(provided, expected);
+
+  // Filter empty/undefined BEFORE createHmac so we never compute an empty-key
+  // HMAC. No secret set at all → reject (fail-closed).
+  const secrets = [env.BLOCK_BUILD_CALLBACK_SECRET, env.BLOCK_BUILD_CALLBACK_SECRET_NEXT].filter(
+    (s): s is string => typeof s === 'string' && s.length > 0
+  );
+  if (secrets.length === 0) return false;
+
+  // Compute every candidate comparison (no boolean short-circuit) so timing
+  // doesn't leak which secret — current vs NEXT — was the matching one.
+  let matched = false;
+  for (const secret of secrets) {
+    const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+    if (safeEqualHex(provided, expected)) matched = true;
+  }
+  return matched;
 }
 
 const SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
@@ -188,6 +256,25 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // Bind the accepted imageRef to THIS callback's own slug + sha (L-CALLBACK).
   if (!body.imageRef || body.imageRef !== expectedImageRef(body.slug, body.sha)) {
     res.status(400).json({ error: 'imageRef does not match slug/sha' });
+    return;
+  }
+
+  // F5 — replay-freshness on the (now HMAC-verified) `ts`. The signer stamps
+  // `ts` inside the signed body, so a replayed callback carries its original
+  // stale value and is rejected here. An absent `ts` is allowed for rollout
+  // tolerance (enforce-if-present). This is HMAC-bound defence-in-depth on top
+  // of the #2510 redis dedup, which fails OPEN and is only single-window — see
+  // checkCallbackTimestamp's doc comment for the reconciliation.
+  const tsCheck = checkCallbackTimestamp(body.ts);
+  if (!tsCheck.ok) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[build-callback] rejecting replayed/stale callback for ${body.slug}@${body.sha.slice(
+        0,
+        8
+      )}: ${tsCheck.reason}`
+    );
+    res.status(401).json({ error: 'Stale or invalid timestamp' });
     return;
   }
 
