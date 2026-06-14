@@ -265,6 +265,15 @@ export const redisCommandDuration = registerHistogram({
 (globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
   redisCommandsInflight,
   redisCommandDuration,
+  // PR #2331 round-3: sentinel observability counters. Same bridge pattern so
+  // attachSysSentinelListeners can grab them without dragging prom-client's
+  // fs/cluster requires into the client bundle.
+  get sysredisSentinelTopologyChangesCounter() {
+    return sysredisSentinelTopologyChangesCounter;
+  },
+  get sysredisSentinelClientErrorsCounter() {
+    return sysredisSentinelClientErrorsCounter;
+  },
 };
 
 // Image feed metrics
@@ -370,6 +379,44 @@ export const appStorageLatencyHistogram = registerHistogramWithLabels({
   help: 'App Blocks KV procedure latency',
   labelNames: ['op'] as const,
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+});
+
+// sysRedis Sentinel observability — Phase 4 cutover SRE-on-call uses these to
+// distinguish a real failover from steady-state sentinel chatter. Cardinality:
+// `type` is a small enum (master-change, +switch-master, etc.), `host` is bounded
+// by the sentinel/master/replica pod count (~3-6), `deployment` is per-pod (same
+// shape as Prometheus's own `pod` label).
+//
+// Override the PROM_PREFIX so the name maps to `civitai_sysredis_*` (matches the
+// dashboard naming requested in the audit) rather than `civitai_app_*`.
+const SYSREDIS_PREFIX = 'civitai_sysredis_';
+function registerSysredisCounter<T extends string>({
+  name,
+  help,
+  labelNames,
+}: {
+  name: string;
+  help: string;
+  labelNames: readonly T[];
+}) {
+  // HMR-safe registration (see registerCounterWithLabels above).
+  try {
+    return new client.Counter({ name: SYSREDIS_PREFIX + name, help, labelNames });
+  } catch (e) {
+    return client.register.getSingleMetric(SYSREDIS_PREFIX + name) as Counter<T>;
+  }
+}
+
+export const sysredisSentinelTopologyChangesCounter = registerSysredisCounter({
+  name: 'sentinel_topology_changes_total',
+  help: 'sysRedis sentinel topology-change events (failover, sentinel-set change, etc.)',
+  labelNames: ['type', 'host', 'deployment'] as const,
+});
+
+export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
+  name: 'sentinel_client_errors_total',
+  help: 'sysRedis sentinel sub-client errors (per-pod TCP/protocol errors against masters/replicas)',
+  labelNames: ['type', 'host', 'deployment'] as const,
 });
 
 // pgPoolAcquireHistogram is registered in src/server/db/db-helpers.ts, not here.

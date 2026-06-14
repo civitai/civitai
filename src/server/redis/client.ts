@@ -14,8 +14,8 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 // cluster aggregator), which the pages-router client webpack build cannot resolve
 // → "Module not found: Can't resolve 'cluster'/'fs'". The metrics are defined and
 // registered server-side in `~/server/prom/client` and published on `globalThis`
-// (`__civitaiRedisMetrics`); `instrumentCommands` reads that handle at command time
-// (server runtime only). See getRedisMetrics() below.
+// (`__civitaiRedisMetrics`); `instrumentCommands` and the sentinel listener attach
+// read that handle at runtime (server-only). See getRedisMetrics() below.
 
 export type RedisKeyStringsCache = Values<typeof REDIS_KEYS>;
 export type RedisKeyStringsSys = Values<typeof REDIS_SYS_KEYS>;
@@ -234,6 +234,61 @@ function triggerTopologyRediscovery(clusterClient: any, reason: string) {
 }
 
 /**
+ * Attach `topology-change` and `client-error` listeners to a Sentinel client.
+ *
+ * Extracted so it can be unit-tested without booting the full redis-client
+ * module (which pulls in prom/db init). Both listeners destructure
+ * event.node.{host,port} into a square-bracketed key/value list so Loki regex
+ * can extract per-pod identifiers, and increment per-event Prometheus counters
+ * labeled {type, host, deployment}.
+ *
+ * `deployment` is the running pod's HOSTNAME env (matches Prometheus's `pod`
+ * label); falls back to 'unknown' off-cluster.
+ */
+export function attachSysSentinelListeners(
+  client: { on: (event: string, listener: (e: any) => void) => unknown },
+  ctx: {
+    deployment: string;
+    log: (msg: string, ...rest: unknown[]) => void;
+    topologyCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
+    errorCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
+  }
+) {
+  client.on('topology-change', (event: any) => {
+    const { type: eventType, node } = event ?? {};
+    const host = node?.host ?? '?';
+    const port = node?.port ?? '?';
+    ctx.log(
+      `Redis sentinel topology change [type=${eventType ?? 'unknown'}, host=${host}, port=${port}]`,
+      event
+    );
+    ctx.topologyCounter
+      .labels({
+        type: String(eventType ?? 'unknown'),
+        host: String(host),
+        deployment: ctx.deployment,
+      })
+      .inc();
+  });
+  client.on('client-error', (event: any) => {
+    const { type: eventType, node, error } = event ?? {};
+    const host = node?.host ?? '?';
+    const port = node?.port ?? '?';
+    ctx.log(
+      `Redis sentinel sub-client error [type=${eventType ?? 'unknown'}, host=${host}, port=${port}]`,
+      error ?? event
+    );
+    ctx.errorCounter
+      .labels({
+        type: String(eventType ?? 'unknown'),
+        host: String(host),
+        deployment: ctx.deployment,
+      })
+      .inc();
+  });
+}
+
+/**
  * Parse cluster node URLs from environment variable.
  * Falls back to single URL if REDIS_CLUSTER_NODES is not set.
  */
@@ -342,7 +397,12 @@ function getBaseClient(type: 'cache' | 'system') {
         sentinelClientOptions: env.REDIS_SYS_SENTINEL_PASSWORD
           ? { password: env.REDIS_SYS_SENTINEL_PASSWORD, socket: socketConfig }
           : { socket: socketConfig },
-        masterPoolSize: 1,
+        // Pool size 2 (not 1) so the periodic PING heartbeat can run on a
+        // separate TCP connection from in-flight writes. With pool size 1, a
+        // slow EVAL (see PR #2332's atomic helper) head-of-line blocks the
+        // heartbeat, which can trip the kubelet readiness probe during normal
+        // load spikes.
+        masterPoolSize: 2,
         replicaPoolSize: 0,
         scanInterval: 10_000,
         // Keep sub-client errors local — surfacing them here would flood the
@@ -379,13 +439,24 @@ function getBaseClient(type: 'cache' | 'system') {
 
   // Sentinel clients don't emit connect/reconnecting/ready — they expose
   // topology-change (master/replica/sentinel set changed) and client-error
-  // (a sub-client errored). Surface both so failovers are visible in Loki.
+  // (a sub-client errored). Surface both so failovers are visible in Loki and
+  // queryable per-pod, and increment Prometheus counters alongside so Grafana
+  // can graph + alert. See attachSysSentinelListeners for the log/label shape.
   if (isSysSentinel) {
-    baseClient.on('topology-change', (event: unknown) => {
-      log(`Redis sentinel topology change (${type})`, event);
-    });
-    baseClient.on('client-error', (event: unknown) => {
-      log(`Redis sentinel sub-client error (${type})`, event);
+    // Look up the counters via the globalThis bridge instead of a static import
+    // — prom-client requires fs/cluster which breaks the client webpack bundle.
+    // By the time getBaseClient runs at server startup, '~/server/prom/client'
+    // has already loaded and populated the bridge. Fall back to no-op stubs in
+    // the off-chance the bridge isn't populated yet (logs still flow to Loki).
+    const metrics = getRedisMetrics();
+    const noopCounter = { labels: () => ({ inc: () => undefined }) };
+    attachSysSentinelListeners(baseClient, {
+      // process.env.HOSTNAME is the pod name in Kubernetes (matches the
+      // Prometheus `pod` label). Fall back to 'unknown' off-cluster.
+      deployment: process.env.HOSTNAME ?? 'unknown',
+      log,
+      topologyCounter: metrics?.sysredisSentinelTopologyChangesCounter ?? noopCounter,
+      errorCounter: metrics?.sysredisSentinelClientErrorsCounter ?? noopCounter,
     });
   }
 
@@ -572,6 +643,11 @@ function getBaseClient(type: 'cache' | 'system') {
 type RedisMetricsBridge = {
   redisCommandsInflight: { inc: (labels: { client: string }) => void; dec: (labels: { client: string }) => void };
   redisCommandDuration: { observe: (labels: { client: string }, value: number) => void };
+  // PR #2331 round-3: sentinel observability counters, exposed via the same
+  // bridge to avoid a static prom-client import edge in this client-bundle-
+  // reachable module. attachSysSentinelListeners reads them at attach time.
+  sysredisSentinelTopologyChangesCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
+  sysredisSentinelClientErrorsCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
 };
 
 // Server-runtime lookup of the prom metric handles WITHOUT a static import edge
