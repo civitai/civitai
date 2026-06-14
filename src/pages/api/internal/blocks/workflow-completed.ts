@@ -84,6 +84,14 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // refuse to record completions even if the orchestrator ships callbacks
   // ahead of Phase 3. Prevents phantom rows. Decision 1: gated on the dedicated
   // global `app-blocks-pipeline-enabled` flag (NOT the mod-segmented user flag).
+  //
+  // DECISION (revisit before Phase-3 billing): this is a RUNTIME billing/
+  // attribution callback, not a build event, yet it currently shares the build
+  // kill-switch `app-blocks-pipeline-enabled`. Harmless today (this handler is a
+  // scaffold with no billing + the orchestrator does not emit the callback yet),
+  // but once real billing lands here, flipping the build flag OFF would 503 these
+  // completions and silently drop Buzz attribution. Give it its OWN flag
+  // (e.g. `app-blocks-billing-enabled`) before Phase-3 billing wires real spend.
   const enabled = await isAppBlocksPipelineEnabled();
   if (!enabled) {
     res.status(503).json({ error: 'App Blocks not enabled' });
