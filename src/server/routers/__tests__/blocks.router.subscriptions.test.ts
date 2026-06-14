@@ -58,7 +58,10 @@ vi.mock('~/server/db/client', () => ({
 // stays cheap and we don't accidentally hit live deps.
 vi.mock('~/server/redis/client', () => ({
   redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-  REDIS_KEYS: { BLOCKS: {} },
+  // GENERATION.RESOURCE_DATA is read at import time by resource-data.redis (pulled
+  // in transitively); without it this suite flakily throws "Cannot read properties
+  // of undefined (reading 'RESOURCE_DATA')" depending on test-file load order.
+  REDIS_KEYS: { BLOCKS: {}, GENERATION: { RESOURCE_DATA: 'packed:generation:resource-data-3' } },
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
