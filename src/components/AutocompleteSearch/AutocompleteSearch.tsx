@@ -494,6 +494,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       <Group className={classes.wrapper} gap={0} wrap="nowrap">
         <Select
           key={pathname}
+          aria-label="Search category"
           classNames={{
             root: classes.targetSelectorRoot,
             input: classes.targetSelectorInput,
@@ -622,6 +623,10 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
               <HoverCard.Target>
                 <Text
+                  component="div"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Quick search keyboard shortcut"
                   fw="bold"
                   style={{
                     border: `1px solid ${
@@ -662,6 +667,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           variant="filled"
           size={36}
           onMouseDown={handleSubmit}
+          aria-label="Search"
         >
           <IconSearch size={18} />
         </LegacyActionIcon>

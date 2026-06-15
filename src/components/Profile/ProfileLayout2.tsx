@@ -25,6 +25,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
+import { isBlobUrl } from '~/utils/type-guards';
 
 export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -80,11 +81,12 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   }, [user, overview, pathname]);
   // const { classes } = useStyles();
 
-  const userMetaImage = user?.profilePicture
-    ? getEdgeUrl(user.profilePicture.url, { width: 1200 })
-    : user?.image && user.image.startsWith('http')
-    ? user.image
-    : undefined;
+  const userMetaImage =
+    user?.profilePicture && !isBlobUrl(user.profilePicture.url)
+      ? getEdgeUrl(user.profilePicture.url, { width: 1200 })
+      : user?.image && user.image.startsWith('http')
+      ? user.image
+      : undefined;
   const metaSchema =
     user && user.username
       ? {
@@ -182,11 +184,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   );
 }
 
-function BlockedByThemPanel({
-  user,
-}: {
-  user: Partial<UserWithCosmetics> & { id: number };
-}) {
+function BlockedByThemPanel({ user }: { user: Partial<UserWithCosmetics> & { id: number } }) {
   const spotlightRef = useRef<HTMLDivElement>(null);
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const el = spotlightRef.current;
@@ -269,8 +267,8 @@ function BlockedByThemPanel({
               has blocked you
             </Text>
             <Text size="sm" className="text-dimmed">
-              Their profile and content are hidden from you. You can still block them on your end
-              to prevent further interactions on your own posts.
+              Their profile and content are hidden from you. You can still block them on your end to
+              prevent further interactions on your own posts.
             </Text>
           </div>
 

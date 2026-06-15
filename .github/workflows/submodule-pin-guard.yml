@@ -1,0 +1,94 @@
+name: Submodule Pin Guard
+
+# Fails a PR that moves the `event-engine-common` submodule pointer BACKWARD
+# (to an ancestor of the base branch's pin).
+#
+# WHY: the gitlink at path `event-engine-common` is silently reverted whenever
+# someone commits with a stale submodule checkout — `git add` rolls the pin back
+# to their local (older) submodule HEAD alongside unrelated changes. This shipped
+# an image:tagIds Redis cache TTL regression to prod: PR #2475 cut the TTL 24h->12h,
+# and commit 79e30dbb8 (feat training steps-pricing, 2026-06-12) accidentally
+# reverted the pin, undoing it. Forward bumps (the new pin is a descendant of the
+# base pin) pass; intentional downgrades can be allowed with a label.
+
+on:
+  pull_request:
+    branches: [main, release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: submodule-pin-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: event-engine-common pin
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare pin vs base
+        id: pin
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          SUB=event-engine-common
+          git fetch -q origin "$BASE_REF"
+          NEW=$(git ls-tree HEAD "$SUB" | awk '{print $3}')
+          OLD=$(git ls-tree FETCH_HEAD "$SUB" | awk '{print $3}')
+          echo "base ($BASE_REF) pin: ${OLD:-<none>}"
+          echo "head pin:            ${NEW:-<none>}"
+          {
+            echo "old=$OLD"
+            echo "new=$NEW"
+          } >> "$GITHUB_OUTPUT"
+          if [ -z "$NEW" ] || [ -z "$OLD" ] || [ "$NEW" = "$OLD" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "pin unchanged or unresolved — nothing to check"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup SSH for submodule
+        if: steps.pin.outputs.changed == 'true'
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SUBMODULE_SSH_KEY }}
+
+      - name: Guard against backward pin move
+        if: steps.pin.outputs.changed == 'true'
+        env:
+          OLD: ${{ steps.pin.outputs.old }}
+          NEW: ${{ steps.pin.outputs.new }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+          SUB=event-engine-common
+          git submodule update --init "$SUB"
+          git -C "$SUB" fetch -q origin
+          git -C "$SUB" cat-file -e "${OLD}^{commit}" 2>/dev/null || { echo "::error::base pin $OLD not found in $SUB"; exit 1; }
+          git -C "$SUB" cat-file -e "${NEW}^{commit}" 2>/dev/null || { echo "::error::new pin $NEW not found in $SUB"; exit 1; }
+
+          if git -C "$SUB" merge-base --is-ancestor "$NEW" "$OLD"; then
+            case ",$LABELS," in
+              *",allow-submodule-downgrade,"*)
+                echo "::warning::$SUB pin moved BACKWARD ($OLD -> $NEW) — allowed by 'allow-submodule-downgrade' label."
+                exit 0 ;;
+            esac
+            echo "::error title=$SUB pin regressed::The $SUB submodule pointer moved BACKWARD ($OLD -> $NEW). Almost always an accidental clobber from a stale submodule checkout. Fix: 'git -C $SUB fetch origin && git -C $SUB checkout $OLD && git add $SUB' then commit. (Intentional downgrade? add the 'allow-submodule-downgrade' label.)"
+            exit 1
+          fi
+
+          if git -C "$SUB" merge-base --is-ancestor "$OLD" "$NEW"; then
+            echo "$SUB pin moved FORWARD ($OLD -> $NEW) — intentional bump, OK"
+            exit 0
+          fi
+
+          echo "::error title=$SUB pin diverged::The $SUB pin moved to a commit that is neither an ancestor nor a descendant of the base pin ($OLD -> $NEW). Verify intentional; add 'allow-submodule-downgrade' to override."
+          exit 1

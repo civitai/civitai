@@ -419,7 +419,7 @@ export const updateUserHandler = async ({
     source,
     landingPage,
     userReferralCode,
-    profilePicture,
+    profilePicture: inputProfilePicture,
     ...data
   } = input;
   const currentUser = ctx.user;
@@ -431,6 +431,14 @@ export const updateUserHandler = async ({
     const valid = verifyAvatar(data.image);
     if (!valid) throw throwBadRequestError('Invalid avatar URL');
   }
+
+  // Drop invalid avatar references (e.g. a client-only `blob:` URL from a stale
+  // upload bundle) instead of persisting them. We don't throw here so the rest of
+  // the profile still saves — the avatar simply isn't updated with the bad value.
+  const profilePicture =
+    inputProfilePicture?.url && !verifyAvatar(inputProfilePicture.url)
+      ? undefined
+      : inputProfilePicture;
 
   try {
     const user = await getUserById({ id, select: { profilePictureId: true } });

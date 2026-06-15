@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth from 'next-auth';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { callbackCookieName, civitaiTokenCookieName } from '~/libs/auth';
 import { Tracker } from '~/server/clickhouse/client';
 import { NotificationCategory } from '~/server/common/enums';
@@ -27,6 +28,9 @@ function isValidCallbackUrl(value: string | undefined): boolean {
 }
 
 export default async function auth(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: this login handler bypasses the endpoint wrappers, so its
+  // 500s were counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   // console.log(new Date().toISOString() + ' ::', 'nextauth', req.url);
   const customAuthOptions = createAuthOptions(req);
 

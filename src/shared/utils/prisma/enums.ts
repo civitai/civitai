@@ -712,6 +712,7 @@ export const CsamReportType = {
   Image: 'Image',
   TrainingData: 'TrainingData',
   GeneratedImage: 'GeneratedImage',
+  ExternalLink: 'ExternalLink',
 } as const;
 
 export type CsamReportType = (typeof CsamReportType)[keyof typeof CsamReportType];

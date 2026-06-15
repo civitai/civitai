@@ -6,6 +6,7 @@ import { env } from '~/env/server';
 import { publicApiContext2 } from '~/server/createContext';
 import { getAllUsersInput } from '~/server/schema/user.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { isClientAbortError } from '~/server/utils/errorHandling';
 
 const schema = getAllUsersInput.extend({
   email: z.never().optional(),
@@ -27,6 +28,11 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       items: users ?? [],
     });
   } catch (error) {
+    if (isClientAbortError(error)) {
+      // Client disconnected mid-request — not a server fault. 499, not 500.
+      if (!res.headersSent) res.status(499).end();
+      return;
+    }
     if (error instanceof TRPCError) {
       const status = getHTTPStatusCodeFromError(error);
       const parsedError = JSON.parse(error.message);

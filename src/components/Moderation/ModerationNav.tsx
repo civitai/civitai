@@ -53,6 +53,7 @@ export function ModerationNav() {
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
+        { label: 'Grant Cosmetics', href: '/moderator/cosmetics/grant' },
         // {
         //   label: 'Paddle Adjustments',
         //   href: '/moderator/paddle/adjustments',
@@ -97,6 +98,11 @@ export function ModerationNav() {
         {
           label: 'Prompt Audit Test',
           href: '/moderator/prompt-audit-test',
+          hidden: !features.csamReports,
+        },
+        {
+          label: 'External CSAM Report',
+          href: '/moderator/csam/external',
           hidden: !features.csamReports,
         },
         {
