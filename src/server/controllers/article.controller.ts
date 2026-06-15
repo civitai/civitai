@@ -37,6 +37,18 @@ export const upsertArticleHandler = async ({
     if (includesAdminOnlyTag && !ctx.features.adminTags) throw throwAuthorizationError();
     const scanContent = ctx.features.articleImageScanning ?? false;
 
+    // Capture the prior published state so we can tell a publish transition apart
+    // from an edit of an already-published article. Only needed for updates; a
+    // new article has no prior state. (Article saves are low volume.)
+    const wasPublished = input.id
+      ? !!(
+          await dbRead.article.findUnique({
+            where: { id: input.id },
+            select: { publishedAt: true },
+          })
+        )?.publishedAt
+      : false;
+
     const result = await upsertArticle({
       ...input,
       userId: ctx.user.id,
@@ -47,11 +59,15 @@ export const upsertArticleHandler = async ({
     // Track provenance (web vs. API key vs. OAuth app) for moderation tracing.
     // nsfw is best-effort false here — an article's nsfwLevel is derived
     // asynchronously after create, so it isn't reliable at this point.
-    await ctx.track.article({
-      type: input.id ? 'Update' : 'Create',
-      articleId: result.id,
-      nsfw: false,
-    });
+    const willBePublished = !!input.publishedAt;
+    const type: 'Create' | 'Publish' | 'Update' = !input.id
+      ? willBePublished
+        ? 'Publish'
+        : 'Create'
+      : willBePublished && !wasPublished
+      ? 'Publish'
+      : 'Update';
+    await ctx.track.article({ type, articleId: result.id, nsfw: false });
 
     return result;
   } catch (error) {
@@ -87,6 +103,8 @@ export async function unpublishArticleHandler({
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     });
+
+    await ctx.track.article({ type: 'Unpublish', articleId: id, nsfw: false });
 
     return {
       ...updatedArticle,
