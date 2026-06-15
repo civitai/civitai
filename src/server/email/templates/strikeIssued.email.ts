@@ -1,4 +1,9 @@
 import { createEmail } from '~/server/email/templates/base.email';
+import { SUPPORT_URL } from '~/server/email/templates/moderation/moderationAction.email';
+import { getBaseUrl } from '~/server/utils/url-helpers';
+
+// Closing signature, kept in sync with the moderation action emails.
+const SIGNATURE = 'The Civitai Moderation Team';
 
 type StrikeEmailData = {
   to: string;
@@ -31,6 +36,10 @@ export const strikeIssuedEmail = createEmail({
       warningBorder: '#fecaca',
     };
 
+    // Primary CTA target: the user's own account-standing view (feature-flagged
+    // behind `features.strikes`). Anchored to the StrikesCard (#strikes).
+    const strikesUrl = `${getBaseUrl()}/user/account#strikes`;
+
     return `
 <body style="background: ${color.background};">
   <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; margin: auto;">
@@ -39,6 +48,11 @@ export const strikeIssuedEmail = createEmail({
       <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background: ${
         color.mainBackground
       }; border-radius: 10px;">
+        <tr>
+          <td align="center" style="padding: 20px 0px 0px 0px;">
+            <img src="${`${getBaseUrl()}/images/logo_light_mode.png`}" alt="Civitai" />
+          </td>
+        </tr>
         <tr>
           <td align="center"
             style="padding: 20px 20px 10px 20px; font-size: 22px; font-family: Helvetica, Arial, sans-serif; color: ${
@@ -87,6 +101,17 @@ export const strikeIssuedEmail = createEmail({
           </td>
         </tr>
         <tr>
+          <td align="center" style="padding: 20px 20px 10px 20px;">
+            <table border="0" cellspacing="0" cellpadding="0">
+              <tr>
+                <td align="center" style="border-radius: 5px;" bgcolor="#346df1"><a href="${strikesUrl}"
+                    target="_blank"
+                    style="font-size: 18px; font-family: Helvetica, Arial, sans-serif; color: #fff; text-decoration: none; border-radius: 5px; padding: 12px 24px; border: 1px solid #346df1; display: inline-block; font-weight: bold;">View Your Active Strikes</a></td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
           <td style="padding: 10px 20px; font-size: 14px; line-height: 22px; font-family: Helvetica, Arial, sans-serif; color: ${
             color.text
           };">
@@ -94,8 +119,15 @@ export const strikeIssuedEmail = createEmail({
           </td>
         </tr>
         <tr>
-          <td style="padding: 10px 20px 20px 20px; font-size: 14px; line-height: 22px; font-family: Helvetica, Arial, sans-serif; color: #666;">
-            If you believe this strike was issued in error, please contact our support team.
+          <td style="padding: 10px 20px; font-size: 14px; line-height: 22px; font-family: Helvetica, Arial, sans-serif; color: #666;">
+            If you believe this strike was issued in error, please <a href="${SUPPORT_URL}" target="_blank" style="color: #346df1; text-decoration: underline;">contact our support team</a>.
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 20px 20px 20px; font-size: 16px; line-height: 24px; font-family: Helvetica, Arial, sans-serif; color: ${
+            color.text
+          };">
+            &mdash; ${SIGNATURE}
           </td>
         </tr>
       </table>
@@ -107,6 +139,7 @@ export const strikeIssuedEmail = createEmail({
   },
 
   text({ username, description, points, activePoints, expiresAt }: StrikeEmailData) {
+    const strikesUrl = `${getBaseUrl()}/user/account#strikes`;
     return `Strike Notice
 
 Hi ${username},
@@ -120,9 +153,14 @@ Strike Points Issued: ${points}
 Total Active Points: ${activePoints}
 Strike Expires: ${formatDate(expiresAt)}
 
+View your active strikes and account standing:
+${strikesUrl}
+
 Please note: Accumulating additional strikes may result in temporary or permanent restrictions on your account.
 
-If you believe this strike was issued in error, please contact our support team.
+If you believe this strike was issued in error, please contact our support team at ${SUPPORT_URL}.
+
+— ${SIGNATURE}
 `;
   },
 
