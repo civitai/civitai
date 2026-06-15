@@ -18,6 +18,14 @@ export type { AuthVerifier, AuthVerifierConfig } from './verify';
 // See docs/thin-session-token-design.md ("LOCKED ARCHITECTURE").
 export { createSessionClient } from './session-client';
 export type { SessionClient } from './session-client';
+// Consumer DEVICE-ACCOUNT CLIENT (server side) — the hub contract for multi-account switching, authorized by
+// the browser's forwarded cookies. Keeps spokes from hand-rolling the hub URL/method per proxy. See cutover (E).
+export { createDeviceAccountClient } from './device-client';
+export type { DeviceAccountClient, DeviceAccount } from './device-client';
+// Consumer SESSION-TOKEN CLIENT (server side) — rolling refresh + revoke, authorized by the session token
+// itself. Keeps spokes from hand-rolling the hub refresh/logout calls. See cutover (C, B).
+export { createSessionTokenClient } from './session-token-client';
+export type { SessionTokenClient } from './session-token-client';
 export { createSessionSigner, maybeCreateSessionSigner } from './sign';
 export type { SessionSigner, SessionSignerConfig } from './sign';
 export { createAccountSwitchProvider } from './account-switch';
