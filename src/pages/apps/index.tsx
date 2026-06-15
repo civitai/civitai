@@ -126,6 +126,14 @@ export default function AppsPage() {
   );
   const newItems = (newData?.items ?? []) as AvailableBlock[];
 
+  // E4 Low-1: when the rails are shown, exclude the apps they already surface
+  // from the "All apps" grid so a featured/new app doesn't render twice.
+  const railIds = useMemo(
+    () => new Set(showRails ? [...featuredItems, ...newItems].map((b) => b.id) : []),
+    [showRails, featuredItems, newItems]
+  );
+  const gridItems = useMemo(() => items.filter((b) => !railIds.has(b.id)), [items, railIds]);
+
   // M1 empty-state: distinguish "no apps exist at all" (total===0) from
   // "your filters matched nothing" (filtered===0). A tiny unfiltered probe
   // (limit:1, no filters/search) tells us whether ANY approved app exists,
@@ -286,11 +294,13 @@ export default function AppsPage() {
             />
           )}
 
-          {(showRails && (featuredItems.length > 0 || newItems.length > 0)) && (
-            <Title order={3} mt="xs">
-              All apps
-            </Title>
-          )}
+          {showRails &&
+            (featuredItems.length > 0 || newItems.length > 0) &&
+            gridItems.length > 0 && (
+              <Title order={3} mt="xs">
+                All apps
+              </Title>
+            )}
 
           {isLoading ? (
             <Center py="xl">
@@ -307,7 +317,7 @@ export default function AppsPage() {
           ) : (
             <>
               <Grid gutter="md">
-                {items.map((block: AvailableBlock) => (
+                {gridItems.map((block: AvailableBlock) => (
                   <Grid.Col key={block.id} span={{ base: 12, sm: 6, md: 4, lg: 3 }}>
                     <AppBlockCard
                       block={block}

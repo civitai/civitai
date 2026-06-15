@@ -251,6 +251,27 @@ describe('BlockRegistry.setMarketplaceMeta — data-integrity rules (F-E E4)', (
     const call = mockDb.appBlock.update.mock.calls[0][0] as { data: Record<string, unknown> };
     expect(call.data).toEqual({ category: null, featuredOrder: null, featured: false });
   });
+
+  it('E4 Low-2: the service writes ONLY its allowlisted fields even if extra keys reach it (mass-assignment guard, independent of the router zod strip)', async () => {
+    mockDb.appBlock.findUnique.mockResolvedValueOnce({ id: 'ab_1', status: 'approved' });
+    const { BlockRegistry } = await import('../block-registry.service');
+    // Call the service DIRECTLY (bypassing the router's zod object that would
+    // strip unknown keys) with attacker-controlled protected columns. The
+    // service's own `data` allowlist must drop them — only `featured` is written.
+    await BlockRegistry.setMarketplaceMeta({
+      appBlockId: 'ab_1',
+      featured: true,
+      status: 'rejected',
+      trustTier: 'internal',
+      manifest: { evil: true },
+      approvedScopes: ['*'],
+    } as never);
+    const call = mockDb.appBlock.update.mock.calls[0][0] as { data: Record<string, unknown> };
+    expect(call.data).toEqual({ featured: true });
+    for (const k of ['status', 'trustTier', 'manifest', 'approvedScopes', 'appBlockId']) {
+      expect(call.data).not.toHaveProperty(k);
+    }
+  });
 });
 
 describe('BlockRegistry.getMarketplaceMeta — mod seed read (F-E E4)', () => {
