@@ -1734,6 +1734,10 @@ export interface AppBlock {
   currentVersionSha: string | null;
   currentVersionDeployedAt: Date | null;
   repoUrl: string | null;
+  category: string | null;
+  featured: boolean;
+  featuredOrder: number | null;
+  screenshots: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
   platformDefault?: PlatformDefaultBlock | null;
