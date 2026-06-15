@@ -98,6 +98,12 @@ restoring the hub as the sole producer. Pure HTTP-only spokes never get it.
    `/api/auth/session`; the ~317 `useCurrentUser` sites swap transparently (`signIn`/`signOut` already hub-routed).
 5. **Delete server NextAuth** — `[...nextauth].ts`, `next-auth-options`, `token-refresh`, AES civ-token; drop the dep.
 
+> **Rule — no hand-rolled hub calls.** Every spoke→hub auth request goes through a `@civitai/auth` helper; app
+> code never builds the hub URL/contract inline. Today's surface: `createSessionClient` (token→user + service
+> invalidate/refresh), `createDeviceAccountClient` (list/switch/remove, cookie-forwarded), `createSessionTokenClient`
+> (rolling refresh + revoke, token-authed). App proxies are thin forwarders that only add framework glue (e.g.
+> setting the Next response cookie). Future hub calls (cross-domain exchange, impersonation) get helpers too.
+
 ---
 
 ## Feature-parity checklist (main app)
@@ -176,14 +182,31 @@ target being in **this** device's set and fresh (<30d); `localStorage` holds zer
 - [x] login links the account (`establishSession` → `touchAccount`); rolling refresh touches the active account
 - [x] `POST /api/auth/switch` (active session + device + fresh → mint civ-token, return it); `GET /api/auth/accounts`
 
-**Main app — in progress:**
+**Main app — same-domain done (type-clean):**
 
-- [x] `/api/auth/accounts` proxy; device-cookie roll in `maybeRollHubCookie`
-- [ ] `/api/auth/switch` proxy (forward → set civ-token → roll device cookie)
-- [ ] `AccountProvider` rewrite: list from the hub device set, switch via the proxy, **logout-one without switching**
-- [ ] **civitai.red** (different registrable domain — cookies don't cross): hub-minted ES256 **swap token** + JWKS
-      receive (`useDomainSync`); the device set is per-domain
-- [ ] Validate e2e: same-domain switch + `.com ↔ .red`
+- [x] `/api/auth/accounts` proxy (GET list + `DELETE ?userId=` remove); device-cookie roll in `maybeRollHubCookie`
+- [x] `/api/auth/switch` proxy (forward → set civ-token → roll device cookie)
+- [x] `AccountProvider` rewrite: list from the hub device set, `swapAccount(userId)` switch, **logout-one without
+      switching**, `removeAccount` → device-set DELETE
+
+**Legacy migration — DON'T lose existing linked accounts:**
+
+- [x] The switcher **merges** the hub device set with the pre-existing `civitai-accounts` localStorage, so no
+      user loses a linked account at cutover. Switching to a legacy-only entry **redeems its stored token** at
+      the hub (which links it to the device set); migrated entries are then pruned from localStorage. New links
+      never write localStorage.
+- [ ] ⚠️ **Strip ordering:** the legacy redeem currently uses next-auth's `account-switch` provider. Before
+      Phase 5 deletes it, convert the redeem to a **hub-native legacy-token exchange** (decrypt the AES token →
+      hub mints + links), or legacy localStorage accounts become unredeemable post-strip.
+
+**Cross-domain — remaining:**
+
+- [ ] **civitai.red** (different registrable domain — cookies don't cross): hub-minted ES256 **swap token** +
+      hub-native **exchange** (verify-only spoke can't mint → POST the swap token back to the hub, which mints a
+      civ-token the spoke stores in its own cookie). Same mechanism unlocks **localhost → auth.civitai.com** dev
+      login (localhost is just another cross-domain spoke). Needs `isSecureCookie()` to follow the app's own
+      base URL (`NEXT_PUBLIC_BASE_URL`) so an http-localhost spoke uses a non-secure cookie.
+- [ ] Validate e2e: same-domain switch + `.com ↔ .red` + localhost
 
 ### F. Moderator impersonation — 🔨 to do
 
