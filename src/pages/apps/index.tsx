@@ -105,6 +105,27 @@ export default function AppsPage() {
     slotFilter || category || (debouncedSearch && debouncedSearch.length > 0)
   );
 
+  // F-E E4 discovery rails — shown ABOVE the grid only on the unfiltered default
+  // view (a "Featured" staff-pick rail + a "New" recently-deployed rail). When
+  // the viewer is actively searching/filtering they want the full grid, so the
+  // rails collapse to avoid duplicating cards. Both reuse the SAME anon-capable,
+  // approved-only public projection as the grid (no extra exposure).
+  const showRails = !hasActiveFilters;
+
+  const { data: featuredData } = trpc.blocks.getFeaturedBlocks.useQuery(
+    { limit: 12 },
+    { enabled: !!features.appBlocks && showRails }
+  );
+  const featuredItems = (featuredData?.items ?? []) as AvailableBlock[];
+
+  // "New" rail: newest-deployed apps, small fixed page (the first page of the
+  // newest sort). Reuses listAvailable, so it's the same projection + gate.
+  const { data: newData } = trpc.blocks.listAvailable.useQuery(
+    { sort: 'newest', limit: 8 },
+    { enabled: !!features.appBlocks && showRails }
+  );
+  const newItems = (newData?.items ?? []) as AvailableBlock[];
+
   // M1 empty-state: distinguish "no apps exist at all" (total===0) from
   // "your filters matched nothing" (filtered===0). A tiny unfiltered probe
   // (limit:1, no filters/search) tells us whether ANY approved app exists,
@@ -242,6 +263,35 @@ export default function AppsPage() {
             </Group>
           </Chip.Group>
 
+          {/* F-E E4 discovery rails — unfiltered default view only. Featured =
+              curated staff picks (sorted by mod-assigned featured_order); New =
+              recently deployed. Each card links to the detail page + installs
+              via the same handler as the grid. */}
+          {showRails && featuredItems.length > 0 && (
+            <MarketplaceRail
+              title="Featured"
+              blocks={featuredItems}
+              subsByBlock={subsByBlock}
+              onOpen={handleOpen}
+              earningsByAppBlockId={earningsByAppBlockId}
+            />
+          )}
+          {showRails && newItems.length > 0 && (
+            <MarketplaceRail
+              title="New"
+              blocks={newItems}
+              subsByBlock={subsByBlock}
+              onOpen={handleOpen}
+              earningsByAppBlockId={earningsByAppBlockId}
+            />
+          )}
+
+          {(showRails && (featuredItems.length > 0 || newItems.length > 0)) && (
+            <Title order={3} mt="xs">
+              All apps
+            </Title>
+          )}
+
           {isLoading ? (
             <Center py="xl">
               <Loader />
@@ -361,6 +411,44 @@ function MarketplaceEmptyState({
         )}
       </Stack>
     </Center>
+  );
+}
+
+/**
+ * F-E E4 discovery rail — a titled horizontal strip of marketplace cards
+ * (Featured / New) shown above the grid on the unfiltered view. Reuses
+ * AppBlockCard so each card behaves identically to the grid (detail link +
+ * install handler + owner-earnings chip).
+ */
+function MarketplaceRail({
+  title,
+  blocks,
+  subsByBlock,
+  onOpen,
+  earningsByAppBlockId,
+}: {
+  title: string;
+  blocks: AvailableBlock[];
+  subsByBlock: Map<string, Partial<Record<SubscriptionScope, SubscriptionRecord>>>;
+  onOpen: (block: AvailableBlock) => void;
+  earningsByAppBlockId: Map<string, number>;
+}) {
+  return (
+    <Stack gap="xs">
+      <Title order={3}>{title}</Title>
+      <Grid gutter="md">
+        {blocks.map((block) => (
+          <Grid.Col key={block.id} span={{ base: 12, sm: 6, md: 4, lg: 3 }}>
+            <AppBlockCard
+              block={block}
+              alreadySubscribed={subsByBlock.has(block.id)}
+              onOpen={onOpen}
+              ownedEarningCents={earningsByAppBlockId.get(block.id)}
+            />
+          </Grid.Col>
+        ))}
+      </Grid>
+    </Stack>
   );
 }
 
