@@ -47,7 +47,7 @@ import type { TRPCClientErrorBase } from '@trpc/client';
 import type { TRPCDefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BlockSlot } from '~/components/AppBlocks/BlockSlot';
@@ -83,6 +83,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
+import { ModelTensorMetadata } from '~/components/Model/ModelVersions/ModelTensorMetadata';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
@@ -231,6 +232,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ...groupedFiles.otherFormatVariants,
     ];
   }, [groupedFiles]);
+  const tensorMetadataEnabled = detailAccordions.includes('tensor-metadata');
+
+  // Shared active-file selection: the download variant picker drives it, and the
+  // Tensors panel follows it (instead of having its own file selector).
+  const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
 
   // Check if this is a component-only model (no model files, only components)
   const isComponentOnlyModel =
@@ -876,6 +882,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       versionId={version.id}
                       modelType={model.type}
                       userPreferences={user?.filePreferences}
+                      selectedFileId={selectedFileId}
+                      onSelectFileId={setSelectedFileId}
                       canDownload={canDownload}
                       downloadPrice={
                         !hasDownloadPermissions &&
@@ -1574,6 +1582,14 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>
+            {isDownloadable && modelFilesVisible.length > 0 && (
+              <ModelTensorMetadata
+                files={modelFilesVisible}
+                userPreferences={user?.filePreferences}
+                enabled={tensorMetadataEnabled}
+                selectedFileId={selectedFileId}
+              />
+            )}
             {version.recommendedResources && version.recommendedResources.length > 0 && (
               <Accordion.Item value="recommended-resources">
                 <Accordion.Control>Recommended Resources</Accordion.Control>
