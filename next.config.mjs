@@ -158,6 +158,22 @@ export default defineNextConfig(
       '/content/[[...slug]]': ['./src/static-content/**/*'],
       '/api/trpc/[trpc]': ['./src/static-content/**/*'],
       '/api/v1/content/[[...slug]]': ['./src/static-content/**/*'],
+      // /api/og uses next/og's `ImageResponse`, which on the nodejs runtime
+      // lazily require()s `next/dist/compiled/@vercel/og/index.node.js` (plus its
+      // resvg/yoga WASM + fonts). @vercel/nft cannot follow that dynamic require,
+      // so with output:'standalone' the file is DROPPED from the image and every
+      // origin (cache-miss) /api/og render throws `Cannot find module ...
+      // index.node.js` -> 500. This became the dominant app-500 source (~1.9/s)
+      // after the Next 16.2.7 upgrade; Cloudflare edge-caching of OG images masks
+      // it for popular entities. Force-include the whole compiled @vercel/og dir
+      // (entry + WASM + fonts) for this route. Two version-agnostic globs (no
+      // hardcoded next@<hash>): the symlinked path, plus the real pnpm path with a
+      // `next@*` wildcard in case globby doesn't follow the node_modules/next
+      // symlink. Whichever matches copies the files; a non-matching glob is a no-op.
+      '/api/og': [
+        './node_modules/next/dist/compiled/@vercel/og/**/*',
+        './node_modules/.pnpm/next@*/node_modules/next/dist/compiled/@vercel/og/**/*',
+      ],
     },
     experimental: {
       // scrollRestoration: true,

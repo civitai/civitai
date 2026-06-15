@@ -9,6 +9,44 @@ import { SourceMapConsumer } from 'source-map';
 import path from 'node:path';
 import fs from 'node:fs';
 
+// Local Meili-deadline sentinel — kept in sync with FETCH_DOCUMENTS_TIMEOUT_MESSAGE
+// in src/server/meilisearch/client.ts. Duplicated as a literal (not imported) on
+// purpose: client.ts already imports `sleep` from this module, so importing the
+// constant back would form a circular dependency (the class that produced the
+// article.metrics Next-16 TDZ → 500 regression). A server-side timeout is NOT a
+// client abort — it surfaces as a 408 elsewhere.
+const MEILI_LOCAL_TIMEOUT_MESSAGE = 'meili-fetch-timeout';
+
+/**
+ * True when an error is a CLIENT-side request abort — the browser closed the tab,
+ * scrolled the infinite feed past the in-flight page, or navigated away, cancelling
+ * the request's AbortSignal mid-fetch. These surface as a bare `AbortError`
+ * (DOMException) that, untreated, bubbles to a 500 even though the server did
+ * nothing wrong and there is no client left to receive a response.
+ *
+ * Walks the `.cause` chain because tRPC wraps the thrown error as
+ * `TRPCError{ cause }` and the Meili layer may wrap once more. Explicitly EXCLUDES
+ * our own local Meili deadline, which also manifests as an AbortError but is a
+ * server-side timeout (handled as 408), not a client disconnect.
+ */
+export function isClientAbortError(e: unknown): boolean {
+  let cur = e as { name?: string; message?: string; cause?: unknown } | undefined;
+  for (let depth = 0; depth < 4 && cur; depth++) {
+    const isAbort =
+      cur.name === 'AbortError' ||
+      cur.message === 'This operation was aborted' ||
+      cur.message === 'The operation was aborted';
+    if (isAbort) {
+      const causeMsg = (cur.cause as { message?: string } | undefined)?.message;
+      const isLocalTimeout =
+        cur.message === MEILI_LOCAL_TIMEOUT_MESSAGE || causeMsg === MEILI_LOCAL_TIMEOUT_MESSAGE;
+      return !isLocalTimeout;
+    }
+    cur = cur.cause as typeof cur;
+  }
+  return false;
+}
+
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
   P2000: 'BAD_REQUEST',

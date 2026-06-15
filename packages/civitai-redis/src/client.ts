@@ -715,6 +715,13 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
 
 // Source of Truth data
 export const REDIS_SYS_KEYS = {
+  BLOCKS: {
+    // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
+    // listForModel response (disable a runaway block without a deploy).
+    EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
+    // Cumulative Buzz-spend cap counter, keyed `system:blocks:buzz-cap:${userId}:${appBlockId}:${day}`.
+    BUZZ_CAP: 'system:blocks:buzz-cap',
+  },
   DOWNLOAD: {
     LIMITS: 'download:limits',
     COUNT: 'download:count',
@@ -950,6 +957,14 @@ export const REDIS_SYS_KEYS = {
 
 // Cached data
 export const REDIS_KEYS = {
+  BLOCKS: {
+    REGISTRY: 'packed:caches:block-registry',
+    TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
+    // Per-blockInstanceId revocation marker (15-min TTL); block-scope middleware 403s when present.
+    REVOKED_INSTANCE: 'blocks:revoked-instance',
+    // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
+    POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
+  },
   DOWNLOAD: {
     COUNT: 'download:count',
   },

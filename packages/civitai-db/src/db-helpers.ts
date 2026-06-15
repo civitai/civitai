@@ -73,7 +73,8 @@ type ClientInstanceType =
   | 'primaryReadLong'
   | 'notification'
   | 'notificationRead'
-  | 'datapacketRead';
+  | 'datapacketRead'
+  | 'apps';
 export type GetClientOptions = Partial<DbConfig> & {
   instance?: ClientInstanceType;
   /** Debug logger (app-defined). Defaults to a no-op. */
@@ -92,6 +93,9 @@ export function getClient(options: GetClientOptions = {}) {
     primaryRead: config.replicaUrl ?? config.databaseUrl,
     primaryReadLong: config.replicaLongUrl ?? config.databaseUrl,
     datapacketRead: config.datapacketReadUrl ?? config.databaseUrl,
+    // App Blocks KV datastore — empty-string sentinel when unset; appsDb never calls getClient
+    // unless APPS_DATABASE_URL is configured (see src/server/db/appsDb.ts).
+    apps: config.appsUrl ?? '',
   };
 
   log(`Creating ${instance} client`);
@@ -106,6 +110,8 @@ export function getClient(options: GetClientOptions = {}) {
     ? 'notif-pg'
     : instance === 'datapacketRead'
     ? 'dp-read-pg'
+    : instance === 'apps'
+    ? 'apps-pg'
     : 'node-pg';
 
   // DO managed Postgres PgBouncer rejects statement_timeout as a startup parameter.

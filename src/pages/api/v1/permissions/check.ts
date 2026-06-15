@@ -4,6 +4,7 @@ import { EntityAccessPermission } from '~/server/common/enums';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getSessionUser } from '~/server/auth/session-user';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { isClientAbortError } from '~/server/utils/errorHandling';
 import { commaDelimitedNumberArray, numericString } from '~/utils/zod-helpers';
 
 const schema = z.object({
@@ -51,6 +52,10 @@ export default PublicEndpoint(
 
       return res.json(data);
     } catch (error) {
+      if (isClientAbortError(error)) {
+        if (!res.headersSent) res.status(499).end();
+        return;
+      }
       return res.status(500).json({ message: 'An unexpected error occurred', error });
     }
   },

@@ -5,6 +5,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { cacheHitCounter, cacheMissCounter, cacheRevalidateCounter } from '~/server/prom/client';
 import type { RedisKeyTemplateCache, RedisKeyTemplates } from '~/server/redis/client';
 import { redis, REDIS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
 export type CacheTarget = 'main' | 'sys';
 
@@ -424,6 +425,43 @@ type FetchThroughCacheOptions = {
   retryCount?: number;
 };
 type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
+
+/**
+ * Per-pod (per-process) single-flight map for the fail-open path ONLY.
+ *
+ * fetchThroughCache normally prevents an origin (DB/ClickHouse) stampede with a
+ * REDIS-backed distributed lock: only the lock-winner runs `fetchFn`, everyone else
+ * serves stale or waits. But that lock lives IN Redis — so when Redis itself stalls
+ * (the PR #2556 socketTimeout now turns a stalled read into a ~10s throw instead of a
+ * 30s-504), the lock is unreachable and the cross-pod single-flight is GONE. Several
+ * fetchThroughCache `fetchFn`s are expensive DB/ClickHouse aggregations (buzz pool
+ * SUM scans, featured-models, mod-rules, creator-program pool math). Naively
+ * catch-and-call-fetchFn on every request across ~80 pods would convert a Redis
+ * problem into a DB thundering-herd — a worse cascade.
+ *
+ * This map degrades that gracefully: during a Redis outage, concurrent requests for
+ * the SAME key on the SAME pod share ONE in-flight `fetchFn()` promise. That bounds
+ * origin load to ≤ (distinct keys × pods) concurrent origin calls instead of
+ * unbounded (× per-request concurrency). It is NOT cross-pod (that's what the Redis
+ * lock was for and Redis is down), but it removes the per-pod multiplier, which is the
+ * dominant term under a request flood. Entries are deleted as soon as the shared
+ * promise settles, so the map only ever holds currently-degraded keys.
+ */
+const failOpenInFlight = new Map<string, Promise<unknown>>();
+
+function fetchThroughCacheFailOpen<T>(key: string, fetchFn: () => Promise<T>): Promise<T> {
+  const existing = failOpenInFlight.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+  // Promise.resolve().then(fetchFn) so even a SYNCHRONOUS throw inside fetchFn becomes
+  // a rejected promise — guaranteeing the .finally cleanup runs and the map entry is
+  // always removed (no leaked/stuck in-flight entry).
+  const p = Promise.resolve().then(fetchFn).finally(() => {
+    failOpenInFlight.delete(key);
+  });
+  failOpenInFlight.set(key, p);
+  return p;
+}
+
 export async function fetchThroughCache<T>(
   key: RedisKeyTemplateCache,
   fetchFn: () => Promise<T>,
@@ -434,12 +472,38 @@ export async function fetchThroughCache<T>(
   const retryCount = options.retryCount ?? 3;
   const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${key}` as const;
 
-  const cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key);
+  // --- Redis READ (cache lookup) -------------------------------------------------
+  // With the socketTimeout fix a stalled Redis read now THROWS (~10s) instead of
+  // hanging to the 30s Traefik 504. Fail OPEN: degrade to a slow-but-working origin
+  // fetch (single-flighted per pod to avoid a DB stampede — see failOpenInFlight)
+  // rather than propagating a 500 on these ~18 hot read paths. This is strictly no
+  // worse than today's behavior on the same paths (a Redis stall already meant a
+  // failed request); it just turns the failure mode from 500/504 into a slow 200.
+  let cachedData: FetchThroughCacheEntity<T> | null;
+  try {
+    cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key);
+  } catch (err) {
+    logSysRedisFailOpen('read-degraded', 'fetchThroughCache get (cache cluster)', err, { key });
+    return fetchThroughCacheFailOpen(key, fetchFn);
+  }
+
   const cachedExpired =
     !cachedData || (cachedData && Date.now() - ttl * 1000 > cachedData.cachedAt);
   if (cachedExpired) {
+    // --- Redis LOCK (stampede guard) ---------------------------------------------
     // Try to set lock. If already locked, do nothing...
-    const gotLock = await redis.setNxKeepTtlWithEx(lockKey, '1', lockTTL);
+    let gotLock: boolean;
+    try {
+      gotLock = await redis.setNxKeepTtlWithEx(lockKey, '1', lockTTL);
+    } catch (err) {
+      // Lock acquisition itself hit a Redis error. We still have a fresh-enough
+      // intent to refresh, but the distributed lock is unavailable. Serve stale if we
+      // have it (cheapest, fully correct); otherwise fail open to a single-flighted
+      // origin fetch (per-pod bounded) instead of throwing a 500.
+      logSysRedisFailOpen('read-degraded', 'fetchThroughCache lock (cache cluster)', err, { key });
+      if (cachedData) return cachedData.data;
+      return fetchThroughCacheFailOpen(key, fetchFn);
+    }
     if (!gotLock) {
       if (cachedData) return cachedData.data;
       if (retryCount === 0) throw new Error('Failed to fetch data through cache');
@@ -454,13 +518,30 @@ export async function fetchThroughCache<T>(
     }
   } else if (cachedData) return cachedData.data;
 
+  // We hold the lock (or there is no lock contention): run the origin fetch and try
+  // to populate the cache. The fetch itself is NOT wrapped — a genuine fetchFn error
+  // is a real error and must propagate as before. Only the best-effort Redis writes
+  // (set result, release lock) are swallowed so a Redis stall on the WRITE side never
+  // turns a successful origin fetch into a 500.
   try {
     const data = await fetchFn();
     const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
-    await redis.packed.set(key, toCache, { EX: ttl * 2 });
+    try {
+      await redis.packed.set(key, toCache, { EX: ttl * 2 });
+    } catch (err) {
+      logSysRedisFailOpen('write-degraded', 'fetchThroughCache set (cache cluster)', err, { key });
+    }
     return data;
   } finally {
-    await redis.del(lockKey);
+    // Best-effort lock release; a failure here just leaves the lock to expire via its
+    // TTL (lockTTL). Never let it mask the fetch result or throw.
+    try {
+      await redis.del(lockKey);
+    } catch (err) {
+      logSysRedisFailOpen('write-degraded', 'fetchThroughCache del-lock (cache cluster)', err, {
+        key,
+      });
+    }
   }
 }
 

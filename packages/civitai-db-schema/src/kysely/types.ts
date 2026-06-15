@@ -241,6 +241,54 @@ export type ApiKey = {
   clientId: string | null;
   buzzLimit: unknown | null;
 };
+export type AppBlock = {
+  id: string;
+  app_id: string;
+  block_id: string;
+  version: string;
+  manifest: unknown;
+  status: Generated<string>;
+  content_rating: string;
+  promotion_eligible: Generated<boolean>;
+  health_status: Generated<string>;
+  health_checked_at: Timestamp | null;
+  render_mode: Generated<string>;
+  trust_tier: Generated<string>;
+  asset_bundle_url: string | null;
+  asset_bundle_sha256: string | null;
+  approved_scopes: Generated<string[]>;
+  current_version_sha: string | null;
+  current_version_deployed_at: Timestamp | null;
+  repo_url: string | null;
+  category: string | null;
+  featured: Generated<boolean>;
+  featured_order: number | null;
+  screenshots: unknown | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppBlockPublishRequest = {
+  id: string;
+  app_block_id: string | null;
+  slug: string;
+  submitted_by_user_id: number;
+  submitted_at: Generated<Timestamp>;
+  version: string;
+  manifest: unknown;
+  bundle_key: string;
+  bundle_sha256: string;
+  bundle_size_bytes: string;
+  file_summary: unknown;
+  manifest_diff_summary: unknown;
+  status: string;
+  reviewed_by_user_id: number | null;
+  reviewed_at: Timestamp | null;
+  rejection_reason: string | null;
+  approval_notes: string | null;
+  forgejo_commit_sha: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
 export type Appeal = {
   id: Generated<number>;
   userId: number;
@@ -255,6 +303,15 @@ export type Appeal = {
   resolvedMessage: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
+};
+export type AppUserScopeGrant = {
+  id: string;
+  user_id: number;
+  app_block_id: string;
+  version: string;
+  granted_scopes: Generated<string[]>;
+  granted_at: Generated<Timestamp>;
+  revoked_at: Timestamp | null;
 };
 export type Article = {
   id: Generated<number>;
@@ -507,6 +564,55 @@ export type BidRecurring = {
   isPaused: Generated<boolean>;
   accountType: Generated<string>;
 };
+export type BlockAttributionPayout = {
+  id: string;
+  app_owner_user_id: number;
+  /**
+   * Caller-supplied period bucket, e.g. ISO week '2026-W22'. The
+   * (owner, period) pair is the idempotency key.
+   */
+  period_key: string;
+  /**
+   * Net publisher share minted for this period (sum of contributing
+   * confirmed rows' app_owner_share_cents, after clawbacks net out).
+   */
+  total_cents: number;
+  /**
+   * Number of block_buzz_attribution rows flipped to paid_out by this mint.
+   */
+  row_count: number;
+  created_at: Generated<Timestamp>;
+};
+export type BlockBuzzAttribution = {
+  id: string;
+  user_id: number;
+  buzz_amount: number;
+  usd_amount_cents: number;
+  buzz_type: Generated<string>;
+  payment_provider: string;
+  payment_transaction_id: string;
+  buzz_transaction_id: string | null;
+  app_id: string;
+  app_block_id: string;
+  block_instance_id: string;
+  scope: string;
+  model_id: number | null;
+  rate_card_version: string;
+  app_owner_share_cents: number;
+  platform_share_cents: number;
+  provider_fee_cents: number;
+  app_owner_user_id: number;
+  status: Generated<string>;
+  voided_reason: string | null;
+  hold_reason: string | null;
+  held_at: Timestamp | null;
+  entry_type: Generated<string>;
+  attributed_at: Generated<Timestamp>;
+  confirmed_at: Timestamp | null;
+  voided_at: Timestamp | null;
+  paid_out_at: Timestamp | null;
+  payout_id: string | null;
+};
 export type BlockedImage = {
   hash: string;
   reason: Generated<BlockImageReason>;
@@ -518,6 +624,67 @@ export type Blocklist = {
   updatedAt: Timestamp;
   type: string;
   data: string[];
+};
+export type BlockScopeInvocation = {
+  id: Generated<string>;
+  user_id: number;
+  app_block_id: string;
+  block_instance_id: string;
+  scope: string;
+  endpoint: string;
+  status_code: number;
+  invoked_at: Generated<Timestamp>;
+};
+export type BlockUserSettings = {
+  block_instance_id: string;
+  user_id: number;
+  settings: Generated<unknown>;
+  updated_at: Generated<Timestamp>;
+};
+export type BlockUserSubscription = {
+  id: string;
+  user_id: number;
+  app_block_id: string;
+  scope: string;
+  target_model_types: string[];
+  target_base_models: string[];
+  /**
+   * NEW (kill_per_model_installs): pin this subscription to specific model
+   * ids. Empty = blanket (applies to every model that passes the type +
+   * base-model filters). Non-empty + non-NULL slot_id = the per-model
+   * install path that model_block_installs used to carry.
+   */
+  target_model_ids: Generated<number[]>;
+  /**
+   * NEW (kill_per_model_installs): when set, this subscription targets a
+   * specific slot id (e.g. "model.sidebar_top"). When NULL, it applies to
+   * every slot the manifest declares (the blanket-subscription shape).
+   */
+  slot_id: string | null;
+  /**
+   * NEW (kill_per_model_installs): copied from model_block_installs.pinned
+   * _version. NULL = use the AppBlock's current approved manifest; semver
+   * string = use that version's manifest from app_block_publish_requests.
+   */
+  pinned_version: string | null;
+  /**
+   * NEW (kill_per_model_installs): preserves the bki_* id from the migrated
+   * install row so block_buzz_attribution, block_scope_invocations, and
+   * block_user_settings continue to resolve. NULL for blanket
+   * subscriptions (which synthesise bus_pub_* / bus_view_* on read).
+   */
+  block_instance_id: string | null;
+  /**
+   * NEW (kill_per_model_installs): mirrors model_block_installs.installed
+   * _by_user_id. For migrated rows this equals user_id by construction;
+   * kept as a separate column so future "installed by mod / installed via
+   * admin tooling" cases are expressible without schema change.
+   */
+  installed_by_user_id: number | null;
+  settings: Generated<unknown>;
+  enabled: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
 };
 export type Bounty = {
   id: Generated<number>;
@@ -2238,6 +2405,17 @@ export type Partner = {
   logo: string | null;
   disabled: Generated<boolean>;
 };
+export type PlatformDefaultBlock = {
+  app_block_id: string;
+  slot_id: string;
+  target_model_types: string[];
+  min_content_rating: string | null;
+  max_content_rating: string | null;
+  priority: Generated<number>;
+  enabled: Generated<boolean>;
+  promoted_at: Generated<Timestamp>;
+  promoted_by: number | null;
+};
 export type Post = {
   id: Generated<number>;
   nsfw: Generated<boolean>;
@@ -3219,6 +3397,9 @@ export type DB = {
   AnswerReaction: AnswerReaction;
   AnswerVote: AnswerVote;
   ApiKey: ApiKey;
+  app_block_publish_requests: AppBlockPublishRequest;
+  app_blocks: AppBlock;
+  app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   Article: Article;
   ArticleEngagement: ArticleEngagement;
@@ -3232,6 +3413,11 @@ export type DB = {
   BaseModelLicensingFee: BaseModelLicensingFee;
   Bid: Bid;
   BidRecurring: BidRecurring;
+  block_attribution_payout: BlockAttributionPayout;
+  block_buzz_attribution: BlockBuzzAttribution;
+  block_scope_invocations: BlockScopeInvocation;
+  block_user_settings: BlockUserSettings;
+  block_user_subscriptions: BlockUserSubscription;
   BlockedImage: BlockedImage;
   Blocklist: Blocklist;
   Bounty: Bounty;
@@ -3376,6 +3562,7 @@ export type DB = {
   OauthClient: OauthClient;
   OauthConsent: OauthConsent;
   Partner: Partner;
+  platform_default_blocks: PlatformDefaultBlock;
   Post: Post;
   PostHelper: PostHelper;
   PostImageTag: PostImageTag;

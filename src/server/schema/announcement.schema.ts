@@ -4,6 +4,13 @@ import { DomainColor } from '~/shared/utils/prisma/enums';
 
 export const domainColorEnum = z.enum(DomainColor);
 
+// Where an announcement is surfaced. `site` is the default catch-all (the global
+// banner area + notifications); `generator` and `training` scope an announcement
+// to those pages. Untyped/legacy announcements are treated as `site` at read time.
+export const announcementTypes = ['site', 'generator', 'training'] as const;
+export const announcementTypeSchema = z.enum(announcementTypes);
+export type AnnouncementType = z.infer<typeof announcementTypeSchema>;
+
 export type AnnouncementMetaSchema = z.infer<typeof announcementMetaSchema>;
 
 export const announcementMetaSchema = z
@@ -18,6 +25,7 @@ export const announcementMetaSchema = z
         color: z.string().optional(),
       })
     ),
+    type: announcementTypeSchema.default('site'),
     targetAudience: z.enum(['all', 'unauthenticated', 'authenticated']).default('all'),
     dismissible: z.boolean().default(true),
     colSpan: z.number().default(6),

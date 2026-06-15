@@ -50,6 +50,9 @@ import { useRouter } from 'next/router';
 import { useMemo, useRef } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { BlockSlot } from '~/components/AppBlocks/BlockSlot';
+import { PublisherSubscriptionBanner } from '~/components/Apps/PublisherSubscriptionBanner';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import {
   BidModelButton,
   getEntityDataForBidModelButton,
@@ -146,6 +149,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const user = useCurrentUser();
+  // `showNsfw` lives on the browsing-settings store (BrowserSettingsProvider),
+  // not on CurrentUser — that field was removed from CurrentUser when the
+  // browsing-settings refactor moved viewer prefs into their own provider.
+  const viewerShowNsfw = useBrowsingSettings((x) => x.showNsfw);
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -468,6 +475,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
       <ContainerGrid2.Col span={{ base: 12, sm: 5, md: 4 }} order={{ sm: 2 }} ref={adContainerRef}>
         <Stack>
+          {/* Owner-only banner: lists publisher_all_my_models subscriptions
+              that would render here so the model owner can opt out of any
+              specific subscription for this model. Hidden for non-owners. */}
+          {isOwner && (
+            <PublisherSubscriptionBanner modelId={model.id} modelType={model.type} />
+          )}
           {model.mode !== ModelModifier.TakenDown && mobile && (
             <ModelCarousel
               modelId={model.id}
@@ -477,6 +490,35 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               minor={model.minor}
             />
           )}
+          {/* App Blocks: model.sidebar_top slot. Renders publisher-installed and
+              platform-default blocks, capped at 3. Client-only — the server
+              emits a placeholder div.
+              Placed AFTER the mobile-only ModelCarousel above so that on small
+              screens (where the sidebar column stacks full-width) the block sits
+              BELOW the image carousel rather than pushing it down. On sm+ the
+              mobile carousel renders nothing, so the block keeps its sidebar-top
+              position (the gallery lives in the other grid column). */}
+          <BlockSlot
+            slotId="model.sidebar_top"
+            context={{
+              slotId: 'model.sidebar_top',
+              modelId: model.id,
+              modelVersionId: version.id,
+              modelName: model.name,
+              modelType: model.type,
+              modelNsfwLevel: model.nsfwLevel,
+              creatorUserId: model.user.id,
+              viewerUserId: user?.id ?? null,
+              viewerUsername: user?.username ?? null,
+              viewerStatus: user?.bannedAt
+                ? 'banned'
+                : user?.muted
+                ? 'muted'
+                : 'active',
+              viewerNsfwEnabled: viewerShowNsfw,
+              theme: colorScheme === 'dark' ? 'dark' : 'light',
+            }}
+          />
           {showRequestReview ? (
             <Button
               color="yellow"
@@ -607,6 +649,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             color="gray"
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
+                            aria-label="Share"
                           >
                             <IconShare3 size={18} />
                           </Button>
@@ -627,6 +670,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               color={isFavorite ? 'green' : 'gray'}
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label={isFavorite ? 'Unlike' : 'Like'}
                             >
                               <ThumbsUpIcon color="#fff" filled={isFavorite} size={18} />
                             </Button>
@@ -649,6 +693,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               variant={isInVault ? 'light' : undefined}
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label={isInVault ? 'Remove from Vault' : 'Add to Vault'}
                             >
                               {isLoading ? (
                                 <Loader size="xs" />
@@ -681,6 +726,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               variant="light"
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label={label}
                             >
                               {icon}
                             </Button>
@@ -710,6 +756,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             loading={toggleNotifyModelMutation.isPending}
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
+                            aria-label={
+                              isNotificationOn
+                                ? 'Stop getting notifications for this model'
+                                : 'Get notifications for this model'
+                            }
                           >
                             {isNotificationOn ? (
                               <IconBellCheck size={18} />
@@ -735,6 +786,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             }
                             fullWidth
                             style={{ paddingLeft: 0, paddingRight: 0 }}
+                            aria-label="Add to collection"
                           >
                             <IconBookmark size={18} />
                           </Button>
@@ -772,6 +824,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                               }
                               fullWidth
                               style={{ paddingLeft: 0, paddingRight: 0 }}
+                              aria-label="Report"
                             >
                               <IconFlag size={18} />
                             </Button>
@@ -1127,6 +1180,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                     size="md"
                                     radius="md"
                                     disabled={archived || isLoadingAccess}
+                                    aria-label={
+                                      canDownload
+                                        ? 'Download from source model'
+                                        : 'Purchase to download'
+                                    }
                                   >
                                     <IconDownload size={16} />
                                   </ActionIcon>

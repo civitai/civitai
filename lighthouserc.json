@@ -1,0 +1,30 @@
+{
+  "//": "Lighthouse CI config for the PR-preview pipeline (datapacket-talos pr-preview-pipeline.yaml `lighthouse` task). REPORT-ONLY: no assertions are set to `error`, so a regression never fails the build. The Tekton task mints a gold-tester NextAuth session cookie (the preview is gated by preview-auth.middleware -> unauthenticated requests 302 to /login) and injects it into collect.settings.extraHeaders at runtime, producing lighthouserc.runtime.json from this base. See tests/lighthouse-mint-cookie.cjs.",
+  "ci": {
+    "collect": {
+      "//": "5 runs + LHCI median aggregation is the single biggest stabilizer on a capacity-constrained build pool — lab noise is real, which is exactly why this is report-only and why timing metrics (LCP/TBT/INP) must NOT be promoted to a gating assertion until a soak proves the threshold sits above the noise band. URLs are filled in per-PR by the task (BASE_URL + these paths). All routes are hit AUTHENTICATED as ci-smoke-gold (a gate-passing paid member) — an anonymous GET would 302 to /login and measure the login page, not the app.",
+      "numberOfRuns": 5,
+      "settings": {
+        "preset": "desktop",
+        "//preset": "Desktop preset (not mobile). Desktop is the lower-variance profile on a noisy shared runner and matches the primary civitai surface; revisit mobile once the desktop signal is trusted.",
+        "chromeFlags": "--no-sandbox --disable-gpu --disable-dev-shm-usage --headless=new",
+        "//chromeFlags": "--no-sandbox is required: the Tekton step runs Chrome without the kernel sandbox privileges. --disable-dev-shm-usage avoids /dev/shm exhaustion in the small container.",
+        "maxWaitForLoad": 60000
+      }
+    },
+    "assert": {
+      "//": "REPORT-ONLY. Every assertion is `warn` — LHCI surfaces the diff but exits 0, so the build never fails. Promotion path (mirrors the bundle-budget soak->gate philosophy): promote the DETERMINISTIC, low-variance metrics to `error` FIRST once a soak confirms a stable baseline — cumulative-layout-shift (geometry, near-zero variance) and total byte/resource budgets. Promote the NOISY timing metrics (largest-contentful-paint, total-blocking-time, interactive, interaction-to-next-paint) LAST, and only with a threshold set comfortably above the observed 5-run noise band. To gate: change the relevant `warn` to `error`.",
+      "assertions": {
+        "categories:performance": ["warn", { "minScore": 0.5 }],
+        "categories:accessibility": ["warn", { "minScore": 0.9 }],
+        "cumulative-layout-shift": ["warn", { "maxNumericValue": 0.1 }],
+        "largest-contentful-paint": ["warn", { "maxNumericValue": 4000 }],
+        "total-blocking-time": ["warn", { "maxNumericValue": 600 }]
+      }
+    },
+    "upload": {
+      "//": "temporary-public-storage gives a public, 7-day report URL with zero infra (no @lhci/server stood up). The task ALSO reads .lighthouseci/manifest.json (median-run summary scores) and the representative lhr-*.json (LCP/CLS/TBT/INP audits) for the PR comment, and .lighthouseci/links.json for the public URLs.",
+      "target": "temporary-public-storage"
+    }
+  }
+}

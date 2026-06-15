@@ -9,7 +9,7 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getFileWithPermission } from '~/server/services/file.service';
 import { Tracker } from '~/server/clickhouse/client';
-import { handleLogError } from '~/server/utils/errorHandling';
+import { handleLogError, isClientAbortError } from '~/server/utils/errorHandling';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
@@ -119,6 +119,10 @@ export default PublicEndpoint(
 
       res.redirect(url);
     } catch (err: unknown) {
+      if (isClientAbortError(err)) {
+        if (!res.headersSent) res.status(499).end();
+        return;
+      }
       const error = err as Error;
       console.error(`Error downloading file: ${file.url} - ${error.message}`);
       return res.status(500).json({ error: 'Error downloading file' });

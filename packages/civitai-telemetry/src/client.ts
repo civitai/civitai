@@ -247,5 +247,32 @@ export const dbReadFallbackCounter = registerCounterWithLabels({
   labelNames: ['entity', 'caller'] as const,
 });
 
+// App Blocks buzz attribution — one row per buzz purchase originating inside a block.
+export const blockBuzzAttributionWriteCounter = registerCounterWithLabels({
+  name: 'block_buzz_attribution_total',
+  help: 'Block buzz attribution rows written',
+  labelNames: ['provider', 'scope', 'status'] as const,
+});
+
+// App Blocks KV datastore (op ∈ get|set|delete|list|getQuota; outcome ∈ ok|unauthorized|…).
+export const appStorageOpsCounter = registerCounterWithLabels({
+  name: 'app_blocks_storage_ops_total',
+  help: 'App Blocks KV datastore tRPC operations',
+  labelNames: ['op', 'outcome'] as const,
+});
+
+export const appStorageQuotaExceededCounter = registerCounterWithLabels({
+  name: 'app_blocks_storage_quota_exceeded_total',
+  help: 'App Blocks KV writes rejected because the app quota would be exceeded',
+  labelNames: ['app_block_id'] as const,
+});
+
+export const appStorageLatencyHistogram = registerHistogram({
+  name: 'app_blocks_storage_latency_seconds',
+  help: 'App Blocks KV procedure latency',
+  labelNames: ['op'] as const,
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+});
+
 // NOTE: the DB pool-depth gauges live in the app (src/server/prom/client.ts) — they
 // compose the db pools + these prom helpers, which is app-level glue, not infra.
