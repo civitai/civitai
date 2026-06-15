@@ -76,6 +76,10 @@ export const createContext = async ({
     | { type: 'oauth'; id: string }
     | undefined;
 
+  // Tag content-creation tracking with how the request was authenticated (web vs.
+  // personal API key vs. OAuth app) so moderators can trace agent/API activity.
+  track.setProvenance({ subject, apiKeyId });
+
   return {
     user: session?.user,
     acceptableOrigin,
