@@ -15,7 +15,8 @@ const { mockIsAppBlocksEnabled, mockFindUnique, mockUser, mockS3Send } = vi.hois
   mockIsAppBlocksEnabled: vi.fn<() => Promise<boolean>>(async () => true),
   mockFindUnique: vi.fn<(...a: unknown[]) => Promise<unknown>>(async () => null),
   mockUser: { value: { id: 1, isModerator: true } as { id: number; isModerator?: boolean } | undefined },
-  mockS3Send: vi.fn(async () => ({
+  // Typed param so `.mock.calls[0][0]` is a real (non-empty) tuple element.
+  mockS3Send: vi.fn(async (_cmd: { Key?: string }) => ({
     Body: { transformToByteArray: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]) },
   })),
 }));
