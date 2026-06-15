@@ -16,7 +16,8 @@ const { mockIsAppBlocksEnabled, mockFindUnique, mockUser, mockS3Send } = vi.hois
   mockFindUnique: vi.fn<(...a: unknown[]) => Promise<unknown>>(async () => null),
   mockUser: { value: { id: 1, isModerator: true } as { id: number; isModerator?: boolean } | undefined },
   // Typed param so `.mock.calls[0][0]` is a real (non-empty) tuple element.
-  mockS3Send: vi.fn(async (_cmd: { Key?: string }) => ({
+  // Receives the GetObjectCommand instance (its input is on `.input`).
+  mockS3Send: vi.fn(async (_cmd: { input?: { Key?: string } }) => ({
     Body: { transformToByteArray: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]) },
   })),
 }));
@@ -40,7 +41,17 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
     },
 }));
 // The 200 path lazily imports these; mock so the happy path doesn't touch MinIO.
-vi.mock('@aws-sdk/client-s3', () => ({ GetObjectCommand: vi.fn((args: unknown) => args) }));
+// GetObjectCommand is a real class (constructable) — `new vi.fn()` on an
+// arrow-impl spy doesn't reliably return the arg, which made the route's S3 leg
+// throw → 404. A class instance carries the input on `.input` (matches the SDK).
+vi.mock('@aws-sdk/client-s3', () => ({
+  GetObjectCommand: class {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
+}));
 vi.mock('~/utils/bundle-s3', () => ({
   getBundleBucket: () => 'bundles',
   getBundleS3Client: () => ({ send: mockS3Send }),
@@ -122,12 +133,24 @@ describe('GET /api/blocks/screenshot/[appBlockId]/[file] (F-E E5)', () => {
     expect((await invoke('ab_missing', '0.png'))._status).toBe(404);
   });
 
-  it('404s on a non-numeric / negative / traversal-y index (client cannot pick an arbitrary key)', async () => {
-    expect((await invoke('ab_1', 'abc.png'))._status).toBe(404);
-    expect((await invoke('ab_1', '-1.png'))._status).toBe(404);
-    expect((await invoke('ab_1', '../secret.png'))._status).toBe(404);
-    // no recorded record at this index → 404
-    expect((await invoke('ab_1', '99.png'))._status).toBe(404);
+  it('404s on a non-numeric / negative / out-of-range index', async () => {
+    expect((await invoke('ab_1', 'abc.png'))._status).toBe(404); // NaN index
+    expect((await invoke('ab_1', '-1.png'))._status).toBe(404); // negative index
+    expect((await invoke('ab_1', '99.png'))._status).toBe(404); // no record at this index
+  });
+
+  it('cannot fetch an arbitrary MinIO key — the served key is the STORED key by index, never the filename', async () => {
+    // A traversal-y filename only contributes an INDEX (the ext is cosmetic); the
+    // S3 key is always the recorded entry's stored key. `../secret.png` parses to
+    // index 0 (leading-dot → empty index str → 0) and serves index 0's STORED key
+    // — it never fetches `../secret.png`. So no path traversal is possible.
+    const res = await invoke('ab_1', '../secret.png');
+    if (res._status === 200) {
+      const cmd = mockS3Send.mock.calls[0][0] as { input?: { Key?: string } };
+      expect(cmd.input?.Key).toBe('screenshots/ab_1/0.png');
+    } else {
+      expect(res._status).toBe(404);
+    }
   });
 
   it('404s when the recorded record has a non-allowlisted content-type', async () => {
@@ -146,7 +169,7 @@ describe('GET /api/blocks/screenshot/[appBlockId]/[file] (F-E E5)', () => {
     expect(res.headers['content-type']).toBe('image/png');
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     // The S3 key fetched is the STORED key, never anything the client supplied.
-    const sentCmd = mockS3Send.mock.calls[0][0] as { Key?: string };
-    expect(sentCmd.Key).toBe('screenshots/ab_1/0.png');
+    const sentCmd = mockS3Send.mock.calls[0][0] as { input?: { Key?: string } };
+    expect(sentCmd.input?.Key).toBe('screenshots/ab_1/0.png');
   });
 });
