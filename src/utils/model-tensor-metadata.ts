@@ -44,7 +44,9 @@ export type ModelTensorDisplayRow =
 
 export type ModelVramEstimate = {
   estimatedMinimumVramBytes: number;
+  recommendedVramBytes: number;
   residentWeightsBytes: number;
+  fullyResidentWeightsBytes: number;
   inferenceReserveBytes: number;
   extraReservedBytes: number;
   dynamicVramPageBytes: number;
@@ -188,11 +190,17 @@ function estimateComfyDynamicOffloadVram(tensors: ModelTensorInfo[]): ModelVramE
     Math.max(residentWeightsBytes, largestTensorBytes),
     COMFY_DYNAMIC_VRAM_PAGE_BYTES
   );
+  const fullyResidentWeightsBytes = roundUpToPage(
+    tensors.reduce((sum, tensor) => sum + tensor.sizeBytes, 0),
+    COMFY_DYNAMIC_VRAM_PAGE_BYTES
+  );
+  const baseReserveBytes = COMFY_INFERENCE_RESERVE_BYTES + COMFY_EXTRA_RESERVED_BYTES;
 
   return {
-    estimatedMinimumVramBytes:
-      residentWeightsBytes + COMFY_INFERENCE_RESERVE_BYTES + COMFY_EXTRA_RESERVED_BYTES,
+    estimatedMinimumVramBytes: residentWeightsBytes + baseReserveBytes,
+    recommendedVramBytes: fullyResidentWeightsBytes + baseReserveBytes,
     residentWeightsBytes,
+    fullyResidentWeightsBytes,
     inferenceReserveBytes: COMFY_INFERENCE_RESERVE_BYTES,
     extraReservedBytes: COMFY_EXTRA_RESERVED_BYTES,
     dynamicVramPageBytes: COMFY_DYNAMIC_VRAM_PAGE_BYTES,

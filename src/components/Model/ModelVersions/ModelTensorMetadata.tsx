@@ -164,6 +164,11 @@ export function ModelTensorMetadata({ files, modelType, userPreferences, enabled
 function TensorMetadataContent({ data }: { data: ModelTensorAnalysis }) {
   const rows = useMemo(() => buildTensorDisplayRows(data.tensors), [data.tensors]);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const recommendedVramBytes =
+    typeof data.vramEstimate?.recommendedVramBytes === 'number'
+      ? data.vramEstimate.recommendedVramBytes
+      : null;
+  const summaryColumns = data.vramEstimate ? (recommendedVramBytes != null ? 4 : 3) : 2;
 
   useEffect(() => {
     setExpandedGroups(
@@ -178,7 +183,7 @@ function TensorMetadataContent({ data }: { data: ModelTensorAnalysis }) {
   return (
     <Stack gap={0}>
       <SimpleGrid
-        cols={{ base: 2, sm: data.vramEstimate ? 3 : 2 }}
+        cols={{ base: 2, sm: summaryColumns }}
         spacing={0}
         style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
       >
@@ -194,6 +199,14 @@ function TensorMetadataContent({ data }: { data: ModelTensorAnalysis }) {
             label="Est. min VRAM"
             value={formatBytes(data.vramEstimate.estimatedMinimumVramBytes, 1)}
             tooltip="Estimated checkpoint weight residency plus Comfy reserve. Actual inference memory depends on workflow settings."
+          />
+        )}
+        {data.vramEstimate && recommendedVramBytes != null && (
+          <SummaryItem
+            icon={<IconCpu size={16} />}
+            label="Recommended VRAM"
+            value={formatBytes(recommendedVramBytes, 1)}
+            tooltip="Estimated VRAM to keep checkpoint weights resident without dynamic offload, plus Comfy reserve."
           />
         )}
       </SimpleGrid>
