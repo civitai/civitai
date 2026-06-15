@@ -261,8 +261,19 @@ export async function getBrowsingSettingAddons() {
     return DEFAULT_BROWSING_SETTINGS_ADDONS;
   }
   if (cached) {
-    const data = JSON.parse(cached) as BrowsingSettingsAddon[];
-    return data;
+    try {
+      return JSON.parse(cached) as BrowsingSettingsAddon[];
+    } catch (err) {
+      // Corrupt/non-JSON value in sysRedis (e.g. a malformed value set by
+      // an ops tool). Without this guard the parse throws all the way up
+      // through _app.tsx getInitialProps and 500s every page render.
+      // Fail open to defaults — same posture as the read above and
+      // getCreationBlockedTags below.
+      logSysRedisFailOpen('read-degraded', 'getBrowsingSettingAddons', err, {
+        cachedSample: cached.slice(0, 64),
+      });
+      return DEFAULT_BROWSING_SETTINGS_ADDONS;
+    }
   }
 
   return DEFAULT_BROWSING_SETTINGS_ADDONS;

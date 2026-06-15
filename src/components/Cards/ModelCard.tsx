@@ -112,6 +112,7 @@ function ModelCardContent({ data }: Props) {
       contentType="model"
       contentId={data.id}
       image={data.images[0]}
+      alt={data.name}
       onSite={!!data.version.trainingStatus}
       isRemix={!!data.images[0]?.remixOfId}
       header={

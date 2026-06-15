@@ -48,16 +48,32 @@ export const TrainStatusMessage = () => {
 export default function TrainWizard() {
   const router = useRouter();
 
-  const { modelId } = router.query;
-  const pathWithId = `${basePath}?modelId=${modelId}`;
+  const { modelId, modelVersionId } = router.query;
+  const versionId = Number(modelVersionId);
+  const pathWithId = `${basePath}?modelId=${modelId}${
+    isNumber(versionId) && versionId > 0 ? `&modelVersionId=${versionId}` : ''
+  }`;
   const isNew = router.pathname === basePath;
   const [state, setState] = useState<WizardState>({ step: 1 });
 
   const {
-    data: model,
+    data: modelData,
     isInitialLoading: modelLoading,
     isError: modelError,
   } = trpc.training.getModelBasic.useQuery({ id: Number(modelId) }, { enabled: !!modelId });
+
+  // The wizard steps all act on modelVersions[0]. When a specific version is requested
+  // (e.g. "Train Further" creates a new Pending version and links here with
+  // ?modelVersionId=...), pin that version to the front rather than guessing by order.
+  const model = useMemo(() => {
+    if (!modelData || !isNumber(versionId) || versionId <= 0) return modelData;
+    const target = modelData.modelVersions.find((mv) => mv.id === versionId);
+    if (!target) return modelData;
+    return {
+      ...modelData,
+      modelVersions: [target, ...modelData.modelVersions.filter((mv) => mv.id !== versionId)],
+    };
+  }, [modelData, versionId]);
 
   const editing = !!model;
   const hasFiles = model && model.modelVersions[0]?.files?.length > 0;

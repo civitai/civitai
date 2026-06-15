@@ -90,7 +90,11 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(upsertArticleInput)
     .use(isFlagProtected('articleCreate'))
-    .use(rateLimit(articleRateLimits, (input: UpsertArticleInput) => !input.id))
+    .use(
+      rateLimit(articleRateLimits, (input: UpsertArticleInput) => !input.id, {
+        onlyCountSuccess: true,
+      })
+    )
     .mutation(upsertArticleHandler),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesDelete })

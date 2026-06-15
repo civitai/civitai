@@ -541,6 +541,18 @@ model User {
   comicReferences            ComicReference[]
   comicProjectEngagements    ComicProjectEngagement[]
 
+  // App Blocks back-relations
+  blockUserSettings          BlockUserSettings[]
+  promotedPlatformBlocks     PlatformDefaultBlock[]          @relation("PlatformDefaultBlockPromoter")
+  blockUserSubscriptions     BlockUserSubscription[]
+  blockBuzzAttributionsAsPurchaser BlockBuzzAttribution[]    @relation("BlockBuzzAttributionPurchaser")
+  blockBuzzAttributionsAsAppOwner  BlockBuzzAttribution[]    @relation("BlockBuzzAttributionAppOwner")
+  blockAttributionPayouts          BlockAttributionPayout[]  @relation("BlockAttributionPayoutOwner")
+  publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
+  publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
+  blockScopeInvocations      BlockScopeInvocation[]
+  appUserScopeGrants         AppUserScopeGrant[]
+
   @@index([deletedAt])
 }
 
@@ -2177,8 +2189,400 @@ model OauthClient {
   updatedAt      DateTime       @default(now()) @updatedAt
   tokens         ApiKey[]
   consents       OauthConsent[]
+  appBlocks      AppBlock[]
+  buzzAttributions BlockBuzzAttribution[]
 
   @@index([userId])
+}
+
+/// App Blocks — v1 substrate. Registry of all blocks across all apps (OauthClients).
+/// Application-generated TEXT primary key (prefixed ULID: `ab_<ulid>`).
+/// See docs/features/app-blocks.md for the architecture overview.
+model AppBlock {
+  id                 String    @id
+  appId              String    @map("app_id")
+  app                OauthClient @relation(fields: [appId], references: [id], onDelete: Cascade)
+  blockId            String    @map("block_id")
+  version            String
+  manifest           Json
+  status             String    @default("pending")
+  contentRating      String    @map("content_rating")
+  promotionEligible  Boolean   @default(false) @map("promotion_eligible")
+  healthStatus       String    @default("unknown") @map("health_status")
+  healthCheckedAt    DateTime? @map("health_checked_at") @db.Timestamptz(6)
+
+  // v2 substrate columns (NULL-safe for v1, included to avoid later migration)
+  renderMode         String    @default("iframe") @map("render_mode")
+  trustTier          String    @default("unverified") @map("trust_tier")
+  assetBundleUrl     String?   @map("asset_bundle_url")
+  assetBundleSha256  String?   @map("asset_bundle_sha256")
+
+  // H-2: scope set captured at moderator approval. Empty array = never
+  // been approved (Prisma doesn't support nullable arrays). Token issuance
+  // fails closed when the requested scope isn't in this set.
+  approvedScopes     String[]  @default([]) @map("approved_scopes")
+
+  // W2 apps-as-repos — Forgejo repo currently backing this block. Nullable
+  // because pre-W2 hackathon rows (apb_01KSD3NP23CQE4TMW14XTEFSNS) won't
+  // have these until W12 migration. Written by the git-push webhook
+  // (sha) + build-callback (deployedAt).
+  currentVersionSha         String?   @map("current_version_sha")
+  currentVersionDeployedAt  DateTime? @map("current_version_deployed_at") @db.Timestamptz(6)
+  repoUrl                   String?   @map("repo_url")
+
+  // F-E E3 marketplace browse metadata — platform-controlled, mod-assigned at
+  // review (NOT manifest/publisher fields, to avoid SEO gaming + the SDK/npm
+  // cross-repo dep). ADDITIVE + manually applied (migration
+  // 20260614120000_e3_marketplace_metadata; CNPG nvme0 does not auto-apply).
+  // NULL/false until applied — read only by the dark, mod-gated marketplace.
+  // `category` is free-text (taxonomy = MARKETPLACE_CATEGORIES const) so adding
+  // a category needs no migration.
+  category           String?   // mod-assigned marketplace category (free-text)
+  featured           Boolean   @default(false) // E4 curation: staff-pick rail
+  featuredOrder      Int?      @map("featured_order") // E4 curation: rail order
+
+  // F-E E5 marketplace screenshot gallery — publisher-supplied screenshots
+  // auto-discovered from the submitted bundle's `screenshots/` dir, validated
+  // (count/size/magic-bytes/name), uploaded to the bundle MinIO at approve, and
+  // recorded here as an array of { key, index, ext, contentType } entries.
+  // PUBLIC display data (served via the gated /api/blocks/screenshot/... route),
+  // but MOD-REVIEWED before approval. ADDITIVE + manually applied (migration
+  // 20260615120000_e5_screenshots; CNPG nvme0 does not auto-apply). NULL until
+  // applied — read ONLY by the dark, mod-gated getAppDetail (NOT listAvailable).
+  screenshots        Json?     // E5: [{ key, index, ext, contentType }]
+
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  platformDefault    PlatformDefaultBlock?
+  userSubscriptions  BlockUserSubscription[]
+  buzzAttributions   BlockBuzzAttribution[]
+  publishRequests    AppBlockPublishRequest[]
+  scopeInvocations   BlockScopeInvocation[]
+  userScopeGrants    AppUserScopeGrant[]
+
+  @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
+  // W1 audit C-3 fix: enforce one app per slug at the DB layer. The
+  // (appId, blockId) constraint above doesn't protect because each
+  // approve mints a fresh appId.
+  @@unique([blockId], map: "app_blocks_block_id_unique")
+  @@index([status], map: "app_blocks_status_idx")
+  // F-E E3 marketplace browse indexes (created by the manual E3 migration).
+  @@index([status, category], map: "app_blocks_status_category_idx")
+  @@index([featured, featuredOrder], map: "app_blocks_featured_order_idx")
+  @@map("app_blocks")
+}
+
+/// W1 v0 publish request — every version of every app goes through the
+/// moderator review queue. The dev uploads a ZIP via /apps/submit (first
+/// version) or /apps/<slug>/submit-version (subsequent). civitai-web
+/// stores the bundle on ssd-minio-backups MinIO, extracts + validates the
+/// manifest, computes diff summaries, and inserts a row here in
+/// status='pending'. A mod approves or rejects via /apps/review.
+///
+/// On approve the platform (a) auto-creates the OauthClient if first
+/// version, (b) inserts/updates the app_blocks row, (c) commits the
+/// bundle contents to the Forgejo repo, which triggers the existing
+/// Tekton build → callback → apply chain.
+///
+/// Forgejo is invisible to developers at every step.
+model AppBlockPublishRequest {
+  id                    String    @id                                                       // pubreq_<ULID>
+  appBlockId            String?   @map("app_block_id")                                      // NULL while first request pending; FK on approve
+  appBlock              AppBlock? @relation(fields: [appBlockId], references: [id], onDelete: SetNull)
+  slug                  String                                                              // app slug; carries identity across the first-request lifecycle
+  submittedByUserId     Int       @map("submitted_by_user_id")
+  submittedBy           User      @relation("PublishRequestSubmitter", fields: [submittedByUserId], references: [id], onDelete: Cascade)
+  submittedAt           DateTime  @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  version               String                                                              // semver, e.g. "0.1.0"
+  manifest              Json                                                                // parsed block.manifest.json from the ZIP
+  bundleKey             String    @map("bundle_key")                                        // S3 key: app-block-bundles/<sha256>.zip
+  bundleSha256          String    @map("bundle_sha256")                                     // for integrity + dedup
+  bundleSizeBytes       BigInt    @map("bundle_size_bytes")
+  fileSummary           Json      @map("file_summary")                                      // { added, removed, changed } vs previous approved version
+  manifestDiffSummary   Json      @map("manifest_diff_summary")                             // field-level diff
+  status                String                                                              // 'pending' | 'approved' | 'rejected' | 'withdrawn'
+  reviewedByUserId      Int?      @map("reviewed_by_user_id")
+  reviewedBy            User?     @relation("PublishRequestReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  reviewedAt            DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  rejectionReason       String?   @map("rejection_reason")
+  approvalNotes         String?   @map("approval_notes")
+  forgejoCommitSha      String?   @map("forgejo_commit_sha")                                // populated on approve after Forgejo commit succeeds
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, submittedAt(sort: Desc)], map: "app_block_publish_requests_queue_idx")  // mod queue
+  @@index([appBlockId, submittedAt(sort: Desc)], map: "app_block_publish_requests_app_history_idx")
+  @@index([submittedByUserId, status], map: "app_block_publish_requests_my_submissions_idx")
+  @@index([slug, status], map: "app_block_publish_requests_slug_idx")
+  @@map("app_block_publish_requests")
+}
+
+/// Per-block-instance, per-user settings (viewer preferences).
+/// FK CASCADE on subscription deletion and GDPR-user-delete.
+///
+/// The FK points at BlockUserSubscription.block_instance_id which is a
+/// nullable + UNIQUE column populated for migrated per-model installs
+/// (preserves the historical `bki_*` id). Future per-model pinned
+/// subscriptions get a fresh `bki_*` id at upsert time. Blanket
+/// subscriptions have NULL block_instance_id; their viewer overrides
+/// aren't currently a thing (no UI surface), but if added later they'd
+/// allocate a block_instance_id on first override write.
+model BlockUserSettings {
+  blockInstanceId String                @map("block_instance_id")
+  subscription    BlockUserSubscription @relation(fields: [blockInstanceId], references: [blockInstanceId], onDelete: Cascade)
+  userId          Int                   @map("user_id")
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  settings        Json                  @default("{}")
+  updatedAt       DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@id([blockInstanceId, userId])
+  @@index([userId], map: "block_user_settings_user_idx")
+  @@map("block_user_settings")
+}
+
+/// Platform-default blocks (promoted to render on all eligible model pages).
+model PlatformDefaultBlock {
+  appBlockId        String   @id @map("app_block_id")
+  appBlock          AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Restrict)
+  slotId            String   @map("slot_id")
+  targetModelTypes  String[] @map("target_model_types")
+  minContentRating  String?  @map("min_content_rating")
+  maxContentRating  String?  @map("max_content_rating")
+  priority          Int      @default(500)
+  enabled           Boolean  @default(true)
+  promotedAt        DateTime @default(now()) @map("promoted_at") @db.Timestamptz(6)
+  promotedBy        Int?     @map("promoted_by")
+  promoter          User?    @relation("PlatformDefaultBlockPromoter", fields: [promotedBy], references: [id], onDelete: SetNull)
+
+  @@index([slotId, enabled], map: "platform_default_blocks_slot_enabled_idx")
+  @@index([slotId, priority], map: "platform_default_blocks_slot_priority_idx")
+  @@index([promotedBy], map: "platform_default_blocks_promoted_by_idx")
+  @@map("platform_default_blocks")
+}
+
+/// User-controlled install row — the ONE install primitive (since the
+/// 2026-05-30 kill_per_model_installs migration absorbed model_block
+/// _installs into this table).
+///
+/// Two scopes:
+///   - 'publisher_all_my_models': model owner. Joins on Model.userId
+///     at listForModel time. Can be blanket (target_model_ids=[]) or
+///     pinned to specific models (target_model_ids=[X,Y,...]).
+///   - 'viewer_personal': any viewer. Joins on the current viewer's
+///     userId. Always blanket in v0; per-model pinning UI is publisher
+///     -only by design.
+///
+/// Pinning shape:
+///   - blanket subscription:  slot_id=NULL, target_model_ids=[]
+///   - pinned subscription:   slot_id=<slot>, target_model_ids=[X]
+///   The pinned shape replaces what model_block_installs did — one row
+///   per (user, app, scope, slot, model) tuple.
+///
+/// block_instance_id is NULL for blanket subs (listForModel synthesises
+/// `bus_pub_<id>` / `bus_view_<id>` at SELECT time); non-NULL for the
+/// pinned shape (the migration preserved the historical `bki_*` id, and
+/// future pinned installs allocate a fresh one). Downstream tables
+/// (block_buzz_attribution, block_scope_invocations, block_user_settings)
+/// look up by this column.
+///
+/// Application-generated id (`bus_<ulid>`).
+model BlockUserSubscription {
+  id                 String   @id
+  userId             Int      @map("user_id")
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appBlockId         String   @map("app_block_id")
+  appBlock           AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  scope              String
+  targetModelTypes   String[] @map("target_model_types")
+  targetBaseModels   String[] @map("target_base_models")
+  /// NEW (kill_per_model_installs): pin this subscription to specific model
+  /// ids. Empty = blanket (applies to every model that passes the type +
+  /// base-model filters). Non-empty + non-NULL slot_id = the per-model
+  /// install path that model_block_installs used to carry.
+  targetModelIds     Int[]    @default([]) @map("target_model_ids")
+  /// NEW (kill_per_model_installs): when set, this subscription targets a
+  /// specific slot id (e.g. "model.sidebar_top"). When NULL, it applies to
+  /// every slot the manifest declares (the blanket-subscription shape).
+  slotId             String?  @map("slot_id")
+  /// NEW (kill_per_model_installs): copied from model_block_installs.pinned
+  /// _version. NULL = use the AppBlock's current approved manifest; semver
+  /// string = use that version's manifest from app_block_publish_requests.
+  pinnedVersion      String?  @map("pinned_version")
+  /// NEW (kill_per_model_installs): preserves the bki_* id from the migrated
+  /// install row so block_buzz_attribution, block_scope_invocations, and
+  /// block_user_settings continue to resolve. NULL for blanket
+  /// subscriptions (which synthesise bus_pub_* / bus_view_* on read).
+  blockInstanceId    String?  @unique @map("block_instance_id")
+  /// NEW (kill_per_model_installs): mirrors model_block_installs.installed
+  /// _by_user_id. For migrated rows this equals user_id by construction;
+  /// kept as a separate column so future "installed by mod / installed via
+  /// admin tooling" cases are expressible without schema change.
+  installedByUserId  Int?     @map("installed_by_user_id")
+  settings           Json     @default("{}")
+  enabled            Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  viewerSettings     BlockUserSettings[]
+
+  // Partial uniqueness — declared in the migration SQL (Prisma can't
+  // express partial unique indexes with array expressions inline). One
+  // blanket sub per (user, app, scope); one pinned sub per
+  // (user, app, scope, slot, target_model_ids[1]).
+  @@map("block_user_subscriptions")
+}
+
+/// Buzz purchase originated from inside an App Block. One row per
+/// (payment_transaction_id, app_block_id). Drives publisher revenue
+/// share — `app_owner_share_cents` is paid out to `app_owner_user_id`
+/// once `status` reaches `paid_out`. Rate card snapshot stored on the
+/// row (`rate_card_version`) so past attributions pay out under their
+/// own terms even if the active rate card later changes.
+///
+/// `blockInstanceId` is intentionally not an FK — see migration
+/// comments. Resolve via BlockRegistry.resolveBlockInstance.
+///
+/// Application-generated id (`bba_<ulid>`).
+model BlockBuzzAttribution {
+  id                     String   @id
+  userId                 Int      @map("user_id")
+  user                   User     @relation("BlockBuzzAttributionPurchaser", fields: [userId], references: [id], onDelete: Restrict)
+  buzzAmount             Int      @map("buzz_amount")
+  usdAmountCents         Int      @map("usd_amount_cents")
+  buzzType               String   @default("yellow") @map("buzz_type")
+
+  paymentProvider        String   @map("payment_provider")
+  paymentTransactionId   String   @map("payment_transaction_id")
+  buzzTransactionId      String?  @map("buzz_transaction_id")
+
+  appId                  String   @map("app_id")
+  app                    OauthClient @relation(fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId             String   @map("app_block_id")
+  appBlock               AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Restrict)
+  blockInstanceId        String   @map("block_instance_id")
+  scope                  String
+  modelId                Int?     @map("model_id")
+
+  rateCardVersion        String   @map("rate_card_version")
+  appOwnerShareCents     Int      @map("app_owner_share_cents")
+  platformShareCents     Int      @map("platform_share_cents")
+  providerFeeCents       Int      @map("provider_fee_cents")
+  appOwnerUserId         Int      @map("app_owner_user_id")
+  appOwner               User     @relation("BlockBuzzAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+
+  status                 String   @default("pending")
+  voidedReason           String?  @map("voided_reason")
+  // 'velocity' (or future triggers) — set when the confirm-pending cron
+  // parks a row in status='held' for manual review instead of confirming
+  // it. NULL on every non-held row.
+  holdReason             String?  @map("hold_reason")
+  heldAt                 DateTime? @map("held_at") @db.Timestamptz(6)
+  // 'purchase' (the normal forward attribution) or 'clawback' (a negative
+  // carry-forward row written when a refund lands AFTER the original was
+  // paid out). Clawback rows carry negative app_owner_share_cents /
+  // usd_amount_cents so the payout aggregator nets them out automatically.
+  entryType              String   @default("purchase") @map("entry_type")
+  attributedAt           DateTime @default(now()) @map("attributed_at") @db.Timestamptz(6)
+  confirmedAt            DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  voidedAt               DateTime? @map("voided_at") @db.Timestamptz(6)
+  paidOutAt              DateTime? @map("paid_out_at") @db.Timestamptz(6)
+  payoutId               String?  @map("payout_id")
+
+  @@unique([paymentTransactionId, appBlockId], map: "block_buzz_attribution_payment_app_uniq")
+  @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bba_publisher_dashboard_idx")
+  @@index([appBlockId, attributedAt(sort: Desc)], map: "bba_app_block_dashboard_idx")
+  @@index([paymentProvider, paymentTransactionId], map: "bba_payment_tx_idx")
+  @@map("block_buzz_attribution")
+}
+
+/// Idempotency ledger for publisher revenue-share payouts. One row per
+/// (app_owner_user_id, period_key) — a publisher is paid at most once per
+/// period. mintPayoutForOwner inserts here inside the same transaction
+/// that flips the contributing block_buzz_attribution rows to paid_out;
+/// the UNIQUE on (app_owner_user_id, period_key) is the no-double-pay
+/// guard (a racing/retried mint hits P2002 and no-ops).
+///
+/// This row records that the ledger was minted — it does NOT mean money
+/// moved. Actual disbursement (Tipalti / creator-program cash bank) is a
+/// separate, leadership-gated step that reads these rows.
+///
+/// Application-generated id (`bba_payout_<ulid>`).
+model BlockAttributionPayout {
+  id             String   @id
+  appOwnerUserId Int      @map("app_owner_user_id")
+  appOwner       User     @relation("BlockAttributionPayoutOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+  /// Caller-supplied period bucket, e.g. ISO week '2026-W22'. The
+  /// (owner, period) pair is the idempotency key.
+  periodKey      String   @map("period_key")
+  /// Net publisher share minted for this period (sum of contributing
+  /// confirmed rows' app_owner_share_cents, after clawbacks net out).
+  totalCents     Int      @map("total_cents")
+  /// Number of block_buzz_attribution rows flipped to paid_out by this mint.
+  rowCount       Int      @map("row_count")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([appOwnerUserId, periodKey], map: "block_attribution_payout_owner_period_uniq")
+  @@index([appOwnerUserId, createdAt(sort: Desc)], map: "bap_owner_created_idx")
+  @@map("block_attribution_payout")
+}
+
+/// W5 v0.5 audit log — one row per successful scope-gated API call from
+/// block-scope.middleware.ts. Surfaced on /apps/installed Activity tab,
+/// interleaved with BlockBuzzAttribution rows so the user sees paid and
+/// free actions on one timeline.
+///
+/// `blockInstanceId` is NOT an FK on purpose — synthetic ids (pdb_*,
+/// bus_pub_*, bus_view_*) have no model_block_installs row. Same
+/// pattern as BlockBuzzAttribution; resolve at read time via
+/// BlockRegistry.resolveBlockInstance.
+model BlockScopeInvocation {
+  id               BigInt   @id @default(autoincrement())
+  userId           Int      @map("user_id")
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appBlockId       String   @map("app_block_id")
+  appBlock         AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  blockInstanceId  String   @map("block_instance_id")
+  scope            String
+  endpoint         String
+  statusCode       Int      @map("status_code") @db.SmallInt
+  invokedAt        DateTime @default(now()) @map("invoked_at") @db.Timestamptz(6)
+
+  @@index([userId, invokedAt(sort: Desc), id(sort: Desc)], map: "bsi_user_invoked_idx")
+  @@index([appBlockId, invokedAt(sort: Desc)], map: "bsi_app_block_invoked_idx")
+  @@map("block_scope_invocations")
+}
+
+/// A6 (audit HIGH / design-gaps C2) — per-user scope-grant consent ledger.
+///
+/// One row per (user, app_block). `granted_scopes` is the set of block-scope
+/// strings the user has consented to for this app (same vocabulary as
+/// app_blocks.approved_scopes / manifest.scopes). Token issuance intersects the
+/// manifest/approved scope set with this row; any scope the app requests but
+/// the user has NOT granted is withheld from the minted token and surfaced as a
+/// `needs_consent` signal. Without this layer a version-bump that adds a scope
+/// silently escalated every existing install (the C2 gap A6 closes).
+///
+/// A grant is written at install / subscribe time (implicit first-consent) and
+/// extended on re-consent. `version` records the app version the grant was last
+/// taken against (informational). `revoked_at` (NULL = active) lets a future
+/// per-scope revoke flip the grant off without losing the audit row — a
+/// non-NULL revoked_at makes the mint path treat granted_scopes as empty.
+///
+/// Application-generated id (`augr_<ulid>`).
+model AppUserScopeGrant {
+  id             String    @id
+  userId         Int       @map("user_id")
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appBlockId     String    @map("app_block_id")
+  appBlock       AppBlock  @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  version        String
+  grantedScopes  String[]  @default([]) @map("granted_scopes")
+  grantedAt      DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  @@unique([userId, appBlockId], map: "app_user_scope_grants_user_app_uniq")
+  @@map("app_user_scope_grants")
 }
 
 model OauthConsent {
@@ -3223,6 +3627,7 @@ enum CsamReportType {
   Image
   TrainingData
   GeneratedImage
+  ExternalLink
 }
 
 model CsamReport {

@@ -6,6 +6,7 @@ import { publicApiContext2 } from '~/server/createContext';
 
 import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { isClientAbortError } from '~/server/utils/errorHandling';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -34,6 +35,11 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       },
     });
   } catch (error) {
+    if (isClientAbortError(error)) {
+      // Client disconnected mid-request — not a server fault. 499, not 500.
+      if (!res.headersSent) res.status(499).end();
+      return;
+    }
     if (error instanceof TRPCError) {
       const status = getHTTPStatusCodeFromError(error);
       const parsedError = JSON.parse(error.message);

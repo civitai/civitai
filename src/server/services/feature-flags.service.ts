@@ -79,6 +79,9 @@ const featureFlags = createFeatureFlags({
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
+  // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
+  // Public availability so it can be rolled out to a tester segment via Flipt; default off.
+  trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
   trainingAutoLabelOrchestrator: {
     availability: ['mod'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -216,6 +219,10 @@ const featureFlags = createFeatureFlags({
   // in sync with the camelCase flag key here.
   retoolUpdateIdentity: ['granted'],
   retoolToggleModerator: ['granted'],
+  // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
+  // default until we ship publisher install UX + moderator approval workflow.
+  // When off, BlockSlot renders nothing and no token-issuance traffic fires.
+  appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

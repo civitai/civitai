@@ -135,4 +135,22 @@ setup('mint preview sessions', async ({ request }) => {
       await request.get(path, { timeout: 60_000, headers }).catch(() => {});
     }
   }
+
+  // Best-effort search warm-up (NOT a blocking readiness gate). The image-search
+  // path (getAllImagesIndex -> the in-cluster feeds-proxy via METRICS_SEARCH_HOST)
+  // can be cold/overloaded; fire ONE GET to warm the connection. We deliberately do
+  // NOT poll-until-ready: the earlier 12x6s gate wasted up to ~72s when search was
+  // overloaded for the whole window, and it was never the load-bearing fix anyway —
+  // each search-dependent spec (whatIf, /moderator/images, image-feed) wraps its
+  // query in retryFlaky (preview-retry.ts), which rides out a transient 408/5xx with
+  // backoff. So a single fire-and-forget warm-up is all that's useful here.
+  // (/moderator/images is already warmed by the mod loop above.)
+  if (gold) {
+    await request
+      .get('/api/v1/images?sort=Most%20Reactions&limit=1', {
+        timeout: 20_000,
+        headers: { cookie: `${COOKIE_NAME}=${gold}` },
+      })
+      .catch(() => {});
+  }
 });

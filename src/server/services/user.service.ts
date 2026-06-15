@@ -270,13 +270,13 @@ export async function getUsersWithSearch({
       })
     );
   } catch (err) {
-    // Mirror image.getInfinite's handling: surface a fast 408 via TRPCError
-    // TIMEOUT so the client can retry instead of waiting on Traefik's 30s
-    // router timeout. tRPC v10 has no SERVICE_UNAVAILABLE / 503 code; TIMEOUT
-    // is the closest semantic match.
+    // Mirror image.getInfinite's handling: surface a fast, retryable 503 via
+    // TRPCError SERVICE_UNAVAILABLE so the client can retry instead of waiting
+    // on Traefik's 30s router timeout. (Was TIMEOUT/408 under tRPC v10, which
+    // lacked SERVICE_UNAVAILABLE; v11 has it.)
     if (err instanceof MeiliCallTimeoutError) {
       throw new TRPCError({
-        code: 'TIMEOUT',
+        code: 'SERVICE_UNAVAILABLE',
         message: 'User search is temporarily overloaded — please retry.',
         cause: err,
       });

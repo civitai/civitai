@@ -1,6 +1,7 @@
 import { Button, CloseButton, Popover, Text } from '@mantine/core';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags, useFeatureFlagsReady } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
@@ -58,6 +59,21 @@ export function NavTidyNotice() {
   // fetch lands. Defined immediately on the normal SSR-seeded path → no delay.
   const show = enabled && ready && !!settings && !isDismissed && hasHiddenNavItem;
 
+  // Open only AFTER the above-the-fold layout has settled. The popover is anchored
+  // to a subnav target; opening it during the initial layout-settle window made its
+  // dropdown paint while the target was still moving, registering a large layout
+  // shift (the dominant home-page CLS contributor). A short post-mount defer lets it
+  // paint once at its final position — no shift — without changing the nudge's intent.
+  const [opened, setOpened] = useState(false);
+  useEffect(() => {
+    if (!show) {
+      setOpened(false);
+      return;
+    }
+    const id = window.setTimeout(() => setOpened(true), 1500);
+    return () => window.clearTimeout(id);
+  }, [show]);
+
   const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
 
   if (!show) return null;
@@ -67,7 +83,7 @@ export function NavTidyNotice() {
       width={280}
       position="bottom-start"
       shadow="lg"
-      opened
+      opened={opened}
       // Stay put until the user explicitly closes it via the X — clicking away
       // or pressing Escape should not permanently dismiss the nudge.
       closeOnClickOutside={false}
@@ -76,7 +92,12 @@ export function NavTidyNotice() {
       arrowSize={10}
     >
       <Popover.Target>
-        <div className="inline-flex cursor-help text-yellow-7" aria-label="Navigation updated">
+        <div
+          role="button"
+          tabIndex={0}
+          className="inline-flex cursor-help text-yellow-7"
+          aria-label="Navigation updated"
+        >
           <IconInfoCircle size={18} />
         </div>
       </Popover.Target>
