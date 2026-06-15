@@ -1,9 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
 import * as z from 'zod';
+import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import {
   inferTensorMetadataFormat,
@@ -66,12 +69,19 @@ export default MixedAuthEndpoint(async function handler(
       modelType: file.modelVersion.model.type,
       fileType: file.type,
     });
-    const analysis = await parseModelTensorMetadata({
-      url: fileResult.url,
-      format,
-      fileSizeBytes: file.sizeKB * 1024,
-      estimateVram,
-    });
+    // Tensor metadata is derived purely from immutable file content, so cache the parsed
+    // analysis by file id. Auth is still re-checked per request above via getFileForModelVersion.
+    const analysis = await fetchThroughCache(
+      `${REDIS_KEYS.CACHES.TENSOR_METADATA}:${id}`,
+      () =>
+        parseModelTensorMetadata({
+          url: fileResult.url,
+          format,
+          fileSizeBytes: file.sizeKB * 1024,
+          estimateVram,
+        }),
+      { ttl: CacheTTL.month }
+    );
     res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
 
     if (summaryOnly) {

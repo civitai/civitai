@@ -2,56 +2,50 @@ import {
   Accordion,
   Alert,
   Badge,
-  Box,
-  Collapse,
   Group,
-  ScrollArea,
-  Select,
-  SimpleGrid,
+  HoverCard,
   Skeleton,
   Stack,
-  Table,
   Text,
-  Tooltip,
   UnstyledButton,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
-import {
-  IconChevronDown,
-  IconChevronRight,
-  IconCpu,
-  IconDatabase,
-  IconTable,
-} from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { IconChevronDown, IconChevronRight } from '@tabler/icons-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import type { ModelById } from '~/types/router';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import {
   buildTensorDisplayRows,
   inferTensorMetadataFormat,
-  supportsTensorVramEstimate,
   type ModelTensorAnalysis,
   type ModelTensorDisplayGroup,
-  type ModelTensorDisplayRow,
   type ModelTensorInfo,
 } from '~/utils/model-tensor-metadata';
 
 type FileType = ModelById['modelVersions'][number]['files'][number];
+type TensorSummary = Omit<ModelTensorAnalysis, 'tensors'>;
 
 type Props = {
   files: FileType[];
-  modelType: ModelById['type'];
   userPreferences?: UserFilePreferences;
+  /** Whether the accordion is currently open (drives the full tensor-list fetch). */
   enabled: boolean;
+  /** Active file id shared with the download variant picker (the panel follows it). */
+  selectedFileId?: number | null;
 };
 
-export function ModelTensorMetadata({ files, modelType, userPreferences, enabled }: Props) {
+const MIN_VRAM_INFO =
+  'Rough lower bound to run this model, estimated from its tensor sizes and precision plus typical runtime overhead. At this level weights are streamed onto the GPU as needed, so it runs but more slowly. Actual usage varies by the tool and settings you use.';
+const RECOMMENDED_VRAM_INFO =
+  'Rough target for smooth performance, estimated from its tensor sizes and precision plus typical runtime overhead. At this level the full set of weights can stay resident on the GPU at once. Actual usage varies by the tool and settings you use.';
+
+export function ModelTensorMetadata({ files, userPreferences, enabled, selectedFileId }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
 
   const supportedFiles = useMemo(
     () => files.filter((file) => inferTensorMetadataFormat(file)),
@@ -62,22 +56,24 @@ export function ModelTensorMetadata({ files, modelType, userPreferences, enabled
     [supportedFiles, userPreferences]
   );
 
-  useEffect(() => {
-    if (!defaultFile) return;
-    if (!selectedFileId || !supportedFiles.some((file) => file.id === selectedFileId)) {
-      setSelectedFileId(defaultFile.id);
-    }
-  }, [defaultFile, selectedFileId, supportedFiles]);
-
+  // Follow the shared download selection when it points at a tensor-parseable
+  // file; otherwise fall back to this version's primary/default file.
   const selectedFile =
     supportedFiles.find((file) => file.id === selectedFileId) ?? defaultFile ?? null;
-  const canEstimateVram = supportsTensorVramEstimate({
-    modelType,
-    fileType: selectedFile?.type,
+
+  // Summary is always fetched (cheap, server-cached) so the closed header can
+  // show the VRAM range at a glance. The full tensor list is only fetched once
+  // the accordion is opened.
+  const summaryQuery = useQuery({
+    queryKey: ['model-file-tensor-metadata', selectedFile?.id, 'summary'],
+    queryFn: () => fetchTensorSummary(selectedFile!.id),
+    enabled: !!selectedFile,
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
   });
 
-  const { data, error, isFetching, isLoading } = useQuery({
-    queryKey: ['model-file-tensor-metadata', selectedFile?.id],
+  const detailQuery = useQuery({
+    queryKey: ['model-file-tensor-metadata', selectedFile?.id, 'full'],
     queryFn: () => fetchTensorMetadata(selectedFile!.id),
     enabled: enabled && !!selectedFile,
     staleTime: Infinity,
@@ -86,28 +82,26 @@ export function ModelTensorMetadata({ files, modelType, userPreferences, enabled
 
   if (!supportedFiles.length) return null;
 
+  const vramEstimate = summaryQuery.data?.vramEstimate ?? null;
+  const tensorCount = summaryQuery.data?.tensorCount ?? null;
+
   return (
     <Accordion.Item value="tensor-metadata">
       <Accordion.Control>
         <Group justify="space-between" gap="xs" wrap="nowrap">
-          <Group gap="xs" wrap="nowrap">
-            <IconTable size={18} style={{ color: theme.colors.dark[2] }} />
-            <Text fw={500}>Tensors</Text>
+          <Group gap={6} wrap="nowrap">
+            Tensors
+            {tensorCount != null && (
+              <Badge size="sm" variant="light" color="gray">
+                {numberWithCommas(tensorCount)}
+              </Badge>
+            )}
           </Group>
           <Group gap={6} wrap="nowrap">
-            {data ? (
-              <>
-                <Badge size="sm" variant="light" color="gray">
-                  {numberWithCommas(data.tensorCount)}
-                </Badge>
-                {data.vramEstimate && (
-                  <Badge size="sm" variant="light" color="blue">
-                    {formatBytes(data.vramEstimate.estimatedMinimumVramBytes, 1)} est. min VRAM
-                  </Badge>
-                )}
-              </>
-            ) : isFetching ? (
-              <Skeleton width={88} height={18} radius="xl" />
+            {vramEstimate ? (
+              <VramSegmentedBadge vramEstimate={vramEstimate} />
+            ) : summaryQuery.isFetching ? (
+              <Skeleton width={150} height={20} radius="sm" />
             ) : null}
           </Group>
         </Group>
@@ -119,41 +113,43 @@ export function ModelTensorMetadata({ files, modelType, userPreferences, enabled
             backgroundColor: colorScheme === 'dark' ? '#1f2023' : theme.colors.gray[0],
           }}
         >
-          {supportedFiles.length > 1 && (
-            <Box
-              p="sm"
-              style={{
-                borderBottom: `1px solid ${
-                  colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                }`,
-              }}
-            >
-              <Select
-                size="xs"
-                label="File"
-                value={selectedFile?.id.toString() ?? null}
-                data={supportedFiles.map((file) => ({
-                  value: file.id.toString(),
-                  label: file.name,
-                }))}
-                onChange={(value) => setSelectedFileId(value ? Number(value) : null)}
-                searchable
-                allowDeselect={false}
-              />
-            </Box>
-          )}
-
-          {isLoading || (isFetching && !data) ? (
-            <Stack p="sm" gap="xs">
-              <Skeleton height={canEstimateVram ? 54 : 44} />
-              <Skeleton height={260} />
+          {detailQuery.isLoading || (detailQuery.isFetching && !detailQuery.data) ? (
+            <Stack gap={0}>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: GRID_COLUMNS,
+                  padding: '8px 12px',
+                  borderBottom: '1px solid var(--mantine-color-default-border)',
+                }}
+              >
+                <Skeleton height={10} width={56} />
+                <Skeleton height={10} width={44} />
+                <Skeleton height={10} width={56} />
+              </div>
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div
+                  key={index}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: GRID_COLUMNS,
+                    alignItems: 'center',
+                    height: ROW_HEIGHT,
+                    padding: '0 12px',
+                  }}
+                >
+                  <Skeleton height={12} width="85%" />
+                  <Skeleton height={12} width="60%" />
+                  <Skeleton height={12} width="50%" />
+                </div>
+              ))}
             </Stack>
-          ) : error ? (
+          ) : detailQuery.error ? (
             <Alert color="yellow" variant="light" m="sm">
-              {(error as Error).message}
+              {(detailQuery.error as Error).message}
             </Alert>
-          ) : data ? (
-            <TensorMetadataContent data={data} />
+          ) : detailQuery.data ? (
+            <TensorTable data={detailQuery.data} />
           ) : null}
         </Stack>
       </Accordion.Panel>
@@ -161,194 +157,238 @@ export function ModelTensorMetadata({ files, modelType, userPreferences, enabled
   );
 }
 
-function TensorMetadataContent({ data }: { data: ModelTensorAnalysis }) {
-  const rows = useMemo(() => buildTensorDisplayRows(data.tensors), [data.tensors]);
+function VramSegmentedBadge({
+  vramEstimate,
+}: {
+  vramEstimate: NonNullable<TensorSummary['vramEstimate']>;
+}) {
+  const hasRecommended = typeof vramEstimate.recommendedVramBytes === 'number';
+  const dividerColor = 'color-mix(in srgb, var(--mantine-color-blue-light-color) 25%, transparent)';
+
+  return (
+    <Group
+      gap={0}
+      wrap="nowrap"
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        borderRadius: 'var(--mantine-radius-sm)',
+        background: 'var(--mantine-color-blue-light)',
+        color: 'var(--mantine-color-blue-light-color)',
+        fontSize: 11,
+        fontWeight: 500,
+        lineHeight: 1,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span style={{ padding: '3px 8px', fontWeight: 700 }}>VRAM</span>
+      <VramSegment
+        label="min"
+        bytes={vramEstimate.estimatedMinimumVramBytes}
+        info={MIN_VRAM_INFO}
+        style={{ borderLeft: `1px solid ${dividerColor}` }}
+      />
+      {hasRecommended && (
+        <VramSegment
+          label="rec"
+          bytes={vramEstimate.recommendedVramBytes}
+          info={RECOMMENDED_VRAM_INFO}
+          style={{ borderLeft: `1px solid ${dividerColor}` }}
+        />
+      )}
+    </Group>
+  );
+}
+
+function VramSegment({
+  label,
+  bytes,
+  info,
+  style,
+}: {
+  label: string;
+  bytes: number;
+  info: string;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <HoverCard width={260} shadow="md" withArrow position="bottom-end" openDelay={100} withinPortal>
+      <HoverCard.Target>
+        <span style={{ padding: '3px 8px', cursor: 'help', ...style }}>
+          <span style={{ opacity: 0.75 }}>{label}</span> {formatBytes(bytes, 1)}
+        </span>
+      </HoverCard.Target>
+      <HoverCard.Dropdown>
+        <Text size="xs" c="dimmed">
+          {info}
+        </Text>
+      </HoverCard.Dropdown>
+    </HoverCard>
+  );
+}
+
+type VisibleRow =
+  | { kind: 'group'; group: ModelTensorDisplayGroup; expanded: boolean }
+  | { kind: 'tensor'; tensor: ModelTensorInfo; nested: boolean };
+
+const ROW_HEIGHT = 32;
+const GRID_COLUMNS = '58% 27% 15%';
+const MIN_TABLE_WIDTH = 520;
+
+function TensorTable({ data }: { data: ModelTensorAnalysis }) {
+  const displayRows = useMemo(() => buildTensorDisplayRows(data.tensors), [data.tensors]);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
-  const recommendedVramBytes =
-    typeof data.vramEstimate?.recommendedVramBytes === 'number'
-      ? data.vramEstimate.recommendedVramBytes
-      : null;
-  const summaryColumns = data.vramEstimate ? (recommendedVramBytes != null ? 4 : 3) : 2;
 
   useEffect(() => {
     setExpandedGroups(
       Object.fromEntries(
-        rows
+        displayRows
           .filter((row) => row.type === 'group' && row.group.displayCount <= 3)
           .map((row) => [(row as { type: 'group'; group: ModelTensorDisplayGroup }).group.id, true])
       )
     );
-  }, [rows]);
+  }, [displayRows]);
+
+  // Flatten groups + expanded children into a single linear list so the whole
+  // thing can be virtualized. Only the rows in view get rendered, which keeps
+  // big groups (e.g. a 1.6k-tensor "model" group) instant to expand.
+  const visibleRows = useMemo<VisibleRow[]>(() => {
+    const out: VisibleRow[] = [];
+    for (const row of displayRows) {
+      if (row.type === 'tensor') {
+        out.push({ kind: 'tensor', tensor: row.tensor, nested: false });
+        continue;
+      }
+      const expanded = !!expandedGroups[row.group.id];
+      out.push({ kind: 'group', group: row.group, expanded });
+      if (expanded)
+        for (const tensor of row.group.tensors) out.push({ kind: 'tensor', tensor, nested: true });
+    }
+    return out;
+  }, [displayRows, expandedGroups]);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: visibleRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 12,
+  });
+
+  const toggleGroup = (id: string) =>
+    setExpandedGroups((current) => ({ ...current, [id]: !current[id] }));
 
   return (
-    <Stack gap={0}>
-      <SimpleGrid
-        cols={{ base: 2, sm: summaryColumns }}
-        spacing={0}
-        style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
-      >
-        <SummaryItem
-          icon={<IconDatabase size={16} />}
-          label="Weights"
-          value={formatBytes(data.totalTensorBytes, 1)}
-        />
-        <SummaryItem label="Tensors" value={numberWithCommas(data.tensorCount)} />
-        {data.vramEstimate && (
-          <SummaryItem
-            icon={<IconCpu size={16} />}
-            label="Est. min VRAM"
-            value={formatBytes(data.vramEstimate.estimatedMinimumVramBytes, 1)}
-            tooltip="Estimated checkpoint weight residency plus Comfy reserve. Actual inference memory depends on workflow settings."
-          />
-        )}
-        {data.vramEstimate && recommendedVramBytes != null && (
-          <SummaryItem
-            icon={<IconCpu size={16} />}
-            label="Recommended VRAM"
-            value={formatBytes(recommendedVramBytes, 1)}
-            tooltip="Estimated VRAM to keep checkpoint weights resident without dynamic offload, plus Comfy reserve."
-          />
-        )}
-      </SimpleGrid>
-
-      <ScrollArea.Autosize mah={380} type="auto">
-        <Table
-          striped
-          highlightOnHover
-          verticalSpacing={4}
-          horizontalSpacing="sm"
-          style={{ minWidth: 560, tableLayout: 'fixed' }}
+    <div style={{ overflowX: 'auto' }}>
+      <div style={{ minWidth: MIN_TABLE_WIDTH }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: GRID_COLUMNS,
+            padding: '6px 12px',
+            fontSize: 'var(--mantine-font-size-xs)',
+            fontWeight: 600,
+            borderBottom: '1px solid var(--mantine-color-default-border)',
+          }}
         >
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th style={{ width: '58%' }}>Tensors</Table.Th>
-              <Table.Th style={{ width: '27%' }}>Shape</Table.Th>
-              <Table.Th style={{ width: '15%' }}>Precision</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {rows.map((row) => {
-              if (row.type === 'tensor')
-                return <TensorRow key={row.tensor.name} tensor={row.tensor} />;
-
-              const expanded = !!expandedGroups[row.group.id];
+          <span>Tensors</span>
+          <span>Shape</span>
+          <span>Precision</span>
+        </div>
+        <div
+          ref={scrollRef}
+          style={{ maxHeight: 360, overflowY: 'auto', scrollbarGutter: 'stable' }}
+        >
+          <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+            {virtualizer.getVirtualItems().map((item) => {
+              const row = visibleRows[item.index];
               return (
-                <GroupRows
-                  key={row.group.id}
-                  row={row}
-                  expanded={expanded}
-                  onToggle={() =>
-                    setExpandedGroups((current) => ({
-                      ...current,
-                      [row.group.id]: !current[row.group.id],
-                    }))
-                  }
-                />
+                <div
+                  key={item.key}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: item.size,
+                    transform: `translateY(${item.start}px)`,
+                    display: 'grid',
+                    gridTemplateColumns: GRID_COLUMNS,
+                    alignItems: 'center',
+                    padding: '0 12px',
+                    background:
+                      item.index % 2
+                        ? 'color-mix(in srgb, var(--mantine-color-text) 4%, transparent)'
+                        : 'transparent',
+                  }}
+                >
+                  {row.kind === 'group' ? (
+                    <UnstyledButton
+                      onClick={() => toggleGroup(row.group.id)}
+                      style={{ gridColumn: '1 / -1', height: '100%' }}
+                    >
+                      <Group gap={6} wrap="nowrap" h="100%" w="100%">
+                        {row.expanded ? (
+                          <IconChevronDown size={14} style={{ flexShrink: 0 }} />
+                        ) : (
+                          <IconChevronRight size={14} style={{ flexShrink: 0 }} />
+                        )}
+                        <Text size="sm" truncate style={{ minWidth: 0, flexShrink: 1 }}>
+                          {row.group.name}
+                        </Text>
+                        <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0 }}>
+                          {numberWithCommas(row.group.displayCount)}
+                        </Badge>
+                      </Group>
+                    </UnstyledButton>
+                  ) : (
+                    <>
+                      <Text
+                        size="sm"
+                        pl={row.nested ? 'md' : 0}
+                        truncate
+                        title={row.tensor.name}
+                        style={{ minWidth: 0 }}
+                      >
+                        {row.tensor.name}
+                      </Text>
+                      <Text
+                        size="xs"
+                        c="dimmed"
+                        truncate
+                        title={formatShape(row.tensor.shape)}
+                        style={{ minWidth: 0 }}
+                      >
+                        {formatShape(row.tensor.shape)}
+                      </Text>
+                      <Text size="xs" c="dimmed" truncate style={{ minWidth: 0 }}>
+                        {row.tensor.dtype}
+                      </Text>
+                    </>
+                  )}
+                </div>
               );
             })}
-          </Table.Tbody>
-        </Table>
-      </ScrollArea.Autosize>
-    </Stack>
-  );
-}
-
-function SummaryItem({
-  icon,
-  label,
-  value,
-  tooltip,
-}: {
-  icon?: React.ReactNode;
-  label: string;
-  value: string;
-  tooltip?: string;
-}) {
-  return (
-    <Box p="sm">
-      <Group gap={6} wrap="nowrap">
-        {icon}
-        <Text size="xs" c="dimmed">
-          {label}
-        </Text>
-      </Group>
-      <Tooltip label={tooltip} disabled={!tooltip} withArrow>
-        <Text size="sm" fw={600} truncate>
-          {value}
-        </Text>
-      </Tooltip>
-    </Box>
-  );
-}
-
-function GroupRows({
-  row,
-  expanded,
-  onToggle,
-}: {
-  row: Extract<ModelTensorDisplayRow, { type: 'group' }>;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <>
-      <Table.Tr>
-        <Table.Td colSpan={3}>
-          <UnstyledButton onClick={onToggle} style={{ width: '100%' }}>
-            <Group gap={4} wrap="nowrap">
-              {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-              <Text size="sm" truncate>
-                {row.group.name} ({numberWithCommas(row.group.displayCount)})
-              </Text>
-            </Group>
-          </UnstyledButton>
-        </Table.Td>
-      </Table.Tr>
-      <Table.Tr style={{ display: expanded ? 'table-row' : 'none' }}>
-        <Table.Td colSpan={3} p={0}>
-          <Collapse in={expanded}>
-            <Table
-              verticalSpacing={4}
-              horizontalSpacing="sm"
-              style={{ minWidth: 560, tableLayout: 'fixed' }}
-            >
-              <Table.Tbody>
-                {row.group.tensors.map((tensor) => (
-                  <TensorRow key={tensor.name} tensor={tensor} nested />
-                ))}
-              </Table.Tbody>
-            </Table>
-          </Collapse>
-        </Table.Td>
-      </Table.Tr>
-    </>
-  );
-}
-
-function TensorRow({ tensor, nested = false }: { tensor: ModelTensorInfo; nested?: boolean }) {
-  return (
-    <Table.Tr>
-      <Table.Td style={{ width: '58%', maxWidth: 0 }}>
-        <Text size="sm" pl={nested ? 'md' : 0} truncate title={tensor.name}>
-          {tensor.name}
-        </Text>
-      </Table.Td>
-      <Table.Td style={{ width: '27%', maxWidth: 0 }}>
-        <Text size="xs" c="dimmed" truncate title={formatShape(tensor.shape)}>
-          {formatShape(tensor.shape)}
-        </Text>
-      </Table.Td>
-      <Table.Td style={{ width: '15%' }}>
-        <Text size="xs" c="dimmed" truncate>
-          {tensor.dtype}
-        </Text>
-      </Table.Td>
-    </Table.Tr>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
 function formatShape(shape: number[]) {
   return `[${shape.map((dimension) => numberWithCommas(dimension)).join(', ')}]`;
+}
+
+async function fetchTensorSummary(fileId: number) {
+  const response = await fetch(`/api/v1/model-files/${fileId}/tensor-metadata?summaryOnly=true`);
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? 'Failed to load tensor metadata');
+  }
+
+  return (await response.json()) as TensorSummary;
 }
 
 async function fetchTensorMetadata(fileId: number) {
