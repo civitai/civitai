@@ -5,7 +5,12 @@ import {
   MAX_BUNDLE_SIZE_BYTES,
   MAX_FILES_IN_BUNDLE,
   MAX_FILE_SIZE_BYTES,
+  MAX_SCREENSHOT_SIZE_BYTES,
+  MAX_SCREENSHOTS,
   MAX_TOTAL_DECOMPRESSED_BYTES,
+  SCREENSHOT_DIR,
+  SCREENSHOT_EXTENSIONS,
+  type ScreenshotExtension,
 } from '~/server/schema/blocks/publish-request.schema';
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
@@ -270,6 +275,233 @@ export async function extractBundleMetadata(
   return { files, manifest };
 }
 
+// ---------------------------------------------------------------------------
+// F-E E5 — screenshot capture (convention-based bundle discovery).
+// ---------------------------------------------------------------------------
+
+/** A validated, magic-byte-checked screenshot extracted from a bundle. */
+export type ExtractedScreenshot = {
+  /** 0-based gallery position (display order = ascending bundle-path order). */
+  index: number;
+  /** Normalised extension (jpg, not jpeg) used for the stored object key + content-type. */
+  ext: ScreenshotExtension;
+  /** MIME type derived from the validated magic bytes (NOT the filename). */
+  contentType: string;
+  /** Raw decompressed image bytes. */
+  content: Buffer;
+};
+
+const SCREENSHOT_CONTENT_TYPE: Record<ScreenshotExtension, string> = {
+  png: 'image/png',
+  webp: 'image/webp',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+};
+
+/**
+ * A screenshot filename under `screenshots/` may ONLY be a flat, safe name:
+ * no nested dirs, no path-traversal, no leading dot, just `[A-Za-z0-9._-]`
+ * before the extension. This rejects `screenshots/../evil`, `screenshots/a/b.png`
+ * (sub-dir), `screenshots/.hidden.png`, and odd/encoded names — the entry must
+ * be exactly `screenshots/<name>.<ext>` at the top of the screenshots dir.
+ */
+const SCREENSHOT_NAME_REGEX = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * Validate that `buf` actually IS an image of the claimed extension by its
+ * magic bytes — the file EXTENSION is never trusted (a `.png` that is really a
+ * script/HTML/SVG payload must be REJECTED). This is the core anti-abuse check
+ * for publisher-supplied images: the public gallery only ever serves bytes that
+ * passed this gate, with the content-type derived from the bytes, not the name.
+ *
+ *   - PNG  : 89 50 4E 47 0D 0A 1A 0A   (8-byte signature)
+ *   - JPEG : FF D8 FF                   (SOI marker)
+ *   - WebP : "RIFF" .... "WEBP"         (RIFF container, WEBP fourCC at byte 8)
+ *
+ * Returns the normalised extension the bytes match, or null if the bytes don't
+ * match the claimed extension's signature (claimed-vs-actual must agree — a real
+ * JPEG uploaded as `.png` is rejected too, so the content-type we serve is
+ * always correct + consistent with the stored key).
+ */
+export function detectImageType(buf: Buffer, claimedExt: ScreenshotExtension): ScreenshotExtension | null {
+  const isPng =
+    buf.length >= 8 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47 &&
+    buf[4] === 0x0d &&
+    buf[5] === 0x0a &&
+    buf[6] === 0x1a &&
+    buf[7] === 0x0a;
+  const isJpeg = buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  const isWebp =
+    buf.length >= 12 &&
+    buf.toString('ascii', 0, 4) === 'RIFF' &&
+    buf.toString('ascii', 8, 12) === 'WEBP';
+
+  // The bytes must match the claimed extension's family. `.jpg`/`.jpeg` are the
+  // same format → both require the JPEG signature and normalise to `jpg`.
+  if (claimedExt === 'png') return isPng ? 'png' : null;
+  if (claimedExt === 'webp') return isWebp ? 'webp' : null;
+  if (claimedExt === 'jpg' || claimedExt === 'jpeg') return isJpeg ? 'jpg' : null;
+  return null;
+}
+
+/** Parse + lower-case the extension of a `screenshots/<name>.<ext>` entry. */
+function screenshotExt(filename: string): ScreenshotExtension | null {
+  const dot = filename.lastIndexOf('.');
+  if (dot <= 0) return null; // no extension, or a dotfile with no name
+  const ext = filename.slice(dot + 1).toLowerCase();
+  return (SCREENSHOT_EXTENSIONS as readonly string[]).includes(ext)
+    ? (ext as ScreenshotExtension)
+    : null;
+}
+
+/**
+ * F-E E5 — auto-discover + validate publisher screenshots from a bundle ZIP.
+ *
+ * Convention-based (decision #2): no SDK manifest field. Any entry directly
+ * under the reserved `screenshots/` dir whose name parses to an accepted image
+ * extension is a candidate. Each candidate is validated:
+ *   - NAME      — flat safe name only (SCREENSHOT_NAME_REGEX); no sub-dirs, no
+ *                 `..`, no leading dot, no odd/encoded names. Anything that
+ *                 isn't `screenshots/<safe-name>.<ext>` is REJECTED.
+ *   - SIZE      — per-screenshot cap (MAX_SCREENSHOT_SIZE_BYTES), tighter than
+ *                 the generic per-file cap. Read via the streaming capped reader
+ *                 so an oversized entry aborts before fully materialising.
+ *   - MAGIC     — the BYTES must match the claimed extension's image signature
+ *                 (detectImageType); a `.png` that isn't a real PNG is REJECTED.
+ *   - COUNT     — at most MAX_SCREENSHOTS; the (N+1)th is REJECTED (NOT silently
+ *                 truncated) so a publisher can't bury non-image payloads past a
+ *                 truncation boundary.
+ *
+ * No `screenshots/` dir (or only the bare dir entry) → returns `[]` (fine).
+ *
+ * Pure + DB/MinIO-free so it's unit-testable; called at submit (fail-fast
+ * validation) AND at approve (materialise to MinIO + the app_blocks row).
+ * Index = ascending bundle-path order, so the gallery order is deterministic
+ * and stable across re-submits.
+ *
+ * Throws (with a human-readable message the submit route surfaces inline) on
+ * any cap/validation breach — the WHOLE submission is rejected, consistent with
+ * the existing bundle-validation failure semantics (no partial capture).
+ */
+export async function extractScreenshots(
+  bundleBuffer: Buffer,
+  opts: { maxScreenshots?: number; maxScreenshotSizeBytes?: number } = {}
+): Promise<ExtractedScreenshot[]> {
+  const maxScreenshots = opts.maxScreenshots ?? MAX_SCREENSHOTS;
+  const maxScreenshotSizeBytes = opts.maxScreenshotSizeBytes ?? MAX_SCREENSHOT_SIZE_BYTES;
+
+  const zip = await JSZip.loadAsync(bundleBuffer);
+
+  // Candidate entries: non-dir files whose path begins with `screenshots/`.
+  // Sort by path so the gallery index is deterministic regardless of ZIP order.
+  const candidates = Object.entries(zip.files)
+    .filter(([rawPath, entry]) => !entry.dir && rawPath.startsWith(SCREENSHOT_DIR))
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  // COUNT cap — reject (don't truncate) so nothing is silently dropped.
+  if (candidates.length > maxScreenshots) {
+    throw new Error(
+      `bundle has ${candidates.length} files under ${SCREENSHOT_DIR} (max ${maxScreenshots} screenshots)`
+    );
+  }
+
+  const out: ExtractedScreenshot[] = [];
+  for (const [rawPath, entry] of candidates) {
+    const filename = rawPath.slice(SCREENSHOT_DIR.length);
+    // NAME: must be a flat safe filename — no nested path, no traversal, no
+    // leading dot. (jszip already normalises `..`, but reject any residual
+    // slash / odd name explicitly rather than rely on that.)
+    if (filename.includes('/') || filename.includes('\\') || !SCREENSHOT_NAME_REGEX.test(filename)) {
+      throw new Error(
+        `invalid screenshot filename "${rawPath}" — only flat names like ${SCREENSHOT_DIR}shot-1.png are allowed (no sub-directories, no "..", no leading dot)`
+      );
+    }
+    const claimedExt = screenshotExt(filename);
+    if (!claimedExt) {
+      throw new Error(
+        `screenshot "${rawPath}" must be one of: ${SCREENSHOT_EXTENSIONS.join(', ')}`
+      );
+    }
+    // SIZE: stream with the tighter screenshot cap; aborts mid-stream on breach.
+    let content: Buffer;
+    try {
+      content = await readZipEntryCapped(entry, {
+        maxFileSizeBytes: maxScreenshotSizeBytes,
+        // Screenshots also count against the generic aggregate budget, but the
+        // bundle already passed extractBundleMetadata's aggregate cap; here we
+        // only need the per-screenshot bound, so the "remaining" budget is the
+        // per-file cap itself (any single screenshot over its own cap aborts).
+        remainingTotalBytes: maxScreenshotSizeBytes,
+        maxTotalBytes: maxScreenshotSizeBytes,
+        path: rawPath,
+      });
+    } catch (err) {
+      // Re-wrap the generic over-cap message into a screenshot-specific one.
+      throw new Error(
+        `screenshot "${rawPath}" is over ${maxScreenshotSizeBytes} bytes (max ${maxScreenshotSizeBytes} per screenshot)`
+      );
+    }
+    // MAGIC: the bytes must actually be an image of the claimed type.
+    const detected = detectImageType(content, claimedExt);
+    if (!detected) {
+      throw new Error(
+        `screenshot "${rawPath}" is not a valid ${claimedExt.toUpperCase()} image (its bytes do not match the expected image signature)`
+      );
+    }
+    out.push({
+      index: out.length,
+      ext: detected,
+      contentType: SCREENSHOT_CONTENT_TYPE[detected],
+      content,
+    });
+  }
+  return out;
+}
+
+/**
+ * F-E E5 — upload validated screenshots to the bundle MinIO under a path scoped
+ * by appBlockId (the row that will display them): `screenshots/<appBlockId>/<index>.<ext>`.
+ * Content-type is the magic-byte-derived value (never the filename's). Returns
+ * the stored-screenshot records persisted to `app_blocks.screenshots`.
+ *
+ * Called at APPROVE (when appBlockId is known + the bundle has passed review).
+ * Idempotent on the key: re-approving the same app overwrites the same objects.
+ */
+export type StoredScreenshot = {
+  key: string;
+  index: number;
+  ext: ScreenshotExtension;
+  contentType: string;
+};
+
+async function storeScreenshots(
+  appBlockId: string,
+  screenshots: ExtractedScreenshot[]
+): Promise<StoredScreenshot[]> {
+  if (screenshots.length === 0) return [];
+  const { getBundleBucket, getBundleS3Client } = await import('~/utils/bundle-s3');
+  const client = getBundleS3Client();
+  const bucket = getBundleBucket();
+  const stored: StoredScreenshot[] = [];
+  for (const s of screenshots) {
+    const key = `screenshots/${appBlockId}/${s.index}.${s.ext}`;
+    await client.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: s.content,
+        ContentType: s.contentType,
+      })
+    );
+    stored.push({ key, index: s.index, ext: s.ext, contentType: s.contentType });
+  }
+  return stored;
+}
+
 /**
  * Diff two file lists (by path + sha256). Returns added/removed/changed
  * paths plus the new file list embedded (so the next submission can diff
@@ -511,6 +743,13 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
 
   const slug = manifest.blockId;
   const version = manifest.version;
+
+  // F-E E5 — validate publisher screenshots NOW (fail-fast) so a bundle with a
+  // too-many / oversized / fake-image / odd-named screenshot is rejected inline
+  // in the submit modal rather than silently carried to the mod queue. The
+  // bytes themselves are re-extracted + uploaded at APPROVE (when appBlockId is
+  // known); here we only assert they pass every cap/magic-byte/name gate.
+  await extractScreenshots(bundleBuffer);
 
   // Static iframe.src sanity check — the deep BlockManifestValidator runs
   // at approve time against the OauthClient.allowedOrigins, but it's worth
@@ -777,9 +1016,8 @@ function isPlatformOwnedPath(path: string): boolean {
  * during approve to push files to Forgejo. Returns Buffer per file (we
  * need binary fidelity for non-text files).
  */
-async function fetchAndExtractBundleFiles(
-  bundleKey: string
-): Promise<Array<{ path: string; content: Buffer }>> {
+/** Fetch the raw bundle ZIP bytes from MinIO by key. */
+async function fetchBundleBuffer(bundleKey: string): Promise<Buffer> {
   const { getBundleBucket, getBundleS3Client } = await import('~/utils/bundle-s3');
   const client = getBundleS3Client();
   const obj = await client.send(
@@ -787,8 +1025,14 @@ async function fetchAndExtractBundleFiles(
   );
   if (!obj.Body) throw new Error(`bundle ${bundleKey} not found in S3`);
   const bytes = await obj.Body.transformToByteArray();
-  const bundleBuffer = Buffer.from(bytes);
+  return Buffer.from(bytes);
+}
 
+/** Extract every file's bytes from an in-memory bundle ZIP, re-applying the
+ *  per-file + running-aggregate caps via the streaming reader. */
+async function extractBundleFilesFromBuffer(
+  bundleBuffer: Buffer
+): Promise<Array<{ path: string; content: Buffer }>> {
   const zip = await JSZip.loadAsync(bundleBuffer);
   const out: Array<{ path: string; content: Buffer }> = [];
   // Defense-in-depth: re-apply per-file + running-aggregate caps via the same
@@ -807,6 +1051,13 @@ async function fetchAndExtractBundleFiles(
     out.push({ path, content });
   }
   return out;
+}
+
+async function fetchAndExtractBundleFiles(
+  bundleKey: string
+): Promise<Array<{ path: string; content: Buffer }>> {
+  const bundleBuffer = await fetchBundleBuffer(bundleKey);
+  return extractBundleFilesFromBuffer(bundleBuffer);
 }
 
 export type ListPendingRequestsOptions = {
@@ -1290,9 +1541,19 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // dropped from the commit — the pipeline injects its own recipe + ignores
   // tenant copies, so committing them to the build-source repo is inert +
   // misleading (audit A8/BUILD-1 Phase 2).
-  const files = (await fetchAndExtractBundleFiles(request.bundleKey)).filter(
+  const bundleBuffer = await fetchBundleBuffer(request.bundleKey);
+  const files = (await extractBundleFilesFromBuffer(bundleBuffer)).filter(
     (f) => !isPlatformOwnedPath(f.path)
   );
+
+  // (4b) F-E E5 — re-extract + validate the bundle's screenshots (same caps /
+  // magic-byte / name gates as submit), then upload them to the bundle MinIO
+  // under `screenshots/<appBlockId>/<index>.<ext>`. Persisted to the row in (6).
+  // The submit path already rejected a bad bundle, so this re-validation should
+  // pass; if a screenshot is somehow invalid here we fail the approve rather
+  // than serve unvalidated publisher bytes. Empty bundle dir → [].
+  const extractedScreenshots = await extractScreenshots(bundleBuffer);
+  const storedScreenshots = await storeScreenshots(appBlockId, extractedScreenshots);
 
   // (5) Atomic single-commit replacement of the repo contents on
   // civitai-apps/<slug>. This commit fires the git-push webhook.
@@ -1313,7 +1574,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // the review queue instead of deploying.
   await dbWrite.appBlock.update({
     where: { id: appBlockId },
-    data: { currentVersionSha: forgejoCommitSha },
+    data: {
+      currentVersionSha: forgejoCommitSha,
+      // F-E E5 — persist the validated, uploaded screenshot records. Replaces
+      // the prior set on a re-approve (the storeScreenshots keys are stable per
+      // appBlockId+index, so the objects are overwritten in place). An empty
+      // gallery is stored as [] so a re-submit that REMOVES all screenshots
+      // clears the old set rather than leaving stale entries.
+      screenshots: storedScreenshots as object,
+    },
   });
   await dbWrite.appBlockPublishRequest.update({
     where: { id: request.id },
@@ -1561,6 +1830,43 @@ export async function backfillPublishRequest(
     fileCount: files.length,
     forgejoCommitSha: appBlock.currentVersionSha ?? '',
   };
+}
+
+/**
+ * F-E E5 — MOD review: derive the submitted bundle's screenshots for a publish
+ * request so the reviewer can SEE the publisher-supplied images before approval
+ * (publisher images = an abuse vector → must be reviewed). Re-fetches the stored
+ * bundle from MinIO and re-runs `extractScreenshots` (the SAME caps / magic-byte
+ * / name validation as submit), returning each as a base64 data URL so the
+ * review modal can render plain <img> without a separate public route (the
+ * pending app isn't approved → it has no public screenshot URLs yet).
+ *
+ * Mod-only at the router layer. Returns [] for a request whose bundle has no
+ * `screenshots/` dir. The data URLs are bounded by MAX_SCREENSHOT_SIZE_BYTES *
+ * MAX_SCREENSHOTS (≈16 MiB worst case) — acceptable for a single mod request.
+ */
+export type ReviewScreenshot = {
+  index: number;
+  contentType: string;
+  dataUrl: string;
+};
+
+export async function getPublishRequestScreenshots(opts: {
+  publishRequestId: string;
+}): Promise<ReviewScreenshot[]> {
+  const { dbRead } = await import('~/server/db/client');
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: opts.publishRequestId },
+    select: { bundleKey: true },
+  });
+  if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
+  const bundleBuffer = await fetchBundleBuffer(row.bundleKey);
+  const screenshots = await extractScreenshots(bundleBuffer);
+  return screenshots.map((s) => ({
+    index: s.index,
+    contentType: s.contentType,
+    dataUrl: `data:${s.contentType};base64,${s.content.toString('base64')}`,
+  }));
 }
 
 export type RejectRequestParams = {

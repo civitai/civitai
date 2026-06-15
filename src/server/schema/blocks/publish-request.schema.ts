@@ -24,6 +24,27 @@ export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MiB per file
 // above any legitimate web bundle's decompressed size yet bounds memory.
 export const MAX_TOTAL_DECOMPRESSED_BYTES = 200 * 1024 * 1024; // 200 MiB
 
+// F-E E5 marketplace screenshot gallery caps. Screenshots are PUBLISHER-SUPPLIED
+// images (an abuse vector), so they get their own tighter caps ON TOP OF the
+// generic bundle caps above:
+//   - count: a gallery, not a dumping ground — extra entries are REJECTED (not
+//     silently truncated) so a publisher can't smuggle payload files past the
+//     reviewer's eye by burying them past a truncation point.
+//   - per-file size: 2 MiB is generous for a screenshot but well under the
+//     10 MiB generic per-file cap, bounding the public-image storage + bandwidth.
+// Both are enforced in extractScreenshots (publish-request.service.ts); a test
+// FAILS if either cap is removed.
+export const MAX_SCREENSHOTS = 8;
+export const MAX_SCREENSHOT_SIZE_BYTES = 2 * 1024 * 1024; // 2 MiB per screenshot
+// Only these extensions are accepted under screenshots/ — and each file's BYTES
+// must additionally match the corresponding image magic-bytes signature (the
+// extension alone is NOT trusted). webp validation also confirms the RIFF...WEBP
+// container, jpeg the SOI marker, png the 8-byte signature.
+export const SCREENSHOT_EXTENSIONS = ['png', 'webp', 'jpg', 'jpeg'] as const;
+export type ScreenshotExtension = (typeof SCREENSHOT_EXTENSIONS)[number];
+// The reserved bundle dir screenshots live under. Anything else is ignored.
+export const SCREENSHOT_DIR = 'screenshots/';
+
 export const submitVersionSchema = z.object({
   // Base64-encoded ZIP bytes. Server decodes, validates size, then
   // extracts manifest.blockId / manifest.version / manifest.name as the
@@ -81,6 +102,15 @@ export const rejectRequestSchema = z.object({
 });
 
 export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;
+
+/** Input for the MOD-ONLY `blocks.getPublishRequestScreenshots` (F-E E5 review). */
+export const getPublishRequestScreenshotsSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type GetPublishRequestScreenshotsInput = z.infer<
+  typeof getPublishRequestScreenshotsSchema
+>;
 
 export const backfillPublishRequestSchema = z.object({
   slug: z.string().min(3).max(40).regex(SLUG_REGEX),

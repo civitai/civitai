@@ -1055,8 +1055,11 @@ describe('approveRequest', () => {
     // triggered by approveRequest itself (the git-push webhook no longer
     // triggers builds). The committed sha is stamped onto current_version_sha
     // (the webhook's approval marker) and the Tekton build is kicked.
+    // F-E E5: step-6 also persists the validated screenshot set. This bundle
+    // has no `screenshots/` dir, so the gallery is the empty array (a re-approve
+    // that removed screenshots would clear the column the same way).
     expect(mockDbWrite.appBlock.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { currentVersionSha: 'commit_sha_abc' } })
+      expect.objectContaining({ data: { currentVersionSha: 'commit_sha_abc', screenshots: [] } })
     );
     expect(mockTriggerBuild).toHaveBeenCalledTimes(1);
     expect(mockTriggerBuild).toHaveBeenCalledWith(

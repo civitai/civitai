@@ -11,6 +11,7 @@ import {
   NumberInput,
   ScrollArea,
   Select,
+  SimpleGrid,
   Stack,
   Switch,
   Table,
@@ -764,6 +765,12 @@ function ReviewModal({
           View code in Forgejo
         </Button>
 
+        {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
+            images are an abuse vector → the mod sees them (here, derived from
+            the submitted bundle) before approving. Renders for every mode so an
+            approved app's screenshots can be re-checked too. */}
+        <ScreenshotsReviewPanel publishRequestId={request.id} />
+
         {/* F-E E4 curation — marketplace metadata (category / featured / order).
             Only for an APPROVED request that has a linked app_block: featuring
             is approved-only, and the meta lives on the app_block row. */}
@@ -893,6 +900,71 @@ function ReviewModal({
         )}
       </Stack>
     </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// F-E E5 screenshot review panel — surfaces the publisher-supplied screenshots
+// auto-discovered from the submitted bundle so the mod reviews them before
+// approval (publisher images = abuse vector). Renders <img> from base64 data
+// URLs returned by the mod-only blocks.getPublishRequestScreenshots query (the
+// pending app has no public screenshot URL yet — it isn't approved).
+// ---------------------------------------------------------------------------
+
+function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId: string }) {
+  const features = useFeatureFlags();
+  const { data, isLoading, error } = trpc.blocks.getPublishRequestScreenshots.useQuery(
+    { publishRequestId },
+    { enabled: !!features?.appBlocks, retry: false }
+  );
+  const items = data?.items ?? [];
+
+  return (
+    <Stack gap={4}>
+      <Group gap={6}>
+        <IconLayoutGrid size={14} />
+        <Text size="sm" fw={600}>
+          Screenshots
+        </Text>
+        {!isLoading && !error && (
+          <Badge size="sm" variant="light" color={items.length > 0 ? 'blue' : 'gray'}>
+            {items.length}
+          </Badge>
+        )}
+      </Group>
+      {isLoading ? (
+        <Text size="xs" c="dimmed">
+          Loading screenshots from the submitted bundle…
+        </Text>
+      ) : error ? (
+        <Text size="xs" c="red">
+          Could not load screenshots: {error.message}
+        </Text>
+      ) : items.length === 0 ? (
+        <Text size="xs" c="dimmed">
+          This bundle includes no `screenshots/` directory.
+        </Text>
+      ) : (
+        <>
+          <Text size="xs" c="dimmed">
+            Publisher-supplied images from the bundle — review before approving.
+          </Text>
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+            {items.map((shot) => (
+              <Card key={shot.index} withBorder padding={0} radius="md" style={{ overflow: 'hidden' }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={shot.dataUrl}
+                  alt={`Screenshot ${shot.index + 1}`}
+                  loading="lazy"
+                  style={{ width: '100%', height: 'auto', display: 'block' }}
+                />
+              </Card>
+            ))}
+          </SimpleGrid>
+        </>
+      )}
+    </Stack>
   );
 }
 

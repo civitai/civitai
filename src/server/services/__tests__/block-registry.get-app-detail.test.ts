@@ -86,6 +86,13 @@ function rawRow(over: Partial<Record<string, unknown>> = {}) {
     version: '1.2.3',
     approved_scopes: ['ai:write:budgeted', 'models:read:self'],
     install_count: 7n,
+    // F-E E5 stored screenshot records (jsonb). The projection must expose ONLY
+    // a public DISPLAY URL + index + content-type — NEVER the underlying MinIO
+    // `key`. Index/ext build the opaque gated app route.
+    screenshots: [
+      { key: 'screenshots/ab_1/0.png', index: 0, ext: 'png', contentType: 'image/png' },
+      { key: 'screenshots/ab_1/1.jpg', index: 1, ext: 'jpg', contentType: 'image/jpeg' },
+    ],
     manifest: {
       name: 'Cool Block',
       description: 'Does cool things',
@@ -201,6 +208,7 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
         'liveUrl',
         'manifest',
         'scopes',
+        'screenshots',
         'version',
       ].sort()
     );
@@ -215,6 +223,53 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
     const detail = await BlockRegistry.getAppDetail('ab_1');
     expect(detail!.liveUrl).toBe('https://cool-block.civit.ai');
     expect(detail!.liveUrl).not.toMatch(/token|jwt|secret|\?/i);
+  });
+
+  it('screenshots are PUBLIC display URLs only — the stored MinIO key never leaks (F-E E5)', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    const detail = await BlockRegistry.getAppDetail('ab_1');
+    expect(detail!.screenshots).toEqual([
+      { index: 0, url: '/api/blocks/screenshot/ab_1/0.png', contentType: 'image/png' },
+      { index: 1, url: '/api/blocks/screenshot/ab_1/1.jpg', contentType: 'image/jpeg' },
+    ]);
+    // The opaque app route only — never the underlying MinIO key.
+    const serialized = JSON.stringify(detail!.screenshots);
+    expect(serialized).not.toContain('screenshots/ab_1/0.png'); // the raw stored key
+    expect(serialized).not.toContain('"key"');
+    for (const shot of detail!.screenshots) {
+      expect(shot.url.startsWith('/api/blocks/screenshot/')).toBe(true);
+      expect(shot.url).not.toMatch(/token|jwt|secret|\?/i);
+    }
+  });
+
+  it('a NULL screenshots column yields an empty gallery (no crash) (F-E E5)', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([rawRow({ screenshots: null })]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const detail = await BlockRegistry.getAppDetail('ab_1');
+    expect(detail!.screenshots).toEqual([]);
+  });
+
+  it('a non-image content-type in a stored screenshot record is DROPPED (F-E E5)', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      rawRow({
+        screenshots: [
+          { key: 'screenshots/ab_1/0.png', index: 0, ext: 'png', contentType: 'image/png' },
+          // tampered/legacy entry — must be dropped, not surfaced to the client.
+          { key: 'screenshots/ab_1/1.html', index: 1, ext: 'html', contentType: 'text/html' },
+        ],
+      }),
+    ]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const detail = await BlockRegistry.getAppDetail('ab_1');
+    expect(detail!.screenshots).toHaveLength(1);
+    expect(detail!.screenshots[0].contentType).toBe('image/png');
+  });
+
+  it('SELECTs the screenshots column (so getAppDetail can render the gallery)', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.getAppDetail('ab_1');
+    const sql = capturedSql();
+    expect(sql).toMatch(/ab\.screenshots/);
   });
 
   it('a NULL approved_scopes column yields an empty scope list (no crash)', async () => {
