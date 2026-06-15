@@ -240,14 +240,10 @@ function TensorTable({ data }: { data: ModelTensorAnalysis }) {
   const displayRows = useMemo(() => buildTensorDisplayRows(data.tensors), [data.tensors]);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
+  // Default every group collapsed; reset when the selected file changes so a
+  // prior file's expanded groups don't linger.
   useEffect(() => {
-    setExpandedGroups(
-      Object.fromEntries(
-        displayRows
-          .filter((row) => row.type === 'group' && row.group.displayCount <= 3)
-          .map((row) => [(row as { type: 'group'; group: ModelTensorDisplayGroup }).group.id, true])
-      )
-    );
+    setExpandedGroups({});
   }, [displayRows]);
 
   // Flatten groups + expanded children into a single linear list so the whole
