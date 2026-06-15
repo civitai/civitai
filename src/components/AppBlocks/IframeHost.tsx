@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Box, Group, Menu } from '@mantine/core';
+import { ActionIcon, Box, Group, Menu, Text } from '@mantine/core';
 import { IconApps, IconDots, IconEyeOff } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BlockFallback } from './BlockFallback';
@@ -116,7 +116,7 @@ function storageErrorMessage(err: unknown): string {
  * publisher or anyone else). Rendering it here (vs in the sandboxed iframe) is
  * the whole point — the trust boundary belongs to the host. (Roadmap W7.)
  */
-function AppBlockChrome({
+export function AppBlockChrome({
   blockInstanceId,
   appName,
   modelId,
@@ -127,6 +127,17 @@ function AppBlockChrome({
   modelId?: number;
   modelName?: string;
 }) {
+  // The host-rendered name of the running app. Falls back to the literal
+  // "App block" so the trust label is never blank. (H2) Naming the app in the
+  // host chrome — not just the iframe `title` — lets the user tell WHICH
+  // sandboxed app is running and trust its provenance; the iframe can't fake it.
+  const label = appName?.trim() ? appName.trim() : 'App block';
+  // When we fall back to "App block", the icon's aria-label already says
+  // "App block" — drop the icon's label in that case so a screen reader doesn't
+  // read a redundant "App block App block". When we have a real app name, keep
+  // the icon's "App block" provenance aria-label so the icon + name read as
+  // "App block, <name>".
+  const iconAriaLabel = appName?.trim() ? 'App block' : undefined;
   return (
     <Group
       justify="space-between"
@@ -140,11 +151,18 @@ function AppBlockChrome({
         background: 'var(--mantine-color-default-hover)',
       }}
     >
-      <Group gap={6} wrap="nowrap">
-        {/* Icon only — the "App block" wordmark was dropped as redundant
-            (the icon + the frame itself already signal it). aria-label keeps
-            the provenance signal for screen readers. */}
-        <IconApps size={14} stroke={1.5} aria-label="App block" />
+      {/* minWidth:0 lets the truncating name shrink instead of pushing the
+          ⋯ menu out of the narrow sidebar layout. */}
+      <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+        {/* aria-label keeps the provenance signal for screen readers; the
+            visible name (below) tells the user WHICH app is running. */}
+        <IconApps size={14} stroke={1.5} aria-label={iconAriaLabel} style={{ flexShrink: 0 }} />
+        {/* Host-rendered (spoof-proof) app-name label. Truncates with an
+            ellipsis at a bounded width so a long name never wraps or shoves
+            the menu off the row in the narrow model.sidebar_top slot. */}
+        <Text size="xs" c="dimmed" truncate maw={160} data-testid="app-block-name">
+          {label}
+        </Text>
       </Group>
       <Menu position="bottom-end" shadow="md" width={180}>
         <Menu.Target>
