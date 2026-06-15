@@ -1,5 +1,10 @@
 import type { Session } from 'next-auth';
-import { createSessionClient, sessionCookieName } from '@civitai/auth';
+import {
+  createSessionClient,
+  sessionCookieName,
+  deviceCookieName,
+  isSecureCookie,
+} from '@civitai/auth';
 
 // The main app's handle to the centralized auth hub (thin-session model — docs/thin-session-token-design.md
 // and docs/main-app-auth-cutover.md). Going forward, user validation routes through this client instead of
@@ -30,7 +35,7 @@ export async function getHubSession(req: {
 }): Promise<Session | null> {
   // The hub's THIN cookie (`civ-token`), distinct from next-auth's legacy `civitai-token`. Read both the
   // secure-prefixed (prod/https) and unprefixed (dev) names so it works in either environment.
-  const token = req.cookies?.[sessionCookieName(true)] ?? req.cookies?.[sessionCookieName(false)];
+  const token = req.cookies?.[sessionCookieName()];
   if (!token) return null;
   const user = await sessionClient.getSessionUser(token);
   if (!user) return null;
@@ -46,7 +51,9 @@ export async function getHubSession(req: {
 const UPDATE_AGE_MS = (Number(process.env.AUTH_SESSION_UPDATE_AGE) || 24 * 60 * 60) * 1000; // default 24h
 const HUB_ORIGIN = process.env.AUTH_JWT_ISSUER;
 const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN;
-const COOKIE_SECURE = !!HUB_ORIGIN && HUB_ORIGIN.startsWith('https://');
+const COOKIE_SECURE = isSecureCookie();
+const DEVICE_COOKIE_NAME = deviceCookieName();
+const DEVICE_TTL_S = 30 * 24 * 60 * 60; // 30d rolling — matches the hub's device record TTL
 
 function decodeClaim(token: string, field: 'iat' | 'exp'): number | undefined {
   try {
@@ -69,7 +76,11 @@ interface CookieWritable {
  * logged in and the next request retries. Fires at most once per updateAge crossing (re-setting the cookie
  * resets the clock). The hub call is the only path that can mint — the main app is verify-only.
  */
-export async function maybeRollHubCookie(token: string, res: CookieWritable): Promise<void> {
+export async function maybeRollHubCookie(
+  token: string,
+  deviceCookie: string | undefined,
+  res: CookieWritable
+): Promise<void> {
   if (!HUB_ORIGIN || !token || typeof res.setHeader !== 'function') return;
   const iat = decodeClaim(token, 'iat');
   if (!iat || Date.now() - iat * 1000 < UPDATE_AGE_MS) return; // fresh enough — no work
@@ -81,7 +92,11 @@ export async function maybeRollHubCookie(token: string, res: CookieWritable): Pr
     try {
       const r = await fetch(`${HUB_ORIGIN.replace(/\/+$/, '')}/api/auth/refresh`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}` },
+        headers: {
+          authorization: `Bearer ${token}`,
+          // Forward the device cookie so the hub keeps THIS browser's active account fresh in its switcher.
+          ...(deviceCookie ? { cookie: `${DEVICE_COOKIE_NAME}=${deviceCookie}` } : {}),
+        },
         signal: controller.signal,
       });
       if (!r.ok) return;
@@ -94,7 +109,7 @@ export async function maybeRollHubCookie(token: string, res: CookieWritable): Pr
     const exp = decodeClaim(fresh, 'exp');
     const maxAge = exp ? Math.max(0, exp - Math.floor(Date.now() / 1000)) : undefined;
     const cookie = [
-      `${sessionCookieName(COOKIE_SECURE)}=${fresh}`,
+      `${sessionCookieName()}=${fresh}`,
       'Path=/',
       'HttpOnly',
       'SameSite=Lax',
@@ -111,6 +126,21 @@ export async function maybeRollHubCookie(token: string, res: CookieWritable): Pr
       ? [String(existing)]
       : [];
     all.push(cookie);
+    // Roll the device cookie too (httpOnly), so the cookie + the hub's device record stay in lockstep with
+    // the session — both live 30 rolling days from the last activity.
+    if (deviceCookie) {
+      all.push(
+        [
+          `${DEVICE_COOKIE_NAME}=${deviceCookie}`,
+          'Path=/',
+          'HttpOnly',
+          'SameSite=Lax',
+          ...(COOKIE_SECURE ? ['Secure'] : []),
+          ...(COOKIE_DOMAIN ? [`Domain=${COOKIE_DOMAIN}`] : []),
+          `Max-Age=${DEVICE_TTL_S}`,
+        ].join('; ')
+      );
+    }
     res.setHeader('Set-Cookie', all);
   } catch {
     // best-effort — the current token is still valid; the user is unaffected

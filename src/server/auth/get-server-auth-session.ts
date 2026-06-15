@@ -11,7 +11,7 @@ import { getSessionFromBearerToken } from './bearer-token';
 import { SESSION_REFRESH_HEADER, SESSION_REFRESH_COOKIE } from '~/shared/constants/auth.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { callbackCookieName } from '~/libs/auth';
-import { sessionCookieName } from '@civitai/auth';
+import { sessionCookieName, deviceCookieName } from '@civitai/auth';
 import { USE_HUB_SESSION, getHubSession, maybeRollHubCookie } from './session-client';
 
 function isValidCallbackUrl(value: string | undefined): boolean {
@@ -101,17 +101,14 @@ export const getServerAuthSession = async ({
   // stays authorized through the transition (no forced mass re-login). New logins mint a civ-token at the
   // hub; legacy cookies age out. See docs/main-app-auth-cutover.md.
   if (USE_HUB_SESSION) {
-    const session = await getHubSession(req as { cookies?: Partial<Record<string, string>> }).catch(
-      () => null
-    );
+    const session = await getHubSession(req).catch(() => null);
     if (session) {
       req.context.session = session;
       // Rolling-session refresh (best-effort, fire-safe — cutover doc section C). Only does work when the
       // token has crossed AUTH_SESSION_UPDATE_AGE; otherwise it's a cheap iat decode + age check.
-      const civ =
-        (req as NextApiRequest).cookies?.[sessionCookieName(true)] ??
-        (req as NextApiRequest).cookies?.[sessionCookieName(false)];
-      if (civ) await maybeRollHubCookie(civ, res as Parameters<typeof maybeRollHubCookie>[1]);
+      const civ = req.cookies?.[sessionCookieName()];
+      const device = req.cookies?.[deviceCookieName()];
+      if (civ) await maybeRollHubCookie(civ, device, res);
       return session;
     }
     // no civ-token → fall through to the legacy next-auth cookie below

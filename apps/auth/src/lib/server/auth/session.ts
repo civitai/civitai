@@ -1,20 +1,21 @@
 import { randomUUID } from 'crypto';
 import type { Cookies } from '@sveltejs/kit';
-import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import {
+  isSecureCookie,
   maybeCreateSessionSigner,
   sessionCookieName,
   type SessionSigner,
   type SessionUser,
 } from '@civitai/auth';
 import { sessions } from './registry';
+import { getOrCreateDeviceId, touchAccount } from './device';
 
 // THE thin-session cookie — a shared contract: every app must use this exact name for SSO to work, so
 // it's a hardcoded constant (via the package's single-source-of-truth helper), NOT configurable.
 // `civ-token` in dev, `__Secure-civ-token` in prod. DISTINCT from the legacy next-auth `civitai-token`
 // cookie, so the two never collide during the cutover.
-export const SESSION_COOKIE = sessionCookieName(!dev);
+export const SESSION_COOKIE = sessionCookieName();
 
 let _signer: SessionSigner | null | undefined;
 /** The hub ES256 signer. Throws a clear error if the keys aren't configured. */
@@ -67,25 +68,35 @@ export function toSessionUser(row: {
 /** Mint the THIN ES256 session JWT (identity only — `sub`/`jti`/`signedAt`, NO embedded user) and set it as
  *  the cross-subdomain cookie. The rich user is resolved per-request from the shared cache (the hub
  *  produces it), so the cookie stays small and every root resolves from one source. */
-export async function establishSession(cookies: Cookies, user: SessionUser): Promise<void> {
-  const signer = getSigner();
+/**
+ * Mint a thin session token for a user + track it (for invalidation). Returns the token; does NOT touch any
+ * cookie — callers that own the HTTP response cookie (the account-switch endpoint, or a spoke proxy) use this
+ * directly and set the cookie themselves. `establishSession` is the cookie-setting wrapper for the login path.
+ */
+export async function mintUserSession(user: SessionUser): Promise<string> {
   const tokenId = randomUUID();
-  const token = await signer.mintSessionToken(
+  const token = await getSigner().mintSessionToken(
     { signedAt: Date.now(), sub: String(user.id) },
     { jti: tokenId } // the session/token id is the standard `jti` claim — no duplicate `id`
   );
+  // Best-effort: track the token so it can be invalidated later (logout / ban). A redis blip must not fail.
+  await sessions.trackToken(tokenId, user.id).catch(() => {});
+  return token;
+}
+
+export async function establishSession(cookies: Cookies, user: SessionUser): Promise<void> {
+  const token = await mintUserSession(user);
   cookies.set(SESSION_COOKIE, token, {
     path: '/',
     domain: env.AUTH_COOKIE_DOMAIN || undefined, // e.g. .civitai.com
     httpOnly: true,
-    secure: !dev,
+    secure: isSecureCookie(),
     sameSite: 'lax',
-    maxAge: signer.maxAge,
+    maxAge: getSigner().maxAge,
   });
 
-  // Best-effort: track the token so it can be invalidated later (logout / ban). A redis blip
-  // must not fail login.
-  await sessions.trackToken(tokenId, user.id).catch(() => {});
+  // Link this account to the browser's device set (the account-switch list, section E). Best-effort.
+  await touchAccount(getOrCreateDeviceId(cookies), user.id).catch(() => {});
 }
 
 export function clearSession(cookies: Cookies): void {

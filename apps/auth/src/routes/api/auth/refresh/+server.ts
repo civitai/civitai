@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { verifier } from '$lib/server/auth/verifier';
 import { getSigner, SESSION_COOKIE } from '$lib/server/auth/session';
 import { sessions } from '$lib/server/auth/registry';
+import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 
 // POST /api/auth/refresh — ROLLING SESSION. Given a still-valid civ-token (Bearer or cookie), verify it
 // (signature + expiry + REVOCATION — verifier.verifyToken enforces all three, so a logged-out / banned /
@@ -29,6 +30,13 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   );
   // Refresh the token-tracking TTL so an actively-used session's tracking entry doesn't lapse.
   await sessions.trackToken(jti, userId).catch(() => {});
+
+  // Keep the ACTIVE account fresh in this browser's switcher: a rolling refresh (section C) means the user is
+  // active, so slide the account's 30-day idle clock + roll the device record TTL. Without this, an actively-
+  // used-but-never-switched account would age out of its own switcher after 30 days. (Device cookie forwarded
+  // by the main app's maybeRollHubCookie.)
+  const deviceId = getDeviceId(cookies);
+  if (deviceId) await touchAccount(deviceId, userId).catch(() => {});
 
   return json({ token: fresh });
 };

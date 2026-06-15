@@ -32,7 +32,10 @@ type AccountState = {
   setAccounts: (val: ((prevState: CivitaiAccounts) => CivitaiAccounts) | CivitaiAccounts) => void;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
-  swapAccount: (token: EncryptedDataSchema, callbackUrl?: string) => Promise<void>;
+  swapAccount: (
+    token: EncryptedDataSchema | { swapToken: string },
+    callbackUrl?: string
+  ) => Promise<void>;
   removeAccount: (id: number) => void;
   ogAccount: ogAccountType;
   setOgAccount: (val: ((prevState: ogAccountType) => ogAccountType) | ogAccountType) => void;
@@ -98,8 +101,18 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     await handleSignOut();
   };
 
-  const swapAccount = async (token: EncryptedDataSchema, callbackUrl?: string) => {
-    await signIn('account-switch', { callbackUrl: callbackUrl ?? window.location.href, ...token });
+  const swapAccount = async (
+    token: EncryptedDataSchema | { swapToken: string },
+    callbackUrl?: string
+  ) => {
+    const cb = callbackUrl ?? window.location.href;
+    if ('swapToken' in token) {
+      // Hub ES256 swap token (cross-domain) — verified via JWKS, no shared secret.
+      await signIn('account-switch-hub', { token: token.swapToken, callbackUrl: cb });
+    } else {
+      // Legacy AES civ-token (same-domain multi-account — long-lived stored credential).
+      await signIn('account-switch', { callbackUrl: cb, ...token });
+    }
   };
 
   const removeAccount = (id: number) => {

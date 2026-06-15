@@ -497,6 +497,30 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           }
         },
       }),
+      // Hub account-switch (ES256 swap token, JWKS-verified — NO shared secret). Registered only when this
+      // app is a verify-only spoke with the hub's JWKS configured. Used for CROSS-DOMAIN sync (e.g. civitai.red),
+      // where the source can't share the AES secret. Same-domain multi-account stays on the AES provider above —
+      // it relies on long-lived stored tokens, and swap tokens are short-lived. The client calls
+      // signIn('account-switch-hub', { token: swapToken }). See docs/main-app-auth-cutover.md (E).
+      // STEP-H-REMOVAL: this is still a next-auth CredentialsProvider; revisit when account-switch goes hub-native.
+      ...(sessionVerifier
+        ? [
+            CredentialsProvider({
+              id: 'account-switch-hub',
+              name: 'Account Switch (hub)',
+              credentials: { token: { label: 'Swap token', type: 'text' } },
+              async authorize(credentials) {
+                const token = credentials?.token;
+                if (!token) return null;
+                const result = await sessionVerifier!.verifySwapToken(token);
+                if (!result) return null;
+                const user = await getSessionUser({ userId: result.userId });
+                if (!user) throw new Error('No user found.');
+                return user;
+              },
+            }),
+          ]
+        : []),
       ...(isDev || isTest
         ? [
             CredentialsProvider({

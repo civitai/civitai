@@ -715,6 +715,10 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
 
 // Source of Truth data
 export const REDIS_SYS_KEYS = {
+  DEVICE: {
+    // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.
+    ACCOUNTS: 'device:accounts',
+  },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
     // listForModel response (disable a runaway block without a deploy).

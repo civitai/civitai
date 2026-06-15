@@ -33,14 +33,14 @@ function safeCallback(cb: unknown): string {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const callbackUrl = safeCallback(req.query.callbackUrl);
-  const token = req.cookies[sessionCookieName(true)] ?? req.cookies[sessionCookieName(false)];
+  const token = req.cookies[sessionCookieName()];
 
   // Best-effort token revocation at the hub. The cookie clears below end the session client-side, so a hub
-  // blip must never block logout.
+  // blip must never block logout. Forward under the ACTUAL (env-derived) cookie name so the hub reads it.
   if (HUB && token) {
     await fetch(`${HUB.replace(/\/+$/, '')}/logout`, {
       method: 'POST',
-      headers: { cookie: `${sessionCookieName(false)}=${token}` },
+      headers: { cookie: `${sessionCookieName()}=${token}` },
       redirect: 'manual',
     }).catch(() => null);
   }
@@ -52,7 +52,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const legacyDomains = [undefined, process.env.NEXTAUTH_COOKIE_DOMAIN || undefined, dParent];
 
   res.setHeader('Set-Cookie', [
-    // new hub session cookie
+    // new hub session cookie — clear BOTH prefixes explicitly (defensive: nuke it regardless of how it was set)
     ...clearCookie(sessionCookieName(false), false, civDomains),
     ...clearCookie(sessionCookieName(true), true, civDomains),
     // legacy next-auth session cookie (hybrid fallback reads it)
