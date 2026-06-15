@@ -1,4 +1,7 @@
 import type { GetServerSidePropsContext, NextApiRequest, NextApiResponse } from 'next';
+// STEP-H-REMOVAL: `getServerSession` + `createAuthOptions` (and the legacy block that uses them) are deleted
+// when NextAuth is removed. The `Session` type must be REPLACED with a first-party session type, not just
+// deleted — it's the return type across this module and nearly every server-side auth consumer.
 import type { Session } from 'next-auth';
 import { getServerSession } from 'next-auth/next';
 import { env } from '~/env/server';
@@ -91,16 +94,24 @@ export const getServerAuthSession = async ({
   }
 
   // Thin-session cutover (flag, default OFF): resolve the cookie session via the centralized hub
-  // (verify → shared cache → hub on miss) instead of next-auth. Fails closed to null on any error — the
-  // legacy next-auth path below is the fallback whenever the flag is off. See docs/main-app-auth-cutover.md.
+  // (verify → shared cache → hub on miss) instead of next-auth.
+  // HYBRID FALLBACK: if there's no civ-token (or the hub can't resolve it), fall THROUGH to the legacy
+  // next-auth path below rather than returning null — so a user still carrying the old next-auth cookie
+  // stays authorized through the transition (no forced mass re-login). New logins mint a civ-token at the
+  // hub; legacy cookies age out. See docs/main-app-auth-cutover.md.
   if (USE_HUB_SESSION) {
     const session = await getHubSession(req as { cookies?: Partial<Record<string, string>> }).catch(
       () => null
     );
-    req.context.session = session;
-    return session;
+    if (session) {
+      req.context.session = session;
+      return session;
+    }
+    // no civ-token → fall through to the legacy next-auth cookie below
   }
 
+  // STEP-H-REMOVAL: this entire legacy block (getServerSession + callback-cookie scrubbing +
+  // checkAndSetSessionHeaders) is deleted at step H; the USE_HUB_SESSION branch above becomes unconditional.
   try {
     // Strip any malformed next-auth.callback-url cookie before next-auth's
     // assertConfig rejects the request with INVALID_CALLBACK_URL_ERROR.
