@@ -26,6 +26,7 @@ import { Fragment } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -54,7 +55,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
     }
-    if (!session.user.isModerator) {
+    if (!isAppDeveloper(session.user)) {
       return { notFound: true };
     }
     return { props: {} };

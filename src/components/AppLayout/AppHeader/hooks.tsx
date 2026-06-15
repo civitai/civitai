@@ -15,6 +15,7 @@ import {
   IconGavel,
   IconHistory,
   IconLink,
+  IconListDetails,
   IconMoneybag,
   IconPhotoUp,
   IconPlayerPlayFilled,
@@ -37,6 +38,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 import type { CollectionType } from '~/shared/utils/prisma/enums';
+import { isAppDeveloper, isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { useMemo } from 'react';
 
 export type UserMenuItem = {
@@ -167,10 +169,31 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         },
         {
           href: '/apps/revenue',
-          visible: features.appBlocks,
+          visible: features.appBlocks && isAppDeveloper(currentUser),
           icon: IconCurrencyDollar,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'App Revenue',
+        },
+        {
+          href: '/apps/submit',
+          visible: features.appBlocks && isAppDeveloper(currentUser),
+          icon: IconUpload,
+          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Submit App',
+        },
+        {
+          href: '/apps/my-submissions',
+          visible: features.appBlocks && isAppDeveloper(currentUser),
+          icon: IconListDetails,
+          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'My Submissions',
+        },
+        {
+          href: '/apps/review',
+          visible: features.appBlocks && isAppReviewer(currentUser),
+          icon: IconGavel,
+          color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Review Apps',
         },
       ],
     },
