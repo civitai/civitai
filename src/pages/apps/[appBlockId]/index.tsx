@@ -132,6 +132,10 @@ export default function AppDetailPage() {
       appName: detail.appName,
       manifest: detail.manifest,
       installCount: detail.installCount,
+      // E3 marketplace-card fields — unused by the settings modal (it sources
+      // scopes from the authenticated getInstallConfig), so safe placeholders.
+      category: null,
+      scopesSummary: [],
     };
     openAppSettingsModal({ block, existingByScope });
   }

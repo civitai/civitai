@@ -773,6 +773,9 @@ export default function InstalledAppsPage() {
       appName: null,
       manifest: sub.manifest as Record<string, unknown>,
       installCount: 0,
+      // E3 marketplace-card fields — unused on the Manage path (modal-only).
+      category: null,
+      scopesSummary: [],
     };
     const existingByScope: Partial<Record<typeof sub.scope, SubscriptionRecord>> = {};
     for (const candidate of subs ?? []) {
