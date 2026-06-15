@@ -108,12 +108,12 @@ export const postRouter = router({
   create: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postCreateSchema)
-    .use(rateLimit(postRateLimits))
+    .use(rateLimit(postRateLimits, undefined, { sharedKey: 'post:create' }))
     .mutation(createPostHandler),
   createWithImages: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createPostWithImagesSchema)
-    .use(rateLimit(postRateLimits))
+    .use(rateLimit(postRateLimits, undefined, { sharedKey: 'post:create' }))
     .mutation(createPostWithImagesHandler),
   update: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })

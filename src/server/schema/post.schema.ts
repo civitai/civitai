@@ -22,13 +22,14 @@ import { commaDelimitedStringArray, numericStringArray } from '~/utils/zod-helpe
 // lives on the `hour` period, which no base/established rule uses (mirrors
 // articleRateLimits). Daily ceilings tier UP by reputation.
 export const postRateLimits: RateLimit[] = [
-  // Brand-new accounts (< 24h): tight hourly clamp. Not overridden because no other
-  // rule uses the hour period.
+  // Newly created accounts: tight hourly clamp for the rest of the calendar day
+  // they sign up (isBetweenToday = same-day membership, matching articleRateLimits).
+  // Not overridden because no other rule uses the hour period.
   {
     limit: 2,
     period: CacheTTL.hour,
     userReq: (user) => !!user.createdAt && isBetweenToday(user.createdAt),
-    errorMessage: 'New accounts are limited to a couple of posts per hour for the first 24 hours.',
+    errorMessage: 'New accounts have a lower hourly posting limit on their first day.',
   },
   // Base daily ceiling (all users, incl. new + low-reputation).
   {

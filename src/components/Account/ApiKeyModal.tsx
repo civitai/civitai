@@ -166,8 +166,8 @@ export function ApiKeyModal({ ...props }: Props) {
           <Alert color="yellow" mt="sm" p="sm">
             <Text size="xs">
               You are responsible for everything done with this key. Anything generated, posted, or
-              published with it — including by automated agents or scripts — counts as your own
-              action under the{' '}
+              published with it (including by automated agents or scripts) counts as your own action
+              under the{' '}
               <Anchor href="/content/tos" target="_blank" rel="noopener noreferrer">
                 Terms of Service
               </Anchor>
