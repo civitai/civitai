@@ -27,6 +27,19 @@ export function GeneratedImageOutput({
     const meta = getStepMeta(step);
     if (meta) mediaDropzoneData.setData(url, meta);
     e.dataTransfer.setData('text/uri-list', url);
+
+    // Set only the drag-feedback "ghost" (the translucent preview under the cursor).
+    // This does NOT resize the image or the dropped file — the post is fetched full-
+    // resolution from `image.url` on drop. We point the ghost at the already-rendered
+    // (small, thumbnail-sized) <img> so the browser snapshots that box instead of
+    // rasterizing the full-resolution source. Without this, Chrome aborts drag-start
+    // when the source is large (hi-res-fix ~1800px is marginally over the limit;
+    // upscales up to 4k are far over) — dragstart fires but immediately ends with
+    // dropEffect 'none', silently breaking drag-to-post. ~1024px outputs stay under
+    // the limit, which is why only hi-res-fix/upscale results were affected.
+    // The 2nd/3rd args are the cursor hotspot WITHIN the ghost (centered), not a scale.
+    const img = e.currentTarget;
+    e.dataTransfer.setDragImage(img, img.clientWidth / 2, img.clientHeight / 2);
   }
 
   function handleContextMenu(e: MouseEvent<HTMLImageElement>) {
