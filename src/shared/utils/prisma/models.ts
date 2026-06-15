@@ -4377,6 +4377,7 @@ export interface Model3D {
   availability: Availability;
   nsfwLevel: number;
   meta: JsonValue;
+  gallerySettings: JsonValue;
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
