@@ -16,7 +16,11 @@ describe('createOauthClientSchema', () => {
   it('accepts valid scheme://host[:port] origins', () => {
     const result = createOauthClientSchema.safeParse({
       ...validBase,
-      allowedOrigins: ['https://example.com', 'http://localhost:5173', 'https://app.example.com:8443'],
+      allowedOrigins: [
+        'https://example.com',
+        'http://localhost:5173',
+        'https://app.example.com:8443',
+      ],
     });
     expect(result.success).toBe(true);
   });
@@ -115,10 +119,7 @@ describe('deriveAllowedOriginsFromRedirectUris', () => {
   });
 
   it('skips malformed URIs', () => {
-    const origins = deriveAllowedOriginsFromRedirectUris([
-      'not a url',
-      'https://example.com/cb',
-    ]);
+    const origins = deriveAllowedOriginsFromRedirectUris(['not a url', 'https://example.com/cb']);
     expect(origins).toEqual(['https://example.com']);
   });
 

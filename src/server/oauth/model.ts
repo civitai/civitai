@@ -117,7 +117,12 @@ export const oauthModel = {
   // `includes` by default; override so loopback redirects get RFC 8252 §7.3 port
   // flexibility (matching the custom pre-check in /api/auth/oauth/authorize).
   async validateRedirectUri(redirectUri: string, client: Client): Promise<boolean> {
-    return redirectUriMatches(client.redirectUris, redirectUri);
+    const registeredUris = Array.isArray(client.redirectUris)
+      ? client.redirectUris
+      : client.redirectUris
+      ? [client.redirectUris]
+      : [];
+    return redirectUriMatches(registeredUris, redirectUri);
   },
 
   // ─── Authorization Code ─────────────────────────────────────
