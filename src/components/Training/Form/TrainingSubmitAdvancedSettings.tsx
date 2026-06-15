@@ -55,6 +55,7 @@ import {
   trainingBaseModelTypesVideo,
   AI_TOOLKIT_EPOCHS,
   aiToolkitStepDefault,
+  aiToolkitSaveEveryDefault,
   aiToolkitBatchMax,
 } from '~/utils/training';
 import type { AudioSampleOverride } from '~/utils/training';
@@ -112,10 +113,7 @@ export const AdvancedSettings = ({
       // checkpoint count (maxTrainEpochs, sent as `epochs`) is derived from it.
       defaultParams.trainBatchSize = 1;
       defaultParams.targetSteps = aiToolkitStepDefault(selectedRun.baseType);
-      defaultParams.saveEvery = Math.max(
-        1,
-        Math.round(defaultParams.targetSteps / AI_TOOLKIT_EPOCHS.default)
-      );
+      defaultParams.saveEvery = aiToolkitSaveEveryDefault(defaultParams.targetSteps);
       defaultParams.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
     } else {
       const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;

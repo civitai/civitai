@@ -56,6 +56,7 @@ import { basePath as trainWizardBasePath } from '~/components/Training/Form/Trai
 import {
   AI_TOOLKIT_EPOCHS,
   aiToolkitStepDefault,
+  aiToolkitSaveEveryDefault,
   type TrainingBaseModelType,
 } from '~/utils/training';
 import type { ModelVersionById } from '~/types/router';
@@ -536,7 +537,7 @@ export default function TrainingSelectFile({
       params.engine = 'ai-toolkit';
       params.trainBatchSize = 1;
       params.targetSteps = aiToolkitStepDefault(baseType);
-      params.saveEvery = Math.max(1, Math.round(params.targetSteps / AI_TOOLKIT_EPOCHS.default));
+      params.saveEvery = aiToolkitSaveEveryDefault(params.targetSteps);
       params.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
       params.continueFrom = continueFromAir;
 

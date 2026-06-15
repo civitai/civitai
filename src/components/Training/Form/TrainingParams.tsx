@@ -4,6 +4,7 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import {
+  AI_TOOLKIT_SAVE_EVERY,
   engineTypes,
   type EngineTypes,
   loraTypes,
@@ -321,10 +322,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     ),
     type: 'int',
     // Default mirrors targetSteps / 10 checkpoints; the seeding effects recompute it per run.
-    default: 200,
-    min: 50,
-    max: 5000,
-    step: 50,
+    // Bounds come from AI_TOOLKIT_SAVE_EVERY so the input and the seeds share one source.
+    default: AI_TOOLKIT_SAVE_EVERY.default,
+    min: AI_TOOLKIT_SAVE_EVERY.min,
+    max: AI_TOOLKIT_SAVE_EVERY.max,
+    step: AI_TOOLKIT_SAVE_EVERY.step,
     overrides: {
       ltx2: { all: { default: 300 } },
       ltx23: { all: { default: 300 } },

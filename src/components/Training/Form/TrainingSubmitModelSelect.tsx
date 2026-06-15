@@ -60,6 +60,7 @@ import {
   type AudioSampleOverride,
   AI_TOOLKIT_EPOCHS,
   aiToolkitStepDefault,
+  aiToolkitSaveEveryDefault,
   getDefaultEngine,
   isSamplePromptsRequired,
   parseAudioCaption,
@@ -275,10 +276,7 @@ export const ModelSelect = ({
       defaultParams.targetSteps = aiToolkitStepDefault(
         (data.baseType ?? selectedRun.baseType) as TrainingBaseModelType
       );
-      defaultParams.saveEvery = Math.max(
-        1,
-        Math.round(defaultParams.targetSteps / AI_TOOLKIT_EPOCHS.default)
-      );
+      defaultParams.saveEvery = aiToolkitSaveEveryDefault(defaultParams.targetSteps);
       defaultParams.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
     } else {
       defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
