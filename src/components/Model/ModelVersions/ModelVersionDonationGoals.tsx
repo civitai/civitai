@@ -119,6 +119,7 @@ const DonationGoalItem = ({
             color={progress < 100 ? 'yellow.7' : 'green'}
             striped={donationGoal.active}
             animated={donationGoal.active}
+            aria-label={`Donation goal progress: ${donationGoal.title}`}
           >
             <Progress.Label>{Math.floor(progress)}%</Progress.Label>
           </Progress.Section>

@@ -146,7 +146,7 @@ export type BountyEntryMode = "Open" | "BenefactorsOnly";
 
 export type BountyEngagementType = "Favorite" | "Track";
 
-export type CsamReportType = "Image" | "TrainingData" | "GeneratedImage";
+export type CsamReportType = "Image" | "TrainingData" | "GeneratedImage" | "ExternalLink";
 
 export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess";
 
@@ -600,6 +600,16 @@ export interface User {
   comicProjects?: ComicProject[];
   comicReferences?: ComicReference[];
   comicProjectEngagements?: ComicProjectEngagement[];
+  blockUserSettings?: BlockUserSettings[];
+  promotedPlatformBlocks?: PlatformDefaultBlock[];
+  blockUserSubscriptions?: BlockUserSubscription[];
+  blockBuzzAttributionsAsPurchaser?: BlockBuzzAttribution[];
+  blockBuzzAttributionsAsAppOwner?: BlockBuzzAttribution[];
+  blockAttributionPayouts?: BlockAttributionPayout[];
+  publishRequestsSubmitted?: AppBlockPublishRequest[];
+  publishRequestsReviewed?: AppBlockPublishRequest[];
+  blockScopeInvocations?: BlockScopeInvocation[];
+  appUserScopeGrants?: AppUserScopeGrant[];
 }
 
 export interface CustomerSubscription {
@@ -1720,6 +1730,178 @@ export interface OauthClient {
   updatedAt: Date;
   tokens?: ApiKey[];
   consents?: OauthConsent[];
+  appBlocks?: AppBlock[];
+  buzzAttributions?: BlockBuzzAttribution[];
+}
+
+export interface AppBlock {
+  id: string;
+  appId: string;
+  app?: OauthClient;
+  blockId: string;
+  version: string;
+  manifest: JsonValue;
+  status: string;
+  contentRating: string;
+  promotionEligible: boolean;
+  healthStatus: string;
+  healthCheckedAt: Date | null;
+  renderMode: string;
+  trustTier: string;
+  assetBundleUrl: string | null;
+  assetBundleSha256: string | null;
+  approvedScopes: string[];
+  currentVersionSha: string | null;
+  currentVersionDeployedAt: Date | null;
+  repoUrl: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  platformDefault?: PlatformDefaultBlock | null;
+  userSubscriptions?: BlockUserSubscription[];
+  buzzAttributions?: BlockBuzzAttribution[];
+  publishRequests?: AppBlockPublishRequest[];
+  scopeInvocations?: BlockScopeInvocation[];
+  userScopeGrants?: AppUserScopeGrant[];
+}
+
+export interface AppBlockPublishRequest {
+  id: string;
+  appBlockId: string | null;
+  appBlock?: AppBlock | null;
+  slug: string;
+  submittedByUserId: number;
+  submittedBy?: User;
+  submittedAt: Date;
+  version: string;
+  manifest: JsonValue;
+  bundleKey: string;
+  bundleSha256: string;
+  bundleSizeBytes: bigint;
+  fileSummary: JsonValue;
+  manifestDiffSummary: JsonValue;
+  status: string;
+  reviewedByUserId: number | null;
+  reviewedBy?: User | null;
+  reviewedAt: Date | null;
+  rejectionReason: string | null;
+  approvalNotes: string | null;
+  forgejoCommitSha: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface BlockUserSettings {
+  blockInstanceId: string;
+  subscription?: BlockUserSubscription;
+  userId: number;
+  user?: User;
+  settings: JsonValue;
+  updatedAt: Date;
+}
+
+export interface PlatformDefaultBlock {
+  appBlockId: string;
+  appBlock?: AppBlock;
+  slotId: string;
+  targetModelTypes: string[];
+  minContentRating: string | null;
+  maxContentRating: string | null;
+  priority: number;
+  enabled: boolean;
+  promotedAt: Date;
+  promotedBy: number | null;
+  promoter?: User | null;
+}
+
+export interface BlockUserSubscription {
+  id: string;
+  userId: number;
+  user?: User;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  scope: string;
+  targetModelTypes: string[];
+  targetBaseModels: string[];
+  targetModelIds: number[];
+  slotId: string | null;
+  pinnedVersion: string | null;
+  blockInstanceId: string | null;
+  installedByUserId: number | null;
+  settings: JsonValue;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  viewerSettings?: BlockUserSettings[];
+}
+
+export interface BlockBuzzAttribution {
+  id: string;
+  userId: number;
+  user?: User;
+  buzzAmount: number;
+  usdAmountCents: number;
+  buzzType: string;
+  paymentProvider: string;
+  paymentTransactionId: string;
+  buzzTransactionId: string | null;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  blockInstanceId: string;
+  scope: string;
+  modelId: number | null;
+  rateCardVersion: string;
+  appOwnerShareCents: number;
+  platformShareCents: number;
+  providerFeeCents: number;
+  appOwnerUserId: number;
+  appOwner?: User;
+  status: string;
+  voidedReason: string | null;
+  holdReason: string | null;
+  heldAt: Date | null;
+  entryType: string;
+  attributedAt: Date;
+  confirmedAt: Date | null;
+  voidedAt: Date | null;
+  paidOutAt: Date | null;
+  payoutId: string | null;
+}
+
+export interface BlockAttributionPayout {
+  id: string;
+  appOwnerUserId: number;
+  appOwner?: User;
+  periodKey: string;
+  totalCents: number;
+  rowCount: number;
+  createdAt: Date;
+}
+
+export interface BlockScopeInvocation {
+  id: bigint;
+  userId: number;
+  user?: User;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  blockInstanceId: string;
+  scope: string;
+  endpoint: string;
+  statusCode: number;
+  invokedAt: Date;
+}
+
+export interface AppUserScopeGrant {
+  id: string;
+  userId: number;
+  user?: User;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  version: string;
+  grantedScopes: string[];
+  grantedAt: Date;
+  revokedAt: Date | null;
 }
 
 export interface OauthConsent {

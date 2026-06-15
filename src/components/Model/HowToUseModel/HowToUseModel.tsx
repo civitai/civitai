@@ -47,6 +47,7 @@ export const HowToButton = ({
         size="xs"
         c="dimmed"
         style={{ lineHeight: 1 }}
+        aria-label={tooltip}
       >
         <IconInfoSquareRounded size={size} {...iconProps} />
       </Text>

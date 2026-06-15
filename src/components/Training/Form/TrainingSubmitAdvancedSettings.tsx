@@ -53,6 +53,9 @@ import {
   parseAudioCaption,
   rapidEta,
   trainingBaseModelTypesVideo,
+  AI_TOOLKIT_EPOCHS,
+  aiToolkitStepDefault,
+  aiToolkitBatchMax,
 } from '~/utils/training';
 import type { AudioSampleOverride } from '~/utils/training';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -102,24 +105,36 @@ export const AdvancedSettings = ({
     const defaultParams = getDefaultTrainingParams(runBase, selectedRun.params.engine);
 
     defaultParams.engine = selectedRun.params.engine;
-    const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
-    defaultParams.numRepeats = Math.max(
-      1,
-      Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1)))
-    );
 
-    if (selectedRun.params.engine !== 'rapid') {
-      defaultParams.targetSteps = Math.ceil(
-        ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
-          defaultParams.trainBatchSize
+    if (features.trainingStepsPricing && selectedRun.params.engine === 'ai-toolkit') {
+      // Steps-based pricing: steps is set directly (not derived from repeats), epochs is
+      // the saved-checkpoint count (default 10), and batchSize defaults to 1.
+      defaultParams.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
+      defaultParams.trainBatchSize = 1;
+      defaultParams.targetSteps = aiToolkitStepDefault(selectedRun.baseType);
+    } else {
+      const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
+      defaultParams.numRepeats = Math.max(
+        1,
+        Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1)))
       );
+
+      if (selectedRun.params.engine !== 'rapid') {
+        defaultParams.targetSteps = Math.ceil(
+          ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
+            defaultParams.trainBatchSize
+        );
+      }
     }
 
     doUpdate({ params: defaultParams });
-  }, [selectedRun.params.engine]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRun.params.engine, features.trainingStepsPricing]);
 
-  // Use functions to set proper starting values based on metadata
+  // Use functions to set proper starting values based on metadata.
+  // numRepeats is deprecated for AI Toolkit under steps-based pricing, so skip seeding it.
   useEffect(() => {
+    if (features.trainingStepsPricing && selectedRun.params.engine === 'ai-toolkit') return;
     if (selectedRun.params.numRepeats === undefined) {
       const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
       const numRepeats = Math.max(1, Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1))));
@@ -128,8 +143,11 @@ export const AdvancedSettings = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.id, numImages]);
 
-  // Set targetSteps automatically on value changes
+  // Set targetSteps automatically on value changes.
+  // Under steps-based pricing, AI Toolkit steps is set directly by the user (and drives
+  // pricing), so it is NOT derived from epochs/repeats/batch.
   useEffect(() => {
+    if (features.trainingStepsPricing && selectedRun.params.engine === 'ai-toolkit') return;
     const { maxTrainEpochs, numRepeats, trainBatchSize } = selectedRun.params;
 
     const newSteps = Math.ceil(
@@ -678,6 +696,45 @@ export const AdvancedSettings = ({
                   </Stack>
                 );
               })}
+              {/* Sample generation settings (AI Toolkit + steps pricing). Blank = defaults. */}
+              {features.trainingStepsPricing && selectedRun.params.engine === 'ai-toolkit' && (
+                <Card withBorder p="sm" radius="sm">
+                  <Stack gap="xs">
+                    <Text size="xs" c="dimmed">
+                      Sample generation settings for the preview outputs. Leave blank to use the
+                      model defaults.
+                    </Text>
+                    <Group grow wrap="wrap" align="flex-start">
+                      <NumberInputWrapper
+                        label="Sample CFG Scale"
+                        min={0}
+                        max={20}
+                        step={0.5}
+                        decimalScale={2}
+                        value={selectedRun.params.sampleCfgScale ?? ''}
+                        onChange={(v) =>
+                          doUpdate({
+                            params: { sampleCfgScale: typeof v === 'number' ? v : undefined },
+                          })
+                        }
+                      />
+                      <NumberInputWrapper
+                        label="Sample LoRA Strength"
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        decimalScale={2}
+                        value={selectedRun.params.sampleStrength ?? ''}
+                        onChange={(v) =>
+                          doUpdate({
+                            params: { sampleStrength: typeof v === 'number' ? v : undefined },
+                          })
+                        }
+                      />
+                    </Group>
+                  </Stack>
+                </Card>
+              )}
             </Stack>
           </Accordion.Panel>
         </Accordion.Item>
@@ -779,12 +836,18 @@ export const AdvancedSettings = ({
 
                   const baseOverride = ts.overrides?.[runBase];
                   const override = baseOverride?.all ?? baseOverride?.[selectedRun.params.engine];
+                  // Steps-based pricing UI only applies to AI Toolkit when the flag is on.
+                  const isAiToolkit =
+                    features.trainingStepsPricing && selectedRun.params.engine === 'ai-toolkit';
 
                   const disabledOverride = override?.disabled;
                   const hint = override?.hint ?? ts.hint;
                   const disabled =
                     selectedRun.params.engine === 'rapid'
                       ? true
+                      : // Steps is the primary, user-set length knob for AI Toolkit.
+                      isAiToolkit && ts.name === 'targetSteps'
+                      ? false
                       : disabledOverride ?? ts.disabled === true;
 
                   if (ts.type === 'int' || ts.type === 'number') {
@@ -793,10 +856,23 @@ export const AdvancedSettings = ({
                       ts.overrides?.[runBase]?.all ??
                       ts.overrides?.[runBase]?.[selectedRun.params.engine];
 
+                    // AI Toolkit steps-based pricing bounds: epochs = saved checkpoints (1–20),
+                    // batchSize capped per ecosystem.
+                    let inpMin = tOverride?.min ?? ts.min;
+                    let inpMax = tOverride?.max ?? ts.max;
+                    if (isAiToolkit && ts.name === 'maxTrainEpochs') {
+                      inpMin = AI_TOOLKIT_EPOCHS.min;
+                      inpMax = AI_TOOLKIT_EPOCHS.max;
+                    }
+                    if (isAiToolkit && ts.name === 'trainBatchSize') {
+                      inpMin = 1;
+                      inpMax = aiToolkitBatchMax(selectedRun.baseType);
+                    }
+
                     inp = (
                       <NumberInputWrapper
-                        min={tOverride?.min ?? ts.min}
-                        max={tOverride?.max ?? ts.max}
+                        min={inpMin}
+                        max={inpMax}
                         decimalScale={
                           ts.type === 'number'
                             ? getPrecision(ts.step ?? ts.default) || 4
@@ -924,9 +1000,14 @@ export const AdvancedSettings = ({
                     value: inp,
                     visible: !(
                       ts.name === 'engine' ||
-                      (ts.name === 'trainBatchSize' &&
-                        selectedRun.params.engine === 'ai-toolkit') ||
-                      (ts.name === 'optimizerArgs' && selectedRun.params.engine === 'ai-toolkit')
+                      (ts.name === 'optimizerArgs' && selectedRun.params.engine === 'ai-toolkit') ||
+                      // Steps pricing (AI Toolkit): batchSize becomes a configurable input and
+                      // numRepeats is hidden. Legacy AI Toolkit keeps the old layout (batchSize
+                      // hidden, numRepeats shown).
+                      (selectedRun.params.engine === 'ai-toolkit' &&
+                        (features.trainingStepsPricing
+                          ? ts.name === 'numRepeats'
+                          : ts.name === 'trainBatchSize'))
                     ),
                   };
                 })}

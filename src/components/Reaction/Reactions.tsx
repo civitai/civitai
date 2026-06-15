@@ -160,6 +160,7 @@ export function Reactions({
             size="compact-xs"
             onClick={() => setShowAll((s) => !s)}
             classNames={{ inner: 'flex gap-0.5' }}
+            aria-label="Add reaction"
             {...(buttonStyling ? buttonStyling('AddReaction') : {})}
           >
             <IconPlus size={16} stroke={2.5} />
@@ -289,6 +290,7 @@ function ReactionBadge({
       color={color}
       size="compact-xs"
       classNames={{ label: 'flex gap-1' }}
+      aria-label={`${reaction} reaction`}
       {...buttonStyling?.(reaction, hasReacted)}
       {...buttonProps}
     >

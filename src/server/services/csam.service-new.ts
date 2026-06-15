@@ -2,6 +2,7 @@ import type { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   CreateCsamReportSchema,
+  CreateExternalCsamReportSchema,
   GetImageResourcesOutput,
   CsamReportFormOutput,
 } from '~/server/schema/csam.schema';
@@ -10,7 +11,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
-import { S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { env } from '~/env/server';
 import fsAsync from 'fs/promises';
 import fs from 'fs';
@@ -33,6 +34,7 @@ import {
   Client,
   Environment,
   FileDetailType,
+  FileRelevance,
   IncidentType,
   IPEventName,
 } from '@civitai/cybertipline-tools';
@@ -130,6 +132,24 @@ export async function createCsamReport({
       type,
       //map imageIds to objects so that we can append additional data to them later
       images: imageIds?.map((id) => ({ id })) ?? [],
+    },
+  });
+}
+
+type ExternalCsamReportDetails = Omit<CreateExternalCsamReportSchema, 'userId'>;
+
+export async function createExternalCsamReport({
+  reportedById,
+  userId,
+  ...details
+}: CreateExternalCsamReportSchema & { reportedById: number }) {
+  return await dbWrite.csamReport.create({
+    data: {
+      userId,
+      reportedById,
+      type: 'ExternalLink',
+      details: removeEmpty(details),
+      images: [],
     },
   });
 }
@@ -451,6 +471,8 @@ export async function processCsamReport(report: CsamReportProps) {
       return await reportGenerationData(report);
     case 'TrainingData':
       return await reportTrainingData(report);
+    case 'ExternalLink':
+      return await reportExternalLink(report);
   }
 }
 
@@ -755,6 +777,241 @@ async function reportTrainingData(report: CsamReportProps) {
   }
 }
 
+async function reportExternalLink(report: CsamReportProps) {
+  const reportingUser = await getReportingUser(report.reportedById);
+  if (!reportingUser?.email || !report.userId) return await deleteCsamReport(report.id);
+
+  const details = report.details as unknown as ExternalCsamReportDetails;
+  const userActivity = await getUserIpInfo(report);
+
+  const ipCaptureEvent = userActivity?.map((activity) => {
+    const [year, month, day, hour, minute, second] = activity.time.split(/[-: ]/).map(Number);
+    return {
+      ipAddress: activity.ip,
+      eventName: IPEventName[activity.type],
+      dateTime: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
+    };
+  });
+
+  // Details displayed under the reported suspect.
+  const reportedInfo: string[] = [`Email: ${details.email}`];
+  if (details.reportedName) reportedInfo.push(`Name: ${details.reportedName}`);
+  if (details.secondaryUserId)
+    reportedInfo.push(
+      `Ban-evasion account: userId ${details.secondaryUserId}${
+        details.secondaryEmail ? ` (${details.secondaryEmail})` : ''
+      }`
+    );
+
+  // Report-level notes: classification + free-form context.
+  const reportInfo: string[] = [];
+  if (details.minorDepiction) reportInfo.push(`Minor depiction: ${details.minorDepiction}`);
+  if (details.contents?.length) {
+    reportInfo.push(
+      `The images/videos in this report may involve:\n${details.contents
+        .map((key) => {
+          const content = csamContentsDictionary[key];
+          return content ? `  - ${content}` : undefined;
+        })
+        .filter(isDefined)
+        .join('\n')}`
+    );
+  }
+  if (details.additionalInfo) reportInfo.push(details.additionalInfo);
+  reportInfo.push('All evidence in this report should be independently verified.');
+
+  // incidentDateTime round-trips through the JSON `details` column, so it
+  // arrives here as a string. The cybertip client calls .toISOString() on it
+  // unconditionally, so coerce back to a Date (falling back to createdAt).
+  const incidentDateTime = details.incidentDateTime
+    ? new Date(details.incidentDateTime)
+    : report.createdAt;
+
+  // The external link goes in webPageIncidents; the chat transcript goes in its
+  // own chatImIncidents entry (its proper NCMEC home), tagged with the platform.
+  const incidentDetails: NonNullable<Report['incidentDetails']> = {};
+  if (details.externalUrls?.length) {
+    incidentDetails.webPageIncidents = [
+      { url: details.externalUrls, thirdPartyHostedContent: true },
+    ];
+  }
+  if (details.chatLogs || details.chatPlatform) {
+    incidentDetails.chatImIncidents = [
+      { chatClient: details.chatPlatform, content: details.chatLogs },
+    ];
+  }
+
+  const initialReport = {
+    incidentSummary: {
+      incidentType: IncidentType.ChildPornography,
+      incidentDateTime,
+    },
+    incidentDetails: Object.keys(incidentDetails).length ? incidentDetails : undefined,
+    reporter: {
+      reportingPerson: {
+        email: [{ email: reportingUser.email }],
+        firstName: reportingUser.name ?? undefined,
+      },
+      contactPerson: {
+        email: [{ email: 'report@civitai.com' }],
+      },
+    },
+    personOrUserReported: {
+      espIdentifier: report.userId.toString(),
+      screenName: details.screenName,
+      personOrUserReportedPerson: {
+        firstName: details.reportedName,
+        email: [{ email: details.email }],
+      },
+      profileUrl: details.profileUrls,
+      ipCaptureEvent,
+      additionalInfo: reportedInfo.join('\n'),
+    },
+    additionalInfo: reportInfo.join('\n\n'),
+  } satisfies Report;
+
+  const {
+    data: { reportId },
+  } = await cybertipClient.submitReport({ ...initialReport });
+
+  try {
+    if (details.evidence?.bucketKey) {
+      const zData = await getCsamBucketZip(details.evidence.bucketKey);
+      const limit = plimit(2);
+
+      // External CSAM is usually real (non-AI) imagery, so generativeAi is
+      // opt-in here rather than defaulted to true like the in-app flows.
+      const fileAnnotations: Record<string, boolean> = {
+        generativeAi: details.fileAnnotations?.generativeAi ?? false,
+      };
+      if (details.fileAnnotations?.infant) fileAnnotations.infant = true;
+      if (details.fileAnnotations?.bestiality) fileAnnotations.bestiality = true;
+      if (details.fileAnnotations?.violenceGore) fileAnnotations.violenceGore = true;
+      if (details.fileAnnotations?.physicalHarm) fileAnnotations.physicalHarm = true;
+
+      const locationOfFile = details.externalUrls?.[0];
+
+      await unzipTrainingData(zData, ({ imgBlob, filename }) =>
+        limit(async () => {
+          const file = blobToFile(imgBlob, filename);
+          const {
+            data: { fileId },
+          } = await cybertipClient.uploadFile({ id: reportId, file });
+
+          await cybertipClient.submitFileDetails({
+            reportId,
+            fileId,
+            originalFileName: filename,
+            locationOfFile,
+            fileViewedByEsp: true,
+            publiclyAvailable: false,
+            fileAnnotations,
+          });
+        })
+      );
+    }
+
+    // Chat-log screenshots are contextual evidence, not the reported abuse
+    // material: upload them as SupplementalReported with no CSAM annotations.
+    if (details.supplementalEvidence?.bucketKey) {
+      const zData = await getCsamBucketZip(details.supplementalEvidence.bucketKey);
+      const limit = plimit(2);
+
+      await unzipTrainingData(zData, ({ imgBlob, filename }) =>
+        limit(async () => {
+          const file = blobToFile(imgBlob, filename);
+          const {
+            data: { fileId },
+          } = await cybertipClient.uploadFile({ id: reportId, file });
+
+          await cybertipClient.submitFileDetails({
+            reportId,
+            fileId,
+            originalFileName: filename,
+            fileViewedByEsp: true,
+            publiclyAvailable: false,
+            fileRelevance: FileRelevance.SupplementalReported,
+            additionalInfo: ['Chat log screenshot / supplemental evidence'],
+          });
+        })
+      );
+    }
+
+    if (isProd) {
+      await dbWrite.csamReport.update({
+        where: { id: report.id },
+        data: { reportId, reportSentAt: new Date() },
+      });
+    }
+
+    await cybertipClient.finishReport({ id: reportId });
+  } catch (e: any) {
+    await cybertipClient.cancelReport({ id: reportId });
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'send-report',
+      message: e.message,
+    });
+  }
+}
+
+function getCsamS3Client() {
+  if (
+    !env.CSAM_UPLOAD_KEY ||
+    !env.CSAM_UPLOAD_SECRET ||
+    !env.CSAM_UPLOAD_REGION ||
+    !env.CSAM_UPLOAD_ENDPOINT ||
+    !env.CSAM_BUCKET_NAME
+  )
+    throw new Error('missing CSAM env vars');
+
+  return new S3Client({
+    credentials: {
+      accessKeyId: env.CSAM_UPLOAD_KEY,
+      secretAccessKey: env.CSAM_UPLOAD_SECRET,
+    },
+    region: env.CSAM_UPLOAD_REGION,
+    endpoint: env.CSAM_UPLOAD_ENDPOINT,
+  });
+}
+
+// Streams a moderator-supplied evidence zip into the locked-down CSAM bucket.
+export async function uploadExternalCsamEvidence({
+  stream: readStream,
+  moderatorId,
+  filename,
+}: {
+  stream: Readable;
+  moderatorId: number;
+  filename: string;
+}) {
+  const client = getCsamS3Client();
+  const Bucket = env.CSAM_BUCKET_NAME;
+  const bucketKey = `external-reports/${moderatorId}/${new Date().getTime()}_${filename}`;
+
+  const upload = new Upload({
+    client,
+    params: { Bucket, Key: bucketKey, Body: readStream },
+    queueSize: 4,
+    partSize: 1024 * 1024 * 5, // 5 MB
+    leavePartsOnError: false,
+  });
+  await upload.done();
+
+  return { bucketKey, filename };
+}
+
+async function getCsamBucketZip(key: string) {
+  const client = getCsamS3Client();
+  const response = await client.send(
+    new GetObjectCommand({ Bucket: env.CSAM_BUCKET_NAME, Key: key })
+  );
+  const byteArray = await response.Body?.transformToByteArray();
+  if (!byteArray) throw new Error('failed to download evidence from CSAM bucket');
+  return await new JSZip().loadAsync(byteArray);
+}
+
 async function getTrainingDataZipStream({
   reportedById,
   versionId,
@@ -869,6 +1126,9 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       }
       case 'TrainingData':
         await archiveTrainingData();
+        break;
+      case 'ExternalLink':
+        // Evidence already lives in the CSAM bucket; only base user data is archived.
         break;
     }
 

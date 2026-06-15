@@ -11,7 +11,7 @@ import {
 } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration } from '~/server/prom/client';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withRedisCommandTimeout } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -77,7 +77,11 @@ let clientConfigCache: { value: Record<string, string>; expiresAt: number } | nu
 async function getClientConfigCached(): Promise<Record<string, string>> {
   const now = Date.now();
   if (clientConfigCache && clientConfigCache.expiresAt > now) return clientConfigCache.value;
-  const client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
+  // Per-command timeout (env REDIS_COMMAND_TIMEOUT_MS) so a stalled/half-open
+  // sysRedis can't park this hGetAll for ~30s. This read runs on EVERY web tRPC
+  // procedure; a TimeoutError here is caught by needsUpdate's try/catch below and
+  // fails open (skips the update banner), never a 500.
+  const client = await withRedisCommandTimeout(sysRedis).hGetAll(REDIS_SYS_KEYS.CLIENT);
   clientConfigCache = { value: client, expiresAt: now + CLIENT_CONFIG_TTL_MS };
   return client;
 }

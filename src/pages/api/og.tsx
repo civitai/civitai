@@ -661,7 +661,12 @@ function FallbackCard() {
         }}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={`${baseUrl}/images/logo_dark_mode.png`} height={60} alt="" />
+        {/* satori requires an explicit width+height on remote <img> or it throws
+            "Image size cannot be determined" — which made FallbackCard itself 500,
+            so any missing entity (or any OgCard render error) hit the catch's
+            fallback and STILL returned 500. logo_dark_mode.png is 142x30 (≈4.733),
+            so width 284 keeps aspect at height 60. */}
+        <img src={`${baseUrl}/images/logo_dark_mode.png`} width={284} height={60} alt="" />
         <div style={{ display: 'flex', fontSize: 16, color: colors.textSecondary }}>
           The Home of Open-Source Generative AI
         </div>
@@ -706,11 +711,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const buffer = Buffer.from(await imageResponse.arrayBuffer());
 
     res.setHeader('Content-Type', 'image/png');
-    res.setHeader(
-      'Cache-Control',
-      'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400'
-    );
-    res.setHeader('CDN-Cache-Control', 'max-age=604800');
+    if (data) {
+      // Real entity card → long edge cache.
+      res.setHeader(
+        'Cache-Control',
+        'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400'
+      );
+      res.setHeader('CDN-Cache-Control', 'max-age=604800');
+    } else {
+      // Missing/deleted/unpublished/NSFW entity → generic fallback card. Cache SHORT
+      // (mirror the catch-block fallback) so a later-published or replica-lagged
+      // entity isn't pinned to the generic card at the CF edge for up to 7 days.
+      res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+    }
     res.send(buffer);
   } catch (error) {
     console.error('OG image generation failed:', error);

@@ -39,6 +39,7 @@ export function ChatButton() {
           color="gray"
           onClick={() => useChatStore.setState((state) => ({ open: !state.open }))}
           data-testid="open-chat"
+          aria-label="Chat"
         >
           <IconMessage2 />
         </LegacyActionIcon>

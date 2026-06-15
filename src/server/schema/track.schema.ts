@@ -379,6 +379,25 @@ const generatorSubmitSchema = z.object({
     // isValid on these rows is path-dependent (legacy/video: false,
     // v2: true) — see the doc-block above for the dashboard caveat.
     isRateLimited: z.boolean().optional(),
+    // Idempotency key also forwarded as `externalId` on the orchestration
+    // create-workflow call. Lets the dashboard join Generator_Submit rows
+    // to orchestration.jobs.externalId exactly (no userId+time heuristic).
+    //
+    // Present on happy-path emits (isValid:true, passed both RHF + the
+    // inner graph.validate / canGenerate gates) — NOT on RHF-fail or
+    // rate-limited emits, which never call mutateAsync. Note that some
+    // happy-path emits still produce no orchestration row — the user can
+    // cancel at the buzz-confirm prompt, hit insufficient-buzz, or trip
+    // a POI/mature-content reject after submit. Those rows will have
+    // externalId populated but never match a job; dashboard joins should
+    // treat unmatched-externalId submits as "submitted, no workflow"
+    // not "missing telemetry."
+    //
+    // Constraints mirror the orchestrator's own validation
+    // (civitai/civitai-orchestration#229 WorkflowTemplate.ExternalId) so
+    // tampered clients get rejected at the trpc layer instead of bloating
+    // the trackAction body before the orchestrator rejects.
+    externalId: z.string().max(128).regex(/^[A-Za-z0-9_-]+$/).optional(),
   }),
 });
 

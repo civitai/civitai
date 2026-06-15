@@ -5,6 +5,8 @@ import { withAxiom } from '@civitai/next-axiom';
 import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { recordTrpcError } from '~/server/prom/http-errors';
+import { isClientAbortError } from '~/server/utils/errorHandling';
 import { appRouter } from '~/server/routers';
 
 export const config = {
@@ -40,6 +42,17 @@ const trpcHandler = createNextApiHandler({
     return Object.keys(headers).length > 0 ? { headers } : {};
   },
   onError: async ({ error, type, path, input, ctx, req }) => {
+    // Client disconnected mid-procedure (closed tab / scrolled the feed past /
+    // navigated away) — the request signal aborted and bubbled an AbortError that
+    // tRPC wrapped as INTERNAL_SERVER_ERROR. Not a server fault: skip BOTH the 5xx
+    // counter and the Axiom ingest (was ~0.07/s of mislabeled 500s, e.g.
+    // image.getInfinite). isClientAbortError walks error.cause for the wrapped abort.
+    if (isClientAbortError(error)) return error;
+
+    // Unsampled per-procedure 5xx attribution (no-ops for 4xx-class errors).
+    // Source of truth for the tRPC slice of the 5xx SLO; see http-errors.ts.
+    recordTrpcError(error, path);
+
     if (isProd) {
       // Auth-class rejections (FORBIDDEN / UNAUTHORIZED) are client-fault 4xx
       // responses — the status code already tells the caller + edge what
