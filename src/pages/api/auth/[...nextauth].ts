@@ -2,14 +2,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth from 'next-auth';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { callbackCookieName, civitaiTokenCookieName } from '~/libs/auth';
-import { Tracker } from '~/server/clickhouse/client';
-import { NotificationCategory } from '~/server/common/enums';
-import { loginCounter, newUserCounter } from '~/server/prom/client';
-import { createNotification } from '~/server/services/notification.service';
-import { createUserReferral } from '~/server/services/user.service';
 import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { invalidateToken } from '~/server/auth/token-tracking';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
+import { runLoginSideEffects } from '~/server/auth/login-side-effects';
 import { createLogger } from '~/utils/logging';
 import { createAuthOptions } from '~/server/auth/next-auth-options';
 
@@ -72,51 +68,15 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
   };
 
+  // STEP-H-REMOVAL: this event wiring goes away with next-auth; the side-effects themselves live in
+  // runLoginSideEffects (also invoked by /api/auth/post-login on the hub path) and stay.
   customAuthOptions.events.signIn = async (context) => {
-    deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
-
-    const source = req.cookies['ref_source'] as string;
-    const landingPage = req.cookies['ref_landing_page'] as string;
-    const loginRedirectReason = req.cookies['ref_login_redirect_reason'] as string;
-
-    const tracker = new Tracker(req, res);
-    if (context.isNewUser) {
-      newUserCounter?.inc();
-      await tracker.userActivity({
-        type: 'Registration',
-        targetUserId: context.user.id,
-        source,
-        landingPage,
-      });
-
-      if (source || landingPage || loginRedirectReason) {
-        // Only source will be set via the auth callback.
-        // For userReferralCode, the user must finish onboarding.
-        await createUserReferral({
-          id: context.user.id,
-          source,
-          landingPage,
-          loginRedirectReason,
-        });
-      }
-
-      // does this work for email login? it should
-      await createNotification({
-        type: 'join-community',
-        userId: context.user.id,
-        category: NotificationCategory.System,
-        key: `join-community:${context.user.id}`,
-        details: {},
-      }).catch();
-    } else {
-      loginCounter?.inc();
-      await tracker.userActivity({
-        type: 'Login',
-        targetUserId: context.user.id,
-        source,
-        landingPage,
-      });
-    }
+    await runLoginSideEffects({
+      req,
+      res,
+      userId: Number(context.user.id),
+      isNewUser: !!context.isNewUser,
+    });
   };
 
   return await NextAuth(req, res, customAuthOptions);

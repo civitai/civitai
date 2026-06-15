@@ -85,10 +85,13 @@ export const getServerSideProps = createServerSideProps({
           : '/';
       // Guard against a /login → hub → /login loop.
       const safeReturn = rawReturn.startsWith('/login') ? '/' : rawReturn;
-      // Absolute URL back to THIS app, so the hub returns the user here after login.
-      const returnAbsolute = new URL(safeReturn, getBaseUrl()).toString();
+      // The hub returns the user to the main app's post-login handler — which runs the login side-effects
+      // the hub can't (ref_* cookies + tracking/referral/notification services) and then forwards to the
+      // real destination. See src/pages/api/auth/post-login.ts.
+      const postLogin = new URL('/api/auth/post-login', getBaseUrl());
+      postLogin.searchParams.set('dest', safeReturn);
       const hubLogin = new URL('/login', hubIssuer);
-      hubLogin.searchParams.set('returnUrl', returnAbsolute);
+      hubLogin.searchParams.set('returnUrl', postLogin.toString());
       return {
         redirect: {
           destination: hubLogin.toString(),

@@ -1,8 +1,9 @@
 # Main App Auth Cutover — NextAuth → centralized hub
 
-Status: **server validation + client session both implemented behind a default-OFF flag; e2e-validated against a
-live hub.** Remaining: login→hub redirect, rolling token max-age extension, NextAuth deletion (scoped below).
-Nothing changes until `USE_HUB_SESSION=true`.
+Status: **server validation + client session + login/logout→hub all implemented behind a default-OFF flag;
+e2e-validated against a live hub (incl. a full email-login round-trip).** Remaining: rolling token max-age
+extension, account-switch/impersonation parity, NextAuth deletion (scoped below). Nothing changes until
+`USE_HUB_SESSION=true`.
 
 This is the main-app half of the thin-session migration — see [thin-session-token-design.md](./thin-session-token-design.md).
 The hub (`apps/auth`) is the sole **producer** + **issuer**; the main app becomes a **consumer** that reads a
@@ -88,12 +89,27 @@ Everything NextAuth does today must work under `USE_HUB_SESSION=true` **before**
 - [x] Hybrid fallback: no `civ-token` → legacy next-auth cookie (already-logged-in users stay authorized, no forced re-login)
 - [x] Bearer-token / API-key path unchanged (reads the same shared `session:data2` cache)
 
-### B. Login / logout → hub
+### B. Login / logout → hub — ✅ complete (flag-gated)
 
-- [ ] `/login` (+ `handleSignIn`, ~8 sites) redirects to the hub when the flag is on
-- [ ] `signOut` (3 sites) clears `civ-token` + hits hub logout (and invalidates the session/token)
-- [ ] **Login side-effects preserved** — currently in the `[...nextauth]` signIn event: new-user/login counters, `userActivity` tracking, `createUserReferral` (`ref_source`/`ref_landing_page`/`ref_login_redirect_reason` cookies), join-community notification. These must fire on the hub (or via a hub→main callback) once login moves there
-- [ ] `generationServiceCookie` cleared on sign-in/sign-out
+> **Validated locally (browser smoke):** visiting `/generate` while unauthorized → `/login` → hub email login
+> → `civ-token` set → `/api/auth/post-login` side-effects → redirected back to `/generate`. All working.
+
+- [x] **Login → hub.** `/login` SSR-redirects to the hub (existing), now wrapping `returnUrl` through
+  `/api/auth/post-login?dest=…`. Interactive login already funnels through `/login` (`pages.signIn: '/login'`),
+  so `signIn()` anywhere lands on the hub — no per-call-site change needed.
+- [x] **Logout → hub.** `signOut` (4 sites: `AccountProvider` ×2, `SessionRefreshSignal`, `preview-restricted`)
+  → `handleSignOut` → `/api/auth/logout` when `NEXT_PUBLIC_AUTH_HUB_URL` is set: clears `civ-token` (both
+  prefixes, host-only + `AUTH_COOKIE_DOMAIN`) + orchestrator cookie, best-effort POSTs the hub `/logout` to
+  revoke the token; legacy next-auth `signOut` otherwise.
+- [x] **Login side-effects preserved.** Extracted to `runLoginSideEffects` (`src/server/auth/login-side-effects.ts`):
+  new-user/login counters, `userActivity`, `createUserReferral` (reads `ref_*` cookies), join-community
+  notification. Called by BOTH the `[...nextauth]` signIn event (legacy) and `/api/auth/post-login` (hub path,
+  which runs on the main app where the `.civitai.com` ref cookies + services live). New-vs-returning is derived
+  from `user.createdAt`.
+- [x] `generationServiceCookie` cleared on login (post-login + legacy event via `runLoginSideEffects`) and logout.
+- [x] **Validated** — email-login round-trip (smoke above). Two deploy-time checks remain (can't be done on
+  localhost, both code-complete): OAuth providers (vs email), and cross-domain logout cookie clearing on
+  `.civitai.com` (cookies are host-only in dev).
 
 ### C. Session lifetime (rolling)
 
@@ -151,6 +167,8 @@ exhaustive removal list — the goal is **zero `next-auth` references** left aft
 | `src/server/auth/token-refresh.ts` | next-auth token refresh | delete |
 | `src/server/auth/get-server-auth-session.ts` | legacy `getServerSession` block + `Session` type import | delete block; **replace** the `Session` type with a first-party type (it's the return type app-wide) |
 | `src/pages/api/auth/session.ts` | `!USE_HUB_SESSION` delegation to the catch-all | delete the off-branch (route becomes hub-only) |
+| `src/utils/auth-helpers.ts` | next-auth `signIn`/`signOut` fallbacks in `handleSignIn`/`handleSignOut` | delete the fallbacks + import (hub paths remain) |
+| `src/pages/api/auth/[...nextauth].ts` signIn event | calls `runLoginSideEffects` | drop the event; `runLoginSideEffects` + `/api/auth/post-login` stay |
 | `@civitai/auth` verifier | legacy-JWE dual-read branch | drop once all legacy cookies have expired |
 | `next-auth` + `next-auth/react` deps | imports app-wide (incl. ~317 `useSession`/`useCurrentUser` sites via the client shim) | remove the dep; keep a thin client shim or replace |
 

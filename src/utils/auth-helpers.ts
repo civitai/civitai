@@ -1,4 +1,7 @@
-import { signIn } from 'next-auth/react';
+// STEP-H-REMOVAL: next-auth/react. `signIn` (handleSignIn's interactive-login fallback) and `signOut`
+// (handleSignOut's fallback) both go at step H — login funnels through /login→hub and logout through
+// /api/auth/logout, so the hub paths become the only paths.
+import { signIn, signOut } from 'next-auth/react';
 import { env } from '~/env/client';
 
 // Auth proxy URL for PR previews - hardcoded as fallback since env vars may not be
@@ -78,4 +81,23 @@ export function handleSignIn(
     const authorizationParams = forceAccountSelection ? { prompt: 'select_account' } : undefined;
     signIn(providerId, { callbackUrl }, authorizationParams);
   }
+}
+
+/**
+ * Sign out. When the centralized auth hub is configured (NEXT_PUBLIC_AUTH_HUB_URL), route to the main app's
+ * /api/auth/logout, which clears the hub's civ-token (+ orchestrator cookie) and best-effort revokes the
+ * token at the hub. Otherwise fall back to next-auth's signOut. See docs/main-app-auth-cutover.md (B).
+ *
+ * STEP-H-REMOVAL: drop the `next-auth/react` signOut fallback (and the import) — the hub path becomes the
+ * only path once NextAuth is gone.
+ */
+export function handleSignOut(options: { callbackUrl?: string } = {}) {
+  const callbackUrl = options.callbackUrl ?? '/';
+  if (env.NEXT_PUBLIC_AUTH_HUB_URL && typeof window !== 'undefined') {
+    const url = new URL('/api/auth/logout', window.location.origin);
+    url.searchParams.set('callbackUrl', callbackUrl);
+    window.location.href = url.toString();
+    return Promise.resolve();
+  }
+  return signOut({ callbackUrl });
 }

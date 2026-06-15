@@ -1,5 +1,6 @@
 import { useLocalStorage, usePrevious } from '@mantine/hooks';
-import { signIn, signOut, useSession } from 'next-auth/react';
+import { signIn, useSession } from 'next-auth/react';
+import { handleSignOut } from '~/utils/auth-helpers';
 import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
 import { createContext, useContext, useEffect } from 'react';
@@ -87,14 +88,14 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
       }
     }
 
-    await signOut();
+    await handleSignOut();
   };
 
   const logoutAll = async () => {
     deleteCookies(deleteCookieList);
     removeOgAccount();
     removeAccounts();
-    await signOut();
+    await handleSignOut();
   };
 
   const swapAccount = async (token: EncryptedDataSchema, callbackUrl?: string) => {
