@@ -308,6 +308,30 @@ export const trainingSettings: TrainingSettingsType[] = [
     },
   },
   {
+    name: 'saveEvery',
+    label: 'Save every',
+    hint: (
+      <>
+        How often (in steps) a checkpoint is saved. Each saved checkpoint is a downloadable epoch
+        you can pick from afterwards.
+        <br />
+        Lower values save more checkpoints (e.g. 3,000 steps saving every 250 produces 12). Has a
+        smaller effect on cost than Steps.
+      </>
+    ),
+    type: 'int',
+    // Default mirrors targetSteps / 10 checkpoints; the seeding effects recompute it per run.
+    default: 200,
+    min: 50,
+    max: 5000,
+    step: 50,
+    overrides: {
+      ltx2: { all: { default: 300 } },
+      ltx23: { all: { default: 300 } },
+      anima: { all: { default: 150 } },
+    },
+  },
+  {
     name: 'resolution',
     label: 'Resolution',
     hint: 'Specify the maximum resolution of training images. If the training images exceed the resolution specified here, they will be scaled down to this resolution.',

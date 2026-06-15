@@ -162,6 +162,9 @@ export const trainingDetailsParams = z.object({
   sampleStrength: z.number().optional(),
   /** AIR of a previously-trained LoRA to continue training from ("train further"). */
   continueFrom: z.string().optional(),
+  // "Save every N steps" — the UI knob that derives `maxTrainEpochs` (saved checkpoints)
+  // as round(targetSteps / saveEvery). UI-only; we send the derived `epochs`, never this.
+  saveEvery: z.number().int().min(1).optional(),
 });
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 

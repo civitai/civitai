@@ -655,6 +655,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         continueFrom: _continueFrom,
         sampleCfgScale: _sampleCfgScale,
         sampleStrength: _sampleStrength,
+        saveEvery: _saveEvery,
         ...legacyEngineParams
       } = paramData;
       let finalParams: any = legacyEngineParams;

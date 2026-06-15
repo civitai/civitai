@@ -530,12 +530,14 @@ export default function TrainingSelectFile({
       await continueFileMutation.mutateAsync(fileData);
 
       // Seed the submit form: steps-pricing defaults + continueFrom, reusing the source
-      // run's base model and prompts.
+      // run's base model and prompts. "Save every" seeds to ~10 checkpoints; maxTrainEpochs
+      // (sent as `epochs`) is derived from it in the submit form.
       const params = getDefaultTrainingParams(base, 'ai-toolkit');
       params.engine = 'ai-toolkit';
-      params.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
       params.trainBatchSize = 1;
       params.targetSteps = aiToolkitStepDefault(baseType);
+      params.saveEvery = Math.max(1, Math.round(params.targetSteps / AI_TOOLKIT_EPOCHS.default));
+      params.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
       params.continueFrom = continueFromAir;
 
       trainingStore.resetRuns(model.id, mediaType);
