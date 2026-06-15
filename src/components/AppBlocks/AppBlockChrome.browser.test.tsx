@@ -21,11 +21,14 @@ describe('AppBlockChrome (H2 host-rendered app name)', () => {
   });
 
   test('a long app name renders in full and the name node stays a single truncating row', async () => {
-    const longName = 'Super Mega Ultra Background Removal And Upscaling Studio Pro Plus Max';
+    // Long enough to need VISUAL truncation (maw=160 ellipsizes well before this),
+    // but deliberately under sanitizeAppChromeName's APP_CHROME_NAME_MAX (64) so the
+    // *accessible* name is rendered in full here — the over-cap length-bound is a
+    // separate concern covered by the sanitizer unit test (appChromeName.test.ts).
+    const longName = 'Background Remover Pro Max Ultra Deluxe Edition Plus';
     renderWithProviders(<AppBlockChrome blockInstanceId="inst-2" appName={longName} />);
 
-    // Full text is present — truncation is purely visual, the accessible name is
-    // not clipped — and a very long name doesn't crash/overflow the render.
+    // Full text present (the visual ellipsis clips the box, not the DOM text).
     await expect.element(page.getByText(longName)).toBeInTheDocument();
 
     // Truncation is locked via Mantine's `data-truncate` attribute (CSS-independent;
