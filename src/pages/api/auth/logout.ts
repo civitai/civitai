@@ -1,12 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { sessionCookieName } from '@civitai/auth';
+import { sessionCookieName, createSessionTokenClient } from '@civitai/auth';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
 // Main-app logout for the hub flow. Clears BOTH the hub's civ-token AND the legacy next-auth session cookie
 // (`civitai-token`) — getServerAuthSession's hybrid path falls back to the legacy cookie, so leaving it would
 // keep a legacy-cookie user logged in — plus the orchestrator cookie. Best-effort revokes the token at the
 // hub, then redirects. Reached via handleSignOut when the hub is configured. See docs/main-app-auth-cutover.md (B).
-const HUB = process.env.AUTH_JWT_ISSUER; // hub origin (token issuer)
+const sessionTokenClient = createSessionTokenClient();
 
 const uniq = <T>(arr: T[]): T[] => [...new Set(arr)];
 
@@ -36,14 +36,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const token = req.cookies[sessionCookieName()];
 
   // Best-effort token revocation at the hub. The cookie clears below end the session client-side, so a hub
-  // blip must never block logout. Forward under the ACTUAL (env-derived) cookie name so the hub reads it.
-  if (HUB && token) {
-    await fetch(`${HUB.replace(/\/+$/, '')}/logout`, {
-      method: 'POST',
-      headers: { cookie: `${sessionCookieName()}=${token}` },
-      redirect: 'manual',
-    }).catch(() => null);
-  }
+  // blip must never block logout (the helper never throws).
+  if (token) await sessionTokenClient.revoke(token);
 
   const dParent = parentDomain(req);
   // civ-token: scoped by AUTH_COOKIE_DOMAIN (hub) or host-only.

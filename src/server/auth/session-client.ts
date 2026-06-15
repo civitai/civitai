@@ -1,6 +1,7 @@
 import type { Session } from 'next-auth';
 import {
   createSessionClient,
+  createSessionTokenClient,
   sessionCookieName,
   deviceCookieName,
   isSecureCookie,
@@ -24,6 +25,8 @@ import {
 export const USE_HUB_SESSION = process.env.USE_HUB_SESSION === 'true';
 
 export const sessionClient = createSessionClient();
+// Session-token lifecycle (rolling refresh / revoke) — the hub contract lives in the package, not inline here.
+const sessionTokenClient = createSessionTokenClient();
 
 /**
  * Resolve the session from the hub, next-auth-free: read the session cookie → verify → resolve the user
@@ -86,24 +89,8 @@ export async function maybeRollHubCookie(
   if (!iat || Date.now() - iat * 1000 < UPDATE_AGE_MS) return; // fresh enough — no work
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2500);
-    let fresh: string | undefined;
-    try {
-      const r = await fetch(`${HUB_ORIGIN.replace(/\/+$/, '')}/api/auth/refresh`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          // Forward the device cookie so the hub keeps THIS browser's active account fresh in its switcher.
-          ...(deviceCookie ? { cookie: `${DEVICE_COOKIE_NAME}=${deviceCookie}` } : {}),
-        },
-        signal: controller.signal,
-      });
-      if (!r.ok) return;
-      fresh = ((await r.json()) as { token?: string }).token;
-    } finally {
-      clearTimeout(timer);
-    }
+    // Only the hub can mint — the package helper forwards the bearer token (+ device cookie) and times out.
+    const fresh = (await sessionTokenClient.refresh(token, { deviceCookie }))?.token;
     if (!fresh) return;
 
     const exp = decodeClaim(fresh, 'exp');

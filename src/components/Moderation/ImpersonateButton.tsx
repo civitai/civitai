@@ -8,7 +8,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ImpersonateButton() {
   const currentUser = useCurrentUser();
-  const { accounts, removeAccount, swapAccount, ogAccount, removeOgAccount } = useAccountContext();
+  const { removeAccount, swapAccount, ogAccount, removeOgAccount } = useAccountContext();
   const [loading, setLoading] = useState<boolean>(false);
 
   const handleSwap = async () => {
@@ -24,22 +24,11 @@ export function ImpersonateButton() {
       message: `-> ${currentUser.username} (${currentUser.id})`,
     });
 
-    const toAccount = Object.entries(accounts).find((a) => a[0] === ogAccount.id.toString());
-    if (!toAccount) {
-      setLoading(false);
-      updateNotification({
-        id: notificationId,
-        icon: <IconX size={18} />,
-        color: 'red',
-        title: 'Failed to switch back',
-        message: 'Could not find original account',
-      });
-      return;
-    }
-
-    removeAccount(currentUser.id);
+    // Switch back to the moderator's own account by id (device-level switch — the hub re-mints their session).
+    // STEP-F: impersonation moves to an `impersonatedBy` claim, dropping the ogAccount localStorage entirely.
+    await removeAccount(currentUser.id);
     removeOgAccount();
-    await swapAccount(toAccount[1].token);
+    await swapAccount(ogAccount.id);
   };
 
   if (!ogAccount || !currentUser || ogAccount.id === currentUser?.id) return <></>;

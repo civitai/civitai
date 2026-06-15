@@ -1,19 +1,24 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { createDeviceAccountClient } from '@civitai/auth';
 
-// Same-origin proxy for the device's linked-account list. Forwards the browser's `.civitai.com` cookies
-// (civ-token + civ-device) to the hub server-side — so no cross-origin CORS — and returns the display-only
-// list for the account switcher. See docs/main-app-auth-cutover.md (section E).
-const HUB = process.env.AUTH_JWT_ISSUER;
+// Same-origin proxy for the device's linked-account set — the browser hits this so its `.civitai.com` cookies
+// (civ-token + civ-device) ride along; we forward them to the hub via the @civitai/auth device client (the hub
+// URL/contract lives in the package, not here).
+//   GET    → the display-only list for the account switcher
+//   DELETE ?userId=N → remove that account from this browser's device set
+// See docs/main-app-auth-cutover.md (section E).
+const deviceAccounts = createDeviceAccountClient();
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (!HUB) return res.status(200).json({ accounts: [] });
-  try {
-    const r = await fetch(`${HUB.replace(/\/+$/, '')}/api/auth/accounts`, {
-      headers: { cookie: req.headers.cookie ?? '' },
-    });
-    if (!r.ok) return res.status(200).json({ accounts: [] });
-    return res.status(200).json(await r.json());
-  } catch {
-    return res.status(200).json({ accounts: [] });
+  const cookie = req.headers.cookie ?? '';
+
+  if (req.method === 'DELETE') {
+    const userId = Number(req.query.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ ok: false });
+    const ok = await deviceAccounts.remove(cookie, userId);
+    return res.status(ok ? 200 : 502).json({ ok });
   }
+
+  const accounts = await deviceAccounts.list(cookie);
+  return res.status(200).json({ accounts });
 }
