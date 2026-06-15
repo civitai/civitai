@@ -40,7 +40,7 @@ import type {
   AvailableBlock,
   SubscriptionRecord,
 } from '~/server/schema/blocks/subscription.schema';
-import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
+import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -379,34 +379,7 @@ function ScopeGrantsPanel() {
               </Stack>
             </Group>
             <Divider />
-            {grant.scopes.length === 0 ? (
-              <Text size="xs" c="dimmed" fs="italic">
-                This app doesn't claim any JWT scopes — it only consumes data from the host-bridge
-                postMessage protocol.
-              </Text>
-            ) : (
-              <Stack gap={4}>
-                {grant.scopes.map((scope) => {
-                  const desc = SCOPE_DESCRIPTIONS[scope];
-                  return (
-                    <Group key={scope} gap="xs" wrap="nowrap" align="flex-start">
-                      <Badge size="sm" variant="light">
-                        {scope}
-                      </Badge>
-                      {desc ? (
-                        <Text size="xs" c="dimmed">
-                          {desc}
-                        </Text>
-                      ) : (
-                        <Text size="xs" c="dimmed" fs="italic">
-                          (no description)
-                        </Text>
-                      )}
-                    </Group>
-                  );
-                })}
-              </Stack>
-            )}
+            <BlockScopeList scopes={grant.scopes} />
           </Stack>
         </Card>
       ))}

@@ -26,6 +26,8 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   'social:tip:self': 'Post tips on behalf of the viewer',
   'block:settings:read': "Read this block's per-install settings",
   'block:settings:write': "Update this block's per-install settings",
+  'apps:storage:read': "Read this app's private per-install data store",
+  'apps:storage:write': "Write to this app's private per-install data store",
 };
 
 export const SLOT_DESCRIPTIONS: Record<string, string> = {

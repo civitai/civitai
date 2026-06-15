@@ -1142,7 +1142,7 @@ export const blocksRouter = router({
       }
       const block = await dbRead.appBlock.findUnique({
         where: { id: input.appBlockId },
-        select: { status: true, manifest: true },
+        select: { status: true, manifest: true, approvedScopes: true },
       });
       if (!block || block.status !== 'approved') {
         throw throwNotFoundError('App block not found');
@@ -1150,12 +1150,20 @@ export const blocksRouter = router({
       const manifest = (block.manifest ?? {}) as Record<string, unknown>;
       // Project ONLY the install-form inputs. `settings` is validated against
       // manifestSettingsSchema so a malformed/absent declaration yields {} (the
-      // form renders no fields rather than throwing). `scopes` is the declared
-      // scope list the form uses to decide which `requires_scope` fields show.
+      // form renders no fields rather than throwing).
       const parsedSettings = manifestSettingsSchema.safeParse(manifest.settings ?? {});
-      const scopes = Array.isArray(manifest.scopes)
+      // `scopes` = manifest.scopes ∩ approvedScopes — the SAME mod-narrowed
+      // ceiling grantScopes (above) enforces at mint and getAppDetail/
+      // scopesSummary expose on the public surfaces. The disclosure must match
+      // what the app can actually be granted: surfacing raw `manifest.scopes`
+      // would over-state (list scopes the mod did NOT approve, so the app will
+      // never be minted them) and could leak an unapproved/internal scope id
+      // the manifest declares but approval dropped.
+      const manifestScopes = Array.isArray(manifest.scopes)
         ? manifest.scopes.filter((s): s is string => typeof s === 'string')
         : [];
+      const approved = new Set(block.approvedScopes ?? []);
+      const scopes = manifestScopes.filter((s) => approved.has(s));
       return {
         settings: parsedSettings.success ? parsedSettings.data : {},
         scopes,
