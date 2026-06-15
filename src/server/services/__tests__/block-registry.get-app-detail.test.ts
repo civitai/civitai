@@ -265,6 +265,23 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
     expect(detail!.screenshots[0].contentType).toBe('image/png');
   });
 
+  it('a VALID image extension paired with a non-image content-type is DROPPED (content-type allowlist is independent of the ext check, F-E E5 Low-3)', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      rawRow({
+        screenshots: [
+          // ext is an allowlisted image ext (png) but the recorded content-type
+          // is text/html — the content-type allowlist must drop it on its OWN
+          // (the ext check alone would let this through). Exercises the
+          // content-type belt independently of the ext belt.
+          { key: 'screenshots/ab_1/0.png', index: 0, ext: 'png', contentType: 'text/html' },
+        ],
+      }),
+    ]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const detail = await BlockRegistry.getAppDetail('ab_1');
+    expect(detail!.screenshots).toHaveLength(0);
+  });
+
   it('SELECTs the screenshots column (so getAppDetail can render the gallery)', async () => {
     const { BlockRegistry } = await import('../block-registry.service');
     await BlockRegistry.getAppDetail('ab_1');

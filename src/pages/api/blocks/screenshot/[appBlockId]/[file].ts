@@ -102,6 +102,11 @@ export default MixedAuthEndpoint(
       }
       const bytes = await obj.Body.transformToByteArray();
       res.setHeader('Content-Type', record.contentType);
+      // Defense-in-depth on a public binary-serving endpoint: never let a
+      // browser content-sniff the validated image bytes into something
+      // executable (e.g. a PNG-header+HTML polyglot). The Content-Type is
+      // already the magic-byte-derived image/* type; nosniff pins it.
+      res.setHeader('X-Content-Type-Options', 'nosniff');
       // Screenshots are immutable per (appBlockId, index, ext) — a re-approve
       // overwrites in place but the gallery URL only changes on a new approve.
       // Cache moderately; the page is deIndex'd + dark so this is conservative.
