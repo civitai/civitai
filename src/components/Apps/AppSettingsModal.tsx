@@ -4,6 +4,7 @@ import {
   Chip,
   Divider,
   Group,
+  Loader,
   Modal,
   NumberInput,
   ScrollArea,
@@ -29,6 +30,7 @@ import type {
   ManifestSettingField,
 } from '~/server/schema/blocks/manifest-settings.meta.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
+import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -109,10 +111,8 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
   // authenticated `getInstallConfig` procedure instead, keyed on appBlockId.
   // The "Manage" path (/apps/installed) passes the FULL manifest, so its
   // `manifest.settings` is already populated; the fetched value matches it.
-  const { data: installConfig } = trpc.blocks.getInstallConfig.useQuery(
-    { appBlockId: block.id },
-    { staleTime: 60_000 }
-  );
+  const { data: installConfig, isLoading: installConfigLoading } =
+    trpc.blocks.getInstallConfig.useQuery({ appBlockId: block.id }, { staleTime: 60_000 });
 
   // Manifest-driven settings (W3 Phase 4). Fields without an explicit
   // `scope:` declaration are treated as 'publisher' for back-compat with
@@ -130,6 +130,12 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
     [settingsSource]
   );
   const declaredScopes = installConfig?.scopes ?? manifest.scopes ?? [];
+  // On the install path `block.manifest` is the public allowlist (scopes
+  // stripped), so the scope disclosure depends on getInstallConfig. Suppress
+  // the "doesn't request any permissions" copy until it resolves so we never
+  // flash a false all-clear. The Manage path carries the full manifest, so
+  // `manifest.scopes` is defined and this is never pending there.
+  const scopesPending = manifest.scopes === undefined && installConfigLoading;
 
   // Initialise the form from existing subscriptions when present. Settings
   // are read from whichever scope has them set — they're meant to be
@@ -283,6 +289,21 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
           <Text size="sm" c="dimmed">
             {manifest.description}
           </Text>
+        )}
+
+        <Divider label="This app can" labelPosition="left" />
+        {scopesPending ? (
+          <Group gap="xs">
+            <Loader size="xs" />
+            <Text size="xs" c="dimmed">
+              Loading permissions…
+            </Text>
+          </Group>
+        ) : (
+          <BlockScopeList
+            scopes={declaredScopes}
+            emptyLabel="This app doesn't request any permissions on your account."
+          />
         )}
 
         <Divider label="Where to show this" labelPosition="left" />
