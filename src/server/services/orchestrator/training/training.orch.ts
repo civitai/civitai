@@ -366,10 +366,11 @@ export const createTrainingWorkflow = async ({
       params = legacyParams;
     }
   } else {
-    // continueFrom / sample params are AI Toolkit-only. The kohya-shaped params schema
-    // tolerates them (it doubles as the UI run state), but they must never reach the
+    // continueFrom / sample params / saveEvery are AI Toolkit-only. The kohya-shaped params
+    // schema tolerates them (it doubles as the UI run state), but they must never reach the
     // kohya/rapid/musubi dispatch, which spreads params straight into the payload.
-    const { continueFrom, sampleCfgScale, sampleStrength, ...engineParams } = trainingParams;
+    const { continueFrom, sampleCfgScale, sampleStrength, saveEvery, ...engineParams } =
+      trainingParams;
     params = engineParams;
   }
 

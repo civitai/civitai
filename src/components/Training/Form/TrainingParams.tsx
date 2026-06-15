@@ -4,6 +4,7 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import {
+  AI_TOOLKIT_SAVE_EVERY,
   engineTypes,
   type EngineTypes,
   loraTypes,
@@ -305,6 +306,31 @@ export const trainingSettings: TrainingSettingsType[] = [
       ltx2: { all: { default: 3000 } },
       ltx23: { all: { default: 3000 } },
       anima: { all: { default: 1500 } },
+    },
+  },
+  {
+    name: 'saveEvery',
+    label: 'Save every',
+    hint: (
+      <>
+        How often (in steps) a checkpoint is saved. Each saved checkpoint is a downloadable epoch
+        you can pick from afterwards.
+        <br />
+        Lower values save more checkpoints (e.g. 3,000 steps saving every 250 produces 12). Has a
+        smaller effect on cost than Steps.
+      </>
+    ),
+    type: 'int',
+    // Default mirrors targetSteps / 10 checkpoints; the seeding effects recompute it per run.
+    // Bounds come from AI_TOOLKIT_SAVE_EVERY so the input and the seeds share one source.
+    default: AI_TOOLKIT_SAVE_EVERY.default,
+    min: AI_TOOLKIT_SAVE_EVERY.min,
+    max: AI_TOOLKIT_SAVE_EVERY.max,
+    step: AI_TOOLKIT_SAVE_EVERY.step,
+    overrides: {
+      ltx2: { all: { default: 300 } },
+      ltx23: { all: { default: 300 } },
+      anima: { all: { default: 150 } },
     },
   },
   {

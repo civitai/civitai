@@ -60,6 +60,7 @@ import {
   type AudioSampleOverride,
   AI_TOOLKIT_EPOCHS,
   aiToolkitStepDefault,
+  aiToolkitSaveEveryDefault,
   getDefaultEngine,
   isSamplePromptsRequired,
   parseAudioCaption,
@@ -269,12 +270,14 @@ export const ModelSelect = ({
 
     if (features.trainingStepsPricing && engineToUse === 'ai-toolkit') {
       // Steps-based pricing: steps is the primary length knob (prefilled per ecosystem),
-      // epochs = saved checkpoints (default 10), batchSize defaults to 1.
-      defaultParams.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
+      // batchSize defaults to 1. "Save every" (step interval) seeds to ~10 checkpoints;
+      // maxTrainEpochs (sent as `epochs`) is derived from it in AdvancedSettings.
       defaultParams.trainBatchSize = 1;
       defaultParams.targetSteps = aiToolkitStepDefault(
         (data.baseType ?? selectedRun.baseType) as TrainingBaseModelType
       );
+      defaultParams.saveEvery = aiToolkitSaveEveryDefault(defaultParams.targetSteps);
+      defaultParams.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
     } else {
       defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
 
