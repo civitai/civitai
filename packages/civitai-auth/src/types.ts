@@ -31,6 +31,11 @@ export interface SessionUser {
   subscriptionId?: string;
   memberInBadState?: boolean;
   allowAds?: boolean;
+  // Client-only fields (parity with the main app's ExtendedUser — see src/types/next-auth.d.ts).
+  name?: string;
+  autoplayGifs?: boolean;
+  leaderboardShowcase?: string;
+  referral?: { id: number };
   // app-specific — tighten against the schema package when wiring up:
   tier?: string;
   meta?: Record<string, unknown>;

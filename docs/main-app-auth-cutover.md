@@ -1,9 +1,9 @@
 # Main App Auth Cutover — NextAuth → centralized hub
 
-Status: **server validation + client session + login/logout→hub all implemented behind a default-OFF flag;
-e2e-validated against a live hub (incl. a full email-login round-trip).** Remaining: rolling token max-age
-extension, account-switch/impersonation parity, NextAuth deletion (scoped below). Nothing changes until
-`USE_HUB_SESSION=true`.
+Status: **server validation, client session, login/logout→hub, rolling refresh, and full session-shape parity
+all implemented behind a default-OFF flag; e2e-validated against a live hub (incl. a full email-login
+round-trip).** Remaining: account-switch + civitai.red, impersonation, silent legacy upgrade, NextAuth deletion
+(scoped below). Nothing changes until `USE_HUB_SESSION=true`.
 
 This is the main-app half of the thin-session migration — see [thin-session-token-design.md](./thin-session-token-design.md).
 The hub (`apps/auth`) is the sole **producer** + **issuer**; the main app becomes a **consumer** that reads a
@@ -52,18 +52,17 @@ data refresh.
 
 ---
 
-## Shape note (review this)
+## Shape note
 
-The hub produces the `@civitai/auth` `SessionUser`, which is the `ExtendedUser` the app expects **minus a few
-client-only fields**: `name`, `autoplayGifs`, `leaderboardShowcase`, `referral`. They're cosmetic/client-only,
-so omitting them server-side is low-risk, but it IS a behavior diff once the flag is on. Options before
-flipping: (a) accept the omission, or (b) add those four to the frozen `@civitai/auth` `SessionUser` contract
-+ the hub producer (`session-shape.ts`). Also: the package `SessionUser` widens `tier`/`meta`/`banDetails`/
-`subscriptions` (loose types), hence the `as unknown as Session` cast in `getHubSession`.
+The hub produces the `@civitai/auth` `SessionUser` to **full parity** with the historic ExtendedUser contract —
+**no fields omitted** (section D). The four previously-missing client-only fields (`name`, `autoplayGifs`,
+`leaderboardShowcase`, `referral`) are now in the `@civitai/auth` `SessionUser` contract + the hub producer
+(`session-shape.ts`). The package `SessionUser` still widens `tier`/`meta`/`banDetails`/`subscriptions` (loose
+types), hence the `as unknown as Session` cast in `getHubSession`.
 
-Also pinned at the cutover (from the hub build): `allowAds`/`redBrowsingLevel` currently reproduce the main
-app's `userSettingsSchema.safeParse`-fails-→-default behavior; when `getSessionUser` is retired, decide
-whether to keep that quirk or read settings directly.
+`allowAds`/`redBrowsingLevel` are now computed from the user's stored `User.settings` in the hub producer
+(honor the explicit value, else the tier-based default) and cached — not hardcoded. See section D for the one
+parity nuance vs `getSessionUser`.
 
 ---
 
@@ -111,14 +110,33 @@ Everything NextAuth does today must work under `USE_HUB_SESSION=true` **before**
   localhost, both code-complete): OAuth providers (vs email), and cross-domain logout cookie clearing on
   `.civitai.com` (cookies are host-only in dev).
 
-### C. Session lifetime (rolling)
+### C. Session lifetime (rolling) — ✅ implemented (flag-gated)
 
-- [ ] **Token max-age extension on activity.** `civ-token` is a FIXED 30-day window today (`AUTH_SESSION_MAX_AGE`, minted only in `establishSession`; hub `hooks.server.ts` only reads it; main app is verify-only) — REGRESSES next-auth's rolling `updateAge`. Restore: main app sees a valid `civ-token` older than `updateAge` → calls a hub **refresh endpoint** (authed by the current token) → mints a fresh `civ-token` → re-sets the cookie; reuse the existing `needsCookieRefresh`/`SESSION_REFRESH_*` signal. Fires only once per threshold-crossing. Config `AUTH_SESSION_UPDATE_AGE`, default **24h** (parity), can raise to ~7d. Pairs with the silent legacy upgrade (G)
+- [x] **Token max-age extension on activity.** Hub `POST /api/auth/refresh` verifies a still-valid `civ-token`
+  (signature + expiry + revocation) and mints a fresh one for the **same user + same `jti`** (new signedAt/exp) —
+  extending the window without changing session identity; expired/revoked tokens are rejected (→ re-login). The
+  main app, in `getServerAuthSession`, decodes the token's `iat` and — when older than `AUTH_SESSION_UPDATE_AGE`
+  (default **24h**, raise to ~7d) — calls the hub refresh **server-side** and re-sets the `civ-token` cookie
+  (`maybeRollHubCookie`: best-effort + fire-safe, fires at most once per crossing, 2.5s timeout). No client
+  wiring needed (the main app can set the `.civitai.com` cookie). Validated: typecheck + hub vitest; browser/
+  deploy e2e pending (needs an aged token).
 
-### D. Session-user shape parity
+### D. Session-user shape parity — ✅ implemented (flag-gated)
 
-- [ ] Decide the 4 client-only fields the hub omits (`name`, `autoplayGifs`, `leaderboardShowcase`, `referral`) — accept the omission, or add to the `@civitai/auth` `SessionUser` contract + hub producer (`session-shape.ts`)
-- [ ] Confirm `allowAds`/`redBrowsingLevel` parity (the `userSettingsSchema.safeParse`-fails→default quirk)
+> @ai: done — matched the full ExtendedUser contract, **no fields omitted** (per your note). Added the four to
+> the `@civitai/auth` `SessionUser` contract + the hub producer query + `shapeSessionUser`.
+
+- [x] **All client-only fields present** — `name`, `autoplayGifs`, `leaderboardShowcase`, `referral` added to the
+  contract + hub producer query (incl. the `UserReferral` join) + `shapeSessionUser`. Full parity, no omissions.
+- [x] **`allowAds`/`redBrowsingLevel` computed from `User.settings`** (honor explicit value, else tier default),
+  so the **real values** are cached — not hardcoded defaults. Covered by new `session-shape` unit tests.
+  - **Parity nuance (review):** the hub reads those two fields *leniently* (focused parse), while `getSessionUser`
+    runs the FULL `userSettingsSchema.safeParse`, which fails wholesale if any *unrelated* field is mistyped →
+    defaults. So for a user whose settings blob has an unrelated malformed field **and** an explicit
+    `allowAds`/`redBrowsingLevel`, the hub honors it while `getSessionUser` currently defaults. To make them
+    bit-identical, `getSessionUser` should adopt the same focused read — a small but **revenue-adjacent** change
+    (users who set `allowAds=false` would then actually get no ads), so I left it for your explicit approval
+    rather than changing main-app behavior unilaterally.
 
 ### E. Account switching (same-domain multi-account **+** civitai.red)
 

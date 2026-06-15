@@ -1,5 +1,17 @@
+import { z } from 'zod';
 import type { SessionUser } from '@civitai/auth';
 import { getUserBanDetails, type BanDetailsMeta } from './ban';
+
+// Focused parse of the two content-preference fields the session exposes off `User.settings`. The main app
+// runs the FULL userSettingsSchema.safeParse (which fails wholesale if any unrelated field is mistyped, then
+// falls back to defaults); we read just these two leniently so an explicit user choice is honored regardless
+// of the rest of the blob. PARITY NOTE: this is intentionally more robust than getSessionUser — for the (rare)
+// user whose settings blob has an unrelated malformed field AND an explicit allowAds/redBrowsingLevel, the hub
+// honors it while getSessionUser currently defaults. To make them bit-identical, getSessionUser should adopt
+// the same focused read (a small, revenue-adjacent change — left for explicit review). See the cutover doc (D).
+const settingsSchema = z
+  .object({ allowAds: z.boolean().optional(), redBrowsingLevel: z.number().optional() })
+  .passthrough();
 
 // PURE derivation: queried rows + permissions → the @civitai/auth SessionUser. No DB / redis / env, so the
 // parity-critical logic (tier ranking, allowAds, ban shaping, field mapping) is unit-testable in isolation.
@@ -17,6 +29,7 @@ function asObject(v: unknown): Record<string, unknown> {
 export interface ProducerUserRow {
   id: number;
   username: string | null;
+  name: string | null;
   email: string | null;
   emailVerified: Date | string | null;
   image: string | null;
@@ -32,9 +45,13 @@ export interface ProducerUserRow {
   deletedAt: Date | string | null;
   customerId: string | null;
   paddleCustomerId: string | null;
+  autoplayGifs: boolean | null;
+  leaderboardShowcase: string | null;
   filePreferences: unknown;
+  settings: unknown;
   meta: unknown;
   profilePicture: { url: string } | null;
+  referral: { id: number } | null;
 }
 
 export interface ProducerSubscriptionRow {
@@ -86,10 +103,13 @@ export function shapeSessionUser({
     }
   }
 
-  // allowAds / redBrowsingLevel — parity defaults (see the PARITY NOTE in session-producer.ts: the main
-  // app's settings safeParse fails for ~all active users, so it falls through to these).
-  const allowAds = highestTier != null ? false : true;
-  const redBrowsingLevel: number | undefined = undefined;
+  // allowAds / redBrowsingLevel — honor the user's stored settings when present (see settingsSchema note),
+  // else fall back to the tier-based default (member → no ads; free → ads). Mirrors getSessionUser's intent.
+  const parsedSettings = settingsSchema.safeParse(asObject(row.settings));
+  const settings = parsedSettings.success ? parsedSettings.data : {};
+  const allowAds = settings.allowAds != null ? settings.allowAds : highestTier != null ? false : true;
+  const redBrowsingLevel: number | undefined =
+    settings.redBrowsingLevel != null ? settings.redBrowsingLevel : undefined;
 
   // meta → banDetails (parity: the main app strips banDetails out of meta before reading it, so banDetails
   // is effectively undefined; reproduced exactly).
@@ -97,11 +117,14 @@ export function shapeSessionUser({
   const { banDetails: _strippedBanDetails, ...userMeta } = fullMeta;
   const banDetails = getUserBanDetails({ meta: userMeta as { banDetails?: BanDetailsMeta } });
 
-  // Assemble the @civitai/auth SessionUser contract. Deliberately OMITTED vs the main app's cached entry:
-  // name, autoplayGifs, leaderboardShowcase, referral — not in the frozen contract. Revisit at the cutover.
+  // Assemble the @civitai/auth SessionUser contract — full parity with the main app's cached entry.
   return {
     id: row.id,
     username: row.username ?? undefined,
+    name: row.name ?? undefined,
+    autoplayGifs: row.autoplayGifs ?? undefined,
+    leaderboardShowcase: row.leaderboardShowcase ?? undefined,
+    referral: row.referral ?? undefined,
     email: row.email ?? undefined,
     emailVerified: row.emailVerified ? new Date(row.emailVerified) : undefined,
     image: row.profilePicture?.url ?? row.image ?? undefined,

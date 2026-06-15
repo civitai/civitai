@@ -24,6 +24,7 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
     .select((eb) => [
       'User.id',
       'User.username',
+      'User.name',
       'User.email',
       'User.emailVerified',
       'User.image',
@@ -39,11 +40,20 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.deletedAt',
       'User.customerId',
       'User.paddleCustomerId',
+      'User.autoplayGifs',
+      'User.leaderboardShowcase',
       'User.filePreferences',
+      'User.settings',
       'User.meta',
       jsonObjectFrom(
         eb.selectFrom('Image').select(['Image.url']).whereRef('Image.id', '=', 'User.profilePictureId')
       ).as('profilePicture'),
+      jsonObjectFrom(
+        eb
+          .selectFrom('UserReferral')
+          .select(['UserReferral.id'])
+          .whereRef('UserReferral.userId', '=', 'User.id')
+      ).as('referral'),
       jsonArrayFrom(
         eb
           .selectFrom('CustomerSubscription')

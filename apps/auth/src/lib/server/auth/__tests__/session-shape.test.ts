@@ -8,6 +8,7 @@ import {
 const baseRow = (over: Partial<ProducerUserRow> = {}): ProducerUserRow => ({
   id: 5,
   username: 'alice',
+  name: 'Alice',
   email: 'alice@example.com',
   emailVerified: null,
   image: null,
@@ -23,9 +24,13 @@ const baseRow = (over: Partial<ProducerUserRow> = {}): ProducerUserRow => ({
   deletedAt: null,
   customerId: null,
   paddleCustomerId: null,
+  autoplayGifs: null,
+  leaderboardShowcase: null,
   filePreferences: {},
+  settings: {},
   meta: {},
   profilePicture: null,
+  referral: null,
   ...over,
 });
 
@@ -144,6 +149,56 @@ describe('shapeSessionUser — tier / subscriptions', () => {
     const u = shape({}, [sub({ product: null }), sub({ id: 's2', product: { metadata: null } })]);
     expect(u.tier).toBeUndefined();
     expect(u.subscriptions).toEqual({});
+  });
+});
+
+describe('shapeSessionUser — client-only fields (D parity)', () => {
+  it('maps name / autoplayGifs / leaderboardShowcase / referral from the row', () => {
+    const u = shape({
+      name: 'Alice',
+      autoplayGifs: true,
+      leaderboardShowcase: 'overall',
+      referral: { id: 42 },
+    });
+    expect(u.name).toBe('Alice');
+    expect(u.autoplayGifs).toBe(true);
+    expect(u.leaderboardShowcase).toBe('overall');
+    expect(u.referral).toEqual({ id: 42 });
+  });
+
+  it('leaves null client-only columns undefined', () => {
+    const u = shape({ name: null, autoplayGifs: null, leaderboardShowcase: null, referral: null });
+    expect(u.name).toBeUndefined();
+    expect(u.autoplayGifs).toBeUndefined();
+    expect(u.leaderboardShowcase).toBeUndefined();
+    expect(u.referral).toBeUndefined();
+  });
+});
+
+describe('shapeSessionUser — allowAds / redBrowsingLevel from settings (D)', () => {
+  it('honors an explicit allowAds in settings over the tier default', () => {
+    // free user defaults to allowAds=true, but an explicit false wins
+    expect(shape({ settings: { allowAds: false } }).allowAds).toBe(false);
+    // member defaults to allowAds=false, but an explicit true wins
+    expect(shape({ settings: { allowAds: true } }, [sub()]).allowAds).toBe(true);
+  });
+
+  it('falls back to the tier default when settings has no allowAds', () => {
+    expect(shape({ settings: {} }).allowAds).toBe(true); // free → ads
+    expect(shape({ settings: {} }, [sub()]).allowAds).toBe(false); // member → no ads
+  });
+
+  it('honors redBrowsingLevel from settings, else undefined', () => {
+    expect(shape({ settings: { redBrowsingLevel: 31 } }).redBrowsingLevel).toBe(31);
+    expect(shape({ settings: {} }).redBrowsingLevel).toBeUndefined();
+  });
+
+  it('treats a null / garbage / mistyped settings blob as no settings (tier default)', () => {
+    expect(shape({ settings: null }).allowAds).toBe(true);
+    expect(shape({ settings: 'nope' }).allowAds).toBe(true);
+    // a mistyped allowAds (wrong type) is ignored → tier default, not a throw
+    expect(shape({ settings: { allowAds: 'yes' } }).allowAds).toBe(true);
+    expect(shape({ settings: { redBrowsingLevel: 'high' } }).redBrowsingLevel).toBeUndefined();
   });
 });
 
