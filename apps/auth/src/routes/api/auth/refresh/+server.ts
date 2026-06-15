@@ -1,0 +1,34 @@
+import { json } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
+import { verifier } from '$lib/server/auth/verifier';
+import { getSigner, SESSION_COOKIE } from '$lib/server/auth/session';
+import { sessions } from '$lib/server/auth/registry';
+
+// POST /api/auth/refresh — ROLLING SESSION. Given a still-valid civ-token (Bearer or cookie), verify it
+// (signature + expiry + REVOCATION — verifier.verifyToken enforces all three, so a logged-out / banned /
+// globally-invalidated token is rejected), then mint a FRESH token for the SAME user + SAME `jti` with a new
+// signedAt/exp — extending the window WITHOUT changing session identity (revocation + tracking keep applying).
+// The main app calls this server-side once a token crosses AUTH_SESSION_UPDATE_AGE, then re-sets the cookie.
+// See docs/main-app-auth-cutover.md (section C). An expired token fails verification → 401 → re-login.
+export const POST: RequestHandler = async ({ request, cookies }) => {
+  const authHeader = request.headers.get('authorization') ?? '';
+  const token = /^bearer /i.test(authHeader)
+    ? authHeader.slice(7).trim()
+    : cookies.get(SESSION_COOKIE);
+  if (!token) return json({ error: 'unauthorized' }, { status: 401 });
+
+  const claims = await verifier.verifyToken(token).catch(() => null);
+  const userId = Number(claims?.sub);
+  const jti = claims?.jti;
+  if (!claims || !Number.isFinite(userId) || !jti)
+    return json({ error: 'unauthorized' }, { status: 401 });
+
+  const fresh = await getSigner().mintSessionToken(
+    { sub: String(userId), signedAt: Date.now() },
+    { jti } // same jti → same session, fresh window
+  );
+  // Refresh the token-tracking TTL so an actively-used session's tracking entry doesn't lapse.
+  await sessions.trackToken(jti, userId).catch(() => {});
+
+  return json({ token: fresh });
+};

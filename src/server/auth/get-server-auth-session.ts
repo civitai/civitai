@@ -11,7 +11,8 @@ import { getSessionFromBearerToken } from './bearer-token';
 import { SESSION_REFRESH_HEADER, SESSION_REFRESH_COOKIE } from '~/shared/constants/auth.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { callbackCookieName } from '~/libs/auth';
-import { USE_HUB_SESSION, getHubSession } from './session-client';
+import { sessionCookieName } from '@civitai/auth';
+import { USE_HUB_SESSION, getHubSession, maybeRollHubCookie } from './session-client';
 
 function isValidCallbackUrl(value: string | undefined): boolean {
   if (!value) return false;
@@ -105,6 +106,12 @@ export const getServerAuthSession = async ({
     );
     if (session) {
       req.context.session = session;
+      // Rolling-session refresh (best-effort, fire-safe — cutover doc section C). Only does work when the
+      // token has crossed AUTH_SESSION_UPDATE_AGE; otherwise it's a cheap iat decode + age check.
+      const civ =
+        (req as NextApiRequest).cookies?.[sessionCookieName(true)] ??
+        (req as NextApiRequest).cookies?.[sessionCookieName(false)];
+      if (civ) await maybeRollHubCookie(civ, res as Parameters<typeof maybeRollHubCookie>[1]);
       return session;
     }
     // no civ-token → fall through to the legacy next-auth cookie below
