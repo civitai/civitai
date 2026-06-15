@@ -180,7 +180,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   // dispute button in the correct state. The endpoint is owner-scoped server-side.
   // Exclude moderators — they have separate mod-only controls for the override.
   const isArticleOwner =
-    !!article && currentUser?.id === article.user.id && !currentUser?.isModerator;
+    !!article && currentUser?.id === article.user.id || currentUser?.isModerator;
   const { data: myReview } = trpc.article.getMyArticleRatingReview.useQuery(
     { articleId: id },
     { enabled: isArticleOwner, staleTime: 60_000 }
