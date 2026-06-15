@@ -350,7 +350,14 @@ describe('BlockRegistry.listAvailable', () => {
   function capturedSql(): string {
     const lastCall = mockDbRead.$queryRaw.mock.calls.at(-1);
     if (!lastCall) return '';
-    const strings = lastCall[0] as unknown as TemplateStringsArray;
+    // E3: listAvailable now calls `$queryRaw(Prisma.sql`…`)` — a single Prisma.Sql
+    // object carrying the assembled `.sql` string (it was a tagged template before,
+    // which this helper reconstructed). Handle both forms.
+    const first = lastCall[0];
+    if (first && typeof first === 'object' && typeof (first as { sql?: unknown }).sql === 'string') {
+      return (first as { sql: string }).sql;
+    }
+    const strings = first as unknown as TemplateStringsArray;
     const values = lastCall.slice(1);
     let sql = '';
     for (let i = 0; i < strings.length; i++) {
@@ -363,21 +370,35 @@ describe('BlockRegistry.listAvailable', () => {
   it('filters on status=approved and orders by install_count desc', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([]);
     const { BlockRegistry } = await import('../block-registry.service');
-    await BlockRegistry.listAvailable({ limit: 20 });
+    // Pass sort explicitly — the schema default ('popular') is applied by the
+    // router's zod parse, not when the service is called directly (an undefined
+    // sort falls through to the name/ASC branch).
+    await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
     const sql = capturedSql();
     expect(sql).toMatch(/ab\.status\s*=\s*'approved'/);
-    expect(sql).toMatch(/ORDER BY install_count DESC/);
+    // E3: default sort `popular` now orders by the projected `sort_key` (the
+    // zero-padded install count) DESC, not a literal `install_count` column.
+    expect(sql).toMatch(/ORDER BY\s+sort_key\s+DESC/i);
   });
 
   it('returns a nextCursor when the result exceeds limit (limit+1 sentinel)', async () => {
+    // E3 rows carry the projected `sort_key` (the cursor encodes it) plus the
+    // `category`/`approved_scopes` columns the projection reads.
     mockDbRead.$queryRaw.mockResolvedValue([
-      { id: 'ab_1', block_id: 'b1', app_id: 'oc', app_name: 'A', manifest: {}, install_count: BigInt(5) },
-      { id: 'ab_2', block_id: 'b2', app_id: 'oc', app_name: 'A', manifest: {}, install_count: BigInt(4) },
-      { id: 'ab_3', block_id: 'b3', app_id: 'oc', app_name: 'A', manifest: {}, install_count: BigInt(3) },
+      { id: 'ab_1', block_id: 'b1', app_id: 'oc', app_name: 'A', manifest: {}, install_count: BigInt(5), category: null, approved_scopes: [], sort_key: '00000000000000000005' },
+      { id: 'ab_2', block_id: 'b2', app_id: 'oc', app_name: 'A', manifest: {}, install_count: BigInt(4), category: null, approved_scopes: [], sort_key: '00000000000000000004' },
+      { id: 'ab_3', block_id: 'b3', app_id: 'oc', app_name: 'A', manifest: {}, install_count: BigInt(3), category: null, approved_scopes: [], sort_key: '00000000000000000003' },
     ]);
     const { BlockRegistry } = await import('../block-registry.service');
     const out = await BlockRegistry.listAvailable({ limit: 2 });
     expect(out.items).toHaveLength(2);
-    expect(out.nextCursor).toBe('ab_2');
+    // E3: nextCursor is now an opaque base64url keyset cursor of the last
+    // returned row (ab_2) — `${sort_key}\x1f${id}` — not the bare id.
+    expect(out.nextCursor).toBeDefined();
+    const [sortKey, id] = Buffer.from(out.nextCursor as string, 'base64url')
+      .toString('utf8')
+      .split('\x1f');
+    expect(id).toBe('ab_2');
+    expect(sortKey).toBe('00000000000000000004');
   });
 });
