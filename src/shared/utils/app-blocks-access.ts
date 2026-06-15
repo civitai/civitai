@@ -14,14 +14,24 @@
  * developer funnel coherent (you can't have revenue from an app you can't
  * submit).
  *
- * When external-developer submission opens (W11), widen THIS predicate — it
- * is the single flip-point for the whole developer funnel. Do NOT re-inline
- * `isModerator` checks in the individual `getServerSideProps` resolvers or
- * the nav hook; route them all through here.
+ * When external-developer submission opens (W11), widen THIS predicate to
+ * govern every CLIENT/SSR developer gate at once — the page `getServerSideProps`
+ * resolvers, the nav hook, and the marketplace "Submit App" CTAs all route
+ * through it (do NOT re-inline `isModerator` checks; that's the incoherence this
+ * file exists to prevent).
+ *
+ * ⚠️ This is NOT the only thing to flip. The data behind these surfaces is served
+ * by `moderatorProcedure`s — `blocks.getMyRevenue`, `getMyApps`,
+ * `listMyPublishRequests`, `withdrawPublishRequest`, and the `submitVersion`
+ * ModEndpoint. Widening this predicate alone lets a non-mod developer PAST the
+ * page gate only to have every query/mutation 403 (a worse UX than today's clean
+ * 404). At W11 those server procs MUST widen in lockstep — ideally by replacing
+ * `moderatorProcedure` on them with a shared `appDeveloperProcedure` so the
+ * server gate has a single flip-point too.
  *
  * NOTE: the moderator-only REVIEW surface (`/apps/review`) is conceptually
  * always-moderator and is NOT part of this developer flip — it gates on
- * `isModerator` directly, not on `isAppDeveloper`.
+ * {@link isAppReviewer} (which stays moderator-only), not `isAppDeveloper`.
  *
  * Pure (no server/client-only imports) so it's usable from both the
  * `getServerSideProps` resolvers and the client-side nav hook.
