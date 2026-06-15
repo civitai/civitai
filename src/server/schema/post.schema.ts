@@ -1,13 +1,56 @@
 import * as z from 'zod';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
+import type { RateLimit } from '~/server/middleware.trpc';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
+import { isBetweenToday } from '~/utils/date-helpers';
 import { imageMetaSchema, imageSchema } from '~/server/schema/image.schema';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray, numericStringArray } from '~/utils/zod-helpers';
+
+// Post creation was historically unthrottled (unlike comments/reactions/article
+// creation). The MCP/API "prompt-to-post" flow makes unlimited automated posting
+// trivial, so apply sane ceilings here. Moderators and dev/test are skipped by the
+// rateLimit() middleware.
+//
+// NOTE on the middleware: for a given period it keeps the HIGHEST limit among the
+// rules whose userReq passes. So a tighter cap for a sub-group can't share a period
+// with a looser base rule (the looser one would win). The new-account clamp therefore
+// lives on the `hour` period, which no base/established rule uses (mirrors
+// articleRateLimits). Daily ceilings tier UP by reputation.
+export const postRateLimits: RateLimit[] = [
+  // Brand-new accounts (< 24h): tight hourly clamp. Not overridden because no other
+  // rule uses the hour period.
+  {
+    limit: 2,
+    period: CacheTTL.hour,
+    userReq: (user) => !!user.createdAt && isBetweenToday(user.createdAt),
+    errorMessage: 'New accounts are limited to a couple of posts per hour for the first 24 hours.',
+  },
+  // Base daily ceiling (all users, incl. new + low-reputation).
+  {
+    limit: 20,
+    period: CacheTTL.day,
+    errorMessage: "You've reached your daily limit for new posts. Please try again tomorrow.",
+  },
+  // Established accounts.
+  {
+    limit: 60,
+    period: CacheTTL.day,
+    userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000,
+    errorMessage: "You've reached your daily limit for new posts. Please try again tomorrow.",
+  },
+  // High-reputation accounts.
+  {
+    limit: 150,
+    period: CacheTTL.day,
+    userReq: (user) => (user.meta?.scores?.total ?? 0) >= 5000,
+    errorMessage: "You've reached your daily limit for new posts. Please try again tomorrow.",
+  },
+];
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({

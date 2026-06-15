@@ -21,7 +21,7 @@ import {
   updatePostHandler,
   updatePostImageHandler,
 } from './../controllers/post.controller';
-import { applyUserPreferences } from './../middleware.trpc';
+import { applyUserPreferences, rateLimit } from './../middleware.trpc';
 import { getByIdSchema } from './../schema/base.schema';
 import {
   addPostTagSchema,
@@ -29,6 +29,7 @@ import {
   createPostWithImagesSchema,
   getPostTagsSchema,
   postCreateSchema,
+  postRateLimits,
   postsQuerySchema,
   postUpdateSchema,
   removePostTagSchema,
@@ -107,10 +108,12 @@ export const postRouter = router({
   create: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postCreateSchema)
+    .use(rateLimit(postRateLimits))
     .mutation(createPostHandler),
   createWithImages: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createPostWithImagesSchema)
+    .use(rateLimit(postRateLimits))
     .mutation(createPostWithImagesHandler),
   update: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })

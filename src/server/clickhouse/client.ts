@@ -267,6 +267,25 @@ export class Tracker {
   private sessionResolved = false;
   private req: NextApiRequest | undefined;
   private res: NextApiResponse | undefined;
+  // Provenance of the request: how was the action initiated? Defaults to 'web'.
+  // Set from the tRPC context (createContext) when auth came from a Bearer token.
+  // Merged only into content-creation events (post/images/comment/bounty) — NOT
+  // the global actor — so it's only sent to tables that have the matching columns.
+  private provenance: { via: 'web' | 'api-key' | 'oauth'; viaClientId: string; viaApiKeyId: number } =
+    { via: 'web', viaClientId: '', viaApiKeyId: 0 };
+
+  public setProvenance(args: {
+    subject?: { type: 'apiKey'; id: number } | { type: 'oauth'; id: string };
+    apiKeyId?: number;
+  }) {
+    const { subject, apiKeyId } = args;
+    if (!subject) return; // session/cookie auth — stays 'web'
+    if (subject.type === 'oauth') {
+      this.provenance = { via: 'oauth', viaClientId: subject.id, viaApiKeyId: apiKeyId ?? 0 };
+    } else {
+      this.provenance = { via: 'api-key', viaClientId: '', viaApiKeyId: apiKeyId ?? subject.id };
+    }
+  }
 
   private async resolveSession() {
     if (!this.sessionResolved && this.req && this.res) {
@@ -583,7 +602,7 @@ export class Tracker {
   }
 
   public comment(values: { type: CommentType; entityId: number; nsfw: boolean }) {
-    return this.track('comments', values);
+    return this.track('comments', { ...values, ...this.provenance });
   }
 
   public commentEvent(values: { type: CommentActivity; commentId: number }) {
@@ -591,7 +610,7 @@ export class Tracker {
   }
 
   public post(values: { type: PostActivityType; postId: number; nsfw: boolean; tags: string[] }) {
-    return this.track('posts', values);
+    return this.track('posts', { ...values, ...this.provenance });
   }
 
   public modelFile(values: { type: ModelFileActivity; id: number; modelVersionId: number }) {
@@ -612,11 +631,14 @@ export class Tracker {
       userId?: number;
     }[]
   ) {
-    return this.trackMany('images', values);
+    return this.trackMany(
+      'images',
+      values.map((v) => ({ ...v, ...this.provenance }))
+    );
   }
 
   public bounty(values: { type: BountyActivity; bountyId: number; userId?: number }) {
-    return this.track('bounties', values);
+    return this.track('bounties', { ...values, ...this.provenance });
   }
 
   public bountyEntry(values: {
