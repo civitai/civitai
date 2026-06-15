@@ -4104,6 +4104,8 @@ model RedeemableCode {
   metadata      Json?
   priceId       String?
   price         Price?             @relation(fields: [priceId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 enum ToolType {
