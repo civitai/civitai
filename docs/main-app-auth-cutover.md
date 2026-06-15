@@ -1,9 +1,9 @@
 # Main App Auth Cutover — NextAuth → centralized hub
 
-Status: **server validation, client session, login/logout→hub, rolling refresh, and full session-shape parity
-all implemented behind a default-OFF flag; e2e-validated against a live hub (incl. a full email-login
-round-trip).** Remaining: account-switch + civitai.red, impersonation, silent legacy upgrade, NextAuth deletion
-(scoped below). Nothing changes until `USE_HUB_SESSION=true`.
+Status: **A–D done (server validation, client session, login/logout→hub, rolling refresh, shape parity).
+DECISION: strip NextAuth BEFORE ship (no flag-flip hybrid — see "Decision" below).** In flight: device-level
+account switching (E). Remaining: the 5-phase strip — resilient resolution, legacy `jose` decoder, E + F
+hub-native, replace `next-auth/react`, delete server NextAuth.
 
 This is the main-app half of the thin-session migration — see [thin-session-token-design.md](./thin-session-token-design.md).
 The hub (`apps/auth`) is the sole **producer** + **issuer**; the main app becomes a **consumer** that reads a
@@ -66,13 +66,37 @@ parity nuance vs `getSessionUser`.
 
 ---
 
-## NextAuth removal timing (read first)
+## Decision: strip NextAuth BEFORE ship (no hybrid) — read first
 
-**NextAuth is NOT ripped out for launch.** Launch = flip `USE_HUB_SESSION=true` per env, with **NextAuth kept as
-the byte-identical fallback** (the hybrid path). Deletion is a **separate, later, irreversible step** (section H
-below), gated on full feature parity — specifically account-switching (incl. civitai.red) and impersonation being
-hub-backed. So existing sessions keep working at launch, and we can flip back by unsetting the flag. Rip-out comes
-only after parity is validated in an env.
+We are **removing NextAuth entirely before shipping**, not keeping it as a flag-flip fallback. The hybrid's
+"flip back to NextAuth" safety net is illusory: once users log in at the hub they hold a `civ-token`, and
+flipping `USE_HUB_SESSION` back to NextAuth would ignore that cookie → log them out — and they can't re-login
+if the hub is the thing that's down. The net shrinks every day and sacrifices the sessions that matter.
+
+Instead the main app validates sessions **hub-independently**, so existing sessions survive a hub outage and
+only *new logins* are affected (the hub is the login authority either way — mitigate with hub HA).
+
+**Resolution model (`getServerAuthSession` / `createSessionClient`):**
+
+1. **Verify** `civ-token` LOCALLY with the hub's public key (`AUTH_JWT_PUBLIC_KEY`), not a JWKS fetch — no hub
+   call to validate a token.
+2. **Resolve the session user**: shared cache (hub's output) → hub `/api/auth/identity` on a miss (hub is the
+   producer by **default**) → **`produceFallback`** (local DB production) if the hub is unreachable.
+3. Legacy `civitai-token`: a `jose`-based JWE decode in `@civitai/auth` (read-only, sunsets as those sessions
+   age out) — NO `next-auth` dependency.
+
+`produceFallback` is **injected into `createSessionClient`** and enabled for BOTH the main app AND **civitai.red**
+(both can reach the DB). It is a **temporary** resilience measure — **revert it once the hub is proven stable**,
+restoring the hub as the sole producer. Pure HTTP-only spokes never get it.
+
+### Phased rollout (each phase keeps the app working; NextAuth stays until the last)
+
+1. **Resilient resolution** — local verify + cache→hub→`produceFallback` chain.
+2. **Legacy decoder** — `jose` `civitai-token` decode; `getServerAuthSession` resolves new-or-legacy, no NextAuth.
+3. **Account-switch + impersonation hub-native** (E + F).
+4. **Client** — replace `next-auth/react` (`SessionProvider`/`useSession`) with a first-party provider over
+   `/api/auth/session`; the ~317 `useCurrentUser` sites swap transparently (`signIn`/`signOut` already hub-routed).
+5. **Delete server NextAuth** — `[...nextauth].ts`, `next-auth-options`, `token-refresh`, AES civ-token; drop the dep.
 
 ---
 
@@ -138,41 +162,53 @@ Everything NextAuth does today must work under `USE_HUB_SESSION=true` **before**
     (users who set `allowAds=false` would then actually get no ads), so I left it for your explicit approval
     rather than changing main-app behavior unilaterally.
 
-### E. Account switching (same-domain multi-account **+** civitai.red)
+### E. Account switching — DEVICE-LEVEL — 🔨 in progress
 
-Both ride the `account-switch` provider + AES `civitai-token` (decrypted with `NEXTAUTH_SECRET`) today. The new
-transport is an ES256 **swap token** (JWKS-verified, no shared secret). Hub side is already built (`/api/auth/sync`
-→ `mintSwapToken`); the **spoke wiring is the gap**:
+Hub-native, **device-level**: not a client-held credential and not a DB-level account link (no cross-device
+association, nothing in the User table). The hub keeps a per-browser **device set** — an httpOnly `civ-device`
+cookie → a Redis hash `device:accounts:{deviceId}` of `userId → lastSwitchedAt`, **30-day rolling** (matches the
+session; refreshed on login + switch + rolling refresh). A switch is authorized by an **active session** + the
+target being in **this** device's set and fresh (<30d); `localStorage` holds zero credentials (display only).
 
-- [ ] Replace the AES `account-switch` CredentialsProvider with `createAccountSwitchProvider()` (`verifySwapToken` via JWKS) in `next-auth-options.ts`
-- [ ] Update `useDomainSync.tsx` + `AccountProvider.swapAccount` for the new `{ swapToken }` response shape (vs `{ token: {iv,data,signedAt} }`)
-- [ ] Point spoke sync at the hub's `/api/auth/sync`; honor the `sync`/`sync-account` redirect contract
-- [ ] **civitai.red:** set `AUTH_JWKS_URI` + `AUTH_JWT_ISSUER` (same Next codebase on a 2nd registrable domain — cookies don't cross `.com`↔`.red`, so sync is mandatory)
-- [ ] Dual-support AES + ES256 during the migration window (until legacy tokens expire)
-- [ ] Validate e2e: same-domain account switch **and** civitai.com ↔ civitai.red sync
+**Hub — done (type-clean):**
 
-### F. Moderator impersonation
+- [x] `device.ts` (device cookie + Redis set: link/list/isFresh/remove + 30d prune); `mintUserSession` extracted
+- [x] login links the account (`establishSession` → `touchAccount`); rolling refresh touches the active account
+- [x] `POST /api/auth/switch` (active session + device + fresh → mint civ-token, return it); `GET /api/auth/accounts`
 
-Today: `/api/auth/impersonate` → `civTokenEncrypt(targetId)` (AES) → `signIn('account-switch')` → target session;
-exit via `ogAccount` (localStorage) + `/api/auth/civ-token`. Audit lives in `ModActivity`, not the session.
+**Main app — in progress:**
 
-- [ ] Hub `/api/auth/impersonate` endpoint: mod-authed + permission-checked (the `impersonation` feature flag), mints a thin `civ-token` for the target user
-- [ ] Main `impersonate.ts` routes to the hub when the hub is issuer (keep the feature-flag + no-self-impersonation guards)
-- [ ] Exit / swap-back (`civ-token.ts` + `ogAccount`) routes to the hub
-- [ ] Preserve `ModActivity` audit logging (`trackModActivity` on/off)
+- [x] `/api/auth/accounts` proxy; device-cookie roll in `maybeRollHubCookie`
+- [ ] `/api/auth/switch` proxy (forward → set civ-token → roll device cookie)
+- [ ] `AccountProvider` rewrite: list from the hub device set, switch via the proxy, **logout-one without switching**
+- [ ] **civitai.red** (different registrable domain — cookies don't cross): hub-minted ES256 **swap token** + JWKS
+      receive (`useDomainSync`); the device set is per-domain
+- [ ] Validate e2e: same-domain switch + `.com ↔ .red`
+
+### F. Moderator impersonation — 🔨 to do
+
+Hub-native and **separate** from account-switch (different authorization model: ownership vs moderator
+privilege). The **only** authorization is **the requester being a moderator** — no internal token, no extra
+credential, no ownership/device check. It must NOT touch the device account-set (the target isn't a linked
+account).
+
+- [ ] Hub `POST /api/auth/impersonate`: the requester's own session must be a moderator (the sole gate) → mint a
+      thin `civ-token` for the target with an `impersonatedBy: modId` claim; write the `ModActivity` audit row
+- [ ] Main `impersonate.ts` routes to the hub (keep the no-self-impersonation guard)
+- [ ] Exit reads the `impersonatedBy` claim to re-mint the moderator's session — no `localStorage` `ogAccount`
 - [ ] Validate e2e: impersonate → act as user → exit back to the moderator
 
 ### G. Legacy-cookie migration
 
 - [ ] (Optional, recommended) **Silent upgrade** — when a request has a valid legacy `civitai-token` but no `civ-token`, transparently mint a `civ-token` at the hub (no login screen) so users migrate without a re-login. Without it, legacy cookies simply age out via the hybrid fallback (A)
 
-### H. NextAuth removal — LATER (not launch)
+### H. Delete server NextAuth — Phase 5 (before ship)
 
-Only after B, E, F are hub-backed + validated in an env:
+After phases 1–4 (resilient resolution, legacy decoder, E + F hub-native, client replaced):
 
-- [ ] Delete `src/pages/api/auth/[...nextauth].ts`, the `jwt()`/`session()` callbacks + providers + adapter in `next-auth-options.ts`, `token-refresh.ts`, and the legacy JWE encode/decode
-- [ ] Keep `next-auth/react` as a thin client shim (needs only `/api/auth/session`), or swap to a custom provider
-- [ ] Legacy-JWE dual-read in `@civitai/auth`'s verifier can be dropped once all legacy cookies have expired
+- [ ] Delete `src/pages/api/auth/[...nextauth].ts`, the `jwt()`/`session()` callbacks + providers + adapter in `next-auth-options.ts`, `token-refresh.ts`, the AES civ-token (`civ-token.ts`), and the legacy JWE encode/decode
+- [ ] **Replace** `next-auth/react` with a first-party `SessionProvider`/`useSession` over `/api/auth/session` (phase 4), then remove the `next-auth` + `next-auth/react` deps entirely
+- [ ] The legacy `jose` `civitai-token` decoder (phase 2) stays read-only until those sessions age out, then deletes
 
 **Tracking — `STEP-H-REMOVAL` markers (kept in sync as we build).** Every NextAuth touchpoint we add or rely on
 carries a `STEP-H-REMOVAL:` code comment. At step H, `grep -rn "STEP-H-REMOVAL" src packages` yields the
