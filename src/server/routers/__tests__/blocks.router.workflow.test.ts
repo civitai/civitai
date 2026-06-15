@@ -102,17 +102,30 @@ vi.mock('~/server/db/client', () => ({
   // shapes the unrelated procedures could hit so the import doesn't crash.
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
 }));
+// blocks.router transitively pulls in many redis-cache modules that read
+// `REDIS_KEYS.<GROUP>.<KEY>` AT IMPORT TIME. The real keys live in redis/client
+// (which connects on import, so we can't importActual it). A hand-trimmed
+// REDIS_KEYS is whack-a-mole — it flakily threw on whichever key the load order
+// reached first (RESOURCE_DATA, then CACHES.TAG_IDS_FOR_IMAGES, ...). `completeKeys`
+// keeps the few values the tests assert on and auto-vivifies ANY other key to a
+// deterministic placeholder string instead of `undefined.X`, ending the flake.
+const { completeKeys } = vi.hoisted(() => {
+  const group = (explicit: Record<string, string>, name: string): Record<string, string> =>
+    new Proxy(explicit, {
+      get: (t, k) => (k in t ? (t as any)[k] : typeof k === 'string' ? `mock:${name}:${k}` : (t as any)[k]),
+    });
+  const completeKeys = (explicit: Record<string, Record<string, string>>) =>
+    new Proxy(explicit, {
+      get: (t, g) => (g in t ? group((t as any)[g], g as string) : typeof g === 'string' ? group({}, g) : (t as any)[g]),
+    });
+  return { completeKeys };
+});
+
 vi.mock('~/server/redis/client', () => ({
   redis: mockRedis,
   sysRedis: mockSysRedis,
-  // GENERATION.RESOURCE_DATA is read at import time by resource-data.redis (pulled
-  // in transitively); without it this suite flakily throws "Cannot read properties
-  // of undefined (reading 'RESOURCE_DATA')" depending on test-file load order.
-  REDIS_KEYS: {
-    BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' },
-    GENERATION: { RESOURCE_DATA: 'packed:generation:resource-data-3' },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
+  REDIS_KEYS: completeKeys({ BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } }),
+  REDIS_SYS_KEYS: completeKeys({ BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } }),
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,

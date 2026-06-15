@@ -56,12 +56,29 @@ vi.mock('~/server/db/client', () => ({
 }));
 // Mock the heavy peer modules the router imports so the import graph
 // stays cheap and we don't accidentally hit live deps.
+// blocks.router transitively pulls in many redis-cache modules (resource-data.redis,
+// caches.ts, ...) that each read `REDIS_KEYS.<GROUP>.<KEY>` AT IMPORT TIME. The
+// real keys live in redis/client (which connects on import, so we can't
+// importActual it). A hand-trimmed REDIS_KEYS is whack-a-mole: it flakily threw on
+// whichever key the current load order happened to reach first (RESOURCE_DATA, then
+// CACHES.TAG_IDS_FOR_IMAGES, ...). `completeKeys` wraps the few values the tests
+// assert on with an auto-vivifying Proxy so ANY other key resolves to a
+// deterministic placeholder string instead of `undefined.X` — ending the flake.
+const { completeKeys } = vi.hoisted(() => {
+  const group = (explicit: Record<string, string>, name: string): Record<string, string> =>
+    new Proxy(explicit, {
+      get: (t, k) => (k in t ? (t as any)[k] : typeof k === 'string' ? `mock:${name}:${k}` : (t as any)[k]),
+    });
+  const completeKeys = (explicit: Record<string, Record<string, string>>) =>
+    new Proxy(explicit, {
+      get: (t, g) => (g in t ? group((t as any)[g], g as string) : typeof g === 'string' ? group({}, g) : (t as any)[g]),
+    });
+  return { completeKeys };
+});
+
 vi.mock('~/server/redis/client', () => ({
   redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-  // GENERATION.RESOURCE_DATA is read at import time by resource-data.redis (pulled
-  // in transitively); without it this suite flakily throws "Cannot read properties
-  // of undefined (reading 'RESOURCE_DATA')" depending on test-file load order.
-  REDIS_KEYS: { BLOCKS: {}, GENERATION: { RESOURCE_DATA: 'packed:generation:resource-data-3' } },
+  REDIS_KEYS: completeKeys({ BLOCKS: {} }),
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
@@ -194,6 +211,12 @@ describe('blocks.listAvailable (public)', () => {
   });
 
   it('returns empty for a non-mod caller (Phase 2 internal-only gate)', async () => {
+    // The gate IS the mod-segmented `app-blocks-enabled` flag (no separate
+    // isModerator belt by design), so a non-mod caller sees it OFF -> gated.
+    // Simulate that here (mirrors the anon flag-off sibling above); without it
+    // the default mock returns the flag ON and the caller wrongly reaches the
+    // service.
+    mockIsAppBlocksEnabled.mockImplementation(async () => false);
     const caller = blocksRouter.createCaller(authedCtx(42, false) as never);
     const out = await caller.listAvailable({ limit: 20 });
     expect(out).toEqual({ items: [], nextCursor: undefined });
@@ -201,6 +224,8 @@ describe('blocks.listAvailable (public)', () => {
   });
 
   it('returns empty for an anon caller (Phase 2 internal-only gate)', async () => {
+    // The mod-segmented flag is OFF for an anon caller -> gated to empty.
+    mockIsAppBlocksEnabled.mockImplementation(async () => false);
     const caller = blocksRouter.createCaller(anonCtx() as never);
     const out = await caller.listAvailable({ limit: 20 });
     expect(out).toEqual({ items: [], nextCursor: undefined });
