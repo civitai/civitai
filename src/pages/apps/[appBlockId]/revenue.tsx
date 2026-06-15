@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
@@ -33,6 +34,9 @@ export const getServerSideProps = createServerSideProps({
           permanent: false,
         },
       };
+    }
+    if (!isAppDeveloper(session.user)) {
+      return { notFound: true };
     }
     return { props: {} };
   },

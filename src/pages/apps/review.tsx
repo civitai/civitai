@@ -49,6 +49,7 @@ import {
   MARKETPLACE_CATEGORY_LABELS,
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -83,7 +84,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
     }
-    if (!session.user.isModerator) {
+    if (!isAppReviewer(session.user)) {
       return { notFound: true };
     }
     return { props: {} };

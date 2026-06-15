@@ -32,6 +32,7 @@ import {
   SEMVER_REGEX,
   SLUG_REGEX,
 } from '~/server/schema/blocks/publish-request.schema';
+import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -60,7 +61,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
     }
-    if (!session.user.isModerator) {
+    if (!isAppDeveloper(session.user)) {
       return { notFound: true };
     }
     return { props: {} };
