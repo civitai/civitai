@@ -157,11 +157,14 @@ export function AppBlockChrome({
       {/* minWidth:0 lets the truncating name shrink instead of pushing the
           ⋯ menu out of the narrow sidebar layout. */}
       <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-        {/* aria-label keeps the provenance signal for screen readers; the
-            visible name (below) tells the user WHICH app is running. */}
+        {/* Provenance signal for screen readers. role="img" is required for the
+            aria-label to be reliably announced — a bare tabler <svg> has no role,
+            so without it the label is dropped. On the fallback the visible "App
+            block" Text carries provenance, so the icon is marked decorative. */}
         <IconApps
           size={14}
           stroke={1.5}
+          role={hasName ? 'img' : undefined}
           aria-label={hasName ? 'App block' : undefined}
           aria-hidden={hasName ? undefined : true}
           style={{ flexShrink: 0 }}
