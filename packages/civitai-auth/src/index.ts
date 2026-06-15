@@ -32,7 +32,7 @@ export {
   type SessionKeys,
   type InvalidateInfo,
 } from './session-registry';
-export { cookiePrefix, sessionCookieName } from './cookies';
+export { cookiePrefix, isSecureCookie, sessionCookieName, deviceCookieName } from './cookies';
 export {
   readReturnUrl,
   readSync,

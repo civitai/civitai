@@ -6,6 +6,9 @@
 // set by the main app's libs/auth.ts) so the hub (thin ES256) and a still-live next-auth never share — and
 // stomp — the same cookie during cutover. Existing next-auth sessions simply re-login at the hub.
 export const SESSION_COOKIE_BASE = 'civ-token';
+// Per-browser device id cookie (account-switch device set, section E). Same secure-prefix rules as the
+// session cookie — derive its name via `deviceCookieName(secure)`, never hardcode the prefixed literal.
+export const DEVICE_COOKIE_BASE = 'civ-device';
 export const SECURE_COOKIE_PREFIX = '__Secure-';
 
 // Cross-domain account sync query param (preferred + legacy).
