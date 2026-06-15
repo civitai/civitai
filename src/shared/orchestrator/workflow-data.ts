@@ -505,18 +505,25 @@ export class Model3DBlob extends BlobData {
   readonly aspect = 1;
   readonly width = 512;
   readonly height = 512;
-  format!: string;
-  variants?: Array<{
+  // `declare` — see ImageBlob. These are populated by `BlobData`'s
+  // `Object.assign(this, data)` in the base ctor. Without `declare`, under
+  // `useDefineForClassFields` (SWC/Next default for modern targets) the
+  // subclass field declarations re-fire after `super()` returns and reset
+  // the values to `undefined` — which is exactly what was making the
+  // QueueItem render "No preview available": format/variants/thumbnailUrl
+  // were being nuked on every Model3DBlob construction.
+  declare format: string;
+  declare variants?: Array<{
     id: string;
     format: string;
     url: string;
     available: boolean;
     urlExpiresAt?: string | null;
   }>;
-  thumbnailId?: string | null;
-  thumbnailUrl?: string | null;
-  thumbnailUrlExpiresAt?: string | null;
-  thumbnailNsfwLevel?: NsfwLevel;
+  declare thumbnailId?: string | null;
+  declare thumbnailUrl?: string | null;
+  declare thumbnailUrlExpiresAt?: string | null;
+  declare thumbnailNsfwLevel?: NsfwLevel;
   constructor(args: BlobConstructorArgs & { data: NormalizedModel3DOutput }) {
     super(args);
   }
