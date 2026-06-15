@@ -25,15 +25,16 @@ export function Announcement({
   dismissible?: boolean;
   moderatorActions?: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
-  const dismissed = useAnnouncementsStore((state) => state.dismissed);
   const { actions, image } = announcement.metadata || {};
+  const announcementType = announcement.metadata.type ?? 'site';
+  const dismissed = useAnnouncementsStore((state) => state.dismissed[announcementType]);
   const theme = useMantineTheme();
   const canDismiss = dismissed.includes(announcement.id)
     ? false
     : dismissible ?? announcement.metadata.dismissible ?? true;
 
   function handleDismiss() {
-    dismissAnnouncements(announcement.id);
+    dismissAnnouncements(announcement.id, announcementType);
   }
 
   return (

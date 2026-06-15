@@ -1,9 +1,10 @@
 import { Center, Loader, Text } from '@mantine/core';
 import { Announcement } from '~/components/Announcements/Announcement';
 import { useGetAnnouncements } from '~/components/Announcements/announcements.utils';
+import type { AnnouncementType } from '~/server/schema/announcement.schema';
 
-export function AnnouncementsList() {
-  const { data, isLoading } = useGetAnnouncements();
+export function AnnouncementsList({ type = 'site' }: { type?: AnnouncementType } = {}) {
+  const { data, isLoading } = useGetAnnouncements(type);
 
   return isLoading ? (
     <Center p="sm">
