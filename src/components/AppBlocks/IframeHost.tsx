@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Box, Group, Menu } from '@mantine/core';
+import { ActionIcon, Box, Group, Menu, Text } from '@mantine/core';
 import { IconApps, IconDots, IconEyeOff } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BlockFallback } from './BlockFallback';
@@ -11,6 +11,7 @@ import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { resolveRequestConsent } from './requestConsentGate';
 import { hideBlock } from './hiddenBlocks';
+import { sanitizeAppChromeName } from './appChromeName';
 import { intersectSandbox } from './sandbox';
 import { projectBlockInitContext, projectBlockInitViewer } from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
@@ -116,7 +117,7 @@ function storageErrorMessage(err: unknown): string {
  * publisher or anyone else). Rendering it here (vs in the sandboxed iframe) is
  * the whole point — the trust boundary belongs to the host. (Roadmap W7.)
  */
-function AppBlockChrome({
+export function AppBlockChrome({
   blockInstanceId,
   appName,
   modelId,
@@ -127,6 +128,19 @@ function AppBlockChrome({
   modelId?: number;
   modelName?: string;
 }) {
+  // The host-rendered name of the running app. (H2) Naming the app in the host
+  // chrome — not just the iframe `title` — lets the user tell WHICH sandboxed
+  // app is running and trust its provenance; the iframe can't fake it. The name
+  // is publisher-controlled, so sanitize it (strip bidi/control/zero-width chars,
+  // collapse whitespace, bound length) before rendering it in the trust label.
+  const sanitizedName = sanitizeAppChromeName(appName);
+  const hasName = sanitizedName !== null;
+  // Falls back to the literal "App block" so the trust label is never blank.
+  const label = sanitizedName ?? 'App block';
+  // When a real name shows, keep the icon's "App block" provenance aria-label so
+  // the icon + name read as "App block, <name>". On the fallback the visible
+  // Text already says "App block", so mark the icon decorative (aria-hidden)
+  // rather than leaving it an unlabeled SVG / double-reading "App block".
   return (
     <Group
       justify="space-between"
@@ -140,11 +154,27 @@ function AppBlockChrome({
         background: 'var(--mantine-color-default-hover)',
       }}
     >
-      <Group gap={6} wrap="nowrap">
-        {/* Icon only — the "App block" wordmark was dropped as redundant
-            (the icon + the frame itself already signal it). aria-label keeps
-            the provenance signal for screen readers. */}
-        <IconApps size={14} stroke={1.5} aria-label="App block" />
+      {/* minWidth:0 lets the truncating name shrink instead of pushing the
+          ⋯ menu out of the narrow sidebar layout. */}
+      <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+        {/* Provenance signal for screen readers. role="img" is required for the
+            aria-label to be reliably announced — a bare tabler <svg> has no role,
+            so without it the label is dropped. On the fallback the visible "App
+            block" Text carries provenance, so the icon is marked decorative. */}
+        <IconApps
+          size={14}
+          stroke={1.5}
+          role={hasName ? 'img' : undefined}
+          aria-label={hasName ? 'App block' : undefined}
+          aria-hidden={hasName ? undefined : true}
+          style={{ flexShrink: 0 }}
+        />
+        {/* Host-rendered (spoof-proof) app-name label. Truncates with an
+            ellipsis at a bounded width so a long name never wraps or shoves
+            the menu off the row in the narrow model.sidebar_top slot. */}
+        <Text size="xs" c="dimmed" truncate maw={160} data-testid="app-block-name">
+          {label}
+        </Text>
       </Group>
       <Menu position="bottom-end" shadow="md" width={180}>
         <Menu.Target>
