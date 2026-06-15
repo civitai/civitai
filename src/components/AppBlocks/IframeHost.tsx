@@ -11,6 +11,7 @@ import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { resolveRequestConsent } from './requestConsentGate';
 import { hideBlock } from './hiddenBlocks';
+import { sanitizeAppChromeName } from './appChromeName';
 import { intersectSandbox } from './sandbox';
 import { projectBlockInitContext, projectBlockInitViewer } from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
@@ -127,17 +128,19 @@ export function AppBlockChrome({
   modelId?: number;
   modelName?: string;
 }) {
-  // The host-rendered name of the running app. Falls back to the literal
-  // "App block" so the trust label is never blank. (H2) Naming the app in the
-  // host chrome — not just the iframe `title` — lets the user tell WHICH
-  // sandboxed app is running and trust its provenance; the iframe can't fake it.
-  const label = appName?.trim() ? appName.trim() : 'App block';
-  // When we fall back to "App block", the icon's aria-label already says
-  // "App block" — drop the icon's label in that case so a screen reader doesn't
-  // read a redundant "App block App block". When we have a real app name, keep
-  // the icon's "App block" provenance aria-label so the icon + name read as
-  // "App block, <name>".
-  const iconAriaLabel = appName?.trim() ? 'App block' : undefined;
+  // The host-rendered name of the running app. (H2) Naming the app in the host
+  // chrome — not just the iframe `title` — lets the user tell WHICH sandboxed
+  // app is running and trust its provenance; the iframe can't fake it. The name
+  // is publisher-controlled, so sanitize it (strip bidi/control/zero-width chars,
+  // collapse whitespace, bound length) before rendering it in the trust label.
+  const sanitizedName = sanitizeAppChromeName(appName);
+  const hasName = sanitizedName !== null;
+  // Falls back to the literal "App block" so the trust label is never blank.
+  const label = sanitizedName ?? 'App block';
+  // When a real name shows, keep the icon's "App block" provenance aria-label so
+  // the icon + name read as "App block, <name>". On the fallback the visible
+  // Text already says "App block", so mark the icon decorative (aria-hidden)
+  // rather than leaving it an unlabeled SVG / double-reading "App block".
   return (
     <Group
       justify="space-between"
@@ -156,7 +159,13 @@ export function AppBlockChrome({
       <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
         {/* aria-label keeps the provenance signal for screen readers; the
             visible name (below) tells the user WHICH app is running. */}
-        <IconApps size={14} stroke={1.5} aria-label={iconAriaLabel} style={{ flexShrink: 0 }} />
+        <IconApps
+          size={14}
+          stroke={1.5}
+          aria-label={hasName ? 'App block' : undefined}
+          aria-hidden={hasName ? undefined : true}
+          style={{ flexShrink: 0 }}
+        />
         {/* Host-rendered (spoof-proof) app-name label. Truncates with an
             ellipsis at a bounded width so a long name never wraps or shoves
             the menu off the row in the narrow model.sidebar_top slot. */}
