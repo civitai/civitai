@@ -22,10 +22,13 @@ import {
 import type {
   AvailableBlock,
   ListAvailableInput,
+  MarketplaceMeta,
   PublicAppDetail,
+  SetMarketplaceMetaInput,
   SubscriptionRecord,
   SubscriptionScope,
 } from '~/server/schema/blocks/subscription.schema';
+import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
 
 const CACHE_TTL_SECONDS = 60;
@@ -2422,6 +2425,182 @@ export class BlockRegistry {
       // Already-public standalone origin (no token/scope). Same host the webhook
       // validates the submitted bundle's iframe.src against.
       liveUrl: `https://${row.block_id}.${env.APPS_DOMAIN}`,
+    };
+  }
+
+  /**
+   * F-E E4 featured rail. Anon-CAPABLE (same exposure posture as listAvailable),
+   * gated behind the mod-segmented appBlocks flag in the router (dark today).
+   *
+   * 🔒 ANON-EXPOSURE — returns the SAME public `AvailableBlock` allowlist the
+   * marketplace listing uses (id/blockId/appId/appName + the `toPublicBlock
+   * manifest` subset + installCount + category + scopesSummary). It is NOT a
+   * wider projection — it reuses the exact listing shape so the two can't drift.
+   * The WHERE clause additionally hard-filters `featured = true` (on top of
+   * `status='approved'`), so ONLY curated, approved apps are returned — a
+   * pending/rejected/unfeatured app can never reach an anon caller here.
+   *
+   * Ordering: `featured_order` ASC with NULLS LAST (a curated, mod-assigned
+   * position; unset rows sink to the end), then install_count DESC as a stable
+   * tiebreak, then `ab.id` ASC so the order is fully deterministic.
+   *
+   * No cursor: the featured set is a small curated list (rail above the grid),
+   * capped by `limit` (≤24); paginating a staff-pick rail isn't a requirement.
+   */
+  static async getFeaturedBlocks(limit: number): Promise<AvailableBlock[]> {
+    type Row = {
+      id: string;
+      block_id: string;
+      app_id: string;
+      app_name: string | null;
+      manifest: unknown;
+      install_count: bigint;
+      category: string | null;
+      approved_scopes: string[] | null;
+    };
+    const rows = (await dbRead.$queryRaw<Row[]>`
+      SELECT
+        ab.id,
+        ab.block_id,
+        ab.app_id,
+        oc.name AS app_name,
+        ab.manifest,
+        ab.category,
+        ab.approved_scopes,
+        (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
+         WHERE bus.app_block_id = ab.id) AS install_count
+      FROM app_blocks ab
+      LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
+      WHERE ab.status = 'approved'
+        AND ab.featured = true
+      ORDER BY ab.featured_order ASC NULLS LAST,
+               install_count DESC,
+               ab.id ASC
+      LIMIT ${limit}
+    ` ) as Row[];
+    // Project to the SAME public allowlist as listAvailable (no widening).
+    return rows.map((r) => ({
+      id: r.id,
+      blockId: r.block_id,
+      appId: r.app_id,
+      appName: r.app_name ?? null,
+      manifest: toPublicBlockManifest(r.manifest),
+      installCount: Number(r.install_count),
+      category: r.category ?? null,
+      scopesSummary: Array.isArray(r.approved_scopes)
+        ? r.approved_scopes
+            .filter((s): s is string => typeof s === 'string')
+            .slice(0, MARKETPLACE_SCOPES_SUMMARY_LIMIT)
+        : [],
+    }));
+  }
+
+  /**
+   * F-E E4 — MOD-ONLY: read the current marketplace metadata for one app_block,
+   * to seed the review-page curation form. The router gates this with
+   * `moderatorProcedure`; this method does NO auth itself.
+   *
+   * Returns `null` for a missing app (router → NOT_FOUND). Carries `status`
+   * (mod-relevant: featuring is approved-only) — this is a moderator surface,
+   * not the anon allowlist, so a status field is intentional here.
+   */
+  static async getMarketplaceMeta(appBlockId: string): Promise<MarketplaceMeta | null> {
+    const row = await dbRead.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: {
+        id: true,
+        status: true,
+        category: true,
+        featured: true,
+        featuredOrder: true,
+      },
+    });
+    if (!row) return null;
+    return {
+      appBlockId: row.id,
+      status: row.status,
+      category: row.category ?? null,
+      featured: row.featured,
+      featuredOrder: row.featuredOrder ?? null,
+    };
+  }
+
+  /**
+   * F-E E4 — MOD-ONLY: set the platform-controlled marketplace metadata
+   * (category / featured / featured_order) on ONE app_block. The router gates
+   * this with `moderatorProcedure` + the isModerator belt; this method does NO
+   * auth itself (caller must be a moderator).
+   *
+   * Validation:
+   *   - `category` (when provided & non-null) MUST be in the taxonomy const
+   *     (`MARKETPLACE_CATEGORIES`). Defense-in-depth: the router schema already
+   *     enums it, but a future internal caller can't slip an off-taxonomy value
+   *     past this layer. `null` clears it; `undefined` leaves it unchanged.
+   *   - Featuring (`featured === true`) is allowed ONLY for a `status='approved'`
+   *     app — a pending/rejected/withdrawn/disabled app can never be featured
+   *     (it would otherwise surface in the anon featured rail). Un-featuring or
+   *     editing category/order on a non-approved app is allowed.
+   *   - `featuredOrder` is an int (router-bounded) or null (clear).
+   *
+   * Returns the updated MarketplaceMeta. Throws NOT_FOUND for a missing app and
+   * BAD_REQUEST for an off-taxonomy category or featuring a non-approved app.
+   */
+  static async setMarketplaceMeta(
+    input: SetMarketplaceMetaInput
+  ): Promise<MarketplaceMeta> {
+    const { appBlockId, category, featured, featuredOrder } = input;
+
+    // Taxonomy belt (router already enums it; re-assert so no off-taxonomy value
+    // can ever be written by any caller).
+    if (
+      category != null &&
+      !(MARKETPLACE_CATEGORIES as readonly string[]).includes(category)
+    ) {
+      throwBadRequestError(`Unknown marketplace category: ${category}`);
+    }
+
+    const existing = await dbWrite.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: { id: true, status: true },
+    });
+    if (!existing) throwNotFoundError('App block not found');
+
+    // Approved-only featuring: refuse to feature anything not approved (it would
+    // otherwise appear in the anon-capable featured rail).
+    if (featured === true && existing!.status !== 'approved') {
+      throwBadRequestError(
+        `Only an approved app can be featured (status="${existing!.status}").`
+      );
+    }
+
+    // Build the patch from ONLY the provided fields — an omitted (undefined)
+    // field is left unchanged; an explicit null clears the column.
+    const data: {
+      category?: string | null;
+      featured?: boolean;
+      featuredOrder?: number | null;
+    } = {};
+    if (category !== undefined) data.category = category;
+    if (featured !== undefined) data.featured = featured;
+    if (featuredOrder !== undefined) data.featuredOrder = featuredOrder;
+
+    const updated = await dbWrite.appBlock.update({
+      where: { id: appBlockId },
+      data,
+      select: {
+        id: true,
+        status: true,
+        category: true,
+        featured: true,
+        featuredOrder: true,
+      },
+    });
+    return {
+      appBlockId: updated.id,
+      status: updated.status,
+      category: updated.category ?? null,
+      featured: updated.featured,
+      featuredOrder: updated.featuredOrder ?? null,
     };
   }
 }

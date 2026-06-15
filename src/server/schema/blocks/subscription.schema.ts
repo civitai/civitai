@@ -220,6 +220,68 @@ export const getAppDetailSchema = z.object({
 });
 export type GetAppDetailInput = z.infer<typeof getAppDetailSchema>;
 
+// ---------------------------------------------------------------------------
+// F-E E4 — curation (featured rail + mod-set marketplace metadata).
+// ---------------------------------------------------------------------------
+
+/**
+ * Input for the public, anon-capable `blocks.getFeaturedBlocks` (F-E E4
+ * featured rail). Only a `limit` — the featured set is the curated staff-pick
+ * list, so there's no client-controlled filter/sort (the order is the
+ * mod-assigned `featured_order`). Same exposure posture as `listAvailable`:
+ * approved-only, the `AvailableBlock` public allowlist, mod-gated until launch.
+ */
+export const getFeaturedBlocksSchema = z.object({
+  limit: z.number().int().min(1).max(24).default(12),
+});
+export type GetFeaturedBlocksInput = z.infer<typeof getFeaturedBlocksSchema>;
+
+/**
+ * Input for the MOD-ONLY `blocks.setMarketplaceMeta` (F-E E4 curation write).
+ * Sets the platform-controlled marketplace metadata on ONE app_block. All three
+ * fields are optional so a mod can patch any subset (e.g. just toggle
+ * `featured`); an omitted field is left unchanged at the service layer.
+ *
+ *   - `category`      — a value from the single-source taxonomy const
+ *                       (`MARKETPLACE_CATEGORIES`) OR `null` to clear it. The
+ *                       enum validation refuses any value outside the taxonomy.
+ *   - `featured`      — the staff-pick toggle (the featured rail filter).
+ *   - `featuredOrder` — the rail sort position (lower = earlier), or `null` to
+ *                       clear. Int only.
+ *
+ * NOTE: `category` uses `.nullable()` (not `.optional()` alone) so the client
+ * can explicitly CLEAR it (send `null`). We distinguish "omitted" (undefined →
+ * leave unchanged) from "clear" (null → set to NULL) at the service layer.
+ */
+export const setMarketplaceMetaSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+  category: z.enum(MARKETPLACE_CATEGORIES).nullable().optional(),
+  featured: z.boolean().optional(),
+  featuredOrder: z.number().int().min(0).max(100000).nullable().optional(),
+});
+export type SetMarketplaceMetaInput = z.infer<typeof setMarketplaceMetaSchema>;
+
+/** Input for the MOD-ONLY `blocks.getMarketplaceMeta` (seeds the curation UI). */
+export const getMarketplaceMetaSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+});
+export type GetMarketplaceMetaInput = z.infer<typeof getMarketplaceMetaSchema>;
+
+/**
+ * MOD-ONLY current marketplace metadata for one app_block — returned by
+ * `blocks.getMarketplaceMeta` so the review-page curation form can render the
+ * current category/featured/order. Carries `status` (mod-relevant: featuring is
+ * only allowed for `approved`) — this is a moderator surface, NOT the anon
+ * `AvailableBlock`/`PublicAppDetail` allowlist, so a mod-only field is fine.
+ */
+export type MarketplaceMeta = {
+  appBlockId: string;
+  status: string;
+  category: string | null;
+  featured: boolean;
+  featuredOrder: number | null;
+};
+
 /**
  * PUBLIC per-app detail shape returned by the anon-capable
  * `blocks.getAppDetail` (F-E E2 marketplace detail page).

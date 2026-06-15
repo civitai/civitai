@@ -11,7 +11,10 @@ import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import {
   getAppDetailSchema,
+  getFeaturedBlocksSchema,
+  getMarketplaceMetaSchema,
   listAvailableSchema,
+  setMarketplaceMetaSchema,
   subscriptionScopeSchema,
 } from '~/server/schema/blocks/subscription.schema';
 import {
@@ -987,6 +990,89 @@ export const blocksRouter = router({
       const detail = await BlockRegistry.getAppDetail(input.appBlockId);
       if (!detail) throw throwNotFoundError('App block not found');
       return detail;
+    }),
+
+  /**
+   * Featured rail — the curated, approved staff-picks (F-E E4). Public,
+   * ANON-CAPABLE; backs the "Featured" rail above the marketplace grid.
+   *
+   * GATING INVARIANT (E4) — anon-capable but DARK until launch (same as E1/E2):
+   *   - `enforceAppBlocksFlag` runs FIRST. For a real anon / non-mod viewer the
+   *     mod-segmented `app-blocks-enabled` flag never matches → the middleware
+   *     marks `_appBlocksDisabled` → this query returns an EMPTY rail (the same
+   *     posture as `listAvailable` for a disabled flag; no data leaks). The rail
+   *     only serves real anon callers once the SEGMENT is widened at launch.
+   *
+   * EXPOSURE / SECURITY — returns the SAME public `AvailableBlock` allowlist the
+   * marketplace LISTING uses (no widening): the service hard-filters
+   * `status='approved' AND featured=true`, so ONLY curated approved apps reach
+   * the caller, and each row is the `toPublicBlockManifest` subset +
+   * installCount + category + scopesSummary. No private/internal fields, no
+   * per-user data.
+   *
+   * Anon rate-limiting: same posture as `listAvailable`.
+   */
+  getFeaturedBlocks: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(getFeaturedBlocksSchema)
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return { items: [] };
+      }
+      const items = await BlockRegistry.getFeaturedBlocks(input.limit);
+      return { items };
+    }),
+
+  /**
+   * MOD-ONLY: read the current marketplace metadata (category/featured/order)
+   * for one app_block — seeds the review-page curation form (F-E E4).
+   *
+   * `moderatorProcedure` + the `isModerator` belt: a non-mod / anon caller is
+   * rejected before any data is read. This is a moderator surface (carries the
+   * internal `status`), NOT the anon `getAppDetail` allowlist.
+   */
+  getMarketplaceMeta: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getMarketplaceMetaSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('App Blocks curation is restricted to civitai team');
+      }
+      const meta = await BlockRegistry.getMarketplaceMeta(input.appBlockId);
+      if (!meta) throw throwNotFoundError('App block not found');
+      return meta;
+    }),
+
+  /**
+   * MOD-ONLY curation write — set category / featured / featured_order on one
+   * app_block (F-E E4). This is the curation surface backing /apps/review.
+   *
+   * GATING / SECURITY:
+   *   - `moderatorProcedure` checks the tRPC session user is a moderator, AND we
+   *     re-assert `ctx.user?.isModerator` (defense-in-depth, mirroring the other
+   *     mod mutations) — a non-mod / anon caller is DENIED (UNAUTHORIZED /
+   *     FORBIDDEN) before any write. There is intentionally NO public path here.
+   *   - `enforceAppBlocksFlag` keeps it behind the dark mod segment.
+   *   - Validation lives in the service (`setMarketplaceMeta`): the category must
+   *     be in the taxonomy const, and featuring is refused for a non-approved
+   *     app — so an unapproved app can never be surfaced in the anon featured
+   *     rail via this write.
+   */
+  setMarketplaceMeta: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(setMarketplaceMetaSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('App Blocks curation is restricted to civitai team');
+      }
+      return BlockRegistry.setMarketplaceMeta(input);
     }),
 
   /**

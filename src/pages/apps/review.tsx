@@ -8,8 +8,11 @@ import {
   Container,
   Group,
   Modal,
+  NumberInput,
   ScrollArea,
+  Select,
   Stack,
+  Switch,
   Table,
   Tabs,
   Text,
@@ -40,6 +43,11 @@ import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
 } from '~/server/services/blocks/scope-descriptions.constants';
+import {
+  MARKETPLACE_CATEGORIES,
+  MARKETPLACE_CATEGORY_LABELS,
+  type MarketplaceCategory,
+} from '~/server/services/blocks/marketplace-categories.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -756,6 +764,13 @@ function ReviewModal({
           View code in Forgejo
         </Button>
 
+        {/* F-E E4 curation — marketplace metadata (category / featured / order).
+            Only for an APPROVED request that has a linked app_block: featuring
+            is approved-only, and the meta lives on the app_block row. */}
+        {mode === 'approved' && request.appBlockId && (
+          <CurationPanel key={request.appBlockId} appBlockId={request.appBlockId} />
+        )}
+
         <Stack gap={4}>
           <Text size="sm" fw={600}>
             Files
@@ -878,6 +893,150 @@ function ReviewModal({
         )}
       </Stack>
     </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// F-E E4 curation panel — mod controls to set the marketplace category +
+// featured/order on an approved app_block (calls blocks.setMarketplaceMeta).
+// Mod-only (the trPC procedures are moderatorProcedure-gated; the whole review
+// page already requires isModerator).
+// ---------------------------------------------------------------------------
+
+const CATEGORY_SELECT_DATA = MARKETPLACE_CATEGORIES.map((c) => ({
+  value: c,
+  label: MARKETPLACE_CATEGORY_LABELS[c],
+}));
+
+function CurationPanel({ appBlockId }: { appBlockId: string }) {
+  const features = useFeatureFlags();
+  const utils = trpc.useUtils();
+  const metaQuery = trpc.blocks.getMarketplaceMeta.useQuery(
+    { appBlockId },
+    { enabled: !!features?.appBlocks }
+  );
+
+  // Local form state, seeded from the fetched meta. `dirty` becomes true once
+  // the mod edits a field so Save is only enabled when there's a change.
+  const [category, setCategory] = useState<MarketplaceCategory | null>(null);
+  const [featured, setFeatured] = useState(false);
+  const [featuredOrder, setFeaturedOrder] = useState<number | null>(null);
+  const [seeded, setSeeded] = useState(false);
+
+  const meta = metaQuery.data;
+  // Seed once when the query first resolves (and re-seed if a different app's
+  // meta arrives — keyed on appBlockId via the parent remount, but guard here
+  // too in case the panel is reused).
+  if (meta && !seeded) {
+    setCategory(
+      meta.category && (MARKETPLACE_CATEGORIES as readonly string[]).includes(meta.category)
+        ? (meta.category as MarketplaceCategory)
+        : null
+    );
+    setFeatured(meta.featured);
+    setFeaturedOrder(meta.featuredOrder);
+    setSeeded(true);
+  }
+
+  const saveMut = trpc.blocks.setMarketplaceMeta.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: 'Marketplace metadata saved.' });
+      await utils.blocks.getMarketplaceMeta.invalidate({ appBlockId });
+      await utils.blocks.getFeaturedBlocks.invalidate();
+      await utils.blocks.listAvailable.invalidate();
+    },
+    onError: (e) => {
+      showErrorNotification({ title: 'Save failed', error: new Error(e.message) });
+    },
+  });
+
+  const isApproved = meta?.status === 'approved';
+  const busy = saveMut.isPending;
+
+  const dirty =
+    !!meta &&
+    ((category ?? null) !== (meta.category ?? null) ||
+      featured !== meta.featured ||
+      (featuredOrder ?? null) !== (meta.featuredOrder ?? null));
+
+  return (
+    <Card withBorder p="sm">
+      <Stack gap="sm">
+        <Group gap={6}>
+          <IconLayoutGrid size={14} />
+          <Text size="sm" fw={600}>
+            Marketplace curation
+          </Text>
+        </Group>
+
+        {metaQuery.isLoading ? (
+          <Text size="xs" c="dimmed">
+            Loading…
+          </Text>
+        ) : metaQuery.isError ? (
+          <Alert color="red" icon={<IconAlertTriangle size={16} />}>
+            {metaQuery.error.message}
+          </Alert>
+        ) : (
+          <>
+            {!isApproved && (
+              <Alert color="yellow" variant="light" icon={<IconAlertTriangle size={16} />}>
+                This app is{' '}
+                <Code>{meta?.status ?? 'unknown'}</Code> — only an approved app can be
+                featured. Category/order can still be set.
+              </Alert>
+            )}
+            <Select
+              label="Category"
+              data={CATEGORY_SELECT_DATA}
+              value={category}
+              onChange={(v) => setCategory((v as MarketplaceCategory) || null)}
+              placeholder="No category"
+              clearable
+              disabled={busy}
+              w={240}
+            />
+            <Switch
+              label="Featured (staff pick rail)"
+              checked={featured}
+              onChange={(e) => setFeatured(e.currentTarget.checked)}
+              disabled={busy || !isApproved}
+            />
+            <NumberInput
+              label="Featured order (lower = earlier)"
+              value={featuredOrder ?? ''}
+              onChange={(v) =>
+                setFeaturedOrder(typeof v === 'number' ? v : v === '' ? null : Number(v))
+              }
+              min={0}
+              max={100000}
+              allowDecimal={false}
+              placeholder="unset"
+              disabled={busy}
+              w={240}
+            />
+            <Group justify="flex-end">
+              <Button
+                size="xs"
+                leftSection={<IconCheck size={14} />}
+                disabled={!dirty || busy}
+                loading={busy}
+                onClick={() =>
+                  saveMut.mutate({
+                    appBlockId,
+                    category: category ?? null,
+                    featured,
+                    featuredOrder: featuredOrder ?? null,
+                  })
+                }
+              >
+                Save curation
+              </Button>
+            </Group>
+          </>
+        )}
+      </Stack>
+    </Card>
   );
 }
 
