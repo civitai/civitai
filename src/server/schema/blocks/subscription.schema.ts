@@ -309,9 +309,65 @@ export type MarketplaceMeta = {
  *                      DOMAIN>`), the same already-public origin the host
  *                      iframes. Built server-side from the blockId + APPS_DOMAIN
  *                      so the client never needs the domain. No token, no scope.
+ *   - `screenshots`  — F-E E5 publisher-supplied screenshot gallery. ONLY the
+ *                      public DISPLAY URL of each screenshot (served by the gated
+ *                      `/api/blocks/screenshot/<appBlockId>/<index>.<ext>` route)
+ *                      + its index/contentType. These images were auto-discovered
+ *                      from the bundle, magic-byte-validated, and MOD-REVIEWED
+ *                      before approval — display-safe public data. The underlying
+ *                      MinIO key is NOT exposed (the URL is an opaque app route).
+ *                      Empty array when the app shipped no `screenshots/` dir.
  *
  * Add a field here ONLY after confirming it is publisher-display-safe for anon.
  */
+export type PublicScreenshot = {
+  index: number;
+  url: string;
+  contentType: string;
+};
+
+/** The accepted public screenshot content-types — anything else is dropped so a
+ *  stored record can never coerce the client into a non-image rendering. */
+const PUBLIC_SCREENSHOT_CONTENT_TYPES = new Set(['image/png', 'image/webp', 'image/jpeg']);
+const PUBLIC_SCREENSHOT_EXTS = new Set(['png', 'webp', 'jpg', 'jpeg']);
+
+/**
+ * F-E E5 — project the raw stored `app_blocks.screenshots` jsonb (an array of
+ * `{ key, index, ext, contentType }`) into the PUBLIC gallery shape: ONLY a
+ * display URL + index + content-type. The underlying MinIO `key` is NEVER
+ * exposed — the URL is the opaque, gated `/api/blocks/screenshot/<appBlockId>/
+ * <index>.<ext>` app route. Defensive against arbitrary/legacy jsonb:
+ *   - drops any entry whose index isn't a non-negative int,
+ *   - drops any entry whose ext/contentType isn't in the image allowlist (so a
+ *     tampered/legacy row can't smuggle a non-image content-type to the client),
+ *   - builds the URL from appBlockId + index + ext server-side (never trusts a
+ *     stored URL/key), so a malicious key in the column can't redirect the img.
+ * Returns [] for NULL / non-array / all-invalid.
+ */
+export function toPublicScreenshots(appBlockId: string, raw: unknown): PublicScreenshot[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PublicScreenshot[] = [];
+  for (const entry of raw) {
+    const e = (entry ?? {}) as Record<string, unknown>;
+    const index = e.index;
+    const ext = typeof e.ext === 'string' ? e.ext.toLowerCase() : '';
+    const contentType = typeof e.contentType === 'string' ? e.contentType : '';
+    if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) continue;
+    if (!PUBLIC_SCREENSHOT_EXTS.has(ext)) continue;
+    if (!PUBLIC_SCREENSHOT_CONTENT_TYPES.has(contentType)) continue;
+    out.push({
+      index,
+      // Server-built opaque app route — never the stored key/url. encodeURIComponent
+      // the id defensively (it's a ULID-shaped PK, but be safe).
+      url: `/api/blocks/screenshot/${encodeURIComponent(appBlockId)}/${index}.${ext}`,
+      contentType,
+    });
+  }
+  // Stable display order by index.
+  out.sort((a, b) => a.index - b.index);
+  return out;
+}
+
 export type PublicAppDetail = {
   id: string;
   blockId: string;
@@ -323,4 +379,5 @@ export type PublicAppDetail = {
   version: string | null;
   installCount: number;
   liveUrl: string;
+  screenshots: PublicScreenshot[];
 };

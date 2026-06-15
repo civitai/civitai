@@ -21,6 +21,7 @@ import {
   approveRequestSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
+  getPublishRequestScreenshotsSchema,
   listApprovedRequestsSchema,
   listPendingRequestsSchema,
   listRejectedRequestsSchema,
@@ -509,6 +510,33 @@ export const blocksRouter = router({
         throw throwAuthorizationError('Mod review history is restricted to civitai team');
       }
       return listRejectedRequests({ limit: input.limit, cursor: input.cursor });
+    }),
+
+  /**
+   * MOD-ONLY (F-E E5): derive the submitted bundle's screenshots for ONE publish
+   * request so the reviewer can SEE the publisher-supplied images before
+   * approving (publisher images = an abuse vector → must be reviewed with the
+   * bundle). Returns base64 data URLs (the pending app has no public screenshot
+   * URL yet — it isn't approved). Re-runs the SAME caps / magic-byte / name
+   * validation as submit, so a malformed screenshot surfaces here too.
+   *
+   * `moderatorProcedure` + the `isModerator` belt + `enforceAppBlocksFlag`: a
+   * non-mod / anon caller is denied before any bundle is read. No public path.
+   */
+  getPublishRequestScreenshots: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getPublishRequestScreenshotsSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review is restricted to civitai team');
+      }
+      const { getPublishRequestScreenshots } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      const items = await getPublishRequestScreenshots({
+        publishRequestId: input.publishRequestId,
+      });
+      return { items };
     }),
 
   /**

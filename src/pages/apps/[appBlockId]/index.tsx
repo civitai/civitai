@@ -9,6 +9,7 @@ import {
   Group,
   List,
   Loader,
+  SimpleGrid,
   Stack,
   Text,
   ThemeIcon,
@@ -119,6 +120,10 @@ export default function AppDetailPage() {
   const description = detail?.manifest.description ?? '';
   const slots = detail?.manifest.targets?.map((t) => t.slotId).filter(Boolean) ?? [];
   const scopes = detail?.scopes ?? [];
+  // F-E E5 publisher screenshot gallery — public display URLs (gated app route),
+  // magic-byte-validated + mod-reviewed at approval. Empty when the app shipped
+  // no `screenshots/` dir.
+  const screenshots = detail?.screenshots ?? [];
 
   function handleInstall() {
     if (!detail) return;
@@ -235,6 +240,43 @@ export default function AppDetailPage() {
                 <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                   {description}
                 </Text>
+              )}
+
+              {/* F-E E5 — publisher screenshot gallery. Public display URLs
+                  (the gated /api/blocks/screenshot/... route); the images were
+                  auto-discovered from the submitted bundle, magic-byte-validated,
+                  and MOD-REVIEWED before approval. Rendered alongside (above) the
+                  live preview per design decision #2 ("do both"). Hidden entirely
+                  when the app shipped no screenshots. */}
+              {screenshots.length > 0 && (
+                <>
+                  <Divider />
+                  <Stack gap="xs">
+                    <Title order={4}>Screenshots</Title>
+                    <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                      {screenshots.map((shot) => (
+                        <Card
+                          key={shot.index}
+                          withBorder
+                          padding={0}
+                          radius="md"
+                          style={{ overflow: 'hidden' }}
+                        >
+                          {/* Plain <img> from the stored URL (decision #2). No
+                              Next/Image optimizer — these are served by our own
+                              gated route, not a configured image domain. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={shot.url}
+                            alt={`${name} screenshot ${shot.index + 1}`}
+                            loading="lazy"
+                            style={{ width: '100%', height: 'auto', display: 'block' }}
+                          />
+                        </Card>
+                      ))}
+                    </SimpleGrid>
+                  </Stack>
+                </>
               )}
 
               <Divider />

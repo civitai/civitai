@@ -2241,6 +2241,16 @@ model AppBlock {
   featured           Boolean   @default(false) // E4 curation: staff-pick rail
   featuredOrder      Int?      @map("featured_order") // E4 curation: rail order
 
+  // F-E E5 marketplace screenshot gallery — publisher-supplied screenshots
+  // auto-discovered from the submitted bundle's `screenshots/` dir, validated
+  // (count/size/magic-bytes/name), uploaded to the bundle MinIO at approve, and
+  // recorded here as an array of { key, index, ext, contentType } entries.
+  // PUBLIC display data (served via the gated /api/blocks/screenshot/... route),
+  // but MOD-REVIEWED before approval. ADDITIVE + manually applied (migration
+  // 20260615120000_e5_screenshots; CNPG nvme0 does not auto-apply). NULL until
+  // applied — read ONLY by the dark, mod-gated getAppDetail (NOT listAvailable).
+  screenshots        Json?     // E5: [{ key, index, ext, contentType }]
+
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 

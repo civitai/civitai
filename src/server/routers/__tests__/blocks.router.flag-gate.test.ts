@@ -241,3 +241,19 @@ describe('enforceAppBlocksFlag — mutation (installOnModel)', () => {
     expect(mockInstallOnModel).not.toHaveBeenCalled();
   });
 });
+
+describe('enforceAppBlocksFlag — mod query (getPublishRequestScreenshots, E5 Low-2)', () => {
+  // The new mod-review screenshot query is moderatorProcedure + enforceAppBlocksFlag;
+  // a non-mod / anon caller must be rejected before the query body reaches (mod-only).
+  const input = { publishRequestId: 'pr_1' };
+
+  it('non-moderator: rejected', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
+    await expect(caller.getPublishRequestScreenshots(input)).rejects.toBeInstanceOf(TRPCError);
+  });
+
+  it('anonymous: rejected', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
+    await expect(caller.getPublishRequestScreenshots(input)).rejects.toBeInstanceOf(TRPCError);
+  });
+});

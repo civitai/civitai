@@ -29,7 +29,7 @@ import type {
   SubscriptionScope,
 } from '~/server/schema/blocks/subscription.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
-import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
+import { toPublicBlockManifest, toPublicScreenshots } from '~/server/schema/blocks/subscription.schema';
 
 const CACHE_TTL_SECONDS = 60;
 export const MAX_BLOCKS_PER_SLOT = 3;
@@ -2381,6 +2381,10 @@ export class BlockRegistry {
       version: string | null;
       approved_scopes: string[] | null;
       install_count: bigint;
+      // F-E E5: stored screenshot records ([{ key, index, ext, contentType }]),
+      // jsonb. NULL until the E5 migration is applied + an app is (re)approved
+      // with a `screenshots/` dir — projected to PUBLIC display URLs below.
+      screenshots: unknown;
     };
     const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT
@@ -2393,6 +2397,7 @@ export class BlockRegistry {
         ab.content_rating,
         ab.version,
         ab.approved_scopes,
+        ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count
       FROM app_blocks ab
@@ -2425,6 +2430,11 @@ export class BlockRegistry {
       // Already-public standalone origin (no token/scope). Same host the webhook
       // validates the submitted bundle's iframe.src against.
       liveUrl: `https://${row.block_id}.${env.APPS_DOMAIN}`,
+      // F-E E5 screenshot gallery — PUBLIC display URLs only (the gated app
+      // route), built server-side from appBlockId + index + ext. The stored
+      // MinIO key is never exposed; a NULL column (pre-migration / no screenshots)
+      // yields []. These images were magic-byte-validated + mod-reviewed.
+      screenshots: toPublicScreenshots(row.id, row.screenshots),
     };
   }
 
