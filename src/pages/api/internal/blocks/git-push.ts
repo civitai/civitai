@@ -10,6 +10,7 @@ import {
   type AppContext,
 } from '~/server/services/block-manifest-validator.service';
 import { FORGEJO_ORG, getRawFile, setCommitStatus } from '~/server/services/blocks/forgejo.service';
+import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 
 /**
  * POST /api/internal/blocks/git-push
@@ -303,6 +304,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     });
     res.status(400).json({ error: 'Invalid manifest JSON' });
     return;
+  }
+
+  // iframe.src is platform-owned (see manifest-normalize.ts). Stamp the
+  // canonical per-app subdomain root onto the parsed manifest BEFORE validation
+  // + the exact-match check below, so an unreviewed direct push that omitted
+  // iframe.src (or carried a stale host) is normalized rather than rejected. The
+  // approve flow already commits a canonical manifest, so this is also belt-and-
+  // suspenders for that path. `slug` (the repo name) is the source of truth.
+  if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)) {
+    stampCanonicalIframeSrc(manifest as Record<string, unknown>, slug, env.APPS_DOMAIN);
   }
 
   const appContext: AppContext = {

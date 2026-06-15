@@ -377,87 +377,59 @@ describe('submitVersion', () => {
     ).rejects.toThrow(/name must be a non-empty string/);
   });
 
-  // ---- iframe.src static checks (catch mixed-content + W12-domain drift
-  // at submit time so devs don't ship a bundle that builds clean but
-  // can't actually mount in the iframe).
+  // ---- iframe.src is PLATFORM-OWNED: the developer never authors it. submit
+  // DERIVES + stamps the canonical per-app subdomain root, overwriting whatever
+  // the dev shipped (or omitted). The deep BlockManifestValidator at approve
+  // still validates the stamped value against OauthClient.allowedOrigins. (Was:
+  // submit hard-rejected a non-canonical iframe.src after the upload.)
 
-  it('rejects when iframe.src is missing', async () => {
+  // Pull the manifest that submitVersion persisted into the publish_request row.
+  function persistedManifest(): Record<string, any> {
+    const call = mockDbWrite.appBlockPublishRequest.create.mock.calls.at(-1);
+    return (call?.[0] as any).data.manifest as Record<string, any>;
+  }
+
+  it('stamps the canonical iframe.src when the manifest omits it', async () => {
     const { submitVersion } = await import('../publish-request.service');
+    // iframe present but no src (dev only set sizing) — and a bundle with no
+    // iframe object at all both resolve to the canonical root.
     const buf = await makeValidBundle({ iframe: { minHeight: 300 } });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /manifest\.iframe\.src must be a string/
-    );
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: 42 });
+    expect(result.publishRequestId).toBeDefined();
+    expect(persistedManifest().iframe.src).toBe('https://hello.civit.ai/');
+    // Other dev-authored iframe fields are preserved.
+    expect(persistedManifest().iframe.minHeight).toBe(300);
   });
 
-  it('rejects HTTP iframe.src as mixed content', async () => {
+  it('overwrites a dev-supplied non-canonical iframe.src (http / wrong host / path)', async () => {
     const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({
-      iframe: { src: 'http://hello.civit.ai/', minHeight: 300 },
-    });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /must use https.*mixed content/i
-    );
+    for (const src of [
+      'http://hello.civit.ai/',
+      'https://attacker.example/',
+      'https://blocks-pr2319.civitaic.com/hello/',
+      'https://hello.civit.ai/hello/',
+      'not a url',
+    ]) {
+      mockDbWrite.appBlockPublishRequest.create.mockClear();
+      const buf = await makeValidBundle({
+        iframe: { src, minHeight: 300, sandbox: 'allow-scripts' },
+      });
+      const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: 42 });
+      expect(result.publishRequestId).toBeDefined();
+      // src normalized to canonical; sandbox preserved.
+      expect(persistedManifest().iframe.src).toBe('https://hello.civit.ai/');
+      expect(persistedManifest().iframe.sandbox).toBe('allow-scripts');
+    }
   });
 
-  it('rejects malformed iframe.src URL', async () => {
-    const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({
-      iframe: { src: 'not a url', minHeight: 300 },
-    });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /is not a valid URL/
-    );
-  });
-
-  it("rejects iframe.src hostname that doesn't match the per-app subdomain", async () => {
-    const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({
-      iframe: { src: 'https://attacker.example/', minHeight: 300 },
-    });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /host must be "hello\.civit\.ai"/
-    );
-  });
-
-  it('rejects leftover hackathon block-host URL pattern', async () => {
-    // Pre-W12 manifests used a shared block-host with path prefix:
-    //   https://blocks-pr2319.civitaic.com/<slug>/
-    // Now devs must use https://<slug>.civit.ai/ — catch this at submit.
-    const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({
-      iframe: {
-        src: 'https://blocks-pr2319.civitaic.com/hello/',
-        minHeight: 300,
-      },
-    });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /host must be "hello\.civit\.ai"/
-    );
-  });
-
-  it('rejects iframe.src with a non-root pathname', async () => {
-    // A stale Vite base: '/hello/' + nginx redirect from / produces a
-    // working bundle that mixed-content-blocks in the iframe (skill
-    // gotcha + 2026-05-29 incident). Reject the leftover path prefix.
-    const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({
-      iframe: { src: 'https://hello.civit.ai/hello/', minHeight: 300 },
-    });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /must point at the subdomain root.*pathname "\/hello\/"/
-    );
-  });
-
-  it('accepts the canonical iframe.src shape (https + matching subdomain + root path)', async () => {
+  it('leaves an already-canonical iframe.src unchanged', async () => {
     const { submitVersion } = await import('../publish-request.service');
     const buf = await makeValidBundle({
       iframe: { src: 'https://hello.civit.ai/', minHeight: 300 },
     });
-    const result = await submitVersion({
-      bundleBuffer: buf,
-      submittedByUserId: 42,
-    });
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: 42 });
     expect(result.publishRequestId).toBeDefined();
+    expect(persistedManifest().iframe.src).toBe('https://hello.civit.ai/');
   });
 
   it('rejects same-user resubmit with a self-withdrawable error wording', async () => {
@@ -1102,6 +1074,21 @@ describe('approveRequest', () => {
       'block.manifest.json',
       'index.html',
     ]);
+
+    // iframe.src is platform-owned: the committed block.manifest.json carries
+    // the canonical per-app subdomain root (the default test manifest ships
+    // `https://hello.civit.ai` with no trailing slash → normalized to `.../`),
+    // so civitai-apps/<slug> stays byte-consistent with app_blocks.manifest and
+    // the git-push webhook re-validates the canonical value.
+    const committedManifest = JSON.parse(
+      commitArg.files
+        .find((f: { path: string }) => f.path === 'block.manifest.json')
+        .content.toString('utf8')
+    );
+    expect(committedManifest.iframe.src).toBe('https://hello.civit.ai/');
+    // ...and the app_blocks row stores the same canonical value.
+    const abArg = mockDbWrite.appBlock.create.mock.calls[0][0].data;
+    expect((abArg.manifest as any).iframe.src).toBe('https://hello.civit.ai/');
   });
 
   it('A1: caps OauthClient.allowedScopes to the manifest-derived bitmask (not Full)', async () => {
@@ -1553,10 +1540,14 @@ describe('approveRequest', () => {
   // pointing at content the build chain will never accept.
   it('FIX (H-4): subsequent-version approve rejects when manifest fails validation', async () => {
     const { approveRequest } = await import('../publish-request.service');
+    // iframe.src is platform-stamped before validation, so it can't be the
+    // failure trigger anymore. Use a sandbox token disallowed for the
+    // unverified trust tier (the gen-from-model 2026-05-29 incident shape) —
+    // a webhook-rejectable manifest that survives canonical-src stamping.
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
       pendingRequest({
         manifest: manifest({
-          iframe: { src: 'https://attacker.example', minHeight: 300 }, // origin not in OauthClient.allowedOrigins
+          iframe: { minHeight: 300, sandbox: 'allow-scripts allow-same-origin' },
         }),
       })
     );
@@ -1589,13 +1580,13 @@ describe('approveRequest', () => {
   // before the OauthClient is even created.
   it('FIX (H-4): first-version approve rejects when manifest fails validation', async () => {
     const { approveRequest } = await import('../publish-request.service');
+    // iframe.src is platform-stamped before validation; trigger the H-4 refusal
+    // via a sandbox token disallowed for the unverified tier instead (a real
+    // webhook-rejectable shape that canonical-src stamping does not fix).
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
       pendingRequest({
         manifest: manifest({
-          // Origin not in the to-be-created allowedOrigins (which would be
-          // ['https://hello.civit.ai']) — same failure mode the webhook
-          // surfaces after the fact.
-          iframe: { src: 'https://elsewhere.example', minHeight: 300 },
+          iframe: { minHeight: 300, sandbox: 'allow-scripts allow-same-origin' },
         }),
       })
     );
