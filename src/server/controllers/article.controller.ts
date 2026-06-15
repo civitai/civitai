@@ -37,12 +37,23 @@ export const upsertArticleHandler = async ({
     if (includesAdminOnlyTag && !ctx.features.adminTags) throw throwAuthorizationError();
     const scanContent = ctx.features.articleImageScanning ?? false;
 
-    return upsertArticle({
+    const result = await upsertArticle({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
       scanContent,
     });
+
+    // Track provenance (web vs. API key vs. OAuth app) for moderation tracing.
+    // nsfw is best-effort false here — an article's nsfwLevel is derived
+    // asynchronously after create, so it isn't reliable at this point.
+    await ctx.track.article({
+      type: input.id ? 'Update' : 'Create',
+      articleId: result.id,
+      nsfw: false,
+    });
+
+    return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

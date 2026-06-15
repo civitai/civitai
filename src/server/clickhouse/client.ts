@@ -535,7 +535,7 @@ export class Tracker {
   }
 
   public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
-    return this.track('modelEvents', values);
+    return this.track('modelEvents', { ...values, ...this.provenance });
   }
 
   public redeemableCode(activity: string, details: { quantity?: number; code?: string }) {
@@ -551,7 +551,7 @@ export class Tracker {
     time?: Date;
     fileId?: number;
   }) {
-    return this.track('modelVersionEvents', values);
+    return this.track('modelVersionEvents', { ...values, ...this.provenance });
   }
 
   public partnerEvent(values: {
@@ -580,7 +580,7 @@ export class Tracker {
     nsfw: boolean;
     rating: number;
   }) {
-    return this.track('resourceReviews', values);
+    return this.track('resourceReviews', { ...values, ...this.provenance });
   }
 
   public reaction(values: {
@@ -647,7 +647,7 @@ export class Tracker {
     benefactorId?: number;
     userId?: number;
   }) {
-    return this.track('bountyEntries', values);
+    return this.track('bountyEntries', { ...values, ...this.provenance });
   }
 
   public bountyBenefactor(values: {
@@ -660,6 +660,14 @@ export class Tracker {
 
   public modelEngagement(values: { type: ModelEngagementType; modelId: number }) {
     return this.track('modelEngagements', values);
+  }
+
+  public article(values: {
+    type: 'Create' | 'Publish' | 'Update' | 'Unpublish' | 'Delete';
+    articleId: number;
+    nsfw: boolean;
+  }) {
+    return this.track('articles', { ...values, ...this.provenance });
   }
 
   public articleEngagement(values: {
