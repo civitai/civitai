@@ -111,8 +111,11 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
   // authenticated `getInstallConfig` procedure instead, keyed on appBlockId.
   // The "Manage" path (/apps/installed) passes the FULL manifest, so its
   // `manifest.settings` is already populated; the fetched value matches it.
-  const { data: installConfig, isLoading: installConfigLoading } =
-    trpc.blocks.getInstallConfig.useQuery({ appBlockId: block.id }, { staleTime: 60_000 });
+  const {
+    data: installConfig,
+    isLoading: installConfigLoading,
+    isError: installConfigError,
+  } = trpc.blocks.getInstallConfig.useQuery({ appBlockId: block.id }, { staleTime: 60_000 });
 
   // Manifest-driven settings (W3 Phase 4). Fields without an explicit
   // `scope:` declaration are treated as 'publisher' for back-compat with
@@ -131,11 +134,18 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
   );
   const declaredScopes = installConfig?.scopes ?? manifest.scopes ?? [];
   // On the install path `block.manifest` is the public allowlist (scopes
-  // stripped), so the scope disclosure depends on getInstallConfig. Suppress
-  // the "doesn't request any permissions" copy until it resolves so we never
-  // flash a false all-clear. The Manage path carries the full manifest, so
-  // `manifest.scopes` is defined and this is never pending there.
+  // stripped), so the scope disclosure depends on getInstallConfig. The Manage
+  // path carries the full manifest, so `manifest.scopes` is defined there and
+  // neither of these is ever set.
+  //
+  // - `scopesPending`: still loading → show a loader, never an all-clear.
+  // - `scopesUnavailable`: getInstallConfig errored → declaredScopes falls back
+  //   to [], which would render the "doesn't request any permissions" copy and
+  //   mislead the user into authorizing UNDISCLOSED scopes. Render an explicit
+  //   error instead and block Save so install never proceeds without a real
+  //   disclosure.
   const scopesPending = manifest.scopes === undefined && installConfigLoading;
+  const scopesUnavailable = manifest.scopes === undefined && installConfigError;
 
   // Initialise the form from existing subscriptions when present. Settings
   // are read from whichever scope has them set — they're meant to be
@@ -299,6 +309,11 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               Loading permissions…
             </Text>
           </Group>
+        ) : scopesUnavailable ? (
+          <Text size="xs" c="red">
+            Couldn&apos;t load this app&apos;s permissions. Close and try again before installing —
+            don&apos;t install without reviewing what it can access.
+          </Text>
         ) : (
           <BlockScopeList
             scopes={declaredScopes}
@@ -428,6 +443,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
             <Button
               leftSection={<IconCheck size={16} />}
               loading={upsertMutation.isPending || deleteMutation.isPending}
+              disabled={scopesUnavailable}
               onClick={handleSave}
             >
               Save
