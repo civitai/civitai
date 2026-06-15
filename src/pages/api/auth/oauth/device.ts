@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { randomBytes, randomInt } from 'crypto';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { dbRead } from '~/server/db/client';
@@ -7,6 +8,7 @@ import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-
 import { DEVICE_CODE_TTL, DEVICE_POLL_INTERVAL } from '~/server/oauth/constants';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 import { env } from '~/env/server';
 
 const DEVICE_CODE_KEY = REDIS_KEYS.OAUTH.DEVICE_CODES;
@@ -27,6 +29,9 @@ function generateUserCode(): string {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   const shouldStop = addCorsHeaders(req, res, ['POST']);
   if (shouldStop) return;
 
@@ -40,6 +45,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res
       .status(400)
       .json({ error: 'invalid_request', error_description: 'Missing client_id' });
+  }
+
+  // SECURITY (audit A1): App-Blocks-provisioned OauthClients (`appblk-<slug>`)
+  // are block-token-only. They carry grants:[] so the device-flow grant check
+  // below already rejects them, but reject explicitly here too (and before the
+  // DB lookup) so the boundary is unambiguous and defense-in-depth. Scoped to
+  // `appblk-` ids only — genuine OAuth-apps clients are unaffected.
+  if (isAppBlockOauthClientId(client_id)) {
+    return res.status(400).json({
+      error: 'invalid_client',
+      error_description: 'This client cannot be used for the device flow',
+    });
   }
 
   // Rate limit

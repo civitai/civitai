@@ -1,7 +1,7 @@
 ---
 title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
-lastmod: 2026-05-28
+lastmod: 2026-06-15
 ---
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [civitai.com](https://civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
@@ -161,7 +161,7 @@ Any content that violates one of the following terms above but has been self-cen
 
 - 11.3 violate, encourage others to violate, or provide instructions on how to violate, any right of a third party, including by infringing or misappropriating any third-party intellectual property right;
 
-- 11.4 access, search, or otherwise use any portion of the Service through the use of any engine, software, tool, agent, device, or mechanism (including spiders, robots, crawlers, and data mining tools) other than the software or search agents provided by Civitai;
+- 11.4 access, search, or otherwise use any portion of the Service through the use of any engine, software, tool, agent, device, or mechanism (including spiders, robots, crawlers, and data mining tools), except (a) through interfaces we expressly provide for automated access, such as our public API or official Model Context Protocol (MCP) server, in each case accessed with your own valid credentials and within any applicable rate limits, (b) the software or search agents provided by Civitai, or (c) as we otherwise authorize in writing. You remain fully responsible for all activity conducted through such authorized access as if you performed it manually, and authorized access does not permit any conduct otherwise prohibited by these Terms (including the activities described in Section 11.9);
 
 - 11.5 interfere with security-related features of the Service, including by: (i) disabling or circumventing features that prevent or limit use, printing or copying of any content; or (ii) reverse engineering or otherwise attempting to discover the source code of any portion of the Service except to the extent that the activity is expressly permitted by applicable law;
 

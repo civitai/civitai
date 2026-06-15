@@ -11,6 +11,7 @@ import { useIsClient } from '~/providers/IsClientProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
+import { Announcements } from '~/components/Announcements/Announcements';
 
 import { GenerationForm } from './GenerationForm';
 import { GenerationFormProvider } from './GenerationFormProvider';
@@ -63,6 +64,7 @@ export function GenerationFormV2({ debug = false }: GenerationFormV2Props = {}) 
           pt={0}
           className="flex flex-col gap-2"
         >
+          <Announcements type="generator" />
           <GenerationFormProvider debug={debug}>
             <GenerationForm />
           </GenerationFormProvider>

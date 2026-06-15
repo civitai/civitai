@@ -8,6 +8,14 @@ import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+// NOTE: do NOT statically import the redis prom metrics from '~/server/prom/client'.
+// This module is client-bundle-reachable (`_app.tsx` → `system-cache.ts` → here),
+// and prom-client eagerly requires `fs`/`cluster` at module load (defaultMetrics +
+// cluster aggregator), which the pages-router client webpack build cannot resolve
+// → "Module not found: Can't resolve 'cluster'/'fs'". The metrics are defined and
+// registered server-side in `~/server/prom/client` and published on `globalThis`
+// (`__civitaiRedisMetrics`); `instrumentCommands` reads that handle at command time
+// (server runtime only). See getRedisMetrics() below.
 
 export type RedisKeyStringsCache = Values<typeof REDIS_KEYS>;
 export type RedisKeyStringsSys = Values<typeof REDIS_SYS_KEYS>;
@@ -263,6 +271,23 @@ function getBaseClient(type: 'cache' | 'system') {
       return Math.min(retries * 100, 3000);
     },
     connectTimeout: env.REDIS_TIMEOUT,
+    // Socket-level inactivity guard. node-redis maps this to net.Socket.setTimeout,
+    // an IDLE timer that fires when NO read OR write happens for this long (any
+    // command write or received reply resets it — verified against @redis/client@5.8.3
+    // + a real redis-server), then destroys the socket with a SocketTimeoutError and
+    // triggers the reconnectStrategy above.
+    // This is the structural fix for the 504 cascade: on a SILENT half-open
+    // connection (pod reschedule/failover, no RST/FIN) the in-flight command is PARKED
+    // in the node-redis queue and blocks every subsequent write (incl. the keepalive
+    // PING), so the idle timer runs to completion and tears the dead socket down in
+    // ~REDIS_SOCKET_TIMEOUT_MS instead of waiting ~30s for OS TCP keepalive (= Traefik
+    // ceiling = 504); parked commands then reject promptly and the client reconnects.
+    // On a HEALTHY idle socket the keepalive PING (pingInterval, derived below) writes
+    // every interval and keeps this timer reset, so it does NOT spuriously fire.
+    // Tunable via REDIS_SOCKET_TIMEOUT_MS (0/unset to disable).
+    ...(env.REDIS_SOCKET_TIMEOUT_MS > 0
+      ? { socketTimeout: env.REDIS_SOCKET_TIMEOUT_MS }
+      : {}),
   };
 
   const authConfig = {
@@ -270,7 +295,23 @@ function getBaseClient(type: 'cache' | 'system') {
     password: url.password,
   };
 
-  const pingInterval = 4 * 60 * 1000;
+  // Keepalive PING interval. node-redis issues a PING every interval ONLY when the
+  // socket is otherwise idle (a parked/in-flight command blocks it from being written),
+  // and each PING is a write+reply that resets the socketTimeout idle timer — so it
+  // keeps a HEALTHY idle socket alive while a genuinely half-open socket (parked command
+  // blocks the PING) still trips socketTimeout. The INVARIANT pingInterval < socketTimeout
+  // is what prevents a healthy idle socket from spuriously firing socketTimeout. We CLAMP
+  // to min(env, socketTimeout/2) so the invariant holds even if REDIS_PING_INTERVAL_MS is
+  // mis-set >= socketTimeout. When socketTimeout is disabled (0) there is no idle timer
+  // to keep reset, so we just honor the configured ping interval.
+  const socketTimeoutMs = env.REDIS_SOCKET_TIMEOUT_MS;
+  const pingInterval =
+    socketTimeoutMs > 0
+      ? Math.min(env.REDIS_PING_INTERVAL_MS, Math.floor(socketTimeoutMs / 2))
+      : env.REDIS_PING_INTERVAL_MS;
+  log(
+    `Redis ping interval (${type}) = ${pingInterval}ms (env REDIS_PING_INTERVAL_MS=${env.REDIS_PING_INTERVAL_MS}, socketTimeout=${socketTimeoutMs}ms)`
+  );
 
   // System redis is always a single node
   // Cache redis can be either cluster or single node based on env.REDIS_CLUSTER
@@ -455,8 +496,116 @@ function getBaseClient(type: 'cache' | 'system') {
   return baseClient;
 }
 
+/**
+ * Wrap the per-client command chokepoint so EVERY command is counted in the
+ * `redis_commands_inflight` gauge and timed into `redis_command_duration_seconds`.
+ *
+ * The chokepoint differs by client kind (verified against @redis/client@5.8.3):
+ *  - SINGLE client (sysRedis): typed methods (`get`/`hGetAll`/`set`/...) →
+ *    `_executeCommand` → `this.sendCommand`. Wrap `sendCommand` on `_self`.
+ *  - CLUSTER client (cache): typed methods route through `this._self._execute(...)`,
+ *    NOT the cluster's top-level `sendCommand` (that's only for keyless commands).
+ *    `_execute` is the per-command wrapper that picks a node and runs it. Wrap
+ *    `_execute` on `_self` so both keyed and keyless cluster commands are caught.
+ *
+ * `createCluster` returns a proxy (`Object.create(realCluster)`) and `_self` points
+ * at the real instance, so we must patch the method on `client._self` (own property),
+ * which proxies inherit through the prototype chain.
+ *
+ * NOTE: node-redis routes MULTI/pipeline sub-commands through `#queue.addCommand`
+ * directly (NOT `sendCommand`/`_execute`), so a batched `multi().exec()` is counted
+ * as ONE inflight unit, not per sub-command. Acceptable: the gauge is a
+ * stall/concurrency signal and a parked pipeline still shows as one long-lived
+ * inflight entry landing in the top duration bucket.
+ *
+ * Overhead per command: one gauge inc/dec + one Date.now() delta observe. No
+ * per-command allocation beyond the closure the call already pays for.
+ */
+// Shape of the prom metric handles published by '~/server/prom/client' on
+// globalThis. Only the methods instrumentCommands calls are typed here.
+type RedisMetricsBridge = {
+  redisCommandsInflight: { inc: (labels: { client: string }) => void; dec: (labels: { client: string }) => void };
+  redisCommandDuration: { observe: (labels: { client: string }, value: number) => void };
+};
+
+// Server-runtime lookup of the prom metric handles WITHOUT a static import edge
+// (which would drag prom-client's fs/cluster requires into the client bundle).
+// Returns undefined until '~/server/prom/client' has loaded server-side (always
+// true by the time real redis commands run — trpc/api routes import it at startup);
+// when undefined, instrumentation simply no-ops for that command (leak-free).
+function getRedisMetrics(): RedisMetricsBridge | undefined {
+  return (globalThis as unknown as { __civitaiRedisMetrics?: RedisMetricsBridge })
+    .__civitaiRedisMetrics;
+}
+
+function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
+  const self = client?._self ?? client;
+  if (!self) return;
+  const labels = { client: clientLabel } as const;
+  // Detect the real chokepoint by capability rather than the static label: a
+  // 'cache' client is a CLUSTER (wrap `_execute`) only when REDIS_CLUSTER is on;
+  // otherwise it's a plain single client (wrap `sendCommand`), same as sysRedis.
+  const isClusterClient = typeof self._execute === 'function';
+  const methodName = isClusterClient ? '_execute' : 'sendCommand';
+  const original = self[methodName];
+  if (typeof original !== 'function') {
+    log(`Redis instrumentation: ${methodName} not found on ${clientLabel} client`);
+    return;
+  }
+  self[methodName] = function (this: any, ...args: any[]) {
+    // Read the metric handles published by '~/server/prom/client' on globalThis
+    // (no static import — see the note on the prom import above). Capture ONCE per
+    // command so inc/dec stay balanced even if prom/client loads mid-flight (a
+    // dec without its matching inc would drive the gauge negative).
+    const metrics = getRedisMetrics();
+    metrics?.redisCommandsInflight.inc(labels);
+    const start = Date.now();
+    const done = () => {
+      metrics?.redisCommandsInflight.dec(labels);
+      metrics?.redisCommandDuration.observe(labels, (Date.now() - start) / 1000);
+    };
+    let result: any;
+    try {
+      result = original.apply(this, args);
+    } catch (err) {
+      // Synchronous throw (e.g. ClientClosedError) — still account for it.
+      done();
+      throw err;
+    }
+    return Promise.resolve(result).finally(done);
+  };
+}
+
+/**
+ * Apply the env-tunable per-command timeout to a fail-open read.
+ *
+ * Returns a node-redis command-options proxy (no new connection) whose commands
+ * carry `{ timeout: REDIS_COMMAND_TIMEOUT_MS }`. node-redis arms an
+ * `AbortSignal.timeout` per command that rejects a parked/slow command with a
+ * `TimeoutError`. ⚠️ ONLY use this on callers that catch the throw and degrade —
+ * at a non-fail-open site it would convert a 30s park into a 500.
+ *
+ * Returns the client unchanged when the timeout is disabled (env = 0).
+ *
+ * Caveat: node-redis does NOT propagate the per-command timeout into MULTI/pipeline
+ * sub-commands, so this has no effect on `client.multi()` batches (those rely on the
+ * socketTimeout structural fix instead).
+ */
+export function withRedisCommandTimeout<C>(client: C): C {
+  const timeout = env.REDIS_COMMAND_TIMEOUT_MS;
+  if (!timeout || timeout <= 0) return client;
+  const withOpts = (client as any).withCommandOptions;
+  if (typeof withOpts !== 'function') return client;
+  return withOpts.call(client, { timeout }) as C;
+}
+
 function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   const client = getBaseClient(type) as unknown as CustomRedisClient<K>;
+
+  // Wire in-flight + duration instrumentation at the per-command chokepoint.
+  // 'cache' is the cluster client (wrap `_execute`), 'system' is the single
+  // sysRedis client (wrap `sendCommand`).
+  instrumentCommands(client, type === 'cache' ? 'cluster' : 'sys');
 
   // Create a separate client instance with Buffer type mapping for packed operations
   // `withTypeMapping` creates a NEW client instance - it doesn't modify the original client.
@@ -906,6 +1055,24 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
+  BLOCKS: {
+    /**
+     * Emergency kill list — Redis SET of `block_id` strings that
+     * BlockRegistry excludes from every listForModel response. Lets ops
+     * disable a runaway block without a deploy.
+     */
+    EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
+    /**
+     * Cumulative Buzz-spend cap counter (audit A7 / design-gaps H1). The
+     * per-call `claims.buzzBudget` only bounds a SINGLE submitWorkflow; a
+     * block holding a valid token can issue unlimited sequential capped
+     * submits and drain the whole balance. This is an integer counter, keyed
+     * `system:blocks:buzz-cap:${userId}:${appBlockId}:${UTC-day}`, INCRBY'd by
+     * the cost of each successful submit and checked before submit. TTL is set
+     * on first write so the per-window key self-expires.
+     */
+    BUZZ_CAP: 'system:blocks:buzz-cap',
+  },
 } as const;
 
 // Cached data
@@ -981,6 +1148,7 @@ export const REDIS_KEYS = {
     MODEL_TAGS: 'packed:caches:model-tags',
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
+    TENSOR_METADATA: 'packed:caches:tensor-metadata',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
     MOD_RULES: {
@@ -1082,6 +1250,25 @@ export const REDIS_KEYS = {
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
+  },
+  BLOCKS: {
+    REGISTRY: 'packed:caches:block-registry',
+    TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
+    /**
+     * Per-blockInstanceId revocation marker. Writers (uninstall,
+     * toggleEnabled(false), publisher ban) set this key with a 15-minute
+     * TTL — the worst-case remaining lifetime of any token issued for the
+     * instance just before revocation. The block-scope middleware checks
+     * existence on every request; missing key → allowed, present → 403.
+     */
+    REVOKED_INSTANCE: 'blocks:revoked-instance',
+    /**
+     * Per-ecosystem-key most-popular-Checkpoint cache. Resolves to a
+     * JSON-encoded ValidatedCheckpoint. 1h TTL — popularity changes
+     * slowly and we'd rather serve a stale-by-an-hour Checkpoint than
+     * pay a multi-join query on every block submit.
+     */
+    POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
   },
 } as const;
 

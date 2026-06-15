@@ -277,6 +277,26 @@ export const getServerSideProps = createServerSideProps({
           ssg.model.getCollectionShowcase.prefetch({ id }),
           session ? ssg.user.getEngagedModelVersions.prefetch({ id }) : null,
           session ? ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id }) : null,
+          // App Blocks CLS fix: SSR-prefetch the slot's listForModel query so
+          // the client `useBlockSlot` useQuery hydrates with isLoading already
+          // false on first render — the slot reserves the right height from
+          // real data instead of flashing 0px → full frame (layout shift).
+          // The input MUST match useBlockSlot's exactly (slotId, modelId,
+          // modelType, modelNsfwLevel) or the React Query cache keys won't
+          // line up and hydration won't apply. Cheap: the blocks router gates
+          // on the appBlocks flag and returns [] when dark, and listForModel
+          // itself is the 60s-cached, indexed path. Fail-soft — a prefetch
+          // miss just falls back to the (now reserved-height) loading path.
+          model
+            ? ssg.blocks.listForModel
+                .prefetch({
+                  slotId: 'model.sidebar_top',
+                  modelId: id,
+                  modelType: model.type,
+                  modelNsfwLevel: model.nsfwLevel ?? undefined,
+                })
+                .catch(() => null)
+            : null,
         ].filter(Boolean)
       );
     }
@@ -872,7 +892,11 @@ export default function ModelDetailsV2({
                     withinPortal
                   >
                     <Menu.Target>
-                      <LegacyActionIcon className={classes.headerButton} variant="light">
+                      <LegacyActionIcon
+                        className={classes.headerButton}
+                        variant="light"
+                        aria-label="Model options"
+                      >
                         <IconDotsVertical size={20} />
                       </LegacyActionIcon>
                     </Menu.Target>
