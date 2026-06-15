@@ -361,7 +361,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  // Require canonical iframe.src host — must match <slug>.<APPS_DOMAIN>/
+  // Require canonical iframe.src host — must match <slug>.<APPS_DOMAIN>/. Now
+  // belt-and-suspenders: the stamp above already forces iframe.src to exactly
+  // this value for any object manifest, so this branch only fires if that
+  // stamping is ever removed/changed — keep it as a defense-in-depth guard.
   const expectedSrc = `https://${slug}.${env.APPS_DOMAIN}/`;
   if (parsedManifest.iframe?.src !== expectedSrc) {
     await setCommitStatusSafe({

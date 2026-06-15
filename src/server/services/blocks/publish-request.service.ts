@@ -1523,15 +1523,30 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     (f) => !isPlatformOwnedPath(f.path)
   );
 
-  // Rewrite the committed block.manifest.json to the normalized manifest so the
-  // platform-owned fields (canonical iframe.src, resolved trustTier) live in the
-  // build-source repo verbatim. This keeps civitai-apps/<slug> byte-consistent
-  // with app_blocks.manifest and means the git-push webhook (which re-fetches
-  // and re-validates the committed manifest) sees the canonical iframe.src
-  // regardless of what the developer shipped. Defensive: if the bundle somehow
-  // lacked a manifest entry, add one (submit requires it, so this is belt-and-
-  // suspenders).
-  const canonicalManifestJson = Buffer.from(JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+  // Commit the developer's ORIGINAL block.manifest.json with ONLY the
+  // platform-owned iframe.src corrected — preserving their field order and NOT
+  // injecting server-resolved fields (e.g. trustTier) into the tenant-visible
+  // build repo. This keeps civitai-apps/<slug>'s manifest faithful to the upload
+  // while its iframe.src agrees with app_blocks.manifest + what the host serves.
+  // (The git-push webhook also stamps iframe.src in-memory, and it no-ops on this
+  // approved sha BEFORE validating, so this rewrite is for repo fidelity, not
+  // validation.) Falls back to the stored manifest only if the bundle's manifest
+  // is somehow missing or unparseable (submit requires + parses it, so the
+  // fallback is belt-and-suspenders).
+  let committedManifestObj: Record<string, unknown> = manifest;
+  const originalManifestFile = files.find((f) => f.path === MANIFEST_PATH);
+  if (originalManifestFile) {
+    try {
+      committedManifestObj = JSON.parse(originalManifestFile.content.toString('utf8'));
+    } catch {
+      committedManifestObj = manifest;
+    }
+  }
+  stampCanonicalIframeSrc(committedManifestObj, request.slug, env.APPS_DOMAIN);
+  const canonicalManifestJson = Buffer.from(
+    JSON.stringify(committedManifestObj, null, 2) + '\n',
+    'utf8'
+  );
   let stampedManifestIntoCommit = false;
   const filesForCommit = files.map((f) => {
     if (f.path !== MANIFEST_PATH) return f;
