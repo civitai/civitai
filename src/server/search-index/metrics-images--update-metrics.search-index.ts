@@ -41,12 +41,16 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
     // TODO somehow check for postId existence, otherwise there are lots of unused rows
 
     lastUpdatedAt ??= new Date(1723528353000);
+    // Subtract a 2-minute buffer so events that landed slightly late (or after
+    // the ReplacingMergeTree dedup settled) near the previous boundary aren't
+    // missed. Overlap is harmless here — entityIds are deduped downstream.
+    const lastUpdatedAtBuffered = new Date(lastUpdatedAt.getTime() - 2 * 60 * 1000);
     const ids = await ch.$query<{ id: number }>`
       SELECT
         distinct entityId as "id"
       FROM entityMetricEvents_month
       WHERE entityType = 'Image'
-      AND createdAt > ${lastUpdatedAt}
+      AND createdAt > ${lastUpdatedAtBuffered}
     `;
     const updateIds = ids?.map((x) => x.id) ?? [];
 
