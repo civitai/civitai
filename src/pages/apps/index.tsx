@@ -6,6 +6,7 @@ import {
   Grid,
   Group,
   Loader,
+  Select,
   Stack,
   Text,
   TextInput,
@@ -22,8 +23,14 @@ import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  MARKETPLACE_CATEGORIES,
+  MARKETPLACE_CATEGORY_LABELS,
+  type MarketplaceCategory,
+} from '~/server/services/blocks/marketplace-categories.constants';
 import type {
   AvailableBlock,
+  MarketplaceSort,
   SubscriptionRecord,
   SubscriptionScope,
 } from '~/server/schema/blocks/subscription.schema';
@@ -31,6 +38,17 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 
 type SlotFilter = 'model.sidebar_top' | 'model.below_images' | 'model.actions_extra';
+
+const SORT_OPTIONS: { value: MarketplaceSort; label: string }[] = [
+  { value: 'popular', label: 'Most popular' },
+  { value: 'newest', label: 'Newest' },
+  { value: 'name', label: 'Name (A–Z)' },
+];
+
+const CATEGORY_OPTIONS = MARKETPLACE_CATEGORIES.map((c) => ({
+  value: c,
+  label: MARKETPLACE_CATEGORY_LABELS[c],
+}));
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -45,6 +63,8 @@ export default function AppsPage() {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const [slotFilter, setSlotFilter] = useState<SlotFilter | null>(null);
+  const [category, setCategory] = useState<MarketplaceCategory | null>(null);
+  const [sort, setSort] = useState<MarketplaceSort>('popular');
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch] = useDebouncedValue(searchInput, 300);
 
@@ -52,14 +72,52 @@ export default function AppsPage() {
   // any viewer who has the appBlocks flag, including a session-less one once
   // the segment widens (dark today). It returns only approved apps + a public
   // field allowlist.
-  const { data: availableData, isLoading } = trpc.blocks.listAvailable.useQuery(
+  //
+  // F-E E3: cursor-paginated via useInfiniteQuery (the `cursor` was always in
+  // the schema but the page used to request a flat limit:50 and never paginate
+  // → silent >50 truncation). Now we page through ALL approved apps.
+  const {
+    data: availableData,
+    isLoading,
+    isFetchingNextPage,
+    fetchNextPage,
+    hasNextPage,
+  } = trpc.blocks.listAvailable.useInfiniteQuery(
     {
       slotId: slotFilter ?? undefined,
+      category: category ?? undefined,
+      sort,
       query: debouncedSearch || undefined,
-      limit: 50,
+      limit: 24,
     },
-    { enabled: !!features.appBlocks }
+    {
+      enabled: !!features.appBlocks,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    }
   );
+
+  const items = useMemo(
+    () => (availableData?.pages ?? []).flatMap((p) => p.items as AvailableBlock[]),
+    [availableData]
+  );
+
+  const hasActiveFilters = Boolean(
+    slotFilter || category || (debouncedSearch && debouncedSearch.length > 0)
+  );
+
+  // M1 empty-state: distinguish "no apps exist at all" (total===0) from
+  // "your filters matched nothing" (filtered===0). A tiny unfiltered probe
+  // (limit:1, no filters/search) tells us whether ANY approved app exists,
+  // without a server change. Only fires when the current filtered view is
+  // empty AND filters are active (so the common no-filter empty case doesn't
+  // double-query).
+  const { data: probeData, isLoading: probeLoading } = trpc.blocks.listAvailable.useQuery(
+    { limit: 1, sort: 'popular' },
+    { enabled: !!features.appBlocks && items.length === 0 && hasActiveFilters }
+  );
+  const anyAppsExist =
+    items.length > 0 || (probeData?.items?.length ?? 0) > 0;
+
   // The per-user queries below are protectedProcedure — they 401 for an anon
   // viewer. Guard on a logged-in user so the dark anon read path doesn't fire
   // them. (`features.appBlocks` alone isn't enough: behind a widened segment an
@@ -101,7 +159,15 @@ export default function AppsPage() {
     });
   }
 
+  function clearFilters() {
+    setSlotFilter(null);
+    setCategory(null);
+    setSearchInput('');
+  }
+
   if (!features.appBlocks) return <NotFound />;
+
+  const showingEmpty = !isLoading && items.length === 0;
 
   return (
     <>
@@ -145,51 +211,156 @@ export default function AppsPage() {
               onChange={(e) => setSearchInput(e.currentTarget.value)}
               style={{ flex: 1, minWidth: 240 }}
             />
-            <Chip.Group
-              value={slotFilter ?? ''}
-              onChange={(v) => setSlotFilter((v || null) as SlotFilter | null)}
-            >
-              <Group gap={6}>
-                <Chip value="">All slots</Chip>
-                <Chip value="model.sidebar_top">Model sidebar</Chip>
-                <Chip value="model.below_images">Below images</Chip>
-                <Chip value="model.actions_extra">Model actions</Chip>
-              </Group>
-            </Chip.Group>
+            <Select
+              label="Sort"
+              data={SORT_OPTIONS}
+              value={sort}
+              onChange={(v) => setSort((v as MarketplaceSort) ?? 'popular')}
+              allowDeselect={false}
+              w={170}
+            />
+            <Select
+              label="Category"
+              data={CATEGORY_OPTIONS}
+              value={category}
+              onChange={(v) => setCategory((v as MarketplaceCategory) || null)}
+              placeholder="All categories"
+              clearable
+              w={180}
+            />
           </Group>
+
+          <Chip.Group
+            value={slotFilter ?? ''}
+            onChange={(v) => setSlotFilter((v || null) as SlotFilter | null)}
+          >
+            <Group gap={6}>
+              <Chip value="">All slots</Chip>
+              <Chip value="model.sidebar_top">Model sidebar</Chip>
+              <Chip value="model.below_images">Below images</Chip>
+              <Chip value="model.actions_extra">Model actions</Chip>
+            </Group>
+          </Chip.Group>
 
           {isLoading ? (
             <Center py="xl">
               <Loader />
             </Center>
-          ) : (availableData?.items ?? []).length === 0 ? (
-            <Center py="xl">
-              <Stack align="center" gap={4}>
-                <Text size="lg" fw={500}>
-                  No app blocks match
-                </Text>
-                <Text size="sm" c="dimmed">
-                  Try clearing your filters or search query.
-                </Text>
-              </Stack>
-            </Center>
+          ) : showingEmpty ? (
+            <MarketplaceEmptyState
+              anyAppsExist={anyAppsExist}
+              probeLoading={probeLoading && hasActiveFilters}
+              hasActiveFilters={hasActiveFilters}
+              onClearFilters={clearFilters}
+              canSubmit={!!currentUser?.isModerator}
+            />
           ) : (
-            <Grid gutter="md">
-              {(availableData?.items ?? []).map((block: AvailableBlock) => (
-                <Grid.Col key={block.id} span={{ base: 12, sm: 6, md: 4, lg: 3 }}>
-                  <AppBlockCard
-                    block={block}
-                    alreadySubscribed={subsByBlock.has(block.id)}
-                    onOpen={handleOpen}
-                    ownedEarningCents={earningsByAppBlockId.get(block.id)}
-                  />
-                </Grid.Col>
-              ))}
-            </Grid>
+            <>
+              <Grid gutter="md">
+                {items.map((block: AvailableBlock) => (
+                  <Grid.Col key={block.id} span={{ base: 12, sm: 6, md: 4, lg: 3 }}>
+                    <AppBlockCard
+                      block={block}
+                      alreadySubscribed={subsByBlock.has(block.id)}
+                      onOpen={handleOpen}
+                      ownedEarningCents={earningsByAppBlockId.get(block.id)}
+                    />
+                  </Grid.Col>
+                ))}
+              </Grid>
+              {hasNextPage && (
+                <Center py="md">
+                  <Button
+                    variant="default"
+                    loading={isFetchingNextPage}
+                    onClick={() => fetchNextPage()}
+                  >
+                    Load more
+                  </Button>
+                </Center>
+              )}
+            </>
           )}
         </Stack>
       </Container>
     </>
+  );
+}
+
+/**
+ * M1 empty-state. Distinguishes two cases:
+ *   - NO apps exist at all (anyAppsExist === false) → a friendly intro + a
+ *     Submit CTA for eligible (mod) viewers.
+ *   - filters matched nothing (apps exist but the current filter set is empty)
+ *     → the "clear filters" copy.
+ * While the probe is still resolving (filters active, view empty) we render a
+ * neutral loader to avoid flashing the wrong message.
+ */
+function MarketplaceEmptyState({
+  anyAppsExist,
+  probeLoading,
+  hasActiveFilters,
+  onClearFilters,
+  canSubmit,
+}: {
+  anyAppsExist: boolean;
+  probeLoading: boolean;
+  hasActiveFilters: boolean;
+  onClearFilters: () => void;
+  canSubmit: boolean;
+}) {
+  if (probeLoading) {
+    return (
+      <Center py="xl">
+        <Loader />
+      </Center>
+    );
+  }
+
+  // Apps exist but the current filters matched nothing.
+  if (anyAppsExist && hasActiveFilters) {
+    return (
+      <Center py="xl">
+        <Stack align="center" gap={8}>
+          <Text size="lg" fw={500}>
+            No app blocks match
+          </Text>
+          <Text size="sm" c="dimmed">
+            Try clearing your filters or search query.
+          </Text>
+          <Button variant="light" size="xs" onClick={onClearFilters}>
+            Clear filters
+          </Button>
+        </Stack>
+      </Center>
+    );
+  }
+
+  // No apps exist at all (or, defensively, an empty view with no active
+  // filters) → friendly intro + Submit CTA for eligible viewers.
+  return (
+    <Center py="xl">
+      <Stack align="center" gap={8}>
+        <Text size="lg" fw={500}>
+          No apps yet
+        </Text>
+        <Text size="sm" c="dimmed" ta="center" maw={420}>
+          App Blocks add interactive panels to model pages — generation, games, utilities and
+          more. Be the first to publish one.
+        </Text>
+        {canSubmit && (
+          <Button
+            component={Link}
+            href="/apps/submit"
+            leftSection={<IconPlus size={16} />}
+            variant="light"
+            size="xs"
+          >
+            Submit an app
+          </Button>
+        )}
+      </Stack>
+    </Center>
   );
 }
 

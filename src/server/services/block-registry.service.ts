@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -29,6 +30,48 @@ import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schem
 
 const CACHE_TTL_SECONDS = 60;
 export const MAX_BLOCKS_PER_SLOT = 3;
+
+/**
+ * F-E E3 — how many approved scopes the marketplace LISTING projects onto each
+ * card as the permission preview (`AvailableBlock.scopesSummary`). The detail
+ * page (E2 getAppDetail) shows the FULL approved scope set; the card shows only
+ * the first N so the grid stays compact. Public, display-safe (same disclosure
+ * data E2 surfaces).
+ */
+export const MARKETPLACE_SCOPES_SUMMARY_LIMIT = 3;
+
+/**
+ * F-E E3 marketplace keyset cursor. Encodes the last row's `(sortKey, id)` as a
+ * base64url string so the next page resumes strictly after it (the sort key is
+ * embedded so a paged scan stays stable even when many rows share a sort value,
+ * e.g. install_count=0). Opaque to the client. We use a unit-separator (\x1f) —
+ * a char that can't appear in any of our sort keys (zero-padded digits, a
+ * fixed-width timestamp, or a lowercased name) nor in an app_block id — so the
+ * split is unambiguous.
+ */
+const CURSOR_SEPARATOR = String.fromCharCode(31); // unit separator (\x1f)
+function encodeMarketplaceCursor(sortKey: string, id: string): string {
+  return Buffer.from(`${sortKey}${CURSOR_SEPARATOR}${id}`, 'utf8').toString('base64url');
+}
+function decodeMarketplaceCursor(cursor: string | undefined): {
+  cursorSortKey: string | null;
+  cursorId: string | null;
+} {
+  if (!cursor) return { cursorSortKey: null, cursorId: null };
+  let decoded: string;
+  try {
+    decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+  } catch {
+    // Malformed cursor → treat as first page (fail-open to a safe default).
+    return { cursorSortKey: null, cursorId: null };
+  }
+  const sep = decoded.indexOf(CURSOR_SEPARATOR);
+  if (sep < 0) return { cursorSortKey: null, cursorId: null };
+  return {
+    cursorSortKey: decoded.slice(0, sep),
+    cursorId: decoded.slice(sep + 1),
+  };
+}
 
 // Slot-reservation math lives in a client-safe module so the model-page SSR
 // path (BlockRegistry.getSlotReservation, below) and the client slot
@@ -2159,16 +2202,28 @@ export class BlockRegistry {
   }
 
   /**
-   * Marketplace listing. Filters by slot (manifest @> {targets:[{slotId}]})
-   * and a simple ILIKE on the manifest name/blockId. Cursor is the last
-   * row's id (the `app_blocks` primary key sorts deterministically). Sort
-   * by install count desc, then id asc — the count is computed at read
-   * time via a correlated subquery; at <20 approved blocks this is fine.
+   * Marketplace listing. Filters by slot (manifest @> {targets:[{slotId}]}),
+   * a free-text ILIKE on the manifest name/blockId, and (F-E E3) a mod-assigned
+   * `category`. Sortable (F-E E3) by `popular` (install_count desc — the
+   * default, unchanged from pre-E3), `newest` (current_version_deployed_at
+   * desc, falling back to created_at), or `name` (manifest name asc).
+   *
+   * Cursor: a deterministic keyset over `(sortKey, id)`. We always append
+   * `ab.id ASC` as the final tiebreaker so the cursor is unambiguous; the
+   * cursor encodes the last row's `id` AND its sort key so a paged scan stays
+   * stable even when many rows share a sort value (e.g. install_count=0).
+   * At the current scale (<20 approved blocks) any of these is cheap.
+   *
+   * The `scopesSummary` projection (top N approved scopes) and the `category`
+   * field are anon-display-safe (see AvailableBlock); they mirror E2's
+   * getAppDetail disclosure. `category` is NULL until the manual E3 migration
+   * is applied AND a mod assigns one — the filter is then a no-op (every row
+   * null), which is fine while the surface is dark.
    */
   static async listAvailable(
     input: ListAvailableInput
   ): Promise<{ items: AvailableBlock[]; nextCursor?: string }> {
-    const { slotId, query, cursor, limit } = input;
+    const { slotId, query, category, sort, cursor, limit } = input;
     type Row = {
       id: string;
       block_id: string;
@@ -2176,22 +2231,54 @@ export class BlockRegistry {
       app_name: string | null;
       manifest: unknown;
       install_count: bigint;
+      category: string | null;
+      approved_scopes: string[] | null;
+      // The sort key for THIS row, projected so we can encode it into the
+      // nextCursor for a stable keyset scan. Text so one column fits all sorts.
+      sort_key: string;
     };
     const slotFilter = slotId
       ? `{"targets":[{"slotId":"${slotId}"}]}`
       : null;
     const queryLike = query ? `%${query.toLowerCase()}%` : null;
-    // The cursor is opaque — we encode `(install_count, id)` so the
-    // tiebreaker stays deterministic across pages. For v1 simplicity, the
-    // cursor is just the last row's id; the install_count tiebreaker
-    // happens naturally because the SQL stays deterministic.
-    const rows = (await dbRead.$queryRaw<Row[]>`
+    const categoryFilter = category ?? null;
+
+    // Keyset cursor = `${sortKey} ${id}` of the last row of the prior page.
+    // Split it back into (sortKey, id) so the WHERE clause resumes after it.
+    const { cursorSortKey, cursorId } = decodeMarketplaceCursor(cursor);
+
+    // The sort key is a TEXT expression chosen so a plain text comparison
+    // orders rows correctly for the requested sort. The SAME expression is used
+    // in the SELECT (so the cursor can carry it), the keyset WHERE, and the
+    // ORDER BY, defined ONCE here (a Prisma.sql fragment) so they can't drift:
+    //   - popular: zero-padded distinct-user install count (DESC text == DESC
+    //              numeric; counts are non-negative).
+    //   - newest:  COALESCE(deployed_at, created_at) as a sortable UTC string,
+    //              DESC (fallback created_at for pre-W2 rows with no deploy ts).
+    //   - name:    lower(manifest name OR block_id), ASC.
+    // Direction matches the comparison: popular/newest DESC (resume strictly
+    // less-than the cursor tuple); name ASC (resume strictly greater-than).
+    // ab.id shares the sort_key direction so the row-value tuple comparison is
+    // a correct, total keyset.
+    const sortKeyExpr =
+      sort === 'popular'
+        ? Prisma.sql`lpad((SELECT COUNT(DISTINCT bus.user_id) FROM block_user_subscriptions bus WHERE bus.app_block_id = ab.id)::text, 20, '0')`
+        : sort === 'newest'
+        ? Prisma.sql`to_char(COALESCE(ab.current_version_deployed_at, ab.created_at) AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')`
+        : Prisma.sql`LOWER(COALESCE(ab.manifest->>'name', ab.block_id))`;
+    const descending = sort === 'popular' || sort === 'newest';
+    const dir = descending ? Prisma.sql`DESC` : Prisma.sql`ASC`;
+    const keysetCmp = descending ? Prisma.sql`<` : Prisma.sql`>`;
+
+    const rows = (await dbRead.$queryRaw<Row[]>(Prisma.sql`
       SELECT
         ab.id,
         ab.block_id,
         ab.app_id,
         oc.name AS app_name,
         ab.manifest,
+        ab.category,
+        ab.approved_scopes,
         -- Post kill_per_model_installs: "install count" = how many distinct
         -- USERS use this app, not how many subscription rows exist. A single
         -- user can hold several rows for one app (a blanket publisher sub +
@@ -2199,7 +2286,9 @@ export class BlockRegistry {
         -- rows let a pin-happy publisher inflate their own app's marketplace
         -- ranking. COUNT(DISTINCT user_id) makes the number mean "users".
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
-         WHERE bus.app_block_id = ab.id) AS install_count
+         WHERE bus.app_block_id = ab.id) AS install_count,
+        -- The sort key for this row, as text, so the keyset cursor can carry it.
+        ${sortKeyExpr} AS sort_key
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'
@@ -2212,12 +2301,19 @@ export class BlockRegistry {
           OR LOWER(COALESCE(ab.manifest->>'name', '')) LIKE ${queryLike}
           OR LOWER(ab.block_id) LIKE ${queryLike}
         )
-        AND (${cursor ?? null}::text IS NULL OR ab.id > ${cursor ?? null}::text)
-      ORDER BY install_count DESC, ab.id ASC
+        AND (${categoryFilter}::text IS NULL OR ab.category = ${categoryFilter}::text)
+        -- Keyset pagination over (sort_key, id). NULL cursor = first page.
+        AND (
+          ${cursorSortKey}::text IS NULL
+          OR (${sortKeyExpr}, ab.id) ${keysetCmp} (${cursorSortKey}::text, ${cursorId}::text)
+        )
+      ORDER BY sort_key ${dir}, ab.id ${dir}
       LIMIT ${limit + 1}
-    `) as Row[];
+    `)) as Row[];
     const trimmed = rows.slice(0, limit);
-    const nextCursor = rows.length > limit ? trimmed[trimmed.length - 1]?.id : undefined;
+    const last = trimmed[trimmed.length - 1];
+    const nextCursor =
+      rows.length > limit && last ? encodeMarketplaceCursor(last.sort_key, last.id) : undefined;
     return {
       // F-E E1 anon-exposure allowlist: project the raw stored manifest down to
       // the vetted PUBLIC subset (name/description/targets[].slotId) via
@@ -2233,6 +2329,18 @@ export class BlockRegistry {
         appName: r.app_name ?? null,
         manifest: toPublicBlockManifest(r.manifest),
         installCount: Number(r.install_count),
+        // Public, mod-assigned category (NULL until the E3 migration + a mod set
+        // it). Display-only.
+        category: r.category ?? null,
+        // F-E E3 scopes-on-cards: the FIRST N APPROVED scope ids (the same
+        // permission-disclosure list E2 surfaces). Defensive against a NULL
+        // column (pre-approval rows) → empty list. NEVER the manifest's raw
+        // scope declaration.
+        scopesSummary: Array.isArray(r.approved_scopes)
+          ? r.approved_scopes
+              .filter((s): s is string => typeof s === 'string')
+              .slice(0, MARKETPLACE_SCOPES_SUMMARY_LIMIT)
+          : [],
       })),
       nextCursor,
     };

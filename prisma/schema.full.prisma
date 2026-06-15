@@ -2230,6 +2230,17 @@ model AppBlock {
   currentVersionDeployedAt  DateTime? @map("current_version_deployed_at") @db.Timestamptz(6)
   repoUrl                   String?   @map("repo_url")
 
+  // F-E E3 marketplace browse metadata — platform-controlled, mod-assigned at
+  // review (NOT manifest/publisher fields, to avoid SEO gaming + the SDK/npm
+  // cross-repo dep). ADDITIVE + manually applied (migration
+  // 20260614120000_e3_marketplace_metadata; CNPG nvme0 does not auto-apply).
+  // NULL/false until applied — read only by the dark, mod-gated marketplace.
+  // `category` is free-text (taxonomy = MARKETPLACE_CATEGORIES const) so adding
+  // a category needs no migration.
+  category           String?   // mod-assigned marketplace category (free-text)
+  featured           Boolean   @default(false) // E4 curation: staff-pick rail
+  featuredOrder      Int?      @map("featured_order") // E4 curation: rail order
+
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -2246,6 +2257,9 @@ model AppBlock {
   // approve mints a fresh appId.
   @@unique([blockId], map: "app_blocks_block_id_unique")
   @@index([status], map: "app_blocks_status_idx")
+  // F-E E3 marketplace browse indexes (created by the manual E3 migration).
+  @@index([status, category], map: "app_blocks_status_category_idx")
+  @@index([featured, featuredOrder], map: "app_blocks_featured_order_idx")
   @@map("app_blocks")
 }
 

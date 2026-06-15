@@ -49,12 +49,25 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
 }));
 
-/** Reconstructs the SQL string from the tagged-template args Prisma received. */
+/**
+ * Reconstructs the SQL string Prisma received. listAvailable composes the
+ * query with `Prisma.sql` and calls `$queryRaw(Prisma.sql\`…\`)` (a single
+ * Sql-object argument, NOT a tagged template) so the per-sort fragments + the
+ * keyset can be conditional. A Prisma.Sql exposes `.sql` (the assembled string
+ * with `?` placeholders), so we read that directly; we still fall back to the
+ * tagged-template reconstruction for any caller that used the literal form.
+ */
 function capturedSql(): string {
   expect(mockDbRead.$queryRaw).toHaveBeenCalled();
   const lastCall = mockDbRead.$queryRaw.mock.calls.at(-1);
   if (!lastCall) return '';
-  const strings = lastCall[0] as unknown as TemplateStringsArray;
+  const first = lastCall[0] as unknown;
+  // Prisma.Sql object form: it carries the assembled `.sql` string.
+  if (first && typeof first === 'object' && typeof (first as { sql?: unknown }).sql === 'string') {
+    return (first as { sql: string }).sql;
+  }
+  // Tagged-template form (legacy callers): rebuild from strings + values.
+  const strings = first as unknown as TemplateStringsArray;
   const values = lastCall.slice(1);
   let sql = '';
   for (let i = 0; i < strings.length; i++) {
@@ -77,6 +90,13 @@ function rawRow(over: Partial<Record<string, unknown>> = {}) {
     app_id: 'app_1',
     app_name: 'Cool App',
     install_count: 5n,
+    // F-E E3 columns the listing now projects. category is mod-assigned (NULL
+    // until the migration + a mod sets it); approved_scopes is the public
+    // permission-disclosure list; sort_key is the projected text sort key the
+    // service uses to build the keyset cursor.
+    category: 'utility',
+    approved_scopes: ['ai:write:budgeted', 'models:read:self', 'buzz:read:self', 'social:tip:self'],
+    sort_key: '00000000000000000005',
     manifest: {
       name: 'Cool Block',
       description: 'Does cool things',
@@ -146,7 +166,17 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
     const { BlockRegistry } = await import('../block-registry.service');
     const { items } = await BlockRegistry.listAvailable({ limit: 20 });
     expect(Object.keys(items[0]).sort()).toEqual(
-      ['appId', 'appName', 'blockId', 'id', 'installCount', 'manifest'].sort()
+      [
+        'appId',
+        'appName',
+        'blockId',
+        // F-E E3 additions — both public/display-safe.
+        'category',
+        'id',
+        'installCount',
+        'manifest',
+        'scopesSummary',
+      ].sort()
     );
     // status is a DB-internal field; it must never appear on the wire shape.
     expect(items[0]).not.toHaveProperty('status');
@@ -174,24 +204,136 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
     const { BlockRegistry } = await import('../block-registry.service');
     await BlockRegistry.listAvailable({
       limit: 20,
+      sort: 'popular',
       query: 'cool',
       slotId: 'model.sidebar_top',
-      cursor: 'ab_0',
+      // A real opaque cursor (base64url of `sortKey␟id`); any prior page's
+      // nextCursor is this shape.
+      cursor: Buffer.from(`00000000000000000005${String.fromCharCode(31)}ab_0`, 'utf8').toString(
+        'base64url'
+      ),
     });
     const sql = capturedSql();
-    // ILIKE name/blockId filter, slot @> jsonb filter, and id > cursor pagination.
+    // ILIKE name/blockId filter, slot @> jsonb filter, and the (sort_key, id)
+    // keyset tuple comparison for pagination.
     expect(sql).toMatch(/LIKE/i);
     expect(sql).toMatch(/@>/);
-    expect(sql).toMatch(/ab\.id\s*>/);
+    // Keyset tuple comparison `(<sortKeyExpr>, ab.id) < (?, ?)`.
+    expect(sql).toMatch(/,\s*ab\.id\)\s*<\s*\(/);
   });
 
   it('emits nextCursor only when a full page+1 is returned (pagination contract)', async () => {
     // Return limit+1 rows so the service trims to `limit` and sets nextCursor.
-    const rows = Array.from({ length: 3 }, (_v, i) => rawRow({ id: `ab_${i}` }));
+    const rows = Array.from({ length: 3 }, (_v, i) =>
+      rawRow({ id: `ab_${i}`, sort_key: `0000000000000000000${i}` })
+    );
     mockDbRead.$queryRaw.mockResolvedValueOnce(rows);
     const { BlockRegistry } = await import('../block-registry.service');
     const { items, nextCursor } = await BlockRegistry.listAvailable({ limit: 2 });
     expect(items).toHaveLength(2);
-    expect(nextCursor).toBe('ab_1');
+    // The cursor is opaque (base64url of `sortKey␟id` of the LAST returned row,
+    // ab_1). Decode it to assert it points at the right keyset position so the
+    // next page resumes correctly — and is NOT just the bare id (it must carry
+    // the sort key too, or a paged scan over tied sort values breaks).
+    expect(nextCursor).toBeDefined();
+    const decoded = Buffer.from(nextCursor as string, 'base64url').toString('utf8');
+    expect(decoded).toBe(`00000000000000000001${String.fromCharCode(31)}ab_1`);
+  });
+
+  // ---------------------------------------------------------------------------
+  // F-E E3 — sort, category filter, scopes-summary.
+  // ---------------------------------------------------------------------------
+
+  it('sort=popular orders by install count DESC (default)', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
+    const sql = capturedSql();
+    // Sort key = zero-padded distinct-user install count; ordered DESC.
+    expect(sql).toMatch(/COUNT\(DISTINCT bus\.user_id\)/);
+    expect(sql).toMatch(/lpad/i);
+    expect(sql).toMatch(/ORDER BY\s+sort_key\s+DESC/i);
+  });
+
+  it('sort=newest orders by current_version_deployed_at (fallback created_at) DESC', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.listAvailable({ limit: 20, sort: 'newest' });
+    const sql = capturedSql();
+    expect(sql).toMatch(/COALESCE\(ab\.current_version_deployed_at,\s*ab\.created_at\)/i);
+    expect(sql).toMatch(/ORDER BY\s+sort_key\s+DESC/i);
+  });
+
+  it('sort=name orders by manifest name ASC (case-insensitive)', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.listAvailable({ limit: 20, sort: 'name' });
+    const sql = capturedSql();
+    expect(sql).toMatch(/LOWER\(COALESCE\(ab\.manifest->>'name',\s*ab\.block_id\)\)/i);
+    expect(sql).toMatch(/ORDER BY\s+sort_key\s+ASC/i);
+    // ASC sort resumes with `>` (not `<`) on the keyset tuple.
+    expect(sql).toMatch(/,\s*ab\.id\)\s*>\s*\(/);
+  });
+
+  it('category filter is threaded into the SQL (only the requested category)', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.listAvailable({ limit: 20, sort: 'popular', category: 'games' });
+    const sql = capturedSql();
+    // The category predicate compares ab.category to the bound param; null param
+    // (no category) makes it a no-op. The approved-only filter still stands.
+    expect(sql).toMatch(/ab\.category\s*=/);
+    expect(sql).toMatch(/ab\.status\s*=\s*'approved'/);
+  });
+
+  it('projects scopesSummary from approved_scopes (public disclosure), capped at the summary limit', async () => {
+    const { BlockRegistry, MARKETPLACE_SCOPES_SUMMARY_LIMIT } = await import(
+      '../block-registry.service'
+    );
+    const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
+    expect(items).toHaveLength(1);
+    // The seeded row has 4 approved scopes; the card summary takes the first N.
+    expect(items[0].scopesSummary).toEqual(
+      ['ai:write:budgeted', 'models:read:self', 'buzz:read:self', 'social:tip:self'].slice(
+        0,
+        MARKETPLACE_SCOPES_SUMMARY_LIMIT
+      )
+    );
+    // category passes through.
+    expect(items[0].category).toBe('utility');
+  });
+
+  it('scopesSummary contains ONLY public approved scopes — never the raw manifest scope declaration', async () => {
+    // The manifest carries its OWN `scopes` array incl. an internal-looking
+    // entry; scopesSummary must come from approved_scopes, NOT the manifest.
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      rawRow({
+        approved_scopes: ['user:read:self'],
+        manifest: {
+          name: 'X',
+          scopes: ['INTERNAL_secret_scope', 'ai:write:budgeted'],
+          settings: { apiKey: 'super-secret' },
+        },
+      }),
+    ]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
+    expect(items[0].scopesSummary).toEqual(['user:read:self']);
+    const serialized = JSON.stringify(items);
+    expect(serialized).not.toContain('INTERNAL_secret_scope');
+    expect(serialized).not.toContain('super-secret');
+  });
+
+  it('a NULL approved_scopes column yields an empty scopesSummary (no crash)', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([rawRow({ approved_scopes: null })]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
+    expect(items[0].scopesSummary).toEqual([]);
+  });
+
+  it('listing wire shape is the public allowlist incl. E3 fields (no status/raw leak)', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
+    expect(Object.keys(items[0]).sort()).toEqual(
+      ['appId', 'appName', 'blockId', 'category', 'id', 'installCount', 'manifest', 'scopesSummary'].sort()
+    );
+    expect(items[0]).not.toHaveProperty('status');
+    expect(items[0]).not.toHaveProperty('approved_scopes');
   });
 });
