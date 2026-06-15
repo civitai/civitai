@@ -16,7 +16,7 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
-import { IconCheck } from '@tabler/icons-react';
+import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { baseModels as ALL_BASE_MODELS } from '~/shared/constants/base-model.constants';
@@ -111,11 +111,8 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
   // authenticated `getInstallConfig` procedure instead, keyed on appBlockId.
   // The "Manage" path (/apps/installed) passes the FULL manifest, so its
   // `manifest.settings` is already populated; the fetched value matches it.
-  const {
-    data: installConfig,
-    isLoading: installConfigLoading,
-    isError: installConfigError,
-  } = trpc.blocks.getInstallConfig.useQuery({ appBlockId: block.id }, { staleTime: 60_000 });
+  const { data: installConfig, isLoading: installConfigLoading } =
+    trpc.blocks.getInstallConfig.useQuery({ appBlockId: block.id }, { staleTime: 60_000 });
 
   // Manifest-driven settings (W3 Phase 4). Fields without an explicit
   // `scope:` declaration are treated as 'publisher' for back-compat with
@@ -139,13 +136,16 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
   // neither of these is ever set.
   //
   // - `scopesPending`: still loading → show a loader, never an all-clear.
-  // - `scopesUnavailable`: getInstallConfig errored → declaredScopes falls back
-  //   to [], which would render the "doesn't request any permissions" copy and
-  //   mislead the user into authorizing UNDISCLOSED scopes. Render an explicit
-  //   error instead and block Save so install never proceeds without a real
-  //   disclosure.
+  // - `scopesUnavailable`: getInstallConfig did NOT resolve to data (error, or
+  //   any non-success state) → declaredScopes falls back to [], which would
+  //   render the "doesn't request any permissions" copy and mislead the user
+  //   into authorizing UNDISCLOSED scopes. Render an explicit error instead and
+  //   block Save so install never proceeds without a real disclosure. Keyed on
+  //   "not resolved" (`!installConfig`) rather than `isError` so any non-success
+  //   outcome blocks the all-clear, not just an explicit error.
   const scopesPending = manifest.scopes === undefined && installConfigLoading;
-  const scopesUnavailable = manifest.scopes === undefined && installConfigError;
+  const scopesUnavailable =
+    manifest.scopes === undefined && !installConfigLoading && !installConfig;
 
   // Initialise the form from existing subscriptions when present. Settings
   // are read from whichever scope has them set — they're meant to be
@@ -310,10 +310,17 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
             </Text>
           </Group>
         ) : scopesUnavailable ? (
-          <Text size="xs" c="red">
-            Couldn&apos;t load this app&apos;s permissions. Close and try again before installing —
-            don&apos;t install without reviewing what it can access.
-          </Text>
+          <Group gap="xs" wrap="nowrap" align="flex-start" role="alert">
+            <IconAlertTriangle
+              size={16}
+              color="var(--mantine-color-red-6)"
+              style={{ flexShrink: 0 }}
+            />
+            <Text size="xs" c="red">
+              Couldn&apos;t load this app&apos;s permissions. Close and try again before installing
+              — don&apos;t install without reviewing what it can access.
+            </Text>
+          </Group>
         ) : (
           <BlockScopeList
             scopes={declaredScopes}
