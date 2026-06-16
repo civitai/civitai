@@ -59,6 +59,18 @@ export const serverSchema = z.object({
   // socket under the timeout. client.ts derives + clamps the ping interval to enforce
   // this even if the two envs are mis-set; see getBaseClient().
   REDIS_SOCKET_TIMEOUT_MS: z.coerce.number().default(10000),
+  // socketTimeout for the SYSTEM (sysRedis) client specifically. The structural
+  // 504-cascade fix above is needed on the CLUSTER (cache) client, where a silent
+  // half-open parks ALL request handlers. The system client is single-node and mostly
+  // idle, and the flaky single-replica sysRedis backend does not cleanly complete the
+  // TCP close on teardown — so the aggressive 10s socketTimeout there does NOT heal a
+  // blip, it ACCUMULATES half-closed sockets ([RxClosing TxClosing]) into a reconnect
+  // storm that wedges /api/health (the readiness probe) for hours. Default 0 = disabled
+  // → the sys client reverts to its pre-#2556 self-healing behavior (a sys half-open
+  // just blips the 5s health-check deadline and clears, no teardown storm). Tunable up
+  // if a real sys half-open guard is ever wanted, but it must be paired with a backend
+  // that closes cleanly. See getBaseClient().
+  REDIS_SYS_SOCKET_TIMEOUT_MS: z.coerce.number().default(0),
   // Keepalive PING interval (ms). node-redis issues a `PING` every interval ONLY when
   // the socket is otherwise idle (a parked/in-flight command blocks it from being
   // written). Each PING is a write+reply round-trip that resets the socketTimeout idle

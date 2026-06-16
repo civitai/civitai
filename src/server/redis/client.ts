@@ -264,6 +264,17 @@ function getBaseClient(type: 'cache' | 'system') {
   const url = new URL(REDIS_URL);
   const connectionUrl = `${url.protocol}//${url.host}`;
 
+  // socketTimeout is scoped PER client kind. The CLUSTER (cache) client carries the
+  // 504-cascade structural fix — a silent half-open there parks every request handler.
+  // The SYSTEM client is single-node + mostly idle; applying the same aggressive 10s
+  // teardown to it (against the flaky single-replica sysRedis backend, which doesn't
+  // cleanly complete the TCP close) converted a transient half-open into a reconnect
+  // storm that ACCUMULATES half-closed sockets and wedged /api/health for hours. So the
+  // sys client uses REDIS_SYS_SOCKET_TIMEOUT_MS (default 0 = disabled → pre-#2556
+  // self-healing); the cache client keeps REDIS_SOCKET_TIMEOUT_MS.
+  const socketTimeoutMs =
+    type === 'system' ? env.REDIS_SYS_SOCKET_TIMEOUT_MS : env.REDIS_SOCKET_TIMEOUT_MS;
+
   // Shared configuration
   const socketConfig = {
     reconnectStrategy(retries: number) {
@@ -284,10 +295,9 @@ function getBaseClient(type: 'cache' | 'system') {
     // ceiling = 504); parked commands then reject promptly and the client reconnects.
     // On a HEALTHY idle socket the keepalive PING (pingInterval, derived below) writes
     // every interval and keeps this timer reset, so it does NOT spuriously fire.
-    // Tunable via REDIS_SOCKET_TIMEOUT_MS (0/unset to disable).
-    ...(env.REDIS_SOCKET_TIMEOUT_MS > 0
-      ? { socketTimeout: env.REDIS_SOCKET_TIMEOUT_MS }
-      : {}),
+    // Tunable via REDIS_SOCKET_TIMEOUT_MS (cache) / REDIS_SYS_SOCKET_TIMEOUT_MS
+    // (system); 0/unset disables it (the system default is 0 — see socketTimeoutMs).
+    ...(socketTimeoutMs > 0 ? { socketTimeout: socketTimeoutMs } : {}),
   };
 
   const authConfig = {
@@ -303,8 +313,8 @@ function getBaseClient(type: 'cache' | 'system') {
   // is what prevents a healthy idle socket from spuriously firing socketTimeout. We CLAMP
   // to min(env, socketTimeout/2) so the invariant holds even if REDIS_PING_INTERVAL_MS is
   // mis-set >= socketTimeout. When socketTimeout is disabled (0) there is no idle timer
-  // to keep reset, so we just honor the configured ping interval.
-  const socketTimeoutMs = env.REDIS_SOCKET_TIMEOUT_MS;
+  // to keep reset, so we just honor the configured ping interval. (socketTimeoutMs is
+  // the per-client-kind value derived above — sys defaults to 0/disabled.)
   const pingInterval =
     socketTimeoutMs > 0
       ? Math.min(env.REDIS_PING_INTERVAL_MS, Math.floor(socketTimeoutMs / 2))
