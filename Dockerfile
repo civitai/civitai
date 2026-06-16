@@ -43,6 +43,12 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # (no warm .next/cache) peaks higher than an incremental one and OOMs at 6 GB on
 # newer commits. Build-arg so a builder with more memory can raise it further.
 ARG NODE_BUILD_MEM=8192
+# Commit SHA of the source being built. Passed by the Tekton build (the shared
+# buildkit script forwards COMMIT_SHA → this build-arg); read by
+# scripts/bundle-budget.mjs --json so the served snapshot is commit-attributable.
+# Defaults empty (commit:null) when built outside CI.
+ARG SOURCE_COMMIT=""
+ENV SOURCE_COMMIT=$SOURCE_COMMIT
 RUN --mount=type=cache,target=/app/.next/cache \
     SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
