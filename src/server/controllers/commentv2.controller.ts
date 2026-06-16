@@ -16,6 +16,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
@@ -193,7 +194,10 @@ export const getCommentsThreadDetailsHandler = async ({
       (x) => x.id
     );
     const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
-    const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
+    // De-dupe + cap so the downstream `notIn` / raw `NOT IN` stays under the Postgres
+    // bind-param limit (heavily-blocked viewer otherwise → P2029 → 500). Ordering is a
+    // load-bearing safety priority — see boundExcludedUserIds.
+    const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers);
 
     return await getCommentsThreadDetails2({ ...input, excludedUserIds });
   } catch (error) {
@@ -278,7 +282,10 @@ export const getCommentsInfiniteHandler = async ({
       (x) => x.id
     );
     const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
-    const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
+    // De-dupe + cap so the downstream `notIn` / raw `NOT IN` stays under the Postgres
+    // bind-param limit (heavily-blocked viewer otherwise → P2029 → 500). Ordering is a
+    // load-bearing safety priority — see boundExcludedUserIds.
+    const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers);
 
     return await getCommentsInfinite({ ...input, excludedUserIds });
   } catch (error) {
