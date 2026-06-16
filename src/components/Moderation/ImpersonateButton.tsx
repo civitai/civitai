@@ -1,46 +1,57 @@
-import { ActionIcon, Stack, Text, Tooltip } from '@mantine/core';
+import { Stack, Text, Tooltip } from '@mantine/core';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import { IconCrystalBall, IconX } from '@tabler/icons-react';
+import { useSession } from 'next-auth/react';
 import React, { useState } from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
+// Shown only while impersonating (section F). "Am I impersonating?" comes straight from the session's
+// `impersonatedBy` claim — no localStorage ogAccount. Exiting goes through the account context (which hits the
+// hub via the same-origin proxy), reads the claim server-side, and re-mints the moderator's own session.
 export function ImpersonateButton() {
   const currentUser = useCurrentUser();
-  const { removeAccount, swapAccount, ogAccount, removeOgAccount } = useAccountContext();
-  const [loading, setLoading] = useState<boolean>(false);
+  const { data: session } = useSession();
+  const { exitImpersonation } = useAccountContext();
+  const impersonatedBy = session?.impersonatedBy;
+  const [loading, setLoading] = useState(false);
 
-  const handleSwap = async () => {
-    if (!currentUser || !ogAccount) return;
+  const handleExit = async () => {
     setLoading(true);
-    const notificationId = `impersonate-back`;
-
+    const notificationId = 'impersonate-back';
     showNotification({
       id: notificationId,
       loading: true,
       autoClose: false,
       title: 'Switching back...',
-      message: `-> ${currentUser.username} (${currentUser.id})`,
+      message: 'Returning to your account',
     });
 
-    // Switch back to the moderator's own account by id (device-level switch — the hub re-mints their session).
-    // STEP-F: impersonation moves to an `impersonatedBy` claim, dropping the ogAccount localStorage entirely.
-    await removeAccount(currentUser.id);
-    removeOgAccount();
-    await swapAccount(ogAccount.id);
+    try {
+      await exitImpersonation(); // reloads as the moderator on success
+    } catch {
+      setLoading(false);
+      updateNotification({
+        id: notificationId,
+        icon: <IconX size={18} />,
+        color: 'red',
+        title: 'Failed to switch back',
+        message: 'Could not exit impersonation',
+      });
+    }
   };
 
-  if (!ogAccount || !currentUser || ogAccount.id === currentUser?.id) return <></>;
+  if (!impersonatedBy || !currentUser) return <></>;
 
   return (
     <Tooltip
       label={
         <Stack gap={0}>
           <Text>
-            You are currently acting as {currentUser.username} ({currentUser.id}).
+            You are acting as {currentUser.username} ({currentUser.id}).
           </Text>
-          <Text>Switch back to {ogAccount.username}.</Text>
+          <Text>Click to return to your account.</Text>
         </Stack>
       }
       position="bottom"
@@ -49,7 +60,7 @@ export function ImpersonateButton() {
         disabled={loading}
         color="red"
         variant="transparent"
-        onClick={handleSwap}
+        onClick={handleExit}
         style={{ boxShadow: '0 0 16px 2px red', borderRadius: '50%' }}
       >
         <IconCrystalBall />

@@ -139,6 +139,7 @@ export default defineNextConfig(
       '@civitai/clickhouse',
       '@civitai/axiom',
       '@civitai/telemetry',
+      '@civitai/auth',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [

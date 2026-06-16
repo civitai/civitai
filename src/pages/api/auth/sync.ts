@@ -15,7 +15,8 @@ export default AuthedEndpoint(async function handler(req, res, user) {
     const token = civTokenEncrypt(userId.toString());
     const swapToken = signer ? await signer.mintSwapToken(userId) : undefined;
     return res.status(200).json({ token, swapToken, userId, username: user.username });
-  } catch (error: unknown) {
-    return res.status(500).send(error);
+  } catch {
+    // Don't leak the raw error/stack to the client.
+    return res.status(500).send('Failed to create sync token');
   }
 });

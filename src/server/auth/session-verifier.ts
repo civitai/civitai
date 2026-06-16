@@ -1,7 +1,6 @@
-// SPOKE verifier for the main app (Path C demonstration). Not yet wired into the request
-// path — `getServerAuthSession` still uses next-auth directly. This shows how a spoke would
-// verify the hub-issued JWT LOCALLY (JWKS, no per-request hop) with the existing redis
-// revocation marker injected. The hub issues ES256; swap callers over to this when wiring the spoke path.
+// SPOKE verifier for the main app (Path C). The shared revocation check used on the hub-session read path:
+// `session-client.ts` injects `isRevoked` into `createSessionClient`, so a logged-out / banned token is
+// rejected even on a `session:data2` cache hit (the cache holds the rich user, not the token's validity).
 //
 // The revocation check mirrors refreshToken()'s gate: TOKEN_STATE[tokenId] === 'invalid'
 // (explicit logout/ban) or a global SESSION.ALL invalidation newer than the token. Reads
@@ -11,7 +10,7 @@ import type { SessionClaims } from '@civitai/auth';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
-async function isRevoked(claims: SessionClaims): Promise<boolean> {
+export async function isRevoked(claims: SessionClaims): Promise<boolean> {
   const tokenId = claims.jti;
   if (!tokenId) return false; // can't check — fail open
   try {

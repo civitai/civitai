@@ -55,6 +55,8 @@ declare module 'next-auth' {
     user?: ExtendedUser & DefaultSession['user'];
     error?: string;
     needsCookieRefresh?: boolean;
+    /** Moderator impersonation (F): the moderator's id when this session is impersonating someone. */
+    impersonatedBy?: number;
   }
 }
 

@@ -1,5 +1,6 @@
 import { useLocalStorage, usePrevious } from '@mantine/hooks';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { authClient } from '@civitai/auth/client';
 // STEP-H-REMOVAL: next-auth/react (useSession/signIn) — replaced by the first-party session provider in phase 4.
 import { signIn, useSession } from 'next-auth/react';
 import { handleSignOut } from '~/utils/auth-helpers';
@@ -45,22 +46,6 @@ type LegacyAccounts = Record<string, LegacyAccount>;
 const legacyAccountsKey = 'civitai-accounts';
 
 const accountsQueryKey = ['device-accounts'] as const;
-const accountsEndpoint = '/api/auth/accounts';
-
-// Hub `/api/auth/accounts` row (image → avatarUrl). Presence here = seamlessly switchable (fresh in the set).
-type HubAccount = {
-  userId: number;
-  username?: string;
-  image?: string;
-  lastSwitchedAt: number;
-  active: boolean;
-};
-
-type ogAccountType = {
-  id: number;
-  username: string;
-} | null;
-const ogAccountKey = 'civitai-og-account';
 
 const deleteCookieList = ['ref_code', 'ref_source'];
 
@@ -76,9 +61,10 @@ type AccountState = {
     callbackUrl?: string
   ) => Promise<void>;
   removeAccount: (id: number) => Promise<void>;
-  ogAccount: ogAccountType;
-  setOgAccount: (val: ((prevState: ogAccountType) => ogAccountType) | ogAccountType) => void;
-  removeOgAccount: () => void;
+  // Moderator impersonation (F) — start acting as `userId` / return to your own account. Both reload on success
+  // and throw with a message on failure (the caller surfaces it). Hub-native: no client-held token, no ogAccount.
+  impersonate: (userId: number) => Promise<void>;
+  exitImpersonation: () => Promise<void>;
 };
 
 const AccountContext = createContext<AccountState | null>(null);
@@ -102,9 +88,7 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     enabled: status === 'authenticated',
     staleTime: 60_000,
     queryFn: async () => {
-      const res = await fetch(accountsEndpoint);
-      if (!res.ok) return {};
-      const { accounts: rows = [] } = (await res.json()) as { accounts?: HubAccount[] };
+      const rows = await authClient.listAccounts();
       return Object.fromEntries(
         rows.map((a) => [String(a.userId), { id: a.userId, username: a.username ?? '', avatarUrl: a.image }])
       );
@@ -123,11 +107,6 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     defaultValue: {},
     getInitialValueInEffect: false,
   });
-  const [ogAccount, setOgAccount, removeOgAccount] = useLocalStorage<ogAccountType>({
-    key: ogAccountKey,
-    defaultValue: null,
-  });
-
   // Seed the roster from the legacy store (one-time; copies identity only, never the token).
   useEffect(() => {
     const ids = Object.keys(legacyAccounts).filter((id) => !(id in roster));
@@ -197,55 +176,46 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
   // Log out of the CURRENT account only — never auto-switch into another. The roster keeps the others listed.
   const logout = async () => {
     deleteCookies(deleteCookieList);
-    removeOgAccount();
     await handleSignOut();
   };
 
-  // Both paths end the current session at the hub; the device set self-prunes after 30 idle days. The roster
-  // (display list) persists either way. TODO(E): a hub "forget this device" so logoutAll also clears the roster.
-  const logoutAll = async () => {
-    deleteCookies(deleteCookieList);
-    removeOgAccount();
-    await handleSignOut();
-  };
+  // TODO(E): once the hub exposes a "forget this device's whole account set" call, logoutAll should clear the
+  // roster + device set too. Until then it's identical to logout (the device set self-prunes after 30 idle days).
+  const logoutAll = logout;
 
   const swapAccount = async (
     target: number | EncryptedDataSchema | { swapToken: string },
     callbackUrl?: string
   ) => {
     const cb = callbackUrl ?? window.location.href;
-    if (typeof target === 'number') {
-      // Fresh in the device set → seamless switch (the hub mints a fresh civ-token; the proxy sets it).
-      if (String(target) in deviceAccounts) {
-        const res = await fetch('/api/auth/switch', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ userId: target }),
-        });
-        // Raced out of the window since the list loaded → fall through to a re-login rather than erroring.
-        if (res.ok) {
-          window.location.assign(cb);
-          return;
-        }
+
+    // Cross-domain (.red) swap token + legacy AES civ-token still go through next-auth signIn.
+    // STEP-H-REMOVAL: replaced by the hub-native exchange.
+    if (typeof target !== 'number') {
+      if ('swapToken' in target) {
+        await signIn('account-switch-hub', { token: target.swapToken, callbackUrl: cb });
       } else {
-        // Mid-migration: redeem the stored legacy token (links it to the device set). STEP-H-REMOVAL: becomes
-        // a hub-native legacy-token exchange when next-auth's account-switch provider is removed.
-        const legacy = legacyAccounts[String(target)];
-        if (legacy) {
-          await signIn('account-switch', { callbackUrl: cb, ...legacy.token });
-          return;
-        }
+        await signIn('account-switch', { callbackUrl: cb, ...target });
       }
-      // Aged out of the seamless window (or the switch raced) → re-authenticate this account at the hub.
-      window.location.assign(getLoginLink({ returnUrl: cb, reason: 'switch-accounts' }));
       return;
     }
-    // STEP-H-REMOVAL: cross-domain (.red) swap token + legacy AES civ-token still go through next-auth signIn.
-    if ('swapToken' in target) {
-      await signIn('account-switch-hub', { token: target.swapToken, callbackUrl: cb });
-    } else {
-      await signIn('account-switch', { callbackUrl: cb, ...target });
+
+    const idStr = String(target);
+    // 1. Fresh in the device set → seamless switch (the hub mints a fresh civ-token; the proxy sets it).
+    //    A false result means it raced out of the 30-day window since the list loaded → fall to re-login.
+    if (idStr in deviceAccounts && (await authClient.switchAccount(target))) {
+      window.location.assign(cb);
+      return;
     }
+    // 2. Legacy-only account (mid-migration) → redeem its stored token, which links it to the device set.
+    //    STEP-H-REMOVAL: becomes a hub-native legacy-token exchange when next-auth account-switch is removed.
+    const legacy = legacyAccounts[idStr];
+    if (legacy && !(idStr in deviceAccounts)) {
+      await signIn('account-switch', { callbackUrl: cb, ...legacy.token });
+      return;
+    }
+    // 3. Aged out of the seamless window → re-authenticate this account at the hub.
+    window.location.assign(getLoginLink({ returnUrl: cb, reason: 'switch-accounts' }));
   };
 
   // Explicit "remove this account from this browser" — drops it from the roster, the legacy store, and the hub
@@ -263,8 +233,21 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
         return next;
       });
     }
-    await fetch(`${accountsEndpoint}?userId=${id}`, { method: 'DELETE' }).catch(() => undefined);
+    await authClient.removeAccount(id).catch(() => undefined);
     await queryClient.invalidateQueries({ queryKey: accountsQueryKey });
+  };
+
+  // Impersonation (F) — via the package browser client → same-origin proxy → hub. The proxy gates on moderator
+  // status, mints the session (stamped impersonatedBy), and sets the cookie; we just reload as that user.
+  const impersonate = async (userId: number) => {
+    await authClient.impersonate(userId); // throws with the proxy's message on failure
+    window.location.reload(); // re-resolve the current page as the impersonated user — keep the mod's place
+  };
+
+  // Exit impersonation — the hub reads `impersonatedBy` off the current session token and re-mints the mod's.
+  const exitImpersonation = async () => {
+    await authClient.exitImpersonation();
+    window.location.reload(); // re-resolve in place as the moderator
   };
 
   // - reload page when account has changed (cross-tab switch)
@@ -292,9 +275,8 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
         logoutAll,
         swapAccount,
         removeAccount,
-        ogAccount,
-        setOgAccount,
-        removeOgAccount,
+        impersonate,
+        exitImpersonation,
       }}
     >
       {children}
