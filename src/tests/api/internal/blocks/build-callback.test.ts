@@ -413,7 +413,8 @@ describe('build-callback handler — flag gate + replay guard', () => {
     // mark was set (SET NX) then freed in the catch so a same-sha retry isn't wedged
     expect(mockSetNx).toHaveBeenCalledTimes(1);
     expect(mockRedisDel).toHaveBeenCalledWith(expect.stringContaining(`apply:${APB}:${SHA}`));
-    // Phase 2: an apply-trigger failure marks the request 'failed'.
+    // Phase 2: 'deploying' is written before triggerApply, then 'failed' when it throws.
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'deploying');
     expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Deploy could not start');
   });
 

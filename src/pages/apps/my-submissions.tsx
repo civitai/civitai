@@ -111,11 +111,48 @@ function formatDate(d: string | Date): string {
   return date.toLocaleString();
 }
 
-function statusBadge(submission: Pick<Submission, 'status' | 'deployState'>) {
+// A build/deploy that hasn't advanced in this long is treated as STALLED: the
+// fire-and-forget apply watcher was almost certainly lost to a civitai-web pod
+// restart (build-callback.ts documents this self-heal-on-next-build window).
+// Generous vs a normal queue+build+deploy so a slow-but-progressing build never
+// trips it. Used to (a) stop polling forever and (b) hint the dev to resubmit.
+const DEPLOY_STALE_AFTER_MS = 20 * 60 * 1000;
+
+function isInFlightDeploy(s: Pick<Submission, 'status' | 'deployState'>): boolean {
+  return (
+    s.status === 'approved' && (s.deployState === 'building' || s.deployState === 'deploying')
+  );
+}
+
+function isStaleDeploy(
+  s: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt'>
+): boolean {
+  if (!isInFlightDeploy(s) || !s.deployUpdatedAt) return false;
+  const updated =
+    typeof s.deployUpdatedAt === 'string' ? new Date(s.deployUpdatedAt) : s.deployUpdatedAt;
+  return Date.now() - updated.getTime() > DEPLOY_STALE_AFTER_MS;
+}
+
+function statusBadge(
+  submission: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt'>
+) {
   const { status } = submission;
   // For an approved request, show the real build/deploy lifecycle rather than a
   // flat "approved" — the dev cares whether their code is actually live.
   if (status === 'approved') {
+    // A stuck in-flight row (watcher lost to a pod restart) shows a muted
+    // "stalled" badge instead of spinning on building/deploying forever.
+    if (isStaleDeploy(submission)) {
+      return (
+        <Badge
+          color="orange"
+          leftSection={<IconAlertTriangle size={12} />}
+          title="No progress for a while — the deploy may be stuck. Resubmit a new version if it doesn't go live."
+        >
+          {submission.deployState} (stalled)
+        </Badge>
+      );
+    }
     switch (submission.deployState) {
       case 'building':
         return (
@@ -174,16 +211,14 @@ export default function MySubmissionsPage() {
   const features = useFeatureFlags();
   const submissionsQuery = trpc.blocks.listMyPublishRequests.useQuery(undefined, {
     enabled: !!features?.appBlocks,
-    // Live-update the badge while any approved submission is mid-build/deploy;
-    // stop polling once everything is terminal (live/failed/non-approved).
+    // Live-update the badge while an approved submission is ACTIVELY building/
+    // deploying. Stop once everything is terminal (live/failed) — AND treat a
+    // stalled in-flight row (watcher lost to a pod restart) as terminal so a
+    // single stuck row can't spin the poll every 5s forever.
     refetchInterval: (query) => {
       const data = (query.state.data ?? []) as Submission[];
-      const inFlight = data.some(
-        (s) =>
-          s.status === 'approved' &&
-          (s.deployState === 'building' || s.deployState === 'deploying')
-      );
-      return inFlight ? 5000 : false;
+      const active = data.some((s) => isInFlightDeploy(s) && !isStaleDeploy(s));
+      return active ? 5000 : false;
     },
   });
 
@@ -320,6 +355,7 @@ export default function MySubmissionsPage() {
                           <Table.Td>
                             <SubmissionActions
                               submission={s}
+                              isFirstVersion={isFirst}
                               onWithdraw={() =>
                                 withdrawMutation.mutate({ publishRequestId: s.id })
                               }
@@ -394,10 +430,12 @@ export default function MySubmissionsPage() {
 
 function SubmissionActions({
   submission,
+  isFirstVersion,
   onWithdraw,
   busy,
 }: {
   submission: Submission;
+  isFirstVersion: boolean;
   onWithdraw: () => void;
   busy: boolean;
 }) {
@@ -416,6 +454,20 @@ function SubmissionActions({
     );
   }
   if (submission.status === 'approved') {
+    // "Open live" points at https://<slug>.civit.ai/. Only meaningful once
+    // something is actually serving: hide it for a FIRST version that hasn't
+    // gone live yet (it would 404 / contradict a "building"/"deploy failed"
+    // badge). For a subsequent version still building/failed, the previously
+    // approved version is still live, so keep the link. null deployState =
+    // legacy approved row → assume live.
+    const live = submission.deployState === 'live' || submission.deployState == null;
+    if (!live && isFirstVersion) {
+      return (
+        <Text size="xs" c="dimmed">
+          —
+        </Text>
+      );
+    }
     return (
       <Button
         size="xs"

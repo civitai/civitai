@@ -291,7 +291,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       context: 'civitai/build',
       description: `Build ${body.status ?? 'failed'}`,
     });
-    await markRequestDeployState(body.slug, body.sha, 'failed', `Build ${body.status ?? 'failed'}`);
+    await markRequestDeployState(
+      body.slug,
+      body.sha,
+      'failed',
+      `Build ${String(body.status ?? 'failed').slice(0, 60)}`
+    );
     res.status(200).json({ ok: true, applied: false, reason: 'build failed' });
     return;
   }

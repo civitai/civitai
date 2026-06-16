@@ -1691,12 +1691,27 @@ export async function markRequestDeployState(
 ): Promise<void> {
   try {
     const { dbWrite } = await import('~/server/db/client');
-    await dbWrite.appBlockPublishRequest.updateMany({
+    const res = await dbWrite.appBlockPublishRequest.updateMany({
       where: { slug, forgejoCommitSha: sha, status: 'approved' },
       data: { deployState: state, deployDetail: detail ?? null, deployUpdatedAt: new Date() },
     });
-  } catch {
-    /* deploy_state is advisory display data — never let it break the caller */
+    if (res.count === 0) {
+      // A systemic mis-key would otherwise be invisible (badges silently never
+      // advance). Log so a regression is greppable; not fatal.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[markRequestDeployState] no approved request matched (slug=${slug}, sha=${sha.slice(0, 12)}, state=${state})`
+      );
+    }
+  } catch (err) {
+    // deploy_state is advisory display data — never let it break the caller,
+    // but don't swallow silently either.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[markRequestDeployState] write failed (slug=${slug}, state=${state}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
   }
 }
 
