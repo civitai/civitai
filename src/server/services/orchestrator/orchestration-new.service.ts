@@ -496,7 +496,7 @@ function validateInput(input: Record<string, unknown>, externalCtx: GenerationCt
     const errorMessages = Object.entries(result.errors)
       .map(([key, error]) => `${key}: ${error.message}`)
       .join(', ');
-    throw new Error(`Validation failed: ${errorMessages}`);
+    throw throwBadRequestError(`Validation failed: ${errorMessages}`);
   }
 
   const computedKeys = new Set<string>();
@@ -518,7 +518,7 @@ function createVideoInterpolationInput(
   data: Extract<GenerationGraphOutput, { workflow: 'vid2vid:interpolate' }>
 ): StepInput {
   if (!data.video?.url) {
-    throw new Error('Video URL is required for video interpolation');
+    throw throwBadRequestError('Video URL is required for video interpolation');
   }
 
   return {
@@ -539,7 +539,7 @@ function createVideoUpscaleInput(
   const { video, scaleFactor } = data;
 
   if (!video?.url) {
-    throw new Error('Video URL is required for video upscaling');
+    throw throwBadRequestError('Video URL is required for video upscaling');
   }
 
   return {
@@ -574,7 +574,7 @@ async function createImageUpscaleSteps(
 
     const image = images[i];
     if (!image?.url) {
-      throw new Error(`Invalid image data at index ${i}`);
+      throw throwBadRequestError(`Invalid image data at index ${i}`);
     }
 
     steps.push(
@@ -595,7 +595,7 @@ async function createImageUpscaleSteps(
   }
 
   if (steps.length === 0) {
-    throw new Error('No images can be upscaled with the selected settings');
+    throw throwBadRequestError('No images can be upscaled with the selected settings');
   }
 
   return Promise.all(steps);
@@ -610,7 +610,7 @@ async function createImageRemoveBackgroundInput(
 ): Promise<StepInput> {
   const sourceImage = data.images?.[0];
   if (!sourceImage?.url) {
-    throw new Error('Image URL is required for background removal');
+    throw throwBadRequestError('Image URL is required for background removal');
   }
 
   const step = await createComfyInput({
@@ -640,7 +640,7 @@ async function createImagePreprocessInput(
 ): Promise<StepInput> {
   const sourceImage = data.images?.[0];
   if (!sourceImage?.url) {
-    throw new Error('Image URL is required for preprocess');
+    throw throwBadRequestError('Image URL is required for preprocess');
   }
 
   const input = removeEmpty({
@@ -725,7 +725,7 @@ async function createStepInputs(
     default: {
       // Ecosystem workflows - ecosystem must be defined
       if (!('ecosystem' in data) || !data.ecosystem) {
-        throw new Error('ecosystem is required for ecosystem workflows');
+        throw throwBadRequestError('ecosystem is required for ecosystem workflows');
       }
       rawResult = await createEcosystemStepInput(data as EcosystemGraphOutput, handlerCtx);
       break;
