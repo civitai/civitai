@@ -33,13 +33,17 @@ describe('withSysReadDeadline', () => {
   it('does not emit an unhandledRejection when the losing read rejects after the deadline fired', async () => {
     const onUnhandled = vi.fn();
     process.on('unhandledRejection', onUnhandled);
-    // deadline (10ms) wins the race; the underlying read rejects later (40ms) — that
-    // late rejection must be reaped by Promise.race, not surface as unhandled.
-    await expect(
-      withSysReadDeadline(rejectAfter(40, new Error('late socket death')), 10)
-    ).rejects.toThrow(/timed out/);
-    await new Promise((r) => setTimeout(r, 60)); // let the loser settle
-    process.off('unhandledRejection', onUnhandled);
-    expect(onUnhandled).not.toHaveBeenCalled();
+    // finally so a regressed assertion can't leak the listener into the shared worker.
+    try {
+      // deadline (10ms) wins the race; the underlying read rejects later (40ms) — that
+      // late rejection must be reaped by Promise.race, not surface as unhandled.
+      await expect(
+        withSysReadDeadline(rejectAfter(40, new Error('late socket death')), 10)
+      ).rejects.toThrow(/timed out/);
+      await new Promise((r) => setTimeout(r, 60)); // let the loser settle
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });
