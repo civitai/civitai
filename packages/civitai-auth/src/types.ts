@@ -51,6 +51,12 @@ export interface SessionClaims {
   jti?: string;
   /** epoch ms the token was (re)signed — existing `token.signedAt`. */
   signedAt?: number;
+  /**
+   * Moderator impersonation: the moderator's userId, stamped into the impersonated user's session token (the
+   * hub mints it on a mod-authed impersonate call). Present ⇒ this is an impersonation session; the exit path
+   * reads it to re-mint the moderator's own session. Identity-only — no extra credential. See cutover (F).
+   */
+  impersonatedBy?: number;
   user?: SessionUser;
   iss?: string;
   aud?: string | string[];

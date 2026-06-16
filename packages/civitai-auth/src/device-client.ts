@@ -1,4 +1,4 @@
-import { loadAuthEnv } from './env';
+import { hubBaseUrl } from './hub';
 
 // DEVICE-ACCOUNT CLIENT — the consumer-side interface to the hub's per-device account set (multi-account
 // switching; docs/main-app-auth-cutover.md, section E). Unlike the SessionClient (token → user, service-authed),
@@ -34,16 +34,9 @@ export interface DeviceAccountClient {
 }
 
 export function createDeviceAccountClient(): DeviceAccountClient {
-  // The hub (token issuer). Returns null when unconfigured so the spoke degrades to "no linked accounts"
-  // rather than throwing on a request path.
-  const hubBase = (): string | null => {
-    const baseUrl = loadAuthEnv().AUTH_JWT_ISSUER;
-    return baseUrl ? baseUrl.replace(/\/+$/, '') : null;
-  };
-
   return {
     async list(cookie) {
-      const base = hubBase();
+      const base = hubBaseUrl();
       if (!base) return [];
       try {
         const res = await fetch(`${base}/api/auth/accounts`, { headers: { cookie } });
@@ -55,7 +48,7 @@ export function createDeviceAccountClient(): DeviceAccountClient {
       }
     },
     async switch(cookie, userId) {
-      const base = hubBase();
+      const base = hubBaseUrl();
       if (!base) return null;
       try {
         const res = await fetch(`${base}/api/auth/switch`, {
@@ -71,7 +64,7 @@ export function createDeviceAccountClient(): DeviceAccountClient {
       }
     },
     async remove(cookie, userId) {
-      const base = hubBase();
+      const base = hubBaseUrl();
       if (!base) return false;
       try {
         const res = await fetch(`${base}/api/auth/accounts?userId=${userId}`, {

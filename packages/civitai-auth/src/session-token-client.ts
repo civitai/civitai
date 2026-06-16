@@ -1,4 +1,4 @@
-import { loadAuthEnv } from './env';
+import { hubBaseUrl } from './hub';
 import { deviceCookieName, sessionCookieName } from './cookies';
 
 // SESSION-TOKEN CLIENT — hub operations on a single session token, authorized by the token ITSELF (not the
@@ -23,15 +23,9 @@ export interface SessionTokenClient {
 }
 
 export function createSessionTokenClient(): SessionTokenClient {
-  // The hub (token issuer). Null when unconfigured → the op no-ops rather than throwing on a request path.
-  const hubBase = (): string | null => {
-    const baseUrl = loadAuthEnv().AUTH_JWT_ISSUER;
-    return baseUrl ? baseUrl.replace(/\/+$/, '') : null;
-  };
-
   return {
     async refresh(token, opts) {
-      const base = hubBase();
+      const base = hubBaseUrl();
       if (!base || !token) return null;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 2500);
@@ -55,7 +49,7 @@ export function createSessionTokenClient(): SessionTokenClient {
       }
     },
     async revoke(token) {
-      const base = hubBase();
+      const base = hubBaseUrl();
       if (!base || !token) return;
       try {
         await fetch(`${base}/logout`, {

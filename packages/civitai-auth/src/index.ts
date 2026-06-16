@@ -12,20 +12,16 @@ export { loadAuthEnv } from './env';
 export type { AuthEnv } from './env';
 export { createAuthVerifier } from './verify';
 export type { AuthVerifier, AuthVerifierConfig } from './verify';
-// Consumer SESSION CLIENT (server side — pulls @civitai/redis + fetch). Zero-config, one builder for the
-// whole consumer session surface: getSessionUser (read: verify → shared cache → hub on miss) +
-// invalidate/refresh (write: routed through the hub). The hub is the sole producer; nothing is injectable.
-// See docs/thin-session-token-design.md ("LOCKED ARCHITECTURE").
-export { createSessionClient } from './session-client';
-export type { SessionClient } from './session-client';
-// Consumer DEVICE-ACCOUNT CLIENT (server side) — the hub contract for multi-account switching, authorized by
-// the browser's forwarded cookies. Keeps spokes from hand-rolling the hub URL/method per proxy. See cutover (E).
-export { createDeviceAccountClient } from './device-client';
+// Server-side consumer→hub clients (each file's header has the detail). All hub interaction goes through these,
+// so app code never hand-rolls a hub fetch.
+export { createSessionClient } from './session-client'; // token→user + invalidate/refresh
+export type { SessionClient, SessionClientConfig } from './session-client';
+export { createDeviceAccountClient } from './device-client'; // multi-account switching (cookie-forwarded)
 export type { DeviceAccountClient, DeviceAccount } from './device-client';
-// Consumer SESSION-TOKEN CLIENT (server side) — rolling refresh + revoke, authorized by the session token
-// itself. Keeps spokes from hand-rolling the hub refresh/logout calls. See cutover (C, B).
-export { createSessionTokenClient } from './session-token-client';
+export { createSessionTokenClient } from './session-token-client'; // rolling refresh + revoke
 export type { SessionTokenClient } from './session-token-client';
+export { createImpersonationClient } from './impersonation-client'; // moderator impersonate / exit
+export type { ImpersonationClient } from './impersonation-client';
 export { createSessionSigner, maybeCreateSessionSigner } from './sign';
 export type { SessionSigner, SessionSignerConfig } from './sign';
 export { createAccountSwitchProvider } from './account-switch';

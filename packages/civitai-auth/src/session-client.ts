@@ -1,7 +1,8 @@
 import { createAuthVerifier, type AuthVerifier } from './verify';
 import { loadAuthEnv } from './env';
+import { hubBaseUrl } from './hub';
 import { getCacheRedis, sessionCacheKey } from './redis';
-import type { SessionUser } from './types';
+import type { SessionUser, SessionClaims } from './types';
 
 // SESSION CLIENT — the consumer-side interface to the auth hub's session-user data (thin-session model;
 // docs/thin-session-token-design.md, "LOCKED ARCHITECTURE"). One zero-config builder for every session op a
@@ -27,10 +28,22 @@ export interface SessionClient {
   refresh(userId: number): Promise<SessionUser | null>;
 }
 
-export function createSessionClient(): SessionClient {
-  // Lazy env-built verifier (jose only instantiated on first read, never at import).
+export interface SessionClientConfig {
+  /**
+   * Injected revocation check (e.g. the shared redis TOKEN_STATE marker). Without it the read path verifies
+   * signature + expiry ONLY — a logged-out / banned token would still resolve on a `session:data2` cache hit,
+   * because the rich user is read from cache, not re-derived. Wiring it makes `getSessionUser` reject a revoked
+   * token before the cache read. Fail-open inside (a redis blip must not log everyone out).
+   */
+  isRevoked?: (claims: SessionClaims) => Promise<boolean> | boolean;
+}
+
+export function createSessionClient(config: SessionClientConfig = {}): SessionClient {
+  // Lazy env-built verifier (jose only instantiated on first read, never at import). The verifier applies the
+  // injected `isRevoked` after signature/expiry, so revocation is enforced on the cache-hit read path too.
   let _verifier: AuthVerifier | undefined;
-  const verify = (token: string) => (_verifier ??= createAuthVerifier()).verifyToken(token);
+  const verify = (token: string) =>
+    (_verifier ??= createAuthVerifier({ isRevoked: config.isRevoked })).verifyToken(token);
 
   // Per-pod single-flight: collapse concurrent read-misses for the same user into ONE hub fetch, so a cache
   // bust / cold cache doesn't fan out into N identical HTTP hops to the hub (stampede protection).
@@ -71,20 +84,19 @@ export function createSessionClient(): SessionClient {
 
   // WRITE: POST the hub's /api/auth/identity (service-authed) to bust (and optionally re-produce). Targets
   // an arbitrary userId, so it's authed by AUTH_INTERNAL_TOKEN — not a user session token.
-  async function postInvalidate(userId: number, refresh: boolean): Promise<SessionUser | null> {
-    const env = loadAuthEnv();
-    const baseUrl = env.AUTH_JWT_ISSUER; // the hub (token issuer)
-    const token = env.AUTH_INTERNAL_TOKEN; // shared service secret
-    if (!baseUrl) throw new Error('[@civitai/auth] createSessionClient: AUTH_JWT_ISSUER is not set');
+  async function postInvalidate(userId: number, reproduce: boolean): Promise<SessionUser | null> {
+    const base = hubBaseUrl();
+    const token = loadAuthEnv().AUTH_INTERNAL_TOKEN; // shared service secret
+    if (!base) throw new Error('[@civitai/auth] createSessionClient: AUTH_JWT_ISSUER is not set');
     if (!token) throw new Error('[@civitai/auth] createSessionClient: AUTH_INTERNAL_TOKEN is not set');
 
-    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/auth/identity`, {
+    const res = await fetch(`${base}/api/auth/identity`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ userId, refresh }),
+      body: JSON.stringify({ userId, refresh: reproduce }), // `refresh` is the hub's wire field
     });
     if (!res.ok) throw new Error(`[@civitai/auth] session invalidate failed: ${res.status}`);
-    if (!refresh) return null;
+    if (!reproduce) return null;
     return ((await res.json()) ?? null) as SessionUser | null;
   }
 
