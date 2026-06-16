@@ -608,57 +608,10 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
   };
 }
 
-/**
- * Apply the env-tunable per-command timeout to a fail-open read.
- *
- * Returns a node-redis command-options proxy (no new connection) whose commands
- * carry `{ timeout: REDIS_COMMAND_TIMEOUT_MS }`. node-redis arms an
- * `AbortSignal.timeout` per command that rejects a parked/slow command with a
- * `TimeoutError`. ⚠️ ONLY use this on callers that catch the throw and degrade —
- * at a non-fail-open site it would convert a 30s park into a 500.
- *
- * Returns the client unchanged when the timeout is disabled (env = 0).
- *
- * Caveat: node-redis does NOT propagate the per-command timeout into MULTI/pipeline
- * sub-commands, so this has no effect on `client.multi()` batches (those rely on the
- * socketTimeout structural fix instead).
- */
-export function withRedisCommandTimeout<C>(client: C): C {
-  const timeout = env.REDIS_COMMAND_TIMEOUT_MS;
-  if (!timeout || timeout <= 0) return client;
-  const withOpts = (client as any).withCommandOptions;
-  if (typeof withOpts !== 'function') return client;
-  return withOpts.call(client, { timeout }) as C;
-}
-
-/**
- * Wall-clock deadline for ANY per-request sysRedis read (single command OR MULTI).
- *
- * The sys client carries no socketTimeout (REDIS_SYS_SOCKET_TIMEOUT_MS defaults to 0,
- * to avoid the reconnect-storm wedge on the single-replica backend). The per-command
- * `withRedisCommandTimeout` does NOT bound a command once it's been WRITTEN — its
- * AbortSignal is disarmed at write time — and never bounds MULTI sub-commands at all.
- * So on a SILENT half-open (client still believes it's connected) a written sys command
- * parks in node-redis's reply queue until OS TCP keepalive errors the socket (Linux
- * defaults ≈ 11min) on EVERY authenticated request. This wall-clock race bounds the
- * *handler* wait regardless of where the command parks; on timeout it rejects so the
- * caller's fail-open keeps serving. The orphaned command settles in the background (its
- * stray rejection is reaped by Promise.race) and is capped by the sys client's
- * `commandsQueueMaxLength`; `disableOfflineQueue` keeps the reconnect path clear.
- * REDIS_SYS_READ_TIMEOUT_MS <= 0 disables the guard.
- */
-export function withSysReadDeadline<T>(p: Promise<T>): Promise<T> {
-  const ms = env.REDIS_SYS_READ_TIMEOUT_MS;
-  if (!ms || ms <= 0) return p;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`sysRedis read timed out after ${ms}ms`)), ms);
-  });
-  // Timer is always cleared in finally() (within `ms`), so no unref() is needed.
-  return Promise.race([p, deadline]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
-}
+// Wall-clock deadline for per-request sysRedis reads — defined in a leaf module so it
+// can be unit-tested without constructing the redis clients. Re-exported here because
+// callers import it from `~/server/redis/client`.
+export { withSysReadDeadline } from './sys-read-deadline';
 
 function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   const client = getBaseClient(type) as unknown as CustomRedisClient<K>;

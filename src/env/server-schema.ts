@@ -76,9 +76,7 @@ export const serverSchema = z.object({
   // socketTimeout (above), and node-redis's per-command timeout can't bound a command
   // once written nor any MULTI sub-command — so on a silent half-open a sys read parks
   // (~OS-keepalive minutes) per request without this. Bounds the request handler and
-  // fails open. Its OWN knob (not REDIS_COMMAND_TIMEOUT_MS, which governs the cache
-  // fail-open path) so disabling one doesn't silently disable the other. 0 disables it.
-  // See redis/client.ts withSysReadDeadline().
+  // fails open. 0 disables it. See redis/sys-read-deadline.ts withSysReadDeadline().
   REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(2000),
   // Bound on the sys client's node-redis command queue. The sys client has no
   // socketTimeout, so on a SILENT half-open it is only cleared by OS TCP keepalive
@@ -99,15 +97,6 @@ export const serverSchema = z.object({
   // (≈ half the 10s default socketTimeout). PING load is trivial: one tiny command per
   // idle node per interval (cluster: per node; a few nodes × pods × 0.2/s).
   REDIS_PING_INTERVAL_MS: z.coerce.number().default(5000),
-  // Per-command timeout (ms) applied ONLY to verified fail-open hot-path reads
-  // (refreshToken pipeline, needsUpdate/getClientConfigCached). node-redis arms an
-  // AbortSignal.timeout per command that rejects a parked/slow command with a
-  // TimeoutError — at these call sites a TimeoutError is caught and degrades (keep
-  // session / skip update banner), so it converts a 30s park into a fast fail-open,
-  // never a 500. Default is far above normal latency (<5ms) so it only fires on a
-  // genuine stall. Set to 0 to disable the per-command layer (socketTimeout still
-  // applies). Tunable for canary rollout.
-  REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().default(2000),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
