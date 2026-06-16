@@ -10,7 +10,7 @@
  * @see docs/generation-support-redesign.md for design documentation
  */
 
-import { CommercialUse, ModelType, type MediaType } from '~/shared/utils/prisma/enums';
+import { ModelType, type MediaType } from '~/shared/utils/prisma/enums';
 import { lazy } from '~/shared/utils/lazy';
 import { isDefined } from '~/utils/type-guards';
 
@@ -89,6 +89,8 @@ export type LicenseRecord = {
   notice?: string;
   poweredBy?: string;
   disableMature?: boolean;
+  // License forbids commercial use (drives commercial-use override + monetization block).
+  nonCommercial?: boolean;
 };
 
 export type BaseModelFamilyRecord = {
@@ -2139,6 +2141,7 @@ export const licenses: LicenseRecord[] = [
     notice:
       'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement. All rights reserved. Copyright © Ideogram, Inc.',
     disableMature: true,
+    nonCommercial: true,
   },
 ];
 
@@ -3540,33 +3543,6 @@ export function getEcosystemDefaults(
 // =============================================================================
 // Base Model Helpers
 // =============================================================================
-
-/**
- * Base models whose license forbids commercial use. Selecting one of these as a
- * resource's base model locks the model's creator permissions to non-commercial
- * (allowCommercialUse is forced to [None] and the commercial options are disabled
- * in the upload UI). Keyed by base model `name` (the value stored on
- * ModelVersion.baseModel). Scoped to Ideogram for now — see license id 37.
- */
-export const nonCommercialLockedBaseModels: string[] = ['Ideogram 4.0'];
-
-export function isNonCommercialLockedBaseModel(baseModel?: string | null): boolean {
-  return !!baseModel && nonCommercialLockedBaseModels.includes(baseModel);
-}
-
-/**
- * Resolve the effective commercial-use permissions for a resource given its base
- * model. Non-commercial base models (e.g. Ideogram) override the stored creator
- * permission to [None] — we derive this at read time rather than storing it, so it
- * always reflects the current base model config and needs no migration of existing
- * records. Use everywhere creator commercial-use permissions are surfaced.
- */
-export function getEffectiveCommercialUse(
-  allowCommercialUse: CommercialUse[],
-  baseModel?: string | null
-): CommercialUse[] {
-  return isNonCommercialLockedBaseModel(baseModel) ? [CommercialUse.None] : allowCommercialUse;
-}
 
 /**
  * Get active base models for selection UIs (e.g., model version upsert form).

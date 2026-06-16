@@ -4,6 +4,7 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types'
 import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   BountyType,
+  CommercialUse,
   Currency,
   MetricTimeframe,
   ModelStatus,
@@ -484,6 +485,10 @@ type LicenseDetails = {
   // When true, mature content is restricted (auto-derives `restrictedNsfwLevels`
   // to MATURE_NSFW_LEVELS). Use this instead of hand-listing levels.
   disableMature?: boolean;
+  // When true, the license forbids commercial use. Drives both the commercial-use
+  // permission override (-> [None]) and the per-version monetization block. The set
+  // of affected base models is derived from this flag (see nonCommercialBaseModels).
+  nonCommercial?: boolean;
 };
 
 // Levels considered "mature" — restricted whenever a license sets disableMature.
@@ -635,6 +640,8 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // License AUP bars pornographic/obscene content. `disableMature` auto-derives
     // the restricted NSFW levels (see getRestrictedNsfwLevelsForBaseModel).
     disableMature: true,
+    // Ideogram Non-Commercial Model Agreement forbids commercial use.
+    nonCommercial: true,
   },
 };
 
@@ -739,6 +746,27 @@ export const nsfwRestrictedBaseModels: BaseModel[] = Object.entries(baseModelLic
 
 export function getRestrictedNsfwLevelsForBaseModel(baseModel: string): NsfwLevel[] {
   return getLicenseRestrictedNsfwLevels(baseModelLicenses[baseModel as BaseModel]);
+}
+
+// Base models whose license forbids commercial use — derived from the `nonCommercial`
+// license flag (single source of truth), mirroring nsfwRestrictedBaseModels.
+export const nonCommercialBaseModels: BaseModel[] = Object.entries(baseModelLicenses)
+  .filter(([, license]) => !!license?.nonCommercial)
+  .map(([baseModel]) => baseModel as BaseModel);
+
+export function isNonCommercialBaseModel(baseModel?: string | null): boolean {
+  return !!baseModel && !!baseModelLicenses[baseModel as BaseModel]?.nonCommercial;
+}
+
+// Effective commercial-use permissions for a resource given its base model.
+// Non-commercial base models override the stored creator permission to [None] — we
+// derive this at read time rather than storing it, so it always reflects the current
+// license config and needs no migration. Use wherever commercial-use is surfaced.
+export function getEffectiveCommercialUse(
+  allowCommercialUse: CommercialUse[],
+  baseModel?: string | null
+): CommercialUse[] {
+  return isNonCommercialBaseModel(baseModel) ? [CommercialUse.None] : allowCommercialUse;
 }
 
 export function isNsfwLevelRestrictedForBaseModel(

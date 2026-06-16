@@ -119,9 +119,9 @@ import {
   baseModelLicenses,
   CAROUSEL_LIMIT,
   constants,
+  getEffectiveCommercialUse,
   getRestrictedNsfwLevelsForBaseModel,
 } from '~/server/common/constants';
-import { getEffectiveCommercialUse } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ReportEntity } from '~/shared/utils/report-helpers';
