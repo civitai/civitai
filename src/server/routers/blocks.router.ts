@@ -653,6 +653,10 @@ export const blocksRouter = router({
           reviewedAt: true,
           rejectionReason: true,
           approvalNotes: true,
+          // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
+          deployState: true,
+          deployDetail: true,
+          deployUpdatedAt: true,
           fileSummary: true,
           manifestDiffSummary: true,
           appBlock: {

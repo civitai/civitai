@@ -88,6 +88,12 @@ type Submission = {
   reviewedAt: string | Date | null;
   rejectionReason: string | null;
   approvalNotes: string | null;
+  /** Phase 2 build/deploy lifecycle for an approved request:
+   * 'building' → 'deploying' → 'live', or 'failed'. Null on non-approved rows
+   * and on approved rows from before this feature shipped. */
+  deployState: 'building' | 'deploying' | 'live' | 'failed' | null;
+  deployDetail: string | null;
+  deployUpdatedAt: string | Date | null;
   fileSummary: unknown;
   manifestDiffSummary: unknown;
   /** Total pinned subscriptions referencing this app block. (Was the
@@ -105,18 +111,50 @@ function formatDate(d: string | Date): string {
   return date.toLocaleString();
 }
 
-function statusBadge(status: string) {
+function statusBadge(submission: Pick<Submission, 'status' | 'deployState'>) {
+  const { status } = submission;
+  // For an approved request, show the real build/deploy lifecycle rather than a
+  // flat "approved" — the dev cares whether their code is actually live.
+  if (status === 'approved') {
+    switch (submission.deployState) {
+      case 'building':
+        return (
+          <Badge color="blue" leftSection={<IconClock size={12} />}>
+            building
+          </Badge>
+        );
+      case 'deploying':
+        return (
+          <Badge color="indigo" leftSection={<IconClock size={12} />}>
+            deploying
+          </Badge>
+        );
+      case 'failed':
+        return (
+          <Badge color="red" leftSection={<IconX size={12} />}>
+            deploy failed
+          </Badge>
+        );
+      case 'live':
+        return (
+          <Badge color="green" leftSection={<IconCheck size={12} />}>
+            live
+          </Badge>
+        );
+      default:
+        // Legacy/pre-Phase-2 approved rows (no deploy_state captured).
+        return (
+          <Badge color="green" leftSection={<IconCheck size={12} />}>
+            approved
+          </Badge>
+        );
+    }
+  }
   switch (status) {
     case 'pending':
       return (
         <Badge color="blue" leftSection={<IconClock size={12} />}>
           pending
-        </Badge>
-      );
-    case 'approved':
-      return (
-        <Badge color="green" leftSection={<IconCheck size={12} />}>
-          approved
         </Badge>
       );
     case 'rejected':
@@ -136,6 +174,17 @@ export default function MySubmissionsPage() {
   const features = useFeatureFlags();
   const submissionsQuery = trpc.blocks.listMyPublishRequests.useQuery(undefined, {
     enabled: !!features?.appBlocks,
+    // Live-update the badge while any approved submission is mid-build/deploy;
+    // stop polling once everything is terminal (live/failed/non-approved).
+    refetchInterval: (query) => {
+      const data = (query.state.data ?? []) as Submission[];
+      const inFlight = data.some(
+        (s) =>
+          s.status === 'approved' &&
+          (s.deployState === 'building' || s.deployState === 'deploying')
+      );
+      return inFlight ? 5000 : false;
+    },
   });
 
   const withdrawMutation = trpc.blocks.withdrawPublishRequest.useMutation({
@@ -230,7 +279,7 @@ export default function MySubmissionsPage() {
                           <Table.Td>
                             <Code>{s.version}</Code>
                           </Table.Td>
-                          <Table.Td>{statusBadge(s.status)}</Table.Td>
+                          <Table.Td>{statusBadge(s)}</Table.Td>
                           <Table.Td>
                             <Text size="xs">{formatDate(s.submittedAt)}</Text>
                           </Table.Td>
@@ -307,6 +356,24 @@ export default function MySubmissionsPage() {
                               >
                                 <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                                   {s.approvalNotes}
+                                </Text>
+                              </Alert>
+                            </Table.Td>
+                          </Table.Tr>
+                        )}
+                        {s.status === 'approved' && s.deployState === 'failed' && (
+                          <Table.Tr>
+                            <Table.Td colSpan={8} p={0}>
+                              <Alert
+                                color="red"
+                                variant="light"
+                                radius={0}
+                                icon={<IconAlertTriangle size={16} />}
+                                title="Build / deploy failed"
+                              >
+                                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                                  {s.deployDetail ??
+                                    'The build or deploy failed. Fix the issue and resubmit a new version.'}
                                 </Text>
                               </Alert>
                             </Table.Td>

@@ -2308,6 +2308,9 @@ model AppBlockPublishRequest {
   rejectionReason       String?   @map("rejection_reason")
   approvalNotes         String?   @map("approval_notes")
   forgejoCommitSha      String?   @map("forgejo_commit_sha")                                // populated on approve after Forgejo commit succeeds
+  deployState           String?   @map("deploy_state")                                      // Phase 2 build/deploy lifecycle (approved requests): building|deploying|live|failed
+  deployDetail          String?   @map("deploy_detail")                                      // human-readable detail, primarily the failure reason
+  deployUpdatedAt       DateTime? @map("deploy_updated_at") @db.Timestamptz(6)              // last deploy_state transition
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
