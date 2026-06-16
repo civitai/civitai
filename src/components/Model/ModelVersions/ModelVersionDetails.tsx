@@ -115,7 +115,12 @@ import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { baseModelLicenses, CAROUSEL_LIMIT, constants } from '~/server/common/constants';
+import {
+  baseModelLicenses,
+  CAROUSEL_LIMIT,
+  constants,
+  getRestrictedNsfwLevelsForBaseModel,
+} from '~/server/common/constants';
 import { getEffectiveCommercialUse } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
@@ -466,6 +471,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${version.meta?.customMessage || 'No reason provided.'}`;
   const license = baseModelLicenses[version.baseModel];
+  // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
+  // Both are derived per displayed version rather than stored on the model.
+  const baseModelRestrictsMature =
+    getRestrictedNsfwLevelsForBaseModel(version.baseModel).length > 0;
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =
     constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0') &&
@@ -1764,7 +1773,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           )}
 
           <Group justify="space-between" align="flex-start" wrap="nowrap">
-            {model.type === 'Checkpoint' && (
+            {(model.type === 'Checkpoint' || !!license || model.licenses.length > 0) && (
               <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
                 <Group gap={4} wrap="wrap" align="center">
                   <IconLicense size={16} />
@@ -1819,12 +1828,14 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             <PermissionIndicator
               permissions={{
                 ...model,
-                // Non-commercial base models (e.g. Ideogram) override the stored
-                // commercial-use permission for the displayed version.
+                // Permissions are derived per displayed version from its base model:
+                // non-commercial base models (e.g. Ideogram) force commercial use off,
+                // and mature-restricted base models force SFW-only generation.
                 allowCommercialUse: getEffectiveCommercialUse(
                   model.allowCommercialUse,
                   version.baseModel
                 ),
+                sfwOnly: model.sfwOnly || baseModelRestrictsMature,
               }}
               ml="auto"
             />

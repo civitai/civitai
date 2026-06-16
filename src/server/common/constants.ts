@@ -628,10 +628,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // Public blob page — the nf4 `raw` URL is gated and 401s.
     url: 'https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md',
     name: 'Ideogram Non-Commercial Model Agreement',
-    // Section 3(iii) attribution wording. Their cited github URL 404s, so we point
-    // at the working HF blob page instead.
+    // Section 3(iii) attribution wording; the URL lives on the linked license name
+    // shown above the notice, so we omit the bare URL here.
     notice:
-      'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement available at https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md. All rights reserved. Copyright © Ideogram, Inc.',
+      'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement. All rights reserved. Copyright © Ideogram, Inc.',
     // License AUP bars pornographic/obscene content. `disableMature` auto-derives
     // the restricted NSFW levels (see getRestrictedNsfwLevelsForBaseModel).
     disableMature: true,
