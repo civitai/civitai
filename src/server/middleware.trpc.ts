@@ -114,6 +114,10 @@ export type RateLimitOptions = {
   // succeeds. Failed calls (validation errors, server hiccups, etc.) won't burn
   // a slot. Off by default so abuse-prevention limits still count failed tries.
   onlyCountSuccess?: boolean;
+  // Override the cache key (defaults to the tRPC path). Use the SAME sharedKey on
+  // multiple procedures to make them share one quota — e.g. post.create and
+  // post.createWithImages both posting against a single per-user post ceiling.
+  sharedKey?: string;
 };
 export function rateLimit<TInput = any>(
   rateLimits?: RateLimit | RateLimit[],
@@ -147,8 +151,10 @@ export function rateLimit<TInput = any>(
       }
     }
 
-    // Get user's attempts
-    const cacheKey = `${REDIS_KEYS.TRPC.LIMIT.BASE}:${path.replace('.', ':')}` as const;
+    // Get user's attempts. options.sharedKey lets multiple procedures share one
+    // quota; otherwise key on the tRPC path.
+    const keyName = options?.sharedKey ?? path.replace('.', ':');
+    const cacheKey = `${REDIS_KEYS.TRPC.LIMIT.BASE}:${keyName}` as const;
     const hashKey = ctx.user?.id?.toString() ?? ctx.ip;
     const attempts = (await redis.packed.hGet<number[]>(cacheKey, hashKey)) ?? [];
 

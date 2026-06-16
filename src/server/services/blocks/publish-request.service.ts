@@ -15,6 +15,8 @@ import {
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
 import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
+// Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
+import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -751,50 +753,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // known); here we only assert they pass every cap/magic-byte/name gate.
   await extractScreenshots(bundleBuffer);
 
-  // Static iframe.src sanity check — the deep BlockManifestValidator runs
-  // at approve time against the OauthClient.allowedOrigins, but it's worth
-  // catching obvious shape problems here so the dev gets feedback in the
-  // submit modal instead of waiting for a mod and a build cycle.
-  //
-  // Caught here:
-  //   - missing / non-string iframe.src
-  //   - HTTP (would mixed-content-block in the iframe)
-  //   - hostname that doesn't match `<blockId>.<APPS_DOMAIN>` (the W12
-  //     per-app-subdomain contract); catches leftover hackathon block-host
-  //     URLs like `blocks-pr2319.civitaic.com/<slug>/`
-  //   - non-/ pathnames (the W12 platform routes the entire subdomain to
-  //     this app — a path prefix usually signals a stale base config in
-  //     the app's bundler/nginx)
-  const iframe =
-    manifest.iframe && typeof manifest.iframe === 'object'
-      ? (manifest.iframe as Record<string, unknown>)
-      : null;
-  if (!iframe || typeof iframe.src !== 'string') {
-    throw new Error('manifest.iframe.src must be a string');
-  }
+  // iframe.src is PLATFORM-OWNED, not developer-authored. The only valid value
+  // is the canonical per-app subdomain root (`https://<slug>.<APPS_DOMAIN>/`),
+  // so we DERIVE + stamp it here instead of making the developer hand-type a
+  // subdomain that doesn't exist until their app is approved (and rejecting them
+  // — after a multi-MiB upload — if they get it wrong). Any dev-supplied or
+  // missing iframe.src is overwritten. Stamping now means the stored
+  // publish-request manifest, the manifest diff, and everything the mod reviews
+  // already carry the canonical value; approve re-stamps defensively and the
+  // deep BlockManifestValidator there still validates it against
+  // OauthClient.allowedOrigins. Mirrors how trustTier is server-owned.
   const { env } = await import('~/env/server');
-  const expectedHost = `${slug}.${env.APPS_DOMAIN}`;
-  let iframeUrl: URL;
-  try {
-    iframeUrl = new URL(iframe.src);
-  } catch {
-    throw new Error(`manifest.iframe.src "${iframe.src}" is not a valid URL`);
-  }
-  if (iframeUrl.protocol !== 'https:') {
-    throw new Error(
-      `manifest.iframe.src must use https:// — got "${iframeUrl.protocol}//${iframeUrl.host}". HTTP iframe sources are blocked by the browser as mixed content.`
-    );
-  }
-  if (iframeUrl.hostname !== expectedHost) {
-    throw new Error(
-      `manifest.iframe.src host must be "${expectedHost}" (the W12 per-app subdomain), got "${iframeUrl.hostname}". Update the manifest's iframe.src to https://${expectedHost}/.`
-    );
-  }
-  if (iframeUrl.pathname !== '/' && iframeUrl.pathname !== '') {
-    throw new Error(
-      `manifest.iframe.src must point at the subdomain root ("/") — got pathname "${iframeUrl.pathname}". The platform routes the entire ${expectedHost} subdomain to this app; a path prefix usually signals a stale bundler base path or nginx redirect that breaks under per-app subdomains.`
-    );
-  }
+  stampCanonicalIframeSrc(manifest, slug, env.APPS_DOMAIN);
 
   // Block double-submit on the same slug — only one pending request per
   // slug at a time. The /apps/submit UI calls getMyPendingForSlug on
@@ -1060,10 +1030,130 @@ async function fetchAndExtractBundleFiles(
   return extractBundleFilesFromBuffer(bundleBuffer);
 }
 
+/**
+ * Reconstruct a bundle ZIP Buffer from the live Forgejo repo at a given ref.
+ *
+ * Used by:
+ *   - `approveRequest` for a PUSH-ORIGINATED publish request (one the git-push
+ *     webhook parked with empty bundle pointers + a real forgejoCommitSha — the
+ *     ZIP was never uploaded, so the Forgejo repo at that sha IS the artifact);
+ *   - `backfillPublishRequest` to snapshot an existing live app's current HEAD.
+ *
+ * `ref` is any git ref the Forgejo tree endpoint resolves — a branch name OR a
+ * commit SHA. The push path passes the exact pushed sha so the reconstructed
+ * bytes match the reviewed commit, not a since-moved branch HEAD.
+ *
+ * The ZIP is built deterministically (`date: new Date(0)`, entries added in
+ * sorted path order) so the same repo state always produces the same bytes →
+ * a stable bundleSha256. Blobs are fetched with bounded concurrency (8 in
+ * flight) to avoid hammering Forgejo on large repos.
+ */
+export async function reconstructBundleFromForgejo(slug: string, ref: string): Promise<Buffer> {
+  const { listRepoTreeAtRef, getBlobContent } = await import('./forgejo.service');
+
+  // Snapshot the blob tree at the exact ref (commit sha or branch).
+  const tree = await listRepoTreeAtRef(slug, ref);
+  // Sort by path so the ZIP entry order — and thus the resulting bytes /
+  // bundleSha256 — is deterministic regardless of Forgejo's tree ordering.
+  const entries = Array.from(tree.entries())
+    .map(([path, blobSha]) => ({ path, blobSha }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+
+  const CONCURRENCY = 8;
+  const files: Array<{ path: string; content: Buffer }> = [];
+  for (let i = 0; i < entries.length; i += CONCURRENCY) {
+    const batch = entries.slice(i, i + CONCURRENCY);
+    const fetched = await Promise.all(
+      batch.map(async (e) => ({
+        path: e.path,
+        content: await getBlobContent(slug, e.blobSha),
+      }))
+    );
+    files.push(...fetched);
+  }
+
+  // Build an in-memory ZIP — same shape a developer would have uploaded.
+  // `date: new Date(0)` zeroes per-entry timestamps so re-runs with identical
+  // repo state produce an identical bundleSha256 (mirrors backfill).
+  const zip = new JSZip();
+  for (const f of files) zip.file(f.path, f.content, { date: new Date(0) });
+  return Buffer.from(await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+}
+
 export type ListPendingRequestsOptions = {
   limit?: number;
   cursor?: string;
 };
+
+/**
+ * Compute the file + manifest diff for a PUSH-ORIGINATED publish request from
+ * the live Forgejo repo at the pushed ref.
+ *
+ * The git-push webhook never receives a ZIP, so without this the parked review
+ * stores a 0-file summary + a misleading "first-version" manifest diff and the
+ * mod approves blind. We reconstruct the bundle from Forgejo (the same bytes
+ * approve will build) and run the IDENTICAL extract+diff pipeline submitVersion
+ * uses, so the diff is faithful (content-sha256 based) and correctly labelled
+ * first-version vs update against the previous approved version.
+ */
+export async function computePushDiffSummaries(
+  slug: string,
+  ref: string
+): Promise<{
+  fileSummary: FileSummary;
+  manifestDiffSummary: ManifestDiffSummary;
+  bundleSizeBytes: number;
+}> {
+  const bundleBuffer = await reconstructBundleFromForgejo(slug, ref);
+  const { files, manifest } = await extractBundleMetadata(bundleBuffer);
+  const previous = await getPreviousApprovedState(slug);
+  return {
+    fileSummary: computeFileDiff(files, previous?.files ?? null),
+    manifestDiffSummary: computeManifestDiff(
+      manifest as Record<string, unknown>,
+      previous?.manifest ?? null
+    ),
+    bundleSizeBytes: bundleBuffer.length,
+  };
+}
+
+/**
+ * Best-effort, OFF-the-webhook-response-path enrichment of a parked
+ * push-originated review row. The git-push webhook parks the row FAST with an
+ * empty summary (so the response isn't blocked on a full Forgejo bundle
+ * reconstruct, and the supersede→create window stays tiny), then fires this
+ * fire-and-forget to fill in the real file/manifest diff + bundle size.
+ *
+ * NEVER throws (a failure leaves the empty summary + the working "View code in
+ * Forgejo @ sha" link — a re-push re-parks + re-enriches). Scoped to
+ * status='pending' so it can't clobber a row a mod approved/rejected — or
+ * another push superseded — in the meantime. Deliberately does NOT touch
+ * bundleKey / bundleSha256: those stay empty as the push-originated marker.
+ */
+export async function enrichPushRequestRow(
+  publishRequestId: string,
+  slug: string,
+  ref: string
+): Promise<void> {
+  try {
+    const { fileSummary, manifestDiffSummary, bundleSizeBytes } =
+      await computePushDiffSummaries(slug, ref);
+    const { dbWrite } = await import('~/server/db/client');
+    await dbWrite.appBlockPublishRequest.updateMany({
+      where: { id: publishRequestId, status: 'pending' },
+      data: {
+        fileSummary: fileSummary as object,
+        manifestDiffSummary: manifestDiffSummary as object,
+        bundleSizeBytes: BigInt(bundleSizeBytes),
+      },
+    });
+  } catch (e) {
+    console.error(
+      `[push-enrich] failed for ${slug}@${ref} (${publishRequestId}), leaving empty summary:`,
+      String(e).slice(0, 240)
+    );
+  }
+}
 
 /**
  * Mod queue: paginated list of publish requests in status='pending',
@@ -1071,7 +1161,7 @@ export type ListPendingRequestsOptions = {
  * review UI doesn't round-trip per row.
  */
 export async function listPendingRequests(opts: ListPendingRequestsOptions = {}) {
-  const [{ dbRead }, { reviewRepoUrl }] = await Promise.all([
+  const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
     import('~/server/db/client'),
     import('./forgejo.service'),
   ]);
@@ -1092,6 +1182,7 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
+      forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
     },
   });
@@ -1106,6 +1197,17 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       // Deep-link into the per-slug Forgejo review repo so mods can
       // browse the actual code from the review modal.
       reviewRepoUrl: reviewRepoUrl(r.slug),
+      // PUSH-ORIGINATED requests have no review-org snapshot — link mods to the
+      // CANONICAL repo at the exact pushed sha instead, so they can review the
+      // real code rather than approve blind. Push rows are marked by empty
+      // bundle pointers (recordPendingFromPush writes bundleKey='' AND
+      // bundleSha256=''); bundleSha256 is already in this payload + NOT NULL, so
+      // it's the discriminator here (the fetch paths key off the equivalent
+      // bundleKey since they need the S3 path).
+      pushCommitUrl:
+        !r.bundleSha256 && r.forgejoCommitSha
+          ? repoCommitUrl(r.slug, r.forgejoCommitSha)
+          : null,
     })),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
@@ -1118,7 +1220,7 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
  * Approved tab doesn't round-trip per row.
  */
 export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}) {
-  const [{ dbRead }, { reviewRepoUrl }] = await Promise.all([
+  const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
     import('~/server/db/client'),
     import('./forgejo.service'),
   ]);
@@ -1141,6 +1243,7 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
+      forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
       reviewedBy: { select: { id: true, username: true, image: true } },
     },
@@ -1152,6 +1255,12 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       ...r,
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
+      // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
+      // is the list-display discriminator (see listPendingRequests).
+      pushCommitUrl:
+        !r.bundleSha256 && r.forgejoCommitSha
+          ? repoCommitUrl(r.slug, r.forgejoCommitSha)
+          : null,
     })),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
@@ -1164,7 +1273,7 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
  * mod feedback without a second round-trip.
  */
 export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}) {
-  const [{ dbRead }, { reviewRepoUrl }] = await Promise.all([
+  const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
     import('~/server/db/client'),
     import('./forgejo.service'),
   ]);
@@ -1187,6 +1296,7 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
+      forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
       reviewedBy: { select: { id: true, username: true, image: true } },
     },
@@ -1198,6 +1308,12 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
       ...r,
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
+      // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
+      // is the list-display discriminator (see listPendingRequests).
+      pushCommitUrl:
+        !r.bundleSha256 && r.forgejoCommitSha
+          ? repoCommitUrl(r.slug, r.forgejoCommitSha)
+          : null,
     })),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
@@ -1261,6 +1377,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       version: true,
       manifest: true,
       bundleKey: true,
+      // Push-originated requests (git-push webhook) carry an empty bundleKey
+      // and this real sha — approve reconstructs the bundle from Forgejo at it.
+      forgejoCommitSha: true,
       submittedByUserId: true,
       appBlockId: true,
     },
@@ -1311,6 +1430,13 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // of a self-declared one.
   const resolvedTrustTier = existingAppBlock?.trustTier ?? 'unverified';
   manifest.trustTier = resolvedTrustTier;
+
+  // iframe.src is platform-owned (see manifest-normalize.ts). submitVersion
+  // already stamped the canonical value, but re-stamp here so approve is also
+  // correct for rows created before this change / via the backfill path. This
+  // makes the value the validator (below), the app_blocks.manifest write, and
+  // the committed block.manifest.json (step 5) all see consistent.
+  stampCanonicalIframeSrc(manifest, request.slug, env.APPS_DOMAIN);
 
   // H-4 fix — run the same BlockManifestValidator the git-push webhook
   // runs, BEFORE any DB writes or the Forgejo commit. Without this:
@@ -1536,15 +1662,68 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     });
   }
 
-  // (4) Fetch + extract bundle. Single MinIO GET; the per-file extract
-  // happens in-memory. Platform-owned build files (Dockerfile/nginx.conf) are
-  // dropped from the commit — the pipeline injects its own recipe + ignores
-  // tenant copies, so committing them to the build-source repo is inert +
-  // misleading (audit A8/BUILD-1 Phase 2).
-  const bundleBuffer = await fetchBundleBuffer(request.bundleKey);
+  // (4) Obtain the bundle bytes. Two origins:
+  //   - ZIP path (submitVersion): the dev uploaded a ZIP → we have a real
+  //     bundleKey → GET it from MinIO (single GET; per-file extract in-memory).
+  //   - PUSH path (git-push webhook): a direct push to civitai-apps/<slug> was
+  //     parked as a `pending` review request with EMPTY bundle pointers
+  //     (bundleKey='') and the pushed forgejoCommitSha — the ZIP was never
+  //     uploaded, so the Forgejo repo at that sha IS the artifact. Reconstruct
+  //     the bundle from the repo at the exact reviewed sha so everything
+  //     downstream (extract / platform-owned filter / manifest rewrite /
+  //     screenshots / commit / sha stamp / build trigger) is byte-identical to
+  //     the ZIP path. (See git-push.ts recordPendingFromPush.)
+  // Platform-owned build files (Dockerfile/nginx.conf) are dropped from the
+  // commit — the pipeline injects its own recipe + ignores tenant copies, so
+  // committing them to the build-source repo is inert + misleading (audit
+  // A8/BUILD-1 Phase 2).
+  let bundleBuffer: Buffer;
+  if (request.bundleKey) {
+    bundleBuffer = await fetchBundleBuffer(request.bundleKey);
+  } else if (request.forgejoCommitSha) {
+    bundleBuffer = await reconstructBundleFromForgejo(request.slug, request.forgejoCommitSha);
+  } else {
+    throw new Error(
+      `publish request ${request.id} has neither a bundle nor a forgejo commit to approve`
+    );
+  }
   const files = (await extractBundleFilesFromBuffer(bundleBuffer)).filter(
     (f) => !isPlatformOwnedPath(f.path)
   );
+
+  // Commit the developer's ORIGINAL block.manifest.json with ONLY the
+  // platform-owned iframe.src corrected — preserving their field order and NOT
+  // injecting server-resolved fields (e.g. trustTier) into the tenant-visible
+  // build repo. This keeps civitai-apps/<slug>'s manifest faithful to the upload
+  // while its iframe.src agrees with app_blocks.manifest + what the host serves.
+  // (The git-push webhook also stamps iframe.src in-memory, and it no-ops on this
+  // approved sha BEFORE validating, so this rewrite is for repo fidelity, not
+  // validation.) Falls back to the stored manifest only if the bundle's manifest
+  // is somehow missing or unparseable (submit requires + parses it, so the
+  // fallback is belt-and-suspenders).
+  let committedManifestObj: Record<string, unknown> = manifest;
+  const originalManifestFile = files.find((f) => f.path === MANIFEST_PATH);
+  if (originalManifestFile) {
+    try {
+      committedManifestObj = JSON.parse(originalManifestFile.content.toString('utf8'));
+    } catch {
+      committedManifestObj = manifest;
+    }
+  }
+  stampCanonicalIframeSrc(committedManifestObj, request.slug, env.APPS_DOMAIN);
+  const canonicalManifestJson = Buffer.from(
+    JSON.stringify(committedManifestObj, null, 2) + '\n',
+    'utf8'
+  );
+  let stampedManifestIntoCommit = false;
+  const filesForCommit = files.map((f) => {
+    if (f.path !== MANIFEST_PATH) return f;
+    stampedManifestIntoCommit = true;
+    return { ...f, content: canonicalManifestJson };
+  });
+  if (!stampedManifestIntoCommit) {
+    filesForCommit.push({ path: MANIFEST_PATH, content: canonicalManifestJson });
+  }
 
   // (4b) F-E E5 — re-extract + validate the bundle's screenshots (same caps /
   // magic-byte / name gates as submit), then upload them to the bundle MinIO
@@ -1560,7 +1739,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   const commitMessage = `Approved publish request ${request.id} — ${request.slug} v${request.version}`;
   const { sha: forgejoCommitSha } = await commitFiles({
     slug: request.slug,
-    files,
+    files: filesForCommit,
     message: commitMessage,
     replaceAllFiles: true,
   });
@@ -1645,12 +1824,63 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     );
   }
 
+  // Phase 2 — surface the build/deploy lifecycle to the developer on
+  // /apps/my-submissions. triggerBuild succeeded above (the catch re-throws),
+  // so the build is now queued: mark the request 'building'. build-callback
+  // advances it deploying → live, or flips it to failed.
+  await markRequestDeployState(request.slug, forgejoCommitSha, 'building');
+
   return {
     publishRequestId: request.id,
     appBlockId,
     forgejoCommitSha,
     isFirstVersion,
   };
+}
+
+/** Build/deploy lifecycle states surfaced on /apps/my-submissions (Phase 2). */
+export type DeployState = 'building' | 'deploying' | 'live' | 'failed';
+
+/**
+ * Advisory: stamp the build/deploy lifecycle state onto the APPROVED publish
+ * request for `(slug, sha)`. Keyed on `forgejo_commit_sha` (unique per approved
+ * version; parked unreviewed requests carry an empty sha so they never match)
+ * + `status='approved'`. Best-effort — a status-write failure must never break
+ * the approve flow or the build-callback, so errors are swallowed. The build is
+ * triggered only by approveRequest, so this is the single source of these
+ * transitions: approveRequest sets 'building'; build-callback sets
+ * 'deploying'/'live'/'failed'.
+ */
+export async function markRequestDeployState(
+  slug: string,
+  sha: string,
+  state: DeployState,
+  detail?: string | null
+): Promise<void> {
+  try {
+    const { dbWrite } = await import('~/server/db/client');
+    const res = await dbWrite.appBlockPublishRequest.updateMany({
+      where: { slug, forgejoCommitSha: sha, status: 'approved' },
+      data: { deployState: state, deployDetail: detail ?? null, deployUpdatedAt: new Date() },
+    });
+    if (res.count === 0) {
+      // A systemic mis-key would otherwise be invisible (badges silently never
+      // advance). Log so a regression is greppable; not fatal.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[markRequestDeployState] no approved request matched (slug=${slug}, sha=${sha.slice(0, 12)}, state=${state})`
+      );
+    }
+  } catch (err) {
+    // deploy_state is advisory display data — never let it break the caller,
+    // but don't swallow silently either.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[markRequestDeployState] write failed (slug=${slug}, state=${state}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
 }
 
 export type BackfillPublishRequestParams = {
@@ -1690,7 +1920,7 @@ export async function backfillPublishRequest(
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
   ]);
-  const { getRepo, listRepoTree, getBlobContent } = await import('./forgejo.service');
+  const { getRepo } = await import('./forgejo.service');
 
   // Identify the live app row.
   const appBlock = await dbRead.appBlock.findFirst({
@@ -1708,38 +1938,23 @@ export async function backfillPublishRequest(
     throw new Error(`app_blocks row for slug=${params.slug} not found; nothing to backfill`);
   }
 
-  // Pull repo metadata to know the default branch + the current commit SHA
-  // we're snapshotting.
+  // Pull repo metadata to know the default branch we're snapshotting.
   const repo = await getRepo(params.slug);
   const defaultBranch = repo.default_branch ?? 'main';
 
-  // Recursively list blobs in the default branch, then download each blob's
-  // raw bytes in parallel (capped at 8 in flight to avoid hammering Forgejo).
-  const tree = await listRepoTree(params.slug, defaultBranch);
-  const entries = Array.from(tree.entries()).map(([path, blobSha]) => ({ path, blobSha }));
-
-  const CONCURRENCY = 8;
-  const files: Array<{ path: string; content: Buffer }> = [];
-  for (let i = 0; i < entries.length; i += CONCURRENCY) {
-    const batch = entries.slice(i, i + CONCURRENCY);
-    const fetched = await Promise.all(
-      batch.map(async (e) => ({
-        path: e.path,
-        content: await getBlobContent(params.slug, e.blobSha),
-      }))
-    );
-    files.push(...fetched);
-  }
-
-  // Build an in-memory ZIP — same shape a developer would have uploaded.
-  // Generate deterministic-ish so re-runs with identical repo state produce
-  // identical bundleSha256.
-  const zip = new JSZip();
-  for (const f of files) zip.file(f.path, f.content, { date: new Date(0) });
-  const bundleBuffer = Buffer.from(
-    await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
-  );
+  // Reconstruct the bundle from the live repo's default-branch HEAD — same
+  // deterministic ZIP build the push-approve path uses (sorted entries +
+  // date:new Date(0)) so re-runs with identical repo state produce an identical
+  // bundleSha256.
+  const bundleBuffer = await reconstructBundleFromForgejo(params.slug, defaultBranch);
   const bundleSha256 = createHash('sha256').update(bundleBuffer).digest('hex');
+
+  // Extract once up-front for consistent file_summary semantics AND the
+  // fileCount returned on both the idempotent + fresh paths.
+  const { files: fileMetas, manifest } = await extractBundleMetadata(bundleBuffer);
+  if (!manifest || typeof manifest !== 'object') {
+    throw new Error(`backfilled bundle for ${params.slug} has no valid block.manifest.json`);
+  }
 
   // Idempotency: if a publish_request for this exact (slug, sha) already
   // exists, return it instead of inserting a duplicate.
@@ -1753,15 +1968,9 @@ export async function backfillPublishRequest(
       appBlockId: existing.appBlockId ?? appBlock.id,
       bundleSha256,
       bundleSizeBytes: Number(existing.bundleSizeBytes),
-      fileCount: files.length,
+      fileCount: fileMetas.length,
       forgejoCommitSha: appBlock.currentVersionSha ?? '',
     };
-  }
-
-  // Reuse the submit path's extract for consistent file_summary semantics.
-  const { files: fileMetas, manifest } = await extractBundleMetadata(bundleBuffer);
-  if (!manifest || typeof manifest !== 'object') {
-    throw new Error(`backfilled bundle for ${params.slug} has no valid block.manifest.json`);
   }
 
   // Upload to MinIO. Reuses the storeBundle helper via dynamic import.
@@ -1827,7 +2036,7 @@ export async function backfillPublishRequest(
     appBlockId: appBlock.id,
     bundleSha256,
     bundleSizeBytes: bundleBuffer.length,
-    fileCount: files.length,
+    fileCount: fileMetas.length,
     forgejoCommitSha: appBlock.currentVersionSha ?? '',
   };
 }
@@ -1857,10 +2066,18 @@ export async function getPublishRequestScreenshots(opts: {
   const { dbRead } = await import('~/server/db/client');
   const row = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: opts.publishRequestId },
-    select: { bundleKey: true },
+    select: { bundleKey: true, slug: true, forgejoCommitSha: true },
   });
   if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
-  const bundleBuffer = await fetchBundleBuffer(row.bundleKey);
+  // PUSH-ORIGINATED requests (git-push webhook) carry an empty bundleKey — the
+  // reviewable artifact is the Forgejo repo at forgejoCommitSha. Reconstruct the
+  // bundle from there (as approveRequest does) instead of issuing an S3
+  // GetObject with an empty Key, which throws "Empty value provided for input
+  // HTTP label: Key". A row with neither pointer is unexpected → no screenshots.
+  if (!row.bundleKey && !row.forgejoCommitSha) return [];
+  const bundleBuffer = row.bundleKey
+    ? await fetchBundleBuffer(row.bundleKey)
+    : await reconstructBundleFromForgejo(row.slug, row.forgejoCommitSha as string);
   const screenshots = await extractScreenshots(bundleBuffer);
   return screenshots.map((s) => ({
     index: s.index,

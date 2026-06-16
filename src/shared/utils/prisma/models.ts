@@ -610,6 +610,7 @@ export interface User {
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
+  appDevForgejoIdentity?: AppDevForgejoIdentity | null;
 }
 
 export interface CustomerSubscription {
@@ -1754,6 +1755,10 @@ export interface AppBlock {
   currentVersionSha: string | null;
   currentVersionDeployedAt: Date | null;
   repoUrl: string | null;
+  category: string | null;
+  featured: boolean;
+  featuredOrder: number | null;
+  screenshots: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
   platformDefault?: PlatformDefaultBlock | null;
@@ -1786,6 +1791,9 @@ export interface AppBlockPublishRequest {
   rejectionReason: string | null;
   approvalNotes: string | null;
   forgejoCommitSha: string | null;
+  deployState: string | null;
+  deployDetail: string | null;
+  deployUpdatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1902,6 +1910,14 @@ export interface AppUserScopeGrant {
   grantedScopes: string[];
   grantedAt: Date;
   revokedAt: Date | null;
+}
+
+export interface AppDevForgejoIdentity {
+  userId: number;
+  user?: User;
+  forgejoUsername: string;
+  forgejoTokenEncrypted: string;
+  createdAt: Date;
 }
 
 export interface OauthConsent {

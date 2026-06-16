@@ -41,12 +41,16 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
     // TODO somehow check for postId existence, otherwise there are lots of unused rows
 
     lastUpdatedAt ??= new Date(1723528353000);
+    // Subtract a 2-minute buffer so events that landed slightly late (or after
+    // the ReplacingMergeTree dedup settled) near the previous boundary aren't
+    // missed. Overlap is harmless here — entityIds are deduped downstream.
+    const lastUpdatedAtBuffered = new Date(lastUpdatedAt.getTime() - 2 * 60 * 1000);
     const ids = await ch.$query<{ id: number }>`
       SELECT
         distinct entityId as "id"
-      FROM entityMetricEvents
+      FROM entityMetricEvents_month
       WHERE entityType = 'Image'
-      AND createdAt > ${lastUpdatedAt}
+      AND createdAt > ${lastUpdatedAtBuffered}
     `;
     const updateIds = ids?.map((x) => x.id) ?? [];
 
@@ -67,12 +71,16 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
     const tasks = chunk(ids, 5000).map((batch) => async () => {
       const results = await ch?.$query<Metrics>(`
         SELECT entityId as "id",
-          sumIf(total, metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) as "reactionCount",
-          sumIf(total, metricType = 'Comment') as "commentCount",
+          sumIf(total, metricType in ('Like', 'Heart', 'Laugh', 'Cry')) as "reactionCount",
+          sumIf(total, metricType = 'commentCount') as "commentCount",
           sumIf(total, metricType = 'Collection') as "collectedCount"
-        FROM entityMetricDailyAgg
-        WHERE entityType = 'Image'
-          AND entityId IN (${batch.join(',')})
+        FROM (
+          SELECT entityId, metricType, day, argMax(total, refreshedAt) as total
+          FROM entityMetricDailyAgg_new
+          WHERE entityType = 'Image'
+            AND entityId IN (${batch.join(',')})
+          GROUP BY entityId, metricType, day
+        )
         GROUP BY id
       `);
       if (results?.length) metrics.push(...results);

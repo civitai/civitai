@@ -4,6 +4,12 @@
   font-variant-numeric: tabular-nums;
   position: relative;
   white-space: nowrap;
+  /* Pin line-height: the digit stack rolls in 1em steps inside a
+     height:1em; overflow:hidden window, so any inherited line-height drift
+     (e.g. CurrencyBadge sets lineHeight:1.5) bleeds adjacent stack rows into
+     the clip window — garbled half-glyphs / misaligned digits. Self-protect
+     here so every caller is safe without a per-call-site lh={1}. */
+  line-height: 1 !important;
 }
 
 .srOnly {

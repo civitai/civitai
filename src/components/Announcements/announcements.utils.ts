@@ -4,6 +4,7 @@ import { persist } from 'zustand/middleware';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { useAppContext } from '~/providers/AppProvider';
+import type { AnnouncementType } from '~/server/schema/announcement.schema';
 import { trpc } from '~/utils/trpc';
 
 // The announcements query is SSR-seeded (see AppProvider / `/api/user/settings`).
@@ -15,26 +16,49 @@ import { trpc } from '~/utils/trpc';
 // re-runs getInitialProps and reseeds anyway.
 const ANNOUNCEMENTS_STALE_TIME = 5 * 60 * 1000;
 
+type DismissedByType = Record<AnnouncementType, number[]>;
+
+// Explicit literal (rather than deriving from `announcementTypes`) so adding a new
+// announcement type is a compile error here until its dismissed bucket is wired up.
+function emptyDismissed(): DismissedByType {
+  return { site: [], generator: [], training: [] };
+}
+
 export const useAnnouncementsStore = create<{
-  dismissed: number[];
+  dismissed: DismissedByType;
 }>()(
   persist(
-    (set) => ({
-      dismissed: [],
+    () => ({
+      dismissed: emptyDismissed(),
     }),
-    { name: 'announcements', version: 1 }
+    {
+      name: 'announcements',
+      // v2: dismissed went from a flat `number[]` to a per-type record. Existing
+      // dismissed ids predate placements, so they belong to the `site` bucket.
+      version: 2,
+      migrate: (persisted, version) => {
+        if (version < 2) {
+          const legacy = (persisted as { dismissed?: number[] } | undefined)?.dismissed ?? [];
+          return { dismissed: { ...emptyDismissed(), site: legacy } };
+        }
+        return persisted as { dismissed: DismissedByType };
+      },
+    }
   )
 );
 
-export function dismissAnnouncements(ids: number | number[]) {
+export function dismissAnnouncements(ids: number | number[], type: AnnouncementType = 'site') {
   useAnnouncementsStore.setState((state) => ({
-    dismissed: [...new Set(state.dismissed.concat(ids))],
+    dismissed: {
+      ...state.dismissed,
+      [type]: [...new Set(state.dismissed[type].concat(ids))],
+    },
   }));
 }
 
-export function useGetAnnouncements() {
+export function useGetAnnouncements(type: AnnouncementType = 'site') {
   const isClient = useIsClient();
-  const dismissed = useAnnouncementsStore((state) => state.dismissed);
+  const dismissed = useAnnouncementsStore((state) => state.dismissed[type]);
   const domainColor = useDomainColor();
   // Seed from the SSR snapshot carried by AppProvider. We seed HERE (not in
   // AppProvider) because the query key is `{ domain: useDomainColor() }` and only
@@ -47,15 +71,29 @@ export function useGetAnnouncements() {
     { domain: domainColor },
     { initialData, staleTime: ANNOUNCEMENTS_STALE_TIME }
   );
-  // v5: query onSettled removed — prune dismissed ids to those still present once data loads.
-  // Functional setState avoids depending on `dismissed` (which would re-loop the effect).
+  // The query returns every announcement for the domain (all types); narrow to the
+  // requested type client-side. `?? 'site'` keeps untyped/legacy announcements in
+  // the default `site` bucket.
+  const typed = useMemo(
+    () => (data ?? []).filter((x) => (x.metadata.type ?? 'site') === type),
+    [data, type]
+  );
+
+  // v5: query onSettled removed — prune this type's dismissed ids to those still
+  // present once data loads. Functional setState avoids depending on `dismissed`
+  // (which would re-loop the effect).
   useEffect(() => {
-    if (!data?.length) return;
-    const announcementIds = data.map((x) => x.id);
+    if (!typed.length) return;
+    const announcementIds = typed.map((x) => x.id);
     useAnnouncementsStore.setState((state) => ({
-      dismissed: state.dismissed.filter((dismissedId) => announcementIds.includes(dismissedId)),
+      dismissed: {
+        ...state.dismissed,
+        [type]: state.dismissed[type].filter((dismissedId) =>
+          announcementIds.includes(dismissedId)
+        ),
+      },
     }));
-  }, [data]);
+  }, [typed, type]);
 
   // Only EXPOSE the seeded data once hydrated. `dismissed` comes from a
   // localStorage-backed zustand store that rehydrates synchronously on the
@@ -70,12 +108,12 @@ export function useGetAnnouncements() {
   const announcements = useMemo(
     () =>
       isClient
-        ? data?.map((announcement) => ({
+        ? typed.map((announcement) => ({
             ...announcement,
             dismissed: dismissed.includes(announcement.id),
-          })) ?? []
+          }))
         : [],
-    [data, dismissed, isClient]
+    [typed, dismissed, isClient]
   );
 
   return { data: announcements, ...rest };

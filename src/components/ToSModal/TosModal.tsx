@@ -27,11 +27,18 @@ export default function TosModal({
   onAccepted,
   slug,
   fieldKey,
+  hashFieldKey,
+  contentHash,
   showBackButton = true,
 }: {
   onAccepted: () => Promise<void>;
   slug: string;
   fieldKey: keyof SetUserSettingsInput;
+  // When provided (the main ToS-update flow), the accepted content hash is stored
+  // alongside the date so future re-prompts key on content, not the `lastmod` date.
+  // Other callers (e.g. Creator Program ToS) omit these and remain date-only.
+  hashFieldKey?: keyof SetUserSettingsInput;
+  contentHash?: string;
   showBackButton?: boolean;
 }) {
   const dialog = useDialogContext();
@@ -70,7 +77,10 @@ export default function TosModal({
     if (!acceptedCoC) return;
     setLoading(true);
 
-    updateUserSettings.mutate({ [fieldKey]: new Date() });
+    updateUserSettings.mutate({
+      [fieldKey]: new Date(),
+      ...(hashFieldKey && contentHash ? { [hashFieldKey]: contentHash } : {}),
+    });
 
     handleClose();
     await onAccepted();

@@ -71,6 +71,10 @@ const {
       ensurePushWebhook: vi.fn(),
       commitFiles: vi.fn(),
       listRepoTree: vi.fn(),
+      // listRepoTreeAtRef — used by reconstructBundleFromForgejo (the
+      // push-originated approve path + backfill). Resolves a commit SHA / ref
+      // directly to its blob tree (no branch→commit lookup).
+      listRepoTreeAtRef: vi.fn(),
       getBlobContent: vi.fn(),
       getRepo: vi.fn(),
       ensureReviewRepo: vi.fn(),
@@ -78,6 +82,11 @@ const {
       // the build trigger itself + pends/marks the commit status.
       setCommitStatus: vi.fn(),
       reviewRepoUrl: vi.fn((slug: string) => `https://forgejo.example/civitai-apps-review/${slug}`),
+      // repoCommitUrl — used by the list payloads' pushCommitUrl (links a
+      // push-originated review to the canonical repo at the pushed sha).
+      repoCommitUrl: vi.fn(
+        (slug: string, ref: string) => `https://forgejo.example/civitai-apps/${slug}/src/commit/${ref}`
+      ),
     },
     // apps-pipeline.service.triggerBuild — approveRequest now triggers the
     // Tekton build directly (the git-push webhook no longer does). Mocked so
@@ -377,87 +386,59 @@ describe('submitVersion', () => {
     ).rejects.toThrow(/name must be a non-empty string/);
   });
 
-  // ---- iframe.src static checks (catch mixed-content + W12-domain drift
-  // at submit time so devs don't ship a bundle that builds clean but
-  // can't actually mount in the iframe).
+  // ---- iframe.src is PLATFORM-OWNED: the developer never authors it. submit
+  // DERIVES + stamps the canonical per-app subdomain root, overwriting whatever
+  // the dev shipped (or omitted). The deep BlockManifestValidator at approve
+  // still validates the stamped value against OauthClient.allowedOrigins. (Was:
+  // submit hard-rejected a non-canonical iframe.src after the upload.)
 
-  it('rejects when iframe.src is missing', async () => {
+  // Pull the manifest that submitVersion persisted into the publish_request row.
+  function persistedManifest(): Record<string, any> {
+    const call = mockDbWrite.appBlockPublishRequest.create.mock.calls.at(-1);
+    return (call?.[0] as any).data.manifest as Record<string, any>;
+  }
+
+  it('stamps the canonical iframe.src when the manifest omits it', async () => {
     const { submitVersion } = await import('../publish-request.service');
+    // iframe present but no src (dev only set sizing) — and a bundle with no
+    // iframe object at all both resolve to the canonical root.
     const buf = await makeValidBundle({ iframe: { minHeight: 300 } });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /manifest\.iframe\.src must be a string/
-    );
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: 42 });
+    expect(result.publishRequestId).toBeDefined();
+    expect(persistedManifest().iframe.src).toBe('https://hello.civit.ai/');
+    // Other dev-authored iframe fields are preserved.
+    expect(persistedManifest().iframe.minHeight).toBe(300);
   });
 
-  it('rejects HTTP iframe.src as mixed content', async () => {
+  it('overwrites a dev-supplied non-canonical iframe.src (http / wrong host / path)', async () => {
     const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({
-      iframe: { src: 'http://hello.civit.ai/', minHeight: 300 },
-    });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /must use https.*mixed content/i
-    );
+    for (const src of [
+      'http://hello.civit.ai/',
+      'https://attacker.example/',
+      'https://blocks-pr2319.civitaic.com/hello/',
+      'https://hello.civit.ai/hello/',
+      'not a url',
+    ]) {
+      mockDbWrite.appBlockPublishRequest.create.mockClear();
+      const buf = await makeValidBundle({
+        iframe: { src, minHeight: 300, sandbox: 'allow-scripts' },
+      });
+      const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: 42 });
+      expect(result.publishRequestId).toBeDefined();
+      // src normalized to canonical; sandbox preserved.
+      expect(persistedManifest().iframe.src).toBe('https://hello.civit.ai/');
+      expect(persistedManifest().iframe.sandbox).toBe('allow-scripts');
+    }
   });
 
-  it('rejects malformed iframe.src URL', async () => {
-    const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({
-      iframe: { src: 'not a url', minHeight: 300 },
-    });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /is not a valid URL/
-    );
-  });
-
-  it("rejects iframe.src hostname that doesn't match the per-app subdomain", async () => {
-    const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({
-      iframe: { src: 'https://attacker.example/', minHeight: 300 },
-    });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /host must be "hello\.civit\.ai"/
-    );
-  });
-
-  it('rejects leftover hackathon block-host URL pattern', async () => {
-    // Pre-W12 manifests used a shared block-host with path prefix:
-    //   https://blocks-pr2319.civitaic.com/<slug>/
-    // Now devs must use https://<slug>.civit.ai/ — catch this at submit.
-    const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({
-      iframe: {
-        src: 'https://blocks-pr2319.civitaic.com/hello/',
-        minHeight: 300,
-      },
-    });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /host must be "hello\.civit\.ai"/
-    );
-  });
-
-  it('rejects iframe.src with a non-root pathname', async () => {
-    // A stale Vite base: '/hello/' + nginx redirect from / produces a
-    // working bundle that mixed-content-blocks in the iframe (skill
-    // gotcha + 2026-05-29 incident). Reject the leftover path prefix.
-    const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({
-      iframe: { src: 'https://hello.civit.ai/hello/', minHeight: 300 },
-    });
-    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })).rejects.toThrow(
-      /must point at the subdomain root.*pathname "\/hello\/"/
-    );
-  });
-
-  it('accepts the canonical iframe.src shape (https + matching subdomain + root path)', async () => {
+  it('leaves an already-canonical iframe.src unchanged', async () => {
     const { submitVersion } = await import('../publish-request.service');
     const buf = await makeValidBundle({
       iframe: { src: 'https://hello.civit.ai/', minHeight: 300 },
     });
-    const result = await submitVersion({
-      bundleBuffer: buf,
-      submittedByUserId: 42,
-    });
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: 42 });
     expect(result.publishRequestId).toBeDefined();
+    expect(persistedManifest().iframe.src).toBe('https://hello.civit.ai/');
   });
 
   it('rejects same-user resubmit with a self-withdrawable error wording', async () => {
@@ -1074,6 +1055,15 @@ describe('approveRequest', () => {
       })
     );
 
+    // Phase 2: after triggerBuild succeeds, the approved request is marked
+    // 'building' so the developer sees the lifecycle on /apps/my-submissions.
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { slug: 'hello', forgejoCommitSha: 'commit_sha_abc', status: 'approved' },
+        data: expect.objectContaining({ deployState: 'building' }),
+      })
+    );
+
     // OauthClient gets the slug-scoped allowedOrigins + a deterministic id
     // (post C-2 fix). The deterministic id is what makes retries idempotent.
     const ocArg = mockDbWrite.oauthClient.create.mock.calls[0][0].data;
@@ -1102,6 +1092,138 @@ describe('approveRequest', () => {
       'block.manifest.json',
       'index.html',
     ]);
+
+    // iframe.src is platform-owned: the committed block.manifest.json carries
+    // the canonical per-app subdomain root (the default test manifest ships
+    // `https://hello.civit.ai` with no trailing slash → normalized to `.../`),
+    // so civitai-apps/<slug> stays byte-consistent with app_blocks.manifest and
+    // the git-push webhook re-validates the canonical value.
+    const committedManifest = JSON.parse(
+      commitArg.files
+        .find((f: { path: string }) => f.path === 'block.manifest.json')
+        .content.toString('utf8')
+    );
+    expect(committedManifest.iframe.src).toBe('https://hello.civit.ai/');
+    // ...and the app_blocks row stores the same canonical value.
+    const abArg = mockDbWrite.appBlock.create.mock.calls[0][0].data;
+    expect((abArg.manifest as any).iframe.src).toBe('https://hello.civit.ai/');
+  });
+
+  // PUSH-ORIGINATED approve (Phase 3 git-push authoring). The git-push webhook
+  // parks an unreviewed direct push as a `pending` request with EMPTY bundle
+  // pointers (bundleKey='', bundleSha256='') + the pushed forgejoCommitSha — the
+  // ZIP was never uploaded, so the Forgejo repo at that sha IS the artifact.
+  // approveRequest must reconstruct the bundle from Forgejo (NOT GET a bundleKey
+  // from S3), then drive the identical downstream: commit, sha stamp, build
+  // trigger, deployState='building'.
+  it('PUSH path: reconstructs the bundle from Forgejo when bundleKey is empty', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({
+        bundleKey: '',
+        bundleSha256: '',
+        forgejoCommitSha: 'pushsha123',
+      })
+    );
+    // First version (no existing app block) — exercises the full create path.
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    // The repo @ pushsha123 has a manifest + index.html (no Dockerfile this
+    // time, so nothing is filtered as platform-owned).
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(
+      new Map([
+        ['block.manifest.json', 'blobM'],
+        ['index.html', 'blobH'],
+      ])
+    );
+    mockForgejo.getBlobContent.mockImplementation(async (_slug: string, sha: string) => {
+      if (sha === 'blobM') return Buffer.from(JSON.stringify(manifest()));
+      return Buffer.from('<!doctype html><html><body>pushed</body></html>');
+    });
+    // mockBundleBuffer.current stays null — if the code ever fell back to the S3
+    // GET path the mock S3 GET throws ("mockBundleBuffer.current not set"),
+    // which would fail this test. That's the regression guard.
+
+    const result = await approveRequest({
+      publishRequestId: 'pubreq_1',
+      reviewerUserId: 999,
+      approvalNotes: 'reviewed the pushed code',
+    });
+
+    // Reconstructed from Forgejo at the EXACT pushed sha.
+    expect(mockForgejo.listRepoTreeAtRef).toHaveBeenCalledWith('hello', 'pushsha123');
+    // NO S3 GET on a bundleKey (the push request has none). storeScreenshots /
+    // storeBundle PUTs are fine; assert specifically no GetObjectCommand fired.
+    const gets = mockS3Send.mock.calls.filter(
+      (c) => c[0]?.constructor?.name === 'GetObjectCommand'
+    );
+    expect(gets).toHaveLength(0);
+
+    expect(result.isFirstVersion).toBe(true);
+    expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+
+    // Committed the reconstructed files (manifest gets the canonical iframe.src
+    // rewrite; index.html passes through).
+    const commitArg = mockForgejo.commitFiles.mock.calls[0][0];
+    expect(commitArg.replaceAllFiles).toBe(true);
+    expect(commitArg.files.map((f: { path: string }) => f.path).sort()).toEqual([
+      'block.manifest.json',
+      'index.html',
+    ]);
+
+    // current_version_sha stamped to the new committed sha.
+    expect(mockDbWrite.appBlock.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { currentVersionSha: 'commit_sha_abc', screenshots: [] } })
+    );
+    // Build triggered with the committed sha.
+    expect(mockTriggerBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'hello', sha: 'commit_sha_abc' })
+    );
+    // Phase 2: marked 'building' after the trigger succeeds.
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { slug: 'hello', forgejoCommitSha: 'commit_sha_abc', status: 'approved' },
+        data: expect.objectContaining({ deployState: 'building' }),
+      })
+    );
+    // The publish_request is finalised approved.
+    const reqUpdate = mockDbWrite.appBlockPublishRequest.update.mock.calls.find(
+      (c: any[]) => c[0]?.where?.id === 'pubreq_1'
+    );
+    expect(reqUpdate?.[0]?.data?.status).toBe('approved');
+  });
+
+  // ZIP-path regression: a request WITH a bundleKey still GETs from S3 and never
+  // touches the Forgejo-reconstruct path.
+  it('ZIP path: still GETs the bundle from S3 (no Forgejo reconstruct) when bundleKey is set', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ bundleKey: 'bundles/sha.zip' })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+    // S3 GET happened on the bundleKey path.
+    const gets = mockS3Send.mock.calls.filter(
+      (c) => c[0]?.constructor?.name === 'GetObjectCommand'
+    );
+    expect(gets).toHaveLength(1);
+    // Forgejo reconstruct path was NOT taken.
+    expect(mockForgejo.listRepoTreeAtRef).not.toHaveBeenCalled();
+  });
+
+  // Defensive: a malformed request with neither a bundle nor a sha throws clearly.
+  it('throws clearly when a request has neither a bundle nor a forgejo commit', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ bundleKey: '', bundleSha256: '', forgejoCommitSha: '' })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/neither a bundle nor a forgejo commit/);
   });
 
   it('A1: caps OauthClient.allowedScopes to the manifest-derived bitmask (not Full)', async () => {
@@ -1553,10 +1675,14 @@ describe('approveRequest', () => {
   // pointing at content the build chain will never accept.
   it('FIX (H-4): subsequent-version approve rejects when manifest fails validation', async () => {
     const { approveRequest } = await import('../publish-request.service');
+    // iframe.src is platform-stamped before validation, so it can't be the
+    // failure trigger anymore. Use a sandbox token disallowed for the
+    // unverified trust tier (the gen-from-model 2026-05-29 incident shape) —
+    // a webhook-rejectable manifest that survives canonical-src stamping.
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
       pendingRequest({
         manifest: manifest({
-          iframe: { src: 'https://attacker.example', minHeight: 300 }, // origin not in OauthClient.allowedOrigins
+          iframe: { minHeight: 300, sandbox: 'allow-scripts allow-same-origin' },
         }),
       })
     );
@@ -1589,13 +1715,13 @@ describe('approveRequest', () => {
   // before the OauthClient is even created.
   it('FIX (H-4): first-version approve rejects when manifest fails validation', async () => {
     const { approveRequest } = await import('../publish-request.service');
+    // iframe.src is platform-stamped before validation; trigger the H-4 refusal
+    // via a sandbox token disallowed for the unverified tier instead (a real
+    // webhook-rejectable shape that canonical-src stamping does not fix).
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
       pendingRequest({
         manifest: manifest({
-          // Origin not in the to-be-created allowedOrigins (which would be
-          // ['https://hello.civit.ai']) — same failure mode the webhook
-          // surfaces after the fact.
-          iframe: { src: 'https://elsewhere.example', minHeight: 300 },
+          iframe: { minHeight: 300, sandbox: 'allow-scripts allow-same-origin' },
         }),
       })
     );
@@ -1729,7 +1855,7 @@ describe('backfillPublishRequest', () => {
       app: { userId: 42 },
     });
     mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null); // not already backfilled
-    mockForgejo.listRepoTree.mockResolvedValue(
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(
       new Map([
         ['block.manifest.json', 'blob1'],
         ['index.html', 'blob2'],
@@ -1773,7 +1899,7 @@ describe('backfillPublishRequest', () => {
       appBlockId: 'apb_existing',
       bundleSizeBytes: 12345n,
     });
-    mockForgejo.listRepoTree.mockResolvedValue(new Map([['block.manifest.json', 'blob1']]));
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(new Map([['block.manifest.json', 'blob1']]));
     mockForgejo.getBlobContent.mockResolvedValue(Buffer.from(JSON.stringify(manifest())));
 
     const result = await backfillPublishRequest({
@@ -1807,10 +1933,67 @@ describe('backfillPublishRequest', () => {
       app: { userId: 42 },
     });
     mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
-    mockForgejo.listRepoTree.mockResolvedValue(new Map());
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(new Map());
 
     await expect(backfillPublishRequest({ slug: 'hello', reviewerUserId: 999 })).rejects.toThrow(
       /empty/
     );
+  });
+});
+
+// ---- reconstructBundleFromForgejo ------------------------------------------
+
+describe('reconstructBundleFromForgejo', () => {
+  it('builds a non-empty ZIP Buffer from the repo tree + blobs at the ref', async () => {
+    const { reconstructBundleFromForgejo } = await import('../publish-request.service');
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(
+      new Map([
+        ['block.manifest.json', 'blobM'],
+        ['index.html', 'blobH'],
+      ])
+    );
+    mockForgejo.getBlobContent.mockImplementation(async (_slug: string, sha: string) => {
+      if (sha === 'blobM') return Buffer.from(JSON.stringify(manifest()));
+      return Buffer.from('<!doctype html>');
+    });
+
+    const buf = await reconstructBundleFromForgejo('hello', 'pushsha123');
+
+    // Resolved the tree at the exact ref (sha), not a branch.
+    expect(mockForgejo.listRepoTreeAtRef).toHaveBeenCalledWith('hello', 'pushsha123');
+    expect(Buffer.isBuffer(buf)).toBe(true);
+    expect(buf.length).toBeGreaterThan(0);
+
+    // The reconstructed ZIP round-trips to the expected file set.
+    const zip = await JSZip.loadAsync(buf);
+    expect(Object.keys(zip.files).sort()).toEqual(['block.manifest.json', 'index.html']);
+  });
+
+  it('is deterministic — identical repo state yields byte-identical bytes', async () => {
+    const { reconstructBundleFromForgejo } = await import('../publish-request.service');
+    // Tree entry order is reversed between the two runs to prove the helper
+    // sorts entries (so Forgejo ordering can't change the resulting bytes).
+    mockForgejo.getBlobContent.mockImplementation(async (_slug: string, sha: string) => {
+      if (sha === 'blobM') return Buffer.from(JSON.stringify(manifest()));
+      return Buffer.from('<!doctype html>');
+    });
+
+    mockForgejo.listRepoTreeAtRef.mockResolvedValueOnce(
+      new Map([
+        ['block.manifest.json', 'blobM'],
+        ['index.html', 'blobH'],
+      ])
+    );
+    const a = await reconstructBundleFromForgejo('hello', 'pushsha123');
+
+    mockForgejo.listRepoTreeAtRef.mockResolvedValueOnce(
+      new Map([
+        ['index.html', 'blobH'],
+        ['block.manifest.json', 'blobM'],
+      ])
+    );
+    const b = await reconstructBundleFromForgejo('hello', 'pushsha123');
+
+    expect(a.equals(b)).toBe(true);
   });
 });

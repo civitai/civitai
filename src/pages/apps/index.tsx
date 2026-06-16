@@ -23,6 +23,7 @@ import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
@@ -158,7 +159,10 @@ export default function AppsPage() {
   // marketplace cards owned by the viewer. Visible only to the owner;
   // the trPC procedure is guarded so other users get nothing back.
   const { data: myAppsRaw } = trpc.blocks.getMyApps.useQuery(undefined, {
-    enabled: !!features.appBlocks && !!currentUser,
+    // getMyApps is a moderatorProcedure — gate on the same developer predicate as
+    // the rest of the funnel so a non-developer never fires it (today: mod-only;
+    // post-W11-widen: only app developers, not every logged-in marketplace viewer).
+    enabled: !!features.appBlocks && isAppDeveloper(currentUser),
   });
   const earningsByAppBlockId = useMemo(() => {
     type AppRow = { id: string; lifetimeShareCents: number };
@@ -312,7 +316,7 @@ export default function AppsPage() {
               probeLoading={probeLoading && hasActiveFilters}
               hasActiveFilters={hasActiveFilters}
               onClearFilters={clearFilters}
-              canSubmit={!!currentUser?.isModerator}
+              canSubmit={isAppDeveloper(currentUser)}
             />
           ) : (
             <>
@@ -467,7 +471,7 @@ function SubmitAppLink() {
   // to non-mods, so the worst case if the gate slips is a clear server-
   // side rejection rather than a silent leak.
   const user = useCurrentUser();
-  if (!user?.isModerator) return null;
+  if (!isAppDeveloper(user)) return null;
   return (
     <Button
       component={Link}

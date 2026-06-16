@@ -82,6 +82,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getMetadata } from '~/utils/metadata';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { CacheTTL } from '../common/constants';
@@ -1131,6 +1133,20 @@ export const addPostImage = async ({
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
     meta = { ...meta, external: externalData };
+  }
+
+  // If no meta was supplied (headless/MCP upload), try to extract it from the
+  // image EXIF. The image is already on the CDN at this point so we can fetch
+  // it by URL. We only do this when meta is absent to avoid overwriting
+  // caller-supplied values.
+  if (!meta && props.url && props.type !== MediaType.video) {
+    try {
+      const edgeUrl = getEdgeUrl(props.url, { original: true });
+      const extracted = await getMetadata(edgeUrl);
+      if (extracted && Object.keys(extracted).length > 0) meta = extracted;
+    } catch {
+      // Non-fatal — proceed without metadata rather than failing the upload
+    }
   }
 
   let toolId: number | undefined;

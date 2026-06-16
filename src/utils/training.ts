@@ -38,6 +38,15 @@ export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 // clamps these server-side, so these are UX guard rails rather than the source of truth.
 export const AI_TOOLKIT_EPOCHS = { default: 10, min: 1, max: 20 } as const;
 
+// "Save every N steps" bounds — the secondary length knob. Kept here so the input config
+// and the per-run seeds stay in sync (seeds must clamp to >= min, not 1).
+export const AI_TOOLKIT_SAVE_EVERY = { default: 200, min: 50, max: 5000, step: 50 } as const;
+
+/** Seed "Save every" so the run starts at ~AI_TOOLKIT_EPOCHS.default checkpoints, never
+ *  below the input minimum even if the step default is small. */
+export const aiToolkitSaveEveryDefault = (steps: number): number =>
+  Math.max(AI_TOOLKIT_SAVE_EVERY.min, Math.round(steps / AI_TOOLKIT_EPOCHS.default));
+
 export const aiToolkitStepDefault = (baseType: TrainingBaseModelType): number =>
   baseType === 'ltx2' || baseType === 'ltx23' ? 3000 : baseType === 'anima' ? 1500 : 2000;
 

@@ -10,6 +10,7 @@ import {
   type AppContext,
 } from '~/server/services/block-manifest-validator.service';
 import { FORGEJO_ORG, getRawFile, setCommitStatus } from '~/server/services/blocks/forgejo.service';
+import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 
 /**
  * POST /api/internal/blocks/git-push
@@ -305,6 +306,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
+  // iframe.src is platform-owned (see manifest-normalize.ts). Stamp the
+  // canonical per-app subdomain root onto the parsed manifest BEFORE validation
+  // + the exact-match check below, so an unreviewed direct push that omitted
+  // iframe.src (or carried a stale host) is normalized rather than rejected. The
+  // approve flow already commits a canonical manifest, so this is also belt-and-
+  // suspenders for that path. `slug` (the repo name) is the source of truth.
+  if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)) {
+    stampCanonicalIframeSrc(manifest as Record<string, unknown>, slug, env.APPS_DOMAIN);
+  }
+
   const appContext: AppContext = {
     allowedScopes: appBlock.app.allowedScopes ?? 0,
     allowedOrigins: (appBlock.app.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
@@ -350,7 +361,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  // Require canonical iframe.src host — must match <slug>.<APPS_DOMAIN>/
+  // Require canonical iframe.src host — must match <slug>.<APPS_DOMAIN>/. Now
+  // belt-and-suspenders: the stamp above already forces iframe.src to exactly
+  // this value for any object manifest, so this branch only fires if that
+  // stamping is ever removed/changed — keep it as a defense-in-depth guard.
   const expectedSrc = `https://${slug}.${env.APPS_DOMAIN}/`;
   if (parsedManifest.iframe?.src !== expectedSrc) {
     await setCommitStatusSafe({
@@ -475,15 +489,18 @@ async function recordPendingFromPush(args: {
   });
 
   const ownerUserId = await resolvePushOwnerUserId(args.appBlockId);
-  const emptyFileSummary = { files: [], added: [], removed: [], changed: [] };
-  const manifestDiffSummary = {
-    kind: 'first-version' as const,
-    fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
-  };
+  const publishRequestId = `pubreq_${newUlid()}`;
 
+  // Park the review IMMEDIATELY with an empty summary, then enrich the real
+  // file/manifest diff + bundle size OFF the response path (below). A full
+  // Forgejo bundle reconstruct inline would (a) add seconds to the webhook
+  // response and (b) widen the supersede→create window enough for concurrent
+  // pushes to collide on the one-pending-per-slug index. The mod-review modal's
+  // "View code in Forgejo @ sha" link works regardless; the diff fills in within
+  // a moment. The empty summary is the durable fallback if enrichment never lands.
   await dbWrite.appBlockPublishRequest.create({
     data: {
-      id: `pubreq_${newUlid()}`,
+      id: publishRequestId,
       appBlockId: args.appBlockId,
       slug: args.slug,
       submittedByUserId: ownerUserId,
@@ -491,15 +508,32 @@ async function recordPendingFromPush(args: {
       manifest: args.manifest,
       // No bundle: the webhook doesn't receive the ZIP. The Forgejo repo at
       // forgejoCommitSha IS the reviewable artifact; mods browse it directly.
+      // bundleKey stays empty as the push-originated marker.
       bundleKey: '',
       bundleSha256: '',
       bundleSizeBytes: BigInt(0),
-      fileSummary: emptyFileSummary,
-      manifestDiffSummary,
+      fileSummary: { files: [], added: [], removed: [], changed: [] },
+      manifestDiffSummary: {
+        kind: 'first-version' as const,
+        fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
+      },
       status: 'pending',
       forgejoCommitSha: args.sha,
     },
   });
+
+  // Fire-and-forget: fill in the real diff + bundle size so the mod sees actual
+  // changes (added/changed/removed) instead of 0 files + a misleading
+  // "first-version" label. enrichPushRequestRow has its own try/catch + is
+  // scoped to status='pending', so it never gates the park and can't clobber a
+  // row that was approved/rejected/superseded in the meantime. civitai-web is a
+  // long-lived server, so the microtask completes after the 202.
+  void (async () => {
+    const { enrichPushRequestRow } = await import(
+      '~/server/services/blocks/publish-request.service'
+    );
+    await enrichPushRequestRow(publishRequestId, args.slug, args.sha);
+  })().catch(() => undefined); // guard the dynamic import itself (house convention: no unhandled rejection)
 }
 
 /**

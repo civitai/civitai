@@ -15,6 +15,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL } from './constants';
 import { createOAuthTokenPair } from './token-helpers';
 import { OriginNotAllowedError } from './errors';
+import { redirectUriMatches } from '~/server/schema/oauth-client.schema';
 
 /** Hash auth code for Redis storage (separate from API key hashing) */
 function hashCode(code: string): string {
@@ -110,6 +111,18 @@ export const oauthModel = {
       allowedScopes: client.allowedScopes,
       isConfidential: client.isConfidential,
     } as Client;
+  },
+
+  // The library validates redirect_uri against client.redirectUris with an exact
+  // `includes` by default; override so loopback redirects get RFC 8252 §7.3 port
+  // flexibility (matching the custom pre-check in /api/auth/oauth/authorize).
+  async validateRedirectUri(redirectUri: string, client: Client): Promise<boolean> {
+    const registeredUris = Array.isArray(client.redirectUris)
+      ? client.redirectUris
+      : client.redirectUris
+      ? [client.redirectUris]
+      : [];
+    return redirectUriMatches(registeredUris, redirectUri);
   },
 
   // ─── Authorization Code ─────────────────────────────────────
