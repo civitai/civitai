@@ -1046,6 +1046,15 @@ describe('approveRequest', () => {
       })
     );
 
+    // Phase 2: after triggerBuild succeeds, the approved request is marked
+    // 'building' so the developer sees the lifecycle on /apps/my-submissions.
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { slug: 'hello', forgejoCommitSha: 'commit_sha_abc', status: 'approved' },
+        data: expect.objectContaining({ deployState: 'building' }),
+      })
+    );
+
     // OauthClient gets the slug-scoped allowedOrigins + a deterministic id
     // (post C-2 fix). The deterministic id is what makes retries idempotent.
     const ocArg = mockDbWrite.oauthClient.create.mock.calls[0][0].data;

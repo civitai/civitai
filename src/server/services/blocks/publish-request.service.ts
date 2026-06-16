@@ -1656,12 +1656,63 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     );
   }
 
+  // Phase 2 — surface the build/deploy lifecycle to the developer on
+  // /apps/my-submissions. triggerBuild succeeded above (the catch re-throws),
+  // so the build is now queued: mark the request 'building'. build-callback
+  // advances it deploying → live, or flips it to failed.
+  await markRequestDeployState(request.slug, forgejoCommitSha, 'building');
+
   return {
     publishRequestId: request.id,
     appBlockId,
     forgejoCommitSha,
     isFirstVersion,
   };
+}
+
+/** Build/deploy lifecycle states surfaced on /apps/my-submissions (Phase 2). */
+export type DeployState = 'building' | 'deploying' | 'live' | 'failed';
+
+/**
+ * Advisory: stamp the build/deploy lifecycle state onto the APPROVED publish
+ * request for `(slug, sha)`. Keyed on `forgejo_commit_sha` (unique per approved
+ * version; parked unreviewed requests carry an empty sha so they never match)
+ * + `status='approved'`. Best-effort — a status-write failure must never break
+ * the approve flow or the build-callback, so errors are swallowed. The build is
+ * triggered only by approveRequest, so this is the single source of these
+ * transitions: approveRequest sets 'building'; build-callback sets
+ * 'deploying'/'live'/'failed'.
+ */
+export async function markRequestDeployState(
+  slug: string,
+  sha: string,
+  state: DeployState,
+  detail?: string | null
+): Promise<void> {
+  try {
+    const { dbWrite } = await import('~/server/db/client');
+    const res = await dbWrite.appBlockPublishRequest.updateMany({
+      where: { slug, forgejoCommitSha: sha, status: 'approved' },
+      data: { deployState: state, deployDetail: detail ?? null, deployUpdatedAt: new Date() },
+    });
+    if (res.count === 0) {
+      // A systemic mis-key would otherwise be invisible (badges silently never
+      // advance). Log so a regression is greppable; not fatal.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[markRequestDeployState] no approved request matched (slug=${slug}, sha=${sha.slice(0, 12)}, state=${state})`
+      );
+    }
+  } catch (err) {
+    // deploy_state is advisory display data — never let it break the caller,
+    // but don't swallow silently either.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[markRequestDeployState] write failed (slug=${slug}, state=${state}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
 }
 
 export type BackfillPublishRequestParams = {

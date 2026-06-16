@@ -24,6 +24,7 @@ import {
 import Link from 'next/link';
 import { Fragment } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { deployRefetchInterval, isStaleDeploy } from '~/components/Apps/deploy-status';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
@@ -88,6 +89,12 @@ type Submission = {
   reviewedAt: string | Date | null;
   rejectionReason: string | null;
   approvalNotes: string | null;
+  /** Phase 2 build/deploy lifecycle for an approved request:
+   * 'building' → 'deploying' → 'live', or 'failed'. Null on non-approved rows
+   * and on approved rows from before this feature shipped. */
+  deployState: 'building' | 'deploying' | 'live' | 'failed' | null;
+  deployDetail: string | null;
+  deployUpdatedAt: string | Date | null;
   fileSummary: unknown;
   manifestDiffSummary: unknown;
   /** Total pinned subscriptions referencing this app block. (Was the
@@ -105,18 +112,65 @@ function formatDate(d: string | Date): string {
   return date.toLocaleString();
 }
 
-function statusBadge(status: string) {
+function statusBadge(
+  submission: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt'>
+) {
+  const { status } = submission;
+  // For an approved request, show the real build/deploy lifecycle rather than a
+  // flat "approved" — the dev cares whether their code is actually live.
+  if (status === 'approved') {
+    // A stuck in-flight row (watcher lost to a pod restart) shows a muted
+    // "stalled" badge instead of spinning on building/deploying forever.
+    if (isStaleDeploy(submission)) {
+      return (
+        <Badge
+          color="orange"
+          leftSection={<IconAlertTriangle size={12} />}
+          title="No progress for a while — the deploy may be stuck. Resubmit a new version if it doesn't go live."
+        >
+          {submission.deployState} (stalled)
+        </Badge>
+      );
+    }
+    switch (submission.deployState) {
+      case 'building':
+        return (
+          <Badge color="blue" leftSection={<IconClock size={12} />}>
+            building
+          </Badge>
+        );
+      case 'deploying':
+        return (
+          <Badge color="indigo" leftSection={<IconClock size={12} />}>
+            deploying
+          </Badge>
+        );
+      case 'failed':
+        return (
+          <Badge color="red" leftSection={<IconX size={12} />}>
+            deploy failed
+          </Badge>
+        );
+      case 'live':
+        return (
+          <Badge color="green" leftSection={<IconCheck size={12} />}>
+            live
+          </Badge>
+        );
+      default:
+        // Legacy/pre-Phase-2 approved rows (no deploy_state captured).
+        return (
+          <Badge color="green" leftSection={<IconCheck size={12} />}>
+            approved
+          </Badge>
+        );
+    }
+  }
   switch (status) {
     case 'pending':
       return (
         <Badge color="blue" leftSection={<IconClock size={12} />}>
           pending
-        </Badge>
-      );
-    case 'approved':
-      return (
-        <Badge color="green" leftSection={<IconCheck size={12} />}>
-          approved
         </Badge>
       );
     case 'rejected':
@@ -136,6 +190,14 @@ export default function MySubmissionsPage() {
   const features = useFeatureFlags();
   const submissionsQuery = trpc.blocks.listMyPublishRequests.useQuery(undefined, {
     enabled: !!features?.appBlocks,
+    // Poll while an approved submission is building/deploying so the badge
+    // live-updates. Once a row looks stalled (watcher likely lost to a pod
+    // restart) we BACK OFF to 30s rather than stop — so a slow build that
+    // finishes past the staleness threshold still self-heals to live/failed
+    // without a reload (the global query config is staleTime:Infinity +
+    // refetchOnWindowFocus:false, so stopping entirely would never recover).
+    // Stop only when nothing is in flight.
+    refetchInterval: (query) => deployRefetchInterval((query.state.data ?? []) as Submission[]),
   });
 
   const withdrawMutation = trpc.blocks.withdrawPublishRequest.useMutation({
@@ -230,7 +292,7 @@ export default function MySubmissionsPage() {
                           <Table.Td>
                             <Code>{s.version}</Code>
                           </Table.Td>
-                          <Table.Td>{statusBadge(s.status)}</Table.Td>
+                          <Table.Td>{statusBadge(s)}</Table.Td>
                           <Table.Td>
                             <Text size="xs">{formatDate(s.submittedAt)}</Text>
                           </Table.Td>
@@ -271,6 +333,7 @@ export default function MySubmissionsPage() {
                           <Table.Td>
                             <SubmissionActions
                               submission={s}
+                              isFirstVersion={isFirst}
                               onWithdraw={() =>
                                 withdrawMutation.mutate({ publishRequestId: s.id })
                               }
@@ -312,6 +375,24 @@ export default function MySubmissionsPage() {
                             </Table.Td>
                           </Table.Tr>
                         )}
+                        {s.status === 'approved' && s.deployState === 'failed' && (
+                          <Table.Tr>
+                            <Table.Td colSpan={8} p={0}>
+                              <Alert
+                                color="red"
+                                variant="light"
+                                radius={0}
+                                icon={<IconAlertTriangle size={16} />}
+                                title="Build / deploy failed"
+                              >
+                                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                                  {s.deployDetail ??
+                                    'The build or deploy failed. Fix the issue and resubmit a new version.'}
+                                </Text>
+                              </Alert>
+                            </Table.Td>
+                          </Table.Tr>
+                        )}
                       </Fragment>
                     );
                   })}
@@ -327,10 +408,12 @@ export default function MySubmissionsPage() {
 
 function SubmissionActions({
   submission,
+  isFirstVersion,
   onWithdraw,
   busy,
 }: {
   submission: Submission;
+  isFirstVersion: boolean;
   onWithdraw: () => void;
   busy: boolean;
 }) {
@@ -349,6 +432,20 @@ function SubmissionActions({
     );
   }
   if (submission.status === 'approved') {
+    // "Open live" points at https://<slug>.civit.ai/. Only meaningful once
+    // something is actually serving: hide it for a FIRST version that hasn't
+    // gone live yet (it would 404 / contradict a "building"/"deploy failed"
+    // badge). For a subsequent version still building/failed, the previously
+    // approved version is still live, so keep the link. null deployState =
+    // legacy approved row → assume live.
+    const live = submission.deployState === 'live' || submission.deployState == null;
+    if (!live && isFirstVersion) {
+      return (
+        <Text size="xs" c="dimmed">
+          —
+        </Text>
+      );
+    }
     return (
       <Button
         size="xs"
