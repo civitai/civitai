@@ -56,7 +56,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import type { CheckTosUpdateResult } from '~/server/services/content.service';
+import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
@@ -102,7 +102,7 @@ type CustomAppProps = {
   cookies: ParsedCookies;
   flags: FeatureAccess;
   userFeatureFlags?: FeatureAccess;
-  tosUpdate?: CheckTosUpdateResult;
+  tosMeta?: TosMeta;
   announcements?: AnnouncementsSeed;
   following?: number[];
   seed: number;
@@ -127,7 +127,7 @@ function MyApp(props: CustomAppProps) {
       cookies = parseCookies(getCookies()),
       flags,
       userFeatureFlags,
-      tosUpdate,
+      tosMeta,
       announcements,
       following,
       seed = Date.now(),
@@ -184,7 +184,7 @@ function MyApp(props: CustomAppProps) {
       seed={seed}
       canIndex={canIndex}
       settings={settings}
-      tosUpdate={tosUpdate}
+      tosMeta={tosMeta}
       announcements={announcements}
       following={following}
       region={region}
@@ -376,7 +376,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // the documented failed-snapshot path without widening any downstream type.
   type SettingsBootstrap = {
     settings: UserContentSettings;
-    tosUpdate?: CheckTosUpdateResult;
+    tosMeta?: TosMeta;
     announcements?: AnnouncementsSeed;
     following?: number[];
     session: Session | null;
@@ -428,13 +428,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     );
     settingsBootstrap = {
       settings: undefined as unknown as UserContentSettings,
-      tosUpdate: undefined,
+      tosMeta: undefined,
       announcements: undefined,
       following: undefined,
       session: null,
     };
   }
-  const { settings, session, tosUpdate, announcements, following } = settingsBootstrap;
+  const { settings, session, tosMeta, announcements, following } = settingsBootstrap;
   // Pass these via the request so we can use them in SSR. Resolve the per-user
   // feature flags and the global (redis-cached, identical-for-all-users) browsing
   // setting addons in PARALLEL — neither depends on the other and both sit on
@@ -464,15 +464,14 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   //   (`user.getFeatureFlags`), a pure function of `settings.features` + the SSR
   //   host `flags`. Computed here via the SAME shared function the resolver uses
   //   (fs-free, safe in this client-bundled getInitialProps graph).
-  // - tosUpdate: the `content.checkTosUpdate` result — computed server-side in the
+  // - tosMeta: the static per-domain ToS metadata (lastmod + body hash + the
+  //   per-domain settings field keys) — resolved server-side in the
   //   `/api/user/settings` route above and delivered via that fetch, so we never
   //   import `content.service` (and its `fs/promises` read) into this graph.
-  //   ToS lastmod only changes on a content deploy (never mid-session), so a
-  //   per-load SSR snapshot is exactly as fresh as the per-load client fetch.
-  // Only seed when the SSR `/api/user/settings` snapshot actually succeeded; on
-  // the rare failed-snapshot path (`settings` undefined) leave the seed undefined
-  // so the client query self-heals via a real fetch (staleTime: Infinity would
-  // never refetch a seed). The settings route applies the same gate to tosUpdate.
+  //   ToS content only changes on a deploy (never mid-session). The show/hide
+  //   decision is computed client-side in `useToSUpdateModal` against the seeded
+  //   `user.getSettings`, so there is no tRPC query to seed here — `tosMeta` just
+  //   rides down through pageProps to AppProvider (its `lastmod` is revived there).
   let userFeatureFlags: FeatureAccess | undefined;
   if (session?.user && settings) {
     userFeatureFlags = computeUserFeatureFlagsOverlay(settings.features, flags);
@@ -505,7 +504,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       browsingSettingsAddons,
       flags,
       userFeatureFlags,
-      tosUpdate,
+      tosMeta,
       announcements,
       following,
       seed: Date.now(),
