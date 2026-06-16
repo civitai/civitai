@@ -1,15 +1,25 @@
 import { error, redirect } from '@sveltejs/kit';
+import { dev } from '$app/environment';
+import { env } from '$env/dynamic/private';
 import type { RequestHandler } from './$types';
 import { getSigner } from '$lib/server/auth/session';
 
-// Allowed cross-domain spoke origins for the swap redirect (open-redirect guard): the civitai family + localhost.
-const SPOKE_ORIGIN = /^https?:\/\/([a-z0-9-]+\.)*civitai\.(com|red|green|blue|work|dev|ai)(:\d+)?$/i;
+// EXPLICIT allowlist of spoke origins the hub will hand a swap token to. This is the ENTIRE trust boundary for
+// where a (bearer) swap token gets delivered, so it's an exact-origin set from AUTH_SPOKE_ORIGINS (comma-
+// separated, e.g. "https://civitai.com,https://civitai.red") — never a broad pattern. localhost is allowed only
+// in dev. The callback must also be the spoke's /api/auth/sync receiver path.
+const ALLOWED_SPOKE_ORIGINS = new Set(
+  (env.AUTH_SPOKE_ORIGINS ?? '')
+    .split(',')
+    .map((s) => s.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
+);
 function allowedCallback(raw: string): URL | null {
   try {
     const u = new URL(raw);
-    const ok =
-      u.hostname === 'localhost' || u.hostname === '127.0.0.1' || SPOKE_ORIGIN.test(u.origin);
-    return ok && u.pathname === '/api/auth/sync' ? u : null;
+    if (u.pathname !== '/api/auth/sync') return null;
+    if (dev && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')) return u;
+    return ALLOWED_SPOKE_ORIGINS.has(u.origin) ? u : null;
   } catch {
     return null;
   }
@@ -23,7 +33,10 @@ function allowedCallback(raw: string): URL | null {
 export const GET: RequestHandler = async ({ url, locals }) => {
   const callback = allowedCallback(url.searchParams.get('callback') ?? '');
   if (!callback) error(400, 'bad callback');
-  const returnUrl = url.searchParams.get('returnUrl') ?? '/';
+  // Only ever reflect a root-relative path back to the spoke (the spoke re-checks, but don't emit an open
+  // redirect for a forgetful/non-Next spoke to inherit).
+  const rawReturn = url.searchParams.get('returnUrl') ?? '/';
+  const returnUrl = rawReturn.startsWith('/') && !rawReturn.startsWith('//') ? rawReturn : '/';
 
   if (!locals.user) {
     // Not signed in at the hub either → login, then come straight back here with the same params.

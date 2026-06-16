@@ -22,11 +22,15 @@ function safePath(raw: unknown): string {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (!HUB) return res.status(400).json({ error: 'hub not configured' });
+  // Require an explicit base URL — never trust the inbound Host header to build the callback origin.
+  if (!SELF_ORIGIN) return res.status(500).json({ error: 'NEXT_PUBLIC_BASE_URL not configured' });
   const returnUrl = safePath(req.query.returnUrl);
   const swap = typeof req.query.swap === 'string' ? req.query.swap : undefined;
 
-  // Receive: redeem the swap token → set this domain's civ-token → continue.
+  // Receive: redeem the swap token → set this domain's civ-token → continue. Suppress Referer so the swap (in
+  // the inbound URL) doesn't leak onward.
   if (swap) {
+    res.setHeader('Referrer-Policy', 'no-referrer');
     const result = await exchange.exchange(swap);
     if (!result) return res.redirect(302, '/login?error=sync');
     setSessionCookie(res, result.token);
@@ -34,9 +38,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // Initiate: bounce to the hub with this endpoint as the callback + the final returnUrl.
-  const origin = SELF_ORIGIN ?? `https://${req.headers.host}`;
   const hubSync = new URL(`${HUB.replace(/\/+$/, '')}/api/auth/sync`);
-  hubSync.searchParams.set('callback', `${origin.replace(/\/+$/, '')}/api/auth/sync`);
+  hubSync.searchParams.set('callback', `${SELF_ORIGIN.replace(/\/+$/, '')}/api/auth/sync`);
   hubSync.searchParams.set('returnUrl', returnUrl);
   return res.redirect(302, hubSync.toString());
 }

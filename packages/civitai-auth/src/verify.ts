@@ -122,6 +122,9 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     }
 
     if (!claims) return null;
+    // A SWAP transport token must NEVER be accepted as a session token (it shares iss/aud/kid with one) — the
+    // exchange flow redeems it via verifySwapToken, not here.
+    if ((claims as { purpose?: unknown }).purpose === 'swap') return null;
     if (cfg.isRevoked && (await cfg.isRevoked(claims))) return null;
     return claims;
   }
