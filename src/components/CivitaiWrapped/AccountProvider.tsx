@@ -1,8 +1,10 @@
 import { useLocalStorage, usePrevious } from '@mantine/hooks';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { authProxy } from '~/utils/auth-proxy';
-// STEP-H-REMOVAL: next-auth/react (useSession/signIn) — replaced by the first-party session provider in phase 4.
-import { signIn, useSession } from 'next-auth/react';
+// STEP-H-REMOVAL: next-auth/react `signIn` (legacy account-switch credentials redeem) — goes in phase 5 with
+// the next-auth server. `useSession` is now the first-party provider.
+import { signIn } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import { handleSignOut } from '~/utils/auth-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { useRouter } from 'next/router';

@@ -1,5 +1,7 @@
 import type { Session, SessionUser } from 'next-auth';
-import { signIn, useSession } from 'next-auth/react';
+// STEP-H-REMOVAL: next-auth/react `signIn` (re-auth on refresh error) — goes in phase 5 with the next-auth server.
+import { signIn } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import { createContext, useContext, useEffect, useMemo } from 'react';
 import { useDomainSync } from '~/hooks/useDomainSync';
 import { useAppContext } from '~/providers/AppProvider';

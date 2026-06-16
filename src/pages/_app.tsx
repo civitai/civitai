@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import '~/utils/disable-router-prefetch';
 import { getCookie, getCookies, deleteCookie } from 'cookies-next';
 import type { Session } from 'next-auth';
-import { SessionProvider } from 'next-auth/react';
+import { SessionProvider } from '~/providers/SessionProvider';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';

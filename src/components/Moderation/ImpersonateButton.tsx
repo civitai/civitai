@@ -1,7 +1,7 @@
 import { Stack, Text, Tooltip } from '@mantine/core';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import { IconCrystalBall, IconX } from '@tabler/icons-react';
-import { useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import React, { useState } from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

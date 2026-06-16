@@ -10,6 +10,7 @@ import {
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { getWorkflow as clientGetWorkflow } from '@civitai/client';
+import { GENERATION_UPDATE_HEADER } from '~/shared/constants/generation.constants';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
@@ -145,7 +146,7 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   }
 
   if (genClient.version && semver.lt(version, genClient.version)) {
-    ctx.res?.setHeader('x-generation-update-required', genClient.version);
+    ctx.res?.setHeader(GENERATION_UPDATE_HEADER, genClient.version);
     if (genClient.notes) ctx.res?.setHeader('x-generation-update-notes', genClient.notes);
   }
 

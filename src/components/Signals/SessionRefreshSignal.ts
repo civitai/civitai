@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import { handleSignOut } from '~/utils/auth-helpers';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
