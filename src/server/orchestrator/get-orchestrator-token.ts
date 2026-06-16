@@ -15,7 +15,31 @@ type Context = {
 
 const TOKEN_STORE: 'redis' | 'cookie' = false ? 'cookie' : 'redis';
 
-export async function getOrchestratorToken(userId: number, ctx: Context) {
+type GetOrchestratorTokenOptions = {
+  /**
+   * Skip the per-pod LRU + in-flight coalescing layer in front of the
+   * DB cold-mint. Use this on CROSS-USER call paths — e.g. the
+   * `moderatorProcedure.queryUserGeneratedImages` handler at
+   * `routers/orchestrator.router.ts:543-555`, which mints a token for
+   * an arbitrary target user. Without this bypass, a compromised
+   * moderator account would leave per-target-user cache entries on
+   * every pod they touched, lingering up to
+   * `ORCHESTRATOR_TOKEN_CACHE_TTL_MS` past account shutdown. Self-call
+   * paths (the user is minting for themselves) should leave this
+   * unset — they benefit from the amplification dampener.
+   *
+   * Even with `bypassCache=true`, the sysRedis hash writeback below
+   * still runs so other pods can hit the cross-pod cache on the next
+   * self-call. Only the per-pod cache is skipped.
+   */
+  bypassCache?: boolean;
+};
+
+export async function getOrchestratorToken(
+  userId: number,
+  ctx: Context,
+  options: GetOrchestratorTokenOptions = {}
+) {
   const redisKey = userId.toString();
   // Fail open on sysRedis: fall through to the getTemporaryUserApiKey
   // fallback path below by setting token=null on error. Catch is scoped
@@ -60,15 +84,17 @@ export async function getOrchestratorToken(userId: number, ctx: Context) {
     // consumerBlobUpload,videoEnhancement}.ts only `throw` — they do
     // not invalidate this cache or the sysRedis hash. Future
     // moderation features must NOT assume cache-coherent revocation.
-    token = await getOrMintCachedToken(userId, () =>
+    const mint = () =>
       getTemporaryUserApiKey({
         name: generationServiceCookie.name,
         // make the db token live just slightly longer than the cookie token
         maxAge: generationServiceCookie.maxAge + 5,
         type: 'System',
         userId,
-      })
-    );
+      });
+    // Cross-user mints (moderator path) must NOT populate the per-pod
+    // cache — Round-5 audit H2. See GetOrchestratorTokenOptions.bypassCache.
+    token = options.bypassCache ? await mint() : await getOrMintCachedToken(userId, mint);
     if (TOKEN_STORE === 'redis') {
       // Cache populate is best-effort: if sysRedis is down we still return
       // the freshly-minted token. Without this catch, the writeback would
