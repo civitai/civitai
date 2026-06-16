@@ -189,6 +189,17 @@ target being in **this** device's set and fresh (<30d); `localStorage` holds zer
 - [x] `AccountProvider` rewrite: list from the hub device set, `swapAccount(userId)` switch, **logout-one without
       switching**, `removeAccount` → device-set DELETE
 
+**Logout scopes — remaining:**
+
+- [ ] **`logoutAll` = log out every account on THIS device** (not just the current one). Needs a hub "forget this
+      device's account set" call: clear the Redis `device:accounts:{deviceId}` set + revoke each linked account's
+      session for this device, clear the client roster. Must NOT affect the same users' sessions on **other**
+      devices. (Today `logoutAll` aliases `logout` — only ends the current session; others age out at 30d.)
+- [ ] **"Log out on all devices"** — an **account-page** action (distinct from the switcher). Globally invalidates
+      ALL of the user's sessions across every device/browser (the registry's per-user cutoff —
+      `invalidateUserSessions`). This is the account-security "sign out everywhere", separate from the device-level
+      `logoutAll` above.
+
 **Legacy migration — DON'T lose existing linked accounts:**
 
 - [x] The switcher **merges** the hub device set with the pre-existing `civitai-accounts` localStorage, so no
