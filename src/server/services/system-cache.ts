@@ -1,6 +1,12 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withRedisCommandTimeout,
+} from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
@@ -122,7 +128,13 @@ export async function getSystemPermissions(): Promise<Record<string, number[]>> 
   //   - addSystemPermission / removeSystemPermission MUST throw to avoid
   //     overwriting the real permission set with a partial mutation
   //     (read returns {} during outage, write later succeeds → wipe).
-  const cachedPermissions = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS);
+  // Per-command timeout so a silent sysRedis half-open can't park this read (reached
+  // per-request on a session-cache miss). withRedisCommandTimeout's AbortSignal DOES
+  // bound a single command (unlike pipelines). It throws on timeout — which preserves
+  // this function's throw-on-error contract for all callers.
+  const cachedPermissions = await withRedisCommandTimeout(sysRedis).get(
+    REDIS_SYS_KEYS.SYSTEM.PERMISSIONS
+  );
   if (cachedPermissions) return JSON.parse(cachedPermissions);
 
   return {};

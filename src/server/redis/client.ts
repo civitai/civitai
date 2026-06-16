@@ -275,6 +275,17 @@ function getBaseClient(type: 'cache' | 'system') {
   const socketTimeoutMs =
     type === 'system' ? env.REDIS_SYS_SOCKET_TIMEOUT_MS : env.REDIS_SOCKET_TIMEOUT_MS;
 
+  // Bound the system client's command queue. With socketTimeoutMs=0 (the sys default),
+  // a SILENT half-open is only cleared by OS TCP keepalive (minutes), during which
+  // every authenticated request enqueues a refreshToken MULTI that never drains — an
+  // unbounded queue would grow the heap toward OOM. Capping it makes new commands
+  // fast-fail once wedged (the fail-open callers catch it). The cache client is left
+  // unbounded — its socketTimeout tears the socket down and flushes the queue.
+  const commandsQueueMaxLength =
+    type === 'system' && env.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH > 0
+      ? env.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH
+      : undefined;
+
   // Shared configuration
   const socketConfig = {
     reconnectStrategy(retries: number) {
@@ -345,6 +356,7 @@ function getBaseClient(type: 'cache' | 'system') {
         ...authConfig,
         socket: socketConfig,
         pingInterval,
+        ...(commandsQueueMaxLength ? { commandsQueueMaxLength } : {}),
       });
 
   // Common event handlers (note: cluster clients don't emit connect/ready events in node-redis v4.x)

@@ -71,6 +71,22 @@ export const serverSchema = z.object({
   // if a real sys half-open guard is ever wanted, but it must be paired with a backend
   // that closes cleanly. See getBaseClient().
   REDIS_SYS_SOCKET_TIMEOUT_MS: z.coerce.number().default(0),
+  // Wall-clock deadline (ms) for the refreshToken sysRedis MULTI/pipeline (runs on
+  // every authenticated request). node-redis can't apply a per-command timeout to a
+  // pipeline and the sys client has no socketTimeout (above), so this is what bounds a
+  // silent half-open on the auth hot path. Its OWN knob (not REDIS_COMMAND_TIMEOUT_MS,
+  // which governs the cache fail-open path) so disabling one doesn't silently disable
+  // the other. 0 disables it. See token-refresh.ts withSysCommandDeadline().
+  REDIS_SYS_PIPELINE_TIMEOUT_MS: z.coerce.number().default(2000),
+  // Bound on the sys client's node-redis command queue. The sys client has no
+  // socketTimeout, so on a SILENT half-open it is only cleared by OS TCP keepalive
+  // (minutes), during which every authenticated request enqueues a MULTI that never
+  // drains → an UNBOUNDED queue → heap growth / OOM. Capping the queue makes new
+  // commands fast-fail (`The queue is full`) once wedged, which the fail-open callers
+  // catch — bounding the heap instead of OOMing the pod. 0 = unbounded (node-redis
+  // default). Only applied to the system client; the cache client self-bounds via its
+  // socketTimeout. See getBaseClient().
+  REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: z.coerce.number().default(10000),
   // Keepalive PING interval (ms). node-redis issues a `PING` every interval ONLY when
   // the socket is otherwise idle (a parked/in-flight command blocks it from being
   // written). Each PING is a write+reply round-trip that resets the socketTimeout idle

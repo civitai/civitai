@@ -17,14 +17,17 @@ const log = createLogger('token-refresh', 'green');
  * MULTI/pipeline sub-commands, and the sys client carries no socketTimeout
  * (`REDIS_SYS_SOCKET_TIMEOUT_MS` defaults to 0 — disabled to avoid the reconnect-storm
  * wedge on the single-replica sysRedis backend). Without this guard, a SILENT half-open
- * (no RST/FIN) would park `pipeline.exec()` for ~30s (until OS TCP keepalive) on EVERY
- * authenticated request → an auth-path 504 cascade. Racing the exec against the existing
- * fail-open command timeout bounds the wait and (via the caller's catch) keeps the
- * session. The losing `exec()` may linger in the command queue but no longer holds the
- * request handler. `REDIS_COMMAND_TIMEOUT_MS <= 0` disables the guard.
+ * (no RST/FIN) would park `pipeline.exec()` until OS TCP keepalive finally errors the
+ * socket — on Linux defaults that is MINUTES (~5s + 9×75s ≈ 11min), not seconds — on
+ * EVERY authenticated request → an auth-path 504 cascade. Racing the exec against
+ * REDIS_SYS_PIPELINE_TIMEOUT_MS bounds the wait and (via the caller's catch) keeps the
+ * session. The losing `exec()` is left to settle in the background (a stray rejection is
+ * swallowed by Promise.race), so it no longer holds the request handler — and the sys
+ * client's `commandsQueueMaxLength` caps how many such parked pipelines can accumulate
+ * during the wedge so they can't grow the heap unbounded. `<= 0` disables the guard.
  */
 function withSysCommandDeadline<T>(p: Promise<T>): Promise<T> {
-  const ms = env.REDIS_COMMAND_TIMEOUT_MS;
+  const ms = env.REDIS_SYS_PIPELINE_TIMEOUT_MS;
   if (!ms || ms <= 0) return p;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
@@ -86,8 +89,9 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
     pipeline.hExists(userTokenKey as any, tokenId); // [1] Check if token exists in tracking
     pipeline.get(REDIS_SYS_KEYS.SESSION.ALL); // [2] Check global invalidation date
     // Wall-clock guard: a silent sysRedis half-open would otherwise park this exec()
-    // ~30s on every authenticated request (no per-cmd timeout on pipelines, no
-    // socketTimeout on the sys client). On timeout this throws → fail open below.
+    // for minutes (OS-keepalive teardown) on every authenticated request — no per-cmd
+    // timeout on pipelines, no socketTimeout on the sys client. On timeout this throws
+    // → fail open below.
     results = await withSysCommandDeadline(pipeline.exec());
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'refreshToken pipeline', err, {
