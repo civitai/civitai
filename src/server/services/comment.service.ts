@@ -28,6 +28,11 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import type { ReportReason, ReportStatus, ReviewReactions } from '~/shared/utils/prisma/enums';
 
+// Postgres caps bind parameters at 32767. A `notIn` negation cannot be auto-split by Prisma
+// (unlike a positive `in`), so a larger exclusion list throws P2029. Bound it conservatively
+// below the limit to leave headroom for the query's other parameters.
+const MAX_EXCLUDED_USER_IDS = 30000;
+
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
   input: {
     limit = DEFAULT_PAGE_SIZE,
@@ -52,7 +57,20 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
   const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
-  const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
+  // De-duplicate (the three lists overlap heavily — mutual blocks appear in both
+  // blockedUsers and blockedByUsers) and cap the list. `userId: { notIn: [...] }` is a
+  // negation filter: Prisma cannot split it into multiple queries the way it splits a
+  // positive `in`, so once the bind-parameter count crosses the Postgres limit (~32767,
+  // shared with the query's other params) the engine throws P2029 ("Query parameter limit
+  // exceeded ... the negation filters used prevent the query from being split") and the
+  // whole comment list 500s. `blockedByUsers` is unbounded (anyone who blocked the viewer),
+  // so a heavily-blocked account can exceed the limit. Bounding the exclusion well below
+  // the limit keeps the query valid; in the pathological case a few of the lowest-priority
+  // excluded users' comments may show through, which is far preferable to a hard 500.
+  const excludedUserIds = [...new Set([...hiddenUsers, ...blockedByUsers, ...blockedUsers])].slice(
+    0,
+    MAX_EXCLUDED_USER_IDS
+  );
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
