@@ -178,7 +178,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const { data: myReview } = trpc.article.getMyArticleRatingReview.useQuery(
     { articleId: id },
-    { enabled: isOwner, staleTime: 60_000 }
+    { enabled: isOwner && features.articleRatingDispute, staleTime: 60_000 }
   );
   const handlePublishArticle = () => {
     if (!article || article.status === ArticleStatus.Published) return;
@@ -436,7 +436,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
             />
           )}
-          {isOwner && (
+          {isOwner && features.articleRatingDispute && (
             <ArticleOwnerRatingControls
               articleId={article.id}
               nsfwLevel={article.nsfwLevel}

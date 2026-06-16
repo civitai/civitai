@@ -16,6 +16,7 @@ import {
 // Numeric (bitwise) NsfwLevel — `Blocked` is 32. NOT the Prisma string enum of
 // the same name in `~/shared/utils/prisma/enums`.
 import { NsfwLevel } from '~/server/common/enums';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { handleLogError } from '~/server/utils/errorHandling';
 
 export type AutoApproveEntryPoint = 'submission' | 'scan-completion';
@@ -471,6 +472,18 @@ export async function maybeAutoResolveDisputeAfterScan(articleId: number): Promi
       },
     });
     if (!pending) return;
+
+    // Gate this background auto-resolve on the dispute feature flag for the
+    // owner, mirroring the per-user `isFlagProtected('articleRatingDispute')`
+    // gate on the dispute endpoints. Keeps the flag an effective kill-switch:
+    // with the feature off, an already-filed Pending dispute is NOT auto-
+    // resolved on rescan — it waits for a moderator. Fail-closed (isFlipt
+    // returns false when Flipt is unavailable), which is the safe direction.
+    const disputeEnabled = await isFlipt(
+      FLIPT_FEATURE_FLAGS.ARTICLE_RATING_DISPUTE,
+      String(pending.userId)
+    );
+    if (!disputeEnabled) return;
 
     const article = await dbRead.article.findUnique({
       where: { id: articleId },
