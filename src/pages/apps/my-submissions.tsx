@@ -24,6 +24,7 @@ import {
 import Link from 'next/link';
 import { Fragment } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { AuthorViaGit } from '~/components/Apps/AuthorViaGit';
 import { deployRefetchInterval, isStaleDeploy } from '~/components/Apps/deploy-status';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -390,6 +391,17 @@ export default function MySubmissionsPage() {
                                     'The build or deploy failed. Fix the issue and resubmit a new version.'}
                                 </Text>
                               </Alert>
+                            </Table.Td>
+                          </Table.Tr>
+                        )}
+                        {/* Phase 3: git-push self-service. Approved rows with an
+                            app block (FK set on approve) can author updates via
+                            git. The server still owner-gates getMyAppRepo, and
+                            the panel only fetches the token on user expand. */}
+                        {s.status === 'approved' && s.appBlockId && (
+                          <Table.Tr>
+                            <Table.Td colSpan={8}>
+                              <AuthorViaGit appBlockId={s.appBlockId} />
                             </Table.Td>
                           </Table.Tr>
                         )}
