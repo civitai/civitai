@@ -145,6 +145,13 @@ export const APP_BLOCKS_RUNTIME_FLAG = 'app-blocks-runtime-enabled';
  * need to flip the flag without standing up Flipt.
  */
 export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
+  // THROWAWAY launch-verify branch ONLY — env-gated simulation of the post-flip
+  // state (Flipt app-blocks-enabled widened mod→public) so the anon/non-mod
+  // public marketplace surfaces (listAvailable/getAppDetail/getFeaturedBlocks)
+  // light up for the click-path verification. Flipt is shared prod↔preview so it
+  // can't be flipped preview-only. Set APP_BLOCKS_FORCE_ON=true on the preview
+  // pod. DO NOT MERGE.
+  if (process.env.APP_BLOCKS_FORCE_ON === 'true') return true;
   // No user supplied → preserve the original global eval for the machine /
   // anonymous gates (webhooks, JWKS). Their callers are unchanged.
   if (!opts?.user) {
