@@ -1,4 +1,4 @@
-import { Button, Center, Checkbox, Group, Loader, Select, Stack, Title } from '@mantine/core';
+import { Button, Center, Group, Loader, Select, Stack, Title } from '@mantine/core';
 import { useEffect, useMemo, useState } from 'react';
 
 import { ArticleRatingReviewCard } from '~/components/Article/ArticleRatingReviewCard';
@@ -20,7 +20,6 @@ const statusData = [
 export default function ArticleRatingReview() {
   const [limit, setLimit] = useState<string>('50');
   const [status, setStatus] = useState<ReportStatus>(ReportStatus.Pending);
-  const [requireReason, setRequireReason] = useState(false);
 
   const queryInput = useMemo(() => ({ limit: Number(limit), status }), [limit, status]);
 
@@ -46,11 +45,6 @@ export default function ArticleRatingReview() {
       <div className="flex items-center justify-between gap-4">
         <Title>Article Rating Review</Title>
         <Group gap={8}>
-          <Checkbox
-            label="Require reason"
-            checked={requireReason}
-            onChange={(event) => setRequireReason(event.currentTarget.checked)}
-          />
           <Select
             placeholder="Status"
             value={status}
@@ -84,7 +78,6 @@ export default function ArticleRatingReview() {
               <ArticleRatingReviewCard
                 key={review.id}
                 review={review}
-                requireReason={requireReason}
                 queryInput={queryInput}
               />
             ))}

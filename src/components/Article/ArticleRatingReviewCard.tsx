@@ -13,7 +13,6 @@ import {
 import { IconExternalLink } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
 
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -41,8 +40,6 @@ interface LevelChipProps {
   dashed?: boolean;
 }
 
-type DismissButtonClickEvent = ReactMouseEvent<HTMLButtonElement>;
-
 // Mirror the labels used by the moderator dashboard's status filter dropdown
 // (src/pages/moderator/article-rating-review.tsx) so badge text and filter
 // text agree. Raw enum values (`Actioned` / `Unactioned`) would otherwise leak
@@ -56,7 +53,6 @@ const statusLabel: Record<ReportStatus, string> = {
 
 export type ArticleRatingReviewCardProps = {
   review: ReviewItem;
-  requireReason: boolean;
   // Pass-through of the active list query input so the mutation can do an
   // optimistic local removal instead of a full-list invalidate (mods open
   // 50+ cards per session — invalidate per-resolve thrashes the cache).
@@ -70,7 +66,6 @@ const levelOptions: LevelOption[] = browsingLevels.map((level) => ({
 
 export function ArticleRatingReviewCard({
   review,
-  requireReason,
   queryInput,
 }: ArticleRatingReviewCardProps) {
   const { article, user } = review;
@@ -121,7 +116,6 @@ export function ArticleRatingReviewCard({
   };
 
   const handleDismiss = () => {
-    if (requireReason && !modComment.trim()) return;
     mutate({
       reviewId: review.id,
       status: ReportStatus.Unactioned,
@@ -129,7 +123,7 @@ export function ArticleRatingReviewCard({
     });
   };
 
-  const dismissDisabled = isPending || resolvedLocal || (requireReason && !modComment.trim());
+  const dismissDisabled = isPending || resolvedLocal;
   const approveDisabled = isPending || resolvedLocal;
 
   const articleHref = `/articles/${article.id}`;
@@ -256,11 +250,7 @@ export function ArticleRatingReviewCard({
               size="sm"
             />
             <Textarea
-              placeholder={
-                requireReason
-                  ? 'Reason required for dismissal'
-                  : 'Optional moderator comment (visible to owner)'
-              }
+              placeholder="Optional moderator comment (visible to owner)"
               value={modComment}
               onChange={(e) => setModComment(e.currentTarget.value)}
               minRows={2}
@@ -273,31 +263,15 @@ export function ArticleRatingReviewCard({
               if a rescan agrees.
             </Text>
             <Group justify="flex-end" gap="xs">
-              <Tooltip
-                label="Provide a reason before rejecting"
-                disabled={!requireReason || !!modComment.trim()}
+              <Button
+                color="red"
+                variant="filled"
+                disabled={dismissDisabled}
+                loading={isPending}
+                onClick={handleDismiss}
               >
-                <Button
-                  color="red"
-                  variant="filled"
-                  data-disabled={dismissDisabled || undefined}
-                  loading={isPending}
-                  onClick={(event: DismissButtonClickEvent) => {
-                    // Mantine strips pointer events from `disabled` buttons,
-                    // which kills the wrapping Tooltip. Use `data-disabled`
-                    // for the visual state and guard the click handler
-                    // instead — keeps the tooltip reachable when the reject
-                    // condition isn't met (e.g. empty mod comment).
-                    if (dismissDisabled) {
-                      event.preventDefault();
-                      return;
-                    }
-                    handleDismiss();
-                  }}
-                >
-                  Reject
-                </Button>
-              </Tooltip>
+                Reject
+              </Button>
               <Button
                 color="teal"
                 disabled={approveDisabled}
