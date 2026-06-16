@@ -19,7 +19,7 @@
  * Budgets live in `.bundle-budget.json`:
  *   { "shared": "350 kB", "routeMax": "1.5 MB", "routes": { "/x": "2 MB" } }
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { brotliCompressSync, constants as zc } from 'node:zlib';
 import { join } from 'node:path';
 
@@ -27,6 +27,11 @@ const NEXT_DIR = process.env.NEXT_DIR || '.next';
 const MANIFEST = join(NEXT_DIR, 'build-manifest.json');
 const BUDGET_FILE = process.env.BUNDLE_BUDGET_FILE || '.bundle-budget.json';
 const GATE = process.argv.includes('--gate');
+// `--json` also writes a machine-readable per-route snapshot (bytes, brotli),
+// consumed by the perf-trend baseline job + the future PR bundle-regression
+// gate. Report-only; independent of --gate.
+const JSON_OUT = process.argv.includes('--json');
+const JSON_FILE = process.env.BUNDLE_JSON_FILE || 'bundle-budget.json';
 const TOP = Number(process.env.BUNDLE_TOP || 20);
 
 const isJs = (f) => typeof f === 'string' && f.endsWith('.js');
@@ -91,6 +96,26 @@ const routes = Object.keys(pages)
 // Coarse total = brotli of every referenced client .js (deduped via cache).
 const allFiles = uniq(Object.values(pages).flat().filter(isJs).concat(sharedFiles));
 const totalSize = sumBr(allFiles);
+
+// ---- machine-readable snapshot (for the perf-trend baseline + future gate) ----
+if (JSON_OUT) {
+  const snapshot = {
+    // Build provenance — best-effort from common CI env vars; null if absent.
+    commit:
+      process.env.BUILD_SHA ||
+      process.env.SOURCE_COMMIT ||
+      process.env.GIT_SHA ||
+      process.env.GITHUB_SHA ||
+      null,
+    builtAt: new Date().toISOString(),
+    unit: 'bytes-brotli',
+    shared: sharedSize,
+    total: totalSize,
+    routes: Object.fromEntries(routes.map((r) => [r.route, r.size])),
+  };
+  writeFileSync(JSON_FILE, JSON.stringify(snapshot, null, 2));
+  console.log(`bundle-budget: wrote ${JSON_FILE} (${routes.length} routes)`);
+}
 
 // ---- report ----
 const breaches = [];
