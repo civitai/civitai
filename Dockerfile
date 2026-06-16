@@ -57,9 +57,12 @@ RUN --mount=type=cache,target=/app/.next/cache \
 # The report is also written to /app/bundle-budget.txt and COPYied into the
 # runner image so the Tekton bundle-comment task can surface it on the PR
 # (kubectl exec ... cat) without a duplicate build.
+# `--json` additionally writes /app/bundle-budget.json (machine-readable per-route
+# First Load JS) — served at /api/internal/bundle-budget for the perf-trend
+# baseline job + the future PR bundle-regression gate.
 # Invoke node directly (not `pnpm run size`) so pnpm's lifecycle preamble
 # (`> model-share@… size /app`) stays out of the report/comment.
-RUN node scripts/bundle-budget.mjs > /app/bundle-budget.txt 2>&1 || true; cat /app/bundle-budget.txt
+RUN node scripts/bundle-budget.mjs --json > /app/bundle-budget.txt 2>&1 || true; cat /app/bundle-budget.txt
 
 # Server source maps (.next/server/**/*.js.map) are emitted by the build
 # (productionBrowserSourceMaps -> turbopackSourceMaps) but @vercel/nft does NOT
@@ -112,6 +115,9 @@ COPY --from=builder /app/package.json ./package.json
 # Bundle-budget report (report-only) — surfaced on the PR by the Tekton
 # bundle-comment task via `kubectl exec ... cat /app/bundle-budget.txt`.
 COPY --from=builder /app/bundle-budget.txt ./bundle-budget.txt
+# Machine-readable per-route First Load JS — served at /api/internal/bundle-budget
+# (main is read by the perf-trend baseline job + the future PR regression gate).
+COPY --from=builder /app/bundle-budget.json ./bundle-budget.json
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
