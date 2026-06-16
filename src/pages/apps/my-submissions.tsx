@@ -24,6 +24,7 @@ import {
 import Link from 'next/link';
 import { Fragment } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { deployRefetchInterval, isStaleDeploy } from '~/components/Apps/deploy-status';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
@@ -111,31 +112,6 @@ function formatDate(d: string | Date): string {
   return date.toLocaleString();
 }
 
-// A build/deploy that hasn't advanced in this long is treated as STALLED: the
-// fire-and-forget apply watcher was likely lost to a civitai-web pod restart
-// (build-callback.ts documents this self-heal-on-next-build window). Must sit
-// COMFORTABLY above the build pipeline's own ceiling — the Tekton pipeline
-// timeout is 20m EXECUTION plus queue time on the single slow build node — so a
-// legitimately slow/queued build is never mislabeled. When a row does look
-// stalled we only BACK OFF polling (never stop), so a slow build that finishes
-// past the threshold still self-heals to live/failed without a page reload.
-const DEPLOY_STALE_AFTER_MS = 45 * 60 * 1000;
-
-function isInFlightDeploy(s: Pick<Submission, 'status' | 'deployState'>): boolean {
-  return (
-    s.status === 'approved' && (s.deployState === 'building' || s.deployState === 'deploying')
-  );
-}
-
-function isStaleDeploy(
-  s: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt'>
-): boolean {
-  if (!isInFlightDeploy(s) || !s.deployUpdatedAt) return false;
-  const updated =
-    typeof s.deployUpdatedAt === 'string' ? new Date(s.deployUpdatedAt) : s.deployUpdatedAt;
-  return Date.now() - updated.getTime() > DEPLOY_STALE_AFTER_MS;
-}
-
 function statusBadge(
   submission: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt'>
 ) {
@@ -221,12 +197,7 @@ export default function MySubmissionsPage() {
     // without a reload (the global query config is staleTime:Infinity +
     // refetchOnWindowFocus:false, so stopping entirely would never recover).
     // Stop only when nothing is in flight.
-    refetchInterval: (query) => {
-      const data = (query.state.data ?? []) as Submission[];
-      const inFlight = data.filter(isInFlightDeploy);
-      if (inFlight.length === 0) return false;
-      return inFlight.some((s) => !isStaleDeploy(s)) ? 5000 : 30000;
-    },
+    refetchInterval: (query) => deployRefetchInterval((query.state.data ?? []) as Submission[]),
   });
 
   const withdrawMutation = trpc.blocks.withdrawPublishRequest.useMutation({
