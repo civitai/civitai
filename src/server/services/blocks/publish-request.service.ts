@@ -15,6 +15,8 @@ import {
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
 import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
+// Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
+import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -751,50 +753,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // known); here we only assert they pass every cap/magic-byte/name gate.
   await extractScreenshots(bundleBuffer);
 
-  // Static iframe.src sanity check — the deep BlockManifestValidator runs
-  // at approve time against the OauthClient.allowedOrigins, but it's worth
-  // catching obvious shape problems here so the dev gets feedback in the
-  // submit modal instead of waiting for a mod and a build cycle.
-  //
-  // Caught here:
-  //   - missing / non-string iframe.src
-  //   - HTTP (would mixed-content-block in the iframe)
-  //   - hostname that doesn't match `<blockId>.<APPS_DOMAIN>` (the W12
-  //     per-app-subdomain contract); catches leftover hackathon block-host
-  //     URLs like `blocks-pr2319.civitaic.com/<slug>/`
-  //   - non-/ pathnames (the W12 platform routes the entire subdomain to
-  //     this app — a path prefix usually signals a stale base config in
-  //     the app's bundler/nginx)
-  const iframe =
-    manifest.iframe && typeof manifest.iframe === 'object'
-      ? (manifest.iframe as Record<string, unknown>)
-      : null;
-  if (!iframe || typeof iframe.src !== 'string') {
-    throw new Error('manifest.iframe.src must be a string');
-  }
+  // iframe.src is PLATFORM-OWNED, not developer-authored. The only valid value
+  // is the canonical per-app subdomain root (`https://<slug>.<APPS_DOMAIN>/`),
+  // so we DERIVE + stamp it here instead of making the developer hand-type a
+  // subdomain that doesn't exist until their app is approved (and rejecting them
+  // — after a multi-MiB upload — if they get it wrong). Any dev-supplied or
+  // missing iframe.src is overwritten. Stamping now means the stored
+  // publish-request manifest, the manifest diff, and everything the mod reviews
+  // already carry the canonical value; approve re-stamps defensively and the
+  // deep BlockManifestValidator there still validates it against
+  // OauthClient.allowedOrigins. Mirrors how trustTier is server-owned.
   const { env } = await import('~/env/server');
-  const expectedHost = `${slug}.${env.APPS_DOMAIN}`;
-  let iframeUrl: URL;
-  try {
-    iframeUrl = new URL(iframe.src);
-  } catch {
-    throw new Error(`manifest.iframe.src "${iframe.src}" is not a valid URL`);
-  }
-  if (iframeUrl.protocol !== 'https:') {
-    throw new Error(
-      `manifest.iframe.src must use https:// — got "${iframeUrl.protocol}//${iframeUrl.host}". HTTP iframe sources are blocked by the browser as mixed content.`
-    );
-  }
-  if (iframeUrl.hostname !== expectedHost) {
-    throw new Error(
-      `manifest.iframe.src host must be "${expectedHost}" (the W12 per-app subdomain), got "${iframeUrl.hostname}". Update the manifest's iframe.src to https://${expectedHost}/.`
-    );
-  }
-  if (iframeUrl.pathname !== '/' && iframeUrl.pathname !== '') {
-    throw new Error(
-      `manifest.iframe.src must point at the subdomain root ("/") — got pathname "${iframeUrl.pathname}". The platform routes the entire ${expectedHost} subdomain to this app; a path prefix usually signals a stale bundler base path or nginx redirect that breaks under per-app subdomains.`
-    );
-  }
+  stampCanonicalIframeSrc(manifest, slug, env.APPS_DOMAIN);
 
   // Block double-submit on the same slug — only one pending request per
   // slug at a time. The /apps/submit UI calls getMyPendingForSlug on
@@ -1312,6 +1282,13 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   const resolvedTrustTier = existingAppBlock?.trustTier ?? 'unverified';
   manifest.trustTier = resolvedTrustTier;
 
+  // iframe.src is platform-owned (see manifest-normalize.ts). submitVersion
+  // already stamped the canonical value, but re-stamp here so approve is also
+  // correct for rows created before this change / via the backfill path. This
+  // makes the value the validator (below), the app_blocks.manifest write, and
+  // the committed block.manifest.json (step 5) all see consistent.
+  stampCanonicalIframeSrc(manifest, request.slug, env.APPS_DOMAIN);
+
   // H-4 fix — run the same BlockManifestValidator the git-push webhook
   // runs, BEFORE any DB writes or the Forgejo commit. Without this:
   //   - app_blocks.manifest gets updated to the new manifest content
@@ -1546,6 +1523,40 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     (f) => !isPlatformOwnedPath(f.path)
   );
 
+  // Commit the developer's ORIGINAL block.manifest.json with ONLY the
+  // platform-owned iframe.src corrected — preserving their field order and NOT
+  // injecting server-resolved fields (e.g. trustTier) into the tenant-visible
+  // build repo. This keeps civitai-apps/<slug>'s manifest faithful to the upload
+  // while its iframe.src agrees with app_blocks.manifest + what the host serves.
+  // (The git-push webhook also stamps iframe.src in-memory, and it no-ops on this
+  // approved sha BEFORE validating, so this rewrite is for repo fidelity, not
+  // validation.) Falls back to the stored manifest only if the bundle's manifest
+  // is somehow missing or unparseable (submit requires + parses it, so the
+  // fallback is belt-and-suspenders).
+  let committedManifestObj: Record<string, unknown> = manifest;
+  const originalManifestFile = files.find((f) => f.path === MANIFEST_PATH);
+  if (originalManifestFile) {
+    try {
+      committedManifestObj = JSON.parse(originalManifestFile.content.toString('utf8'));
+    } catch {
+      committedManifestObj = manifest;
+    }
+  }
+  stampCanonicalIframeSrc(committedManifestObj, request.slug, env.APPS_DOMAIN);
+  const canonicalManifestJson = Buffer.from(
+    JSON.stringify(committedManifestObj, null, 2) + '\n',
+    'utf8'
+  );
+  let stampedManifestIntoCommit = false;
+  const filesForCommit = files.map((f) => {
+    if (f.path !== MANIFEST_PATH) return f;
+    stampedManifestIntoCommit = true;
+    return { ...f, content: canonicalManifestJson };
+  });
+  if (!stampedManifestIntoCommit) {
+    filesForCommit.push({ path: MANIFEST_PATH, content: canonicalManifestJson });
+  }
+
   // (4b) F-E E5 — re-extract + validate the bundle's screenshots (same caps /
   // magic-byte / name gates as submit), then upload them to the bundle MinIO
   // under `screenshots/<appBlockId>/<index>.<ext>`. Persisted to the row in (6).
@@ -1560,7 +1571,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   const commitMessage = `Approved publish request ${request.id} — ${request.slug} v${request.version}`;
   const { sha: forgejoCommitSha } = await commitFiles({
     slug: request.slug,
-    files,
+    files: filesForCommit,
     message: commitMessage,
     replaceAllFiles: true,
   });
