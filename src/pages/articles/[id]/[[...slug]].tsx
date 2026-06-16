@@ -176,14 +176,9 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const queryUtils = trpc.useUtils();
   const upsertArticleMutation = trpc.article.upsert.useMutation();
 
-  // Owner-only: fetch the latest nsfwLevel review row so we can render the
-  // dispute button in the correct state. The endpoint is owner-scoped server-side.
-  // Exclude moderators — they have separate mod-only controls for the override.
-  const isArticleOwner =
-    !!article && currentUser?.id === article.user.id || currentUser?.isModerator;
   const { data: myReview } = trpc.article.getMyArticleRatingReview.useQuery(
     { articleId: id },
-    { enabled: isArticleOwner, staleTime: 60_000 }
+    { enabled: isOwner, staleTime: 60_000 }
   );
   const handlePublishArticle = () => {
     if (!article || article.status === ArticleStatus.Published) return;
@@ -441,7 +436,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
             />
           )}
-          {isArticleOwner && (
+          {isOwner && (
             <ArticleOwnerRatingControls
               articleId={article.id}
               nsfwLevel={article.nsfwLevel}
