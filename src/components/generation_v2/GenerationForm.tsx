@@ -1905,22 +1905,20 @@ export function GenerationForm() {
               )}
             /> */}
 
-              {/* ControlNets — gated behind the `controlNets` Flipt flag, then
-                  only rendered for ecosystems that declare the node */}
-              {features.controlNets && (
-                <Controller
-                  graph={graph}
-                  name="controlNets"
-                  render={({ value, meta, onChange, error }) => (
-                    <ControlNetsInput
-                      value={value as ControlNetsInputProps['value']}
-                      onChange={onChange as ControlNetsInputProps['onChange']}
-                      meta={meta as ControlNetsInputProps['meta']}
-                      error={error?.message}
-                    />
-                  )}
-                />
-              )}
+              {/* ControlNets — disabled for now (the node is when:false in every
+                  ecosystem graph); renders only when a graph declares the node */}
+              <Controller
+                graph={graph}
+                name="controlNets"
+                render={({ value, meta, onChange, error }) => (
+                  <ControlNetsInput
+                    value={value as ControlNetsInputProps['value']}
+                    onChange={onChange as ControlNetsInputProps['onChange']}
+                    meta={meta as ControlNetsInputProps['meta']}
+                    error={error?.message}
+                  />
+                )}
+              />
 
               {/* Krea 2 style references — only rendered when the Krea2 graph
                   declares the styleReferences node */}

@@ -118,20 +118,20 @@ function ArticleStats({ data }: { data: ArticleGetAllRecord }) {
           >
             <div className="flex items-center gap-0.5">
               <IconBookmark size={14} strokeWidth={2.5} />
-              <Text fw="bold" size="xs">
+              <Text size="xs" lh={1} fw="bold">
                 <AnimatedCount value={m.collectedCount} />
               </Text>
             </div>
             <div className="flex items-center gap-0.5">
               <IconMessageCircle2 size={14} strokeWidth={2.5} />
-              <Text fw="bold" size="xs">
+              <Text size="xs" lh={1} fw="bold">
                 <AnimatedCount value={m.commentCount} />
               </Text>
             </div>
             <InteractiveTipBuzzButton toUserId={user.id} entityType={'Article'} entityId={id}>
               <div className="flex items-center gap-0.5">
                 <IconBolt size={14} strokeWidth={2.5} />
-                <Text fw="bold" size="xs">
+                <Text size="xs" lh={1} fw="bold">
                   <AnimatedCount value={m.tippedAmountCount + tippedAmount} />
                 </Text>
               </div>
@@ -144,7 +144,7 @@ function ArticleStats({ data }: { data: ArticleGetAllRecord }) {
           >
             <div className="flex items-center gap-0.5">
               <IconEye size={14} strokeWidth={2.5} />
-              <Text fw="bold" size="xs">
+              <Text size="xs" lh={1} fw="bold">
                 <AnimatedCount value={m.viewCount} />
               </Text>
             </div>

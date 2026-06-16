@@ -117,9 +117,10 @@ const standardModeBaseGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
   // ControlNets — only available for txt2img workflows.
   .node(
     'controlNets',
-    (ctx) => ({
+    () => ({
       ...controlNetsNode({ preprocessors: fluxControlNetPreprocessors, limit: CONTROLNET_LIMIT }),
-      when: ctx.workflow === 'txt2img',
+      // Disabled for now (was: ctx.workflow === 'txt2img').
+      when: false,
     }),
     ['workflow']
   )

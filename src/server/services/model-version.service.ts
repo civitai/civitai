@@ -712,7 +712,32 @@ export const updateModelVersionById = async ({
     }
   }
 
-  const result = await dbWrite.modelVersion.update({ where: { id }, data });
+  // Peel off a plain-Date publishedAt so it can be routed through the
+  // anti-bump guard. Other update-input shapes (null, FieldUpdateOperations,
+  // undefined) flow through prisma .update() unchanged. Wrapped in a tx so
+  // the two writes can't half-apply.
+  const publishedAt = data.publishedAt instanceof Date ? data.publishedAt : undefined;
+  const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
+
+  const result = await dbWrite.$transaction(async (tx) => {
+    const updated = await tx.modelVersion.update({ where: { id }, data: restData });
+    if (publishedAt !== undefined) {
+      const writeCount = await tx.$executeRaw`
+        UPDATE "ModelVersion"
+        SET "publishedAt" = ${publishedAt}
+        WHERE id = ${id}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
+      // Reflect the guard outcome on the returned object. tx.modelVersion
+      // .update() captured row state BEFORE this raw write, so without
+      // patching here callers reading `result.publishedAt` would see the
+      // pre-guard value. When writeCount = 0 the guard blocked the write
+      // and the original returned value is still authoritative.
+      if (writeCount > 0) updated.publishedAt = publishedAt;
+    }
+    return updated;
+  });
+
   await preventModelVersionLag(result.modelId, id);
   await bustMvCache(id, result.modelId);
 };
@@ -723,14 +748,12 @@ export const publishModelVersionsWithEarlyAccess = async ({
   meta,
   tx,
   continueOnError = false,
-  republishing = false,
 }: {
   modelVersionIds: number[];
   publishedAt?: Date;
   meta?: ModelVersionMeta;
   tx?: Prisma.TransactionClient;
   continueOnError?: boolean;
-  republishing?: boolean;
 }) => {
   if (modelVersionIds.length === 0) return [];
   const dbClient = tx ?? dbWrite;
@@ -805,7 +828,6 @@ export const publishModelVersionsWithEarlyAccess = async ({
           where: { id: currentVersion.id },
           data: {
             status: ModelStatus.Published,
-            publishedAt: !republishing ? publishedAt : undefined,
             earlyAccessConfig: earlyAccessConfig ?? undefined,
             meta,
             // Will be overwritten anyway by EA.
@@ -818,6 +840,19 @@ export const publishModelVersionsWithEarlyAccess = async ({
             model: { select: { userId: true, id: true, type: true, nsfw: true } },
           },
         });
+
+        // Anti-bump guard: publishedAt is immutable once a version has gone
+        // public. Allowed transitions: NULL (Draft) -> set, or future
+        // (Scheduled) -> reschedule. Republish of an already-public version
+        // is a no-op for this column. Mirrors the Post guard below.
+        if (publishedAt !== undefined) {
+          await dbClient.$executeRaw`
+            UPDATE "ModelVersion"
+            SET "publishedAt" = ${publishedAt}
+            WHERE id = ${currentVersion.id}
+            AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+          `;
+        }
 
         await bustMvCache(updatedVersion.id, updatedVersion.modelId);
 
@@ -933,7 +968,6 @@ export const publishModelVersionById = async ({
           publishedAt,
           meta,
           tx,
-          republishing,
         });
 
         if (!updated) {
@@ -944,11 +978,10 @@ export const publishModelVersionById = async ({
       }
 
       if (!updatedVersion) {
-        updatedVersion = await dbWrite.modelVersion.update({
+        updatedVersion = await tx.modelVersion.update({
           where: { id },
           data: {
             status,
-            publishedAt: !republishing ? publishedAt : undefined,
             meta,
             availability: currentVersion.model.availability,
           },
@@ -959,6 +992,17 @@ export const publishModelVersionById = async ({
             model: { select: { userId: true, id: true, type: true, nsfw: true } },
           },
         });
+
+        // Anti-bump guard: publishedAt is immutable once a version has gone
+        // public. Allowed transitions: NULL (Draft) -> set, or future
+        // (Scheduled) -> reschedule. Republish of an already-public version
+        // is a no-op for this column. Mirrors the Post guard below.
+        await tx.$executeRaw`
+          UPDATE "ModelVersion"
+          SET "publishedAt" = ${publishedAt}
+          WHERE id = ${id}
+          AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        `;
       }
 
       // Restore posts that were unpublished alongside this version, and re-target
@@ -984,11 +1028,15 @@ export const publishModelVersionById = async ({
       `;
 
       if (!currentVersion.model.publishedAt) {
-        // Safeguard to ensure the model is marked as published if it wasn't already.
-        await tx.model.update({
-          where: { id: updatedVersion.model.id },
-          data: { publishedAt },
-        });
+        // Safeguard to ensure the model is marked as published if it wasn't
+        // already. Anti-bump guard prevents racing writers from rewriting an
+        // already-public Model.publishedAt — only NULL or future values flip.
+        await tx.$executeRaw`
+          UPDATE "Model"
+          SET "publishedAt" = ${publishedAt}
+          WHERE id = ${updatedVersion.model.id}
+          AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        `;
       }
 
       return updatedVersion;
@@ -1522,61 +1570,62 @@ export const earlyAccessPurchase = async ({
       },
     });
 
-    await dbWrite.$transaction(async (tx) => {
-      if (accessRecord) {
-        // Should only happen if the user purchased Generation but NOT download.
-        // Update entity access:
-        await tx.entityAccess.update({
-          where: {
-            accessToId_accessToType_accessorId_accessorType: {
+    await dbWrite.$transaction(
+      async (tx) => {
+        if (accessRecord) {
+          // Should only happen if the user purchased Generation but NOT download.
+          // Update entity access:
+          await tx.entityAccess.update({
+            where: {
+              accessToId_accessToType_accessorId_accessorType: {
+                accessToId: modelVersionId,
+                accessToType: 'ModelVersion',
+                accessorId: userId,
+                accessorType: 'User',
+              },
+            },
+            data: {
+              permissions: Math.max(
+                EntityAccessPermission.EarlyAccessDownload +
+                  EntityAccessPermission.EarlyAccessGeneration,
+                access.permissions ?? 0
+              ),
+              meta: { ...(access.meta ?? {}), [`${type}-buzzTransactionId`]: buzzTransactionId },
+            },
+          });
+        } else {
+          // Grant entity access:
+          await tx.entityAccess.create({
+            data: {
               accessToId: modelVersionId,
               accessToType: 'ModelVersion',
               accessorId: userId,
               accessorType: 'User',
+              permissions:
+                type === 'generation'
+                  ? EntityAccessPermission.EarlyAccessGeneration
+                  : EntityAccessPermission.EarlyAccessGeneration +
+                    EntityAccessPermission.EarlyAccessDownload,
+              meta: { [`${type}-buzzTransactionId`]: buzzTransactionId },
+              addedById: userId, // Since it's a purchase
             },
-          },
-          data: {
-            permissions: Math.max(
-              EntityAccessPermission.EarlyAccessDownload +
-                EntityAccessPermission.EarlyAccessGeneration,
-              access.permissions ?? 0
-            ),
-            meta: { ...(access.meta ?? {}), [`${type}-buzzTransactionId`]: buzzTransactionId },
-          },
-        });
-      } else {
-        // Grant entity access:
-        await tx.entityAccess.create({
-          data: {
-            accessToId: modelVersionId,
-            accessToType: 'ModelVersion',
-            accessorId: userId,
-            accessorType: 'User',
-            permissions:
-              type === 'generation'
-                ? EntityAccessPermission.EarlyAccessGeneration
-                : EntityAccessPermission.EarlyAccessGeneration +
-                  EntityAccessPermission.EarlyAccessDownload,
-            meta: { [`${type}-buzzTransactionId`]: buzzTransactionId },
-            addedById: userId, // Since it's a purchase
-          },
-        });
-      }
+          });
+        }
 
-      if (earlyAccessDonationGoal) {
-        // Create a donation record:
-        await tx.donation.create({
-          data: {
-            amount,
-            donationGoalId: earlyAccessDonationGoal.id,
-            userId,
-            buzzTransactionId: buzzTransactionId as string,
-          },
-        });
-      }
+        if (earlyAccessDonationGoal) {
+          // Create a donation record:
+          await tx.donation.create({
+            data: {
+              amount,
+              donationGoalId: earlyAccessDonationGoal.id,
+              userId,
+              buzzTransactionId: buzzTransactionId as string,
+            },
+          });
+        }
 
-      // Set model version early access purchase as true:
-      await tx.$queryRaw`
+        // Set model version early access purchase as true:
+        await tx.$queryRaw`
         UPDATE "ModelVersion"
         SET meta = jsonb_set(
           COALESCE(meta, '{}'::jsonb),
@@ -1585,7 +1634,9 @@ export const earlyAccessPurchase = async ({
         )
         WHERE "id" = ${modelVersionId}; -- Your conditions here
       `;
-    },  { timeout: 10000 }); // Doubled timeout since this transaction involves multiple steps and external calls.
+      },
+      { timeout: 10000 }
+    ); // Doubled timeout since this transaction involves multiple steps and external calls.
 
     // Post-transaction side effects: failures here must not trigger a refund,
     // since the purchase itself already succeeded.
@@ -1624,13 +1675,13 @@ export const earlyAccessPurchase = async ({
         description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       });
 
-      logToAxiom({ 
+      logToAxiom({
         type: 'error',
         name: 'early-access-purchase-refund',
         error,
         modelVersionId,
         buzzTransactionId,
-       });
+      });
     }
     throw throwDbError(error);
   }

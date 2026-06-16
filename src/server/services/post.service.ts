@@ -82,6 +82,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getMetadata } from '~/utils/metadata';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { CacheTTL } from '../common/constants';
@@ -654,10 +656,29 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
   if (!post) throw throwNotFoundError();
 
+  // Only fetch the unpublish-context JOIN when the post is currently
+  // unpublished (publishedAt = NULL). Public reads are the hot path and
+  // don't need this — default the fields and skip the query. Note: a small
+  // set of orphan rows can have `publishedAt != null` AND a `prevPublishedAt`
+  // stash (future-scheduled clamp orphans documented in the
+  // clamp-publishedat-bumps endpoint); we deliberately don't surface
+  // restore-only state for those — they're cleaned out-of-band.
+  // Pass the same `db` client used above so the stash JOIN shares
+  // `getDbWithoutLag`'s primary-routing right after an unpublish/republish.
+  const unpublishContext: PostUnpublishContext = post.publishedAt
+    ? {
+        wasPublished: false,
+        unpublishedAt: null,
+        unpublishedBy: null,
+        parentModelId: null,
+      }
+    : await getPostUnpublishContext({ id, db });
+
   return {
     ...post,
     detail: post.detail,
     tags: post.tags.flatMap((x) => x.tag),
+    ...unpublishContext,
   };
 };
 
@@ -684,8 +705,60 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     collectionItemExists = !!collectionItem;
   }
 
+  // Unpublish context is already attached by getPostDetail above.
   return { ...post, collectionTagId, images, collectionItemExists };
 };
+
+export type PostUnpublishContext = {
+  // True when the post carries a `prevPublishedAt` stash — i.e. it was
+  // previously public, then unpublished via the parent model/version flow.
+  // Drives the restore-only UI in PostEditSidebar: when set, the post
+  // cannot be rescheduled, only republished at its original date.
+  wasPublished: boolean;
+  unpublishedAt: Date | null;
+  unpublishedBy: number | null;
+  // Surfaced via JOIN so the UI can build a link back to the parent model
+  // edit page (where the actual unpublish reason + custom message live).
+  // We deliberately don't surface the reason directly on the post —
+  // model-level reasons like "insufficient-description" don't always map
+  // onto the post itself, so showing them in the post alert is misleading.
+  parentModelId: number | null;
+};
+
+async function getPostUnpublishContext({
+  id,
+  db = dbRead,
+}: {
+  id: number;
+  db?: typeof dbRead | typeof dbWrite;
+}): Promise<PostUnpublishContext> {
+  const rows = await db.$queryRaw<
+    {
+      metadata: Record<string, unknown> | null;
+      modelId: number | null;
+    }[]
+  >`
+    SELECT
+      p.metadata                AS "metadata",
+      mv."modelId"              AS "modelId"
+    FROM "Post" p
+    LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+    WHERE p.id = ${id}
+  `;
+
+  const row = rows[0];
+  const metadata = (row?.metadata ?? {}) as Record<string, unknown>;
+  const prevPublishedAt = metadata.prevPublishedAt;
+  const rawUnpublishedAt = metadata.unpublishedAt;
+  const rawUnpublishedBy = metadata.unpublishedBy;
+
+  return {
+    wasPublished: !!prevPublishedAt,
+    unpublishedAt: typeof rawUnpublishedAt === 'string' ? new Date(rawUnpublishedAt) : null,
+    unpublishedBy: typeof rawUnpublishedBy === 'number' ? rawUnpublishedBy : null,
+    parentModelId: row?.modelId ?? null,
+  };
+}
 
 async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
   const imageIds = images.map((x) => x.id);
@@ -779,6 +852,13 @@ export const createPost = async ({
     tags: post.tags.flatMap((x) => x.tag),
     images: [] as PostImageEditable[],
     collectionItemExists,
+    // A fresh post has never been unpublished — supply the
+    // PostUnpublishContext defaults so the type matches getPostEditDetail
+    // (which carries these via the getPostDetail spread).
+    wasPublished: false,
+    unpublishedAt: null,
+    unpublishedBy: null,
+    parentModelId: null,
   };
 };
 
@@ -789,14 +869,68 @@ export const updatePost = async ({
 }: PostUpdateInput & { user: SessionUser; availability?: Availability }) => {
   if (data.title) await throwOnBlockedLinkDomain(data.title);
   if (data.detail) await throwOnBlockedLinkDomain(data.detail);
-  const post = await dbWrite.post.update({
-    where: { id, userId: !user.isModerator ? user.id : undefined },
-    data: {
-      ...data,
-      title: !!data.title ? (data.title.length > 0 ? data.title : null) : undefined,
-      detail: !!data.detail ? (data.detail.length > 0 ? data.detail : null) : undefined,
-    },
+
+  // Peel off a plain-Date publishedAt so it can be routed through the
+  // anti-bump guard. Other update-input shapes (null, undefined,
+  // FieldUpdateOperations) flow through prisma .update() unchanged.
+  // Mirrors the pattern in updateModelVersion (model-version.service.ts).
+  const publishedAt = data.publishedAt instanceof Date ? data.publishedAt : undefined;
+  const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
+
+  const post = await dbWrite.$transaction(async (tx) => {
+    const updated = await tx.post.update({
+      where: { id, userId: !user.isModerator ? user.id : undefined },
+      data: {
+        ...restData,
+        title: !!restData.title ? (restData.title.length > 0 ? restData.title : null) : undefined,
+        detail: !!restData.detail
+          ? (restData.detail.length > 0 ? restData.detail : null)
+          : undefined,
+      },
+    });
+    if (publishedAt !== undefined) {
+      // Anti-bump guard: publishedAt is immutable once a post has gone
+      // public. Allowed transitions: NULL (Draft/Unpublished) -> set, or
+      // future (Scheduled) -> reschedule. Republish of an already-public
+      // post is a no-op for this column.
+      //
+      // Write-once-on-republish: if `metadata.prevPublishedAt` is set, the
+      // post was previously published then unpublished via the parent
+      // model/version unpublish flow. Restore the original date regardless
+      // of the submitted value — owners must not be able to bump a post to
+      // the top of feeds by unpublishing the parent, then picking a new
+      // `publishedAt` on the post edit page. Mirrors the CASE expressions
+      // used by `publishModelVersionById` (model-version.service.ts) and
+      // `publishModelById` (model.service.ts) when they fan out to attached
+      // posts. Strip the stash on success.
+      const writtenRows = await tx.$queryRaw<{ publishedAt: Date | null }[]>`
+        UPDATE "Post"
+        SET
+          "publishedAt" = CASE
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
+            THEN ("metadata"->>'prevPublishedAt')::timestamptz
+            ELSE ${publishedAt}
+          END,
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+        WHERE id = ${id}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+        RETURNING "publishedAt"
+      `;
+      // Reflect the actually-written timestamp (may be the stashed
+      // prevPublishedAt rather than the submitted value). The controller's
+      // wasPublished check (post.controller.ts: `!post?.publishedAt &&
+      // updatedPost.publishedAt`) needs this to fire reward / event-engine
+      // side-effects on a fresh publish. When no row matched, the guard
+      // blocked the write and the original returned value remains
+      // authoritative. Propagate the value faithfully — including null —
+      // rather than masking malformed stash data behind a truthy check.
+      if (writtenRows.length > 0) {
+        updated.publishedAt = writtenRows[0].publishedAt;
+      }
+    }
+    return updated;
   });
+
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(post.userId);
 
@@ -999,6 +1133,20 @@ export const addPostImage = async ({
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
     meta = { ...meta, external: externalData };
+  }
+
+  // If no meta was supplied (headless/MCP upload), try to extract it from the
+  // image EXIF. The image is already on the CDN at this point so we can fetch
+  // it by URL. We only do this when meta is absent to avoid overwriting
+  // caller-supplied values.
+  if (!meta && props.url && props.type !== MediaType.video) {
+    try {
+      const edgeUrl = getEdgeUrl(props.url, { original: true });
+      const extracted = await getMetadata(edgeUrl);
+      if (extracted && Object.keys(extracted).length > 0) meta = extracted;
+    } catch {
+      // Non-fatal — proceed without metadata rather than failing the upload
+    }
   }
 
   let toolId: number | undefined;

@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { generateKeyPairSync } from 'crypto';
 
 // Mock @civitai/client to avoid ESM resolution issues
 vi.mock('@civitai/client', () => ({
@@ -55,13 +56,39 @@ vi.mock('@civitai/client', () => ({
   },
 }));
 
+// App Blocks: provision a real RSA keypair so BlockTokenService can sign and
+// tests can verify against the matching public key. Generated once per test
+// process. The public PEM is re-exported so the block-token round-trip test
+// verifies against the exact key the service signed with. (The block-tokens
+// API "503 when keys not configured" test overrides ~/env/server per-test, so
+// these defaults don't interfere with that negative case.)
+const { publicKey: _btPublicKey, privateKey: _btPrivateKey } = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+});
+export const TEST_BLOCK_TOKEN_PUBLIC_PEM = _btPublicKey.export({
+  type: 'spki',
+  format: 'pem',
+}) as string;
+const TEST_BLOCK_TOKEN_PRIVATE_PEM = _btPrivateKey.export({
+  type: 'pkcs8',
+  format: 'pem',
+}) as string;
+
 // Mock environment variables. Use a Proxy so any env.X access returns a
 // reasonable default — saves us from enumerating every URL/endpoint var that
 // production code happens to read at module load.
 const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   TIER_METADATA_KEY: 'tier',
   BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
+  // meilisearch/client.ts feeds this straight into pLimit() at module load —
+  // an undefined value makes p-limit throw "Expected concurrency to be a number".
+  // Mirror the production default (server-schema.ts: .default(50)).
+  MEILI_CALL_CONCURRENCY: 50,
+  // Same module-load pLimit() trap in signals/wrapper.ts (default 30).
+  SIGNALS_CALL_CONCURRENCY: 30,
   LOGGING: '',
+  BLOCK_TOKEN_PRIVATE_KEY: TEST_BLOCK_TOKEN_PRIVATE_PEM,
+  BLOCK_TOKEN_PUBLIC_KEY: TEST_BLOCK_TOKEN_PUBLIC_PEM,
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
   NOTIFICATION_DB_URL: 'postgres://user:pass@localhost:5432/notif',
   DATABASE_SSL: false,
@@ -72,6 +99,9 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   DATABASE_READ_TIMEOUT: 10000,
   REDIS_URL: 'redis://localhost:6379',
   REDIS_SYS_URL: 'redis://localhost:6379',
+  REDIS_SYS_SOCKET_TIMEOUT_MS: 0,
+  REDIS_SYS_READ_TIMEOUT_MS: 2000,
+  REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: 10000,
   NEXTAUTH_URL: 'http://localhost:3000',
   NEXTAUTH_SECRET: 'test-secret',
   S3_UPLOAD_ENDPOINT: 'http://localhost:9000',
@@ -97,28 +127,61 @@ vi.mock('~/env/server', () => ({
 }));
 
 // Prevent prom/client from initializing real DB pools at module load.
+// A metric-shaped stub covering every prom-client surface our code touches
+// (Counter.inc, Gauge.inc/dec/set, Histogram.observe, and the .labels()/.startTimer()
+// helpers) so any registered metric — named export OR built via a register* factory
+// — is safe to call without a real prom-client registry.
+const promMetricStub = () => {
+  const child = { inc: vi.fn(), dec: vi.fn(), set: vi.fn(), observe: vi.fn() };
+  return {
+    inc: vi.fn(),
+    dec: vi.fn(),
+    set: vi.fn(),
+    observe: vi.fn(),
+    startTimer: vi.fn(() => vi.fn()),
+    labels: vi.fn(() => child),
+  };
+};
+
 vi.mock('~/server/prom/client', () => ({
-  registerCounter: vi.fn(() => ({ inc: vi.fn() })),
-  registerCounterWithLabels: vi.fn(() => ({ inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) })),
-  missingSignedAtCounter: { inc: vi.fn() },
-  newUserCounter: { inc: vi.fn() },
-  loginCounter: { inc: vi.fn() },
-  onboardingCompletedCounter: { inc: vi.fn() },
-  onboardingErrorCounter: { inc: vi.fn() },
-  leakingContentCounter: { inc: vi.fn() },
-  vaultItemProcessedCounter: { inc: vi.fn() },
-  vaultItemFailedCounter: { inc: vi.fn() },
-  rewardGivenCounter: { inc: vi.fn() },
-  rewardFailedCounter: { inc: vi.fn() },
-  clavataCounter: { inc: vi.fn() },
-  cacheHitCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  cacheMissCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  cacheRevalidateCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  imagesFeedWithoutIndexCounter: { inc: vi.fn() },
-  creatorCompCreatorsPaidCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  creatorCompAmountPaidCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  userUpdateCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
-  dbReadFallbackCounter: { inc: vi.fn(), labels: vi.fn(() => ({ inc: vi.fn() })) },
+  // Factory functions — modules call these at import time to build their metrics
+  // (e.g. meilisearch/client.ts, eventloop-longtask.ts). Each returns a stub.
+  registerCounter: vi.fn(promMetricStub),
+  registerCounterWithLabels: vi.fn(promMetricStub),
+  registerGaugeWithLabels: vi.fn(promMetricStub),
+  registerHistogram: vi.fn(promMetricStub),
+  registerInstrumentationMetric: vi.fn(promMetricStub),
+  // Named metric exports the real module ships.
+  missingSignedAtCounter: promMetricStub(),
+  newUserCounter: promMetricStub(),
+  loginCounter: promMetricStub(),
+  onboardingCompletedCounter: promMetricStub(),
+  onboardingErrorCounter: promMetricStub(),
+  leakingContentCounter: promMetricStub(),
+  vaultItemProcessedCounter: promMetricStub(),
+  vaultItemFailedCounter: promMetricStub(),
+  rewardGivenCounter: promMetricStub(),
+  rewardFailedCounter: promMetricStub(),
+  clavataCounter: promMetricStub(),
+  cacheHitCounter: promMetricStub(),
+  cacheMissCounter: promMetricStub(),
+  cacheRevalidateCounter: promMetricStub(),
+  trpcProcedureDuration: promMetricStub(),
+  imagesFeedWithoutIndexCounter: promMetricStub(),
+  creatorCompCreatorsPaidCounter: promMetricStub(),
+  creatorCompAmountPaidCounter: promMetricStub(),
+  licenseFeeCreatorsPaidCounter: promMetricStub(),
+  licenseFeeAmountPaidCounter: promMetricStub(),
+  userUpdateCounter: promMetricStub(),
+  dbReadFallbackCounter: promMetricStub(),
+  // App-Blocks W4 KV storage metrics (apps.router). promMetricStub() covers the
+  // .inc()/.labels()/.observe()/.startTimer() surface these tests exercise.
+  appStorageOpsCounter: promMetricStub(),
+  appStorageQuotaExceededCounter: promMetricStub(),
+  appStorageLatencyHistogram: promMetricStub(),
+  // sysRedis sentinel observability counters (PR #2331 round-3).
+  sysredisSentinelTopologyChangesCounter: promMetricStub(),
+  sysredisSentinelClientErrorsCounter: promMetricStub(),
 }));
 
 // Mock logging

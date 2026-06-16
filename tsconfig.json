@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2018",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     // "types": ["offscreencanvas"],
     "allowJs": true,
     "skipLibCheck": true,
@@ -14,12 +18,14 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "jsx": "preserve",
+    "jsx": "react-jsx",
     "incremental": true,
     "noUncheckedIndexedAccess": false, // TODO swap to true
     "baseUrl": "src",
     "paths": {
-      "~/*": ["./*"]
+      "~/*": [
+        "./*"
+      ]
     },
     "noErrorTruncation": true,
     "plugins": [
@@ -37,6 +43,7 @@
     "scripts/local-dev/*.ts",
     "src",
     "tests",
+    "test",
     ".next/types/**/*.ts"
   ],
   "exclude": [

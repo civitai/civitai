@@ -4,7 +4,14 @@ import semver from 'semver';
 import superjson from 'superjson';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  acquireBulkheadSlot,
+  BulkheadFullError,
+  HEAVY_REQUEST_CONCURRENCY,
+} from '~/server/utils/request-bulkhead';
+import { trpcProcedureDuration } from '~/server/prom/client';
+import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -70,7 +77,12 @@ let clientConfigCache: { value: Record<string, string>; expiresAt: number } | nu
 async function getClientConfigCached(): Promise<Record<string, string>> {
   const now = Date.now();
   if (clientConfigCache && clientConfigCache.expiresAt > now) return clientConfigCache.value;
-  const client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
+  // Wall-clock deadline so a stalled/half-open sysRedis can't park this hGetAll for
+  // OS-keepalive minutes (the sys client has no socketTimeout, and a per-command
+  // timeout can't abort a written command). This read runs on EVERY web tRPC procedure
+  // (behind the 5s cache above); a timeout here is caught by needsUpdate's try/catch
+  // below and fails open (skips the update banner), never a 500.
+  const client = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT));
   clientConfigCache = { value: client, expiresAt: now + CLIENT_CONFIG_TTL_MS };
   return client;
 }
@@ -192,11 +204,84 @@ const enforceTokenScope = t.middleware(({ ctx, meta, next }) => {
   return next();
 });
 
+// Time every procedure by path (full chain + resolver) so heavy-pool isolation
+// candidates can be ranked by P99 x rate — the criterion behind the image-feed
+// cutover. Placed first in the chain so it spans all downstream middleware + the
+// resolver. All exported procedures derive from publicProcedure, so this covers
+// every tRPC call. `path` is the fixed dotted procedure name.
+//
+// OPT-IN via TRPC_PROCEDURE_METRICS=true. This is a HIGH-cardinality metric:
+// ~870 procedures x (buckets + sum + count) PER POD. Enabling it everywhere
+// (api-primary 90-100 + heavy + SSR via createCaller + jobs ≈ 200 pods) would
+// add hundreds of thousands of Prometheus active series. Enable it only on the
+// pools whose isolation we're deciding (api-primary, api-heavy) and leave it off
+// on SSR/jobs/canary to bound the series count and keep an instant off-switch.
+const TRPC_PROCEDURE_METRICS = process.env.TRPC_PROCEDURE_METRICS === 'true';
+
+// The actual procedure-timing logic. Generic over `next`'s return type so it
+// stays transparent to tRPC's MiddlewareResult typing. Kept standalone so the
+// ALS label wrapper can be applied ONLY when the long-task labels tier is armed.
+function runRecordProcedureDuration<T>(path: string, next: () => Promise<T>): Promise<T> {
+  if (!TRPC_PROCEDURE_METRICS) return next();
+  const end = trpcProcedureDuration.startTimer({ path });
+  return (async () => {
+    try {
+      return await next();
+    } finally {
+      end();
+    }
+  })();
+}
+
+const recordProcedureDuration = t.middleware(({ path, next }) => {
+  // When the long-task LABELS tier is armed, wrap the procedure in an ALS store
+  // tagged with its path so a detected synchronous block can be attributed to the
+  // running procedure. This costs one AsyncLocalStorage.run() per request — the
+  // async_hooks context-propagation cost — so it is OFF by default. When it is
+  // not armed (the disarmed default AND base-armed-without-labels), this is the
+  // ORIGINAL code path: a direct call with NO wrapper, NO extra closure, NO
+  // microtask hop. Independent of TRPC_PROCEDURE_METRICS.
+  if (longTaskLabelsArmed) {
+    return runWithLongTaskLabel(`trpc:${path}`, () => runRecordProcedureDuration(path, next));
+  }
+  return runRecordProcedureDuration(path, next);
+});
+
 export const publicProcedure = t.procedure
+  .use(recordProcedureDuration)
   .use(isAcceptableOrigin)
   .use(enforceClientVersion)
   .use(applyDomainFeature)
   .use(enforceTokenScope);
+
+// Per-pod concurrency cap for CPU-heavy procedures (see request-bulkhead.ts).
+// Fast-fails with 429 when a pod already has HEAVY_REQUEST_CONCURRENCY heavy
+// requests in flight, so a backlog can't pin the single JS thread → probe
+// timeout → Error/137. Keyed so the tRPC feed procedures and the REST
+// /api/v1/images handler share one per-pod budget (they hit the same heavy path).
+const withBulkhead = (key: string) =>
+  t.middleware(async ({ next }) => {
+    let release: () => void;
+    try {
+      release = acquireBulkheadSlot(key, HEAVY_REQUEST_CONCURRENCY);
+    } catch (e) {
+      if (e instanceof BulkheadFullError)
+        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Server busy — please retry.' });
+      throw e;
+    }
+    try {
+      return await next();
+    } finally {
+      release();
+    }
+  });
+
+/**
+ * Public procedure for CPU-heavy endpoints (e.g. the image feed). Adds a per-pod
+ * concurrency cap that fast-fails (429) under overload so a request backlog can't
+ * pin the single JS thread and take the pod down.
+ */
+export const heavyProcedure = publicProcedure.use(withBulkhead('heavy-image'));
 
 /**
  * Reusable middleware to ensure

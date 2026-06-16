@@ -280,21 +280,35 @@ export const getInfiniteImagesHandler = async ({
 }) => {
   const { user, features, signal } = ctx;
 
-  // Check BitDex mode first â€” if active (shadow or primary), always route through
-  // getAllImagesIndex (which handles BitDex internally), bypassing the useIndex check.
-  // Skip BitDex for queries that need features it doesn't support:
-  // - collectionId: requires relational joins through CollectionItem table
-  // - prioritizedUserIds: showcase carousel needs DB-level user prioritization (TODO in getAllImagesIndex)
-  // - reactions: per-user reaction data isn't in the search index, needs DB subquery on ImageReaction
-  // - postId/postIds: specific post queries are ~2ms in Postgres (covered index) and create
-  //   unique cache keys in BitDex that hurt cache hit rate
-  const skipBitdex =
-    !!input.collectionId ||
-    !!input.prioritizedUserIds?.length ||
-    !!input.reactions?.length ||
+  // Params the search index physically can't serve â€” these must use the DB
+  // (getAllImages). The decision is server-side: there is no client `useIndex`
+  // flag, so a client can't force the expensive un-indexed path on a broad query.
+  // Correctness-critical filters (wrong results if the index ignored them):
+  // - postId/postIds: specific post lookups (~2ms covered-index in PG; also create
+  //   unique cache keys in BitDex that hurt cache hit rate)
+  // - collectionId: requires relational joins through CollectionItem
+  // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
+  // - imageId: not a search-index filter
+  // - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
+  //   a modelId-only query would silently return the global feed (matches the
+  //   /api/v1/images legacy-method logic)
+  // Ordering-only:
+  // - prioritizedUserIds: DB-level user prioritization (TODO in getAllImagesIndex).
+  //   Only forces the DB when scoped to a model (its sole legit use â€” the model
+  //   showcase carousel, which always pairs it with modelVersionId). Sent alone it
+  //   degrades to index ordering rather than acting as a broad-feed DB escape hatch.
+  const requiresDbPath =
     !!input.postId ||
-    !!input.postIds?.length;
-  const bitdexMode = skipBitdex
+    !!input.postIds?.length ||
+    !!input.collectionId ||
+    !!input.reactions?.length ||
+    !!input.imageId ||
+    (!!input.modelId && !input.modelVersionId) ||
+    (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId));
+
+  // BitDex (Flipt-gated index experiment) routes through getAllImagesIndex, so it
+  // can only run when the index can serve the query.
+  const bitdexMode = requiresDbPath
     ? null
     : await getFliptVariant(
         FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
@@ -303,9 +317,9 @@ export const getInfiniteImagesHandler = async ({
       );
   const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
 
-  // Use getAllImagesIndex when useIndex is true OR BitDex is active.
-  // Use getAllImages (DB) otherwise.
-  const useIndex = useBitdex || (features.imageIndexFeed && input.useIndex);
+  // Use getAllImagesIndex when BitDex is active or the index can serve the query;
+  // otherwise use getAllImages (DB).
+  const useIndex = useBitdex || (features.imageIndexFeed && !requiresDbPath);
 
   if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();

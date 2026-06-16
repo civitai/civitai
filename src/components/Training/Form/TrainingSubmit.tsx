@@ -17,14 +17,21 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import { IconAlertTriangle, IconConfetti, IconCopy, IconPlus, IconX } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconConfetti,
+  IconCopy,
+  IconPlus,
+  IconRepeat,
+  IconX,
+} from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
 import type { TRPCDefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { capitalize, isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
@@ -137,6 +144,23 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       ? defaultRunVideo
       : defaultRun;
   const selectedRun = runs[selectedRunIndex] ?? fallbackRun;
+
+  // "Train Further": the source-epoch reference is persisted on the version because the
+  // in-memory training store doesn't survive reloads. Re-seed the run's continueFrom from
+  // it once per mount; if the user removes it afterwards, we don't re-add it.
+  const continueFromEpoch = thisTrainingDetails?.continueFromEpoch;
+  const hydratedContinueFrom = useRef(false);
+  useEffect(() => {
+    if (hydratedContinueFrom.current) return;
+    if (!features.trainingStepsPricing || !continueFromEpoch) return;
+    hydratedContinueFrom.current = true;
+    if (selectedRun.params.continueFrom !== continueFromEpoch.air) {
+      updateRun(model.id, thisMediaType, selectedRun.id, {
+        params: { continueFrom: continueFromEpoch.air },
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [continueFromEpoch]);
 
   const allLabeled =
     thisMediaType === 'video' || thisMediaType === 'audio'
@@ -253,7 +277,19 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         flipAugmentation: selectedRun.params.flipAugmentation || false,
         shuffleTokens: selectedRun.params.shuffleCaption,
         keepTokens: selectedRun.params.keepTokens,
-        numRepeats: selectedRun.params.numRepeats,
+        // Steps-based pricing: send `steps` (primary length knob, drives pricing) +
+        // `batchSize` + sample params. Without the flag, send `numRepeats` only and let
+        // the orchestrator keep the legacy flat per-epoch pricing (epochs without steps).
+        // `continueFrom` is omitted from the quote (it doesn't affect step pricing and
+        // needs a server-side presigned URL).
+        ...(features.trainingStepsPricing
+          ? {
+              steps: selectedRun.params.targetSteps,
+              batchSize: selectedRun.params.trainBatchSize,
+              sampleCfgScale: selectedRun.params.sampleCfgScale,
+              sampleStrength: selectedRun.params.sampleStrength,
+            }
+          : { numRepeats: selectedRun.params.numRepeats }),
       } as any;
       return retData;
     }
@@ -290,6 +326,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     selectedRun.params.flipAugmentation,
     selectedRun.params.shuffleCaption,
     selectedRun.params.keepTokens,
+    selectedRun.params.targetSteps,
+    selectedRun.params.sampleCfgScale,
+    selectedRun.params.sampleStrength,
+    features.trainingStepsPricing,
   ]);
 
   const [debounced] = useDebouncedValue(whatIfData, 100);
@@ -529,6 +569,17 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 </Text>
               </Group>
             </Group>
+            {features.trainingStepsPricing &&
+              runs.some((r) => r.params.continueFrom) &&
+              continueFromEpoch && (
+                <Text size="sm" c="dimmed">
+                  This training continues from Epoch #{continueFromEpoch.epochNumber}
+                  {continueFromEpoch.sourceVersionName
+                    ? ` of ${continueFromEpoch.sourceVersionName}`
+                    : ''}{' '}
+                  instead of starting from the base model.
+                </Text>
+              )}
             <Text mt="md">Proceed?</Text>
           </Stack>
         ),
@@ -596,8 +647,18 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      // Transform params for AI Toolkit if needed
-      let finalParams: any = paramData;
+      // Transform params for AI Toolkit if needed.
+      // continueFrom / sample params are AI Toolkit-only: strip them from every other
+      // engine so they never persist into kohya/rapid/musubi trainingDetails (the run
+      // state can carry them, e.g. after switching engines on a continued training).
+      const {
+        continueFrom: _continueFrom,
+        sampleCfgScale: _sampleCfgScale,
+        sampleStrength: _sampleStrength,
+        saveEvery: _saveEvery,
+        ...legacyEngineParams
+      } = paramData;
+      let finalParams: any = legacyEngineParams;
       if (paramData.engine === 'ai-toolkit') {
         const ecosystem = getAiToolkitEcosystem(base, baseType);
         const modelVariant = getAiToolkitModelVariant(base as TrainingDetailsBaseModelList);
@@ -646,7 +707,17 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           flipAugmentation: paramData.flipAugmentation || false,
           shuffleTokens: paramData.shuffleCaption,
           keepTokens: paramData.keepTokens,
-          numRepeats: paramData.numRepeats,
+          // Steps-based pricing: persist steps/batchSize/sample params + continueFrom so the
+          // orchestrator bills per-step. Without the flag, keep numRepeats (legacy flat pricing).
+          ...(features.trainingStepsPricing
+            ? {
+                steps: paramData.targetSteps,
+                batchSize: paramData.trainBatchSize,
+                sampleCfgScale: paramData.sampleCfgScale,
+                sampleStrength: paramData.sampleStrength,
+                ...(paramData.continueFrom && { continueFrom: paramData.continueFrom }),
+              }
+            : { numRepeats: paramData.numRepeats }),
         };
       }
 
@@ -661,7 +732,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       // update the first one since it exists, or create for others
       const versionMutateData: ModelVersionUpsertInput = {
         ...(idx === 0 && { id: thisModelVersion.id }),
-        name: `V${idx + 1}`,
+        // Continued trainings keep their "(from epoch N)" name instead of the V1 rename
+        // so the source epoch stays visible in version lists.
+        name:
+          features.trainingStepsPricing && idx === 0 && paramData.continueFrom
+            ? thisModelVersion.name
+            : `V${idx + 1}`,
         modelId: model.id,
         baseModel: baseModelConvert,
         trainedWords: thisModelVersion.trainedWords ?? [],
@@ -679,6 +755,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           ...(negativePrompt && { negativePrompt }),
           staging,
           highPriority,
+          // Keep the source-epoch label honest: only persist it when this run actually
+          // continues (flag on, continueFrom set, AND the engine that supports it).
+          continueFromEpoch:
+            features.trainingStepsPricing &&
+            paramData.continueFrom &&
+            paramData.engine === 'ai-toolkit'
+              ? (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)
+                  ?.continueFromEpoch
+              : undefined,
         },
         uploadType: ModelUploadType.Trained,
       };
@@ -992,6 +1077,50 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       {formBaseModel && (
         <>
+          {features.trainingStepsPricing && !!selectedRun.params.continueFrom && (
+            <AlertWithIcon
+              icon={<IconRepeat size={16} />}
+              color="violet"
+              iconColor="violet"
+              size="md"
+              mt="sm"
+            >
+              <Group gap="sm" justify="space-between" wrap="nowrap">
+                <Text>
+                  Continuing training from{' '}
+                  <Text span fw={700}>
+                    {continueFromEpoch && continueFromEpoch.air === selectedRun.params.continueFrom
+                      ? `Epoch #${continueFromEpoch.epochNumber}${
+                          continueFromEpoch.sourceVersionName
+                            ? ` of ${continueFromEpoch.sourceVersionName}`
+                            : ''
+                        }`
+                      : selectedRun.params.continueFrom.split('/').pop()}
+                  </Text>
+                  {' — '}this run picks up from that checkpoint instead of the base model.
+                  {selectedRun.params.engine !== 'ai-toolkit' && (
+                    <Text span c="yellow.7" fw={600}>
+                      {' '}
+                      This requires the AI Toolkit engine and will be ignored with the current
+                      engine.
+                    </Text>
+                  )}
+                </Text>
+                <Button
+                  variant="subtle"
+                  color="red"
+                  size="compact-sm"
+                  onClick={() =>
+                    updateRun(model.id, thisMediaType, selectedRun.id, {
+                      params: { continueFrom: undefined },
+                    })
+                  }
+                >
+                  Remove
+                </Button>
+              </Group>
+            </AlertWithIcon>
+          )}
           <AdvancedSettings
             modelId={model.id}
             mediaType={thisMediaType}

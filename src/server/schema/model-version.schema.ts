@@ -155,6 +155,16 @@ export const trainingDetailsParams = z.object({
   shuffleCaption: z.boolean(),
   targetSteps: z.number(),
   engine: z.enum(engineTypes).optional().default('kohya'),
+  // Steps-based pricing (AI Toolkit) — sample generation + continue-training inputs.
+  // Stored on the UI/Kohya-shaped run params so they round-trip through the store,
+  // then mapped into the AI Toolkit payload at submit/whatif time.
+  sampleCfgScale: z.number().optional(),
+  sampleStrength: z.number().optional(),
+  /** AIR of a previously-trained LoRA to continue training from ("train further"). */
+  continueFrom: z.string().optional(),
+  // "Save every N steps" — the UI knob that derives `maxTrainEpochs` (saved checkpoints)
+  // as round(targetSteps / saveEvery). UI-only; we send the derived `epochs`, never this.
+  saveEvery: z.number().int().min(1).optional(),
 });
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 
@@ -163,7 +173,16 @@ const aiToolkitTrainingDetailsParams = z.object({
   engine: z.literal('ai-toolkit'),
   ecosystem: z.string(),
   modelVariant: z.string().optional(),
-  epochs: z.number(),
+  // Steps-based pricing: `steps` is the primary length knob (drives pricing);
+  // `epochs` is the number of saved checkpoints. `epochs`-only (no `steps`) keeps
+  // the legacy flat per-epoch pricing for back-compat.
+  epochs: z.number().int().min(1).optional(),
+  steps: z.number().int().min(1).optional(),
+  batchSize: z.number().int().min(1).optional(),
+  sampleCfgScale: z.number().optional(),
+  sampleStrength: z.number().optional(),
+  /** AIR of a previously-trained LoRA to continue training from. */
+  continueFrom: z.string().optional(),
   resolution: z.number().nullable(),
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
@@ -235,6 +254,18 @@ export const trainingDetailsObj = z.object({
   negativePrompt: z.string().optional(),
   staging: z.boolean().optional(),
   highPriority: z.boolean().optional(),
+  // "Train Further": which epoch this version continues training from. The orchestrator
+  // payload only needs params.continueFrom (an orchestrator-sourced AIR for the epoch's
+  // LoRA, same as generation uses); this object exists so the UI can clearly label the
+  // source epoch, and it survives reloads (the in-memory training store does not).
+  continueFromEpoch: z
+    .object({
+      air: z.string(),
+      epochNumber: z.number(),
+      sourceModelVersionId: z.number(),
+      sourceVersionName: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const modelVersionUpsertSchema = z.object({
@@ -415,7 +446,6 @@ export type ModelVersionMeta = ModelMeta & {
   picFinderModelId?: number;
   earlyAccessDownloadData?: { date: string; downloads: number }[];
   generationImagesCount?: { date: string; generations: number }[];
-  allowAIRecommendations?: boolean;
   hadEarlyAccessPurchase?: boolean;
   /**
    * When set, opening this version in the generator loads the target version's

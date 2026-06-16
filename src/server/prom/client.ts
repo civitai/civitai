@@ -3,8 +3,64 @@ import client from 'prom-client';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
+// request-bulkhead is a pure leaf module (no imports), so this edge cannot form a cycle.
+import { bulkheadSnapshot } from '~/server/utils/request-bulkhead';
 
 const PROM_PREFIX = 'civitai_app_';
+
+// ---------------------------------------------------------------------------
+// Cross-graph shared registry (for instrumentation-time metrics)
+// ---------------------------------------------------------------------------
+//
+// WHY: Next.js compiles `instrumentation.ts` into a SEPARATE webpack bundle from
+// the API-route/pages bundle, and `prom-client` is NOT in `serverExternalPackages`
+// (next.config.mjs), so each bundle gets its own copy of the module — and thus its
+// own `client.register` (the prom-client `globalRegistry`). A metric created and
+// mutated from the instrumentation graph (e.g. the event-loop long-task detector's
+// `setInterval`) lands in the instrumentation graph's registry, while `/metrics`
+// (an API route) scrapes the request graph's registry. The two never meet, so the
+// counter/histogram/gauge appear registered-but-never-incremented (or never
+// exported) even though the emitting code runs. See the eventloop-longtask metrics
+// bug (civitai PR #2451).
+//
+// FIX: pin ONE `Registry` on `globalThis` (the real V8 global, shared across all
+// webpack bundles in the same Node process — the same mechanism the
+// `global.pgGaugeInitialized` guards below already rely on). Any metric created in
+// EITHER graph registers into this single object, and `/metrics` merges it into the
+// scrape. This is required only for metrics emitted from the instrumentation graph;
+// request-graph-only metrics already work because they emit + scrape in one graph.
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiInstrumentationRegistry: client.Registry | undefined;
+}
+
+export const instrumentationRegistry: client.Registry =
+  globalThis.__civitaiInstrumentationRegistry ??
+  (globalThis.__civitaiInstrumentationRegistry = new client.Registry());
+
+/**
+ * Get-or-create a metric in the cross-graph shared `instrumentationRegistry`,
+ * idempotently. Use this for any metric created or mutated from the instrumentation
+ * graph (`instrumentation.ts` subtree) so that `/metrics` — scraped from the request
+ * graph — can actually see it.
+ *
+ * The metric is created via `factory` which MUST construct it with
+ * `registers: [instrumentationRegistry]` (so it lands in the shared registry, not
+ * the default per-graph one). Because both webpack graphs eval the same module-level
+ * code against the SAME globalThis-pinned registry, the second graph (and HMR
+ * re-evals) would otherwise throw "already registered" inside the constructor — so we
+ * short-circuit to the existing instance BEFORE calling `factory`. Returns the single
+ * shared instance either way.
+ */
+export function registerInstrumentationMetric<M extends client.Metric<string>>(
+  name: string,
+  factory: () => M
+): M {
+  const existing = instrumentationRegistry.getSingleMetric(name);
+  if (existing) return existing as unknown as M;
+  return factory();
+}
+
 export function registerCounter({ name, help }: { name: string; help: string }) {
   // Do this to deal with HMR in nextjs
   try {
@@ -151,10 +207,65 @@ export const cacheRevalidateCounter = registerCounterWithLabels({
   labelNames: ['cache_name', 'cache_type'] as const,
 });
 
+// tRPC per-procedure latency — wall-clock duration of the full middleware chain +
+// resolver, labeled by procedure path. Used to rank heavy-pool isolation
+// candidates by P99 x rate (the criterion behind the image-feed cutover). Bucket
+// layout (to 30s) keeps the long tail visible like images_search.
+//
+// ⚠️ HIGH CARDINALITY: `path` is a fixed enum of ~870 procedure names (NOT ~93 —
+// that's the router count), so this emits ~870 x (buckets+sum+count) series PER
+// POD. It is gated OPT-IN behind TRPC_PROCEDURE_METRICS (see trpc.ts) so only the
+// pools we point it at (api-primary, api-heavy) pay the cost. Buckets kept lean.
+export const trpcProcedureDuration = registerHistogram({
+  name: 'trpc_procedure_duration_seconds',
+  help: 'tRPC procedure wall-clock duration (full chain + resolver) by path',
+  labelNames: ['path'] as const,
+  buckets: [0.05, 0.25, 1, 2, 5, 10, 30],
+});
+
+// Redis client in-flight + duration instrumentation.
+//
+// WHY: api-primary 504 cascades root-cause to node-redis commands parking
+// off-CPU in the command queue against a SILENT half-open connection (no
+// RST/FIN). The event loop stays flat and every dependency server-metric is
+// clean — the stall is entirely client-side and was uninstrumented. These two
+// metrics make it visible: during a cascade `redis_commands_inflight` climbs
+// toward the concurrency ceiling and `redis_command_duration_seconds` piles
+// into the top (~30s) bucket, directly attributing the request hang to Redis
+// (and confirming/refuting the socketTimeout fix on the next event).
+//
+// Cardinality is intentionally tiny: one label `client` ∈ cluster|sys. No
+// per-key / per-command-name labels. Overhead per command is a gauge inc/dec
+// plus one histogram observe of an already-captured timestamp delta — no
+// per-command allocation beyond the closure the wrapper already creates.
+export const redisCommandsInflight = registerGaugeWithLabels({
+  name: 'redis_commands_inflight',
+  help: 'In-flight node-redis commands by client (cluster vs sys); climbs toward the queue ceiling during a half-open stall',
+  labelNames: ['client'] as const,
+});
+
+export const redisCommandDuration = registerHistogram({
+  name: 'redis_command_duration_seconds',
+  help: 'node-redis command wall-clock duration by client; the long tail (~30s bucket) is the half-open command-queue park',
+  labelNames: ['client'] as const,
+  // Up to 30s to capture the parked-command tail that maps onto the Traefik
+  // 30s ceiling → 504. Lean bucket set keeps the series count low.
+  buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
+});
+
+// The bridge to '~/server/redis/client' via globalThis.__civitaiRedisMetrics is
+// published below, AFTER the sysredisSentinel* counters are declared (search for
+// "__civitaiRedisMetrics ="). Placing it there lets us capture all four counter
+// values directly instead of behind getters — a getter that fired during
+// top-level eval (before the const declarations executed) would throw a
+// ReferenceError that the no-op fallback at the call site (optional chaining)
+// does NOT catch. No eager reader exists today; the bridge is consumed only
+// from function bodies in redis/client.ts at command/connect time.
+
 // Image feed metrics
 export const imagesFeedWithoutIndexCounter = registerCounter({
   name: 'images_feed_without_index_total',
-  help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
+  help: 'Number of times getInfiniteImagesHandler resolves to the DB path (index cannot serve the query params)',
 });
 
 // Creator compensation metrics
@@ -197,6 +308,124 @@ export const dbReadFallbackCounter = registerCounterWithLabels({
   labelNames: ['entity', 'caller'] as const,
 });
 
+// App Blocks buzz attribution
+// One row written per buzz purchase originating inside a block. Labels
+// give us per-provider, per-scope, per-status dashboards without
+// cross-contaminating sums. `status` values: 'pending'|'voided' at
+// write time; future status changes go through separate counters.
+export const blockBuzzAttributionWriteCounter = registerCounterWithLabels({
+  name: 'block_buzz_attribution_total',
+  help: 'Block buzz attribution rows written',
+  labelNames: ['provider', 'scope', 'status'] as const,
+});
+
+// App Blocks KV datastore (W4-v0)
+// `op` ∈ get|set|delete|list|getQuota; `outcome` ∈ ok|unauthorized|
+// not_found|payload_too_large|quota_exceeded|error. Read-only counters
+// keep the procedure-side instrumentation cheap; heavier histograms hang
+// off a future per-app dashboard.
+export const appStorageOpsCounter = registerCounterWithLabels({
+  name: 'app_blocks_storage_ops_total',
+  help: 'App Blocks KV datastore tRPC operations',
+  labelNames: ['op', 'outcome'] as const,
+});
+
+// One quota-exceeded reject is interesting on its own (it means the
+// publisher hit the 50MB ceiling). Track per-app_block_id so we can
+// surface specific apps in alerts before they get bumped to v1.
+export const appStorageQuotaExceededCounter = registerCounterWithLabels({
+  name: 'app_blocks_storage_quota_exceeded_total',
+  help: 'App Blocks KV writes rejected because the app quota would be exceeded',
+  labelNames: ['app_block_id'] as const,
+});
+
+// Per-operation latency. Buckets sized for KV operations on a small CNPG
+// cluster (everything should land < 50ms in the happy path; outliers
+// beyond 250ms point at quota lookups blocked on a long write somewhere).
+function registerHistogramWithLabels<T extends string>(opts: {
+  name: string;
+  help: string;
+  labelNames: readonly T[];
+  buckets: number[];
+}) {
+  try {
+    return new client.Histogram({
+      name: PROM_PREFIX + opts.name,
+      help: opts.help,
+      labelNames: opts.labelNames as unknown as string[],
+      buckets: opts.buckets,
+    });
+  } catch {
+    return client.register.getSingleMetric(PROM_PREFIX + opts.name) as client.Histogram<T>;
+  }
+}
+
+export const appStorageLatencyHistogram = registerHistogramWithLabels({
+  name: 'app_blocks_storage_latency_seconds',
+  help: 'App Blocks KV procedure latency',
+  labelNames: ['op'] as const,
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+});
+
+// sysRedis Sentinel observability — Phase 4 cutover SRE-on-call uses these to
+// distinguish a real failover from steady-state sentinel chatter. Cardinality:
+// `type` is a small enum (master-change, +switch-master, etc.), `host` is bounded
+// by the sentinel/master/replica pod count (~3-6), `deployment` is per-pod (same
+// shape as Prometheus's own `pod` label).
+//
+// Override the PROM_PREFIX so the name maps to `civitai_sysredis_*` (matches the
+// dashboard naming requested in the audit) rather than `civitai_app_*`.
+const SYSREDIS_PREFIX = 'civitai_sysredis_';
+function registerSysredisCounter<T extends string>({
+  name,
+  help,
+  labelNames,
+}: {
+  name: string;
+  help: string;
+  labelNames: readonly T[];
+}) {
+  // HMR-safe registration (see registerCounterWithLabels above).
+  try {
+    return new client.Counter({ name: SYSREDIS_PREFIX + name, help, labelNames });
+  } catch (e) {
+    return client.register.getSingleMetric(SYSREDIS_PREFIX + name) as Counter<T>;
+  }
+}
+
+export const sysredisSentinelTopologyChangesCounter = registerSysredisCounter({
+  name: 'sentinel_topology_changes_total',
+  help: 'sysRedis sentinel topology-change events (failover, sentinel-set change, etc.)',
+  labelNames: ['type', 'host', 'deployment'] as const,
+});
+
+export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
+  name: 'sentinel_client_errors_total',
+  help: 'sysRedis sentinel sub-client errors (per-pod TCP/protocol errors against masters/replicas)',
+  labelNames: ['type', 'host', 'deployment'] as const,
+});
+
+// Bridge the redis metric handles to '~/server/redis/client' via globalThis,
+// WITHOUT that module statically importing this one. redis/client.ts is
+// client-bundle-reachable (`_app.tsx` → `system-cache.ts` → redis/client.ts) and
+// prom-client eagerly requires `fs`/`cluster` at load (defaultMetrics + cluster
+// aggregator), so a static `redis/client → prom/client` import edge breaks the
+// pages-router client webpack build. This module only ever loads server-side
+// (imported by trpc/api routes/instrumentation at startup), so publishing here is
+// safe and is in place before any real redis command runs. instrumentCommands()
+// and attachSysSentinelListeners read `globalThis.__civitaiRedisMetrics` at
+// command/connect time.
+//
+// Placed AFTER all four counters declare so no getter indirection is needed
+// (and no TDZ surface — a getter that fires during top-level eval would throw
+// ReferenceError, which the no-op fallback at the call site does NOT catch).
+(globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
+  redisCommandsInflight,
+  redisCommandDuration,
+  sysredisSentinelTopologyChangesCounter,
+  sysredisSentinelClientErrorsCounter,
+};
+
 // pgPoolAcquireHistogram is registered in src/server/db/db-helpers.ts, not here.
 // Defining it here would create a module-init cycle (prom/client.ts imports
 // pgDb → db-helpers, which would import this histogram back), which webpack's
@@ -205,6 +434,31 @@ export const dbReadFallbackCounter = registerCounterWithLabels({
 declare global {
   // eslint-disable-next-line no-var
   var pgGaugeInitialized: boolean;
+  // eslint-disable-next-line no-var
+  var heavyBulkheadGaugeInitialized: boolean;
+}
+
+// Heavy-route bulkhead observability (per pod). collect()-based so it reflects the
+// live in-process state on each scrape with no per-request work. This is the signal
+// for tuning HEAVY_REQUEST_CONCURRENCY: rejects climbing means the pod is shedding.
+if (!global.heavyBulkheadGaugeInitialized) {
+  new client.Gauge({
+    name: PROM_PREFIX + 'heavy_bulkhead_active',
+    help: 'In-flight heavy-route bulkhead slots per key (per pod)',
+    labelNames: ['key'],
+    collect() {
+      for (const { key, active } of bulkheadSnapshot()) this.set({ key }, active);
+    },
+  });
+  new client.Gauge({
+    name: PROM_PREFIX + 'heavy_bulkhead_rejects',
+    help: 'Cumulative heavy-route bulkhead fast-fail rejects per key (per pod); monotonic, use rate()',
+    labelNames: ['key'],
+    collect() {
+      for (const { key, rejects } of bulkheadSnapshot()) this.set({ key }, rejects);
+    },
+  });
+  global.heavyBulkheadGaugeInitialized = true;
 }
 
 if (!global.pgGaugeInitialized) {

@@ -10,13 +10,16 @@ import {
   IconCloudLock,
   // IconClubs,
   IconCrown,
+  IconCurrencyDollar,
   IconGift,
   IconGavel,
   IconHistory,
   IconLink,
+  IconListDetails,
   IconMoneybag,
   IconPhotoUp,
   IconPlayerPlayFilled,
+  IconPlugConnected,
   IconProgressBolt,
   IconSword,
   IconThumbUp,
@@ -35,6 +38,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 import type { CollectionType } from '~/shared/utils/prisma/enums';
+import { isAppDeveloper, isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { useMemo } from 'react';
 
 export type UserMenuItem = {
@@ -147,6 +151,49 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Referrals',
           newUntil: new Date('2026-07-20'),
+        },
+        {
+          href: '/apps',
+          visible: features.appBlocks,
+          icon: IconPlugConnected,
+          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Apps',
+          newUntil: new Date('2026-07-01'),
+        },
+        {
+          href: '/apps/installed',
+          visible: features.appBlocks,
+          icon: IconPlugConnected,
+          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Installed Apps',
+        },
+        {
+          href: '/apps/revenue',
+          visible: features.appBlocks && isAppDeveloper(currentUser),
+          icon: IconCurrencyDollar,
+          color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'App Revenue',
+        },
+        {
+          href: '/apps/submit',
+          visible: features.appBlocks && isAppDeveloper(currentUser),
+          icon: IconUpload,
+          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Submit App',
+        },
+        {
+          href: '/apps/my-submissions',
+          visible: features.appBlocks && isAppDeveloper(currentUser),
+          icon: IconListDetails,
+          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'My Submissions',
+        },
+        {
+          href: '/apps/review',
+          visible: features.appBlocks && isAppReviewer(currentUser),
+          icon: IconGavel,
+          color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Review Apps',
         },
       ],
     },

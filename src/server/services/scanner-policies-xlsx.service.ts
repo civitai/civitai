@@ -187,6 +187,7 @@ export type ScoredResultRow = {
 };
 
 const SUMMARY_SHEET = 'Summary';
+const LEGEND_SHEET = 'Legend';
 
 const SUMMARY_COLUMNS = [
   { header: 'policyName', width: 36 },
@@ -285,7 +286,7 @@ function sanitizeSheetName(name: string, fallback: string): string {
 
 /** Locate an existing per-policy sheet by its embedded hash (cell B2). */
 function findSheetByHash(workbook: ExcelJS.Workbook, policyHash: string): ExcelJS.Worksheet | null {
-  const reserved = new Set([INPUT_SHEET, META_SHEET, SUMMARY_SHEET, RESULTS_SHEET]);
+  const reserved = new Set([INPUT_SHEET, META_SHEET, SUMMARY_SHEET, LEGEND_SHEET, RESULTS_SHEET]);
   let found: ExcelJS.Worksheet | null = null;
   workbook.eachSheet((sheet) => {
     if (found) return;
@@ -382,6 +383,110 @@ function writePolicyDetailSheet(args: {
   sheet.views = [{ state: 'frozen', ySplit: POLICY_DATA_HEADER_ROW }];
 
   return sheetName;
+}
+
+/**
+ * Write a fresh Legend sheet describing every column on the Summary and
+ * per-policy detail sheets, plus the verdictCategory values and a quick
+ * decision shortcut for "should I ship this candidate". Removes any
+ * existing Legend sheet first so column changes never go stale.
+ */
+function writeLegendSheet(workbook: ExcelJS.Workbook): void {
+  const existing = workbook.getWorksheet(LEGEND_SHEET);
+  if (existing) workbook.removeWorksheet(existing.id);
+
+  const sheet = workbook.addWorksheet(LEGEND_SHEET);
+  sheet.getColumn(1).width = 22;
+  sheet.getColumn(2).width = 110;
+
+  let row = 1;
+  const writeHeader = (text: string) => {
+    sheet.getCell(row, 1).value = text;
+    sheet.getCell(row, 1).font = { bold: true, size: 13 };
+    sheet.mergeCells(row, 1, row, 2);
+    row++;
+  };
+  const writeSubheader = (text: string) => {
+    sheet.getCell(row, 1).value = text;
+    sheet.getCell(row, 1).font = { bold: true };
+    sheet.mergeCells(row, 1, row, 2);
+    row++;
+  };
+  const writeKV = (key: string, value: string) => {
+    sheet.getCell(row, 1).value = key;
+    sheet.getCell(row, 1).font = { bold: true };
+    sheet.getCell(row, 2).value = value;
+    sheet.getCell(row, 2).alignment = { wrapText: true, vertical: 'top' };
+    row++;
+  };
+  const blank = () => {
+    row++;
+  };
+
+  writeHeader('Scanner Policies — workbook legend');
+  blank();
+
+  writeSubheader('Summary sheet columns');
+  writeKV('policyName', 'Candidate name as shown in the moderator UI. Same value as the per-policy sheet\'s B1 cell.');
+  writeKV('sheet', 'Name of this candidate\'s detail tab in this workbook (long names may get a hash suffix).');
+  writeKV('policyHash', 'sha256(mode + label + threshold + policy text). Editing any of those mints a new hash → new Summary row.');
+  writeKV('label', 'XGuard label this candidate targets (Young, Suggestive, Explicit, etc.). All rows share the dataset\'s label.');
+  writeKV('threshold', 'Cutoff applied to score. triggered = (score >= threshold).');
+  writeKV('testCases', 'Total rows scored. Equals input row count minus rows the orchestrator never returned a result for.');
+  writeKV('tp', 'True positives — expectedTrigger=true AND triggered=true. Errors excluded.');
+  writeKV('fp', 'False positives — expectedTrigger=false AND triggered=true. Cost.');
+  writeKV('tn', 'True negatives — expectedTrigger=false AND triggered=false.');
+  writeKV('fn', 'False negatives — expectedTrigger=true AND triggered=false. Cost.');
+  writeKV('recall', 'tp / (tp + fn). Fraction of real triggers the policy catches. Higher = catches more.');
+  writeKV('fpRate', 'fp / (fp + tn). Fraction of safe content that wrongly triggers. Lower = quieter.');
+  writeKV('accuracy', '(tp + tn) / (testCases - errors). Overall correctness. Misleading on imbalanced data — use with recall + fpRate.');
+  writeKV('fpFixed', 'vs baseline: baseline fired wrongly (FP) but this candidate did not. WIN.');
+  writeKV('tpDropped', 'vs baseline: baseline caught correctly (TP) but this candidate missed. LOSS.');
+  writeKV('tpRecovered', 'vs baseline: baseline missed (FN) but this candidate caught. WIN.');
+  writeKV('tnNewlyFiring', 'vs baseline: baseline correctly did not fire (TN) but this candidate fired wrongly. LOSS.');
+  writeKV('errors', 'Rows where scoring failed (orchestrator timeout, parse error, etc.). Excluded from tp/fp/tn/fn and the rates.');
+  writeKV('runId', 'Which scoring run produced these numbers. Re-running against the same dataset overwrites this row.');
+  writeKV('runAt', 'ISO timestamp the run started.');
+  blank();
+
+  writeSubheader('Per-policy detail sheet columns');
+  writeKV('contentHash', 'Identifier joining back to the Test Cases sheet. XLOOKUP / VLOOKUP on Test Cases.contentHash.');
+  writeKV('workflowId', 'Orchestrator workflow that produced this row. Paste into the orchestrator console to inspect.');
+  writeKV('score', 'Raw probability returned by XGuard for this label.');
+  writeKV('triggered', 'score >= threshold.');
+  writeKV('expectedTrigger', 'Ground truth from the moderator-verdict majority for this contentHash.');
+  writeKV('correct', 'triggered === expectedTrigger.');
+  writeKV('verdictCategory', 'See verdictCategory table below.');
+  writeKV('errorMessage', 'When verdictCategory=error: what went wrong. Often the label name the orchestrator returned vs the one we asked for.');
+  blank();
+
+  writeSubheader('verdictCategory values');
+  writeKV('agree-trigger', 'Baseline and this candidate both triggered, and the row was a real positive. Win for both.');
+  writeKV('agree-secure', 'Baseline and this candidate both did NOT trigger, and the row was a real negative. Win for both.');
+  writeKV('fpFixed', 'Baseline fired wrongly here; this candidate correctly did not. New rule WIN.');
+  writeKV('tpDropped', 'Baseline correctly fired here; this candidate missed it. New rule LOSS.');
+  writeKV('tpRecovered', 'Baseline missed; this candidate caught. New rule WIN.');
+  writeKV('tnNewlyFiring', 'Baseline correctly stayed silent; this candidate fired wrongly. New rule LOSS.');
+  writeKV('no-baseline', 'Row was scored without a baseline in this run (only one candidate active). No vs-baseline comparison.');
+  writeKV('error', 'Scoring failed for this row. See errorMessage. Excluded from all summary stats.');
+  blank();
+
+  writeSubheader('Quick decision rule for "should I ship this candidate?"');
+  writeKV('Recall', 'Within ~3 points of baseline recall.');
+  writeKV('fpRate', 'Improves by 5+ points vs baseline.');
+  writeKV('TP costs', 'tpDropped ≤ 2 AND tpRecovered ≥ 3, OR fpFixed dominates the diff.');
+  writeKV('Spot-check', 'Open this candidate\'s detail sheet, filter to fpFixed and tpRecovered rows, eyeball the prompts.');
+  writeKV('Baseline', 'The first candidate in the active set (typically Live). The four vs-baseline columns are zero for the baseline itself.');
+  blank();
+
+  writeSubheader('Sheet roles');
+  writeKV('Test Cases', 'Input rows + ground truth (contentHash, label, verdict, expectedTrigger, prompts). Built when the dataset was exported.');
+  writeKV('Summary', 'One row per policyHash. Per-policy aggregates + vs-baseline deltas. Re-running updates rows in place.');
+  writeKV('Legend', 'This sheet. Rewritten every run.');
+  writeKV('<policy name>', 'Per-policy detail sheet. Header rows 1-5 identify the policy; row 7+ is the per-contentHash score table.');
+  writeKV('_meta (hidden)', 'datasetId, mode, label, exportedAt. Used to reject mismatched uploads in older flows; safe to ignore.');
+
+  sheet.views = [{ state: 'frozen', ySplit: 1 }];
 }
 
 function upsertSummarySheet(
@@ -484,10 +589,14 @@ export async function appendResultsToWorkbook(
   const legacy = workbook.getWorksheet(RESULTS_SHEET);
   if (legacy) workbook.removeWorksheet(legacy.id);
 
+  // Always write a fresh Legend sheet describing every column in the workbook.
+  // Cheap to regenerate each run so it stays in sync with the column set.
+  writeLegendSheet(workbook);
+
   // Prune existing per-policy sheets whose policyHash has been archived.
   if (archivedPolicyHashes.size > 0) {
     const sheetsToRemove: number[] = [];
-    const reserved = new Set([INPUT_SHEET, META_SHEET, SUMMARY_SHEET, RESULTS_SHEET]);
+    const reserved = new Set([INPUT_SHEET, META_SHEET, SUMMARY_SHEET, LEGEND_SHEET, RESULTS_SHEET]);
     workbook.eachSheet((sheet) => {
       if (reserved.has(sheet.name)) return;
       const v = sheet.getCell('B2').value;

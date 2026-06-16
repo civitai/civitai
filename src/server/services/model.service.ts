@@ -322,7 +322,7 @@ export const getModelsRaw = async ({
     } catch (err) {
       if (err instanceof MeiliCallTimeoutError) {
         throw new TRPCError({
-          code: 'TIMEOUT',
+          code: 'SERVICE_UNAVAILABLE',
           message: 'Model search is temporarily overloaded — please retry.',
           cause: err,
         });
@@ -1511,21 +1511,45 @@ export const deleteModelById = async ({
 };
 
 export const restoreModelById = async ({ id }: GetByIdInput) => {
-  const model = await dbWrite.model.update({
-    where: { id },
-    data: {
-      deletedAt: null,
-      status: 'Draft',
-      deletedBy: null,
-      modelVersions: {
-        updateMany: { where: { status: 'Deleted' }, data: { status: 'Draft' } },
-      },
-    },
+  // Derive restored status from publishedAt so a previously-public model
+  // returns to Unpublished (was public -> hidden) rather than Draft. Blanket
+  // Draft would let the next publish reset publishedAt under the legacy gate
+  // (the anti-bump SQL guard now blocks that, but mismatched status was its
+  // own UX bug — restored work shouldn't pretend it was never published).
+  //   publishedAt IS NULL    -> Draft
+  //   publishedAt >  NOW()   -> Scheduled (future publish was queued)
+  //   publishedAt <= NOW()   -> Unpublished
+  const result = await dbWrite.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<{ userId: number }[]>`
+      UPDATE "Model"
+      SET "deletedAt" = NULL,
+          "deletedBy" = NULL,
+          "status" = CASE
+            WHEN "publishedAt" IS NULL      THEN 'Draft'::"ModelStatus"
+            WHEN "publishedAt" >  NOW()     THEN 'Scheduled'::"ModelStatus"
+            ELSE 'Unpublished'::"ModelStatus"
+          END
+      WHERE id = ${id}
+        AND "status" = 'Deleted'::"ModelStatus"
+      RETURNING "userId"
+    `;
+    await tx.$executeRaw`
+      UPDATE "ModelVersion"
+      SET "status" = CASE
+        WHEN "publishedAt" IS NULL  THEN 'Draft'::"ModelStatus"
+        WHEN "publishedAt" >  NOW() THEN 'Scheduled'::"ModelStatus"
+        ELSE 'Unpublished'::"ModelStatus"
+      END
+      WHERE "modelId" = ${id}
+        AND "status" = 'Deleted'::"ModelStatus"
+    `;
+    return rows[0] ?? null;
   });
 
-  await userModelCountCache.refresh(model.userId);
+  if (!result) return null;
+  await userModelCountCache.refresh(result.userId);
 
-  return model;
+  return { id, userId: result.userId };
 };
 
 export const permaDeleteModelById = async ({
@@ -2035,7 +2059,6 @@ export const publishModelById = async ({
         where: { id },
         data: {
           status,
-          publishedAt: !republishing ? publishedAt : undefined,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
           deletedAt: null,
         },
@@ -2053,6 +2076,17 @@ export const publishModelById = async ({
           status: true,
         },
       });
+
+      // Anti-bump guard: publishedAt is immutable once a model has gone
+      // public. Allowed transitions: NULL (Draft) -> set, or future
+      // (Scheduled) -> reschedule. Republish of an already-public model is a
+      // no-op for this column. Mirrors the Post guard below.
+      await tx.$executeRaw`
+        UPDATE "Model"
+        SET "publishedAt" = ${publishedAt}
+        WHERE id = ${id}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
 
       // Validate NSFW + restricted base model combination
       if (model.nsfw) {
@@ -2088,19 +2122,27 @@ export const publishModelById = async ({
 
       if (includeVersions) {
         if (status === ModelStatus.Published) {
-          // Publish model versions with early access check:
+          // Publish model versions with early access check. Anti-bump guard
+          // for ModelVersion.publishedAt lives inside this call.
           await publishModelVersionsWithEarlyAccess({
             modelVersionIds: versionIds,
-            publishedAt: !republishing ? publishedAt : undefined,
+            publishedAt,
             tx,
-            republishing,
           });
         } else if (status === ModelStatus.Scheduled) {
-          // Schedule model versions:
+          // Schedule model versions. Status flips unconditionally, but
+          // publishedAt only flips while the row is mutable (Draft or
+          // future-Scheduled) — anti-bump guard via raw SQL.
           await tx.modelVersion.updateMany({
             where: { id: { in: versionIds } },
-            data: { status, publishedAt: !republishing ? publishedAt : undefined },
+            data: { status },
           });
+          await tx.$executeRaw`
+            UPDATE "ModelVersion"
+            SET "publishedAt" = ${publishedAt}
+            WHERE id IN (${Prisma.join(versionIds, ',')})
+            AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+          `;
         }
 
         // Restore posts that were unpublished alongside the model, and re-target
@@ -2604,9 +2646,7 @@ export async function bumpModel({ id }: { id: number }) {
 
   await Promise.all([
     dataForModelsCache.refresh([id]),
-    modelsSearchIndex.queueUpdate([
-      { id, action: SearchIndexUpdateQueueAction.Update },
-    ]),
+    modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]),
     userModelCountCache.refresh(updated.userId),
   ]);
 
@@ -3149,7 +3189,6 @@ export async function copyGallerySettingsToAllModelsByUser({
       WHERE
         "userId" = ${userId}
     `;
-
   });
 
   // Count-cache refresh hits Redis — run after commit, off the txn budget.
@@ -3690,40 +3729,90 @@ export const publishPrivateModel = async ({
   const versionIds = versions.map((v) => v.id);
   const now = new Date();
 
-  await dbWrite.$transaction([
-    dbWrite.post.updateMany({
+  await dbWrite.$transaction(async (tx) => {
+    // Availability + demotion to null flip unconditionally; the publish
+    // bump to `now` is routed through the anti-bump SQL guard below so an
+    // already-public post (e.g. a Public→Private→Public flip) keeps its
+    // original publishedAt. Same invariant as publishModelById:2154-2167.
+    await tx.post.updateMany({
       where: {
         modelVersionId: { in: versionIds },
       },
       data: {
-        publishedAt: publishVersions ? now : null,
+        publishedAt: publishVersions ? undefined : null,
         availability: Availability.Public,
       },
-    }),
-    dbWrite.modelVersion.updateMany({
+    });
+    if (publishVersions) {
+      // Write-once-on-republish: honor the prevPublishedAt stash if it
+      // exists (e.g. post was previously public, unpublished via parent,
+      // then the model went through a Private cycle). Strips the stash on
+      // success. Mirrors the CASE pattern used by publishModelVersionById
+      // and publishModelById.
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET
+          "publishedAt" = CASE
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
+            THEN ("metadata"->>'prevPublishedAt')::timestamptz
+            ELSE ${now}
+          END,
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+        WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
+    }
+
+    await tx.modelVersion.updateMany({
       where: { id: { in: versionIds } },
       data: {
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Draft,
-        publishedAt: publishVersions ? now : null,
+        // Private->Public flip: status flips unconditionally; publishedAt is
+        // handled separately under the anti-bump SQL guard below so legacy
+        // rows with NULL publishedAt still get a first-publish timestamp,
+        // while already-public rows keep their original date. Demotion
+        // writes null so a follow-up publish can transition cleanly.
+        publishedAt: publishVersions ? undefined : null,
       },
-    }),
-    dbWrite.model.update({
+    });
+
+    await tx.model.update({
       where: {
         id: modelId,
       },
       data: {
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
-        publishedAt: publishVersions ? now : null,
+        // Same rationale as the ModelVersion write above.
+        publishedAt: publishVersions ? undefined : null,
         meta: {
           ...((model.meta ?? {}) as ModelMeta),
           cannotPromote: false,
         },
       },
       select: { id: true },
-    }),
-  ]);
+    });
+
+    if (publishVersions) {
+      // Anti-bump guard: set publishedAt = NOW() only on rows that are
+      // currently NULL (never published) or scheduled in the future. Rows
+      // already public keep their original publishedAt — same invariant as
+      // publishModelById / publishModelVersionById.
+      await tx.$executeRaw`
+        UPDATE "ModelVersion"
+        SET "publishedAt" = ${now}
+        WHERE id IN (${Prisma.join(versionIds, ',')})
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
+      await tx.$executeRaw`
+        UPDATE "Model"
+        SET "publishedAt" = ${now}
+        WHERE id = ${modelId}
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
+      `;
+    }
+  });
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

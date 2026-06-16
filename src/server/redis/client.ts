@@ -1,13 +1,21 @@
 import chunk from 'lodash-es/chunk';
 import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
-import { createClient, createCluster } from 'redis';
+import { createClient, createCluster, createSentinel } from 'redis';
 import { RESP_TYPES } from 'redis';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+// NOTE: do NOT statically import the redis prom metrics from '~/server/prom/client'.
+// This module is client-bundle-reachable (`_app.tsx` → `system-cache.ts` → here),
+// and prom-client eagerly requires `fs`/`cluster` at module load (defaultMetrics +
+// cluster aggregator), which the pages-router client webpack build cannot resolve
+// → "Module not found: Can't resolve 'cluster'/'fs'". The metrics are defined and
+// registered server-side in `~/server/prom/client` and published on `globalThis`
+// (`__civitaiRedisMetrics`); `instrumentCommands` and the sentinel listener attach
+// read that handle at runtime (server-only). See getRedisMetrics() below.
 
 export type RedisKeyStringsCache = Values<typeof REDIS_KEYS>;
 export type RedisKeyStringsSys = Values<typeof REDIS_SYS_KEYS>;
@@ -226,6 +234,61 @@ function triggerTopologyRediscovery(clusterClient: any, reason: string) {
 }
 
 /**
+ * Attach `topology-change` and `client-error` listeners to a Sentinel client.
+ *
+ * Extracted so it can be unit-tested without booting the full redis-client
+ * module (which pulls in prom/db init). Both listeners destructure
+ * event.node.{host,port} into a square-bracketed key/value list so Loki regex
+ * can extract per-pod identifiers, and increment per-event Prometheus counters
+ * labeled {type, host, deployment}.
+ *
+ * `deployment` is the running pod's HOSTNAME env (matches Prometheus's `pod`
+ * label); falls back to 'unknown' off-cluster.
+ */
+export function attachSysSentinelListeners(
+  client: { on: (event: string, listener: (e: any) => void) => unknown },
+  ctx: {
+    deployment: string;
+    log: (msg: string, ...rest: unknown[]) => void;
+    topologyCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
+    errorCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
+  }
+) {
+  client.on('topology-change', (event: any) => {
+    const { type: eventType, node } = event ?? {};
+    const host = node?.host ?? '?';
+    const port = node?.port ?? '?';
+    ctx.log(
+      `Redis sentinel topology change [type=${eventType ?? 'unknown'}, host=${host}, port=${port}]`,
+      event
+    );
+    ctx.topologyCounter
+      .labels({
+        type: String(eventType ?? 'unknown'),
+        host: String(host),
+        deployment: ctx.deployment,
+      })
+      .inc();
+  });
+  client.on('client-error', (event: any) => {
+    const { type: eventType, node, error } = event ?? {};
+    const host = node?.host ?? '?';
+    const port = node?.port ?? '?';
+    ctx.log(
+      `Redis sentinel sub-client error [type=${eventType ?? 'unknown'}, host=${host}, port=${port}]`,
+      error ?? event
+    );
+    ctx.errorCounter
+      .labels({
+        type: String(eventType ?? 'unknown'),
+        host: String(host),
+        deployment: ctx.deployment,
+      })
+      .inc();
+  });
+}
+
+/**
  * Parse cluster node URLs from environment variable.
  * Falls back to single URL if REDIS_CLUSTER_NODES is not set.
  */
@@ -256,6 +319,37 @@ function getBaseClient(type: 'cache' | 'system') {
   const url = new URL(REDIS_URL);
   const connectionUrl = `${url.protocol}//${url.host}`;
 
+  // socketTimeout is scoped PER client kind. The CLUSTER (cache) client carries the
+  // 504-cascade structural fix — a silent half-open there parks every request handler.
+  // The SYSTEM client is single-node + mostly idle; applying the same aggressive 10s
+  // teardown to it (against the flaky single-replica sysRedis backend, which doesn't
+  // cleanly complete the TCP close) converted a transient half-open into a reconnect
+  // storm that ACCUMULATES half-closed sockets and wedged /api/health for hours. So the
+  // sys client uses REDIS_SYS_SOCKET_TIMEOUT_MS (default 0 = disabled → pre-#2556
+  // self-healing); the cache client keeps REDIS_SOCKET_TIMEOUT_MS.
+  const socketTimeoutMs =
+    type === 'system' ? env.REDIS_SYS_SOCKET_TIMEOUT_MS : env.REDIS_SOCKET_TIMEOUT_MS;
+
+  // Two coupled guards on the SYSTEM client (both system-only; the cache client keeps
+  // node-redis defaults — its socketTimeout tears the socket down and flushes the queue):
+  //
+  // 1. commandsQueueMaxLength — with socketTimeoutMs=0, a SILENT half-open is only
+  //    cleared by OS TCP keepalive (minutes), during which written-but-unanswered
+  //    commands pile in the reply queue. The cap fast-fails new commands once wedged
+  //    (the fail-open callers catch it) so the heap can't grow unbounded toward OOM.
+  // 2. disableOfflineQueue — while the socket is RECONNECTING (not ready), node-redis
+  //    would otherwise buffer commands in its offline write queue. Under sustained authed
+  //    load that buffer fills before the reconnect handshake (HELLO/AUTH/SELECT) can
+  //    enqueue — and the handshake goes through the SAME bounded queue — starving
+  //    recovery → a PERMANENT wedge. Rejecting offline commands immediately
+  //    (ClientOfflineError → fail-open) keeps the write queue empty so the handshake
+  //    always has room. Together: bounded heap on a half-open AND guaranteed recovery.
+  const isSystem = type === 'system';
+  const commandsQueueMaxLength =
+    isSystem && env.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH > 0
+      ? env.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH
+      : undefined;
+
   // Shared configuration
   const socketConfig = {
     reconnectStrategy(retries: number) {
@@ -263,6 +357,22 @@ function getBaseClient(type: 'cache' | 'system') {
       return Math.min(retries * 100, 3000);
     },
     connectTimeout: env.REDIS_TIMEOUT,
+    // Socket-level inactivity guard. node-redis maps this to net.Socket.setTimeout,
+    // an IDLE timer that fires when NO read OR write happens for this long (any
+    // command write or received reply resets it — verified against @redis/client@5.8.3
+    // + a real redis-server), then destroys the socket with a SocketTimeoutError and
+    // triggers the reconnectStrategy above.
+    // This is the structural fix for the 504 cascade: on a SILENT half-open
+    // connection (pod reschedule/failover, no RST/FIN) the in-flight command is PARKED
+    // in the node-redis queue and blocks every subsequent write (incl. the keepalive
+    // PING), so the idle timer runs to completion and tears the dead socket down in
+    // ~REDIS_SOCKET_TIMEOUT_MS instead of waiting ~30s for OS TCP keepalive (= Traefik
+    // ceiling = 504); parked commands then reject promptly and the client reconnects.
+    // On a HEALTHY idle socket the keepalive PING (pingInterval, derived below) writes
+    // every interval and keeps this timer reset, so it does NOT spuriously fire.
+    // Tunable via REDIS_SOCKET_TIMEOUT_MS (cache) / REDIS_SYS_SOCKET_TIMEOUT_MS
+    // (system); 0/unset disables it (the system default is 0 — see socketTimeoutMs).
+    ...(socketTimeoutMs > 0 ? { socketTimeout: socketTimeoutMs } : {}),
   };
 
   const authConfig = {
@@ -270,13 +380,68 @@ function getBaseClient(type: 'cache' | 'system') {
     password: url.password,
   };
 
-  const pingInterval = 4 * 60 * 1000;
+  // Keepalive PING interval. node-redis issues a PING every interval ONLY when the
+  // socket is otherwise idle (a parked/in-flight command blocks it from being written),
+  // and each PING is a write+reply that resets the socketTimeout idle timer — so it
+  // keeps a HEALTHY idle socket alive while a genuinely half-open socket (parked command
+  // blocks the PING) still trips socketTimeout. The INVARIANT pingInterval < socketTimeout
+  // is what prevents a healthy idle socket from spuriously firing socketTimeout. We CLAMP
+  // to min(env, socketTimeout/2) so the invariant holds even if REDIS_PING_INTERVAL_MS is
+  // mis-set >= socketTimeout. When socketTimeout is disabled (0) there is no idle timer
+  // to keep reset, so we just honor the configured ping interval. (socketTimeoutMs is
+  // the per-client-kind value derived above — sys defaults to 0/disabled.)
+  const pingInterval =
+    socketTimeoutMs > 0
+      ? Math.min(env.REDIS_PING_INTERVAL_MS, Math.floor(socketTimeoutMs / 2))
+      : env.REDIS_PING_INTERVAL_MS;
+  log(
+    `Redis ping interval (${type}) = ${pingInterval}ms (env REDIS_PING_INTERVAL_MS=${env.REDIS_PING_INTERVAL_MS}, socketTimeout=${socketTimeoutMs}ms)`
+  );
 
-  // System redis is always a single node
+  // System redis is always a single node (or — when REDIS_SYS_SENTINELS is set —
+  // a Sentinel-discovered HA topology). See claudedocs/sysredis-ha-migration-runbook.md.
   // Cache redis can be either cluster or single node based on env.REDIS_CLUSTER
   const isCluster = type === 'cache' && env.REDIS_CLUSTER;
+  const isSysSentinel = type === 'system' && !!env.REDIS_SYS_SENTINELS;
 
-  const baseClient = isCluster
+  const baseClient = isSysSentinel
+    ? createSentinel({
+        // Non-null assertion is safe: server-schema's superRefine rejects boot
+        // when REDIS_SYS_SENTINELS is set without REDIS_SYS_SENTINEL_NAME.
+        name: env.REDIS_SYS_SENTINEL_NAME!,
+        sentinelRootNodes: env.REDIS_SYS_SENTINELS!.split(',').map((hp) => {
+          const [host, port] = hp.trim().split(':');
+          return { host, port: parseInt(port ?? '26379', 10) };
+        }),
+        nodeClientOptions: {
+          // Reuse the password that's already extracted from REDIS_SYS_URL —
+          // the new HA cluster is provisioned with the same secret.
+          password: authConfig.password,
+          socket: socketConfig,
+          // Match the standalone path's PING heartbeat. Sentinel sub-clients
+          // are long-lived against each master/replica pod; without this, an
+          // idle connection through any intermediate LB or rolling-update of a
+          // sentinel pod can silently expire.
+          pingInterval,
+        },
+        sentinelClientOptions: env.REDIS_SYS_SENTINEL_PASSWORD
+          ? { password: env.REDIS_SYS_SENTINEL_PASSWORD, socket: socketConfig }
+          : { socket: socketConfig },
+        // Pool size 2 (not 1) so the periodic PING heartbeat can run on a
+        // separate TCP connection from in-flight writes. With pool size 1, a
+        // slow EVAL (see PR #2332's atomic helper) head-of-line blocks the
+        // heartbeat, which can trip the kubelet readiness probe during normal
+        // load spikes.
+        masterPoolSize: 2,
+        replicaPoolSize: 0,
+        scanInterval: 10_000,
+        // Keep sub-client errors local — surfacing them here would flood the
+        // top-level `error` listener whenever a single sentinel/replica pod
+        // flaps. We log them explicitly via the `client-error` listener below.
+        passthroughClientErrorEvents: false,
+        reserveClient: false,
+      })
+    : isCluster
     ? createCluster({
         // Use multiple root nodes for redundant topology discovery
         rootNodes: parseClusterNodes(connectionUrl),
@@ -294,6 +459,8 @@ function getBaseClient(type: 'cache' | 'system') {
         ...authConfig,
         socket: socketConfig,
         pingInterval,
+        ...(commandsQueueMaxLength ? { commandsQueueMaxLength } : {}),
+        ...(isSystem ? { disableOfflineQueue: true } : {}),
       });
 
   // Common event handlers (note: cluster clients don't emit connect/ready events in node-redis v4.x)
@@ -301,6 +468,29 @@ function getBaseClient(type: 'cache' | 'system') {
   baseClient.on('connect', () => log(`Redis connected (${type})`));
   baseClient.on('reconnecting', () => log(`Redis reconnecting (${type})`));
   baseClient.on('ready', () => log(`Redis ready! (${type})`));
+
+  // Sentinel clients don't emit connect/reconnecting/ready — they expose
+  // topology-change (master/replica/sentinel set changed) and client-error
+  // (a sub-client errored). Surface both so failovers are visible in Loki and
+  // queryable per-pod, and increment Prometheus counters alongside so Grafana
+  // can graph + alert. See attachSysSentinelListeners for the log/label shape.
+  if (isSysSentinel) {
+    // Look up the counters via the globalThis bridge instead of a static import
+    // — prom-client requires fs/cluster which breaks the client webpack bundle.
+    // By the time getBaseClient runs at server startup, '~/server/prom/client'
+    // has already loaded and populated the bridge. Fall back to no-op stubs in
+    // the off-chance the bridge isn't populated yet (logs still flow to Loki).
+    const metrics = getRedisMetrics();
+    const noopCounter = { labels: () => ({ inc: () => undefined }) };
+    attachSysSentinelListeners(baseClient, {
+      // process.env.HOSTNAME is the pod name in Kubernetes (matches the
+      // Prometheus `pod` label). Fall back to 'unknown' off-cluster.
+      deployment: process.env.HOSTNAME ?? 'unknown',
+      log,
+      topologyCounter: metrics?.sysredisSentinelTopologyChangesCounter ?? noopCounter,
+      errorCounter: metrics?.sysredisSentinelClientErrorsCounter ?? noopCounter,
+    });
+  }
 
   // Cluster-specific event handlers for failover detection
   // Enhanced failover handling is gated behind FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER
@@ -455,8 +645,103 @@ function getBaseClient(type: 'cache' | 'system') {
   return baseClient;
 }
 
+/**
+ * Wrap the per-client command chokepoint so EVERY command is counted in the
+ * `redis_commands_inflight` gauge and timed into `redis_command_duration_seconds`.
+ *
+ * The chokepoint differs by client kind (verified against @redis/client@5.8.3):
+ *  - SINGLE client (sysRedis): typed methods (`get`/`hGetAll`/`set`/...) →
+ *    `_executeCommand` → `this.sendCommand`. Wrap `sendCommand` on `_self`.
+ *  - CLUSTER client (cache): typed methods route through `this._self._execute(...)`,
+ *    NOT the cluster's top-level `sendCommand` (that's only for keyless commands).
+ *    `_execute` is the per-command wrapper that picks a node and runs it. Wrap
+ *    `_execute` on `_self` so both keyed and keyless cluster commands are caught.
+ *
+ * `createCluster` returns a proxy (`Object.create(realCluster)`) and `_self` points
+ * at the real instance, so we must patch the method on `client._self` (own property),
+ * which proxies inherit through the prototype chain.
+ *
+ * NOTE: node-redis routes MULTI/pipeline sub-commands through `#queue.addCommand`
+ * directly (NOT `sendCommand`/`_execute`), so a batched `multi().exec()` is counted
+ * as ONE inflight unit, not per sub-command. Acceptable: the gauge is a
+ * stall/concurrency signal and a parked pipeline still shows as one long-lived
+ * inflight entry landing in the top duration bucket.
+ *
+ * Overhead per command: one gauge inc/dec + one Date.now() delta observe. No
+ * per-command allocation beyond the closure the call already pays for.
+ */
+// Shape of the prom metric handles published by '~/server/prom/client' on
+// globalThis. Only the methods instrumentCommands calls are typed here.
+type RedisMetricsBridge = {
+  redisCommandsInflight: { inc: (labels: { client: string }) => void; dec: (labels: { client: string }) => void };
+  redisCommandDuration: { observe: (labels: { client: string }, value: number) => void };
+  // PR #2331 round-3: sentinel observability counters, exposed via the same
+  // bridge to avoid a static prom-client import edge in this client-bundle-
+  // reachable module. attachSysSentinelListeners reads them at attach time.
+  sysredisSentinelTopologyChangesCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
+  sysredisSentinelClientErrorsCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
+};
+
+// Server-runtime lookup of the prom metric handles WITHOUT a static import edge
+// (which would drag prom-client's fs/cluster requires into the client bundle).
+// Returns undefined until '~/server/prom/client' has loaded server-side (always
+// true by the time real redis commands run — trpc/api routes import it at startup);
+// when undefined, instrumentation simply no-ops for that command (leak-free).
+function getRedisMetrics(): RedisMetricsBridge | undefined {
+  return (globalThis as unknown as { __civitaiRedisMetrics?: RedisMetricsBridge })
+    .__civitaiRedisMetrics;
+}
+
+function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
+  const self = client?._self ?? client;
+  if (!self) return;
+  const labels = { client: clientLabel } as const;
+  // Detect the real chokepoint by capability rather than the static label: a
+  // 'cache' client is a CLUSTER (wrap `_execute`) only when REDIS_CLUSTER is on;
+  // otherwise it's a plain single client (wrap `sendCommand`), same as sysRedis.
+  const isClusterClient = typeof self._execute === 'function';
+  const methodName = isClusterClient ? '_execute' : 'sendCommand';
+  const original = self[methodName];
+  if (typeof original !== 'function') {
+    log(`Redis instrumentation: ${methodName} not found on ${clientLabel} client`);
+    return;
+  }
+  self[methodName] = function (this: any, ...args: any[]) {
+    // Read the metric handles published by '~/server/prom/client' on globalThis
+    // (no static import — see the note on the prom import above). Capture ONCE per
+    // command so inc/dec stay balanced even if prom/client loads mid-flight (a
+    // dec without its matching inc would drive the gauge negative).
+    const metrics = getRedisMetrics();
+    metrics?.redisCommandsInflight.inc(labels);
+    const start = Date.now();
+    const done = () => {
+      metrics?.redisCommandsInflight.dec(labels);
+      metrics?.redisCommandDuration.observe(labels, (Date.now() - start) / 1000);
+    };
+    let result: any;
+    try {
+      result = original.apply(this, args);
+    } catch (err) {
+      // Synchronous throw (e.g. ClientClosedError) — still account for it.
+      done();
+      throw err;
+    }
+    return Promise.resolve(result).finally(done);
+  };
+}
+
+// Wall-clock deadline for per-request sysRedis reads — defined in a leaf module so it
+// can be unit-tested without constructing the redis clients. Re-exported here because
+// callers import it from `~/server/redis/client`.
+export { withSysReadDeadline } from './sys-read-deadline';
+
 function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   const client = getBaseClient(type) as unknown as CustomRedisClient<K>;
+
+  // Wire in-flight + duration instrumentation at the per-command chokepoint.
+  // 'cache' is the cluster client (wrap `_execute`), 'system' is the single
+  // sysRedis client (wrap `sendCommand`).
+  instrumentCommands(client, type === 'cache' ? 'cluster' : 'sys');
 
   // Create a separate client instance with Buffer type mapping for packed operations
   // `withTypeMapping` creates a NEW client instance - it doesn't modify the original client.
@@ -583,14 +868,22 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   };
 
   // Implement scanIterator for cluster - it doesn't exist natively on RedisCluster
-  // We need to scan each master node and yield results from all of them
+  // For Sentinel, scanIterator is also absent (the JS-only helper lives on
+  // RedisClient, not the Sentinel proxy); we replicate its scan loop manually
+  // using SCAN, which IS proxied to the current master.
   const baseClient = client as any;
 
-  // Save reference to the original scanIterator (exists on single client, not on cluster)
+  // Save reference to the original scanIterator (exists on single client only,
+  // not on cluster, not on sentinel).
   const originalScanIterator = baseClient.scanIterator?.bind(baseClient);
 
+  // Detect sentinel mode: the Sentinel proxy exposes getMasterNode but not
+  // scanIterator. Cluster exposes .masters. Single client exposes scanIterator.
+  const isSentinelClient =
+    typeof baseClient.getMasterNode === 'function' &&
+    typeof baseClient.scanIterator !== 'function';
+
   client.scanIterator = async function* (options) {
-    // Check if this is a cluster client (has masters property)
     if (baseClient.masters) {
       // Cluster mode: iterate through all master nodes
       const masters = await baseClient.masters;
@@ -598,6 +891,16 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
         const nodeClient = await baseClient.nodeClient(master);
         yield* nodeClient.scanIterator(options);
       }
+    } else if (isSentinelClient) {
+      // Sentinel mode: drive SCAN directly against the proxy. SCAN is part of
+      // the COMMANDS map and is routed to the master client lease, so this
+      // works without needing to borrow a raw client via .use(...).
+      let cursor = options?.cursor ?? '0';
+      do {
+        const reply = await baseClient.scan(cursor, options);
+        cursor = reply.cursor;
+        yield reply.keys;
+      } while (cursor !== '0');
     } else {
       // Single node mode: use original native scanIterator
       yield* originalScanIterator(options);
@@ -906,6 +1209,24 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
+  BLOCKS: {
+    /**
+     * Emergency kill list — Redis SET of `block_id` strings that
+     * BlockRegistry excludes from every listForModel response. Lets ops
+     * disable a runaway block without a deploy.
+     */
+    EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
+    /**
+     * Cumulative Buzz-spend cap counter (audit A7 / design-gaps H1). The
+     * per-call `claims.buzzBudget` only bounds a SINGLE submitWorkflow; a
+     * block holding a valid token can issue unlimited sequential capped
+     * submits and drain the whole balance. This is an integer counter, keyed
+     * `system:blocks:buzz-cap:${userId}:${appBlockId}:${UTC-day}`, INCRBY'd by
+     * the cost of each successful submit and checked before submit. TTL is set
+     * on first write so the per-window key self-expires.
+     */
+    BUZZ_CAP: 'system:blocks:buzz-cap',
+  },
 } as const;
 
 // Cached data
@@ -929,6 +1250,7 @@ export const REDIS_KEYS = {
     TOKENS: 'generation:tokens',
     COUNT: 'generation:count',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
+    QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
   },
   OAUTH: {
     AUTHORIZATION_CODES: 'packed:oauth:authorization-codes',
@@ -980,6 +1302,7 @@ export const REDIS_KEYS = {
     MODEL_TAGS: 'packed:caches:model-tags',
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
+    TENSOR_METADATA: 'packed:caches:tensor-metadata',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
     MOD_RULES: {
@@ -1081,6 +1404,25 @@ export const REDIS_KEYS = {
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
+  },
+  BLOCKS: {
+    REGISTRY: 'packed:caches:block-registry',
+    TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
+    /**
+     * Per-blockInstanceId revocation marker. Writers (uninstall,
+     * toggleEnabled(false), publisher ban) set this key with a 15-minute
+     * TTL — the worst-case remaining lifetime of any token issued for the
+     * instance just before revocation. The block-scope middleware checks
+     * existence on every request; missing key → allowed, present → 403.
+     */
+    REVOKED_INSTANCE: 'blocks:revoked-instance',
+    /**
+     * Per-ecosystem-key most-popular-Checkpoint cache. Resolves to a
+     * JSON-encoded ValidatedCheckpoint. 1h TTL — popularity changes
+     * slowly and we'd rather serve a stale-by-an-hour Checkpoint than
+     * pay a multi-join query on every block submit.
+     */
+    POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
   },
 } as const;
 

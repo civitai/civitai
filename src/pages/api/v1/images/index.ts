@@ -8,8 +8,15 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
+import client from 'prom-client';
 import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
-import { buildSearchActor } from '~/server/meilisearch/client';
+import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
+import {
+  buildSearchActor,
+  isFailfastStatus,
+  MeiliCallTimeoutError,
+  MeilisearchFetchError,
+} from '~/server/meilisearch/client';
 import {
   getAllImages,
   getAllImagesIndex,
@@ -18,6 +25,13 @@ import {
 import { imageMetaCache } from '~/server/redis/caches';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { isClientAbortError } from '~/server/utils/errorHandling';
+import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
+import {
+  acquireBulkheadSlot,
+  BulkheadFullError,
+  HEAVY_REQUEST_CONCURRENCY,
+} from '~/server/utils/request-bulkhead';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -85,7 +99,35 @@ const imagesEndpointSchema = z.object({
   withTags: booleanString().default(false),
 });
 
+// Reuse the shared images-search metrics bundle (idempotent registration on the
+// default registry that /api/metrics scrapes). This times the FULL REST handler
+// — including enrichment + JSON serialization, the actual pin cost — which the
+// inner getImagesFromSearch timer doesn't capture. route label keeps it queryable
+// alongside the search-fn timing without extra cardinality.
+const { requestDurationSeconds } = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
+
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // When the long-task LABELS tier is armed, attribute any synchronous event-loop
+  // block during this heavy handler to 'rest:/api/v1/images'. That costs one
+  // AsyncLocalStorage.run() per request and is OFF by default. When it is not
+  // armed (the disarmed default AND base-armed-without-labels), this is the
+  // ORIGINAL code path: a direct handler call with NO wrapper/closure. See
+  // src/server/eventloop-longtask.ts.
+  if (longTaskLabelsArmed) {
+    return runWithLongTaskLabel('rest:/api/v1/images', () => handleImagesRequest(req, res));
+  }
+  return handleImagesRequest(req, res);
+});
+
+async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
+  // Started AFTER param validation + the paging guard so cheap 400/429 rejects
+  // aren't recorded as ~0ms heavy requests, which would dilute the heavy-tail P99
+  // this metric exists to measure. (Also the correct slot for the bulkhead merge:
+  // the #2428 acquire goes immediately above this, so a 503-rejected request is
+  // never timed.) Ended in finally; `?.` because early returns leave it unstarted.
+  let endTimer: (() => void) | undefined;
+
+  let releaseSlot: (() => void) | undefined;
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
@@ -93,7 +135,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const session = await getServerAuthSession({ req, res });
 
     // Handle pagination
-    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, withTags, ...data } = reqParams.data;
+    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, withTags, ...data } =
+      reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
     if (usingPaging) {
@@ -106,6 +149,29 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
       ({ skip } = getPagination(limit, page));
     }
+
+    // Per-pod concurrency cap (shared with the tRPC feed via the 'heavy-image' key):
+    // fast-fail with 503 when this pod is already saturated with heavy image work,
+    // so a backlog can't pin the single JS thread → probe timeout → Error/137.
+    // Acquired AFTER param validation + the paging guard so cheap 400/429 rejects
+    // don't consume a heavy slot. no-store so an edge layer can't cache the 503
+    // and turn a momentary shed into a multi-minute outage. Released in the finally
+    // below — NOT on res 'close', which can lag the actual heavy work by the
+    // keep-alive teardown and would hold the slot (and shed) long after the JS
+    // thread is free. Symmetric with the tRPC heavyProcedure's finally release.
+    try {
+      releaseSlot = acquireBulkheadSlot('heavy-image', HEAVY_REQUEST_CONCURRENCY);
+    } catch (e) {
+      if (e instanceof BulkheadFullError) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '2');
+        return res.status(503).json({ error: 'Server busy, please retry shortly.' });
+      }
+      throw e;
+    }
+
+    // Timed only for admitted requests (bulkhead 503 returns above, before this).
+    endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
 
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);
@@ -258,6 +324,36 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       metadata,
     });
   } catch (error) {
+    if (isClientAbortError(error)) {
+      // Client disconnected mid-feed (closed tab / scrolled past / navigated). The
+      // Meili fetch's AbortSignal fired and bubbled a bare AbortError — not a server
+      // fault. 499 keeps it out of the 5xx SLO + the http-errors counter. (Was the
+      // top mislabeled-500 source on this endpoint.)
+      if (!res.headersSent) res.status(499).end();
+      return;
+    }
+    // Meili saturation / timeout / upstream 5xx (feeds-proxy shed or backend
+    // brownout) → 503 SERVICE_UNAVAILABLE, retryable. Without this the raw
+    // MeiliCallTimeoutError / MeilisearchFetchError is not a TRPCError, so the
+    // generic mapping below defaults it to 500 — the dominant mislabeled-500
+    // source on this endpoint. no-store so an edge layer can't cache the error,
+    // Retry-After so clients/CF retry the (typically seconds-long) flap.
+    // Mirrors the tRPC image feed + the /api/v1/models handler. 4xx-other
+    // (malformed filter / auth) is NOT failfast-eligible and still bubbles to
+    // the generic mapping below.
+    if (
+      error instanceof MeiliCallTimeoutError ||
+      (error instanceof MeilisearchFetchError && isFailfastStatus(error.status))
+    ) {
+      if (!res.headersSent) {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '2');
+        res
+          .status(503)
+          .json({ error: 'Image search is temporarily overloaded — please retry.' });
+      }
+      return;
+    }
     const trpcError = error as TRPCError;
     const statusCode = getHTTPStatusCodeFromError(trpcError);
 
@@ -265,8 +361,13 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       error: trpcError.message,
       code: trpcError.code,
     });
+  } finally {
+    endTimer?.();
+    // Release the heavy slot as soon as the handler resolves (synchronous
+    // serialization — the actual pin cost — is done by now), not on socket close.
+    releaseSlot?.();
   }
-});
+}
 
 type Metadata = {
   currentPage?: number;

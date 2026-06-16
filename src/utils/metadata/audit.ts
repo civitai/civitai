@@ -335,8 +335,7 @@ const ageRegexes = templates.map((template) => {
 // Danbooru-style tags that embed digits but aren't ages. Without stripping these,
 // prompts like `score_9, year 2025` falsely match the `{age} {years}` template
 // because the trailing digit in `score_9` sits within 3 non-alphanumeric chars of `year`.
-const falsePositiveTagPattern =
-  /\bscore_\d(?:_up|_down)?\b|\bsource_\w+\b|\brating_\w+\b/gi;
+const falsePositiveTagPattern = /\bscore_\d(?:_up|_down)?\b|\bsource_\w+\b|\brating_\w+\b/gi;
 
 // --------------------------------------
 // Age Check Function (Two-Phase Approach)
@@ -367,7 +366,11 @@ export function includesMinorAge(prompt: string | undefined) {
 // #endregion
 
 // #region [inappropriate]
-function prepareWordRegex(word: string, pluralize = false, leet = true) {
+// Builds the "body" of a word pattern (everything between the leading/trailing
+// non-alphanumeric boundary groups). Extracted so the combined-regex pre-filter
+// in `checkable` can reuse the EXACT same body, guaranteeing the gate matches a
+// superset of what the per-word regexes match.
+function prepareWordRegexBody(word: string, pluralize = false, leet = true) {
   let regexStr = word;
   regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]+`);
   if (leet && !word.includes('[')) {
@@ -378,7 +381,12 @@ function prepareWordRegex(word: string, pluralize = false, leet = true) {
       .replace(/e/g, '[e|3]');
   }
   if (pluralize) regexStr += '[s|z]*';
-  regexStr = `([^a-zA-Z0-9]+|^)` + regexStr + `([^a-zA-Z0-9]+|$)`;
+  return regexStr;
+}
+
+function prepareWordRegex(word: string, pluralize = false, leet = true) {
+  const body = prepareWordRegexBody(word, pluralize, leet);
+  const regexStr = `([^a-zA-Z0-9]+|^)` + body + `([^a-zA-Z0-9]+|$)`;
   const regex = new RegExp(regexStr, 'i');
   return regex;
 }
@@ -398,12 +406,49 @@ type MatcherFn = (prompt: string, checkable: Checkable) => string | false;
 type PreprocessorFn = (word: string) => string;
 export function checkable(
   words: string[],
-  options?: { pluralize?: boolean; leet?: boolean; matcher?: MatcherFn; preprocessor?: PreprocessorFn }
+  options?: {
+    pluralize?: boolean;
+    leet?: boolean;
+    matcher?: MatcherFn;
+    preprocessor?: PreprocessorFn;
+  }
 ) {
+  const bodies: string[] = [];
   const regexes = words.map((word) => {
+    bodies.push(prepareWordRegexBody(word, options?.pluralize, options?.leet));
     const regex = prepareWordRegex(word, options?.pluralize, options?.leet);
     return { regex, word } as Checkable;
   });
+
+  // Combined-regex pre-filter ("gate"): one alternation regex per chunk that
+  // answers "does ANY word in this chunk match at all?" in a single exec. The
+  // dominant case — a prompt that matches nothing in the list — then costs
+  // `ceil(N / CHUNK)` exec calls instead of N. Each body is wrapped in a
+  // non-capturing group and reuses the EXACT per-word body inside the same
+  // leading/trailing boundary groups, so the gate matches a superset of the
+  // per-word regexes (no false negatives). On a gate hit we fall back to the
+  // unchanged per-word loop to identify the specific match, so results are
+  // byte-for-byte identical to the original implementation.
+  //
+  // Chunking keeps each combined pattern well under JS engine limits (large
+  // alternations can blow the compiled-regex size budget) and bounds the cost
+  // of any single exec.
+  const GATE_CHUNK_SIZE = 200;
+  const gateRegexes: RegExp[] = [];
+  for (let i = 0; i < bodies.length; i += GATE_CHUNK_SIZE) {
+    const chunk = bodies
+      .slice(i, i + GATE_CHUNK_SIZE)
+      .map((body) => `(?:${body})`)
+      .join('|');
+    gateRegexes.push(new RegExp(`([^a-zA-Z0-9]+|^)(?:${chunk})([^a-zA-Z0-9]+|$)`, 'i'));
+  }
+  function gatePasses(prompt: string) {
+    for (const gate of gateRegexes) {
+      if (gate.test(prompt)) return true;
+    }
+    return false;
+  }
+
   function preprocessor(prompt: string) {
     prompt = prompt.trim();
     if (options?.preprocessor) return options.preprocessor(prompt);
@@ -412,6 +457,10 @@ export function checkable(
 
   function inPrompt(prompt: string, matcher?: MatcherFn) {
     prompt = preprocessor(prompt);
+    // Fast no-match gate: if nothing in any chunk can match, no per-word regex
+    // (and no matcher, which only returns a value when `regex.test` is true) can
+    // either — short-circuit the O(N) loop.
+    if (!gatePasses(prompt)) return false;
     matcher ??= options?.matcher;
     for (const { regex, word } of regexes) {
       if (matcher) {
@@ -429,6 +478,9 @@ export function checkable(
   }
   function highlight(prompt: string, replaceFn: (word: string) => string) {
     const target = preprocessor(prompt);
+    // Same gate as inPrompt: highlight rewrites only words that match, so if the
+    // gate misses there is nothing to rewrite and we return the prompt unchanged.
+    if (!gatePasses(target)) return prompt;
     for (const { regex } of regexes) {
       if (regex.test(target)) {
         const match = regex.exec(target);

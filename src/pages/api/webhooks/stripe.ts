@@ -7,6 +7,7 @@ import {
   upsertSubscription,
 } from '~/server/services/stripe.service';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { env } from '~/env/server';
 import type Stripe from 'stripe';
@@ -25,6 +26,12 @@ import {
   recordMembershipPaymentReward,
   revokeForChargeback,
 } from '~/server/services/referral.service';
+import {
+  AttributionAppMissingError,
+  recordAttribution,
+  voidAttributionsForPayment,
+} from '~/server/services/blocks/buzz-attribution.service';
+import { extractAttribution } from '~/server/schema/blocks/attribution.schema';
 
 const log = (data: MixedObject) =>
   logToAxiom({ name: 'stripe-webhook', ...data }, 'webhooks').catch(() => null);
@@ -62,6 +69,10 @@ const relevantEvents = new Set([
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Count any 5xx this webhook emits into civitai_app_http_errors_total — these
+  // handlers bypass the endpoint wrappers, so their 500s were counter-blind.
+  // Listener-only (res.once('finish')); no behavior/response change.
+  instrumentApiResponse(req, res);
   if (req.method === 'POST') {
     const stripe = await getServerStripe();
     if (!stripe) {
@@ -238,6 +249,85 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                   paymentMethodFingerprint: pmFingerprint,
                 },
               });
+
+              // App Blocks revenue-share attribution. Skipped silently when
+              // metadata doesn't carry block fields (the steady-state for
+              // every non-block buzz purchase). Also skipped for test-mode
+              // events so dashboard tinkering doesn't pollute revenue.
+              //
+              // Order matters: the buzz credit lands first (line 215) —
+              // attribution is a derived audit/payout artifact and a failed
+              // write here MUST NOT block the buzz grant. Stripe retries
+              // the entire webhook on a non-2xx, and both
+              // completeStripeBuzzTransaction (via metadata.transactionId)
+              // and recordAttribution (via UNIQUE on
+              // payment_transaction_id + app_block_id) are idempotent, so
+              // a retry is safe.
+              if (event.livemode !== false) {
+                const attribution = extractAttribution(
+                  metadata as Record<string, string | number | null | undefined>
+                );
+                if (attribution) {
+                  try {
+                    // Pull the actual Stripe fee off the balance
+                    // transaction. We only fetch when attribution is
+                    // present to avoid the extra round-trip for the 99% of
+                    // non-block buzz purchases. Falls back to 0 when the
+                    // expansion path is unavailable (rare; the row's
+                    // share-sum CHECK still holds because providerFee+
+                    // platformShare+publisherShare = gross by construction).
+                    let providerFeeCents = 0;
+                    const chargeId =
+                      typeof paymentIntent.latest_charge === 'string'
+                        ? paymentIntent.latest_charge
+                        : paymentIntent.latest_charge?.id;
+                    if (chargeId) {
+                      try {
+                        const charge = await stripe.charges.retrieve(chargeId, {
+                          expand: ['balance_transaction'],
+                        });
+                        const balanceTx = charge.balance_transaction;
+                        if (balanceTx && typeof balanceTx !== 'string') {
+                          providerFeeCents = balanceTx.fee ?? 0;
+                        }
+                      } catch {
+                        // Best-effort; leaving the fee at 0 means the
+                        // publisher gets a slightly higher share than
+                        // Stripe's actual net. Acceptable for v1; revisit
+                        // if reconciliation surfaces material drift.
+                      }
+                    }
+                    await recordAttribution({
+                      userId: metadata.userId,
+                      buzzAmount: metadata.buzzAmount,
+                      buzzType: metadata.buzzType,
+                      usdAmountCents: paymentIntent.amount ?? metadata.unitAmount,
+                      providerFeeCents,
+                      paymentProvider: 'stripe',
+                      paymentTransactionId: paymentIntent.id,
+                      buzzTransactionId: metadata.transactionId ?? null,
+                      attribution,
+                    });
+                  } catch (attrErr) {
+                    // Never fail the webhook on an attribution write —
+                    // the buzz credit has already happened. Log loudly so
+                    // ops notices, then continue. AttributionAppMissingError
+                    // specifically is expected when an app is deleted
+                    // between purchase and webhook delivery.
+                    const isExpected = attrErr instanceof AttributionAppMissingError;
+                    log({
+                      type: isExpected ? 'warning' : 'error',
+                      stage: 'block-attribution-write',
+                      eventType: event.type,
+                      eventId: event.id,
+                      paymentIntentId: paymentIntent.id,
+                      attribution,
+                      error: (attrErr as Error)?.message,
+                      stack: (attrErr as Error)?.stack,
+                    });
+                  }
+                }
+              }
             }
 
             if (metadata.type === 'clubMembershipPayment') {
@@ -279,6 +369,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 sourceEventId,
                 reason: event.type,
               }).catch(() => null);
+              // Also void any App Blocks attribution row that referenced
+              // this payment. If the row had already paid out, the row
+              // flips to voided here and the payout reconciliation job
+              // claws back from the publisher's NEXT payout (the row
+              // stamps payout_id for audit). Always-livemode is enforced
+              // upstream — refund webhooks for test-mode events still
+              // can't match any attribution row because we never wrote
+              // one in the first place.
+              await voidAttributionsForPayment({
+                paymentProvider: 'stripe',
+                paymentTransactionId: sourceEventId,
+                reason: event.type === 'charge.refunded' ? 'refund' : 'chargeback',
+              }).catch((err) => {
+                log({
+                  type: 'error',
+                  stage: 'block-attribution-void',
+                  eventType: event.type,
+                  sourceEventId,
+                  error: (err as Error)?.message,
+                });
+                return 0;
+              });
             }
             break;
           }

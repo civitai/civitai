@@ -108,6 +108,17 @@ export default MixedAuthEndpoint(async function handler(
   let meiliNextCursor: string | undefined;
   if (query) {
     const browsingLevelValues = Flags.instanceToArray(browsingLevel);
+    // Offset-based pagination for relevance-ranked text search.
+    //
+    // The query cursor is now an opaque numeric OFFSET, not a model id. We
+    // dropped the previous `sort: ['id:desc']` because the models index puts
+    // 'sort' first in its rankingRules (models.search-index.ts), so forcing an
+    // id sort made Meili rank by recency instead of text relevance — burying
+    // canonical low-id models (e.g. the original "DreamShaper", id 4384) past
+    // the first pages even though they are the exact-name match. Relevance
+    // ranking surfaces the right model first; id-cursor pagination is
+    // incompatible with that order, so we page by offset instead.
+    const queryOffset = cursor && Number.isFinite(Number(cursor)) ? Math.max(0, Number(cursor)) : 0;
     // Fetch IDs from Meilisearch.
     // Wrap the SDK call under withMeili('search', ...) so a backend brownout
     // is bounded by MEILI_CALL_TIMEOUT_MS instead of bleeding the event loop
@@ -124,32 +135,35 @@ export default MixedAuthEndpoint(async function handler(
       meiliResult = client
         ? await withMeili('search', () =>
             client.index(MODELS_SEARCH_INDEX).search<{ id: number }>(query, {
+              offset: queryOffset || undefined,
               limit: limit ? limit + 1 : undefined,
-              filter: [
-                cursor ? `id < ${String(cursor)}` : undefined,
-                `nsfwLevel IN [${browsingLevelValues.join(',')}]`,
-              ].filter(isDefined),
+              filter: [`nsfwLevel IN [${browsingLevelValues.join(',')}]`],
               attributesToRetrieve: ['id'],
-              sort: ['id:desc'],
             })
           )
         : undefined;
     } catch (e) {
       if (e instanceof MeiliCallTimeoutError) {
         // Override the public cache headers set by MixedAuthEndpoint —
-        // without this Cloudflare caches the 408 and turns a transient
-        // Meili brownout into a sticky 408 wall for every other
+        // without this Cloudflare caches the 503 and turns a transient
+        // Meili brownout into a sticky 503 wall for every other
         // unauthenticated caller with the same query.
         res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Retry-After', '2');
         return res
-          .status(408)
+          .status(503)
           .json({ error: 'Model search is temporarily overloaded — please retry.' });
       }
       throw e;
     }
 
-    meiliNextCursor = meiliResult?.hits.pop()?.id.toString();
-    searchIds = meiliResult?.hits?.map((hit: { id: number }) => hit.id) ?? [];
+    // We request `limit + 1` hits to detect whether another page exists
+    // without a second count query. The extra hit is sliced off and the next
+    // offset is advanced by `limit`.
+    const hits = meiliResult?.hits ?? [];
+    const hasMore = limit ? hits.length > limit : false;
+    searchIds = (hasMore ? hits.slice(0, limit) : hits).map((hit) => hit.id);
+    meiliNextCursor = hasMore ? String(queryOffset + limit) : undefined;
   }
 
   try {
@@ -168,6 +182,13 @@ export default MixedAuthEndpoint(async function handler(
       user,
     });
 
+    // Meilisearch returns ids in relevance order, but getModelsWithVersions
+    // re-sorts by lastVersionAt/modelId (model.service.ts). For text search,
+    // restore the relevance ranking so the best match stays first.
+    const orderedItems = query
+      ? searchIds.map((id) => items.find((m) => m.id === id)).filter(isDefined)
+      : items;
+
     const preferredFormat = {
       type: user?.filePreferences?.size === 'pruned' ? 'Pruned Model' : undefined,
       metadata: user?.filePreferences,
@@ -185,7 +206,7 @@ export default MixedAuthEndpoint(async function handler(
     }
 
     return res.status(200).json({
-      items: items.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
+      items: orderedItems.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
         ...model,
         mode: model.mode == null ? undefined : model.mode,
         creator: user

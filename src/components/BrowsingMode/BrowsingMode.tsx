@@ -32,7 +32,7 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
     <Popover zIndex={301 + 1} withArrow withinPortal>
       <Popover.Target>
         <Indicator className="flex items-center" color="red" disabled={!isRestricted}>
-          <LegacyActionIcon variant="subtle" color="gray">
+          <LegacyActionIcon variant="subtle" color="gray" aria-label="Browsing mode">
             <IconEyeExclamation {...iconProps} />
           </LegacyActionIcon>
         </Indicator>

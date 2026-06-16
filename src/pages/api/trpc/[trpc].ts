@@ -1,9 +1,12 @@
 // src/pages/api/trpc/[trpc].ts
 import { createNextApiHandler } from '@trpc/server/adapters/next';
+import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { withAxiom } from '@civitai/next-axiom';
 import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
 import { logToAxiom, safeError } from '~/server/logging/client';
+import { recordTrpcError } from '~/server/prom/http-errors';
+import { isClientAbortError } from '~/server/utils/errorHandling';
 import { appRouter } from '~/server/routers';
 
 export const config = {
@@ -39,6 +42,17 @@ const trpcHandler = createNextApiHandler({
     return Object.keys(headers).length > 0 ? { headers } : {};
   },
   onError: async ({ error, type, path, input, ctx, req }) => {
+    // Client disconnected mid-procedure (closed tab / scrolled the feed past /
+    // navigated away) — the request signal aborted and bubbled an AbortError that
+    // tRPC wrapped as INTERNAL_SERVER_ERROR. Not a server fault: skip BOTH the 5xx
+    // counter and the Axiom ingest (was ~0.07/s of mislabeled 500s, e.g.
+    // image.getInfinite). isClientAbortError walks error.cause for the wrapped abort.
+    if (isClientAbortError(error)) return error;
+
+    // Unsampled per-procedure 5xx attribution (no-ops for 4xx-class errors).
+    // Source of truth for the tRPC slice of the 5xx SLO; see http-errors.ts.
+    recordTrpcError(error, path);
+
     if (isProd) {
       // Auth-class rejections (FORBIDDEN / UNAUTHORIZED) are client-fault 4xx
       // responses — the status code already tells the caller + edge what
@@ -52,7 +66,17 @@ const trpcHandler = createNextApiHandler({
       // (isAcceptableOrigin, isAuthed, enforceTokenScope, isFlagProtected).
       // Other tRPC errors (Meili timeouts, DB errors, etc.) keep full
       // observability.
-      if (error.code === 'FORBIDDEN' || error.code === 'UNAUTHORIZED') {
+      //
+      // TOO_MANY_REQUESTS is the heavy-route bulkhead fast-fail (heavyProcedure).
+      // It trips precisely during a pile-up, and per-reject stack-capture +
+      // stringify + Axiom ingest would add event-loop pressure during the exact
+      // storm the bulkhead exists to relieve. The `civitai_app_heavy_bulkhead_rejects`
+      // gauge already carries the signal, so skip the ingest here too.
+      if (
+        error.code === 'FORBIDDEN' ||
+        error.code === 'UNAUTHORIZED' ||
+        error.code === 'TOO_MANY_REQUESTS'
+      ) {
         return error;
       }
 
@@ -91,4 +115,15 @@ const trpcHandler = createNextApiHandler({
 });
 
 // export API handler
-export default withAxiom(trpcHandler);
+//
+// withAxiom is overloaded with `(param: NextConfig): NextConfig` declared first.
+// With an untyped arrow, TS can't cleanly resolve the API-handler overload
+// (Next 16's stricter route types turn the ambiguity into a hard error). Typing
+// the params explicitly forces the `AxiomApiHandler` overload, and the async
+// body gives an explicit `Promise<void>` return. The result is still asserted to
+// NextApiHandler for the generated route-type validator. Method-override is
+// handled natively by `allowMethodOverride: true` above (main), so no manual
+// restore step is needed here.
+export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
+  await trpcHandler(req, res);
+}) as NextApiHandler;

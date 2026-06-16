@@ -90,15 +90,25 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(upsertArticleInput)
     .use(isFlagProtected('articleCreate'))
-    .use(rateLimit(articleRateLimits, (input: UpsertArticleInput) => !input.id))
+    .use(
+      rateLimit(articleRateLimits, (input: UpsertArticleInput) => !input.id, {
+        onlyCountSuccess: true,
+      })
+    )
     .mutation(upsertArticleHandler),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesDelete })
     .input(getByIdSchema)
     .use(isFlagProtected('articleCreate'))
-    .mutation(({ input, ctx }) =>
-      deleteArticleById({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
+    .mutation(async ({ input, ctx }) => {
+      const result = await deleteArticleById({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+      await ctx.track.article({ type: 'Delete', articleId: input.id, nsfw: false });
+      return result;
+    }),
   unpublish: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(unpublishArticleSchema)

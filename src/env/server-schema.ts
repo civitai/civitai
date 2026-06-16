@@ -21,6 +21,12 @@ export const serverSchema = z.object({
   NOTIFICATION_DB_URL: z.url(),
   NOTIFICATION_DB_REPLICA_URL: z.url(),
   DATAPACKET_DATABASE_RO_URL: z.url().optional(),
+  // App Blocks W4-KV-v0 — connection to cnpg-cluster-apps (`apps` DB) where
+  // each approved app block gets an isolated schema. civitai-web is the only
+  // service with these creds; apps never see DB credentials directly. Optional
+  // so PR previews + dev environments that haven't provisioned the apps DB
+  // yet keep starting (the storage tRPC procedures throw cleanly when unset).
+  APPS_DATABASE_URL: z.url().optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
@@ -32,7 +38,77 @@ export const serverSchema = z.object({
   REDIS_CLUSTER_NODES: z.string().optional(), // Comma-separated list of cluster node URLs for redundant discovery
   REDIS_CLUSTER_REFRESH_INTERVAL: z.coerce.number().default(30000), // Topology refresh interval in ms (default 30s)
   REDIS_SYS_URL: z.url(),
+  // Optional Sentinel-mode env vars for the `system` Redis client. When
+  // REDIS_SYS_SENTINELS is unset (default), the existing REDIS_SYS_URL path is
+  // used and behavior is unchanged. When set, src/server/redis/client.ts
+  // switches the system client to `createSentinel(...)` against this Sentinel
+  // pool. See claudedocs/sysredis-ha-migration-runbook.md (datapacket-talos)
+  // for the rollout sequence.
+  REDIS_SYS_SENTINELS: z.string().optional(), // comma-separated host:port list, e.g. "civitai-app-sysredis-sentinel.civitai-app-sysredis.svc.cluster.local:26379"
+  // Master group name. No default — the cluster uses "sysmaster", and the
+  // historical Sentinel default ("mymaster") would silently fail every lookup.
+  // The superRefine below makes this required whenever REDIS_SYS_SENTINELS is set.
+  REDIS_SYS_SENTINEL_NAME: z.string().optional(),
+  REDIS_SYS_SENTINEL_PASSWORD: z.string().optional(), // only set if sentinel-auth is enabled (not initially)
   REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
+  // Socket-level inactivity timeout (ms). Passed to node-redis `socket.socketTimeout`,
+  // which maps to net.Socket.setTimeout — an IDLE timer that fires when NO read OR
+  // write activity happens on the live socket for this long (any command write or
+  // received reply resets it; verified empirically against @redis/client@5.8.3 +
+  // a real redis-server). Its job is to kill a SILENT half-open connection (pod
+  // reschedule/failover with no RST/FIN): during a real stall the in-flight command
+  // is PARKED in the node-redis queue and blocks every subsequent write (including
+  // the keepalive PING), so the idle timer runs to completion and tears the dead
+  // socket down in ~REDIS_SOCKET_TIMEOUT_MS instead of waiting ~30s for OS TCP
+  // keepalive — the root cause of the api-primary 504 cascades. 10s is comfortably
+  // above normal round-trip latency (<5ms). Tunable so it can be widened/disabled in
+  // prod without a redeploy.
+  //
+  // ⚠️ INVARIANT: REDIS_PING_INTERVAL_MS MUST stay well below this value, otherwise a
+  // HEALTHY but idle socket (off-peak, a cold slot range, a quiet pod) goes idle for
+  // > socketTimeout with no traffic and the idle timer fires on a perfectly good node
+  // → spurious reconnect churn. The keepalive PING is what keeps an idle-but-healthy
+  // socket under the timeout. client.ts derives + clamps the ping interval to enforce
+  // this even if the two envs are mis-set; see getBaseClient().
+  REDIS_SOCKET_TIMEOUT_MS: z.coerce.number().default(10000),
+  // socketTimeout for the SYSTEM (sysRedis) client specifically. The structural
+  // 504-cascade fix above is needed on the CLUSTER (cache) client, where a silent
+  // half-open parks ALL request handlers. The system client is single-node and mostly
+  // idle, and the flaky single-replica sysRedis backend does not cleanly complete the
+  // TCP close on teardown — so the aggressive 10s socketTimeout there does NOT heal a
+  // blip, it ACCUMULATES half-closed sockets ([RxClosing TxClosing]) into a reconnect
+  // storm that wedges /api/health (the readiness probe) for hours. Default 0 = disabled
+  // → the sys client reverts to its pre-#2556 self-healing behavior (a sys half-open
+  // just blips the 5s health-check deadline and clears, no teardown storm). Tunable up
+  // if a real sys half-open guard is ever wanted, but it must be paired with a backend
+  // that closes cleanly. See getBaseClient().
+  REDIS_SYS_SOCKET_TIMEOUT_MS: z.coerce.number().default(0),
+  // Wall-clock deadline (ms) for EVERY per-request sysRedis read (the refreshToken
+  // MULTI and the single-command config/session reads). The sys client has no
+  // socketTimeout (above), and node-redis's per-command timeout can't bound a command
+  // once written nor any MULTI sub-command — so on a silent half-open a sys read parks
+  // (~OS-keepalive minutes) per request without this. Bounds the request handler and
+  // fails open. 0 disables it. See redis/sys-read-deadline.ts withSysReadDeadline().
+  REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(2000),
+  // Bound on the sys client's node-redis command queue. The sys client has no
+  // socketTimeout, so on a SILENT half-open it is only cleared by OS TCP keepalive
+  // (minutes), during which every authenticated request enqueues a MULTI that never
+  // drains → an UNBOUNDED queue → heap growth / OOM. Capping the queue makes new
+  // commands fast-fail (`The queue is full`) once wedged, which the fail-open callers
+  // catch — bounding the heap instead of OOMing the pod. 0 = unbounded (node-redis
+  // default). Only applied to the system client; the cache client self-bounds via its
+  // socketTimeout. See getBaseClient().
+  REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: z.coerce.number().default(10000),
+  // Keepalive PING interval (ms). node-redis issues a `PING` every interval ONLY when
+  // the socket is otherwise idle (a parked/in-flight command blocks it from being
+  // written). Each PING is a write+reply round-trip that resets the socketTimeout idle
+  // timer, so it keeps a HEALTHY idle socket alive while a genuinely half-open one
+  // (where the parked command blocks the PING) still trips socketTimeout. MUST be
+  // comfortably below REDIS_SOCKET_TIMEOUT_MS — client.ts additionally clamps it to
+  // min(this, socketTimeout/2) so the invariant holds even on a misconfig. Default 5s
+  // (≈ half the 10s default socketTimeout). PING load is trivial: one tiny command per
+  // idle node per interval (cluster: per node; a few nodes × pods × 0.2/s).
+  REDIS_PING_INTERVAL_MS: z.coerce.number().default(5000),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
@@ -187,7 +263,6 @@ export const serverSchema = z.object({
   NCMEC_URL: z.string().optional(),
   NCMEC_USERNAME: z.string().default(''),
   NCMEC_PASSWORD: z.string().default(''),
-  RESOURCE_RECOMMENDER_URL: z.url().optional(),
   DIRNAME: z.string().optional(),
   IMAGE_QUERY_CACHING: zc.booleanString,
   POST_QUERY_CACHING: zc.booleanString,
@@ -368,4 +443,87 @@ export const serverSchema = z.object({
   SERVER_DOMAIN_BLUE_ALIASES: z.string().optional(),
   SERVER_DOMAIN_RED: z.string().optional(),
   SERVER_DOMAIN_RED_ALIASES: z.string().optional(),
+
+  // App Blocks (Phase 1) — RSA keypair for block-scoped JWT issuance + JWKS.
+  // BLOCK_TOKEN_PRIVATE_KEY signs tokens; BLOCK_TOKEN_PUBLIC_KEY is served via
+  // /api/v1/block-tokens/jwks. BLOCK_TOKEN_PUBLIC_KEY_NEXT is set during the
+  // rotation window so the JWKS endpoint publishes both keys (and verifyBlockToken
+  // accepts signatures from either) for one full token lifetime. BLOCK_ALLOWED_ORIGINS
+  // is the CORS allow-list (comma-separated). All optional so the app boots before
+  // App Blocks rolls out; the token endpoints fail-closed if the signing key is missing.
+  BLOCK_TOKEN_PRIVATE_KEY: z.string().optional(),
+  BLOCK_TOKEN_PUBLIC_KEY: z.string().optional(),
+  BLOCK_TOKEN_PUBLIC_KEY_NEXT: z.string().optional(),
+  BLOCK_ALLOWED_ORIGINS: z.string().optional(),
+
+  // App Blocks W2 (apps-as-repos). Optional so envs that don't run the
+  // platform layer (PR previews without apps-pipeline wiring) still boot.
+  //
+  // FORGEJO_BASE_URL          public root, e.g. https://forgejo.civitai.com
+  // FORGEJO_ADMIN_TOKEN       Forgejo personal access token (admin) — used
+  //                           by civitai-web to create repos / webhooks
+  // FORGEJO_WEBHOOK_SECRET    HMAC shared secret between Forgejo → webhook
+  // BLOCK_BUILD_CALLBACK_SECRET   HMAC shared secret between Tekton → callback
+  // APPS_TEKTON_TRIGGER_URL   HTTP endpoint that creates PipelineRuns on
+  //                           dc-02-a (the app-blocks-trigger receiver,
+  //                           reached via the VPN proxy on dp-1). Example:
+  //                           http://wireguard-proxy-service.civitai-submodel-proxy.svc.cluster.local:8088/trigger-build
+  // APPS_TEKTON_TRIGGER_SECRET   HMAC shared secret between civitai-web and
+  //                           the app-blocks-trigger receiver. 32-byte hex.
+  // APPS_KUBE_NAMESPACE       civitai-apps (where apply Jobs are created
+  //                           on dp-1). Defaults to civitai-apps.
+  // APPS_DOMAIN               public per-app subdomain root, e.g.
+  //                           civit.ai — used to build iframe.src
+  //                           validation in the webhook. Defaults to civit.ai
+  //                           since CF universal SSL covers *.civit.ai
+  //                           single-level wildcard for free.
+  FORGEJO_BASE_URL: z.string().url().optional(),
+  // Browser-facing public URL for Forgejo — distinct from FORGEJO_BASE_URL
+  // because the latter points at the cluster-internal service so civitai-web's
+  // API + webhook calls don't loop through Cloudflare + oauth2-proxy. The
+  // mod-review UI link in /apps/review uses this one. Defaults to the
+  // production hostname; PR previews can override but won't normally need to.
+  FORGEJO_PUBLIC_URL: z.string().url().default('https://forgejo.civitai.com'),
+  FORGEJO_ADMIN_TOKEN: z.string().optional(),
+  FORGEJO_WEBHOOK_SECRET: z.string().optional(),
+  // F6 — optional second HMAC secret accepted during a zero-downtime rotation.
+  // verifyForgejoSignature (git-push.ts) / verifySignature (build-callback.ts)
+  // accept a signature valid under EITHER the current or the _NEXT secret. When
+  // unset, behaviour is identical to single-secret. Pairs with the talos-side
+  // APPS_TEKTON_TRIGGER_SECRET_NEXT to complete the three-secret rotation.
+  FORGEJO_WEBHOOK_SECRET_NEXT: z.string().optional(),
+  BLOCK_BUILD_CALLBACK_SECRET: z.string().optional(),
+  BLOCK_BUILD_CALLBACK_SECRET_NEXT: z.string().optional(),
+  APPS_TEKTON_TRIGGER_URL: z.string().url().optional(),
+  APPS_TEKTON_TRIGGER_SECRET: z.string().optional(),
+  APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
+  APPS_DOMAIN: z.string().default('civit.ai'),
+
+  // App Blocks W1 (publish-request flow). S3-compatible storage for
+  // dev-uploaded ZIP bundles. Production points at ssd-minio-backups
+  // MinIO with credentials scoped to the app-block-bundles bucket only.
+  // All optional so envs without the publish-request feature still boot.
+  //
+  // BUNDLE_S3_ENDPOINT             e.g. http://minio.minio-ssd-backups.svc.cluster.local
+  // BUNDLE_S3_BUCKET               e.g. app-block-bundles
+  // BUNDLE_S3_ACCESS_KEY_ID        scoped service-account key
+  // BUNDLE_S3_SECRET_ACCESS_KEY    matching secret
+  BUNDLE_S3_ENDPOINT: z.string().url().optional(),
+  BUNDLE_S3_BUCKET: z.string().optional(),
+  BUNDLE_S3_ACCESS_KEY_ID: z.string().optional(),
+  BUNDLE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+}).superRefine((env, ctx) => {
+  // Sentinel-mode for the system Redis client requires an explicit master group
+  // name. The live HA cluster uses `sysmaster`; the node-redis default
+  // (`mymaster`) silently produces a Sentinel that never resolves a master, so
+  // we refuse to start with REDIS_SYS_SENTINELS set but REDIS_SYS_SENTINEL_NAME
+  // missing. The non-sentinel path (REDIS_SYS_URL only) is unaffected.
+  if (env.REDIS_SYS_SENTINELS && !env.REDIS_SYS_SENTINEL_NAME) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['REDIS_SYS_SENTINEL_NAME'],
+      message:
+        'REDIS_SYS_SENTINEL_NAME is required when REDIS_SYS_SENTINELS is set (cluster uses "sysmaster")',
+    });
+  }
 });

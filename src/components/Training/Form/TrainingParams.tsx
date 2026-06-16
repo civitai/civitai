@@ -4,6 +4,7 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import {
+  AI_TOOLKIT_SAVE_EVERY,
   engineTypes,
   type EngineTypes,
   loraTypes,
@@ -284,23 +285,53 @@ export const trainingSettings: TrainingSettingsType[] = [
     label: 'Steps',
     hint: (
       <>
-        The total number of steps for training. Computed automatically with (epochs * # of images *
-        repeats / batch size).
+        The total number of training steps. With AI Toolkit this is the primary control over
+        training length and what pricing is based on &mdash; set it directly.
         <br />
-        The maximum allowed is 10,000 steps.
+        For other engines it is computed automatically from (epochs &times; # of images &times;
+        repeats / batch size). The maximum allowed is 10,000 steps.
       </>
     ),
     type: 'int',
-    default: undefined,
+    // Steps-based pricing prefill (AI Toolkit). For Kohya-style engines this default is
+    // immediately overwritten by the auto-calc in AdvancedSettings.
+    default: 2000,
     min: 1,
     max: 10000,
     step: 1,
+    // Kept disabled by default (Kohya auto-computes); AdvancedSettings makes it editable
+    // for the AI Toolkit engine where steps is the primary, user-set length knob.
     disabled: true,
-    // overrides: {
-    //   hy_720_fp8: { all: { max: 5000 } },
-    //   wan_2_1_i2v_14b_720p: { all: { max: 5000 } },
-    //   wan_2_1_t2v_14b: { all: { max: 5000 } },
-    // },
+    overrides: {
+      ltx2: { all: { default: 3000 } },
+      ltx23: { all: { default: 3000 } },
+      anima: { all: { default: 1500 } },
+    },
+  },
+  {
+    name: 'saveEvery',
+    label: 'Save every',
+    hint: (
+      <>
+        How often (in steps) a checkpoint is saved. Each saved checkpoint is a downloadable epoch
+        you can pick from afterwards.
+        <br />
+        Lower values save more checkpoints (e.g. 3,000 steps saving every 250 produces 12). Has a
+        smaller effect on cost than Steps.
+      </>
+    ),
+    type: 'int',
+    // Default mirrors targetSteps / 10 checkpoints; the seeding effects recompute it per run.
+    // Bounds come from AI_TOOLKIT_SAVE_EVERY so the input and the seeds share one source.
+    default: AI_TOOLKIT_SAVE_EVERY.default,
+    min: AI_TOOLKIT_SAVE_EVERY.min,
+    max: AI_TOOLKIT_SAVE_EVERY.max,
+    step: AI_TOOLKIT_SAVE_EVERY.step,
+    overrides: {
+      ltx2: { all: { default: 300 } },
+      ltx23: { all: { default: 300 } },
+      anima: { all: { default: 150 } },
+    },
   },
   {
     name: 'resolution',

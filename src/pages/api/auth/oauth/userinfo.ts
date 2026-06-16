@@ -1,10 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { addCorsHeaders } from '~/server/utils/endpoint-helpers';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   const shouldStop = addCorsHeaders(req, res, ['GET']);
   if (shouldStop) return;
 

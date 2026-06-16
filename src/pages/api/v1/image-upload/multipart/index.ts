@@ -1,11 +1,15 @@
 import { randomUUID } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { getMimeTypeFromExt } from '~/shared/constants/mime-types';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getMultipartPutUrl, getImageUploadBackend } from '~/utils/s3-utils';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 
 export default async function imageUploadMultipart(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   try {
     const session = await getServerAuthSession({ req, res });
     const userId = session?.user?.id;

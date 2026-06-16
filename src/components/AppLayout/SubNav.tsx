@@ -10,6 +10,7 @@ import { PostFeedFilters } from '~/components/Filters/FeedFilters/PostFeedFilter
 import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilters';
 import { ToolFeedFilters } from '~/components/Filters/FeedFilters/ToolFeedFilters';
 import { ManageHomepageButton } from '~/components/HomeBlocks/ManageHomepageButton';
+import { NavTidyNotice } from '~/components/Alerts/NavTidyNotice';
 import { HomeTabs } from '~/components/HomeContentToggle/HomeContentToggle';
 import { ToolImageFeedFilters } from '~/components/Filters/FeedFilters/ToolImageFeedFilters';
 import clsx from 'clsx';
@@ -39,6 +40,7 @@ export function SubNav2() {
       })}
     >
       <HomeTabs />
+      <NavTidyNotice />
       {section?.component}
     </div>
   );

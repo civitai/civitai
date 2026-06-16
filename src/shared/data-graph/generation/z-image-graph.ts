@@ -84,9 +84,10 @@ const turboModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
   // ControlNets — only available for txt2img workflows.
   .node(
     'controlNets',
-    (ctx) => ({
+    () => ({
       ...controlNetsNode({ preprocessors: zImageControlNetPreprocessors, limit: CONTROLNET_LIMIT }),
-      when: ctx.workflow === 'txt2img',
+      // Disabled for now (was: ctx.workflow === 'txt2img').
+      when: false,
     }),
     ['workflow']
   )
@@ -107,9 +108,10 @@ const baseModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
   // ControlNets — only available for txt2img workflows.
   .node(
     'controlNets',
-    (ctx) => ({
+    () => ({
       ...controlNetsNode({ preprocessors: zImageControlNetPreprocessors, limit: CONTROLNET_LIMIT }),
-      when: ctx.workflow === 'txt2img',
+      // Disabled for now (was: ctx.workflow === 'txt2img').
+      when: false,
     }),
     ['workflow']
   )

@@ -53,6 +53,10 @@ import {
   parseAudioCaption,
   rapidEta,
   trainingBaseModelTypesVideo,
+  AI_TOOLKIT_EPOCHS,
+  aiToolkitStepDefault,
+  aiToolkitSaveEveryDefault,
+  aiToolkitBatchMax,
 } from '~/utils/training';
 import type { AudioSampleOverride } from '~/utils/training';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -102,24 +106,38 @@ export const AdvancedSettings = ({
     const defaultParams = getDefaultTrainingParams(runBase, selectedRun.params.engine);
 
     defaultParams.engine = selectedRun.params.engine;
-    const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
-    defaultParams.numRepeats = Math.max(
-      1,
-      Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1)))
-    );
 
-    if (selectedRun.params.engine !== 'rapid') {
-      defaultParams.targetSteps = Math.ceil(
-        ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
-          defaultParams.trainBatchSize
+    if (features.trainingStepsPricing && selectedRun.params.engine === 'ai-toolkit') {
+      // Steps-based pricing: steps is set directly (not derived from repeats), batchSize
+      // defaults to 1. "Save every" is the secondary knob (step interval); the saved-
+      // checkpoint count (maxTrainEpochs, sent as `epochs`) is derived from it.
+      defaultParams.trainBatchSize = 1;
+      defaultParams.targetSteps = aiToolkitStepDefault(selectedRun.baseType);
+      defaultParams.saveEvery = aiToolkitSaveEveryDefault(defaultParams.targetSteps);
+      defaultParams.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
+    } else {
+      const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
+      defaultParams.numRepeats = Math.max(
+        1,
+        Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1)))
       );
+
+      if (selectedRun.params.engine !== 'rapid') {
+        defaultParams.targetSteps = Math.ceil(
+          ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
+            defaultParams.trainBatchSize
+        );
+      }
     }
 
     doUpdate({ params: defaultParams });
-  }, [selectedRun.params.engine]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRun.params.engine, features.trainingStepsPricing]);
 
-  // Use functions to set proper starting values based on metadata
+  // Use functions to set proper starting values based on metadata.
+  // numRepeats is deprecated for AI Toolkit under steps-based pricing, so skip seeding it.
   useEffect(() => {
+    if (features.trainingStepsPricing && selectedRun.params.engine === 'ai-toolkit') return;
     if (selectedRun.params.numRepeats === undefined) {
       const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
       const numRepeats = Math.max(1, Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1))));
@@ -128,8 +146,11 @@ export const AdvancedSettings = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.id, numImages]);
 
-  // Set targetSteps automatically on value changes
+  // Set targetSteps automatically on value changes.
+  // Under steps-based pricing, AI Toolkit steps is set directly by the user (and drives
+  // pricing), so it is NOT derived from epochs/repeats/batch.
   useEffect(() => {
+    if (features.trainingStepsPricing && selectedRun.params.engine === 'ai-toolkit') return;
     const { maxTrainEpochs, numRepeats, trainBatchSize } = selectedRun.params;
 
     const newSteps = Math.ceil(
@@ -154,6 +175,29 @@ export const AdvancedSettings = ({
     selectedRun.params.numRepeats,
     selectedRun.params.trainBatchSize,
     numImages,
+  ]);
+
+  // Steps-based pricing (AI Toolkit): "Save every" (step interval) is the user-set knob;
+  // derive maxTrainEpochs (the saved-checkpoint count we send as `epochs`) from it as
+  // round(steps / saveEvery), clamped to the allowed checkpoint range. Recomputes when
+  // either steps or saveEvery changes so the sticky interval holds as steps grow.
+  useEffect(() => {
+    if (!features.trainingStepsPricing || selectedRun.params.engine !== 'ai-toolkit') return;
+    const { targetSteps, saveEvery } = selectedRun.params;
+    if (!saveEvery || saveEvery < 1) return;
+    const checkpoints = Math.min(
+      AI_TOOLKIT_EPOCHS.max,
+      Math.max(AI_TOOLKIT_EPOCHS.min, Math.round(targetSteps / saveEvery))
+    );
+    if (selectedRun.params.maxTrainEpochs !== checkpoints) {
+      doUpdate({ params: { maxTrainEpochs: checkpoints } });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedRun.params.engine,
+    selectedRun.params.targetSteps,
+    selectedRun.params.saveEvery,
+    features.trainingStepsPricing,
   ]);
 
   // Adjust optimizer and related settings
@@ -354,6 +398,18 @@ export const AdvancedSettings = ({
       : selectedRun.params.engine === 'kohya'
       ? 'Kohya'
       : selectedRun.params.engine;
+
+  // Steps-based pricing UI only applies to AI Toolkit when the flag is on.
+  const isAiToolkit = features.trainingStepsPricing && selectedRun.params.engine === 'ai-toolkit';
+
+  // For AI Toolkit, lead with the two length knobs in priority order — Steps (primary)
+  // then Save every (secondary) — instead of their default array position.
+  const orderedTrainingSettings = isAiToolkit
+    ? [...trainingSettings].sort((a, b) => {
+        const rank = (name: string) => (name === 'targetSteps' ? 0 : name === 'saveEvery' ? 1 : 2);
+        return rank(a.name) - rank(b.name);
+      })
+    : trainingSettings;
 
   return (
     <>
@@ -678,6 +734,45 @@ export const AdvancedSettings = ({
                   </Stack>
                 );
               })}
+              {/* Sample generation settings (AI Toolkit + steps pricing). Blank = defaults. */}
+              {features.trainingStepsPricing && selectedRun.params.engine === 'ai-toolkit' && (
+                <Card withBorder p="sm" radius="sm">
+                  <Stack gap="xs">
+                    <Text size="xs" c="dimmed">
+                      Sample generation settings for the preview outputs. Leave blank to use the
+                      model defaults.
+                    </Text>
+                    <Group grow wrap="wrap" align="flex-start">
+                      <NumberInputWrapper
+                        label="Sample CFG Scale"
+                        min={0}
+                        max={20}
+                        step={0.5}
+                        decimalScale={2}
+                        value={selectedRun.params.sampleCfgScale ?? ''}
+                        onChange={(v) =>
+                          doUpdate({
+                            params: { sampleCfgScale: typeof v === 'number' ? v : undefined },
+                          })
+                        }
+                      />
+                      <NumberInputWrapper
+                        label="Sample LoRA Strength"
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        decimalScale={2}
+                        value={selectedRun.params.sampleStrength ?? ''}
+                        onChange={(v) =>
+                          doUpdate({
+                            params: { sampleStrength: typeof v === 'number' ? v : undefined },
+                          })
+                        }
+                      />
+                    </Group>
+                  </Stack>
+                </Card>
+              )}
             </Stack>
           </Accordion.Panel>
         </Accordion.Item>
@@ -774,7 +869,7 @@ export const AdvancedSettings = ({
             <Accordion.Panel>
               <DescriptionTable
                 labelWidth="200px"
-                items={trainingSettings.map((ts) => {
+                items={orderedTrainingSettings.map((ts) => {
                   let inp: React.ReactNode;
 
                   const baseOverride = ts.overrides?.[runBase];
@@ -785,6 +880,9 @@ export const AdvancedSettings = ({
                   const disabled =
                     selectedRun.params.engine === 'rapid'
                       ? true
+                      : // Steps is the primary, user-set length knob for AI Toolkit.
+                      isAiToolkit && ts.name === 'targetSteps'
+                      ? false
                       : disabledOverride ?? ts.disabled === true;
 
                   if (ts.type === 'int' || ts.type === 'number') {
@@ -793,10 +891,23 @@ export const AdvancedSettings = ({
                       ts.overrides?.[runBase]?.all ??
                       ts.overrides?.[runBase]?.[selectedRun.params.engine];
 
+                    // AI Toolkit steps-based pricing bounds: epochs = saved checkpoints (1–20),
+                    // batchSize capped per ecosystem.
+                    let inpMin = tOverride?.min ?? ts.min;
+                    let inpMax = tOverride?.max ?? ts.max;
+                    if (isAiToolkit && ts.name === 'maxTrainEpochs') {
+                      inpMin = AI_TOOLKIT_EPOCHS.min;
+                      inpMax = AI_TOOLKIT_EPOCHS.max;
+                    }
+                    if (isAiToolkit && ts.name === 'trainBatchSize') {
+                      inpMin = 1;
+                      inpMax = aiToolkitBatchMax(selectedRun.baseType);
+                    }
+
                     inp = (
                       <NumberInputWrapper
-                        min={tOverride?.min ?? ts.min}
-                        max={tOverride?.max ?? ts.max}
+                        min={inpMin}
+                        max={inpMax}
                         decimalScale={
                           ts.type === 'number'
                             ? getPrecision(ts.step ?? ts.default) || 4
@@ -876,57 +987,131 @@ export const AdvancedSettings = ({
                     );
                   }
 
+                  // Rows with their own info bubble skip the label hover tooltip to avoid a
+                  // double popup (the bubble carries the full explanation).
+                  const hasInfoBubble =
+                    isAiToolkit && (ts.name === 'targetSteps' || ts.name === 'saveEvery');
+                  const labelInner = (
+                    <Group>
+                      <Group gap={6}>
+                        <Text
+                          inline
+                          style={hint && !hasInfoBubble ? { cursor: 'help' } : undefined}
+                        >
+                          {ts.label}
+                        </Text>
+                        {isAiToolkit && ts.name === 'targetSteps' && (
+                          <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                            <Stack gap={4}>
+                              <Text size="sm" fw={600}>
+                                Steps
+                              </Text>
+                              <Text size="sm">
+                                The total number of training steps — the main thing that drives how
+                                long training takes and what it costs. More steps means the LoRA
+                                learns your dataset more strongly; too many can{' '}
+                                <Text span fw={600}>
+                                  overtrain
+                                </Text>{' '}
+                                it and introduce artifacts.
+                              </Text>
+                              <Text size="sm" c="dimmed">
+                                This is the primary dial — start here, then use{' '}
+                                <Text span fw={600}>
+                                  Save every
+                                </Text>{' '}
+                                to choose how many checkpoints you get along the way.
+                              </Text>
+                            </Stack>
+                          </InfoPopover>
+                        )}
+                        {ts.name === 'targetSteps' && selectedRun.params.targetSteps > maxSteps && (
+                          <Tooltip
+                            label={`Max steps too high. Limit: ${numberWithCommas(maxSteps)}`}
+                            position="bottom"
+                          >
+                            <IconAlertTriangle color="orange" size={16} />
+                          </Tooltip>
+                        )}
+                        {ts.name === 'trainBatchSize' &&
+                          ['flux', 'sd35'].includes(selectedRun.baseType) &&
+                          selectedRun.params.engine === 'kohya' &&
+                          selectedRun.params.trainBatchSize > 2 &&
+                          selectedRun.params.resolution > 512 && (
+                            <Tooltip
+                              label={`Batch size too high for resolution (max of 2 for >512)`}
+                              position="bottom"
+                            >
+                              <IconAlertTriangle color="orange" size={16} />
+                            </Tooltip>
+                          )}
+                        {isAiToolkit && ts.name === 'saveEvery' && (
+                          <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                            <Stack gap={4}>
+                              <Text size="sm" fw={600}>
+                                Save every
+                              </Text>
+                              <Text size="sm">
+                                How often (in steps) a checkpoint is saved. Each saved checkpoint is
+                                a downloadable{' '}
+                                <Text span fw={600}>
+                                  epoch
+                                </Text>{' '}
+                                — a candidate you can preview and pick from after training.
+                              </Text>
+                              <Text size="sm">
+                                e.g. 3,000 steps saving every 250 produces 3,000 / 250 ={' '}
+                                <Text span fw={600}>
+                                  12 checkpoints
+                                </Text>
+                                . Saving more often gives you more candidates, with a much smaller
+                                effect on cost than Steps.
+                              </Text>
+                            </Stack>
+                          </InfoPopover>
+                        )}
+                        {isAiToolkit && ts.name === 'saveEvery' && (
+                          <Text size="xs" c="dimmed">
+                            ≈ {selectedRun.params.maxTrainEpochs} checkpoint
+                            {selectedRun.params.maxTrainEpochs === 1 ? '' : 's'}
+                          </Text>
+                        )}
+                      </Group>
+                      {/* use this for new parameters */}
+                      {/*{ts.name === 'engine' && selectedRun.baseType === 'flux' && (*/}
+                      {/*  <Badge color="green">NEW</Badge>*/}
+                      {/*)}*/}
+                    </Group>
+                  );
+
                   return {
-                    label: hint ? (
-                      <CivitaiTooltip
-                        position="top"
-                        variant="roundedOpaque"
-                        withArrow
-                        multiline
-                        label={hint}
-                      >
-                        <Group>
-                          <Group gap={6}>
-                            <Text inline style={{ cursor: 'help' }}>
-                              {ts.label}
-                            </Text>
-                            {ts.name === 'targetSteps' &&
-                              selectedRun.params.targetSteps > maxSteps && (
-                                <Tooltip
-                                  label={`Max steps too high. Limit: ${numberWithCommas(maxSteps)}`}
-                                  position="bottom"
-                                >
-                                  <IconAlertTriangle color="orange" size={16} />
-                                </Tooltip>
-                              )}
-                            {ts.name === 'trainBatchSize' &&
-                              ['flux', 'sd35'].includes(selectedRun.baseType) &&
-                              selectedRun.params.engine === 'kohya' &&
-                              selectedRun.params.trainBatchSize > 2 &&
-                              selectedRun.params.resolution > 512 && (
-                                <Tooltip
-                                  label={`Batch size too high for resolution (max of 2 for >512)`}
-                                  position="bottom"
-                                >
-                                  <IconAlertTriangle color="orange" size={16} />
-                                </Tooltip>
-                              )}
-                          </Group>
-                          {/* use this for new parameters */}
-                          {/*{ts.name === 'engine' && selectedRun.baseType === 'flux' && (*/}
-                          {/*  <Badge color="green">NEW</Badge>*/}
-                          {/*)}*/}
-                        </Group>
-                      </CivitaiTooltip>
-                    ) : (
-                      ts.label
-                    ),
+                    label:
+                      hint && !hasInfoBubble ? (
+                        <CivitaiTooltip
+                          position="top"
+                          variant="roundedOpaque"
+                          withArrow
+                          multiline
+                          label={hint}
+                        >
+                          {labelInner}
+                        </CivitaiTooltip>
+                      ) : (
+                        labelInner
+                      ),
                     value: inp,
                     visible: !(
                       ts.name === 'engine' ||
-                      (ts.name === 'trainBatchSize' &&
-                        selectedRun.params.engine === 'ai-toolkit') ||
-                      (ts.name === 'optimizerArgs' && selectedRun.params.engine === 'ai-toolkit')
+                      (ts.name === 'optimizerArgs' && selectedRun.params.engine === 'ai-toolkit') ||
+                      // "Save every" is the AI-Toolkit + steps-pricing knob only.
+                      (ts.name === 'saveEvery' && !isAiToolkit) ||
+                      // Steps pricing (AI Toolkit): epochs is derived from Save every (so hide the
+                      // raw Epochs row), numRepeats is deprecated, batchSize is configurable.
+                      // Legacy AI Toolkit keeps the old layout (batchSize hidden, numRepeats shown).
+                      (selectedRun.params.engine === 'ai-toolkit' &&
+                        (features.trainingStepsPricing
+                          ? ts.name === 'numRepeats' || ts.name === 'maxTrainEpochs'
+                          : ts.name === 'trainBatchSize'))
                     ),
                   };
                 })}

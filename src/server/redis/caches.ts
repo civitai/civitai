@@ -37,9 +37,9 @@ export const tagIdsForImagesCache = createCachedObject<{
 }>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
   idKey: 'imageId',
-  // Reduced from day to 8h on DP — 296B/key but ~16M keys/shard (~4.4 GiB).
+  // 8h TTL — 296B/key but ~16M keys/shard (~4.4 GiB).
   // With stale-while-revalidate, effective Redis EX = 16h.
-  ttl: env.IS_DATAPACKET ? CacheTTL.hour * 8 : CacheTTL.day,
+  ttl: CacheTTL.hour * 8,
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
@@ -1118,10 +1118,10 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  // Reduced from day to 4h on DP to prevent Redis OOM — image-meta is ~2.8KB/key
-  // and accounts for ~72% of Redis memory at scale (26 GiB/shard with 10M keys).
-  // With stale-while-revalidate, effective Redis EX = 8h.
-  ttl: env.IS_DATAPACKET ? CacheTTL.hour * 4 : CacheTTL.hour,
+  // 4h TTL to bound Redis memory — image-meta is ~2.8KB/key (~2.3 GiB / ~1% of
+  // the cluster per the 2026-06-09 keyspace audit; the tag caches are the heavy
+  // consumers, not this one). With stale-while-revalidate, effective Redis EX = 8h.
+  ttl: CacheTTL.hour * 4,
 });
 
 type ImageWithMetadata = {
@@ -1143,8 +1143,8 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  // Reduced from day to 4h on DP — same rationale as imageMetaCache.
-  ttl: env.IS_DATAPACKET ? CacheTTL.hour * 4 : CacheTTL.hour,
+  // 4h TTL — same rationale as imageMetaCache.
+  ttl: CacheTTL.hour * 4,
 });
 
 export const thumbnailCache = createCachedObject<{
@@ -1311,7 +1311,11 @@ type ImageTagsCacheItem = {
 export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_TAGS,
   idKey: 'imageId',
-  ttl: CacheTTL.day,
+  // Reduced from day to 1h — this cache ran at ~50% of next-redis-cluster
+  // (~12.7M keys/shard × ~4.2KB full tag composites) yet had a 25.5% hit ratio
+  // (misses > hits): a 24h TTL bought nothing since entries were LRU-evicted long
+  // before reuse. SWR off → effective Redis EX = 1h. (2026-06-09 redis usage audit)
+  ttl: CacheTTL.hour,
   staleWhileRevalidate: false,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
@@ -1397,7 +1401,10 @@ type ImageResourcesCacheItem = {
 export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_RESOURCES,
   idKey: 'imageId',
-  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
+  // Reduced from day to 8h — 68.8% hit at ~728B/key × ~7.3M keys; with SWR on,
+  // the day TTL resided for 48h, generous for a sub-average-hit cache.
+  // Effective Redis EX = 16h. (2026-06-09 redis usage audit)
+  ttl: CacheTTL.hour * 8,
   lookupFn: async (ids, fromWrite) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};
@@ -1451,7 +1458,7 @@ export function getBaseModelFromResources(
 export const modelVersionResourceCache = createCachedObject<ModelVersionResourceCacheItem>({
   key: REDIS_KEYS.CACHES.MODEL_VERSION_RESOURCE_INFO,
   idKey: 'versionId',
-  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.md,
+  ttl: CacheTTL.day,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
     const mvInfo = await db.modelVersion.findMany({
@@ -1530,7 +1537,7 @@ type UserDownloadsCacheItem = {
 export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
   key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
   idKey: 'userId',
-  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
+  ttl: CacheTTL.day,
   cacheNotFound: false,
   lookupFn: async (userIds) => {
     if (!clickhouse) return {};

@@ -79,6 +79,9 @@ const featureFlags = createFeatureFlags({
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
+  // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
+  // Public availability so it can be rolled out to a tester segment via Flipt; default off.
+  trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
   trainingAutoLabelOrchestrator: {
     availability: ['mod'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -87,7 +90,6 @@ const featureFlags = createFeatureFlags({
   trainingAutoCaption: { availability: ['public'], fliptKey: 'training-auto-caption2' },
   trainingAutoTag: { availability: ['public'], fliptKey: 'training-auto-tag2' },
   wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },
-  controlNets: { availability: ['public'], fliptKey: 'control-nets' },
   enhancedCompatibilitySdcpp: {
     availability: ['public'],
     fliptKey: 'enhanced-compatibility-sdcpp',
@@ -99,6 +101,20 @@ const featureFlags = createFeatureFlags({
     default: false,
     displayName: 'Larger Images in Generator',
     description: `Images displayed in the generator will be larger on small screens`,
+    availability: ['public'],
+  },
+  postsNavItem: {
+    toggleable: true,
+    default: false,
+    displayName: 'Posts in Navigation',
+    description: `Show the Posts item in the main site navigation.`,
+    availability: ['public'],
+  },
+  eventsNavItem: {
+    toggleable: true,
+    default: false,
+    displayName: 'Events in Navigation',
+    description: `Show the Events item in the main site navigation.`,
     availability: ['public'],
   },
   alternateHome: ['public'],
@@ -114,7 +130,6 @@ const featureFlags = createFeatureFlags({
   imageSearch: ['public'],
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
-  recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
     toggleable: true,
     default: true,
@@ -204,6 +219,10 @@ const featureFlags = createFeatureFlags({
   // in sync with the camelCase flag key here.
   retoolUpdateIdentity: ['granted'],
   retoolToggleModerator: ['granted'],
+  // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
+  // default until we ship publisher install UX + moderator approval workflow.
+  // When off, BlockSlot renders nothing and no token-issuance traffic fires.
+  appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -438,7 +457,15 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
   const fliptContext = buildFliptContext(ctx.user);
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureAccess>((acc, key) => {
-    if (hasFeature(key, ctx, fliptContext)) acc[key] = true;
+    if (!hasFeature(key, ctx, fliptContext)) return acc;
+    const feature = featureFlags[key];
+    // Toggleable flags resolve to their default at the base layer. Logged-in
+    // users get their stored choice merged on top client-side (via
+    // user.getFeatureFlags), but anonymous users have no override — so a
+    // default-off toggleable (e.g. postsNavItem) must stay off for them rather
+    // than leak through on bare access.
+    if (feature.toggleable && feature.default === false) return acc;
+    acc[key] = true;
     return acc;
   }, {} as FeatureAccess);
 }
@@ -552,6 +579,49 @@ export const domainRestrictedToggleableKeys = new Set(
     })
     .map(([key]) => key as FeatureFlagKey)
 );
+
+export const defaultToggleableFeatures = toggleableFeatures.reduce(
+  (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
+  {} as FeatureAccess
+);
+
+/**
+ * Pure computation of the per-user toggleable-feature overlay returned by
+ * `user.getFeatureFlags`. Single source of truth shared by the tRPC resolver
+ * (`getUserFeatureFlagsHandler`) and the SSR seed in `_app` getInitialProps —
+ * keeping the SSR-injected `initialData` byte-identical to a live fetch.
+ *
+ * @param userFeatures the stored `settings.features` JSON record (toggle choices)
+ * @param hostFeatures the request's already-resolved host-level FeatureAccess
+ *   (the controller's `ctx.features`) — used to enforce domain restrictions.
+ */
+export function computeUserFeatureFlagsOverlay(
+  userFeatures: Record<string, boolean> | undefined,
+  hostFeatures: FeatureAccess
+): FeatureAccess {
+  const features = userFeatures ?? {};
+
+  // filter toggleable features from user settings
+  const filteredUserFeatures = Object.keys(features).reduce(
+    (acc, key) =>
+      toggleableFeatures.some((x) => x.key === key) ? { ...acc, [key]: features[key] } : acc,
+    {} as FeatureAccess
+  );
+
+  const result = {
+    ...defaultToggleableFeatures,
+    ...filteredUserFeatures,
+  } as FeatureAccess;
+
+  // Don't let toggleable defaults override domain restrictions
+  for (const key of domainRestrictedToggleableKeys) {
+    if (key in result && !hostFeatures[key]) {
+      delete result[key];
+    }
+  }
+
+  return result;
+}
 
 type FeatureAvailability = (typeof featureAvailability)[number];
 export type FeatureFlagKey = keyof typeof featureFlags;

@@ -1,6 +1,12 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
@@ -122,7 +128,13 @@ export async function getSystemPermissions(): Promise<Record<string, number[]>> 
   //   - addSystemPermission / removeSystemPermission MUST throw to avoid
   //     overwriting the real permission set with a partial mutation
   //     (read returns {} during outage, write later succeeds → wipe).
-  const cachedPermissions = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS);
+  // Wall-clock deadline so a silent sysRedis half-open can't park this read (reached
+  // per-request on a session-cache miss; the sys client has no socketTimeout and a
+  // per-command timeout can't abort a written command). On timeout it throws — which
+  // preserves this function's throw-on-error contract for all callers.
+  const cachedPermissions = await withSysReadDeadline(
+    sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS)
+  );
   if (cachedPermissions) return JSON.parse(cachedPermissions);
 
   return {};
@@ -261,8 +273,19 @@ export async function getBrowsingSettingAddons() {
     return DEFAULT_BROWSING_SETTINGS_ADDONS;
   }
   if (cached) {
-    const data = JSON.parse(cached) as BrowsingSettingsAddon[];
-    return data;
+    try {
+      return JSON.parse(cached) as BrowsingSettingsAddon[];
+    } catch (err) {
+      // Corrupt/non-JSON value in sysRedis (e.g. a malformed value set by
+      // an ops tool). Without this guard the parse throws all the way up
+      // through _app.tsx getInitialProps and 500s every page render.
+      // Fail open to defaults — same posture as the read above and
+      // getCreationBlockedTags below.
+      logSysRedisFailOpen('read-degraded', 'getBrowsingSettingAddons', err, {
+        cachedSample: cached.slice(0, 64),
+      });
+      return DEFAULT_BROWSING_SETTINGS_ADDONS;
+    }
   }
 
   return DEFAULT_BROWSING_SETTINGS_ADDONS;

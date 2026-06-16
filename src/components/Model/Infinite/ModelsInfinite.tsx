@@ -1,8 +1,7 @@
 import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { useEffect } from 'react';
+import { useRef } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
@@ -36,23 +35,20 @@ export function ModelsInfinite({
 
   const pending = currentUser !== null && filterOverrides.username === currentUser.username;
 
-  const filters = removeEmpty({
+  const computedFilters = removeEmpty({
     ...(disableStoreFilters ? filterOverrides : { ...modelFilters, ...filterOverrides }),
     pending,
   });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  // Stabilize identity so query keys only update on real content change.
+  const filtersRef = useRef(computedFilters);
+  if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
+  const filters = filtersRef.current;
 
   const browsingLevel = useBrowsingLevelDebounced();
   const { models, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryModels({
-    ...debouncedFilters,
+    ...filters,
     browsingLevel,
   });
-
-  //#region [useEffect] cancel debounced filters
-  useEffect(() => {
-    if (isEqual(filters, debouncedFilters)) cancel();
-  }, [debouncedFilters, filters]);
-  //#endregion
 
   return (
     <ModelCardContextProvider

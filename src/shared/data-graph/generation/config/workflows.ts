@@ -63,6 +63,7 @@ const EDIT_IMG_IDS = [
   ECO.Grok,
   ECO.WanImage27,
   ECO.HiDreamO1,
+  ECO.MAI,
 ];
 
 /** Image ecosystems that support image:create */
@@ -243,9 +244,9 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Run a ControlNet preprocessor on an image (canny, openpose, depth, etc.)',
     category: 'image',
     showBackButton: true,
-    // Same gate as the ControlNets UI itself — this workflow only makes sense
-    // for users who can attach the preprocessed output to a ControlNet.
-    featureFlag: 'controlNets',
+    // ControlNets are disabled for now, so the preprocessor — which only produces
+    // input for a ControlNet — is hidden from the picker too.
+    hidden: true,
     ecosystemIds: [],
     isNew: true,
   },
@@ -578,8 +579,7 @@ export function filterWorkflowsByGatedEcosystems<T extends { workflows: Workflow
  * Drop workflow options whose `featureFlag` is set to a flag that's disabled
  * for this user. Workflows without a `featureFlag` are always kept.
  *
- * Used by `WorkflowInput` so e.g. `img2img:preprocess` disappears when the
- * `controlNets` Flipt flag is off.
+ * Used by `WorkflowInput` to hide flag-gated workflows from the picker.
  */
 export function filterWorkflowsByFeatureFlags<T extends { workflows: WorkflowOption[] }>(
   grouped: T[],

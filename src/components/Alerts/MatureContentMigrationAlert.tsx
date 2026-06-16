@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react';
 import { Button, CloseButton, Text, ThemeIcon } from '@mantine/core';
 import { IconArrowRight, IconPepper } from '@tabler/icons-react';
 import { useSession } from 'next-auth/react';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useFeatureFlags, useFeatureFlagsReady } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -15,20 +15,20 @@ export function MatureContentMigrationAlert() {
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
   const { data: session } = useSession();
-  // `AppProvider` seeds `user.getSettings` with SSR `initialData` and the
-  // global `staleTime: Infinity` prevents refetching — so `data` is truthy
-  // immediately with potentially stale `dismissedAlerts`. Gate on `isFetched`
-  // (only true after a real network fetch resolves) so we never render based
-  // on the SSR snapshot, and force a refetch on mount via `staleTime: 0`.
-  const { data: settings, isFetched } = trpc.user.getSettings.useQuery(undefined, {
-    staleTime: 0,
-  });
-  const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
-
   // Check the raw session user preferences (before domain override).
   // On green, the BrowserSettingsProvider forces showNsfw=false, so we
   // need the original values to know if the user would see NSFW elsewhere.
   const user = session?.user;
+  const ready = useFeatureFlagsReady();
+  // `AppProvider` seeds `user.getSettings` with SSR `initialData`, and the
+  // dismiss mutation keeps the cache current via an optimistic update — so the
+  // SSR snapshot is authoritative for `dismissedAlerts` without a per-mount
+  // refetch. Gate visibility on `ready` (the per-user feature-flag overlay) so
+  // we don't flash against the anon `features.isGreen` value.
+  const { data: settings } = trpc.user.getSettings.useQuery(undefined, {
+    enabled: !!user,
+  });
+  const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
   const hasNsfwEnabled =
     user?.showNsfw && Flags.intersects(user.browsingLevel, nsfwBrowsingLevelsFlag);
 
@@ -45,6 +45,14 @@ export function MatureContentMigrationAlert() {
     },
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) utils.user.getSettings.setData(undefined, ctx.prev);
+    },
+    // Reconcile with server truth after the optimistic update: the optimistic
+    // setData spreads `...old`, so if the cached base was incomplete (e.g. a
+    // failed SSR settings snapshot) it could persist a truncated settings
+    // object. Refetch once on dismiss to restore the full object + confirm the
+    // stored dismissedAlerts. One request per dismiss (rare) — not per mount.
+    onSettled: () => {
+      utils.user.getSettings.invalidate();
     },
   });
 
@@ -64,7 +72,12 @@ export function MatureContentMigrationAlert() {
     if (el) el.style.opacity = '0';
   }, []);
 
-  if (!features.isGreen || !hasNsfwEnabled || !isFetched || isDismissed) return null;
+  // `!settings` guards the rare path where the SSR `/api/user/settings` snapshot
+  // failed (→ undefined initialData): the query self-heals via a mount fetch, and
+  // until it lands we must not render against undefined `dismissedAlerts` (which
+  // would briefly re-show an already-dismissed alert). On the normal SSR-seeded
+  // path `settings` is defined immediately, so this adds no delay or refetch.
+  if (!features.isGreen || !hasNsfwEnabled || !ready || !settings || isDismissed) return null;
 
   const redDomain = serverDomains.red;
   const redUrl = syncAccount(`//${redDomain}`);

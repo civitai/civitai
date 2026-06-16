@@ -226,9 +226,9 @@
     height: calc(100% + 4px);
     filter: blur(8px);
     z-index: -1;
-    & :global {
-      animation: glowing 20s linear infinite;
-    }
+    /* `glowing` is a global keyframes (src/styles/globals.css); no local @keyframes
+       of that name exists, so the reference stays global under CSS modules. */
+    animation: glowing 20s linear infinite;
   }
 }
 

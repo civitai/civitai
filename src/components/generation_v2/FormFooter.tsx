@@ -51,7 +51,12 @@ import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { Controller, useGraph, useGraphValues, MultiController } from '~/libs/data-graph/react';
+import {
+  Controller,
+  useGraph,
+  useGraphSubscriptions,
+  MultiController,
+} from '~/libs/data-graph/react';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
@@ -325,8 +330,12 @@ function ConnectedBuzzTypeSelector() {
  */
 export function useSelfHostedBlock() {
   const { selfHostedMode, selfHostedDisabledEcosystems, gateRules } = useGenerationConfig();
-  const graphValues = useGraphValues<GenerationGraphTypes>();
-  const selectedEcosystem = (graphValues as { ecosystem?: string }).ecosystem;
+  const graph = useGraph<GenerationGraphTypes>();
+  // Subscribe to only `ecosystem` — not the whole graph — so prompt/seed/etc.
+  // edits (which fire the global watcher) don't needlessly re-render this.
+  const { ecosystem: selectedEcosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
+    ecosystem?: string;
+  };
   if (!selectedEcosystem)
     return { blockedEcosystem: undefined, state: undefined, message: undefined };
 
@@ -716,8 +725,10 @@ function CostBreakdown() {
  */
 function QuantityField() {
   const graph = useGraph<GenerationGraphTypes>();
-  const values = useGraphValues<GenerationGraphTypes>();
-  const ecosystem = (values as { ecosystem?: string }).ecosystem;
+  // Subscribe to only `ecosystem` so prompt edits don't re-render this field.
+  const { ecosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
+    ecosystem?: string;
+  };
   const isLtxv23 = ecosystem === 'LTXV23';
 
   const [upsellOpened, setUpsellOpened] = useState(false);
@@ -1109,7 +1120,16 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // Happy path — validation + rate-limit both clear. Emit Generator_Submit
     // BEFORE the buzz-transaction prompt so click-and-abandon (cancel at
     // confirm / insufficient-buzz) is still captured.
+    //
+    // externalId is shared between this emit AND the mutateAsync input below.
+    // Failure-path emits (validation, rate-limit) above omit it because no
+    // orchestrator workflow exists for those rows. Generated inside the try
+    // so a crypto.randomUUID() throw (non-secure-context fallback) can't
+    // break the submit — externalId stays undefined and the path degrades
+    // to pre-PR behavior (no idempotency, no exact-join).
+    let externalId: string | undefined;
     try {
+      externalId = crypto.randomUUID();
       const submitSnapshot = graph.getSnapshot() as ResourceSnapshot;
       trackAction({
         type: 'Generator_Submit',
@@ -1119,6 +1139,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
           hasRemixOfId: !!remixOfId,
           formVersion: 'new',
           isValid: true,
+          externalId,
         },
       }).catch(() => undefined);
     } catch {
@@ -1199,6 +1220,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
+        externalId,
       });
 
       if (hasEarlyAccess) {

@@ -46,6 +46,54 @@ ARG NODE_BUILD_MEM=8192
 RUN --mount=type=cache,target=/app/.next/cache \
     SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
+# Bundle-size budget (report-only during the soak). Next 16 (Turbopack) emits
+# opaque hashed chunks and removed per-route build stats, so scripts/bundle-budget.mjs
+# parses .next/build-manifest.json to reconstruct per-page First Load JS (brotli)
+# + a shared-by-all-pages figure. Runs here because .next exists in this stage
+# and the build already happened — no duplicate build. `|| true` keeps it
+# report-only (numbers print to the build log); to GATE, add `--gate` to the
+# node invocation and replace `|| true; cat ...` with `; rc=$?; cat ...; exit $rc`
+# so a budget breach fails the image build.
+# The report is also written to /app/bundle-budget.txt and COPYied into the
+# runner image so the Tekton bundle-comment task can surface it on the PR
+# (kubectl exec ... cat) without a duplicate build.
+# Invoke node directly (not `pnpm run size`) so pnpm's lifecycle preamble
+# (`> model-share@… size /app`) stays out of the report/comment.
+RUN node scripts/bundle-budget.mjs > /app/bundle-budget.txt 2>&1 || true; cat /app/bundle-budget.txt
+
+# Server source maps (.next/server/**/*.js.map) are emitted by the build
+# (productionBrowserSourceMaps -> turbopackSourceMaps) but @vercel/nft does NOT
+# trace sibling .map files into .next/standalone, so they never reach runtime.
+# Collect ONLY the server-chunk maps into a structure-preserving staging dir.
+# These are NOT shipped in the runtime image (they added ~761 MB to every prod
+# pod — too much for a debug aid). Instead they are published as a separate,
+# fetched-on-demand `maps` artifact image (see the `maps` target below + the
+# Tekton maps-publish step), keyed by the same tag as the runtime image, so a
+# `.cpuprofile` captured from image X can be de-minified offline against X's maps.
+# Build-chunk map filenames are content hashes (no spaces/newlines), so the
+# newline-delimited `tar -T -` files-from list is safe and works under both GNU tar
+# and busybox tar (alpine). `tar | tar` preserves the dir structure
+# (e.g. chunks/<hash>.js.map) so each map keeps its .next/server-relative path.
+# (Comments must stay OUTSIDE the RUN: Docker collapses the \-continuations into one
+# line, where an inline `#` would swallow the rest of the command.)
+RUN mkdir -p /app/server-maps && \
+    cd /app/.next/server && \
+    { find . -name '*.js.map' | tar -cf - -T - | tar -xf - -C /app/server-maps || true; } && \
+    echo "Staged $(find /app/server-maps -name '*.js.map' | wc -l) server source maps ($(du -sh /app/server-maps | cut -f1))"
+
+##### MAPS ARTIFACT (fetched on-demand; NOT part of the runtime image)
+#
+# A minimal `FROM scratch` image holding ONLY the staged server source maps,
+# under /server-maps mirroring the .next/server tree. Published to a sibling
+# registry repo (ghcr.io/civitai/civitai-web-maps:<same-tag>) by the Tekton
+# maps-publish step using the SAME ghcr credentials as the runtime push — no new
+# secrets. It shares every builder layer with the runtime build, so building this
+# target is a buildkit cache hit plus one small layer; it is never pulled by a
+# running pod. The cpuprofile resolver fetches it on demand keyed by image tag
+# (scripts/resolve-cpuprofile.mjs --image ...).
+FROM scratch AS maps
+COPY --from=builder /app/server-maps/ /server-maps/
+
 ##### RUNNER
 
 FROM node:20-alpine3.20 AS runner
@@ -61,9 +109,15 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/next.config.mjs ./
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
+# Bundle-budget report (report-only) — surfaced on the PR by the Tekton
+# bundle-comment task via `kubectl exec ... cat /app/bundle-budget.txt`.
+COPY --from=builder /app/bundle-budget.txt ./bundle-budget.txt
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# NOTE: server source maps are intentionally NOT copied into the runtime image.
+# They are published as the separate `maps` target above (fetched on-demand by
+# the cpuprofile resolver), keeping the prod pod lean (~761 MB smaller).
 
 USER nextjs
 EXPOSE 3000

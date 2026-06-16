@@ -22,6 +22,15 @@ export const modifyUserInput = z.object({
   lastViewedMessageId: z.number().optional(),
 });
 
+// Per-chat read tracking for headless/agent (MCP) use. The website only exposes
+// blanket markAllAsRead and a low-level modifyUser (which requires the caller to
+// already know the latest message id). markChatRead resolves the caller's
+// chatMember + latest message id server-side and marks just that one chat read.
+export type MarkChatReadInput = z.infer<typeof markChatReadInput>;
+export const markChatReadInput = z.object({
+  chatId: z.number(),
+});
+
 export type CreateMessageInput = z.infer<typeof createMessageInput>;
 export const createMessageInput = z.object({
   chatId: z.number(),

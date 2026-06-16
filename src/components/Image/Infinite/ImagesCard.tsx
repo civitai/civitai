@@ -330,6 +330,7 @@ function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; reado
           className="justify-between p-2"
           invisibleEmpty
           disableBuzzTip={image.poi}
+          abbreviate
         />
       )}
     </Metrics>

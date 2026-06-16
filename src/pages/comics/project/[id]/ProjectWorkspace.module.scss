@@ -739,7 +739,7 @@
 }
 
 .subtleBtnSm {
-  composes: subtleBtn;
+  @extend .subtleBtn;
   padding: 4px 10px;
   font-size: 12px;
 }
@@ -862,9 +862,6 @@
   animation: spin 0.6s linear infinite;
 }
 
-:global {
-  @keyframes pulse-outline {
-    0%, 100% { outline-color: var(--mantine-color-yellow-6); }
-    50% { outline-color: var(--mantine-color-yellow-3); }
-  }
-}
+/* @keyframes pulse-outline moved to src/styles/globals.css — it is referenced by
+   an inline JS style in PanelCard.tsx and must remain a global keyframes, and
+   Turbopack does not support the `:global { @keyframes }` block form. */
