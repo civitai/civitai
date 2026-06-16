@@ -8,13 +8,6 @@ import { decodeTokenClaim } from './token-claims';
 // Validation routes through this client (getHubSession) instead of next-auth's jwt()/session(); refresh +
 // invalidate propagate via the shared redis. Zero-config from env; built lazily so import touches nothing.
 
-/**
- * Feature flag for the hub-backed session path (default OFF). When false, getServerAuthSession behaves
- * EXACTLY as before (next-auth). Flip per-environment ONLY once the hub is the producer + login authority
- * for that env (deployed, minting, `/api/auth/identity` live, AUTH_JWT_ISSUER set). See the cutover doc.
- */
-export const USE_HUB_SESSION = process.env.USE_HUB_SESSION === 'true';
-
 // Inject the shared revocation check so the read path rejects a logged-out/banned token even on a cache hit
 // (otherwise a revoked civ-token resolves until the session:data2 entry is re-warmed). See session-verifier.ts.
 export const sessionClient = createSessionClient({ isRevoked });
@@ -59,7 +52,8 @@ const HUB_ORIGIN = process.env.AUTH_JWT_ISSUER;
 export async function maybeRollHubCookie(
   token: string,
   deviceCookie: string | undefined,
-  res: CookieWritable
+  res: CookieWritable,
+  host?: string
 ): Promise<void> {
   if (!HUB_ORIGIN || !token || typeof res.setHeader !== 'function') return;
   const iat = decodeTokenClaim(token, 'iat');
@@ -70,7 +64,7 @@ export async function maybeRollHubCookie(
     const fresh = (await sessionTokenClient.refresh(token, { deviceCookie }))?.token;
     if (!fresh) return;
     // Re-set the civ-token + roll the device cookie in lockstep (both live 30 rolling days from last activity).
-    setSessionCookie(res, fresh, { deviceCookie });
+    setSessionCookie(res, fresh, { deviceCookie, host });
   } catch {
     // best-effort — the current token is still valid; the user is unaffected
   }

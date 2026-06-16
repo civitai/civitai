@@ -1,4 +1,9 @@
-import { DEVICE_COOKIE_BASE, SECURE_COOKIE_PREFIX, SESSION_COOKIE_BASE } from './constants';
+import {
+  DEVICE_COOKIE_BASE,
+  LEGACY_SESSION_COOKIE_BASE,
+  SECURE_COOKIE_PREFIX,
+  SESSION_COOKIE_BASE,
+} from './constants';
 
 // Single source of truth for the auth cookie names — the hub sets them, the main app sets them, and every
 // spoke reads them. The `__Secure-` prefix is a browser-enforced HTTPS-only guarantee, applied when secure
@@ -22,3 +27,8 @@ export const sessionCookieName = (secure: boolean = isSecureCookie()): string =>
 
 export const deviceCookieName = (secure: boolean = isSecureCookie()): string =>
   `${cookiePrefix(secure)}${DEVICE_COOKIE_BASE}`;
+
+// Legacy NextAuth session cookie name — resolved with the SAME dev/prod secure logic as the hub cookie above,
+// so prod reads `__Secure-civitai-token` and dev reads `civitai-token`. READ-ONLY during the cutover.
+export const legacySessionCookieName = (secure: boolean = isSecureCookie()): string =>
+  `${cookiePrefix(secure)}${LEGACY_SESSION_COOKIE_BASE}`;

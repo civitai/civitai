@@ -1,6 +1,6 @@
 import { createAuthVerifier, type AuthVerifier } from './verify';
 import { loadAuthEnv } from './env';
-import { hubBaseUrl } from './hub';
+import { hubFetch } from './hub';
 import { getCacheRedis, sessionCacheKey } from './redis';
 import type { SessionUser, SessionClaims } from './types';
 
@@ -85,12 +85,10 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
   // WRITE: POST the hub's /api/auth/identity (service-authed) to bust (and optionally re-produce). Targets
   // an arbitrary userId, so it's authed by AUTH_INTERNAL_TOKEN — not a user session token.
   async function postInvalidate(userId: number, reproduce: boolean): Promise<SessionUser | null> {
-    const base = hubBaseUrl();
     const token = loadAuthEnv().AUTH_INTERNAL_TOKEN; // shared service secret
-    if (!base) throw new Error('[@civitai/auth] createSessionClient: AUTH_JWT_ISSUER is not set');
     if (!token) throw new Error('[@civitai/auth] createSessionClient: AUTH_INTERNAL_TOKEN is not set');
 
-    const res = await fetch(`${base}/api/auth/identity`, {
+    const res = await hubFetch('/api/auth/identity', {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ userId, refresh: reproduce }), // `refresh` is the hub's wire field

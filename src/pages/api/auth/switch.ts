@@ -20,6 +20,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!result) return res.status(403).json({ error: 'switch not allowed' });
 
   // Set the new session cookie + roll the device cookie in lockstep (the hub slid the device record).
-  setSessionCookie(res, result.token, { deviceCookie: req.cookies[deviceCookieName()] });
+  setSessionCookie(res, result.token, {
+    deviceCookie: req.cookies[deviceCookieName()],
+    host: req.headers.host,
+  });
   return res.status(200).json({ ok: true, userId });
 }

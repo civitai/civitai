@@ -9,11 +9,15 @@ export const SESSION_COOKIE_BASE = 'civ-token';
 // Per-browser device id cookie (account-switch device set, section E). Same secure-prefix rules as the
 // session cookie — derive its name via `deviceCookieName(secure)`, never hardcode the prefixed literal.
 export const DEVICE_COOKIE_BASE = 'civ-device';
+// Legacy NextAuth session cookie — READ-ONLY during the cutover (decoded by the jose helper). Same secure-prefix
+// rules as the others, so resolve its name via `legacySessionCookieName(secure)`, never hardcode the literal
+// (prod is `__Secure-civitai-token`, not `civitai-token`).
+export const LEGACY_SESSION_COOKIE_BASE = 'civitai-token';
 export const SECURE_COOKIE_PREFIX = '__Secure-';
 
-// Cross-domain account sync query param (preferred + legacy).
-export const SYNC_PARAM = 'sync';
-export const LEGACY_SYNC_PARAM = 'sync-account';
+// Cross-domain account sync query param — the single marker the hub re-attaches after login and the
+// destination's useDomainSync reads to kick off /api/auth/sync.
+export const SYNC_PARAM = 'sync-account';
 
 // Credentials-provider id the cross-root receiver registers; the client signIn() id must match.
 export const ACCOUNT_SWITCH_PROVIDER_ID = 'account-switch';

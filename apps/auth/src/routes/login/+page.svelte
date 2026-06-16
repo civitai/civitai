@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { SYNC_PARAM } from '@civitai/auth';
   import { buildWordmarkSvg, buildBadgeSvg, getHoliday } from '@civitai/brand';
   import {
     IconBrandDiscord,
@@ -30,7 +31,7 @@
 
   const href = (providerId: string) => {
     const params = new URLSearchParams({ returnUrl: data.returnUrl });
-    if (data.sync) params.set('sync', data.sync);
+    if (data.sync) params.set(SYNC_PARAM, data.sync);
     return `/login/${providerId}?${params.toString()}`;
   };
 
@@ -122,7 +123,7 @@
               value={form?.email ?? ''}
             />
             <input type="hidden" name="returnUrl" value={data.returnUrl} />
-            {#if data.sync}<input type="hidden" name="sync" value={data.sync} />{/if}
+            {#if data.sync}<input type="hidden" name={SYNC_PARAM} value={data.sync} />{/if}
             {#if data.turnstileSiteKey}
               <div class="cf-turnstile" data-sitekey={data.turnstileSiteKey} data-theme="dark"></div>
             {/if}

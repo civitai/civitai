@@ -38,6 +38,12 @@ export function getDeviceId(cookies: Cookies): string | undefined {
   return cookies.get(DEVICE_COOKIE);
 }
 
+/** Re-set the (existing) device cookie to roll its 30-day TTL — pairs with touchAccount on a direct browser
+ *  switch, so the device cookie doesn't expire while its redis set is still being refreshed. */
+export function rollDeviceCookie(cookies: Cookies, deviceId: string): void {
+  cookies.set(DEVICE_COOKIE, deviceId, { ...cookieOpts, maxAge: DEVICE_TTL_S });
+}
+
 /** Add or refresh an account on this device's set (login + each switch touch `lastSwitchedAt`). */
 export async function touchAccount(deviceId: string, userId: number): Promise<void> {
   const sys = getSysRedis();

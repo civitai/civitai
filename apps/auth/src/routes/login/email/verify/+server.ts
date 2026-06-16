@@ -1,5 +1,6 @@
 import { error, redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
+import { SYNC_PARAM } from '@civitai/auth';
 import type { RequestHandler } from './$types';
 import { consumeVerificationToken } from '$lib/server/auth/email-tokens';
 import { findOrCreateUserByEmail } from '$lib/server/auth/users';
@@ -11,7 +12,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
   const token = url.searchParams.get('token');
   const email = url.searchParams.get('email')?.toLowerCase();
   const returnUrl = url.searchParams.get('returnUrl') ?? '/';
-  const sync = url.searchParams.get('sync');
+  const sync = url.searchParams.get(SYNC_PARAM);
 
   if (!token || !email) error(400, 'Invalid verification link');
 

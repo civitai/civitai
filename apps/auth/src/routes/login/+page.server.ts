@@ -1,5 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
+import { SYNC_PARAM } from '@civitai/auth';
 import { isEmailConfigured } from '@civitai/email';
 import type { Actions, PageServerLoad } from './$types';
 import { listEnabledProviders } from '$lib/server/auth/providers';
@@ -51,7 +52,7 @@ export const actions: Actions = {
       .trim()
       .toLowerCase();
     const returnUrl = String(data.get('returnUrl') ?? '/');
-    const sync = data.get('sync') ? String(data.get('sync')) : null;
+    const sync = data.get(SYNC_PARAM) ? String(data.get(SYNC_PARAM)) : null;
 
     if (!EMAIL_RE.test(email)) return fail(400, { email, invalid: true });
 
@@ -81,7 +82,7 @@ export const actions: Actions = {
       verifyUrl.searchParams.set('token', token);
       verifyUrl.searchParams.set('email', email);
       if (returnUrl) verifyUrl.searchParams.set('returnUrl', returnUrl);
-      if (sync) verifyUrl.searchParams.set('sync', sync);
+      if (sync) verifyUrl.searchParams.set(SYNC_PARAM, sync);
 
       await sendVerificationEmail(email, verifyUrl.toString());
       return { sent: true, email };

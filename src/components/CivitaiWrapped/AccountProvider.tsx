@@ -1,6 +1,6 @@
 import { useLocalStorage, usePrevious } from '@mantine/hooks';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { authClient } from '@civitai/auth/client';
+import { authProxy } from '~/utils/auth-proxy';
 // STEP-H-REMOVAL: next-auth/react (useSession/signIn) — replaced by the first-party session provider in phase 4.
 import { signIn, useSession } from 'next-auth/react';
 import { handleSignOut } from '~/utils/auth-helpers';
@@ -46,6 +46,9 @@ type LegacyAccounts = Record<string, LegacyAccount>;
 const legacyAccountsKey = 'civitai-accounts';
 
 const accountsQueryKey = ['device-accounts'] as const;
+// Stable empty reference for the device-account set — using a `= {}` destructuring default would mint a NEW
+// object every render, so any effect depending on it would re-run (and re-setState) forever.
+const EMPTY_ROSTER: Roster = {};
 
 const deleteCookieList = ['ref_code', 'ref_source'];
 
@@ -78,18 +81,20 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
   const queryClient = useQueryClient();
   const currentUserId = userData?.user?.id;
 
-  // The seamlessly-switchable set (hub device set, 30d rolling). Empty until authenticated.
-  const { data: deviceAccounts = {} } = useQuery<Record<string, RosterEntry>>({
+  // The seamlessly-switchable set (hub device set, 30d rolling). Empty until authenticated. `?? EMPTY_ROSTER`
+  // (not a `= {}` default) keeps the reference STABLE across renders so the effects below don't loop.
+  const { data: deviceAccountsData } = useQuery<Record<string, RosterEntry>>({
     queryKey: accountsQueryKey,
     enabled: status === 'authenticated',
     staleTime: 60_000,
     queryFn: async () => {
-      const rows = await authClient.listAccounts();
+      const rows = await authProxy.listAccounts();
       return Object.fromEntries(
         rows.map((a) => [String(a.userId), { id: a.userId, username: a.username ?? '', avatarUrl: a.image }])
       );
     },
   });
+  const deviceAccounts = deviceAccountsData ?? EMPTY_ROSTER;
 
   // Durable display roster (no credentials). getInitialValueInEffect:false so it shows on first paint.
   const [roster, setRoster] = useLocalStorage<Roster>({
@@ -118,25 +123,37 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [legacyAccounts]);
 
-  // Remember the current user + every seamlessly-switchable account in the durable roster.
+  // Remember the current user + every seamlessly-switchable account in the durable roster. Returns the SAME
+  // object when nothing changed so setState bails (no re-render / no localStorage churn / no render loop).
   useEffect(() => {
     setRoster((prev) => {
       const next = { ...prev };
-      if (currentUserId && userData?.user) {
-        next[String(currentUserId)] = {
+      let changed = false;
+      const upsert = (id: string, entry: RosterEntry) => {
+        const cur = prev[id];
+        if (!cur || cur.id !== entry.id || cur.username !== entry.username || cur.avatarUrl !== entry.avatarUrl) {
+          next[id] = entry;
+          changed = true;
+        }
+      };
+      // NB: skip the current user while IMPERSONATING — the "current user" is then the impersonated target, not
+      // a real account linked on this device, so it must never enter the switcher roster (impersonation also
+      // never touches the hub device set, so deviceAccounts below won't reintroduce it).
+      if (currentUserId && userData?.user && !userData.impersonatedBy) {
+        upsert(String(currentUserId), {
           id: currentUserId,
-          username: userData.user.username ?? next[String(currentUserId)]?.username ?? '',
-          avatarUrl: userData.user.image ?? next[String(currentUserId)]?.avatarUrl,
-        };
+          username: userData.user.username ?? prev[String(currentUserId)]?.username ?? '',
+          avatarUrl: userData.user.image ?? prev[String(currentUserId)]?.avatarUrl,
+        });
       }
       for (const [id, a] of Object.entries(deviceAccounts)) {
-        next[id] = {
+        upsert(id, {
           id: a.id,
-          username: a.username || next[id]?.username || '',
-          avatarUrl: a.avatarUrl ?? next[id]?.avatarUrl,
-        };
+          username: a.username || prev[id]?.username || '',
+          avatarUrl: a.avatarUrl ?? prev[id]?.avatarUrl,
+        });
       }
-      return next;
+      return changed ? next : prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUserId, deviceAccounts]);
@@ -184,7 +201,7 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     const idStr = String(userId);
     // 1. Fresh in the device set → seamless switch (the hub mints a fresh civ-token; the proxy sets it).
     //    A false result means it raced out of the 30-day window since the list loaded → fall to re-login.
-    if (idStr in deviceAccounts && (await authClient.switchAccount(userId))) {
+    if (idStr in deviceAccounts && (await authProxy.switchAccount(userId))) {
       window.location.assign(cb);
       return;
     }
@@ -214,20 +231,20 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
         return next;
       });
     }
-    await authClient.removeAccount(id).catch(() => undefined);
+    await authProxy.removeAccount(id).catch(() => undefined);
     await queryClient.invalidateQueries({ queryKey: accountsQueryKey });
   };
 
   // Impersonation (F) — via the package browser client → same-origin proxy → hub. The proxy gates on moderator
   // status, mints the session (stamped impersonatedBy), and sets the cookie; we just reload as that user.
   const impersonate = async (userId: number) => {
-    await authClient.impersonate(userId); // throws with the proxy's message on failure
+    await authProxy.impersonate(userId); // throws with the proxy's message on failure
     window.location.reload(); // re-resolve the current page as the impersonated user — keep the mod's place
   };
 
   // Exit impersonation — the hub reads `impersonatedBy` off the current session token and re-mints the mod's.
   const exitImpersonation = async () => {
-    await authClient.exitImpersonation();
+    await authProxy.exitImpersonation();
     window.location.reload(); // re-resolve in place as the moderator
   };
 

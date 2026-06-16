@@ -1,4 +1,4 @@
-import { LEGACY_SYNC_PARAM, SYNC_PARAM } from './constants';
+import { SYNC_PARAM } from './constants';
 
 // The login redirect contract — returnUrl handling + cross-domain sync — shared by the hub, the
 // main app, and every spoke so they can't drift. Pure functions, framework-agnostic. The
@@ -10,9 +10,9 @@ export function readReturnUrl(url: URL): string {
   return raw.startsWith('/login') ? '/' : raw;
 }
 
-/** The cross-domain sync marker — `sync` (preferred) or legacy `sync-account`. */
+/** The cross-domain sync marker (`sync-account`). */
 export function readSync(url: URL): string | null {
-  return url.searchParams.get(SYNC_PARAM) ?? url.searchParams.get(LEGACY_SYNC_PARAM);
+  return url.searchParams.get(SYNC_PARAM);
 }
 
 export interface ReturnTargetOptions {
@@ -34,8 +34,8 @@ export function isSafeReturnTarget(target: string, opts: ReturnTargetOptions = {
 }
 
 /**
- * Where to send the user after login: the validated returnUrl with the `sync` marker re-attached
- * as `sync-account` (what the destination's useDomainSync reads). Unsafe targets collapse to '/'.
+ * Where to send the user after login: the validated returnUrl with the `sync-account` marker re-attached
+ * (what the destination's useDomainSync reads). Unsafe targets collapse to '/'.
  * Relative targets stay relative; absolute allowed targets stay absolute.
  */
 export function buildPostLoginRedirect(
@@ -48,7 +48,7 @@ export function buildPostLoginRedirect(
   if (!sync) return target;
   try {
     const u = new URL(target, baseOrigin);
-    if (!u.searchParams.has(LEGACY_SYNC_PARAM)) u.searchParams.set(LEGACY_SYNC_PARAM, sync);
+    if (!u.searchParams.has(SYNC_PARAM)) u.searchParams.set(SYNC_PARAM, sync);
     return target.startsWith('/') ? `${u.pathname}${u.search}${u.hash}` : u.toString();
   } catch {
     return target;

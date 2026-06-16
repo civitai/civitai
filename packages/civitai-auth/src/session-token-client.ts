@@ -1,4 +1,4 @@
-import { hubBaseUrl } from './hub';
+import { hubFetch } from './hub';
 import { deviceCookieName, sessionCookieName } from './cookies';
 
 // SESSION-TOKEN CLIENT — hub operations on a single session token (rolling refresh + revoke), authorized by the
@@ -22,12 +22,11 @@ export interface SessionTokenClient {
 export function createSessionTokenClient(): SessionTokenClient {
   return {
     async refresh(token, opts) {
-      const base = hubBaseUrl();
-      if (!base || !token) return null;
+      if (!token) return null;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 2500);
       try {
-        const res = await fetch(`${base}/api/auth/refresh`, {
+        const res = await hubFetch('/api/auth/refresh', {
           method: 'POST',
           headers: {
             authorization: `Bearer ${token}`,
@@ -46,10 +45,9 @@ export function createSessionTokenClient(): SessionTokenClient {
       }
     },
     async revoke(token) {
-      const base = hubBaseUrl();
-      if (!base || !token) return;
+      if (!token) return;
       try {
-        await fetch(`${base}/logout`, {
+        await hubFetch('/logout', {
           method: 'POST',
           // Forward under the ACTUAL (env-derived) cookie name so the hub reads it.
           headers: { cookie: `${sessionCookieName()}=${token}` },

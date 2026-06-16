@@ -1,4 +1,4 @@
-import { hubBaseUrl } from './hub';
+import { hubFetch } from './hub';
 
 // EXCHANGE CLIENT — redeems a cross-domain SWAP token at the hub for a civ-token. Used by a spoke's server-side
 // sync handler (a different registrable domain that can't read the hub's cookie): the swap token IS the
@@ -11,10 +11,9 @@ export interface ExchangeClient {
 export function createExchangeClient(): ExchangeClient {
   return {
     async exchange(swapToken) {
-      const base = hubBaseUrl();
-      if (!base || !swapToken) return null;
+      if (!swapToken) return null;
       try {
-        const res = await fetch(`${base}/api/auth/exchange`, {
+        const res = await hubFetch('/api/auth/exchange', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ swapToken }),

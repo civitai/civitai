@@ -33,7 +33,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader('Referrer-Policy', 'no-referrer');
     const result = await exchange.exchange(swap);
     if (!result) return res.redirect(302, '/login?error=sync');
-    setSessionCookie(res, result.token);
+    setSessionCookie(res, result.token, { host: req.headers.host });
     return res.redirect(302, returnUrl);
   }
 

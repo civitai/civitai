@@ -17,9 +17,9 @@ describe('readReturnUrl', () => {
 });
 
 describe('readSync', () => {
-  it('reads sync or legacy sync-account', () => {
-    expect(readSync(u('?sync=green'))).toBe('green');
+  it('reads the sync-account marker', () => {
     expect(readSync(u('?sync-account=red'))).toBe('red');
+    expect(readSync(u('?sync=green'))).toBeNull(); // the old `sync` alias is gone
     expect(readSync(u(''))).toBeNull();
   });
 });

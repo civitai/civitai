@@ -250,7 +250,9 @@ account).
 After phases 1–4 (resilient resolution, legacy decoder, E + F hub-native, client replaced):
 
 - [ ] Delete `src/pages/api/auth/[...nextauth].ts`, the `jwt()`/`session()` callbacks + providers + adapter in `next-auth-options.ts`, `token-refresh.ts`, the AES civ-token (`civ-token.ts`), and the legacy JWE encode/decode
+  - NB: the `src/pages/api/auth/civ-token.ts` **endpoint** is already caller-less (nothing fetches it) — it can be deleted **now**, ahead of Phase 5. Only the `civTokenDecrypt` **function** (in `~/server/auth/civ-token`) is still held, by `next-auth-options.ts` for legacy account-switch; that module deletes with next-auth-options.
 - [ ] **Replace** `next-auth/react` with a first-party `SessionProvider`/`useSession` over `/api/auth/session` (phase 4), then remove the `next-auth` + `next-auth/react` deps entirely
+- [ ] **Phase 4 — `UpdateRequiredWatcher` + `src/shared/constants/auth.constants.ts`:** the `SESSION_REFRESH_HEADER` branch calls next-auth's `update()` (→ JWT callback) and its server-side setter (`checkAndSetSessionHeaders`) is **already deleted**, so the branch is currently dead — invalidation now propagates via signals (`session-invalidation.ts`). Drop the session-refresh branch (or rewire it to the hub + import the constant from `@civitai/auth`, where `SESSION_REFRESH_HEADER`/`COOKIE` already live). Then **rehome `GENERATION_UPDATE_HEADER`** (a generation-panel signal, not auth) out of `auth.constants.ts` and **delete that file**.
 - [ ] The legacy `jose` `civitai-token` decoder (phase 2) stays read-only until those sessions age out, then deletes
 
 **Tracking — `STEP-H-REMOVAL` markers (kept in sync as we build).** Every NextAuth touchpoint we add or rely on
@@ -267,10 +269,39 @@ exhaustive removal list — the goal is **zero `next-auth` references** left aft
 | `src/utils/auth-helpers.ts` | next-auth `signIn`/`signOut` fallbacks in `handleSignIn`/`handleSignOut` | delete the fallbacks + import (hub paths remain) |
 | `src/pages/api/auth/[...nextauth].ts` signIn event | calls `runLoginSideEffects` | drop the event; `runLoginSideEffects` + `/api/auth/post-login` stay |
 | `@civitai/auth` verifier | legacy-JWE dual-read branch | drop once all legacy cookies have expired |
+| `src/components/UpdateRequiredWatcher/UpdateRequiredWatcher.tsx` | `SESSION_REFRESH_HEADER` branch → next-auth `update()`; setter already deleted so it's dead | Phase 4: drop the session-refresh branch (signals replace it) or rewire to the hub; keep the generation-update branch |
+| `src/shared/constants/auth.constants.ts` | `SESSION_REFRESH_HEADER`/`COOKIE` (dup'd in `@civitai/auth`, `update()`-coupled) + `GENERATION_UPDATE_HEADER` (generation, not auth) | Phase 4: rehome `GENERATION_UPDATE_HEADER`; delete file |
+| `src/pages/api/auth/civ-token.ts` | dead AES civ-token endpoint (no callers) | delete (can go now, ahead of Phase 5) |
 | `next-auth` + `next-auth/react` deps | imports app-wide (incl. ~317 `useSession`/`useCurrentUser` sites via the client shim) | remove the dep; keep a thin client shim or replace |
 
 > **Rule for new work:** any code that imports or relies on NextAuth gets a `STEP-H-REMOVAL:` marker comment
 > **and** a row in this table. That's how we guarantee a clean rip-out with no lingering `next-auth` references.
+
+### Endpoint disposition (`src/pages/api/auth/*`)
+
+Audit of every file under `src/pages/api/auth/` — what gets removed and when. Most stay; the cutover only
+removes two.
+
+**Remove:**
+
+- [ ] `civ-token.ts` — **now.** Dead AES civ-token endpoint, no callers (the `civTokenDecrypt` *function* it
+  re-exports stays with `next-auth-options.ts` until Phase 5).
+- [ ] `[...nextauth].ts` — **Phase 5.** NextAuth catch-all; still serves the legacy `account-switch` credentials
+  flow until E's legacy redeem goes hub-native, and is shadowed by `session.ts`.
+
+**Keep (not unnecessary — reason each survives):**
+
+- `oauth/*` (8) + `jwks.ts` — the OIDC provider ("Sign in with Civitai"); `jwks.ts` is its `jwks_uri`.
+- `accounts.ts`, `switch.ts`, `impersonate.ts` — the main app's same-origin **proxies** to the hub (it deploys
+  cross-site as `.red`, so it can't use the package's browser client).
+- `post-login.ts` — runs login side-effects on civitai.com (ref_* cookies, Tracker, referral, notif) the hub can't.
+- `logout.ts` — clears civ-token + legacy `civitai-token` + orchestrator cookie; revokes at the hub.
+- `sync.ts` — the spoke side of cross-domain login (swap-token receiver).
+- `session.ts` — **becomes the first-party** `{ user, expires }` endpoint the new provider reads (Phase 4). The
+  next-auth off-branch is already gone; the file stays.
+- `freshdesk.ts` — Freshdesk SSO, its own feature (unrelated to the hub).
+- `user-from-token.ts` — integration-token webhook utility; no in-repo callers but external integrations may use
+  it. Out of scope for the cutover — only remove if you confirm nothing depends on it.
 
 ### Env / ops (per environment)
 

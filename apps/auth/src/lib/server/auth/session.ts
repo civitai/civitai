@@ -90,8 +90,13 @@ export async function mintUserSession(
   return token;
 }
 
-export async function establishSession(cookies: Cookies, user: SessionUser): Promise<void> {
-  const token = await mintUserSession(user);
+/**
+ * Set the thin-session cookie from an ALREADY-MINTED token — no mint, no device-set touch. Used by endpoints
+ * that serve the browser client DIRECTLY (switch / impersonate / exit), so the hub itself lands the
+ * `.civitai.com` cookie on a credentialed CORS response. (The main app's proxies don't use this — they read the
+ * returned token and set their own cookie, because they also deploy cross-site as `.red`.)
+ */
+export function setSessionCookie(cookies: Cookies, token: string): void {
   cookies.set(SESSION_COOKIE, token, {
     path: '/',
     domain: env.AUTH_COOKIE_DOMAIN || undefined, // e.g. .civitai.com
@@ -100,6 +105,11 @@ export async function establishSession(cookies: Cookies, user: SessionUser): Pro
     sameSite: 'lax',
     maxAge: getSigner().maxAge,
   });
+}
+
+export async function establishSession(cookies: Cookies, user: SessionUser): Promise<void> {
+  const token = await mintUserSession(user);
+  setSessionCookie(cookies, token);
 
   // Link this account to the browser's device set (the account-switch list, section E). Best-effort.
   await touchAccount(getOrCreateDeviceId(cookies), user.id).catch(() => {});

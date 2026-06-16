@@ -10,7 +10,6 @@ describe('constants', () => {
     expect(C.SESSION_REFRESH_HEADER).toBe('x-session-refresh');
     expect(C.SESSION_REFRESH_COOKIE).toBe('civ-session-refresh');
     expect(C.ACCOUNT_SWITCH_PROVIDER_ID).toBe('account-switch');
-    expect(C.SYNC_PARAM).toBe('sync');
-    expect(C.LEGACY_SYNC_PARAM).toBe('sync-account');
+    expect(C.SYNC_PARAM).toBe('sync-account');
   });
 });

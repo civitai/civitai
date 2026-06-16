@@ -1,4 +1,4 @@
-import { hubBaseUrl } from './hub';
+import { hubFetch } from './hub';
 
 // IMPERSONATION CLIENT — the hub's moderator-impersonation endpoints (section F). Authorized purely by the
 // BROWSER's forwarded session cookie: the hub gates `impersonate` on the requester being a MODERATOR (no
@@ -20,10 +20,8 @@ export interface ImpersonationClient {
 
 export function createImpersonationClient(): ImpersonationClient {
   const post = async (path: string, cookie: string, body?: unknown): Promise<{ token: string } | null> => {
-    const base = hubBaseUrl();
-    if (!base) return null;
     try {
-      const res = await fetch(`${base}${path}`, {
+      const res = await hubFetch(path, {
         method: 'POST',
         headers: { cookie, 'content-type': 'application/json' },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),

@@ -1,3 +1,4 @@
+import { SYNC_PARAM } from '@civitai/auth';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
 import { QS } from '~/utils/qs';
 
@@ -38,7 +39,7 @@ export function syncAccount(url: string, redirectUrl?: string): string {
 
   return QS.stringifyUrl({
     url,
-    query: { 'sync-account': currentColor, 'sync-redirect': redirectUrl },
+    query: { [SYNC_PARAM]: currentColor, 'sync-redirect': redirectUrl },
   });
 }
 

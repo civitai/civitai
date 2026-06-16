@@ -1,24 +1,21 @@
 // SPOKE verify side (Path C). Verifies a session token LOCALLY — no per-request hop:
 //  1. ES256 JWS  → jose `jwtVerify` against the hub's cached JWKS (refetched only on an
 //                  unknown `kid`, i.e. key rotation). This is the steady state.
-//  2. legacy JWE → next-auth's own `decode` with NEXTAUTH_SECRET, ONLY during the
-//                  HS256->RS256 migration window (parent doc: "token-format migration").
+//  2. legacy JWE → decoded with NEXTAUTH_SECRET via a jose reimplementation (legacy-cookie.ts) — NO next-auth
+//                  dependency — ONLY to READ old `civitai-token` cookies until they age out post-cutover.
 //  3. revocation → an INJECTED `isRevoked(claims)` (the existing redis marker). Injected,
 //                  not imported, so the package keeps zero infra deps (base-package rules).
 //
 // Factory mirrors the createXClients(config) injection convention.
 import { createRemoteJWKSet, decodeProtectedHeader, importSPKI, jwtVerify } from 'jose';
 import { sessionCookieName } from './cookies';
+import { decodeLegacySessionCookie } from './legacy-cookie';
 import { loadAuthEnv } from './env';
 import type { SessionClaims } from './types';
 
 const ALG = 'ES256'; // matches the signer (sign.ts) — EC P-256 keys, smaller signatures than RS256
 // Accept a multiline PEM or a single-line value with literal `\n` escapes (matches sign.ts).
 const normalizePem = (pem: string) => pem.replace(/\\n/g, '\n');
-
-// next-auth is imported DYNAMICALLY (only in the legacy-decode branch) so the package's
-// static module graph stays jose + zod only — non-next-auth consumers (e.g. the SvelteKit
-// hub under Vite SSR) can import @civitai/auth without pulling next-auth.
 
 export interface AuthVerifierConfig {
   jwksUri?: string;
@@ -110,15 +107,9 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
         return null; // bad signature / expired / wrong issuer
       }
     } else if (cfg.legacySecret) {
-      // Legacy next-auth JWE (encrypted, hkdf from secret). Drop this branch post-cutover.
-      // Catch like the ES256 branch: a corrupt/foreign cookie must resolve to null (no session),
-      // not throw — callers (next-auth decode override, hub hooks) expect null on a bad token.
-      try {
-        const { decode: nextAuthDecode } = await import('next-auth/jwt');
-        claims = (await nextAuthDecode({ token, secret: cfg.legacySecret })) as SessionClaims | null;
-      } catch {
-        return null;
-      }
+      // Legacy next-auth JWE (encrypted, hkdf from NEXTAUTH_SECRET) — decoded with jose, no next-auth dep
+      // (legacy-cookie.ts). Returns null on a corrupt/foreign/expired cookie. Drop post-cutover.
+      claims = await decodeLegacySessionCookie(token, cfg.legacySecret);
     }
 
     if (!claims) return null;

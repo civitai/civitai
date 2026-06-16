@@ -1,4 +1,4 @@
-import { hubBaseUrl } from './hub';
+import { hubFetch } from './hub';
 
 // DEVICE-ACCOUNT CLIENT — the hub's per-device account set (multi-account switching; cutover doc E). Authorized
 // by the BROWSER's forwarded cookies (civ-token + civ-device), not a service token: a same-origin proxy passes
@@ -29,10 +29,8 @@ export interface DeviceAccountClient {
 export function createDeviceAccountClient(): DeviceAccountClient {
   return {
     async list(cookie) {
-      const base = hubBaseUrl();
-      if (!base) return [];
       try {
-        const res = await fetch(`${base}/api/auth/accounts`, { headers: { cookie } });
+        const res = await hubFetch('/api/auth/accounts', { headers: { cookie } });
         if (!res.ok) return [];
         const { accounts = [] } = (await res.json()) as { accounts?: DeviceAccount[] };
         return accounts;
@@ -41,10 +39,8 @@ export function createDeviceAccountClient(): DeviceAccountClient {
       }
     },
     async switch(cookie, userId) {
-      const base = hubBaseUrl();
-      if (!base) return null;
       try {
-        const res = await fetch(`${base}/api/auth/switch`, {
+        const res = await hubFetch('/api/auth/switch', {
           method: 'POST',
           headers: { cookie, 'content-type': 'application/json' },
           body: JSON.stringify({ userId }),
@@ -57,10 +53,8 @@ export function createDeviceAccountClient(): DeviceAccountClient {
       }
     },
     async remove(cookie, userId) {
-      const base = hubBaseUrl();
-      if (!base) return false;
       try {
-        const res = await fetch(`${base}/api/auth/accounts?userId=${userId}`, {
+        const res = await hubFetch(`/api/auth/accounts?userId=${userId}`, {
           method: 'DELETE',
           headers: { cookie },
         });
