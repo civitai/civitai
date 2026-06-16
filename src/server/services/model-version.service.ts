@@ -296,7 +296,7 @@ export const upsertModelVersion = async ({
   if (isNonCommercialLockedBaseModel(data.baseModel)) {
     const attemptsMonetization =
       (data.licensingFee != null && data.licensingFee > 0) ||
-      !!monetization ||
+      !!monetization?.type ||
       !!updatedEarlyAccessConfig;
     if (attemptsMonetization) {
       throw throwBadRequestError(

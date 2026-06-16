@@ -254,6 +254,18 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     }
   }, [baseModel]);
 
+  // Non-commercial base models can't be monetized. The monetization controls are
+  // hidden (shouldUnregister is false, so their values would otherwise persist and
+  // be re-submitted, then rejected server-side with a confusing error). Clear them
+  // when switching to such a base model so the form can save.
+  useEffect(() => {
+    if (!isNonCommercialBaseModel) return;
+    if ((form.getValues('licensingFee') ?? 0) > 0) form.setValue('licensingFee', 0);
+    if (form.getValues('monetization')) form.setValue('monetization', null);
+    if (form.getValues('earlyAccessConfig')) form.setValue('earlyAccessConfig', null);
+    if (form.getValues('useMonetization')) form.setValue('useMonetization', false);
+  }, [isNonCommercialBaseModel]);
+
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     onError(error) {
       showErrorNotification({
