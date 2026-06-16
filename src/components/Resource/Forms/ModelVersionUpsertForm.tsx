@@ -215,6 +215,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
   const baseModel = form.watch('baseModel') ?? 'SD 1.5';
+  // Non-commercial base models (e.g. Ideogram) can't be monetized — hide the
+  // licensing-fee and early-access controls for these versions.
+  const isNonCommercialBaseModel = isNonCommercialLockedBaseModel(baseModel);
   const recResources = form.watch('recommendedResources') ?? [];
   const [minStrength, maxStrength] = form.watch([
     'settings.minStrength',
@@ -227,9 +230,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
   const hasExistingLicensingFee = (version?.licensingFee ?? 0) > 0;
   const showLicensingFeeBlock =
-    !!features.licensingFee ||
-    hasExistingLicensingFee ||
-    existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash;
+    !isNonCommercialBaseModel &&
+    (!!features.licensingFee ||
+      hasExistingLicensingFee ||
+      existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash);
   const showLicensingFeeSettlementCurrency =
     existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash ||
     !!currentUser?.isModerator;
@@ -379,6 +383,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const showEarlyAccessInput =
     !model?.poi && // POI models won't allow EA.
     !isPrivateModel &&
+    !isNonCommercialBaseModel && // Non-commercial base models can't be monetized.
     (currentUser?.isModerator ||
       (maxEarlyAccessModels > 0 &&
         features.earlyAccessModel &&
@@ -859,11 +864,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               </Text>
             </Alert>
           )}
-          {isNonCommercialLockedBaseModel(baseModel) && (
+          {isNonCommercialBaseModel && (
             <Alert color="yellow" title="Non-commercial base model">
               <Text>
-                {baseModel} is licensed for non-commercial use only. Commercial use has been
-                disabled for this model and cannot be enabled.
+                {baseModel} is licensed for non-commercial use only. This version cannot be
+                monetized (no licensing fees or paid early access) and commercial use is disabled.
               </Text>
             </Alert>
           )}

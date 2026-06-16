@@ -87,7 +87,10 @@ import { filesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
-import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
+import {
+  getBaseModelsByGroup,
+  isNonCommercialLockedBaseModel,
+} from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 
 export const getModelVersionRunStrategies = async ({
@@ -285,6 +288,21 @@ export const upsertModelVersion = async ({
         ', '
       )}`
     );
+  }
+
+  // Non-commercial base models (e.g. Ideogram) can't be monetized — reject any
+  // monetization on this version. Scoped to the version, so a model's other
+  // versions on commercial base models can still monetize.
+  if (isNonCommercialLockedBaseModel(data.baseModel)) {
+    const attemptsMonetization =
+      (data.licensingFee != null && data.licensingFee > 0) ||
+      !!monetization ||
+      !!updatedEarlyAccessConfig;
+    if (attemptsMonetization) {
+      throw throwBadRequestError(
+        `The base model "${data.baseModel}" is licensed for non-commercial use and cannot be monetized.`
+      );
+    }
   }
 
   // Check if trying to publish a model version when model is marked as cannotPublish
