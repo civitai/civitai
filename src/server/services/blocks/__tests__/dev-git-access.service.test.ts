@@ -204,12 +204,11 @@ describe('ensureForgejoIdentity — recovers from an abandoned (wedged) claim', 
 
     const res = await mod.ensureForgejoIdentity(8);
     expect(res).toEqual({ forgejoUsername: 'dev-8', token: 'reclaimed-token-sha1' });
-    // Reclaim was optimistic-concurrency guarded on the empty token + createdAt.
-    expect(mockDbWrite.appDevForgejoIdentity.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId: 8, forgejoTokenEncrypted: '', createdAt: staleCreatedAt },
-      })
-    );
+    // Reclaim is guarded on a RANGE (empty token + createdAt older than the
+    // stale threshold), not exact equality (timestamptz µs vs JS-Date ms).
+    const reclaimWhere = mockDbWrite.appDevForgejoIdentity.updateMany.mock.calls[0][0].where;
+    expect(reclaimWhere).toMatchObject({ userId: 8, forgejoTokenEncrypted: '' });
+    expect(reclaimWhere.createdAt.lt).toBeInstanceOf(Date);
     // Then it provisioned + filled the token (no permanent wedge).
     expect(mockForgejo.mintForgejoUserToken).toHaveBeenCalled();
     expect(mockDbWrite.appDevForgejoIdentity.update).toHaveBeenCalledTimes(1);

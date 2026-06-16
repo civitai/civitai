@@ -184,11 +184,19 @@ export async function ensureForgejoIdentity(userId: number): Promise<ForgejoIden
         return { forgejoUsername: row.forgejoUsername, token: decryptToken(row.forgejoTokenEncrypted, secret) };
       }
       if (row && !row.forgejoTokenEncrypted && Date.now() - row.createdAt.getTime() > STALE_CLAIM_MS) {
-        // Optimistic-concurrency reclaim: only succeeds if the row is STILL the
-        // same empty, stale claim we just read (createdAt unchanged). Bumping
-        // createdAt makes us the new owner; a competing reclaimer gets count 0.
+        // Reclaim the abandoned claim. Guard on a RANGE (still empty + still
+        // older than the threshold), NOT exact createdAt equality — Postgres
+        // timestamptz(6) keeps microseconds but Prisma reads a millisecond Date,
+        // so an equality match would spuriously fail. The range + the row lock
+        // serialize concurrent reclaimers: the first updateMany bumps createdAt
+        // to now; a competing one re-evaluates the predicate post-commit (no
+        // longer < threshold) → count 0. Exactly one reclaimer wins.
         const reclaimed = await dbWrite.appDevForgejoIdentity.updateMany({
-          where: { userId, forgejoTokenEncrypted: '', createdAt: row.createdAt },
+          where: {
+            userId,
+            forgejoTokenEncrypted: '',
+            createdAt: { lt: new Date(Date.now() - STALE_CLAIM_MS) },
+          },
           data: { createdAt: new Date() },
         });
         if (reclaimed.count === 1) {
