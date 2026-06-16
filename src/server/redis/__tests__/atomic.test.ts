@@ -35,10 +35,18 @@ describe('hSetWithTTL', () => {
     expect(options.arguments).toEqual(['field-1', 'value-1', '5000']);
   });
 
-  it('stringifies numeric values', async () => {
+  // REGRESSION GUARD (#2332-hotfix): the original cut shipped with
+  // `value as unknown as string`, leaving numeric values as runtime numbers
+  // when they reached node-redis's encodeCommand — which then crashed on
+  // every `setToken(userId, Date.now(), ...)` call in prod. The fail-open
+  // wrappers absorbed the throws (no user-visible 500s) but every
+  // session/token write SILENTLY DROPPED, leaving sysRedis out-of-sync
+  // until rollback. This test must keep the asserted `'42'` (string) shape;
+  // if it ever flips back to `42` (number), the regression is back.
+  it('stringifies numeric values before reaching node-redis encodeCommand', async () => {
     const client = mockClient();
     await hSetWithTTL(client, 'k', 'f', 42, 1000);
-    expect(client.eval.mock.calls[0][1].arguments).toEqual(['f', 42, '1000']);
+    expect(client.eval.mock.calls[0][1].arguments).toEqual(['f', '42', '1000']);
   });
 
   it('forwards Buffer values without coercion (msgpack-packed write path)', async () => {
@@ -96,6 +104,27 @@ describe('hSetMultiWithTTL', () => {
     const client = mockClient();
     await hSetMultiWithTTL(client, 'k', {}, 1000);
     expect(client.eval).not.toHaveBeenCalled();
+  });
+
+  // REGRESSION GUARD (#2332-hotfix): same numeric-value bug as the
+  // single-field hSetWithTTL had. Each value in the entries map was cast
+  // `as unknown as string` without runtime coercion, crashing on any
+  // numeric value (e.g. token timestamps in session-invalidation).
+  it('stringifies numeric values + forwards Buffer values unchanged', async () => {
+    const client = mockClient();
+    const packed = Buffer.from([0x80]);
+    await hSetMultiWithTTL(
+      client,
+      'k',
+      { 'token-num': 123, 'token-str': 'str', 'token-buf': packed },
+      10_000
+    );
+    const args = client.eval.mock.calls[0][1].arguments;
+    // ARGV: [ttl, count, ...fieldNames, ...values]
+    expect(args.slice(0, 5)).toEqual(['10000', '3', 'token-num', 'token-str', 'token-buf']);
+    expect(args[5]).toEqual('123'); // number → string
+    expect(args[6]).toEqual('str'); // string → string
+    expect(args[7]).toBe(packed); // Buffer → Buffer (reference identity)
   });
 
   // PR #2332 round-3 guard — see hSetWithTTL twin test above.

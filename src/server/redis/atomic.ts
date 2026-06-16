@@ -78,6 +78,24 @@ type EvalCapableClient = {
 };
 
 /**
+ * Coerce a `string | number | Buffer` argument to something node-redis v5's
+ * `encodeCommand` will accept (a string or a Buffer). Numbers MUST be
+ * stringified here; passing one through reaches encodeCommand at
+ * `node_modules/@redis/client/dist/lib/RESP/encoder.js` which then throws
+ * `RangeError: "Cannot read properties of undefined"` (the encoder dispatches
+ * on the argument's `.length` after assuming string|Buffer). This was the
+ * regression in #2332's first cut: `value as unknown as string` is a TS-only
+ * lie, leaving the runtime number value to crash on every `setToken`-style
+ * call where the caller passes `Date.now()`.
+ *
+ * Buffers pass through unchanged — `.toString()` would default to UTF-8 and
+ * mangle binary content from msgpack-packed call sites.
+ */
+function toRedisArg(v: string | number | Buffer): string | Buffer {
+  return typeof v === 'number' ? String(v) : v;
+}
+
+/**
  * Atomically set a single hash field's value AND its TTL.
  *
  * Atomicity caveat: the script's HSET and HPEXPIRE are independent
@@ -115,12 +133,12 @@ export async function hSetWithTTL(
     return 1
   `;
   // node-redis v5 EVAL options take RedisArgument[] (string | Buffer). We
-  // coerce numbers via String(); Buffer is passed through. We cast to
+  // coerce numbers via toRedisArg(); Buffer is passed through. We cast to
   // string[] because the EvalCapableClient shape declares string[] for
   // simplicity — at runtime node-redis accepts Buffer here too.
   await client.eval(script, {
     keys: [key],
-    arguments: [field, value as unknown as string, String(ttlMs)],
+    arguments: [field, toRedisArg(value) as unknown as string, String(ttlMs)],
   });
 }
 
@@ -175,7 +193,7 @@ export async function hSetMultiWithTTL(
     String(ttlMs),
     String(entries.length),
     ...fieldNames,
-    ...entries.map(([, v]) => v as unknown as string),
+    ...entries.map(([, v]) => toRedisArg(v) as unknown as string),
   ];
 
   const script = `
