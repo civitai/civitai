@@ -71,6 +71,10 @@ const {
       ensurePushWebhook: vi.fn(),
       commitFiles: vi.fn(),
       listRepoTree: vi.fn(),
+      // listRepoTreeAtRef — used by reconstructBundleFromForgejo (the
+      // push-originated approve path + backfill). Resolves a commit SHA / ref
+      // directly to its blob tree (no branch→commit lookup).
+      listRepoTreeAtRef: vi.fn(),
       getBlobContent: vi.fn(),
       getRepo: vi.fn(),
       ensureReviewRepo: vi.fn(),
@@ -1100,6 +1104,123 @@ describe('approveRequest', () => {
     expect((abArg.manifest as any).iframe.src).toBe('https://hello.civit.ai/');
   });
 
+  // PUSH-ORIGINATED approve (Phase 3 git-push authoring). The git-push webhook
+  // parks an unreviewed direct push as a `pending` request with EMPTY bundle
+  // pointers (bundleKey='', bundleSha256='') + the pushed forgejoCommitSha — the
+  // ZIP was never uploaded, so the Forgejo repo at that sha IS the artifact.
+  // approveRequest must reconstruct the bundle from Forgejo (NOT GET a bundleKey
+  // from S3), then drive the identical downstream: commit, sha stamp, build
+  // trigger, deployState='building'.
+  it('PUSH path: reconstructs the bundle from Forgejo when bundleKey is empty', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({
+        bundleKey: '',
+        bundleSha256: '',
+        forgejoCommitSha: 'pushsha123',
+      })
+    );
+    // First version (no existing app block) — exercises the full create path.
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    // The repo @ pushsha123 has a manifest + index.html (no Dockerfile this
+    // time, so nothing is filtered as platform-owned).
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(
+      new Map([
+        ['block.manifest.json', 'blobM'],
+        ['index.html', 'blobH'],
+      ])
+    );
+    mockForgejo.getBlobContent.mockImplementation(async (_slug: string, sha: string) => {
+      if (sha === 'blobM') return Buffer.from(JSON.stringify(manifest()));
+      return Buffer.from('<!doctype html><html><body>pushed</body></html>');
+    });
+    // mockBundleBuffer.current stays null — if the code ever fell back to the S3
+    // GET path the mock S3 GET throws ("mockBundleBuffer.current not set"),
+    // which would fail this test. That's the regression guard.
+
+    const result = await approveRequest({
+      publishRequestId: 'pubreq_1',
+      reviewerUserId: 999,
+      approvalNotes: 'reviewed the pushed code',
+    });
+
+    // Reconstructed from Forgejo at the EXACT pushed sha.
+    expect(mockForgejo.listRepoTreeAtRef).toHaveBeenCalledWith('hello', 'pushsha123');
+    // NO S3 GET on a bundleKey (the push request has none). storeScreenshots /
+    // storeBundle PUTs are fine; assert specifically no GetObjectCommand fired.
+    const gets = mockS3Send.mock.calls.filter(
+      (c) => c[0]?.constructor?.name === 'GetObjectCommand'
+    );
+    expect(gets).toHaveLength(0);
+
+    expect(result.isFirstVersion).toBe(true);
+    expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+
+    // Committed the reconstructed files (manifest gets the canonical iframe.src
+    // rewrite; index.html passes through).
+    const commitArg = mockForgejo.commitFiles.mock.calls[0][0];
+    expect(commitArg.replaceAllFiles).toBe(true);
+    expect(commitArg.files.map((f: { path: string }) => f.path).sort()).toEqual([
+      'block.manifest.json',
+      'index.html',
+    ]);
+
+    // current_version_sha stamped to the new committed sha.
+    expect(mockDbWrite.appBlock.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { currentVersionSha: 'commit_sha_abc', screenshots: [] } })
+    );
+    // Build triggered with the committed sha.
+    expect(mockTriggerBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'hello', sha: 'commit_sha_abc' })
+    );
+    // Phase 2: marked 'building' after the trigger succeeds.
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { slug: 'hello', forgejoCommitSha: 'commit_sha_abc', status: 'approved' },
+        data: expect.objectContaining({ deployState: 'building' }),
+      })
+    );
+    // The publish_request is finalised approved.
+    const reqUpdate = mockDbWrite.appBlockPublishRequest.update.mock.calls.find(
+      (c: any[]) => c[0]?.where?.id === 'pubreq_1'
+    );
+    expect(reqUpdate?.[0]?.data?.status).toBe('approved');
+  });
+
+  // ZIP-path regression: a request WITH a bundleKey still GETs from S3 and never
+  // touches the Forgejo-reconstruct path.
+  it('ZIP path: still GETs the bundle from S3 (no Forgejo reconstruct) when bundleKey is set', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ bundleKey: 'bundles/sha.zip' })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+    // S3 GET happened on the bundleKey path.
+    const gets = mockS3Send.mock.calls.filter(
+      (c) => c[0]?.constructor?.name === 'GetObjectCommand'
+    );
+    expect(gets).toHaveLength(1);
+    // Forgejo reconstruct path was NOT taken.
+    expect(mockForgejo.listRepoTreeAtRef).not.toHaveBeenCalled();
+  });
+
+  // Defensive: a malformed request with neither a bundle nor a sha throws clearly.
+  it('throws clearly when a request has neither a bundle nor a forgejo commit', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ bundleKey: '', bundleSha256: '', forgejoCommitSha: '' })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/neither a bundle nor a forgejo commit/);
+  });
+
   it('A1: caps OauthClient.allowedScopes to the manifest-derived bitmask (not Full)', async () => {
     const { approveRequest } = await import('../publish-request.service');
     // models:read:self (bit 1<<2 = 4) + user:read:self (1<<0 = 1) +
@@ -1729,7 +1850,7 @@ describe('backfillPublishRequest', () => {
       app: { userId: 42 },
     });
     mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null); // not already backfilled
-    mockForgejo.listRepoTree.mockResolvedValue(
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(
       new Map([
         ['block.manifest.json', 'blob1'],
         ['index.html', 'blob2'],
@@ -1773,7 +1894,7 @@ describe('backfillPublishRequest', () => {
       appBlockId: 'apb_existing',
       bundleSizeBytes: 12345n,
     });
-    mockForgejo.listRepoTree.mockResolvedValue(new Map([['block.manifest.json', 'blob1']]));
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(new Map([['block.manifest.json', 'blob1']]));
     mockForgejo.getBlobContent.mockResolvedValue(Buffer.from(JSON.stringify(manifest())));
 
     const result = await backfillPublishRequest({
@@ -1807,10 +1928,67 @@ describe('backfillPublishRequest', () => {
       app: { userId: 42 },
     });
     mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
-    mockForgejo.listRepoTree.mockResolvedValue(new Map());
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(new Map());
 
     await expect(backfillPublishRequest({ slug: 'hello', reviewerUserId: 999 })).rejects.toThrow(
       /empty/
     );
+  });
+});
+
+// ---- reconstructBundleFromForgejo ------------------------------------------
+
+describe('reconstructBundleFromForgejo', () => {
+  it('builds a non-empty ZIP Buffer from the repo tree + blobs at the ref', async () => {
+    const { reconstructBundleFromForgejo } = await import('../publish-request.service');
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(
+      new Map([
+        ['block.manifest.json', 'blobM'],
+        ['index.html', 'blobH'],
+      ])
+    );
+    mockForgejo.getBlobContent.mockImplementation(async (_slug: string, sha: string) => {
+      if (sha === 'blobM') return Buffer.from(JSON.stringify(manifest()));
+      return Buffer.from('<!doctype html>');
+    });
+
+    const buf = await reconstructBundleFromForgejo('hello', 'pushsha123');
+
+    // Resolved the tree at the exact ref (sha), not a branch.
+    expect(mockForgejo.listRepoTreeAtRef).toHaveBeenCalledWith('hello', 'pushsha123');
+    expect(Buffer.isBuffer(buf)).toBe(true);
+    expect(buf.length).toBeGreaterThan(0);
+
+    // The reconstructed ZIP round-trips to the expected file set.
+    const zip = await JSZip.loadAsync(buf);
+    expect(Object.keys(zip.files).sort()).toEqual(['block.manifest.json', 'index.html']);
+  });
+
+  it('is deterministic — identical repo state yields byte-identical bytes', async () => {
+    const { reconstructBundleFromForgejo } = await import('../publish-request.service');
+    // Tree entry order is reversed between the two runs to prove the helper
+    // sorts entries (so Forgejo ordering can't change the resulting bytes).
+    mockForgejo.getBlobContent.mockImplementation(async (_slug: string, sha: string) => {
+      if (sha === 'blobM') return Buffer.from(JSON.stringify(manifest()));
+      return Buffer.from('<!doctype html>');
+    });
+
+    mockForgejo.listRepoTreeAtRef.mockResolvedValueOnce(
+      new Map([
+        ['block.manifest.json', 'blobM'],
+        ['index.html', 'blobH'],
+      ])
+    );
+    const a = await reconstructBundleFromForgejo('hello', 'pushsha123');
+
+    mockForgejo.listRepoTreeAtRef.mockResolvedValueOnce(
+      new Map([
+        ['index.html', 'blobH'],
+        ['block.manifest.json', 'blobM'],
+      ])
+    );
+    const b = await reconstructBundleFromForgejo('hello', 'pushsha123');
+
+    expect(a.equals(b)).toBe(true);
   });
 });

@@ -251,8 +251,26 @@ export async function listRepoTree(
     `/api/v1/repos/${org}/${slug}/branches/${encodeURIComponent(branch)}`
   );
   const branchInfo = await unwrap<{ commit: { id: string } }>(branchRes);
+  return listRepoTreeAtRef(slug, branchInfo.commit.id, org);
+}
+
+/**
+ * Recursively list every blob in the repo at an arbitrary git ref —
+ * a commit SHA (NOT just a branch name) — as Map<path, blob-sha>. Same
+ * shape as `listRepoTree`, but skips the branch→commit lookup so the
+ * caller can snapshot a specific historical commit (e.g. the sha a
+ * git-push parked on a pending review request).
+ *
+ * Forgejo's `git/trees/<ref>` resolves a commit ref to its root tree, so
+ * passing a commit SHA returns that commit's full recursive blob list.
+ */
+export async function listRepoTreeAtRef(
+  slug: string,
+  ref: string,
+  org: string = FORGEJO_ORG
+): Promise<Map<string, string>> {
   const treeRes = await fjFetch(
-    `/api/v1/repos/${org}/${slug}/git/trees/${branchInfo.commit.id}?recursive=true&per_page=1000`
+    `/api/v1/repos/${org}/${slug}/git/trees/${encodeURIComponent(ref)}?recursive=true&per_page=1000`
   );
   const tree = await unwrap<{
     tree: Array<{ path: string; type: string; sha: string }>;
@@ -260,7 +278,7 @@ export async function listRepoTree(
   }>(treeRes);
   if (tree.truncated) {
     throw new Error(
-      `Forgejo tree for ${slug}@${branch} is truncated (>1000 entries); pagination not implemented`
+      `Forgejo tree for ${slug}@${ref} is truncated (>1000 entries); pagination not implemented`
     );
   }
   const result = new Map<string, string>();
