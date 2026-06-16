@@ -6,6 +6,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hSetWithTTL } from '~/server/redis/atomic';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
@@ -199,13 +200,32 @@ export function rateLimit<TInput = any>(
       const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
       const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
       // Atomic packed-write: single EVAL replaces racy Promise.all([hSet, hExpire]).
-      await hSetWithTTL(
-        redis,
-        cacheKey,
-        hashKey,
-        pack(updatedAttempts),
-        CacheTTL.day * 1000
-      );
+      //
+      // Fail-open wrapper (PR #2332 round-4 audit fix): without this
+      // try/catch, an in-flight EVAL throw during a sysRedis (cache
+      // client) failover would 500 every authed mutation that flows
+      // through this middleware. Trade-off documented under the
+      // `rate-limit-write-degraded` subtype: the current request is
+      // allowed through and the sliding-window quota under-counts the
+      // attempt until the next successful write. A sustained spike on
+      // that subtype = abuse-prevention effectively disabled, which
+      // ops should dashboard separately from generic write-degraded.
+      try {
+        await hSetWithTTL(
+          redis,
+          cacheKey,
+          hashKey,
+          pack(updatedAttempts),
+          CacheTTL.day * 1000
+        );
+      } catch (error) {
+        logSysRedisFailOpen(
+          'rate-limit-write-degraded',
+          'middleware.trpc.recordAttempt',
+          error,
+          { cacheKey, hashKey }
+        );
+      }
     };
 
     // When onlyCountSuccess is set, defer recording until the procedure succeeds

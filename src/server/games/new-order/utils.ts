@@ -5,6 +5,7 @@ import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { hSetWithTTL, zAddWithTTL } from '~/server/redis/atomic';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
@@ -32,18 +33,45 @@ function createCounter<TId extends number | string = number | string>({
   ordered,
 }: CounterOptions<TId>) {
   async function setCacheValue(id: TId, value: number) {
+    // Fail-open wrappers (PR #2332 round-4 audit fix): a sysRedis
+    // failover (Phase 4) during a judgment write would otherwise 500 the
+    // submission. The counter is a cache mirror of ClickHouse-truth
+    // counts (the `fetchCount` callback) — a missed write reverts to a
+    // cache miss on the next read and re-hydrates from source. Subtype
+    // `write-degraded` matches session-invalidation.updateSessionState.
+    // Preserve the `ttl === 0` bypass: PEXPIRE/HPEXPIRE with 0ms would
+    // DELETE the key/field (see atomic.ts header — that's why the
+    // helpers' ttlMs > 0 guard exists).
     if (ordered) {
       if (ttl !== 0) {
         // Atomic single-EVAL replaces racy Promise.all([zAdd, expire]).
         // ttl===0 path stays bare zAdd — PEXPIRE with 0ms would DELETE the key.
-        await zAddWithTTL(sysRedis, key, value, id.toString(), ttl * 1000);
+        try {
+          await zAddWithTTL(sysRedis, key, value, id.toString(), ttl * 1000);
+        } catch (error) {
+          logSysRedisFailOpen(
+            'write-degraded',
+            'new-order.createCounter.zAdd',
+            error,
+            { key, id }
+          );
+        }
       } else {
         await sysRedis.zAdd(key, { score: value, value: id.toString() });
       }
     } else {
       if (ttl !== 0) {
         // Atomic single-EVAL replaces racy Promise.all([hSet, hExpire]).
-        await hSetWithTTL(sysRedis, key, id.toString(), value, ttl * 1000);
+        try {
+          await hSetWithTTL(sysRedis, key, id.toString(), value, ttl * 1000);
+        } catch (error) {
+          logSysRedisFailOpen(
+            'write-degraded',
+            'new-order.createCounter.hSet',
+            error,
+            { key, id }
+          );
+        }
       } else {
         await sysRedis.hSet(key, id.toString(), value);
       }

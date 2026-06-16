@@ -25,7 +25,17 @@ export async function trackToken(tokenId: string, userId: number) {
 
     log(`Tracked token ${tokenId} for user ${userId}`);
   } catch (error) {
-    log(`Error tracking token ${tokenId} for user ${userId}: ${(error as Error).message}`);
+    // Fail-open wrapper (PR #2332 round-4 audit fix): mirror the sibling
+    // `invalidateToken` (round-3) so Loki/Grafana see the same structured
+    // `sysredis-fail-open` event for the write-degraded sysRedis path
+    // instead of a plain dev-style log line. Subtype `write-degraded`
+    // matches session-invalidation.updateSessionState.
+    logSysRedisFailOpen(
+      'write-degraded',
+      'token-tracking.trackToken',
+      error,
+      { tokenId, userId }
+    );
   }
 }
 

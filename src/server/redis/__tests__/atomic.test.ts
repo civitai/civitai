@@ -47,6 +47,22 @@ describe('hSetWithTTL', () => {
     await hSetWithTTL(client, 'k', 'f', packed, 1000);
     expect(client.eval.mock.calls[0][1].arguments[1]).toBe(packed);
   });
+
+  // PR #2332 round-3 guard: HPEXPIRE with 0/negative ms REMOVES the field —
+  // an accidental config bug (e.g. `someConfig.ttlSeconds * 1000` evaluating
+  // to 0 or NaN) would silently destroy the very write this helper just
+  // performed. The guard MUST fire before the EVAL is dispatched so a
+  // missing TTL never reaches the server.
+  it('throws on non-positive ttlMs and never calls EVAL', async () => {
+    const client = mockClient();
+    await expect(hSetWithTTL(client, 'k', 'f', 'v', 0)).rejects.toThrow(/positive finite number/);
+    await expect(hSetWithTTL(client, 'k', 'f', 'v', -1)).rejects.toThrow(/positive finite number/);
+    await expect(hSetWithTTL(client, 'k', 'f', 'v', NaN)).rejects.toThrow(/positive finite number/);
+    await expect(hSetWithTTL(client, 'k', 'f', 'v', Infinity)).rejects.toThrow(
+      /positive finite number/
+    );
+    expect(client.eval).not.toHaveBeenCalled();
+  });
 });
 
 describe('hSetMultiWithTTL', () => {
@@ -81,6 +97,25 @@ describe('hSetMultiWithTTL', () => {
     await hSetMultiWithTTL(client, 'k', {}, 1000);
     expect(client.eval).not.toHaveBeenCalled();
   });
+
+  // PR #2332 round-3 guard — see hSetWithTTL twin test above.
+  it('throws on non-positive ttlMs and never calls EVAL', async () => {
+    const client = mockClient();
+    const fields = { f: 'v' };
+    await expect(hSetMultiWithTTL(client, 'k', fields, 0)).rejects.toThrow(
+      /positive finite number/
+    );
+    await expect(hSetMultiWithTTL(client, 'k', fields, -1)).rejects.toThrow(
+      /positive finite number/
+    );
+    await expect(hSetMultiWithTTL(client, 'k', fields, NaN)).rejects.toThrow(
+      /positive finite number/
+    );
+    await expect(hSetMultiWithTTL(client, 'k', fields, Infinity)).rejects.toThrow(
+      /positive finite number/
+    );
+    expect(client.eval).not.toHaveBeenCalled();
+  });
 });
 
 describe('zAddWithTTL', () => {
@@ -103,5 +138,19 @@ describe('zAddWithTTL', () => {
     const client = mockClient();
     await zAddWithTTL(client, 'k', 0, 'm', 1000);
     expect(client.eval.mock.calls[0][1].arguments).toEqual(['0', 'm', '1000']);
+  });
+
+  // PR #2332 round-3 guard: PEXPIRE with 0/negative ms DELETES the key —
+  // would destroy the sorted set ZADD just wrote into. See atomic.ts
+  // header for the full failure-mode rationale.
+  it('throws on non-positive ttlMs and never calls EVAL', async () => {
+    const client = mockClient();
+    await expect(zAddWithTTL(client, 'k', 1, 'm', 0)).rejects.toThrow(/positive finite number/);
+    await expect(zAddWithTTL(client, 'k', 1, 'm', -1)).rejects.toThrow(/positive finite number/);
+    await expect(zAddWithTTL(client, 'k', 1, 'm', NaN)).rejects.toThrow(/positive finite number/);
+    await expect(zAddWithTTL(client, 'k', 1, 'm', Infinity)).rejects.toThrow(
+      /positive finite number/
+    );
+    expect(client.eval).not.toHaveBeenCalled();
   });
 });
