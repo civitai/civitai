@@ -112,11 +112,14 @@ function formatDate(d: string | Date): string {
 }
 
 // A build/deploy that hasn't advanced in this long is treated as STALLED: the
-// fire-and-forget apply watcher was almost certainly lost to a civitai-web pod
-// restart (build-callback.ts documents this self-heal-on-next-build window).
-// Generous vs a normal queue+build+deploy so a slow-but-progressing build never
-// trips it. Used to (a) stop polling forever and (b) hint the dev to resubmit.
-const DEPLOY_STALE_AFTER_MS = 20 * 60 * 1000;
+// fire-and-forget apply watcher was likely lost to a civitai-web pod restart
+// (build-callback.ts documents this self-heal-on-next-build window). Must sit
+// COMFORTABLY above the build pipeline's own ceiling — the Tekton pipeline
+// timeout is 20m EXECUTION plus queue time on the single slow build node — so a
+// legitimately slow/queued build is never mislabeled. When a row does look
+// stalled we only BACK OFF polling (never stop), so a slow build that finishes
+// past the threshold still self-heals to live/failed without a page reload.
+const DEPLOY_STALE_AFTER_MS = 45 * 60 * 1000;
 
 function isInFlightDeploy(s: Pick<Submission, 'status' | 'deployState'>): boolean {
   return (
@@ -211,14 +214,18 @@ export default function MySubmissionsPage() {
   const features = useFeatureFlags();
   const submissionsQuery = trpc.blocks.listMyPublishRequests.useQuery(undefined, {
     enabled: !!features?.appBlocks,
-    // Live-update the badge while an approved submission is ACTIVELY building/
-    // deploying. Stop once everything is terminal (live/failed) — AND treat a
-    // stalled in-flight row (watcher lost to a pod restart) as terminal so a
-    // single stuck row can't spin the poll every 5s forever.
+    // Poll while an approved submission is building/deploying so the badge
+    // live-updates. Once a row looks stalled (watcher likely lost to a pod
+    // restart) we BACK OFF to 30s rather than stop — so a slow build that
+    // finishes past the staleness threshold still self-heals to live/failed
+    // without a reload (the global query config is staleTime:Infinity +
+    // refetchOnWindowFocus:false, so stopping entirely would never recover).
+    // Stop only when nothing is in flight.
     refetchInterval: (query) => {
       const data = (query.state.data ?? []) as Submission[];
-      const active = data.some((s) => isInFlightDeploy(s) && !isStaleDeploy(s));
-      return active ? 5000 : false;
+      const inFlight = data.filter(isInFlightDeploy);
+      if (inFlight.length === 0) return false;
+      return inFlight.some((s) => !isStaleDeploy(s)) ? 5000 : 30000;
     },
   });
 
