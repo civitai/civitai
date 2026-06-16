@@ -45,7 +45,10 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
-import { getActiveBaseModels } from '~/shared/constants/basemodel.constants';
+import {
+  getActiveBaseModels,
+  isNonCommercialLockedBaseModel,
+} from '~/shared/constants/basemodel.constants';
 import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
@@ -798,8 +801,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     style={{ flexShrink: 0, marginTop: 2 }}
                   />
                   <Text size="xs" c="yellow">
-                    With a license fee set, this version stops earning creator compensation and
-                    tips — you earn through the license fee instead.
+                    With a license fee set, this version stops earning creator compensation and tips
+                    — you earn through the license fee instead.
                   </Text>
                 </Group>
               )}
@@ -853,6 +856,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 >
                   Learn more
                 </Text>
+              </Text>
+            </Alert>
+          )}
+          {isNonCommercialLockedBaseModel(baseModel) && (
+            <Alert color="yellow" title="Non-commercial base model">
+              <Text>
+                {baseModel} is licensed for non-commercial use only. Commercial use has been
+                disabled for this model and cannot be enabled.
               </Text>
             </Alert>
           )}

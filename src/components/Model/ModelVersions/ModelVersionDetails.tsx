@@ -116,6 +116,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { baseModelLicenses, CAROUSEL_LIMIT, constants } from '~/server/common/constants';
+import { getEffectiveCommercialUse } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -484,9 +485,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           {/* Owner-only banner: lists publisher_all_my_models subscriptions
               that would render here so the model owner can opt out of any
               specific subscription for this model. Hidden for non-owners. */}
-          {isOwner && (
-            <PublisherSubscriptionBanner modelId={model.id} modelType={model.type} />
-          )}
+          {isOwner && <PublisherSubscriptionBanner modelId={model.id} modelType={model.type} />}
           {model.mode !== ModelModifier.TakenDown && mobile && (
             <ModelCarousel
               modelId={model.id}
@@ -516,11 +515,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               creatorUserId: model.user.id,
               viewerUserId: user?.id ?? null,
               viewerUsername: user?.username ?? null,
-              viewerStatus: user?.bannedAt
-                ? 'banned'
-                : user?.muted
-                ? 'muted'
-                : 'active',
+              viewerStatus: user?.bannedAt ? 'banned' : user?.muted ? 'muted' : 'active',
               viewerNsfwEnabled: viewerShowNsfw,
               theme: colorScheme === 'dark' ? 'dark' : 'light',
             }}
@@ -1821,7 +1816,18 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 ))}
               </Stack>
             )}
-            <PermissionIndicator permissions={model} ml="auto" />
+            <PermissionIndicator
+              permissions={{
+                ...model,
+                // Non-commercial base models (e.g. Ideogram) override the stored
+                // commercial-use permission for the displayed version.
+                allowCommercialUse: getEffectiveCommercialUse(
+                  model.allowCommercialUse,
+                  version.baseModel
+                ),
+              }}
+              ml="auto"
+            />
           </Group>
           {license?.notice && (
             <Text size="xs" c="dimmed">

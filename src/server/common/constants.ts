@@ -481,7 +481,13 @@ type LicenseDetails = {
   notice?: string;
   poweredBy?: string;
   restrictedNsfwLevels?: NsfwLevel[];
+  // When true, mature content is restricted (auto-derives `restrictedNsfwLevels`
+  // to MATURE_NSFW_LEVELS). Use this instead of hand-listing levels.
+  disableMature?: boolean;
 };
+
+// Levels considered "mature" — restricted whenever a license sets disableMature.
+const MATURE_NSFW_LEVELS: NsfwLevel[] = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
 const baseLicenses: Record<string, LicenseDetails> = {
   openrail: {
     url: 'https://huggingface.co/spaces/CompVis/stable-diffusion-license',
@@ -618,6 +624,18 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://www.vidu.com/terms',
     name: 'Vidu Q1',
   },
+  'ideogram nc': {
+    // Public blob page — the nf4 `raw` URL is gated and 401s.
+    url: 'https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md',
+    name: 'Ideogram Non-Commercial Model Agreement',
+    // Section 3(iii) attribution wording. Their cited github URL 404s, so we point
+    // at the working HF blob page instead.
+    notice:
+      'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement available at https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md. All rights reserved. Copyright © Ideogram, Inc.',
+    // License AUP bars pornographic/obscene content. `disableMature` auto-derives
+    // the restricted NSFW levels (see getRestrictedNsfwLevelsForBaseModel).
+    disableMature: true,
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -698,22 +716,29 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Kling: baseLicenses['kling'],
   'Vidu Q1': baseLicenses['vidu'],
   Seedance: baseLicenses['seedream'],
+  'Ideogram 4.0': baseLicenses['ideogram nc'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
 export type Sampler = (typeof constants.samplers)[number];
 
+// Resolve the restricted NSFW levels for a license, deriving from `disableMature`
+// when an explicit `restrictedNsfwLevels` array isn't provided.
+function getLicenseRestrictedNsfwLevels(license: LicenseDetails | undefined): NsfwLevel[] {
+  if (!license) return [];
+  if (license.restrictedNsfwLevels && license.restrictedNsfwLevels.length > 0)
+    return license.restrictedNsfwLevels;
+  if (license.disableMature) return MATURE_NSFW_LEVELS;
+  return [];
+}
+
 // Base models that use licenses with NSFW restrictions
 export const nsfwRestrictedBaseModels: BaseModel[] = Object.entries(baseModelLicenses)
-  .filter(
-    ([, license]) =>
-      license && license.restrictedNsfwLevels && license.restrictedNsfwLevels.length > 0
-  )
+  .filter(([, license]) => getLicenseRestrictedNsfwLevels(license).length > 0)
   .map(([baseModel]) => baseModel as BaseModel);
 
 export function getRestrictedNsfwLevelsForBaseModel(baseModel: string): NsfwLevel[] {
-  const license = baseModelLicenses[baseModel as BaseModel];
-  return license?.restrictedNsfwLevels || [];
+  return getLicenseRestrictedNsfwLevels(baseModelLicenses[baseModel as BaseModel]);
 }
 
 export function isNsfwLevelRestrictedForBaseModel(
