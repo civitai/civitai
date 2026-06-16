@@ -2351,6 +2351,7 @@ export interface Article {
   nsfwLevel: number;
   userNsfwLevel: number;
   moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
   status: ArticleStatus;
   thread?: Thread | null;

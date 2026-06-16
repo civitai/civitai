@@ -13,6 +13,9 @@ import {
   ImageIngestionStatus,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
+// Numeric (bitwise) NsfwLevel — `Blocked` is 32. NOT the Prisma string enum of
+// the same name in `~/shared/utils/prisma/enums`.
+import { NsfwLevel } from '~/server/common/enums';
 import { handleLogError } from '~/server/utils/errorHandling';
 
 export type AutoApproveEntryPoint = 'submission' | 'scan-completion';
@@ -23,6 +26,7 @@ type ArticleForGate = {
   ingestion: ArticleIngestionStatus;
   nsfwLevel: number;
   moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   coverId: number | null;
 };
 
@@ -117,9 +121,20 @@ export async function computeArticleDerivedNsfwLevel(articleId: number): Promise
  * All gate conditions must hold:
  *   1. suggestedLevel < article.nsfwLevel               (down-direction only)
  *   2. moderatorNsfwLevel != null                       (override is what we'd clear)
+ *   2b. moderatorNsfwLevel != Blocked                   (never auto-unblock a TOS pin)
  *   3. article fully scanned, no pending/blocked/error  (trust the rescan)
  *   4. article is Published (not UnpublishedViolation)  (sanity)
  *   5. derived <= suggestedLevel                        (content actually agrees)
+ *   6. basis != null && derived < basis                 (content GENUINELY dropped
+ *                                                        since the override was set)
+ *
+ * Gate #6 is the guard against clearing a deliberate above-images override. The
+ * basis is the content-derived level captured when the override was placed (see
+ * `Article.moderatorNsfwLevelBasis`). If current `derived` is still >= that
+ * basis, the content hasn't moved — the override encodes human judgment the
+ * scanners can't reproduce (text nuance, context) and must NOT be auto-cleared.
+ * A null basis (legacy override predating the column, or one set without a
+ * snapshot) fails closed → the dispute routes to the mod queue.
  *
  * The caller is responsible for ownership / rate-limit / re-edit-gate checks
  * upstream — this helper only judges the auto-approve decision itself.
@@ -134,6 +149,12 @@ export async function evaluateAutoApproveGate({
   // 1 + 2 + 4: cheap field checks first, no DB round-trip required.
   if (article.moderatorNsfwLevel == null) {
     return { eligible: false, reason: 'no-override', derivedLevel: null };
+  }
+  // 2b: a Blocked override is a TOS pin — never auto-clear it via a dispute,
+  // regardless of what the images currently scan to. The proper unblock path
+  // is a moderator action, not an owner-initiated rating dispute.
+  if (article.moderatorNsfwLevel === NsfwLevel.Blocked) {
+    return { eligible: false, reason: 'override-blocked', derivedLevel: null };
   }
   if (suggestedLevel >= article.nsfwLevel) {
     return { eligible: false, reason: 'not-down-direction', derivedLevel: null };
@@ -190,6 +211,17 @@ export async function evaluateAutoApproveGate({
   }
   if (derivedLevel > suggestedLevel) {
     return { eligible: false, reason: 'derived-exceeds-suggested', derivedLevel };
+  }
+
+  // 6: the override may only be auto-cleared when the content that justified it
+  // has genuinely dropped. A null basis fails closed (legacy / unsnapshotted
+  // override → mod queue); derived still >= basis means the content hasn't moved
+  // and the override is encoding non-image judgment we must not auto-erase.
+  if (article.moderatorNsfwLevelBasis == null) {
+    return { eligible: false, reason: 'no-override-basis', derivedLevel };
+  }
+  if (derivedLevel >= article.moderatorNsfwLevelBasis) {
+    return { eligible: false, reason: 'content-not-dropped-since-override', derivedLevel };
   }
 
   return { eligible: true, derivedLevel };
@@ -312,6 +344,10 @@ export async function autoResolveArticleRatingReview(args: AutoResolveArgs): Pro
       where: { id: args.articleId },
       data: {
         moderatorNsfwLevel: null,
+        // Override is gone → its basis snapshot is meaningless. Clear it so a
+        // future override starts from a fresh snapshot and the gate doesn't read
+        // a stale basis against a null override.
+        moderatorNsfwLevelBasis: null,
         userNsfwLevel: args.suggestedLevel,
         lockedProperties: Array.from(lockedSet),
       },
@@ -422,6 +458,7 @@ export async function maybeAutoResolveDisputeAfterScan(articleId: number): Promi
         ingestion: true,
         nsfwLevel: true,
         moderatorNsfwLevel: true,
+        moderatorNsfwLevelBasis: true,
         coverId: true,
       },
     });
@@ -434,6 +471,7 @@ export async function maybeAutoResolveDisputeAfterScan(articleId: number): Promi
         ingestion: article.ingestion,
         nsfwLevel: article.nsfwLevel,
         moderatorNsfwLevel: article.moderatorNsfwLevel,
+        moderatorNsfwLevelBasis: article.moderatorNsfwLevelBasis,
         coverId: article.coverId,
       },
       suggestedLevel: pending.suggestedLevel,

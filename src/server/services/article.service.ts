@@ -1027,12 +1027,21 @@ export const upsertArticle = async ({
     // owner save can't quietly drift userNsfwLevel underneath it. When the
     // mod clears the override (sets back to null) we unlock the picker and
     // the article returns to auto-derivation on the next recompute.
+    //
+    // We also (re)snapshot `moderatorNsfwLevelBasis` — the content-derived level
+    // at override time — so the auto-approve gate (#6) can later distinguish a
+    // genuine content drop from an override deliberately set above the images
+    // (which must not be auto-cleared by an owner dispute). `undefined` leaves
+    // the column untouched; only an actual override change writes it.
+    let moderatorNsfwLevelBasis: number | null | undefined = undefined;
     if (moderatorOverrideChanged) {
       const lockedSet = new Set<string>(data.lockedProperties ?? article.lockedProperties ?? []);
       if (data.moderatorNsfwLevel != null) {
         lockedSet.add('userNsfwLevel');
+        moderatorNsfwLevelBasis = (await computeArticleDerivedNsfwLevel(id as number)) ?? 0;
       } else {
         lockedSet.delete('userNsfwLevel');
+        moderatorNsfwLevelBasis = null;
       }
       data.lockedProperties = Array.from(lockedSet);
     }
@@ -1073,6 +1082,7 @@ export const upsertArticle = async ({
         where: { id },
         data: {
           ...data,
+          ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           metadata: { ...prevMetadata, ...data.metadata },
           publishedAt,
           coverId,
@@ -2345,6 +2355,7 @@ export async function createArticleRatingReview({
         status: true,
         ingestion: true,
         moderatorNsfwLevel: true,
+        moderatorNsfwLevelBasis: true,
         coverId: true,
         title: true,
       },
@@ -2423,6 +2434,7 @@ export async function createArticleRatingReview({
         ingestion: article.ingestion,
         nsfwLevel: article.nsfwLevel,
         moderatorNsfwLevel: article.moderatorNsfwLevel,
+        moderatorNsfwLevelBasis: article.moderatorNsfwLevelBasis,
         coverId: article.coverId,
       },
       suggestedLevel,
@@ -2492,6 +2504,7 @@ export async function getArticleRatingReviewForOwner({
       updatedAt: true,
       nsfwLevel: true,
       moderatorNsfwLevel: true,
+      moderatorNsfwLevelBasis: true,
     },
   });
   if (!article) throw throwNotFoundError(`No article with id ${articleId}`);
@@ -2519,7 +2532,12 @@ export async function getArticleRatingReviewForOwner({
   });
 
   // Stale-override signal for the owner banner: only meaningful when an
-  // override is active AND we can compute a derived level lower than it.
+  // override is active AND content has genuinely dropped below the basis it was
+  // set against — which is exactly the auto-approve gate's #6 precondition. We
+  // compare derived to `moderatorNsfwLevelBasis` (not to the override itself) so
+  // the banner only advertises a dispute that will actually auto-approve; an
+  // override sitting above the images (basis == derived) won't light it up,
+  // since disputing it would just route to the mod queue.
   // Skip the derived computation when there's no override (the auto path
   // already resolves to ground truth) or when the article has no resubmit
   // option anyway (Pending review blocks it).
@@ -2528,7 +2546,9 @@ export async function getArticleRatingReviewForOwner({
   if (article.moderatorNsfwLevel != null && review?.status !== ReportStatus.Pending) {
     derivedLevel = await computeArticleDerivedNsfwLevel(articleId);
     derivedRatingDroppedBelowOverride =
-      derivedLevel != null && derivedLevel < article.moderatorNsfwLevel;
+      derivedLevel != null &&
+      article.moderatorNsfwLevelBasis != null &&
+      derivedLevel < article.moderatorNsfwLevelBasis;
   }
 
   if (!review) {
@@ -2702,8 +2722,15 @@ export async function resolveArticleRatingReview({
       const lockedSet = new Set<string>(current?.lockedProperties ?? []);
       lockedSet.add('userNsfwLevel');
 
-      // Write both `moderatorNsfwLevel` (the override signal) and
-      // `nsfwLevel` (the effective level) in a single update. The CTE in
+      // Snapshot the content-derived level at the moment this override is set,
+      // so a later down-direction dispute can only auto-clear it if the content
+      // genuinely drops below this basis (see evaluateAutoApproveGate gate #6).
+      // A mod actioning above the images encodes judgment the scanners can't
+      // reproduce; the basis is what keeps that from being auto-erased.
+      const moderatorNsfwLevelBasis = (await computeArticleDerivedNsfwLevel(reviewRow.articleId)) ?? 0;
+
+      // Write `moderatorNsfwLevel` (override signal), `nsfwLevel` (effective
+      // level) and the basis snapshot in a single update. The CTE in
       // `updateArticleNsfwLevels` resolves to COALESCE(moderatorNsfwLevel,
       // GREATEST(...)) — so when an override is set, the effective level is
       // always identical to the override. Writing it directly skips the
@@ -2713,6 +2740,7 @@ export async function resolveArticleRatingReview({
         where: { id: reviewRow.articleId },
         data: {
           moderatorNsfwLevel: appliedLevel,
+          moderatorNsfwLevelBasis,
           nsfwLevel: appliedLevel,
           lockedProperties: Array.from(lockedSet),
         },

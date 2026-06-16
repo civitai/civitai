@@ -3185,6 +3185,12 @@ model Article {
   nsfwLevel        Int           @default(0)
   userNsfwLevel    Int           @default(0)
   moderatorNsfwLevel Int?
+  // Snapshot of the content-derived NSFW level (images + moderation floor) at
+  // the moment `moderatorNsfwLevel` was set. Lets the auto-approve gate tell
+  // "content genuinely dropped since the override" from "override was always
+  // above the images" — only the former may be auto-cleared. Null when no
+  // override is active (or a legacy override predating this column).
+  moderatorNsfwLevelBasis Int?
   lockedProperties String[]      @default([])
   status           ArticleStatus @default(Draft)
 
