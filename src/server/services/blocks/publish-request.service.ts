@@ -1099,7 +1099,11 @@ export type ListPendingRequestsOptions = {
 export async function computePushDiffSummaries(
   slug: string,
   ref: string
-): Promise<{ fileSummary: FileSummary; manifestDiffSummary: ManifestDiffSummary }> {
+): Promise<{
+  fileSummary: FileSummary;
+  manifestDiffSummary: ManifestDiffSummary;
+  bundleSizeBytes: number;
+}> {
   const bundleBuffer = await reconstructBundleFromForgejo(slug, ref);
   const { files, manifest } = await extractBundleMetadata(bundleBuffer);
   const previous = await getPreviousApprovedState(slug);
@@ -1109,7 +1113,46 @@ export async function computePushDiffSummaries(
       manifest as Record<string, unknown>,
       previous?.manifest ?? null
     ),
+    bundleSizeBytes: bundleBuffer.length,
   };
+}
+
+/**
+ * Best-effort, OFF-the-webhook-response-path enrichment of a parked
+ * push-originated review row. The git-push webhook parks the row FAST with an
+ * empty summary (so the response isn't blocked on a full Forgejo bundle
+ * reconstruct, and the supersede→create window stays tiny), then fires this
+ * fire-and-forget to fill in the real file/manifest diff + bundle size.
+ *
+ * NEVER throws (a failure leaves the empty summary + the working "View code in
+ * Forgejo @ sha" link — a re-push re-parks + re-enriches). Scoped to
+ * status='pending' so it can't clobber a row a mod approved/rejected — or
+ * another push superseded — in the meantime. Deliberately does NOT touch
+ * bundleKey / bundleSha256: those stay empty as the push-originated marker.
+ */
+export async function enrichPushRequestRow(
+  publishRequestId: string,
+  slug: string,
+  ref: string
+): Promise<void> {
+  try {
+    const { fileSummary, manifestDiffSummary, bundleSizeBytes } =
+      await computePushDiffSummaries(slug, ref);
+    const { dbWrite } = await import('~/server/db/client');
+    await dbWrite.appBlockPublishRequest.updateMany({
+      where: { id: publishRequestId, status: 'pending' },
+      data: {
+        fileSummary: fileSummary as object,
+        manifestDiffSummary: manifestDiffSummary as object,
+        bundleSizeBytes: BigInt(bundleSizeBytes),
+      },
+    });
+  } catch (e) {
+    console.error(
+      `[push-enrich] failed for ${slug}@${ref} (${publishRequestId}), leaving empty summary:`,
+      String(e).slice(0, 240)
+    );
+  }
 }
 
 /**
@@ -1139,6 +1182,7 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
+      bundleKey: true,
       forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
     },
@@ -1158,7 +1202,7 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       // snapshot — link mods to the CANONICAL repo at the exact pushed sha
       // instead, so they can review the real code rather than approve blind.
       pushCommitUrl:
-        !r.bundleSha256 && r.forgejoCommitSha
+        !r.bundleKey && r.forgejoCommitSha
           ? repoCommitUrl(r.slug, r.forgejoCommitSha)
           : null,
     })),
@@ -1196,6 +1240,7 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
+      bundleKey: true,
       forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
       reviewedBy: { select: { id: true, username: true, image: true } },
@@ -1209,7 +1254,7 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
       pushCommitUrl:
-        !r.bundleSha256 && r.forgejoCommitSha
+        !r.bundleKey && r.forgejoCommitSha
           ? repoCommitUrl(r.slug, r.forgejoCommitSha)
           : null,
     })),
@@ -1247,6 +1292,7 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
+      bundleKey: true,
       forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
       reviewedBy: { select: { id: true, username: true, image: true } },
@@ -1260,7 +1306,7 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
       pushCommitUrl:
-        !r.bundleSha256 && r.forgejoCommitSha
+        !r.bundleKey && r.forgejoCommitSha
           ? repoCommitUrl(r.slug, r.forgejoCommitSha)
           : null,
     })),

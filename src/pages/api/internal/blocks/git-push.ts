@@ -489,36 +489,18 @@ async function recordPendingFromPush(args: {
   });
 
   const ownerUserId = await resolvePushOwnerUserId(args.appBlockId);
+  const publishRequestId = `pubreq_${newUlid()}`;
 
-  // Compute the real file + manifest diff from the Forgejo repo at the pushed
-  // sha so the mod-review modal shows actual changes (added/changed/removed +
-  // first-version vs update) instead of 0 files + a misleading "first-version"
-  // label — otherwise the mod approves blind, undercutting the no-trust gate.
-  // Best-effort: if Forgejo enrichment fails the review still parks with the
-  // empty summary (the modal's "View code in Forgejo @ sha" link is the
-  // fallback). Enrichment must never gate parking the review.
-  let fileSummary: object = { files: [], added: [], removed: [], changed: [] };
-  let manifestDiffSummary: object = {
-    kind: 'first-version' as const,
-    fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
-  };
-  try {
-    const { computePushDiffSummaries } = await import(
-      '~/server/services/blocks/publish-request.service'
-    );
-    const diffs = await computePushDiffSummaries(args.slug, args.sha);
-    fileSummary = diffs.fileSummary;
-    manifestDiffSummary = diffs.manifestDiffSummary;
-  } catch (e) {
-    console.error(
-      `[git-push] diff enrichment failed for ${args.slug}@${args.sha}, parking with empty summary:`,
-      String(e).slice(0, 240)
-    );
-  }
-
+  // Park the review IMMEDIATELY with an empty summary, then enrich the real
+  // file/manifest diff + bundle size OFF the response path (below). A full
+  // Forgejo bundle reconstruct inline would (a) add seconds to the webhook
+  // response and (b) widen the supersede→create window enough for concurrent
+  // pushes to collide on the one-pending-per-slug index. The mod-review modal's
+  // "View code in Forgejo @ sha" link works regardless; the diff fills in within
+  // a moment. The empty summary is the durable fallback if enrichment never lands.
   await dbWrite.appBlockPublishRequest.create({
     data: {
-      id: `pubreq_${newUlid()}`,
+      id: publishRequestId,
       appBlockId: args.appBlockId,
       slug: args.slug,
       submittedByUserId: ownerUserId,
@@ -526,15 +508,32 @@ async function recordPendingFromPush(args: {
       manifest: args.manifest,
       // No bundle: the webhook doesn't receive the ZIP. The Forgejo repo at
       // forgejoCommitSha IS the reviewable artifact; mods browse it directly.
+      // bundleKey stays empty as the push-originated marker.
       bundleKey: '',
       bundleSha256: '',
       bundleSizeBytes: BigInt(0),
-      fileSummary,
-      manifestDiffSummary,
+      fileSummary: { files: [], added: [], removed: [], changed: [] },
+      manifestDiffSummary: {
+        kind: 'first-version' as const,
+        fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
+      },
       status: 'pending',
       forgejoCommitSha: args.sha,
     },
   });
+
+  // Fire-and-forget: fill in the real diff + bundle size so the mod sees actual
+  // changes (added/changed/removed) instead of 0 files + a misleading
+  // "first-version" label. enrichPushRequestRow has its own try/catch + is
+  // scoped to status='pending', so it never gates the park and can't clobber a
+  // row that was approved/rejected/superseded in the meantime. civitai-web is a
+  // long-lived server, so the microtask completes after the 202.
+  void (async () => {
+    const { enrichPushRequestRow } = await import(
+      '~/server/services/blocks/publish-request.service'
+    );
+    await enrichPushRequestRow(publishRequestId, args.slug, args.sha);
+  })();
 }
 
 /**
