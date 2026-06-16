@@ -679,7 +679,7 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
 
     return updatedModel;
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -732,7 +732,7 @@ export const declineReviewHandler = async ({
 
     return updatedModel;
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -750,7 +750,7 @@ export const earlyAccessModelVersionsOnTimeframeHandler = async ({
       userId: ctx.user.id,
     });
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -768,7 +768,7 @@ export const modelVersionGeneratedImagesOnTimeframeHandler = async ({
       userId: ctx.user.id,
     });
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -849,7 +849,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
       buzzType: getAllowedAccountTypes(ctx.features)[0],
     });
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -868,7 +868,7 @@ export const modelVersionDonationGoalsHandler = async ({
       isModerator: ctx.user?.isModerator,
     });
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
