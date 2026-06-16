@@ -253,28 +253,14 @@ export const redisCommandDuration = registerHistogram({
   buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
 });
 
-// Bridge the redis metric handles to '~/server/redis/client' via globalThis,
-// WITHOUT that module statically importing this one. redis/client.ts is
-// client-bundle-reachable (`_app.tsx` → `system-cache.ts` → redis/client.ts) and
-// prom-client eagerly requires `fs`/`cluster` at load (defaultMetrics + cluster
-// aggregator), so a static `redis/client → prom/client` import edge breaks the
-// pages-router client webpack build. This module only ever loads server-side
-// (imported by trpc/api routes/instrumentation at startup), so publishing here is
-// safe and is in place before any real redis command runs. instrumentCommands()
-// reads `globalThis.__civitaiRedisMetrics` at command time.
-(globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
-  redisCommandsInflight,
-  redisCommandDuration,
-  // PR #2331 round-3: sentinel observability counters. Same bridge pattern so
-  // attachSysSentinelListeners can grab them without dragging prom-client's
-  // fs/cluster requires into the client bundle.
-  get sysredisSentinelTopologyChangesCounter() {
-    return sysredisSentinelTopologyChangesCounter;
-  },
-  get sysredisSentinelClientErrorsCounter() {
-    return sysredisSentinelClientErrorsCounter;
-  },
-};
+// The bridge to '~/server/redis/client' via globalThis.__civitaiRedisMetrics is
+// published below, AFTER the sysredisSentinel* counters are declared (search for
+// "__civitaiRedisMetrics ="). Placing it there lets us capture all four counter
+// values directly instead of behind getters — a getter that fired during
+// top-level eval (before the const declarations executed) would throw a
+// ReferenceError that the no-op fallback at the call site (optional chaining)
+// does NOT catch. No eager reader exists today; the bridge is consumed only
+// from function bodies in redis/client.ts at command/connect time.
 
 // Image feed metrics
 export const imagesFeedWithoutIndexCounter = registerCounter({
@@ -418,6 +404,27 @@ export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
   help: 'sysRedis sentinel sub-client errors (per-pod TCP/protocol errors against masters/replicas)',
   labelNames: ['type', 'host', 'deployment'] as const,
 });
+
+// Bridge the redis metric handles to '~/server/redis/client' via globalThis,
+// WITHOUT that module statically importing this one. redis/client.ts is
+// client-bundle-reachable (`_app.tsx` → `system-cache.ts` → redis/client.ts) and
+// prom-client eagerly requires `fs`/`cluster` at load (defaultMetrics + cluster
+// aggregator), so a static `redis/client → prom/client` import edge breaks the
+// pages-router client webpack build. This module only ever loads server-side
+// (imported by trpc/api routes/instrumentation at startup), so publishing here is
+// safe and is in place before any real redis command runs. instrumentCommands()
+// and attachSysSentinelListeners read `globalThis.__civitaiRedisMetrics` at
+// command/connect time.
+//
+// Placed AFTER all four counters declare so no getter indirection is needed
+// (and no TDZ surface — a getter that fires during top-level eval would throw
+// ReferenceError, which the no-op fallback at the call site does NOT catch).
+(globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
+  redisCommandsInflight,
+  redisCommandDuration,
+  sysredisSentinelTopologyChangesCounter,
+  sysredisSentinelClientErrorsCounter,
+};
 
 // pgPoolAcquireHistogram is registered in src/server/db/db-helpers.ts, not here.
 // Defining it here would create a module-init cycle (prom/client.ts imports
