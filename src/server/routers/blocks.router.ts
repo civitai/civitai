@@ -1947,6 +1947,15 @@ export const blocksRouter = router({
       if (block.app?.userId !== ctx.user!.id) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
       }
+      // A banned/suspended account must not be issued (or re-issued) a live push
+      // credential. They still can't deploy (the mod gate holds), but we don't
+      // hand out a fresh Forgejo token. Full revoke-on-ban is a follow-up.
+      if (ctx.user!.bannedAt) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Account is not eligible for git access',
+        });
+      }
 
       const slug = block.blockId;
 

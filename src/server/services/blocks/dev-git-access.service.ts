@@ -91,7 +91,11 @@ export function forgejoUsernameForUser(userId: number): string {
 
 export type ForgejoIdentity = { forgejoUsername: string; token: string };
 
-type IdentityRow = { forgejoUsername: string; forgejoTokenEncrypted: string };
+type IdentityRow = {
+  forgejoUsername: string;
+  forgejoTokenEncrypted: string;
+  createdAt: Date;
+};
 
 async function readIdentity(
   db: { appDevForgejoIdentity: { findUnique: (a: unknown) => Promise<unknown> } },
@@ -99,7 +103,7 @@ async function readIdentity(
 ): Promise<IdentityRow | null> {
   return (await db.appDevForgejoIdentity.findUnique({
     where: { userId },
-    select: { forgejoUsername: true, forgejoTokenEncrypted: true },
+    select: { forgejoUsername: true, forgejoTokenEncrypted: true, createdAt: true },
   })) as IdentityRow | null;
 }
 
@@ -110,6 +114,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // generous headroom; a timeout surfaces as a retryable error, not a wedge.
 const PROVISION_WAIT_TRIES = 25;
 const PROVISION_WAIT_MS = 200;
+
+// A placeholder (empty-token) claim row this old is treated as ABANDONED — the
+// owner died hard (pod kill) between the claim and the token write, so its
+// catch-rollback never ran. Must comfortably exceed PROVISION_WAIT (~5s) +
+// realistic provisioning latency so a slow-but-live owner is never stolen from.
+const STALE_CLAIM_MS = 60_000;
 
 /**
  * Read-or-provision the caller's Forgejo identity, returning their decrypted
@@ -163,15 +173,34 @@ export async function ensureForgejoIdentity(userId: number): Promise<ForgejoIden
 
   if (!owner) {
     // Someone else owns provisioning (or a complete row appeared between the
-    // fast path and the claim). Wait a bounded time for the token to land.
+    // fast path and the claim). Wait a bounded time for the token to land —
+    // OR, if the claim row is ABANDONED (empty token + older than the stale
+    // threshold: an owner that died mid-provision so its rollback never ran),
+    // atomically reclaim it and become the owner ourselves, so the user can
+    // never be permanently wedged behind a dead claim.
     for (let i = 0; i < PROVISION_WAIT_TRIES; i++) {
       const row = await readIdentity(dbRead, userId);
       if (row && row.forgejoTokenEncrypted) {
         return { forgejoUsername: row.forgejoUsername, token: decryptToken(row.forgejoTokenEncrypted, secret) };
       }
+      if (row && !row.forgejoTokenEncrypted && Date.now() - row.createdAt.getTime() > STALE_CLAIM_MS) {
+        // Optimistic-concurrency reclaim: only succeeds if the row is STILL the
+        // same empty, stale claim we just read (createdAt unchanged). Bumping
+        // createdAt makes us the new owner; a competing reclaimer gets count 0.
+        const reclaimed = await dbWrite.appDevForgejoIdentity.updateMany({
+          where: { userId, forgejoTokenEncrypted: '', createdAt: row.createdAt },
+          data: { createdAt: new Date() },
+        });
+        if (reclaimed.count === 1) {
+          owner = true;
+          break;
+        }
+      }
       await sleep(PROVISION_WAIT_MS);
     }
-    throw new Error('Forgejo identity provisioning is taking too long — please retry');
+    if (!owner) {
+      throw new Error('Forgejo identity provisioning is taking too long — please retry');
+    }
   }
 
   // We own provisioning. Create the user + mint the token + fill in the claim.

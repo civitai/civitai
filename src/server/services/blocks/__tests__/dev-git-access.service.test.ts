@@ -24,6 +24,7 @@ const { mockDbRead, mockDbWrite, mockForgejo } = vi.hoisted(() => ({
       findUnique: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       delete: vi.fn(),
     },
   },
@@ -175,6 +176,43 @@ describe('ensureForgejoIdentity — owner (provisioning) path', () => {
     await expect(mod.ensureForgejoIdentity(3)).rejects.toThrow(/forgejo down/);
     // Placeholder claim rolled back so the next attempt isn't wedged.
     expect(mockDbWrite.appDevForgejoIdentity.delete).toHaveBeenCalledWith({ where: { userId: 3 } });
+  });
+});
+
+describe('ensureForgejoIdentity — recovers from an abandoned (wedged) claim', () => {
+  it('reclaims a stale empty-token row (owner died mid-provision) and provisions it itself', async () => {
+    const mod = await import('../dev-git-access.service');
+    const staleCreatedAt = new Date(Date.now() - 120_000); // 2 min old → past the 60s stale threshold
+    mockDbRead.appDevForgejoIdentity.findUnique
+      .mockResolvedValueOnce(null) // fast-path miss
+      .mockResolvedValue({
+        forgejoUsername: 'dev-8',
+        forgejoTokenEncrypted: '', // abandoned: claimed but never filled
+        createdAt: staleCreatedAt,
+      });
+    // We lose the fresh claim (the dead owner's row already occupies the PK)...
+    mockDbWrite.appDevForgejoIdentity.create.mockRejectedValue({ code: 'P2002' });
+    // ...but we atomically reclaim the stale row and become the owner.
+    mockDbWrite.appDevForgejoIdentity.updateMany.mockResolvedValue({ count: 1 });
+    mockForgejo.createForgejoUser.mockResolvedValue({
+      user: { id: 8, username: 'dev-8' },
+      password: 'pw-reclaim-1234567890abcdef',
+      created: true,
+    });
+    mockForgejo.mintForgejoUserToken.mockResolvedValue('reclaimed-token-sha1');
+    mockDbWrite.appDevForgejoIdentity.update.mockResolvedValue({});
+
+    const res = await mod.ensureForgejoIdentity(8);
+    expect(res).toEqual({ forgejoUsername: 'dev-8', token: 'reclaimed-token-sha1' });
+    // Reclaim was optimistic-concurrency guarded on the empty token + createdAt.
+    expect(mockDbWrite.appDevForgejoIdentity.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: 8, forgejoTokenEncrypted: '', createdAt: staleCreatedAt },
+      })
+    );
+    // Then it provisioned + filled the token (no permanent wedge).
+    expect(mockForgejo.mintForgejoUserToken).toHaveBeenCalled();
+    expect(mockDbWrite.appDevForgejoIdentity.update).toHaveBeenCalledTimes(1);
   });
 });
 

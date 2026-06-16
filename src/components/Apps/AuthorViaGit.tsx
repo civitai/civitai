@@ -166,7 +166,13 @@ function GitAccessPanel({ appBlockId }: { appBlockId: string }) {
       <Text size="sm" fw={500}>
         Steps
       </Text>
-      <CopyableCode value={data.instructions} />
+      {/* instructions embed the same token-bearing clone URL — mask it under the
+          same reveal toggle so the token isn't shown in cleartext on first paint
+          (copy still copies the real value). */}
+      <CopyableCode
+        value={data.instructions}
+        display={showToken ? data.instructions : maskCloneUrlCredential(data.instructions)}
+      />
 
       <Alert color="blue" variant="light" py="xs">
         <Text size="xs">

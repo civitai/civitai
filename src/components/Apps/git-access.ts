@@ -13,17 +13,18 @@
 const TOKEN_MASK = '••••••••';
 
 /**
- * Replaces the password (token) segment of a `user:token@host` clone URL with a
- * fixed mask, preserving the username and everything from `@host` onward so the
- * shape is still recognizable. Returns the input unchanged if it doesn't carry
- * an embedded `user:pass@` credential (nothing to mask, fail-safe — never throws).
+ * Replaces the password (token) segment of any `scheme://user:token@host`
+ * credential with a fixed mask, preserving the username + host + path. Works on
+ * a bare clone URL AND on a multi-line string that EMBEDS one (e.g. the
+ * `git clone <url>` instructions snippet) — every occurrence is masked. Only
+ * masks when both a colon (a password) and an `@` are present in the userinfo,
+ * with no `/` or whitespace inside (so it never mangles a `host:port` or a URL
+ * without credentials). Returns the input unchanged when there's nothing to mask
+ * (fail-safe — never throws).
  */
-export function maskCloneUrlCredential(cloneUrl: string): string {
-  // Match scheme + userinfo (user:pass) + the rest. Only mask when BOTH a colon
-  // (a password is present) and an '@' (it's really userinfo, not a host:port)
-  // are in the authority. Non-greedy user/pass; the '@' anchors the credential.
-  const m = cloneUrl.match(/^(\w+:\/\/)([^:/@\s]+):([^@\s]+)@(.+)$/);
-  if (!m) return cloneUrl;
-  const [, scheme, user, , rest] = m;
-  return `${scheme}${user}:${TOKEN_MASK}@${rest}`;
+export function maskCloneUrlCredential(text: string): string {
+  return text.replace(
+    /(\w+:\/\/)([^:/@\s]+):([^@\s]+)@/g,
+    (_full, scheme, user) => `${scheme}${user}:${TOKEN_MASK}@`
+  );
 }

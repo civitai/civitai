@@ -29,4 +29,20 @@ describe('maskCloneUrlCredential', () => {
     const url = 'https://dev-7:a:b:c@host.tld/org/slug.git';
     expect(maskCloneUrlCredential(url)).toBe('https://dev-7:••••••••@host.tld/org/slug.git');
   });
+
+  it('masks an embedded credential inside a multi-line instructions string', () => {
+    const instructions = [
+      '# Clone your app repo (credential is embedded in the URL):',
+      'git clone https://dev-42:supersecrettoken@forgejo.example.com/civitai-apps/my-slug.git',
+      'cd my-slug && git add -A && git commit -m "update" && git push',
+    ].join('\n');
+    const masked = maskCloneUrlCredential(instructions);
+    // The live token must not survive into the masked display string...
+    expect(masked).not.toContain('supersecrettoken');
+    expect(masked).toContain(
+      'git clone https://dev-42:••••••••@forgejo.example.com/civitai-apps/my-slug.git'
+    );
+    // ...and the surrounding instruction text is preserved.
+    expect(masked).toContain('cd my-slug && git add -A');
+  });
 });
