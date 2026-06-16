@@ -127,7 +127,7 @@ export const getResourceReviewsInfinite = async ({
       (await dbRead.user.findUnique(userFindArgs)) ??
       (await dbWrite.user.findUnique(userFindArgs));
 
-    if (!targetUser) throw new Error('User not found');
+    if (!targetUser) throw throwNotFoundError('User not found');
 
     AND.push({
       userId: {

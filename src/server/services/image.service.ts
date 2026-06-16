@@ -1295,7 +1295,7 @@ export const getAllImages = async (
   }
 
   if (username && !targetUserId) {
-    if (!prefetchedTargetUser) throw new Error('User not found');
+    if (!prefetchedTargetUser) throw throwNotFoundError('User not found');
     targetUserId = prefetchedTargetUser.id;
   }
 
@@ -2920,7 +2920,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const targetUser =
       (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
       (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
-    if (!targetUser) throw new Error('User not found');
+    if (!targetUser) throw throwNotFoundError('User not found');
     userId = targetUser.id;
 
     logToAxiom(
@@ -3774,7 +3774,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const targetUser =
       (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
       (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
-    if (!targetUser) throw new Error('User not found');
+    if (!targetUser) throw throwNotFoundError('User not found');
     userId = targetUser.id;
 
     logToAxiom(
