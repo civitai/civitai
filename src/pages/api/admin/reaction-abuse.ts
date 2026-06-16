@@ -9,8 +9,14 @@
  * excluded users stop counting toward reaction metrics/ranking (forward-only,
  * within ~5 min on the current day).
  *
+ * NOTE: lives under /api/admin (NOT /api/testing) on purpose — it is called by a
+ * scheduled agent in PRODUCTION, and `route-guards.middleware.ts` hard-blocks
+ * /api/testing/* in prod (`canAccess: () => !isProd` → 307 to /login before the
+ * token check ever runs). /api/admin is the home for WEBHOOK_TOKEN-secured ops
+ * endpoints that must run in prod.
+ *
  * Usage:
- *   POST /api/testing/reaction-abuse?token=$WEBHOOK_TOKEN
+ *   POST /api/admin/reaction-abuse?token=$WEBHOOK_TOKEN
  *   Content-Type: application/json
  *   Body: { "action": "<action>", ...params }
  *
