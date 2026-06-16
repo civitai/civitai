@@ -1,6 +1,8 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
+import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
@@ -1897,6 +1899,118 @@ export const blocksRouter = router({
         lifetimeShareCents: lifetimeMap.get(a.id)?.shareCents ?? 0,
         lifetimeCount: lifetimeMap.get(a.id)?.count ?? 0,
       }));
+    }),
+
+  /**
+   * Phase 3 (git-push self-service) — return the developer's clone URL +
+   * push credential for one of THEIR apps.
+   *
+   * Owner-gated on OauthClient.userId (the same v1 source of truth as
+   * getMyApps). Lazily provisions a scoped, restricted Forgejo identity for
+   * the caller the first time they ask (ensureForgejoIdentity), then grants
+   * that identity `write` on the app's own civitai-apps/<slug> repo
+   * (addCollaborator). A push parks a pending review request and can NEVER
+   * deploy without mod approval — the no-trust-on-push gate is unchanged.
+   *
+   * The repo only exists once the FIRST version has been ZIP-approved (approve
+   * pre-creates civitai-apps/<slug>); until then there's nothing to push to, so
+   * we return a `notYetAvailable` shape rather than provisioning a credential
+   * the dev can't use.
+   *
+   * `protectedProcedure` (not moderator): an app owner authoring their own app
+   * need not be a mod. Access is bounded by the app.userId owner check + the
+   * appBlocks flag, and the credential is write-on-their-own-repo-only.
+   */
+  getMyAppRepo: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      if (!ctx.features.appBlocks) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'App Blocks is not available to this account',
+        });
+      }
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: {
+          blockId: true,
+          status: true,
+          app: { select: { userId: true } },
+        },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      // Owner gate — OauthClient.userId is the v1 app-ownership source of truth.
+      // FORBIDDEN (authenticated but not permitted) rather than UNAUTHORIZED, to
+      // distinguish a logged-in non-owner from an anon caller; mirrors the
+      // grantScopes ceiling gate above.
+      if (block.app?.userId !== ctx.user!.id) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
+      }
+      // A banned/suspended account must not be issued (or re-issued) a live push
+      // credential. They still can't deploy (the mod gate holds), but we don't
+      // hand out a fresh Forgejo token. Full revoke-on-ban is a follow-up.
+      if (ctx.user!.bannedAt) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Account is not eligible for git access',
+        });
+      }
+
+      const slug = block.blockId;
+
+      // No Forgejo repo exists until the first version is ZIP-approved
+      // (approveRequest pre-creates civitai-apps/<slug>). Signal "not yet"
+      // instead of provisioning a credential against a missing repo.
+      if (block.status !== 'approved') {
+        return {
+          notYetAvailable: true as const,
+          slug,
+          firstVersionIsZip: true as const,
+          message:
+            'Your first version must be submitted as a ZIP and approved before git access is available. After that, git push to this repo to submit updates.',
+        };
+      }
+
+      const { ensureForgejoIdentity } = await import(
+        '~/server/services/blocks/dev-git-access.service'
+      );
+      const { addCollaborator } = await import('~/server/services/blocks/forgejo.service');
+
+      const { forgejoUsername, token } = await ensureForgejoIdentity(ctx.user!.id);
+      // Idempotent: grants write on this slug's repo (no-op if already a
+      // collaborator). The repo lives under civitai-apps/<slug>.
+      await addCollaborator({ slug, username: forgejoUsername, permission: 'write' });
+
+      // Browser-facing host (clone via Cloudflare → oauth2-proxy is bypassed by
+      // the embedded basic-auth credential, which Forgejo accepts for git).
+      const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const httpUrl = `https://${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+      const cloneUrl = `https://${encodeURIComponent(forgejoUsername)}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+
+      const instructions = [
+        `# Clone your app repo (credential is embedded in the URL):`,
+        `git clone ${cloneUrl}`,
+        `cd ${slug}`,
+        ``,
+        `# Make changes, then:`,
+        `git add -A`,
+        `git commit -m "describe your change"`,
+        `git push origin main`,
+        ``,
+        `# A push parks a pending review request. It is NOT deployed until a`,
+        `# Civitai moderator approves it.`,
+      ].join('\n');
+
+      return {
+        notYetAvailable: false as const,
+        slug,
+        httpUrl,
+        cloneUrl,
+        forgejoUsername,
+        instructions,
+        firstVersionIsZip: false as const,
+      };
     }),
 });
 

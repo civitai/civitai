@@ -1030,6 +1030,56 @@ async function fetchAndExtractBundleFiles(
   return extractBundleFilesFromBuffer(bundleBuffer);
 }
 
+/**
+ * Reconstruct a bundle ZIP Buffer from the live Forgejo repo at a given ref.
+ *
+ * Used by:
+ *   - `approveRequest` for a PUSH-ORIGINATED publish request (one the git-push
+ *     webhook parked with empty bundle pointers + a real forgejoCommitSha — the
+ *     ZIP was never uploaded, so the Forgejo repo at that sha IS the artifact);
+ *   - `backfillPublishRequest` to snapshot an existing live app's current HEAD.
+ *
+ * `ref` is any git ref the Forgejo tree endpoint resolves — a branch name OR a
+ * commit SHA. The push path passes the exact pushed sha so the reconstructed
+ * bytes match the reviewed commit, not a since-moved branch HEAD.
+ *
+ * The ZIP is built deterministically (`date: new Date(0)`, entries added in
+ * sorted path order) so the same repo state always produces the same bytes →
+ * a stable bundleSha256. Blobs are fetched with bounded concurrency (8 in
+ * flight) to avoid hammering Forgejo on large repos.
+ */
+export async function reconstructBundleFromForgejo(slug: string, ref: string): Promise<Buffer> {
+  const { listRepoTreeAtRef, getBlobContent } = await import('./forgejo.service');
+
+  // Snapshot the blob tree at the exact ref (commit sha or branch).
+  const tree = await listRepoTreeAtRef(slug, ref);
+  // Sort by path so the ZIP entry order — and thus the resulting bytes /
+  // bundleSha256 — is deterministic regardless of Forgejo's tree ordering.
+  const entries = Array.from(tree.entries())
+    .map(([path, blobSha]) => ({ path, blobSha }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+
+  const CONCURRENCY = 8;
+  const files: Array<{ path: string; content: Buffer }> = [];
+  for (let i = 0; i < entries.length; i += CONCURRENCY) {
+    const batch = entries.slice(i, i + CONCURRENCY);
+    const fetched = await Promise.all(
+      batch.map(async (e) => ({
+        path: e.path,
+        content: await getBlobContent(slug, e.blobSha),
+      }))
+    );
+    files.push(...fetched);
+  }
+
+  // Build an in-memory ZIP — same shape a developer would have uploaded.
+  // `date: new Date(0)` zeroes per-entry timestamps so re-runs with identical
+  // repo state produce an identical bundleSha256 (mirrors backfill).
+  const zip = new JSZip();
+  for (const f of files) zip.file(f.path, f.content, { date: new Date(0) });
+  return Buffer.from(await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+}
+
 export type ListPendingRequestsOptions = {
   limit?: number;
   cursor?: string;
@@ -1231,6 +1281,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       version: true,
       manifest: true,
       bundleKey: true,
+      // Push-originated requests (git-push webhook) carry an empty bundleKey
+      // and this real sha — approve reconstructs the bundle from Forgejo at it.
+      forgejoCommitSha: true,
       submittedByUserId: true,
       appBlockId: true,
     },
@@ -1513,12 +1566,31 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     });
   }
 
-  // (4) Fetch + extract bundle. Single MinIO GET; the per-file extract
-  // happens in-memory. Platform-owned build files (Dockerfile/nginx.conf) are
-  // dropped from the commit — the pipeline injects its own recipe + ignores
-  // tenant copies, so committing them to the build-source repo is inert +
-  // misleading (audit A8/BUILD-1 Phase 2).
-  const bundleBuffer = await fetchBundleBuffer(request.bundleKey);
+  // (4) Obtain the bundle bytes. Two origins:
+  //   - ZIP path (submitVersion): the dev uploaded a ZIP → we have a real
+  //     bundleKey → GET it from MinIO (single GET; per-file extract in-memory).
+  //   - PUSH path (git-push webhook): a direct push to civitai-apps/<slug> was
+  //     parked as a `pending` review request with EMPTY bundle pointers
+  //     (bundleKey='') and the pushed forgejoCommitSha — the ZIP was never
+  //     uploaded, so the Forgejo repo at that sha IS the artifact. Reconstruct
+  //     the bundle from the repo at the exact reviewed sha so everything
+  //     downstream (extract / platform-owned filter / manifest rewrite /
+  //     screenshots / commit / sha stamp / build trigger) is byte-identical to
+  //     the ZIP path. (See git-push.ts recordPendingFromPush.)
+  // Platform-owned build files (Dockerfile/nginx.conf) are dropped from the
+  // commit — the pipeline injects its own recipe + ignores tenant copies, so
+  // committing them to the build-source repo is inert + misleading (audit
+  // A8/BUILD-1 Phase 2).
+  let bundleBuffer: Buffer;
+  if (request.bundleKey) {
+    bundleBuffer = await fetchBundleBuffer(request.bundleKey);
+  } else if (request.forgejoCommitSha) {
+    bundleBuffer = await reconstructBundleFromForgejo(request.slug, request.forgejoCommitSha);
+  } else {
+    throw new Error(
+      `publish request ${request.id} has neither a bundle nor a forgejo commit to approve`
+    );
+  }
   const files = (await extractBundleFilesFromBuffer(bundleBuffer)).filter(
     (f) => !isPlatformOwnedPath(f.path)
   );
@@ -1752,7 +1824,7 @@ export async function backfillPublishRequest(
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
   ]);
-  const { getRepo, listRepoTree, getBlobContent } = await import('./forgejo.service');
+  const { getRepo } = await import('./forgejo.service');
 
   // Identify the live app row.
   const appBlock = await dbRead.appBlock.findFirst({
@@ -1770,38 +1842,23 @@ export async function backfillPublishRequest(
     throw new Error(`app_blocks row for slug=${params.slug} not found; nothing to backfill`);
   }
 
-  // Pull repo metadata to know the default branch + the current commit SHA
-  // we're snapshotting.
+  // Pull repo metadata to know the default branch we're snapshotting.
   const repo = await getRepo(params.slug);
   const defaultBranch = repo.default_branch ?? 'main';
 
-  // Recursively list blobs in the default branch, then download each blob's
-  // raw bytes in parallel (capped at 8 in flight to avoid hammering Forgejo).
-  const tree = await listRepoTree(params.slug, defaultBranch);
-  const entries = Array.from(tree.entries()).map(([path, blobSha]) => ({ path, blobSha }));
-
-  const CONCURRENCY = 8;
-  const files: Array<{ path: string; content: Buffer }> = [];
-  for (let i = 0; i < entries.length; i += CONCURRENCY) {
-    const batch = entries.slice(i, i + CONCURRENCY);
-    const fetched = await Promise.all(
-      batch.map(async (e) => ({
-        path: e.path,
-        content: await getBlobContent(params.slug, e.blobSha),
-      }))
-    );
-    files.push(...fetched);
-  }
-
-  // Build an in-memory ZIP — same shape a developer would have uploaded.
-  // Generate deterministic-ish so re-runs with identical repo state produce
-  // identical bundleSha256.
-  const zip = new JSZip();
-  for (const f of files) zip.file(f.path, f.content, { date: new Date(0) });
-  const bundleBuffer = Buffer.from(
-    await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
-  );
+  // Reconstruct the bundle from the live repo's default-branch HEAD — same
+  // deterministic ZIP build the push-approve path uses (sorted entries +
+  // date:new Date(0)) so re-runs with identical repo state produce an identical
+  // bundleSha256.
+  const bundleBuffer = await reconstructBundleFromForgejo(params.slug, defaultBranch);
   const bundleSha256 = createHash('sha256').update(bundleBuffer).digest('hex');
+
+  // Extract once up-front for consistent file_summary semantics AND the
+  // fileCount returned on both the idempotent + fresh paths.
+  const { files: fileMetas, manifest } = await extractBundleMetadata(bundleBuffer);
+  if (!manifest || typeof manifest !== 'object') {
+    throw new Error(`backfilled bundle for ${params.slug} has no valid block.manifest.json`);
+  }
 
   // Idempotency: if a publish_request for this exact (slug, sha) already
   // exists, return it instead of inserting a duplicate.
@@ -1815,15 +1872,9 @@ export async function backfillPublishRequest(
       appBlockId: existing.appBlockId ?? appBlock.id,
       bundleSha256,
       bundleSizeBytes: Number(existing.bundleSizeBytes),
-      fileCount: files.length,
+      fileCount: fileMetas.length,
       forgejoCommitSha: appBlock.currentVersionSha ?? '',
     };
-  }
-
-  // Reuse the submit path's extract for consistent file_summary semantics.
-  const { files: fileMetas, manifest } = await extractBundleMetadata(bundleBuffer);
-  if (!manifest || typeof manifest !== 'object') {
-    throw new Error(`backfilled bundle for ${params.slug} has no valid block.manifest.json`);
   }
 
   // Upload to MinIO. Reuses the storeBundle helper via dynamic import.
@@ -1889,7 +1940,7 @@ export async function backfillPublishRequest(
     appBlockId: appBlock.id,
     bundleSha256,
     bundleSizeBytes: bundleBuffer.length,
-    fileCount: files.length,
+    fileCount: fileMetas.length,
     forgejoCommitSha: appBlock.currentVersionSha ?? '',
   };
 }
