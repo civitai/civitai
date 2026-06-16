@@ -91,13 +91,18 @@
  * KNOWN BEHAVIOR (mint timeout)
  * -----------------------------
  * `mint()` is wrapped in `Promise.race` against a configurable timeout
- * (`ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS`, default 10s; 0 disables).
+ * (`ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS`, default 5s; 0 disables).
  * Without a timeout, a Postgres failover or PgBouncer reserve_pool
  * exhaustion could leave the `inflight` Map slot held by a promise that
  * never settles. Subsequent same-user callers would attach to that dead
  * promise forever. The timeout rejects the awaiting promise, which fires
  * the `.finally()` that clears the inflight slot so the next caller gets
  * a fresh attempt.
+ *
+ * Default 5_000ms — well below the 10s kubelet liveness probe timeout
+ * (a stalled mint that hits the timeout simultaneously with a probe
+ * would cascade into pod-eviction), well above ApiKey INSERT p99. Set
+ * to 0 to disable the timeout entirely (debug knob; not for prod).
  */
 
 import { LRUCache } from 'lru-cache';
@@ -132,10 +137,13 @@ const TTL_MS = readNonNegativeInt('ORCHESTRATOR_TOKEN_CACHE_TTL_MS', DEFAULT_TTL
 // Hard upper bound on how long we will await a `mint()` call before
 // rejecting and freeing the inflight slot. `0` disables the timeout
 // entirely (mint is awaited indefinitely — pre-this-PR behaviour). The
-// default (10s) is well above any healthy ApiKey INSERT P99 but well
-// below the kubelet liveness probe timeout, so a stalled mint won't
-// wedge the inflight slot past one health-check window.
-const DEFAULT_MINT_TIMEOUT_MS = 10_000;
+// default (5s) is well above any healthy ApiKey INSERT P99 but well
+// below the 10s kubelet liveness probe timeout — a stalled mint that
+// hits the timeout simultaneously with a probe would otherwise cascade
+// into pod eviction (the round-4 audit caught that 10s == probe timeout
+// risked synchronization). 5s leaves a 5s probe headroom while staying
+// well above any healthy mint duration.
+const DEFAULT_MINT_TIMEOUT_MS = 5_000;
 const MINT_TIMEOUT_MS = readNonNegativeInt(
   'ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS',
   DEFAULT_MINT_TIMEOUT_MS
@@ -261,5 +269,26 @@ export const __testing = {
   },
   isDisabled() {
     return CACHE_DISABLED;
+  },
+  // PR #2333 round-4: explicit cleanup for HMR safety in dev + test
+  // isolation. `LRUCache` with `ttl > 0` + `ttlAutopurge: true` registers
+  // a per-entry `setTimeout` on every `set()` to drive the autopurge.
+  // Those timers anchor the cache instance reachable for up to TTL_MS
+  // after the last write — under Next.js dev HMR, each edit to this
+  // module leaves the OLD `tokenCache` reachable until those timers
+  // drain, and under vitest's `vi.resetModules()` flow, each dynamic
+  // import leaves the prior module instance similarly anchored.
+  //
+  // `tokenCache.clear()` drops all entries (and cancels their pending
+  // ttlAutopurge `setTimeout`s — that is the load-bearing call here),
+  // and we also clear the `inflight` Map so awaiting promises don't
+  // keep the module reachable past intent.
+  //
+  // Production callers must NOT invoke this — it is purely a hook for
+  // HMR cleanup and test isolation. `__testing.clear()` is the public
+  // test-suite reset; `destroy()` is the "module is going away" hook.
+  destroy() {
+    tokenCache?.clear();
+    inflight.clear();
   },
 };

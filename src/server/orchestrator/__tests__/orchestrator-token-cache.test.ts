@@ -83,6 +83,32 @@ describe('orchestrator-token-cache', () => {
     expect(new Set([a, b, c]).size).toBe(3);
   });
 
+  it('__testing.destroy() drops cache + inflight and leaves the module re-usable', async () => {
+    // Round-4 audit fix: `destroy()` is the HMR-safety / test-isolation
+    // hook that drops every entry in the LRUCache (and cancels the
+    // per-entry ttlAutopurge setTimeouts that anchor the cache instance
+    // reachable past intent). Verify it (a) clears cache size, (b)
+    // clears inflight, and (c) leaves the module usable for subsequent
+    // calls (it is NOT a destructive teardown — production code must
+    // never call this, but if it did the module must not be broken).
+    const mintA = vi.fn(async () => 'token-a');
+    await getOrMintCachedToken(1, mintA);
+    expect(__testing.size()).toEqual({ cache: 1, inflight: 0 });
+
+    __testing.destroy();
+    expect(__testing.size()).toEqual({ cache: 0, inflight: 0 });
+
+    // Module remains usable after destroy: a fresh call mints + caches
+    // again. This is the property that makes destroy() safe to call from
+    // both HMR-cleanup and the afterEach hook in the env-driven block
+    // below — neither path wants a one-shot teardown.
+    const mintB = vi.fn(async () => 'token-b');
+    const result = await getOrMintCachedToken(2, mintB);
+    expect(result).toBe('token-b');
+    expect(mintB).toHaveBeenCalledTimes(1);
+    expect(__testing.size()).toEqual({ cache: 1, inflight: 0 });
+  });
+
   it('clears the in-flight slot on rejection so future calls can retry', async () => {
     let attempt = 0;
     const mint = vi.fn(async () => {
@@ -107,7 +133,18 @@ describe('orchestrator-token-cache', () => {
 describe('orchestrator-token-cache — env-driven module init', () => {
   const ORIGINAL_ENV = { ...process.env };
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Drop the prior module instance's LRUCache + inflight before the
+    // next dynamic-import test. Without this, each `vi.resetModules()`
+    // leaves a ttlAutopurge-timer-anchored LRUCache reachable until its
+    // 50ms TTL drains — the round-4 audit measured ~6 leaked instances
+    // across this describe block.
+    try {
+      const mod = await import('../orchestrator-token-cache');
+      mod.__testing.destroy();
+    } catch {
+      /* ignore — the module may not have loaded for this test */
+    }
     // Restore env so subsequent tests/suites see a clean slate.
     process.env = { ...ORIGINAL_ENV };
     vi.resetModules();
@@ -201,13 +238,13 @@ describe('orchestrator-token-cache — env-driven module init', () => {
 
   it('awaits a slow mint with no timeout when ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS=0', async () => {
     // 0 = timeout disabled (pre-this-PR behaviour). Even a mint slower
-    // than the default 10s timeout must be awaited to completion.
+    // than the default 5s timeout must be awaited to completion.
     process.env.ORCHESTRATOR_TOKEN_CACHE_MINT_TIMEOUT_MS = '0';
     vi.resetModules();
     const mod = await import('../orchestrator-token-cache');
 
     // Mint takes 100ms — far longer than the 50ms used in the timeout
-    // tests above. If the default-10s timeout were still active this
+    // tests above. If the default-5s timeout were still active this
     // would still pass; the load-bearing assertion is that 0 truly
     // disables the wrapping (no Promise.race overhead, no setTimeout).
     const mintSlow = vi.fn(async () => {
