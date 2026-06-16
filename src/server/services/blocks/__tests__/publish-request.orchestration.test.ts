@@ -82,6 +82,11 @@ const {
       // the build trigger itself + pends/marks the commit status.
       setCommitStatus: vi.fn(),
       reviewRepoUrl: vi.fn((slug: string) => `https://forgejo.example/civitai-apps-review/${slug}`),
+      // repoCommitUrl — used by the list payloads' pushCommitUrl (links a
+      // push-originated review to the canonical repo at the pushed sha).
+      repoCommitUrl: vi.fn(
+        (slug: string, ref: string) => `https://forgejo.example/civitai-apps/${slug}/src/commit/${ref}`
+      ),
     },
     // apps-pipeline.service.triggerBuild — approveRequest now triggers the
     // Tekton build directly (the git-push webhook no longer does). Mocked so

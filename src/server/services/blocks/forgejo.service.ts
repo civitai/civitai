@@ -36,6 +36,18 @@ export function reviewRepoUrl(slug: string): string {
   return `${u}/${FORGEJO_REVIEW_ORG}/${slug}`;
 }
 
+/**
+ * Browser deep-link to the CANONICAL app repo at an exact commit. Used by the
+ * mod-review UI for PUSH-ORIGINATED requests: those have no uploaded bundle and
+ * no civitai-apps-review snapshot — the canonical `civitai-apps/<slug>` repo at
+ * the pushed sha IS the reviewable artifact. Uses FORGEJO_PUBLIC_URL
+ * (browser-facing host), mirroring reviewRepoUrl.
+ */
+export function repoCommitUrl(slug: string, ref: string): string {
+  const u = env.FORGEJO_PUBLIC_URL.replace(/\/$/, '');
+  return `${u}/${FORGEJO_ORG}/${slug}/src/commit/${ref}`;
+}
+
 function getBaseUrl(): string {
   const u = env.FORGEJO_BASE_URL;
   if (!u) throw new Error('FORGEJO_BASE_URL not configured');
