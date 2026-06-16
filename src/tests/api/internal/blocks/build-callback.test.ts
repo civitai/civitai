@@ -25,6 +25,7 @@ const {
   mockWaitApply,
   mockSetCommitStatus,
   mockAppBlockUpdate,
+  mockMarkDeploy,
 } = vi.hoisted(() => {
   // nxResult: true = newly set (first time), false = key already present (replay).
   const mockRedis = { nxResult: true, nxThrows: false };
@@ -47,6 +48,7 @@ const {
     mockWaitApply: vi.fn<(...a: any[]) => Promise<string>>(async () => 'succeeded'),
     mockSetCommitStatus: vi.fn(async () => undefined),
     mockAppBlockUpdate: vi.fn(async () => undefined),
+    mockMarkDeploy: vi.fn<(...a: any[]) => Promise<void>>(async () => undefined),
   };
 });
 
@@ -83,6 +85,11 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   waitForApplyJob: mockWaitApply,
 }));
 vi.mock('~/server/services/blocks/forgejo.service', () => ({ setCommitStatus: mockSetCommitStatus }));
+// Phase 2: build-callback marks the per-request deploy lifecycle. Mock the
+// helper so we can assert the transitions (the real one writes to the DB).
+vi.mock('~/server/services/blocks/publish-request.service', () => ({
+  markRequestDeployState: mockMarkDeploy,
+}));
 
 import {
   checkCallbackTimestamp,
@@ -361,6 +368,8 @@ describe('build-callback handler — flag gate + replay guard', () => {
     expect(res._body).toMatchObject({ applied: false });
     expect(mockTriggerApply).not.toHaveBeenCalled();
     expect(mockSetNx).not.toHaveBeenCalled(); // dedup slot untouched by a failure callback
+    // Phase 2: a build failure marks the request 'failed' so the dev sees it.
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', expect.stringMatching(/Build/));
   });
 
   it('clears the replay slot on a DEFINITIVE apply failure so a same-sha retry is not blocked', async () => {
@@ -369,6 +378,9 @@ describe('build-callback handler — flag gate + replay guard', () => {
     await invoke(signedReq(validSuccessBody()), res);
     await flush(); // let the fire-and-forget watcher run
     expect(mockRedisDel).toHaveBeenCalledWith(expect.stringContaining(`apply:${APB}:${SHA}`));
+    // Phase 2: 'deploying' on apply trigger, then 'failed' from the watcher.
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'deploying');
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Deploy failed');
   });
 
   it('does NOT clear the slot on apply timeout (the Job may still be running)', async () => {
@@ -377,6 +389,8 @@ describe('build-callback handler — flag gate + replay guard', () => {
     await invoke(signedReq(validSuccessBody()), res);
     await flush();
     expect(mockRedisDel).not.toHaveBeenCalled();
+    // Phase 2: a timeout is surfaced as 'failed' with the timeout detail.
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Deploy timed out');
   });
 
   it('records the deploy and keeps the slot on apply success', async () => {
@@ -386,6 +400,9 @@ describe('build-callback handler — flag gate + replay guard', () => {
     await flush();
     expect(mockAppBlockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: APB } }));
     expect(mockRedisDel).not.toHaveBeenCalled();
+    // Phase 2: the request transitions 'deploying' (apply trigger) → 'live' (watcher).
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'deploying');
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'live');
   });
 
   it('clears the replay slot when triggerApply itself throws — no watcher runs, so the catch must free it', async () => {
@@ -396,6 +413,9 @@ describe('build-callback handler — flag gate + replay guard', () => {
     // mark was set (SET NX) then freed in the catch so a same-sha retry isn't wedged
     expect(mockSetNx).toHaveBeenCalledTimes(1);
     expect(mockRedisDel).toHaveBeenCalledWith(expect.stringContaining(`apply:${APB}:${SHA}`));
+    // Phase 2: 'deploying' is written before triggerApply, then 'failed' when it throws.
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'deploying');
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Deploy could not start');
   });
 
   // ---- F5: callback `ts` replay-freshness through the handler ----------------

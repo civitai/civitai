@@ -96,6 +96,7 @@ const imagesEndpointSchema = z.object({
   withMeta: booleanString().default(false),
   requiringMeta: booleanString().optional(),
   flatMeta: booleanString().optional(),
+  withTags: booleanString().default(false),
 });
 
 // Reuse the shared images-search metrics bundle (idempotent registration on the
@@ -134,7 +135,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     const session = await getServerAuthSession({ req, res });
 
     // Handle pagination
-    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, ...data } =
+    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, withTags, ...data } =
       reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
@@ -221,7 +222,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
           cursor,
           // Only fetch tagIds and profilePictures here; metaSelect is fetched
           // on-demand in the controller below to avoid query filtering.
-          include: ['tagIds', 'profilePictures'],
+          include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
           periodMode: 'published',
           headers: { src: '/api/v1/images' },
           browsingLevel: _browsingLevel,
@@ -239,7 +240,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
           limit,
           skip,
           cursor,
-          include: ['tagIds', 'profilePictures'],
+          include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
           periodMode: 'published',
           browsingLevel: _browsingLevel,
           withMeta: false,
@@ -257,7 +258,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
           limit,
           skip,
           cursor,
-          include: ['tagIds', 'profilePictures'],
+          include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
           periodMode: 'published',
           browsingLevel: _browsingLevel,
           withMeta: false,
@@ -317,6 +318,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
           username: image.user.username,
           baseModel: image.baseModel,
           modelVersionIds: image.modelVersionIds,
+          tags: withTags ? (image.tags?.map((t) => ({ id: t.id, name: t.name })) ?? []) : undefined,
         };
       }),
       metadata,

@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 import type { UserContentSettings } from '~/server/schema/user.schema';
-import type { CheckTosUpdateResult } from '~/server/services/content.service';
+import type { TosMeta } from '~/server/services/content.service';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
@@ -12,9 +12,10 @@ import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
 type AppProviderProps = {
   children: React.ReactNode;
   settings: UserContentSettings;
-  // SSR-computed `content.checkTosUpdate` result (logged-in only). Seeds the
-  // query so `useToSUpdateModal` never fires it on bootstrap.
-  tosUpdate?: CheckTosUpdateResult;
+  // Static per-domain ToS metadata (lastmod + body hash + settings field keys).
+  // Exposed via context; `useToSUpdateModal` compares it against the seeded
+  // `user.getSettings` to decide whether to show the ToS modal.
+  tosMeta?: TosMeta;
   // SSR-computed `announcement.getAnnouncements` result (anon + authed). Carried
   // down to `useGetAnnouncements`, which seeds the query under the client's
   // `useDomainColor()` key — this provider sits above FeatureFlagsProvider so it
@@ -32,6 +33,12 @@ type AppProviderProps = {
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
+  // Whether the request is from a logged-in user (`!!session || hasAuthCookie`,
+  // computed in _app). AppProvider sits ABOVE SessionProvider so it can't use
+  // `useSession()` — this prop is its only auth signal. Used to gate the ambient
+  // `user.getSettings` query (a protectedProcedure) so logged-out users don't fire
+  // a guaranteed-401 fetch; the SSR `initialData` still seeds the cache for them.
+  isAuthed: boolean;
 };
 
 type AppContext = {
@@ -45,6 +52,7 @@ type AppContext = {
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
   announcements?: AnnouncementsSeed;
+  tosMeta?: TosMeta;
 };
 const Context = createContext<AppContext | null>(null);
 export function useAppContext() {
@@ -65,32 +73,10 @@ export function useServerDomains(): Record<ColorDomain, string> {
     red: serverDomains.red?.primary ?? 'civitai.red',
   };
 }
-// Next pageProps stringify Dates; a live superjson tRPC response keeps them as
-// Date objects. Re-hydrate the Date-typed fields of the checkTosUpdate snapshot
-// so the SSR seed matches a live fetch (the modal hook calls `.getTime()`).
-const toDate = (v: unknown): Date | undefined =>
-  v == null ? undefined : v instanceof Date ? v : new Date(v as string | number);
-
-function reviveTosUpdate(tosUpdate?: CheckTosUpdateResult): CheckTosUpdateResult | undefined {
-  if (!tosUpdate) return undefined;
-  // `hasUpdate` is `true` (boolean) on the never-seen path, otherwise the
-  // `lastmod` Date when an update exists. Preserve booleans, revive date strings.
-  const hasUpdate =
-    typeof tosUpdate.hasUpdate === 'boolean' || tosUpdate.hasUpdate == null
-      ? tosUpdate.hasUpdate
-      : toDate(tosUpdate.hasUpdate);
-  return {
-    ...tosUpdate,
-    hasUpdate,
-    lastmod: toDate(tosUpdate.lastmod),
-    userLastSeen: toDate(tosUpdate.userLastSeen),
-  };
-}
-
 export function AppProvider({
   children,
   settings,
-  tosUpdate,
+  tosMeta,
   announcements,
   following,
   domain,
@@ -98,27 +84,13 @@ export function AppProvider({
   serverDomains,
   availableOAuthProviders,
   verifiedBot,
+  isAuthed,
   ...appContext
 }: AppProviderProps) {
-  trpc.user.getSettings.useQuery(undefined, { initialData: settings });
-  // Seed `content.checkTosUpdate` from the SSR snapshot so `useToSUpdateModal`
-  // (mounted deeper, in AppLayout) reads a primed cache and never fires the
-  // per-bootstrap fetch. ToS lastmod only changes on a content deploy, so this
-  // snapshot is exactly as fresh as a live fetch. `staleTime: Infinity` keeps
-  // the seeded observer from refetching; the accept flow's `setData` still
-  // patches `hasUpdate=false` regardless of staleTime.
-  //
-  // The SSR value travels via Next pageProps (plain JSON), which stringifies
-  // Dates — but a live tRPC fetch returns real Date objects (superjson) and the
-  // modal hook calls `.getTime()` on `lastmod`. Revive the Date fields so the
-  // seed is shape-identical to a live response.
-  const tosUpdateInitial = useMemo(() => reviveTosUpdate(tosUpdate), [tosUpdate]);
-  trpc.content.checkTosUpdate.useQuery(undefined, {
-    initialData: tosUpdateInitial,
-    enabled: !!tosUpdateInitial,
-    staleTime: Infinity,
-    gcTime: Infinity,
-  });
+  // Gate on `isAuthed` — `user.getSettings` is a protectedProcedure, so firing it
+  // for a logged-out user is a guaranteed 401. `initialData` still seeds the cache
+  // for everyone; only the network fetch is suppressed when not logged in.
+  trpc.user.getSettings.useQuery(undefined, { initialData: settings, enabled: isAuthed });
   // Seed `user.getFollowingUsers` (the followed-userId list) from the SSR
   // snapshot so the ambient follow/notify buttons read a primed cache and never
   // fire it on bootstrap. The list only changes via the user's own follow/
@@ -147,6 +119,9 @@ export function AppProvider({
     availableOAuthProviders,
     verifiedBot,
     announcements: reviveAnnouncementsSeed(announcements),
+    // All-string payload (current hash + baseline + field keys) — survives the
+    // pageProps JSON round-trip as-is, no revival needed.
+    tosMeta,
   }));
 
   return <Context.Provider value={state}>{children}</Context.Provider>;

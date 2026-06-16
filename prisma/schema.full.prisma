@@ -552,6 +552,7 @@ model User {
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
   appUserScopeGrants         AppUserScopeGrant[]
+  appDevForgejoIdentity      AppDevForgejoIdentity?
 
   @@index([deletedAt])
 }
@@ -2308,6 +2309,9 @@ model AppBlockPublishRequest {
   rejectionReason       String?   @map("rejection_reason")
   approvalNotes         String?   @map("approval_notes")
   forgejoCommitSha      String?   @map("forgejo_commit_sha")                                // populated on approve after Forgejo commit succeeds
+  deployState           String?   @map("deploy_state")                                      // Phase 2 build/deploy lifecycle (approved requests): building|deploying|live|failed
+  deployDetail          String?   @map("deploy_detail")                                      // human-readable detail, primarily the failure reason
+  deployUpdatedAt       DateTime? @map("deploy_updated_at") @db.Timestamptz(6)              // last deploy_state transition
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -2583,6 +2587,29 @@ model AppUserScopeGrant {
 
   @@unique([userId, appBlockId], map: "app_user_scope_grants_user_app_uniq")
   @@map("app_user_scope_grants")
+}
+
+/// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
+/// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
+/// first time a developer requests git access to one of their apps.
+///
+/// The Forgejo user is `restricted:true` and granted `write` ONLY on its own
+/// civitai-apps/<slug> repo(s), so a push parks a pending review request but can
+/// NEVER deploy without mod approval (the no-trust-on-push gate is unchanged).
+///
+/// `forgejo_token_encrypted` holds the user's own Forgejo PAT (sha1, scope
+/// `write:repository`), AES-256-GCM-encrypted at rest keyed on NEXTAUTH_SECRET.
+/// It is the SOURCE OF TRUTH for the token: Forgejo can't recover a user's
+/// password, so the token is minted once at provision and re-read thereafter,
+/// never re-minted. A GDPR delete of the User cascades this row away.
+model AppDevForgejoIdentity {
+  userId                Int      @id @map("user_id")
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  forgejoUsername       String   @map("forgejo_username")
+  forgejoTokenEncrypted String   @map("forgejo_token_encrypted")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("app_dev_forgejo_identity")
 }
 
 model OauthConsent {
@@ -4104,6 +4131,8 @@ model RedeemableCode {
   metadata      Json?
   priceId       String?
   price         Price?             @relation(fields: [priceId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 enum ToolType {

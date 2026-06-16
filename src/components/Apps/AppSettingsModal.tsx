@@ -4,6 +4,7 @@ import {
   Chip,
   Divider,
   Group,
+  Loader,
   Modal,
   NumberInput,
   ScrollArea,
@@ -15,7 +16,7 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
-import { IconCheck } from '@tabler/icons-react';
+import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { baseModels as ALL_BASE_MODELS } from '~/shared/constants/base-model.constants';
@@ -29,6 +30,7 @@ import type {
   ManifestSettingField,
 } from '~/server/schema/blocks/manifest-settings.meta.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
+import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -109,10 +111,8 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
   // authenticated `getInstallConfig` procedure instead, keyed on appBlockId.
   // The "Manage" path (/apps/installed) passes the FULL manifest, so its
   // `manifest.settings` is already populated; the fetched value matches it.
-  const { data: installConfig } = trpc.blocks.getInstallConfig.useQuery(
-    { appBlockId: block.id },
-    { staleTime: 60_000 }
-  );
+  const { data: installConfig, isLoading: installConfigLoading } =
+    trpc.blocks.getInstallConfig.useQuery({ appBlockId: block.id }, { staleTime: 60_000 });
 
   // Manifest-driven settings (W3 Phase 4). Fields without an explicit
   // `scope:` declaration are treated as 'publisher' for back-compat with
@@ -130,6 +130,22 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
     [settingsSource]
   );
   const declaredScopes = installConfig?.scopes ?? manifest.scopes ?? [];
+  // On the install path `block.manifest` is the public allowlist (scopes
+  // stripped), so the scope disclosure depends on getInstallConfig. The Manage
+  // path carries the full manifest, so `manifest.scopes` is defined there and
+  // neither of these is ever set.
+  //
+  // - `scopesPending`: still loading → show a loader, never an all-clear.
+  // - `scopesUnavailable`: getInstallConfig did NOT resolve to data (error, or
+  //   any non-success state) → declaredScopes falls back to [], which would
+  //   render the "doesn't request any permissions" copy and mislead the user
+  //   into authorizing UNDISCLOSED scopes. Render an explicit error instead and
+  //   block Save so install never proceeds without a real disclosure. Keyed on
+  //   "not resolved" (`!installConfig`) rather than `isError` so any non-success
+  //   outcome blocks the all-clear, not just an explicit error.
+  const scopesPending = manifest.scopes === undefined && installConfigLoading;
+  const scopesUnavailable =
+    manifest.scopes === undefined && !installConfigLoading && !installConfig;
 
   // Initialise the form from existing subscriptions when present. Settings
   // are read from whichever scope has them set — they're meant to be
@@ -285,6 +301,33 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
           </Text>
         )}
 
+        <Divider label="This app can" labelPosition="left" />
+        {scopesPending ? (
+          <Group gap="xs">
+            <Loader size="xs" />
+            <Text size="xs" c="dimmed">
+              Loading permissions…
+            </Text>
+          </Group>
+        ) : scopesUnavailable ? (
+          <Group gap="xs" wrap="nowrap" align="flex-start" role="alert">
+            <IconAlertTriangle
+              size={16}
+              color="var(--mantine-color-red-6)"
+              style={{ flexShrink: 0 }}
+            />
+            <Text size="xs" c="red">
+              Couldn&apos;t load this app&apos;s permissions. Close and try again before installing
+              — don&apos;t install without reviewing what it can access.
+            </Text>
+          </Group>
+        ) : (
+          <BlockScopeList
+            scopes={declaredScopes}
+            emptyLabel="This app doesn't request any permissions on your account."
+          />
+        )}
+
         <Divider label="Where to show this" labelPosition="left" />
 
         <Stack gap="xs">
@@ -407,6 +450,7 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
             <Button
               leftSection={<IconCheck size={16} />}
               loading={upsertMutation.isPending || deleteMutation.isPending}
+              disabled={scopesUnavailable}
               onClick={handleSave}
             >
               Save

@@ -37,7 +37,7 @@ export const createAnimaInput = defineHandler<AnimaCtx, [ImageGenStepTemplate]>(
     {
       $type: 'imageGen',
       input: removeEmpty({
-        engine: 'sdcpp',
+        engine: 'comfy',
         ecosystem: 'anima',
         operation: 'createImage',
         prompt: data.prompt,

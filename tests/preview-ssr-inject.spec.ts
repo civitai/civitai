@@ -20,9 +20,10 @@ import { storageStatePath } from './preview-fixtures';
  *   1. `user.getFeatureFlags` is SSR-seeded: its value is present in
  *      `__NEXT_DATA__.props.pageProps.userFeatureFlags`, AND the client never
  *      fires `user.getFeatureFlags` on bootstrap.
- *   2. `content.checkTosUpdate` is SSR-seeded: its value is present in
- *      `__NEXT_DATA__.props.pageProps.tosUpdate`, AND the client never fires
- *      `content.checkTosUpdate` on bootstrap.
+ *   2. The static ToS metadata is SSR-delivered: it's present in
+ *      `__NEXT_DATA__.props.pageProps.tosMeta`, AND the client never fires a
+ *      `content.checkTosUpdate` request (that route no longer exists — the modal
+ *      decision is computed client-side from `tosMeta` + the seeded getSettings).
  *
  * The tRPC client is non-batched (src/utils/trpc.ts httpLink), so the procedure
  * name is in the request path — a substring match on the URL is a reliable
@@ -103,8 +104,8 @@ async function fetchTrpcQueryJson(
   const out = await page.evaluate(
     async ({ proc, inp }) => {
       // tRPC's non-batched httpLink puts a query's input in the `?input=` query
-      // string as the superjson envelope `{"json": <value>}`. Procedures with no
-      // input (getFeatureFlags/checkTosUpdate) omit it entirely.
+      // string as the superjson envelope `{"json": <value>}`. No-input procedures
+      // (e.g. getFeatureFlags) omit it entirely.
       const qs =
         typeof inp === 'undefined'
           ? ''
@@ -152,7 +153,7 @@ function assertAnnouncementsSeedEqualsLive(seed: unknown, live: unknown, label: 
   }
 }
 
-test.describe('SSR-injected getFeatureFlags + checkTosUpdate (logged-in)', () => {
+test.describe('SSR-injected getFeatureFlags + ToS metadata (logged-in)', () => {
   test.use({ storageState: storageStatePath('mod') });
 
   test('both procedures are seeded into __NEXT_DATA__ and not fetched on bootstrap', async ({
@@ -170,14 +171,18 @@ test.describe('SSR-injected getFeatureFlags + checkTosUpdate (logged-in)', () =>
       'userFeatureFlags is an object'
     ).toBe(true);
 
-    // (b) SSR payload carries the checkTosUpdate snapshot (an object with the
-    //     resolver's return shape). hasUpdate may be true/false/a date — we only
-    //     assert the object is present.
-    const tosUpdate = await readPageProp(page, 'tosUpdate');
-    expect(tosUpdate.present, 'tosUpdate present in __NEXT_DATA__ pageProps').toBe(true);
+    // (b) SSR payload carries the static ToS metadata (lastmod + body hash +
+    //     per-domain field keys). The show/hide decision is computed client-side,
+    //     so we just assert the metadata object is present and carries a hash.
+    const tosMeta = await readPageProp(page, 'tosMeta');
+    expect(tosMeta.present, 'tosMeta present in __NEXT_DATA__ pageProps').toBe(true);
     expect(
-      typeof tosUpdate.value === 'object' && tosUpdate.value !== null,
-      'tosUpdate is an object'
+      typeof tosMeta.value === 'object' && tosMeta.value !== null,
+      'tosMeta is an object'
+    ).toBe(true);
+    expect(
+      typeof (tosMeta.value as { hash?: unknown }).hash === 'string',
+      'tosMeta carries a content hash'
     ).toBe(true);
 
     // (c) The client never issues either now-SSR-injected procedure on bootstrap.
@@ -198,30 +203,29 @@ test.describe('SSR-injected getFeatureFlags + checkTosUpdate (logged-in)', () =>
     ).toHaveLength(0);
   });
 
-  // The core correctness property: the SSR-injected seed must be byte-identical
-  // to what a live resolver fetch returns. With `staleTime: Infinity` a wrong
-  // seed would never self-correct (until reload), so a divergence here means
-  // users are served wrong feature flags / ToS state. Both paths call the same
-  // shared fn (computeUserFeatureFlagsOverlay / checkTosUpdate) so this should
-  // hold by construction — this asserts it for a real authed user end-to-end.
-  test('SSR seed byte-equals a live fetch for both procedures', async ({ page }) => {
+  // The core correctness property for getFeatureFlags: the SSR-injected seed must
+  // be byte-identical to a live resolver fetch (with `staleTime: Infinity` a wrong
+  // seed would never self-correct until reload). ToS metadata has NO resolver
+  // anymore — it's static deploy data delivered via pageProps — so we assert its
+  // static shape instead of a live comparison.
+  test('feature-flag SSR seed byte-equals a live fetch; tosMeta carries static fields', async ({
+    page,
+  }) => {
     await page.goto(AUTHED_LANDING, { waitUntil: 'domcontentloaded' });
 
     const seedFlags = await readPageProp(page, 'userFeatureFlags');
-    const seedTos = await readPageProp(page, 'tosUpdate');
+    const seedTos = await readPageProp(page, 'tosMeta');
     expect(seedFlags.present, 'userFeatureFlags seed present in __NEXT_DATA__').toBe(true);
-    expect(seedTos.present, 'tosUpdate seed present in __NEXT_DATA__').toBe(true);
+    expect(seedTos.present, 'tosMeta seed present in __NEXT_DATA__').toBe(true);
 
     const liveFlags = await fetchTrpcQueryJson(page, FEATURE_FLAGS_PROCEDURE);
-    const liveTos = await fetchTrpcQueryJson(page, TOS_PROCEDURE);
 
     // Normalize the wire-representation difference for "no value" fields: the SSR
     // seed crosses the wire via JSON.stringify (drops `undefined` keys) while the
     // live fetch uses superjson (encodes `undefined` as `null`). Both mean absent;
     // stripping null/undefined-valued keys compares the meaningful fields
     // apples-to-apples. `false`/0/'' are kept, so a real value-vs-absent
-    // divergence is still caught. (e.g. checkTosUpdate's unused `userLastSeen`:
-    // omitted in the seed, `null` in the live fetch — semantically identical.)
+    // divergence is still caught.
     const stripNullish = (o: unknown) =>
       o && typeof o === 'object'
         ? Object.fromEntries(
@@ -233,10 +237,20 @@ test.describe('SSR-injected getFeatureFlags + checkTosUpdate (logged-in)', () =>
       stripNullish(seedFlags.value),
       'user.getFeatureFlags SSR seed must byte-equal a live resolver fetch'
     ).toEqual(stripNullish(liveFlags));
-    expect(
-      stripNullish(seedTos.value),
-      'content.checkTosUpdate SSR seed must byte-equal a live resolver fetch'
-    ).toEqual(stripNullish(liveTos));
+
+    // tosMeta is static deploy data. Assert the fields the client relies on are
+    // present: current body hash + rollout baseline + the per-domain settings field
+    // keys it compares/writes.
+    const tos = seedTos.value as {
+      hash?: unknown;
+      baselineHash?: unknown;
+      fieldKey?: unknown;
+      hashFieldKey?: unknown;
+    };
+    expect(typeof tos.hash, 'tosMeta.hash is a string').toBe('string');
+    expect(typeof tos.baselineHash, 'tosMeta.baselineHash is a string').toBe('string');
+    expect(typeof tos.fieldKey, 'tosMeta.fieldKey is a string').toBe('string');
+    expect(typeof tos.hashFieldKey, 'tosMeta.hashFieldKey is a string').toBe('string');
   });
 });
 
@@ -404,11 +418,14 @@ test.describe('SSR-injected getFollowingUsers (logged-in)', () => {
  *      live (the toggle mutation's optimistic setData + invalidate refetch the
  *      seeded query — invalidate refetches regardless of staleTime).
  *  [ ] Opt-2 ToS-never-accepted: a user who has NEVER accepted the ToS still
- *      gets the ToS modal on first load (the `hasUpdate=true` when last-seen is
- *      undefined path), seeded from SSR rather than a client fetch.
+ *      gets the ToS modal on first load (no stored hash/date → `hasUpdate` true),
+ *      computed client-side from `tosMeta` + the SSR-seeded getSettings.
  *  [ ] Opt-2 ToS accept persists: accepting the ToS dismisses the modal (the
- *      accept flow's setData patches `hasUpdate=false`) and it stays dismissed
- *      on reload; the domain→field mapping is correct on green/red/blue hosts.
+ *      accept mutation patches the getSettings cache with the new hash, so the
+ *      hook recomputes `hasUpdate=false`) and it stays dismissed on reload; the
+ *      domain→field mapping is correct on green/red/blue hosts.
+ *  [ ] Opt-2 ToS no false-positive: a stray `lastmod` bump with NO body change
+ *      must NOT re-prompt a hash-backed user (the body hash is unchanged).
  *  [ ] Announcements render + dismiss: with an ACTIVE announcement, the banner
  *      renders from the SSR seed (now in the initial HTML) and dismissing it
  *      persists across navigation (the dismissed-ids zustand store is unchanged

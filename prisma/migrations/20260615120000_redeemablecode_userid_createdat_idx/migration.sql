@@ -1,0 +1,13 @@
+-- CreateIndex
+--
+-- The "list a user's redeemable codes" query
+--   SELECT ... FROM "RedeemableCode" WHERE "userId" = $1 ORDER BY "createdAt" DESC OFFSET $2
+-- runs ~194k times/week (the table's only index is the pkey on "code"), so each call
+-- does a parallel Seq Scan over the whole table. Verified on the prod-data dev clone:
+--   before: Parallel Seq Scan, ~48.5 ms, ~8266 shared buffers, 2 parallel workers
+--   after : Index Scan,        ~0.32 ms, ~205 shared buffers, no sort
+-- The composite (userId, createdAt DESC) also satisfies the ORDER BY, so the sort node
+-- is eliminated (vs a bare (userId) index which still needs a sort).
+--
+-- Add CONCURRENTLY when running against the production database to avoid locking the table.
+CREATE INDEX "RedeemableCode_userId_createdAt_idx" ON "RedeemableCode"("userId", "createdAt" DESC);

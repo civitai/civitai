@@ -3,6 +3,7 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { Announcements } from '~/components/Announcements/Announcements';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -105,6 +106,7 @@ export default function TrainWizard() {
         <NotFound />
       ) : (
         <Stack pb="xl">
+          <Announcements type="training" />
           <Group gap={8} wrap="nowrap">
             <Title order={2}>Train a LoRA</Title>
             <FeatureIntroductionHelpButton

@@ -409,16 +409,20 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         const metrics = await clickhouse?.$query<Metrics>(`
             SELECT entityId as "id",
                    sumIf(total, metricType = 'Collection') as "collectedCount",
-                   sumIf(total, metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) as "reactionCount",
-                   sumIf(total, metricType = 'Comment') as "commentCount",
-                   sumIf(total, metricType = 'ReactionLike') as "likeCount",
-                   sumIf(total, metricType = 'ReactionCry') as "cryCount",
-                   sumIf(total, metricType = 'Buzz') as "tippedAmountCount",
-                   sumIf(total, metricType = 'ReactionHeart') as "heartCount",
-                   sumIf(total, metricType = 'ReactionLaugh') as "laughCount"
-            FROM entityMetricDailyAgg
-            WHERE entityType = 'Image'
-              AND entityId IN (${batch.join(',')})
+                   sumIf(total, metricType in ('Like', 'Heart', 'Laugh', 'Cry')) as "reactionCount",
+                   sumIf(total, metricType = 'commentCount') as "commentCount",
+                   sumIf(total, metricType = 'Like') as "likeCount",
+                   sumIf(total, metricType = 'Cry') as "cryCount",
+                   sumIf(total, metricType = 'tippedAmount') as "tippedAmountCount",
+                   sumIf(total, metricType = 'Heart') as "heartCount",
+                   sumIf(total, metricType = 'Laugh') as "laughCount"
+            FROM (
+              SELECT entityId, metricType, day, argMax(total, refreshedAt) as total
+              FROM entityMetricDailyAgg_new
+              WHERE entityType = 'Image'
+                AND entityId IN (${batch.join(',')})
+              GROUP BY entityId, metricType, day
+            )
             GROUP BY id
           `);
 

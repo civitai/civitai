@@ -32,6 +32,7 @@ import {
   SEMVER_REGEX,
   SLUG_REGEX,
 } from '~/server/schema/blocks/publish-request.schema';
+import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -60,7 +61,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
     }
-    if (!session.user.isModerator) {
+    if (!isAppDeveloper(session.user)) {
       return { notFound: true };
     }
     return { props: {} };
@@ -298,9 +299,10 @@ export default function SubmitAppPage() {
             <Text c="dimmed" size="sm">
               Upload a ZIP of your app source. The slug, version, and name come
               from <Code>block.manifest.json</Code> — no separate fields to
-              fill in. A moderator reviews the manifest + change summary, then
-              approves or rejects with feedback. Approved submissions deploy
-              automatically.
+              fill in, and you don&apos;t set <Code>iframe.src</Code> (the
+              platform assigns it from your slug). A moderator reviews the
+              manifest + change summary, then approves or rejects with feedback.
+              Approved submissions deploy automatically.
             </Text>
           </Stack>
 
@@ -311,7 +313,7 @@ export default function SubmitAppPage() {
               <Stack gap="md">
                 <FileInput
                   label="App bundle (.zip)"
-                  description={`ZIP of your app source: Dockerfile + block.manifest.json + index.html + src/. Max ${Math.round(MAX_BUNDLE_SIZE_BYTES / (1024 * 1024))} MiB.`}
+                  description={`ZIP of your app source: block.manifest.json + index.html + src/. No Dockerfile/nginx needed — the platform builds + serves it. Max ${Math.round(MAX_BUNDLE_SIZE_BYTES / (1024 * 1024))} MiB.`}
                   placeholder="my-app.zip"
                   accept=".zip,application/zip,application/x-zip-compressed"
                   value={bundle}

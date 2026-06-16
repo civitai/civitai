@@ -3,6 +3,7 @@ import {
   createOauthClientSchema,
   updateOauthClientSchema,
   deriveAllowedOriginsFromRedirectUris,
+  redirectUriMatches,
 } from '../oauth-client.schema';
 
 describe('createOauthClientSchema', () => {
@@ -15,7 +16,11 @@ describe('createOauthClientSchema', () => {
   it('accepts valid scheme://host[:port] origins', () => {
     const result = createOauthClientSchema.safeParse({
       ...validBase,
-      allowedOrigins: ['https://example.com', 'http://localhost:5173', 'https://app.example.com:8443'],
+      allowedOrigins: [
+        'https://example.com',
+        'http://localhost:5173',
+        'https://app.example.com:8443',
+      ],
     });
     expect(result.success).toBe(true);
   });
@@ -114,14 +119,40 @@ describe('deriveAllowedOriginsFromRedirectUris', () => {
   });
 
   it('skips malformed URIs', () => {
-    const origins = deriveAllowedOriginsFromRedirectUris([
-      'not a url',
-      'https://example.com/cb',
-    ]);
+    const origins = deriveAllowedOriginsFromRedirectUris(['not a url', 'https://example.com/cb']);
     expect(origins).toEqual(['https://example.com']);
   });
 
   it('returns [] for an empty input', () => {
     expect(deriveAllowedOriginsFromRedirectUris([])).toEqual([]);
+  });
+});
+
+describe('redirectUriMatches', () => {
+  const registered = ['http://localhost:18188/civitai/callback', 'https://app.example.com/cb'];
+
+  it('matches an exact registered URI', () => {
+    expect(redirectUriMatches(registered, 'http://localhost:18188/civitai/callback')).toBe(true);
+    expect(redirectUriMatches(registered, 'https://app.example.com/cb')).toBe(true);
+  });
+
+  it('allows any port for a loopback redirect (RFC 8252)', () => {
+    expect(redirectUriMatches(registered, 'http://localhost:58264/civitai/callback')).toBe(true);
+    expect(redirectUriMatches(registered, 'http://localhost:9999/civitai/callback')).toBe(true);
+  });
+
+  it('still requires the same loopback path and scheme', () => {
+    expect(redirectUriMatches(registered, 'http://localhost:58264/other/path')).toBe(false);
+    expect(redirectUriMatches(registered, 'https://localhost:58264/civitai/callback')).toBe(false);
+  });
+
+  it('does NOT give port flexibility to non-loopback hosts', () => {
+    expect(redirectUriMatches(registered, 'https://app.example.com:8443/cb')).toBe(false);
+    expect(redirectUriMatches(registered, 'https://evil.example.com/cb')).toBe(false);
+  });
+
+  it('rejects malformed or empty redirect URIs', () => {
+    expect(redirectUriMatches(registered, 'not a url')).toBe(false);
+    expect(redirectUriMatches(registered, '')).toBe(false);
   });
 });

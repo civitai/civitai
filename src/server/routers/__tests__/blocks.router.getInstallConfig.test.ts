@@ -151,10 +151,11 @@ beforeEach(() => {
 });
 
 describe('blocks.getInstallConfig', () => {
-  it('returns settings meta + declared scopes for an approved app (and nothing else)', async () => {
+  it('returns settings meta + approved scopes for an approved app (and nothing else)', async () => {
     mockDbReadAppBlockFindUnique.mockResolvedValue({
       status: 'approved',
       manifest: APPROVED_MANIFEST,
+      approvedScopes: ['ai:write:budgeted', 'models:read:self'],
     });
     const caller = blocksRouter.createCaller(authedCtx(42) as never);
     const out = await caller.getInstallConfig({ appBlockId: 'ab_x' });
@@ -172,6 +173,40 @@ describe('blocks.getInstallConfig', () => {
     expect(out).not.toHaveProperty('trustTier');
     expect(out).not.toHaveProperty('iframe');
     expect(out).not.toHaveProperty('name');
+  });
+
+  // H3 disclosure correctness: the install modal shows these scopes at the
+  // authorization moment, so they MUST equal the mint ceiling (manifest ∩
+  // approvedScopes), NOT the raw self-declared manifest. A scope the mod did
+  // NOT approve will never be minted — disclosing it would over-state, and an
+  // internal/unapproved scope id the manifest declares must not leak. Mirrors
+  // grantScopes' ceiling + getAppDetail's approved-only projection.
+  it('discloses only manifest ∩ approvedScopes — drops mod-narrowed/unapproved scopes', async () => {
+    mockDbReadAppBlockFindUnique.mockResolvedValue({
+      status: 'approved',
+      manifest: {
+        name: 'overclaiming app',
+        scopes: ['ai:write:budgeted', 'models:read:self', 'social:tip:self', 'INTERNAL_secret'],
+      },
+      // The moderator narrowed approval to a subset; the other two are NOT granted.
+      approvedScopes: ['ai:write:budgeted', 'models:read:self'],
+    });
+    const caller = blocksRouter.createCaller(authedCtx(42) as never);
+    const out = await caller.getInstallConfig({ appBlockId: 'ab_overclaim' });
+    expect(out.scopes).toEqual(['ai:write:budgeted', 'models:read:self']);
+    expect(out.scopes).not.toContain('social:tip:self');
+    expect(out.scopes).not.toContain('INTERNAL_secret');
+  });
+
+  it('returns empty scopes when approvedScopes is empty even if the manifest declares some', async () => {
+    mockDbReadAppBlockFindUnique.mockResolvedValue({
+      status: 'approved',
+      manifest: { name: 'pending-approval', scopes: ['ai:write:budgeted'] },
+      approvedScopes: [],
+    });
+    const caller = blocksRouter.createCaller(authedCtx(42) as never);
+    const out = await caller.getInstallConfig({ appBlockId: 'ab_unapproved_scopes' });
+    expect(out.scopes).toEqual([]);
   });
 
   it('returns empty settings + empty scopes for an approved app with no declarations', async () => {

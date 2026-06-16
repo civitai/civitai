@@ -277,3 +277,95 @@ describe('commitFiles', () => {
     ).rejects.toThrow(/Forgejo 404/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 3 (git-push self-service) — per-user Forgejo identity provisioning.
+// ---------------------------------------------------------------------------
+
+describe('createForgejoUser', () => {
+  it('POSTs a restricted/private user via the admin API and returns the password (fresh create)', async () => {
+    const { createForgejoUser } = await import('../forgejo.service');
+    fm.enqueue({ id: 42, login: 'dev-7', username: 'dev-7' });
+
+    const res = await createForgejoUser({ username: 'dev-7', email: 'dev-7@apps.civitai.invalid' });
+    expect(res.created).toBe(true);
+    expect(res.user.id).toBe(42);
+    expect(typeof res.password).toBe('string');
+    expect((res.password as string).length).toBeGreaterThanOrEqual(24);
+
+    // Admin endpoint + admin token + restricted/private flags.
+    expect(fm.calls[0].url).toBe('https://forgejo.example/api/v1/admin/users');
+    expect((fm.calls[0].init?.headers as Record<string, string>)['Authorization']).toBe(
+      'token tok-test'
+    );
+    const body = JSON.parse(fm.calls[0].init!.body as string);
+    expect(body.username).toBe('dev-7');
+    expect(body.email).toBe('dev-7@apps.civitai.invalid');
+    expect(body.restricted).toBe(true);
+    expect(body.visibility).toBe('private');
+    expect(body.must_change_password).toBe(false);
+    expect(typeof body.password).toBe('string');
+  });
+
+  it('is idempotent on 422 (already exists) — falls back to getForgejoUser, returns null password', async () => {
+    const { createForgejoUser } = await import('../forgejo.service');
+    fm.enqueue({ message: 'user already exists' }, 422); // POST /admin/users
+    fm.enqueue({ id: 9, username: 'dev-7' }); // GET /users/dev-7
+
+    const res = await createForgejoUser({ username: 'dev-7', email: 'dev-7@apps.civitai.invalid' });
+    expect(res.created).toBe(false);
+    expect(res.password).toBeNull();
+    expect(res.user.id).toBe(9);
+
+    // Second call is the GET fallback.
+    expect(fm.calls[1].url).toBe('https://forgejo.example/api/v1/users/dev-7');
+  });
+});
+
+describe('getForgejoUser', () => {
+  it('GETs the user by username with admin auth', async () => {
+    const { getForgejoUser } = await import('../forgejo.service');
+    fm.enqueue({ id: 5, username: 'dev-12' });
+
+    const user = await getForgejoUser('dev-12');
+    expect(user.id).toBe(5);
+    expect(fm.calls[0].url).toBe('https://forgejo.example/api/v1/users/dev-12');
+    expect((fm.calls[0].init?.headers as Record<string, string>)['Authorization']).toBe(
+      'token tok-test'
+    );
+  });
+});
+
+describe('mintForgejoUserToken', () => {
+  it('authenticates as the user via HTTP Basic (NOT the admin token) and returns the sha1', async () => {
+    const { mintForgejoUserToken } = await import('../forgejo.service');
+    fm.enqueue({ id: 1, name: 'civitai-git-push', sha1: 'tok-sha1-abc' });
+
+    const sha1 = await mintForgejoUserToken({
+      username: 'dev-7',
+      password: 'pw-1234567890abcdef',
+      name: 'civitai-git-push',
+      scopes: ['write:repository'],
+    });
+    expect(sha1).toBe('tok-sha1-abc');
+
+    expect(fm.calls[0].url).toBe('https://forgejo.example/api/v1/users/dev-7/tokens');
+    const auth = (fm.calls[0].init?.headers as Record<string, string>)['Authorization'];
+    const expected = `Basic ${Buffer.from('dev-7:pw-1234567890abcdef').toString('base64')}`;
+    expect(auth).toBe(expected);
+    // Crucially NOT the admin token.
+    expect(auth).not.toContain('tok-test');
+
+    const body = JSON.parse(fm.calls[0].init!.body as string);
+    expect(body.name).toBe('civitai-git-push');
+    expect(body.scopes).toEqual(['write:repository']);
+  });
+
+  it('throws when Forgejo returns no sha1', async () => {
+    const { mintForgejoUserToken } = await import('../forgejo.service');
+    fm.enqueue({ id: 1, name: 'x' }); // missing sha1
+    await expect(
+      mintForgejoUserToken({ username: 'dev-7', password: 'pw', name: 'x', scopes: [] })
+    ).rejects.toThrow(/no sha1/);
+  });
+});

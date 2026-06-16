@@ -49,6 +49,7 @@ import {
   MARKETPLACE_CATEGORY_LABELS,
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -83,7 +84,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
     }
-    if (!session.user.isModerator) {
+    if (!isAppReviewer(session.user)) {
       return { notFound: true };
     }
     return { props: {} };
@@ -120,6 +121,9 @@ type ReviewedRequestCommon = {
   fileSummary: unknown;
   manifestDiffSummary: unknown;
   reviewRepoUrl: string;
+  // PUSH-ORIGINATED requests (git-push, empty bundle) have no review-org
+  // snapshot — this links the mod to the canonical repo at the exact pushed sha.
+  pushCommitUrl?: string | null;
   submittedBy: UserProfile;
 };
 
@@ -755,14 +759,16 @@ function ReviewModal({
 
         <Button
           component="a"
-          href={request.reviewRepoUrl}
+          href={request.pushCommitUrl ?? request.reviewRepoUrl}
           target="_blank"
           rel="noopener"
           variant="default"
           leftSection={<IconCode size={14} />}
           rightSection={<IconExternalLink size={12} />}
         >
-          View code in Forgejo
+          {request.pushCommitUrl
+            ? 'View code in Forgejo (git push) ↗ commit'
+            : 'View code in Forgejo'}
         </Button>
 
         {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
