@@ -1051,9 +1051,14 @@ function Model3DQueueCardOutputs({
       >
         {viewerOpen && modelUrl ? (
           <>
+            {/* `compact` switches the viewer's container to `h-full` so it
+                fills its parent TwCard instead of imposing the default
+                `min-h-[480px]` which would overflow the aspect-square
+                queue card. */}
             <Model3DViewerDynamic
               url={modelUrl}
               format={modelFormat}
+              compact
               className="size-full"
             />
             <Tooltip label="Close 3D preview" withinPortal position="left">
@@ -1072,11 +1077,15 @@ function Model3DQueueCardOutputs({
           </>
         ) : thumbnailUrl ? (
           <>
+            {/* size-full so the thumbnail fills the aspect-square card.
+                The orchestrator-emitted thumbnail is square (1024×1024)
+                so object-cover matches object-contain visually but
+                guarantees full coverage on any future non-square sources. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={thumbnailUrl}
               alt="3D model thumbnail"
-              className="max-h-full max-w-full object-contain"
+              className="size-full object-cover"
             />
             {modelUrl && (
               <Tooltip label="View in 3D" withinPortal position="left">
