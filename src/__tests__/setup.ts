@@ -179,6 +179,9 @@ vi.mock('~/server/prom/client', () => ({
   appStorageOpsCounter: promMetricStub(),
   appStorageQuotaExceededCounter: promMetricStub(),
   appStorageLatencyHistogram: promMetricStub(),
+  // sysRedis sentinel observability counters (PR #2331 round-3).
+  sysredisSentinelTopologyChangesCounter: promMetricStub(),
+  sysredisSentinelClientErrorsCounter: promMetricStub(),
 }));
 
 // Mock logging
