@@ -21,13 +21,17 @@
  * The stored token (the user's Forgejo PAT, scope `write:repository`) is
  * AES-256-GCM encrypted at rest keyed on NEXTAUTH_SECRET (see encryptToken).
  *
- * db/forgejo are dynamically imported inside the functions so this module has no
- * load-time side effects (mirrors the sibling publish-request / scope-grant
- * services — keeps the env-coupled Prisma/Forgejo clients out of the import
- * graph until actually invoked).
+ * dbRead/dbWrite are statically imported (the app-wide convention — 262 call
+ * sites vs 3 using the dynamic form). This module is itself only ever
+ * dynamic-imported by its consumer (blocks.router's getMyAppRepo), so there's no
+ * load-time-side-effect concern to avoid; importing the real client also gives
+ * readIdentity proper Prisma types (a hand-rolled `{ findUnique: … }` param shape
+ * is not structurally assignable from PrismaClient and broke the prod tsc build).
+ * The heavier Forgejo client + env are still imported lazily inside the function.
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
+import { dbRead, dbWrite } from '~/server/db/client';
 
 // gitea-1.22 fine-grained token scope for repo write (implies read). The dev
 // only ever pushes to their own repo, so write:repository is the full ceiling.
@@ -97,11 +101,8 @@ type IdentityRow = {
   createdAt: Date;
 };
 
-async function readIdentity(
-  db: { appDevForgejoIdentity: { findUnique: (a: unknown) => Promise<unknown> } },
-  userId: number
-): Promise<IdentityRow | null> {
-  return (await db.appDevForgejoIdentity.findUnique({
+async function readIdentity(userId: number): Promise<IdentityRow | null> {
+  return (await dbRead.appDevForgejoIdentity.findUnique({
     where: { userId },
     select: { forgejoUsername: true, forgejoTokenEncrypted: true, createdAt: true },
   })) as IdentityRow | null;
@@ -146,7 +147,6 @@ const STALE_CLAIM_MS = 60_000;
  * purge never touches app code.
  */
 export async function ensureForgejoIdentity(userId: number): Promise<ForgejoIdentity> {
-  const { dbRead, dbWrite } = await import('~/server/db/client');
   const { env } = await import('~/env/server');
 
   const secret = env.NEXTAUTH_SECRET;
@@ -155,7 +155,7 @@ export async function ensureForgejoIdentity(userId: number): Promise<ForgejoIden
   const forgejoUsername = forgejoUsernameForUser(userId);
 
   // Fast path: a COMPLETE identity already exists (non-empty token).
-  const fast = await readIdentity(dbRead, userId);
+  const fast = await readIdentity(userId);
   if (fast && fast.forgejoTokenEncrypted) {
     return { forgejoUsername: fast.forgejoUsername, token: decryptToken(fast.forgejoTokenEncrypted, secret) };
   }
@@ -179,7 +179,7 @@ export async function ensureForgejoIdentity(userId: number): Promise<ForgejoIden
     // atomically reclaim it and become the owner ourselves, so the user can
     // never be permanently wedged behind a dead claim.
     for (let i = 0; i < PROVISION_WAIT_TRIES; i++) {
-      const row = await readIdentity(dbRead, userId);
+      const row = await readIdentity(userId);
       if (row && row.forgejoTokenEncrypted) {
         return { forgejoUsername: row.forgejoUsername, token: decryptToken(row.forgejoTokenEncrypted, secret) };
       }
@@ -248,7 +248,7 @@ export async function ensureForgejoIdentity(userId: number): Promise<ForgejoIden
     if (filled.count === 1) {
       return { forgejoUsername, token };
     }
-    const winner = await readIdentity(dbRead, userId);
+    const winner = await readIdentity(userId);
     if (winner && winner.forgejoTokenEncrypted) {
       return {
         forgejoUsername: winner.forgejoUsername,
