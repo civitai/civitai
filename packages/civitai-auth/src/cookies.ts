@@ -6,13 +6,14 @@ import { DEVICE_COOKIE_BASE, SECURE_COOKIE_PREFIX, SESSION_COOKIE_BASE } from '.
 export const cookiePrefix = (secure: boolean): string => (secure ? SECURE_COOKIE_PREFIX : '');
 
 /**
- * Whether auth cookies are secure (the `Secure` attribute + the `__Secure-` name prefix). The SINGLE shared
- * signal so the hub and every spoke derive identical names: the hub issuer's protocol (`AUTH_JWT_ISSUER`) —
- * https in prod, http in dev. Read straight off `process.env` (no full env validation) so it's safe at module
- * load. The cookie's `Secure` attribute must be set from this same value wherever a cookie is written.
+ * Whether auth cookies are secure (the `Secure` attribute + the `__Secure-` name prefix). This follows the
+ * APP's OWN serving protocol — `NEXT_PUBLIC_BASE_URL` for a Next spoke (each spoke sets/reads its own cookie),
+ * falling back to the hub issuer (`AUTH_JWT_ISSUER`, which the hub sets to its own origin). The distinction
+ * matters cross-domain: a localhost (http) spoke talking to the prod (https) hub must use a NON-secure cookie
+ * even though the issuer is https. Read straight off `process.env` so it's safe at module load.
  */
 export const isSecureCookie = (): boolean =>
-  (process.env.AUTH_JWT_ISSUER ?? '').startsWith('https://');
+  (process.env.NEXT_PUBLIC_BASE_URL ?? process.env.AUTH_JWT_ISSUER ?? '').startsWith('https://');
 
 // `secure` defaults to the env-derived value, so call sites can just use `sessionCookieName()` — pass an
 // explicit boolean only to override (tests, or clearing BOTH prefixes on logout).

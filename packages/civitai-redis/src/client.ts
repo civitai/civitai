@@ -719,6 +719,10 @@ export const REDIS_SYS_KEYS = {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.
     ACCOUNTS: 'device:accounts',
   },
+  SWAP: {
+    // Single-use marker for redeemed cross-domain swap tokens — `swap:used:${jti}` (TTL = swap max age).
+    USED: 'swap:used',
+  },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
     // listForModel response (disable a runaway block without a deploy).

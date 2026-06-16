@@ -50,11 +50,11 @@ export interface AuthVerifier {
     callbackUrl: string
   ): Promise<{ session: SessionClaims } | { redirect: string }>;
   /**
-   * Verify a cross-root SWAP transport token (minted by the hub's mintSwapToken).
-   * Returns the userId or null. Used by the `account-switch` receiver on a different
-   * root domain to establish a local session — no shared secret, JWKS only.
+   * Verify a cross-root SWAP transport token (minted by the hub's mintSwapToken). Returns the userId + the
+   * token's `jti` (so the hub can burn it for single-use) or null. Used by the cross-domain exchange to
+   * establish a local session on a different root domain — no shared secret, JWKS only.
    */
-  verifySwapToken(token: string): Promise<{ userId: number } | null>;
+  verifySwapToken(token: string): Promise<{ userId: number; jti: string } | null>;
 }
 
 export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifier {
@@ -144,7 +144,7 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     return { redirect };
   }
 
-  async function verifySwapToken(token: string): Promise<{ userId: number } | null> {
+  async function verifySwapToken(token: string): Promise<{ userId: number; jti: string } | null> {
     if (!canVerify())
       throw new Error(
         '[@civitai/auth] no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI configured for swap verification'
@@ -153,7 +153,10 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
       const { payload } = await verifyAsymmetric(token);
       if (payload.purpose !== 'swap') return null;
       const userId = Number(payload.sub);
-      return Number.isFinite(userId) ? { userId } : null;
+      // `jti` lets the exchange enforce single-use (the hub burns it after redeeming).
+      return Number.isFinite(userId) && typeof payload.jti === 'string'
+        ? { userId, jti: payload.jti }
+        : null;
     } catch {
       return null;
     }
