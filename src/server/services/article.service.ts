@@ -1028,14 +1028,9 @@ export const upsertArticle = async ({
     // When a mod sets an override, lock the user's picker so a subsequent
     // owner save can't quietly drift userNsfwLevel underneath it. When the
     // mod clears the override (sets back to null) we unlock the picker and
-    // the article returns to auto-derivation on the next recompute.
-    //
-    // We also (re)snapshot `moderatorNsfwLevelBasis` — the content-derived level
-    // at override time — so the auto-approve gate (#6) can later distinguish a
-    // genuine content drop from an override deliberately set above the images
-    // (which must not be auto-cleared by an owner dispute). `undefined` leaves
-    // the column untouched; only an actual override change writes it.
-    // Lock/unlock the user picker only when the override VALUE changes.
+    // the article returns to auto-derivation on the next recompute. Lock/unlock
+    // fires only when the override VALUE changes; the basis snapshot below has
+    // its own (broader) trigger.
     let moderatorNsfwLevelBasis: number | null | undefined = undefined;
     if (moderatorOverrideChanged) {
       const lockedSet = new Set<string>(data.lockedProperties ?? article.lockedProperties ?? []);
@@ -1043,9 +1038,17 @@ export const upsertArticle = async ({
       else lockedSet.delete('userNsfwLevel');
       data.lockedProperties = Array.from(lockedSet);
     }
-    // Re-snapshot the basis on every moderator assertion of a non-null override
-    // (even an unchanged re-affirm), and clear it when the override is cleared.
-    // See shouldRestampOverrideBasis for why aggressive re-stamping is safe.
+    // (Re)snapshot `moderatorNsfwLevelBasis` — the content-derived level at
+    // override time — so the auto-approve gate (#6) can later distinguish a
+    // genuine content drop from an override deliberately set above the images
+    // (which must not be auto-cleared by an owner dispute). Re-stamp on every
+    // moderator assertion of a non-null override (even an unchanged re-affirm),
+    // clear it when the override is cleared, and leave it untouched when the
+    // field is omitted. NOTE: derived is computed against the CURRENTLY-COMMITTED
+    // content — if this same save also changes images, those rescan post-commit,
+    // so the basis reflects pre-save content (safe: gate #3 blocks auto-approve
+    // until the rescan settles). See shouldRestampOverrideBasis for why
+    // aggressive re-stamping is safe.
     if (!!isModerator && data.moderatorNsfwLevel === null) {
       moderatorNsfwLevelBasis = null;
     } else if (
