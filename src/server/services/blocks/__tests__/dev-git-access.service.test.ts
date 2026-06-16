@@ -26,6 +26,7 @@ const { mockDbRead, mockDbWrite, mockForgejo } = vi.hoisted(() => ({
       update: vi.fn(),
       updateMany: vi.fn(),
       delete: vi.fn(),
+      deleteMany: vi.fn(),
     },
   },
   mockForgejo: {
@@ -105,7 +106,7 @@ describe('ensureForgejoIdentity — owner (provisioning) path', () => {
       created: true,
     });
     mockForgejo.mintForgejoUserToken.mockResolvedValue('minted-token-sha1');
-    mockDbWrite.appDevForgejoIdentity.update.mockResolvedValue({});
+    mockDbWrite.appDevForgejoIdentity.updateMany.mockResolvedValue({ count: 1 }); // fill wins
 
     const res = await mod.ensureForgejoIdentity(42);
     expect(res).toEqual({ forgejoUsername: 'dev-42', token: 'minted-token-sha1' });
@@ -127,17 +128,19 @@ describe('ensureForgejoIdentity — owner (provisioning) path', () => {
       })
     );
 
-    // FILL: UPDATE the claim row with the ENCRYPTED token (not plaintext).
-    expect(mockDbWrite.appDevForgejoIdentity.update).toHaveBeenCalledTimes(1);
-    const upd = mockDbWrite.appDevForgejoIdentity.update.mock.calls[0][0];
-    expect(upd.where).toEqual({ userId: 42 });
-    expect(upd.data.forgejoTokenEncrypted).not.toContain('minted-token-sha1');
-    expect(mod.__testing.decryptToken(upd.data.forgejoTokenEncrypted, 'unit-test-secret-key')).toBe(
+    // FILL: conditional updateMany guarded on the STILL-empty token (so a
+    // concurrent reclaimer's good token can't be overwritten), storing the
+    // ENCRYPTED token (not plaintext). Only the fill ran (no reclaim here).
+    expect(mockDbWrite.appDevForgejoIdentity.updateMany).toHaveBeenCalledTimes(1);
+    const fill = mockDbWrite.appDevForgejoIdentity.updateMany.mock.calls[0][0];
+    expect(fill.where).toEqual({ userId: 42, forgejoTokenEncrypted: '' });
+    expect(fill.data.forgejoTokenEncrypted).not.toContain('minted-token-sha1');
+    expect(mod.__testing.decryptToken(fill.data.forgejoTokenEncrypted, 'unit-test-secret-key')).toBe(
       'minted-token-sha1'
     );
 
     expect(mockForgejo.deleteForgejoUser).not.toHaveBeenCalled();
-    expect(mockDbWrite.appDevForgejoIdentity.delete).not.toHaveBeenCalled();
+    expect(mockDbWrite.appDevForgejoIdentity.deleteMany).not.toHaveBeenCalled();
   });
 
   it('true-orphan edge (we hold the claim, Forgejo user exists) — deletes + recreates for a known password', async () => {
@@ -152,13 +155,13 @@ describe('ensureForgejoIdentity — owner (provisioning) path', () => {
         created: true,
       });
     mockForgejo.mintForgejoUserToken.mockResolvedValue('recreated-token-sha1');
-    mockDbWrite.appDevForgejoIdentity.update.mockResolvedValue({});
+    mockDbWrite.appDevForgejoIdentity.updateMany.mockResolvedValue({ count: 1 });
 
     const res = await mod.ensureForgejoIdentity(9);
     expect(res.token).toBe('recreated-token-sha1');
     expect(mockForgejo.deleteForgejoUser).toHaveBeenCalledWith('dev-9');
     expect(mockForgejo.createForgejoUser).toHaveBeenCalledTimes(2);
-    expect(mockDbWrite.appDevForgejoIdentity.update).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.appDevForgejoIdentity.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it('rolls back the claim row if provisioning throws (so a retry can re-provision)', async () => {
@@ -171,11 +174,14 @@ describe('ensureForgejoIdentity — owner (provisioning) path', () => {
       created: true,
     });
     mockForgejo.mintForgejoUserToken.mockRejectedValue(new Error('forgejo down'));
-    mockDbWrite.appDevForgejoIdentity.delete.mockResolvedValue({});
+    mockDbWrite.appDevForgejoIdentity.deleteMany.mockResolvedValue({ count: 1 });
 
     await expect(mod.ensureForgejoIdentity(3)).rejects.toThrow(/forgejo down/);
-    // Placeholder claim rolled back so the next attempt isn't wedged.
-    expect(mockDbWrite.appDevForgejoIdentity.delete).toHaveBeenCalledWith({ where: { userId: 3 } });
+    // Roll back ONLY a still-empty claim (deleteMany guarded on the empty token)
+    // so a concurrent reclaimer's filled row is never nuked.
+    expect(mockDbWrite.appDevForgejoIdentity.deleteMany).toHaveBeenCalledWith({
+      where: { userId: 3, forgejoTokenEncrypted: '' },
+    });
   });
 });
 
@@ -200,18 +206,19 @@ describe('ensureForgejoIdentity — recovers from an abandoned (wedged) claim', 
       created: true,
     });
     mockForgejo.mintForgejoUserToken.mockResolvedValue('reclaimed-token-sha1');
-    mockDbWrite.appDevForgejoIdentity.update.mockResolvedValue({});
 
     const res = await mod.ensureForgejoIdentity(8);
     expect(res).toEqual({ forgejoUsername: 'dev-8', token: 'reclaimed-token-sha1' });
-    // Reclaim is guarded on a RANGE (empty token + createdAt older than the
-    // stale threshold), not exact equality (timestamptz µs vs JS-Date ms).
+    // Two updateMany calls: [0] the RANGE-guarded reclaim (empty token +
+    // createdAt older than the stale threshold — not exact equality, since
+    // timestamptz µs ≠ JS-Date ms), [1] the conditional fill.
+    expect(mockDbWrite.appDevForgejoIdentity.updateMany).toHaveBeenCalledTimes(2);
     const reclaimWhere = mockDbWrite.appDevForgejoIdentity.updateMany.mock.calls[0][0].where;
     expect(reclaimWhere).toMatchObject({ userId: 8, forgejoTokenEncrypted: '' });
     expect(reclaimWhere.createdAt.lt).toBeInstanceOf(Date);
-    // Then it provisioned + filled the token (no permanent wedge).
+    const fillWhere = mockDbWrite.appDevForgejoIdentity.updateMany.mock.calls[1][0].where;
+    expect(fillWhere).toEqual({ userId: 8, forgejoTokenEncrypted: '' });
     expect(mockForgejo.mintForgejoUserToken).toHaveBeenCalled();
-    expect(mockDbWrite.appDevForgejoIdentity.update).toHaveBeenCalledTimes(1);
   });
 });
 

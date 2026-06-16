@@ -236,13 +236,33 @@ export async function ensureForgejoIdentity(userId: number): Promise<ForgejoIden
       scopes: FORGEJO_TOKEN_SCOPES,
     });
 
-    await dbWrite.appDevForgejoIdentity.update({
-      where: { userId },
+    // Fill the token ONLY while the row is still our empty claim. If we stalled
+    // >STALE_CLAIM_MS and a waiter reclaimed + filled it (against a possibly
+    // RECREATED Forgejo user), our token is dead — don't overwrite the winner's
+    // good token with it. count 0 → we were superseded: return the winner's
+    // stored token instead of persisting a dead one.
+    const filled = await dbWrite.appDevForgejoIdentity.updateMany({
+      where: { userId, forgejoTokenEncrypted: '' },
       data: { forgejoTokenEncrypted: encryptToken(token, secret) },
     });
-    return { forgejoUsername, token };
+    if (filled.count === 1) {
+      return { forgejoUsername, token };
+    }
+    const winner = await readIdentity(dbRead, userId);
+    if (winner && winner.forgejoTokenEncrypted) {
+      return {
+        forgejoUsername: winner.forgejoUsername,
+        token: decryptToken(winner.forgejoTokenEncrypted, secret),
+      };
+    }
+    throw new Error('Forgejo identity provisioning was superseded — please retry');
   } catch (err) {
-    await dbWrite.appDevForgejoIdentity.delete({ where: { userId } }).catch(() => {});
+    // Roll back ONLY a still-empty claim (ours). If a reclaimer already filled
+    // the row with a valid token, a blind delete would nuke their good row —
+    // deleteMany guarded on the empty token leaves it intact.
+    await dbWrite.appDevForgejoIdentity
+      .deleteMany({ where: { userId, forgejoTokenEncrypted: '' } })
+      .catch(() => {});
     throw err;
   }
 }

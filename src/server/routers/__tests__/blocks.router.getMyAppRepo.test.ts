@@ -177,6 +177,21 @@ describe('blocks.getMyAppRepo — Phase 3 git-push credential', () => {
     expect(mockAddCollaborator).not.toHaveBeenCalled();
   });
 
+  it('banned owner: FORBIDDEN, nothing provisioned (no credential issued to a banned account)', async () => {
+    findUnique.mockResolvedValue({
+      blockId: 'my-app',
+      status: 'approved',
+      app: { userId: ownerUser.id },
+    });
+    const bannedOwner = { ...ownerUser, bannedAt: new Date() };
+    const caller = blocksRouter.createCaller(fakeCtx(bannedOwner) as never);
+    await expect(caller.getMyAppRepo({ appBlockId: 'ab_1' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockEnsureForgejoIdentity).not.toHaveBeenCalled();
+    expect(mockAddCollaborator).not.toHaveBeenCalled();
+  });
+
   it('owner, app approved: provisions identity, grants write on the slug repo, returns the clone URL with creds', async () => {
     findUnique.mockResolvedValue({
       blockId: 'my-app',
