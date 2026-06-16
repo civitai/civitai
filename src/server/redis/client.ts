@@ -275,14 +275,23 @@ function getBaseClient(type: 'cache' | 'system') {
   const socketTimeoutMs =
     type === 'system' ? env.REDIS_SYS_SOCKET_TIMEOUT_MS : env.REDIS_SOCKET_TIMEOUT_MS;
 
-  // Bound the system client's command queue. With socketTimeoutMs=0 (the sys default),
-  // a SILENT half-open is only cleared by OS TCP keepalive (minutes), during which
-  // every authenticated request enqueues a refreshToken MULTI that never drains — an
-  // unbounded queue would grow the heap toward OOM. Capping it makes new commands
-  // fast-fail once wedged (the fail-open callers catch it). The cache client is left
-  // unbounded — its socketTimeout tears the socket down and flushes the queue.
+  // Two coupled guards on the SYSTEM client (both system-only; the cache client keeps
+  // node-redis defaults — its socketTimeout tears the socket down and flushes the queue):
+  //
+  // 1. commandsQueueMaxLength — with socketTimeoutMs=0, a SILENT half-open is only
+  //    cleared by OS TCP keepalive (minutes), during which written-but-unanswered
+  //    commands pile in the reply queue. The cap fast-fails new commands once wedged
+  //    (the fail-open callers catch it) so the heap can't grow unbounded toward OOM.
+  // 2. disableOfflineQueue — while the socket is RECONNECTING (not ready), node-redis
+  //    would otherwise buffer commands in its offline write queue. Under sustained authed
+  //    load that buffer fills before the reconnect handshake (HELLO/AUTH/SELECT) can
+  //    enqueue — and the handshake goes through the SAME bounded queue — starving
+  //    recovery → a PERMANENT wedge. Rejecting offline commands immediately
+  //    (ClientOfflineError → fail-open) keeps the write queue empty so the handshake
+  //    always has room. Together: bounded heap on a half-open AND guaranteed recovery.
+  const isSystem = type === 'system';
   const commandsQueueMaxLength =
-    type === 'system' && env.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH > 0
+    isSystem && env.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH > 0
       ? env.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH
       : undefined;
 
@@ -357,6 +366,7 @@ function getBaseClient(type: 'cache' | 'system') {
         socket: socketConfig,
         pingInterval,
         ...(commandsQueueMaxLength ? { commandsQueueMaxLength } : {}),
+        ...(isSystem ? { disableOfflineQueue: true } : {}),
       });
 
   // Common event handlers (note: cluster clients don't emit connect/ready events in node-redis v4.x)
@@ -619,6 +629,35 @@ export function withRedisCommandTimeout<C>(client: C): C {
   const withOpts = (client as any).withCommandOptions;
   if (typeof withOpts !== 'function') return client;
   return withOpts.call(client, { timeout }) as C;
+}
+
+/**
+ * Wall-clock deadline for ANY per-request sysRedis read (single command OR MULTI).
+ *
+ * The sys client carries no socketTimeout (REDIS_SYS_SOCKET_TIMEOUT_MS defaults to 0,
+ * to avoid the reconnect-storm wedge on the single-replica backend). The per-command
+ * `withRedisCommandTimeout` does NOT bound a command once it's been WRITTEN — its
+ * AbortSignal is disarmed at write time — and never bounds MULTI sub-commands at all.
+ * So on a SILENT half-open (client still believes it's connected) a written sys command
+ * parks in node-redis's reply queue until OS TCP keepalive errors the socket (Linux
+ * defaults ≈ 11min) on EVERY authenticated request. This wall-clock race bounds the
+ * *handler* wait regardless of where the command parks; on timeout it rejects so the
+ * caller's fail-open keeps serving. The orphaned command settles in the background (its
+ * stray rejection is reaped by Promise.race) and is capped by the sys client's
+ * `commandsQueueMaxLength`; `disableOfflineQueue` keeps the reconnect path clear.
+ * REDIS_SYS_READ_TIMEOUT_MS <= 0 disables the guard.
+ */
+export function withSysReadDeadline<T>(p: Promise<T>): Promise<T> {
+  const ms = env.REDIS_SYS_READ_TIMEOUT_MS;
+  if (!ms || ms <= 0) return p;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`sysRedis read timed out after ${ms}ms`)), ms);
+  });
+  // Timer is always cleared in finally() (within `ms`), so no unref() is needed.
+  return Promise.race([p, deadline]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {

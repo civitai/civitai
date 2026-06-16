@@ -6,7 +6,7 @@ import { createAuthOptions } from './next-auth-options';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
 import { SESSION_REFRESH_HEADER, SESSION_REFRESH_COOKIE } from '~/shared/constants/auth.constants';
-import { REDIS_SYS_KEYS, sysRedis, withRedisCommandTimeout } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { callbackCookieName } from '~/libs/auth';
 
 function isValidCallbackUrl(value: string | undefined): boolean {
@@ -46,11 +46,11 @@ async function checkAndSetSessionHeaders(
     try {
       const userId = session.user?.id;
       if (userId) {
-        // Per-command timeout so a silent sysRedis half-open can't park this read (the
-        // sys client has no socketTimeout). Single command → withRedisCommandTimeout's
-        // AbortSignal bounds it; the surrounding try/catch keeps the best-effort contract.
-        const cause = await withRedisCommandTimeout(sysRedis).get(
-          `${REDIS_SYS_KEYS.SESSION.REFRESH_CAUSE}:${userId}`
+        // Wall-clock deadline so a silent sysRedis half-open can't park this read (the
+        // sys client has no socketTimeout, and a per-command timeout can't abort a
+        // written command). The surrounding try/catch keeps the best-effort contract.
+        const cause = await withSysReadDeadline(
+          sysRedis.get(`${REDIS_SYS_KEYS.SESSION.REFRESH_CAUSE}:${userId}`)
         );
         if (cause) res.setHeader('x-session-refresh-cause', cause);
       }

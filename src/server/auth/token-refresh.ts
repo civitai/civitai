@@ -1,7 +1,11 @@
 import type { JWT } from 'next-auth/jwt';
 import { v4 as uuid } from 'uuid';
-import { env } from '~/env/server';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getSessionUser } from './session-user';
 import type { User } from '~/shared/utils/prisma/models';
@@ -9,36 +13,6 @@ import { createLogger } from '~/utils/logging';
 
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
 const log = createLogger('token-refresh', 'green');
-
-/**
- * Wall-clock deadline for a sysRedis MULTI/pipeline on the auth hot path.
- *
- * node-redis does NOT propagate `withRedisCommandTimeout`'s per-command timeout into
- * MULTI/pipeline sub-commands, and the sys client carries no socketTimeout
- * (`REDIS_SYS_SOCKET_TIMEOUT_MS` defaults to 0 — disabled to avoid the reconnect-storm
- * wedge on the single-replica sysRedis backend). Without this guard, a SILENT half-open
- * (no RST/FIN) would park `pipeline.exec()` until OS TCP keepalive finally errors the
- * socket — on Linux defaults that is MINUTES (~5s + 9×75s ≈ 11min), not seconds — on
- * EVERY authenticated request → an auth-path 504 cascade. Racing the exec against
- * REDIS_SYS_PIPELINE_TIMEOUT_MS bounds the wait and (via the caller's catch) keeps the
- * session. The losing `exec()` is left to settle in the background (a stray rejection is
- * swallowed by Promise.race), so it no longer holds the request handler — and the sys
- * client's `commandsQueueMaxLength` caps how many such parked pipelines can accumulate
- * during the wedge so they can't grow the heap unbounded. `<= 0` disables the guard.
- */
-function withSysCommandDeadline<T>(p: Promise<T>): Promise<T> {
-  const ms = env.REDIS_SYS_PIPELINE_TIMEOUT_MS;
-  if (!ms || ms <= 0) return p;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`sysRedis command timed out after ${ms}ms`)), ms);
-  });
-  // The timer is always cleared in finally() (within `ms`), so no unref() is needed to
-  // avoid holding the event loop.
-  return Promise.race([p, deadline]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
-}
 
 export type RefreshTokenResult = {
   token: JWT | null;
@@ -92,7 +66,7 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
     // for minutes (OS-keepalive teardown) on every authenticated request — no per-cmd
     // timeout on pipelines, no socketTimeout on the sys client. On timeout this throws
     // → fail open below.
-    results = await withSysCommandDeadline(pipeline.exec());
+    results = await withSysReadDeadline(pipeline.exec());
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'refreshToken pipeline', err, {
       userId: user.id,

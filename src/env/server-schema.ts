@@ -71,13 +71,15 @@ export const serverSchema = z.object({
   // if a real sys half-open guard is ever wanted, but it must be paired with a backend
   // that closes cleanly. See getBaseClient().
   REDIS_SYS_SOCKET_TIMEOUT_MS: z.coerce.number().default(0),
-  // Wall-clock deadline (ms) for the refreshToken sysRedis MULTI/pipeline (runs on
-  // every authenticated request). node-redis can't apply a per-command timeout to a
-  // pipeline and the sys client has no socketTimeout (above), so this is what bounds a
-  // silent half-open on the auth hot path. Its OWN knob (not REDIS_COMMAND_TIMEOUT_MS,
-  // which governs the cache fail-open path) so disabling one doesn't silently disable
-  // the other. 0 disables it. See token-refresh.ts withSysCommandDeadline().
-  REDIS_SYS_PIPELINE_TIMEOUT_MS: z.coerce.number().default(2000),
+  // Wall-clock deadline (ms) for EVERY per-request sysRedis read (the refreshToken
+  // MULTI and the single-command config/session reads). The sys client has no
+  // socketTimeout (above), and node-redis's per-command timeout can't bound a command
+  // once written nor any MULTI sub-command — so on a silent half-open a sys read parks
+  // (~OS-keepalive minutes) per request without this. Bounds the request handler and
+  // fails open. Its OWN knob (not REDIS_COMMAND_TIMEOUT_MS, which governs the cache
+  // fail-open path) so disabling one doesn't silently disable the other. 0 disables it.
+  // See redis/client.ts withSysReadDeadline().
+  REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(2000),
   // Bound on the sys client's node-redis command queue. The sys client has no
   // socketTimeout, so on a SILENT half-open it is only cleared by OS TCP keepalive
   // (minutes), during which every authenticated request enqueues a MULTI that never
