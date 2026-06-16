@@ -1086,12 +1086,39 @@ export type ListPendingRequestsOptions = {
 };
 
 /**
+ * Compute the file + manifest diff for a PUSH-ORIGINATED publish request from
+ * the live Forgejo repo at the pushed ref.
+ *
+ * The git-push webhook never receives a ZIP, so without this the parked review
+ * stores a 0-file summary + a misleading "first-version" manifest diff and the
+ * mod approves blind. We reconstruct the bundle from Forgejo (the same bytes
+ * approve will build) and run the IDENTICAL extract+diff pipeline submitVersion
+ * uses, so the diff is faithful (content-sha256 based) and correctly labelled
+ * first-version vs update against the previous approved version.
+ */
+export async function computePushDiffSummaries(
+  slug: string,
+  ref: string
+): Promise<{ fileSummary: FileSummary; manifestDiffSummary: ManifestDiffSummary }> {
+  const bundleBuffer = await reconstructBundleFromForgejo(slug, ref);
+  const { files, manifest } = await extractBundleMetadata(bundleBuffer);
+  const previous = await getPreviousApprovedState(slug);
+  return {
+    fileSummary: computeFileDiff(files, previous?.files ?? null),
+    manifestDiffSummary: computeManifestDiff(
+      manifest as Record<string, unknown>,
+      previous?.manifest ?? null
+    ),
+  };
+}
+
+/**
  * Mod queue: paginated list of publish requests in status='pending',
  * oldest first (FIFO). Includes the submitter's basic profile so the
  * review UI doesn't round-trip per row.
  */
 export async function listPendingRequests(opts: ListPendingRequestsOptions = {}) {
-  const [{ dbRead }, { reviewRepoUrl }] = await Promise.all([
+  const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
     import('~/server/db/client'),
     import('./forgejo.service'),
   ]);
@@ -1112,6 +1139,7 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
+      forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
     },
   });
@@ -1126,6 +1154,13 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       // Deep-link into the per-slug Forgejo review repo so mods can
       // browse the actual code from the review modal.
       reviewRepoUrl: reviewRepoUrl(r.slug),
+      // PUSH-ORIGINATED requests (empty bundleSha256) have no review-org
+      // snapshot — link mods to the CANONICAL repo at the exact pushed sha
+      // instead, so they can review the real code rather than approve blind.
+      pushCommitUrl:
+        !r.bundleSha256 && r.forgejoCommitSha
+          ? repoCommitUrl(r.slug, r.forgejoCommitSha)
+          : null,
     })),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
@@ -1138,7 +1173,7 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
  * Approved tab doesn't round-trip per row.
  */
 export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}) {
-  const [{ dbRead }, { reviewRepoUrl }] = await Promise.all([
+  const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
     import('~/server/db/client'),
     import('./forgejo.service'),
   ]);
@@ -1161,6 +1196,7 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
+      forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
       reviewedBy: { select: { id: true, username: true, image: true } },
     },
@@ -1172,6 +1208,10 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       ...r,
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
+      pushCommitUrl:
+        !r.bundleSha256 && r.forgejoCommitSha
+          ? repoCommitUrl(r.slug, r.forgejoCommitSha)
+          : null,
     })),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
@@ -1970,10 +2010,18 @@ export async function getPublishRequestScreenshots(opts: {
   const { dbRead } = await import('~/server/db/client');
   const row = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: opts.publishRequestId },
-    select: { bundleKey: true },
+    select: { bundleKey: true, slug: true, forgejoCommitSha: true },
   });
   if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
-  const bundleBuffer = await fetchBundleBuffer(row.bundleKey);
+  // PUSH-ORIGINATED requests (git-push webhook) carry an empty bundleKey — the
+  // reviewable artifact is the Forgejo repo at forgejoCommitSha. Reconstruct the
+  // bundle from there (as approveRequest does) instead of issuing an S3
+  // GetObject with an empty Key, which throws "Empty value provided for input
+  // HTTP label: Key". A row with neither pointer is unexpected → no screenshots.
+  if (!row.bundleKey && !row.forgejoCommitSha) return [];
+  const bundleBuffer = row.bundleKey
+    ? await fetchBundleBuffer(row.bundleKey)
+    : await reconstructBundleFromForgejo(row.slug, row.forgejoCommitSha as string);
   const screenshots = await extractScreenshots(bundleBuffer);
   return screenshots.map((s) => ({
     index: s.index,

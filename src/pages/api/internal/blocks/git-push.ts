@@ -489,11 +489,32 @@ async function recordPendingFromPush(args: {
   });
 
   const ownerUserId = await resolvePushOwnerUserId(args.appBlockId);
-  const emptyFileSummary = { files: [], added: [], removed: [], changed: [] };
-  const manifestDiffSummary = {
+
+  // Compute the real file + manifest diff from the Forgejo repo at the pushed
+  // sha so the mod-review modal shows actual changes (added/changed/removed +
+  // first-version vs update) instead of 0 files + a misleading "first-version"
+  // label — otherwise the mod approves blind, undercutting the no-trust gate.
+  // Best-effort: if Forgejo enrichment fails the review still parks with the
+  // empty summary (the modal's "View code in Forgejo @ sha" link is the
+  // fallback). Enrichment must never gate parking the review.
+  let fileSummary: object = { files: [], added: [], removed: [], changed: [] };
+  let manifestDiffSummary: object = {
     kind: 'first-version' as const,
     fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
   };
+  try {
+    const { computePushDiffSummaries } = await import(
+      '~/server/services/blocks/publish-request.service'
+    );
+    const diffs = await computePushDiffSummaries(args.slug, args.sha);
+    fileSummary = diffs.fileSummary;
+    manifestDiffSummary = diffs.manifestDiffSummary;
+  } catch (e) {
+    console.error(
+      `[git-push] diff enrichment failed for ${args.slug}@${args.sha}, parking with empty summary:`,
+      String(e).slice(0, 240)
+    );
+  }
 
   await dbWrite.appBlockPublishRequest.create({
     data: {
@@ -508,7 +529,7 @@ async function recordPendingFromPush(args: {
       bundleKey: '',
       bundleSha256: '',
       bundleSizeBytes: BigInt(0),
-      fileSummary: emptyFileSummary,
+      fileSummary,
       manifestDiffSummary,
       status: 'pending',
       forgejoCommitSha: args.sha,
