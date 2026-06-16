@@ -982,6 +982,7 @@ function Model3DQueueCardOutputs({
 }) {
   const router = useRouter();
   const [viewerOpen, setViewerOpen] = useState(false);
+  console.log('Model3DQueueCardOutputs', { request, pending, processing });
 
   // PolyGen outputs flow through `formatStepOutputs` as `Model3DBlob`s —
   // one per generated mesh, with the 2D preview carried on `thumbnailUrl`
