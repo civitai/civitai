@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { isDev, isProd, isTest } from '~/env/other';
+import { isDev, isPreview, isProd, isTest } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
@@ -128,8 +128,11 @@ export function rateLimit<TInput = any>(
   if (!Array.isArray(rateLimits)) rateLimits = [rateLimits];
 
   return middleware(async ({ ctx, input, next, path }) => {
-    // Skip if user is a moderator
-    if (ctx.user?.isModerator || isDev || isTest) return await next();
+    // Skip if user is a moderator, or in a non-prod env (dev/test/preview).
+    // Preview runs on the shared dev DB with a small set of CI smoke accounts, so
+    // per-account daily quotas (e.g. the new-post limit) get exhausted across many
+    // PR runs and the smoke suite fails deterministically — see civitai#2592.
+    if (ctx.user?.isModerator || isDev || isTest || isPreview) return await next();
 
     // Skip rate limiting if condition is provided and not met
     if (condition && !condition(input as TInput)) {
