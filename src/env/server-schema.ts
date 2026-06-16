@@ -38,6 +38,18 @@ export const serverSchema = z.object({
   REDIS_CLUSTER_NODES: z.string().optional(), // Comma-separated list of cluster node URLs for redundant discovery
   REDIS_CLUSTER_REFRESH_INTERVAL: z.coerce.number().default(30000), // Topology refresh interval in ms (default 30s)
   REDIS_SYS_URL: z.url(),
+  // Optional Sentinel-mode env vars for the `system` Redis client. When
+  // REDIS_SYS_SENTINELS is unset (default), the existing REDIS_SYS_URL path is
+  // used and behavior is unchanged. When set, src/server/redis/client.ts
+  // switches the system client to `createSentinel(...)` against this Sentinel
+  // pool. See claudedocs/sysredis-ha-migration-runbook.md (datapacket-talos)
+  // for the rollout sequence.
+  REDIS_SYS_SENTINELS: z.string().optional(), // comma-separated host:port list, e.g. "civitai-app-sysredis-sentinel.civitai-app-sysredis.svc.cluster.local:26379"
+  // Master group name. No default — the cluster uses "sysmaster", and the
+  // historical Sentinel default ("mymaster") would silently fail every lookup.
+  // The superRefine below makes this required whenever REDIS_SYS_SENTINELS is set.
+  REDIS_SYS_SENTINEL_NAME: z.string().optional(),
+  REDIS_SYS_SENTINEL_PASSWORD: z.string().optional(), // only set if sentinel-auth is enabled (not initially)
   REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
   // Socket-level inactivity timeout (ms). Passed to node-redis `socket.socketTimeout`,
   // which maps to net.Socket.setTimeout — an IDLE timer that fires when NO read OR
@@ -500,4 +512,18 @@ export const serverSchema = z.object({
   BUNDLE_S3_BUCKET: z.string().optional(),
   BUNDLE_S3_ACCESS_KEY_ID: z.string().optional(),
   BUNDLE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+}).superRefine((env, ctx) => {
+  // Sentinel-mode for the system Redis client requires an explicit master group
+  // name. The live HA cluster uses `sysmaster`; the node-redis default
+  // (`mymaster`) silently produces a Sentinel that never resolves a master, so
+  // we refuse to start with REDIS_SYS_SENTINELS set but REDIS_SYS_SENTINEL_NAME
+  // missing. The non-sentinel path (REDIS_SYS_URL only) is unaffected.
+  if (env.REDIS_SYS_SENTINELS && !env.REDIS_SYS_SENTINEL_NAME) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['REDIS_SYS_SENTINEL_NAME'],
+      message:
+        'REDIS_SYS_SENTINEL_NAME is required when REDIS_SYS_SENTINELS is set (cluster uses "sysmaster")',
+    });
+  }
 });

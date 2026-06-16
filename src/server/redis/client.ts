@@ -1,7 +1,7 @@
 import chunk from 'lodash-es/chunk';
 import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
-import { createClient, createCluster } from 'redis';
+import { createClient, createCluster, createSentinel } from 'redis';
 import { RESP_TYPES } from 'redis';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
@@ -14,8 +14,8 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 // cluster aggregator), which the pages-router client webpack build cannot resolve
 // → "Module not found: Can't resolve 'cluster'/'fs'". The metrics are defined and
 // registered server-side in `~/server/prom/client` and published on `globalThis`
-// (`__civitaiRedisMetrics`); `instrumentCommands` reads that handle at command time
-// (server runtime only). See getRedisMetrics() below.
+// (`__civitaiRedisMetrics`); `instrumentCommands` and the sentinel listener attach
+// read that handle at runtime (server-only). See getRedisMetrics() below.
 
 export type RedisKeyStringsCache = Values<typeof REDIS_KEYS>;
 export type RedisKeyStringsSys = Values<typeof REDIS_SYS_KEYS>;
@@ -234,6 +234,61 @@ function triggerTopologyRediscovery(clusterClient: any, reason: string) {
 }
 
 /**
+ * Attach `topology-change` and `client-error` listeners to a Sentinel client.
+ *
+ * Extracted so it can be unit-tested without booting the full redis-client
+ * module (which pulls in prom/db init). Both listeners destructure
+ * event.node.{host,port} into a square-bracketed key/value list so Loki regex
+ * can extract per-pod identifiers, and increment per-event Prometheus counters
+ * labeled {type, host, deployment}.
+ *
+ * `deployment` is the running pod's HOSTNAME env (matches Prometheus's `pod`
+ * label); falls back to 'unknown' off-cluster.
+ */
+export function attachSysSentinelListeners(
+  client: { on: (event: string, listener: (e: any) => void) => unknown },
+  ctx: {
+    deployment: string;
+    log: (msg: string, ...rest: unknown[]) => void;
+    topologyCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
+    errorCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
+  }
+) {
+  client.on('topology-change', (event: any) => {
+    const { type: eventType, node } = event ?? {};
+    const host = node?.host ?? '?';
+    const port = node?.port ?? '?';
+    ctx.log(
+      `Redis sentinel topology change [type=${eventType ?? 'unknown'}, host=${host}, port=${port}]`,
+      event
+    );
+    ctx.topologyCounter
+      .labels({
+        type: String(eventType ?? 'unknown'),
+        host: String(host),
+        deployment: ctx.deployment,
+      })
+      .inc();
+  });
+  client.on('client-error', (event: any) => {
+    const { type: eventType, node, error } = event ?? {};
+    const host = node?.host ?? '?';
+    const port = node?.port ?? '?';
+    ctx.log(
+      `Redis sentinel sub-client error [type=${eventType ?? 'unknown'}, host=${host}, port=${port}]`,
+      error ?? event
+    );
+    ctx.errorCounter
+      .labels({
+        type: String(eventType ?? 'unknown'),
+        host: String(host),
+        deployment: ctx.deployment,
+      })
+      .inc();
+  });
+}
+
+/**
  * Parse cluster node URLs from environment variable.
  * Falls back to single URL if REDIS_CLUSTER_NODES is not set.
  */
@@ -343,11 +398,50 @@ function getBaseClient(type: 'cache' | 'system') {
     `Redis ping interval (${type}) = ${pingInterval}ms (env REDIS_PING_INTERVAL_MS=${env.REDIS_PING_INTERVAL_MS}, socketTimeout=${socketTimeoutMs}ms)`
   );
 
-  // System redis is always a single node
+  // System redis is always a single node (or — when REDIS_SYS_SENTINELS is set —
+  // a Sentinel-discovered HA topology). See claudedocs/sysredis-ha-migration-runbook.md.
   // Cache redis can be either cluster or single node based on env.REDIS_CLUSTER
   const isCluster = type === 'cache' && env.REDIS_CLUSTER;
+  const isSysSentinel = type === 'system' && !!env.REDIS_SYS_SENTINELS;
 
-  const baseClient = isCluster
+  const baseClient = isSysSentinel
+    ? createSentinel({
+        // Non-null assertion is safe: server-schema's superRefine rejects boot
+        // when REDIS_SYS_SENTINELS is set without REDIS_SYS_SENTINEL_NAME.
+        name: env.REDIS_SYS_SENTINEL_NAME!,
+        sentinelRootNodes: env.REDIS_SYS_SENTINELS!.split(',').map((hp) => {
+          const [host, port] = hp.trim().split(':');
+          return { host, port: parseInt(port ?? '26379', 10) };
+        }),
+        nodeClientOptions: {
+          // Reuse the password that's already extracted from REDIS_SYS_URL —
+          // the new HA cluster is provisioned with the same secret.
+          password: authConfig.password,
+          socket: socketConfig,
+          // Match the standalone path's PING heartbeat. Sentinel sub-clients
+          // are long-lived against each master/replica pod; without this, an
+          // idle connection through any intermediate LB or rolling-update of a
+          // sentinel pod can silently expire.
+          pingInterval,
+        },
+        sentinelClientOptions: env.REDIS_SYS_SENTINEL_PASSWORD
+          ? { password: env.REDIS_SYS_SENTINEL_PASSWORD, socket: socketConfig }
+          : { socket: socketConfig },
+        // Pool size 2 (not 1) so the periodic PING heartbeat can run on a
+        // separate TCP connection from in-flight writes. With pool size 1, a
+        // slow EVAL (see PR #2332's atomic helper) head-of-line blocks the
+        // heartbeat, which can trip the kubelet readiness probe during normal
+        // load spikes.
+        masterPoolSize: 2,
+        replicaPoolSize: 0,
+        scanInterval: 10_000,
+        // Keep sub-client errors local — surfacing them here would flood the
+        // top-level `error` listener whenever a single sentinel/replica pod
+        // flaps. We log them explicitly via the `client-error` listener below.
+        passthroughClientErrorEvents: false,
+        reserveClient: false,
+      })
+    : isCluster
     ? createCluster({
         // Use multiple root nodes for redundant topology discovery
         rootNodes: parseClusterNodes(connectionUrl),
@@ -374,6 +468,29 @@ function getBaseClient(type: 'cache' | 'system') {
   baseClient.on('connect', () => log(`Redis connected (${type})`));
   baseClient.on('reconnecting', () => log(`Redis reconnecting (${type})`));
   baseClient.on('ready', () => log(`Redis ready! (${type})`));
+
+  // Sentinel clients don't emit connect/reconnecting/ready — they expose
+  // topology-change (master/replica/sentinel set changed) and client-error
+  // (a sub-client errored). Surface both so failovers are visible in Loki and
+  // queryable per-pod, and increment Prometheus counters alongside so Grafana
+  // can graph + alert. See attachSysSentinelListeners for the log/label shape.
+  if (isSysSentinel) {
+    // Look up the counters via the globalThis bridge instead of a static import
+    // — prom-client requires fs/cluster which breaks the client webpack bundle.
+    // By the time getBaseClient runs at server startup, '~/server/prom/client'
+    // has already loaded and populated the bridge. Fall back to no-op stubs in
+    // the off-chance the bridge isn't populated yet (logs still flow to Loki).
+    const metrics = getRedisMetrics();
+    const noopCounter = { labels: () => ({ inc: () => undefined }) };
+    attachSysSentinelListeners(baseClient, {
+      // process.env.HOSTNAME is the pod name in Kubernetes (matches the
+      // Prometheus `pod` label). Fall back to 'unknown' off-cluster.
+      deployment: process.env.HOSTNAME ?? 'unknown',
+      log,
+      topologyCounter: metrics?.sysredisSentinelTopologyChangesCounter ?? noopCounter,
+      errorCounter: metrics?.sysredisSentinelClientErrorsCounter ?? noopCounter,
+    });
+  }
 
   // Cluster-specific event handlers for failover detection
   // Enhanced failover handling is gated behind FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER
@@ -558,6 +675,11 @@ function getBaseClient(type: 'cache' | 'system') {
 type RedisMetricsBridge = {
   redisCommandsInflight: { inc: (labels: { client: string }) => void; dec: (labels: { client: string }) => void };
   redisCommandDuration: { observe: (labels: { client: string }, value: number) => void };
+  // PR #2331 round-3: sentinel observability counters, exposed via the same
+  // bridge to avoid a static prom-client import edge in this client-bundle-
+  // reachable module. attachSysSentinelListeners reads them at attach time.
+  sysredisSentinelTopologyChangesCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
+  sysredisSentinelClientErrorsCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
 };
 
 // Server-runtime lookup of the prom metric handles WITHOUT a static import edge
@@ -746,14 +868,22 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   };
 
   // Implement scanIterator for cluster - it doesn't exist natively on RedisCluster
-  // We need to scan each master node and yield results from all of them
+  // For Sentinel, scanIterator is also absent (the JS-only helper lives on
+  // RedisClient, not the Sentinel proxy); we replicate its scan loop manually
+  // using SCAN, which IS proxied to the current master.
   const baseClient = client as any;
 
-  // Save reference to the original scanIterator (exists on single client, not on cluster)
+  // Save reference to the original scanIterator (exists on single client only,
+  // not on cluster, not on sentinel).
   const originalScanIterator = baseClient.scanIterator?.bind(baseClient);
 
+  // Detect sentinel mode: the Sentinel proxy exposes getMasterNode but not
+  // scanIterator. Cluster exposes .masters. Single client exposes scanIterator.
+  const isSentinelClient =
+    typeof baseClient.getMasterNode === 'function' &&
+    typeof baseClient.scanIterator !== 'function';
+
   client.scanIterator = async function* (options) {
-    // Check if this is a cluster client (has masters property)
     if (baseClient.masters) {
       // Cluster mode: iterate through all master nodes
       const masters = await baseClient.masters;
@@ -761,6 +891,16 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
         const nodeClient = await baseClient.nodeClient(master);
         yield* nodeClient.scanIterator(options);
       }
+    } else if (isSentinelClient) {
+      // Sentinel mode: drive SCAN directly against the proxy. SCAN is part of
+      // the COMMANDS map and is routed to the master client lease, so this
+      // works without needing to borrow a raw client via .use(...).
+      let cursor = options?.cursor ?? '0';
+      do {
+        const reply = await baseClient.scan(cursor, options);
+        cursor = reply.cursor;
+        yield reply.keys;
+      } while (cursor !== '0');
     } else {
       // Single node mode: use original native scanIterator
       yield* originalScanIterator(options);
