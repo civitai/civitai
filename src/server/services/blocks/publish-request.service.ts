@@ -1224,7 +1224,7 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
  * mod feedback without a second round-trip.
  */
 export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}) {
-  const [{ dbRead }, { reviewRepoUrl }] = await Promise.all([
+  const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
     import('~/server/db/client'),
     import('./forgejo.service'),
   ]);
@@ -1247,6 +1247,7 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
+      forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
       reviewedBy: { select: { id: true, username: true, image: true } },
     },
@@ -1258,6 +1259,10 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
       ...r,
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
+      pushCommitUrl:
+        !r.bundleSha256 && r.forgejoCommitSha
+          ? repoCommitUrl(r.slug, r.forgejoCommitSha)
+          : null,
     })),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
