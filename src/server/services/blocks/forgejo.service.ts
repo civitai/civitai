@@ -17,6 +17,7 @@
  * env that doesn't have direct cluster DNS. FORGEJO_BASE_URL handles both.
  */
 
+import { randomBytes } from 'crypto';
 import { env } from '~/env/server';
 
 export const FORGEJO_ORG = 'civitai-apps';
@@ -392,6 +393,131 @@ export async function commitFiles(opts: {
   });
   const result = await unwrap<{ commit: { sha: string } }>(res);
   return { sha: result.commit.sha };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 (git-push self-service) — per-user Forgejo identity provisioning.
+//
+// These functions mint a SCOPED, restricted Forgejo user + token for a civitai
+// developer so they can `git push` to their own civitai-apps/<slug> repo. The
+// admin token (createForgejoUser / getForgejoUser) creates/looks up the user;
+// the user's OWN HTTP-Basic creds (mintForgejoUserToken) mint their token —
+// Forgejo refuses to mint a user token via the admin PAT.
+//
+// Isolation: the created user is `restricted:true` + `visibility:'private'`, so
+// it has NO ambient access; write on a specific repo comes only from an explicit
+// addCollaborator call (the dev-git-access flow). A push still parks a pending
+// review request and can NEVER deploy without mod approval.
+// ---------------------------------------------------------------------------
+
+export type ForgejoUser = { id: number; username: string };
+
+/**
+ * Random Forgejo password for a provisioned dev user. 32 hex chars (16 bytes
+ * of entropy) clears Forgejo's MIN_PASSWORD_LENGTH and is used exactly once —
+ * to HTTP-Basic-auth the immediate `mintForgejoUserToken` call. It is never
+ * stored (the minted token is the persisted credential).
+ */
+function randomForgejoPassword(): string {
+  return randomBytes(16).toString('hex');
+}
+
+/**
+ * Create a restricted, private Forgejo user via the admin API.
+ *
+ * Idempotent: a 409/422 (username/email already taken) is treated as
+ * "already exists" and we return the existing user via getForgejoUser — but
+ * WITHOUT a password (you can't recover an existing user's password). The
+ * caller (ensureForgejoIdentity) only mints a token on the fresh-create path,
+ * where `password` is returned; the DB identity row is the source of truth for
+ * the token thereafter.
+ *
+ * `restricted:true` is the isolation boundary: the user sees nothing it isn't
+ * explicitly made a collaborator on.
+ */
+export async function createForgejoUser(opts: {
+  username: string;
+  email: string;
+}): Promise<{ user: ForgejoUser; password: string | null; created: boolean }> {
+  const password = randomForgejoPassword();
+  const res = await fjFetch('/api/v1/admin/users', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: opts.username,
+      email: opts.email,
+      password,
+      must_change_password: false,
+      restricted: true,
+      visibility: 'private',
+    }),
+  });
+  if (res.status === 409 || res.status === 422) {
+    // Already exists — recover the row; password is unknown/unrecoverable.
+    const existing = await getForgejoUser(opts.username);
+    return { user: existing, password: null, created: false };
+  }
+  const user = await unwrap<ForgejoUser>(res);
+  return { user, password, created: true };
+}
+
+/** Look up a Forgejo user by username (admin auth). */
+export async function getForgejoUser(username: string): Promise<ForgejoUser> {
+  const res = await fjFetch(`/api/v1/users/${encodeURIComponent(username)}`);
+  return unwrap<ForgejoUser>(res);
+}
+
+/**
+ * Delete a Forgejo user via the admin API. Used only to recover the rare
+ * "Forgejo user exists but we have NO DB identity row" edge: since the password
+ * is unrecoverable we can't mint a token for the orphaned user, so we delete +
+ * recreate it cleanly. `purge:true` removes its repos/data too. 404 (already
+ * gone) is treated as success.
+ */
+export async function deleteForgejoUser(username: string): Promise<void> {
+  const res = await fjFetch(
+    `/api/v1/admin/users/${encodeURIComponent(username)}?purge=true`,
+    { method: 'DELETE' }
+  );
+  if (!res.ok && res.status !== 204 && res.status !== 404) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Forgejo deleteUser ${res.status}: ${body.slice(0, 240)}`);
+  }
+}
+
+/**
+ * Mint a fine-grained access token FOR a Forgejo user, authed as that user via
+ * HTTP Basic (username:password) — NOT the admin token. gitea/Forgejo's
+ * POST /users/{username}/tokens requires the user's own credentials; the admin
+ * PAT is rejected here.
+ *
+ * `scopes` are gitea-1.22 fine-grained scope strings; for repo write the scope
+ * is `write:repository` (which implies read). Returns the token's `sha1` — the
+ * value the developer uses in the clone URL. The token is shown ONCE by Forgejo
+ * (here); we encrypt + persist it immediately.
+ */
+export async function mintForgejoUserToken(opts: {
+  username: string;
+  password: string;
+  name: string;
+  scopes: string[];
+}): Promise<string> {
+  const basic = Buffer.from(`${opts.username}:${opts.password}`).toString('base64');
+  const url = `${getBaseUrl()}/api/v1/users/${encodeURIComponent(opts.username)}/tokens`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basic}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ name: opts.name, scopes: opts.scopes }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const token = await unwrap<{ sha1: string }>(res);
+  if (!token?.sha1) {
+    throw new Error('Forgejo token mint returned no sha1');
+  }
+  return token.sha1;
 }
 
 /**
