@@ -301,7 +301,7 @@ function TensorTable({ data }: { data: ModelTensorAnalysis }) {
               const row = visibleRows[item.index];
               return (
                 <div
-                  key={item.key}
+                  key={String(item.key)}
                   style={{
                     position: 'absolute',
                     top: 0,
