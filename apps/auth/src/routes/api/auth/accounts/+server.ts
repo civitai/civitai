@@ -14,11 +14,11 @@ export const GET: RequestHandler = async ({ cookies, locals }) => {
   const linked = await listAccounts(deviceId);
   const accounts = await Promise.all(
     linked.map(async ({ userId, lastSwitchedAt }) => {
-      const u = await getOrProduceSessionUser(userId).catch(() => null);
+      const account = await getOrProduceSessionUser(userId).catch(() => null);
       return {
         userId,
-        username: u?.username,
-        image: u?.image,
+        username: account?.username,
+        image: account?.image,
         lastSwitchedAt,
         active: locals.user?.id === userId,
       };

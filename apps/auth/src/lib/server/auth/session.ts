@@ -65,18 +65,24 @@ export function toSessionUser(row: {
   };
 }
 
-/** Mint the THIN ES256 session JWT (identity only — `sub`/`jti`/`signedAt`, NO embedded user) and set it as
- *  the cross-subdomain cookie. The rich user is resolved per-request from the shared cache (the hub
- *  produces it), so the cookie stays small and every root resolves from one source. */
 /**
- * Mint a thin session token for a user + track it (for invalidation). Returns the token; does NOT touch any
- * cookie — callers that own the HTTP response cookie (the account-switch endpoint, or a spoke proxy) use this
- * directly and set the cookie themselves. `establishSession` is the cookie-setting wrapper for the login path.
+ * Mint the THIN ES256 session token (identity only — `sub`/`jti`/`signedAt`, NO embedded user; the rich user is
+ * resolved per-request from the shared cache) + track it for invalidation. Returns the token; does NOT touch
+ * any cookie — callers that own the HTTP response set it themselves. `establishSession` is the cookie-setting
+ * wrapper for the login path.
  */
-export async function mintUserSession(user: SessionUser): Promise<string> {
+export async function mintUserSession(
+  user: SessionUser,
+  opts?: { impersonatedBy?: number }
+): Promise<string> {
   const tokenId = randomUUID();
   const token = await getSigner().mintSessionToken(
-    { signedAt: Date.now(), sub: String(user.id) },
+    {
+      signedAt: Date.now(),
+      sub: String(user.id),
+      // Moderator impersonation (F): stamp the moderator's id so the exit path can re-mint their session.
+      ...(opts?.impersonatedBy ? { impersonatedBy: opts.impersonatedBy } : {}),
+    },
     { jti: tokenId } // the session/token id is the standard `jti` claim — no duplicate `id`
   );
   // Best-effort: track the token so it can be invalidated later (logout / ban). A redis blip must not fail.
