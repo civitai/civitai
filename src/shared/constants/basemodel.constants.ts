@@ -89,6 +89,8 @@ export type LicenseRecord = {
   notice?: string;
   poweredBy?: string;
   disableMature?: boolean;
+  // License forbids commercial use (drives commercial-use override + monetization block).
+  nonCommercial?: boolean;
 };
 
 export type BaseModelFamilyRecord = {
@@ -2131,10 +2133,15 @@ export const licenses: LicenseRecord[] = [
   {
     id: 37,
     name: 'Ideogram Non-Commercial Model Agreement',
-    url: 'https://github.com/ideogram-oss/ideogram-4/model_licenses/LICENSE-IDEOGRAM-4-NON-COMMERCIAL',
+    // Public blob page — the nf4 `raw` URL is gated and 401s, and their license's
+    // own cited github URL 404s. The license name links here in the UI.
+    url: 'https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md',
+    // Section 3(iii) attribution wording; the URL lives on the linked license name
+    // above the notice, so we omit the bare URL here.
     notice:
       'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement. All rights reserved. Copyright © Ideogram, Inc.',
     disableMature: true,
+    nonCommercial: true,
   },
 ];
 
