@@ -308,7 +308,7 @@ export const blocksRouter = router({
       });
     }),
 
-  installOnModel: moderatorProcedure
+  installOnModel: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -326,7 +326,7 @@ export const blocksRouter = router({
       });
     }),
 
-  updateSettings: moderatorProcedure
+  updateSettings: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -347,7 +347,7 @@ export const blocksRouter = router({
    * so the NOT EXISTS subquery in listForModel suppresses platform defaults
    * for the same app_block_id. See plan §4 invariant.
    */
-  toggleEnabled: moderatorProcedure
+  toggleEnabled: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -1136,7 +1136,7 @@ export const blocksRouter = router({
    * `validateBlockSettings`). The client never becomes the source of truth for
    * what gets persisted.
    */
-  getInstallConfig: moderatorProcedure
+  getInstallConfig: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(z.object({ appBlockId: z.string().min(1).max(64) }))
     .query(async ({ ctx, input }) => {
@@ -1189,7 +1189,7 @@ export const blocksRouter = router({
    * (mirrors per-model install row shape); `viewer_personal` is a viewer
    * write (mirrors per-viewer override row shape).
    */
-  upsertSubscription: moderatorProcedure
+  upsertSubscription: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -1247,7 +1247,7 @@ export const blocksRouter = router({
    * (already deleted is a success); rows owned by another user raise
    * authorization at the service layer.
    */
-  deleteSubscription: moderatorProcedure
+  deleteSubscription: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(z.object({ subscriptionId: z.string().min(1).max(64) }))
     .mutation(async ({ ctx, input }) => {
