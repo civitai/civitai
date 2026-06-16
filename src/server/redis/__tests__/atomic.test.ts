@@ -38,7 +38,12 @@ describe('hSetWithTTL', () => {
   it('stringifies numeric values', async () => {
     const client = mockClient();
     await hSetWithTTL(client, 'k', 'f', 42, 1000);
-    expect(client.eval.mock.calls[0][1].arguments).toEqual(['f', 42, '1000']);
+    // node-redis v5 EVAL rejects raw numbers ("arguments[N] must be of type
+    // string | Buffer, got number") — numeric values MUST be stringified.
+    expect(client.eval.mock.calls[0][1].arguments).toEqual(['f', '42', '1000']);
+    for (const arg of client.eval.mock.calls[0][1].arguments) {
+      expect(typeof arg === 'string' || Buffer.isBuffer(arg)).toBe(true);
+    }
   });
 
   it('forwards Buffer values without coercion (msgpack-packed write path)', async () => {
@@ -90,6 +95,16 @@ describe('hSetMultiWithTTL', () => {
       'invalid',
       'refresh',
     ]);
+  });
+
+  it('stringifies numeric values (node-redis v5 EVAL rejects raw numbers)', async () => {
+    const client = mockClient();
+    await hSetMultiWithTTL(client, 'k', { 'f-1': 42, 'f-2': 'v' }, 1000);
+    // ARGV: [ttl, count, ...fields, ...values] — numeric value must be '42'
+    expect(client.eval.mock.calls[0][1].arguments).toEqual(['1000', '2', 'f-1', 'f-2', '42', 'v']);
+    for (const arg of client.eval.mock.calls[0][1].arguments) {
+      expect(typeof arg === 'string' || Buffer.isBuffer(arg)).toBe(true);
+    }
   });
 
   it('no-ops on empty input (avoids EVAL with zero fields)', async () => {

@@ -120,7 +120,7 @@ export async function hSetWithTTL(
   // simplicity — at runtime node-redis accepts Buffer here too.
   await client.eval(script, {
     keys: [key],
-    arguments: [field, value as unknown as string, String(ttlMs)],
+    arguments: [field, (typeof value === 'number' ? String(value) : value) as unknown as string, String(ttlMs)],
   });
 }
 
@@ -175,7 +175,7 @@ export async function hSetMultiWithTTL(
     String(ttlMs),
     String(entries.length),
     ...fieldNames,
-    ...entries.map(([, v]) => v as unknown as string),
+    ...entries.map(([, v]) => (typeof v === 'number' ? String(v) : v) as unknown as string),
   ];
 
   const script = `
