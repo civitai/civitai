@@ -253,16 +253,37 @@ const {
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
 export async function purgeResizeCache({ url }: { url: string }) {
-  // Purge from new cache bucket
-  const { items } = await getImageS3Client().listObjects({
-    bucket: env.S3_IMAGE_CACHE_BUCKET,
-    prefix: url,
-  });
-  const keys = items.map((x) => x.Key).filter(isDefined);
-  if (keys.length) {
-    await getImageS3Client().deleteManyObjects({
+  // Best-effort: purge resized variants from the image-cache bucket. This is a
+  // cache invalidation, NOT a source-of-truth write — a stale resized variant is
+  // self-healing (re-derived on next request) and must never fail the caller's
+  // mutation. The S3 client here talks to an S3-compatible proxy
+  // (S3_IMAGE_UPLOAD_ENDPOINT); when that proxy returns a non-S3 body (e.g. a
+  // plain-text "404 page not found" from the proxy front-end), the AWS SDK's
+  // deserializer throws `char '4' is not expected.:1:1` which previously
+  // surfaced as a 500 on post.updateImage (hideMeta toggle). Swallow + log so a
+  // flaky/non-conforming cache proxy can't break image edits. (The deleteImage
+  // caller already wraps this in try/catch — this makes the contract intrinsic.)
+  try {
+    const { items } = await getImageS3Client().listObjects({
       bucket: env.S3_IMAGE_CACHE_BUCKET,
-      keys,
+      prefix: url,
+    });
+    const keys = items.map((x) => x.Key).filter(isDefined);
+    if (keys.length) {
+      await getImageS3Client().deleteManyObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET,
+        keys,
+      });
+    }
+  } catch (err) {
+    logToAxiom({
+      type: 'warning',
+      name: 'purge-resize-cache',
+      message: 'resize-cache purge failed',
+      imageKey: url,
+      error: safeError(err),
+    }).catch(() => {
+      // swallow — best effort logging
     });
   }
 
