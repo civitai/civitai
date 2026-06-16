@@ -154,7 +154,7 @@ export function rateLimit<TInput = any>(
     // Get user's attempts. options.sharedKey lets multiple procedures share one
     // quota; otherwise key on the tRPC path.
     const keyName = options?.sharedKey ?? path.replace('.', ':');
-    const cacheKey = `${REDIS_KEYS.TRPC.LIMIT.BASE}:${keyName}`;
+    const cacheKey = `${REDIS_KEYS.TRPC.LIMIT.BASE}:${keyName}` as const;
     const hashKey = ctx.user?.id?.toString() ?? ctx.ip;
     const attempts = (await redis.packed.hGet<number[]>(cacheKey, hashKey)) ?? [];
 

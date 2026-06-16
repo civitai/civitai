@@ -193,6 +193,7 @@ function MyApp(props: CustomAppProps) {
       serverDomains={serverDomains}
       availableOAuthProviders={availableOAuthProviders}
       verifiedBot={verifiedBot}
+      isAuthed={!!session || hasAuthCookie}
     >
       <Head>
         <title>Civitai | Share your models</title>

@@ -32,6 +32,12 @@ type AppProviderProps = {
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
+  // Whether the request is from a logged-in user (`!!session || hasAuthCookie`,
+  // computed in _app). AppProvider sits ABOVE SessionProvider so it can't use
+  // `useSession()` — this prop is its only auth signal. Used to gate the ambient
+  // `user.getSettings` query (a protectedProcedure) so logged-out users don't fire
+  // a guaranteed-401 fetch; the SSR `initialData` still seeds the cache for them.
+  isAuthed: boolean;
 };
 
 type AppContext = {
@@ -98,9 +104,13 @@ export function AppProvider({
   serverDomains,
   availableOAuthProviders,
   verifiedBot,
+  isAuthed,
   ...appContext
 }: AppProviderProps) {
-  trpc.user.getSettings.useQuery(undefined, { initialData: settings });
+  // Gate on `isAuthed` — `user.getSettings` is a protectedProcedure, so firing it
+  // for a logged-out user is a guaranteed 401. `initialData` still seeds the cache
+  // for everyone; only the network fetch is suppressed when not logged in.
+  trpc.user.getSettings.useQuery(undefined, { initialData: settings, enabled: isAuthed });
   // Seed `content.checkTosUpdate` from the SSR snapshot so `useToSUpdateModal`
   // (mounted deeper, in AppLayout) reads a primed cache and never fires the
   // per-bootstrap fetch. ToS lastmod only changes on a content deploy, so this
