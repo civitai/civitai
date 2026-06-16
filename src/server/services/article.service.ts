@@ -83,6 +83,7 @@ import { submitTextModeration } from '~/server/services/text-moderation.service'
 import { trackModActivity } from '~/server/services/moderator.service';
 import { ReportStatus } from '~/shared/utils/prisma/enums';
 import {
+  AutoResolveRaceLost,
   autoResolveArticleRatingReview,
   computeArticleDerivedNsfwLevel,
   evaluateAutoApproveGate,
@@ -2452,31 +2453,64 @@ export async function createArticleRatingReview({
     });
 
     if (gate.eligible) {
-      const auto = await autoResolveArticleRatingReview({
-        mode: 'create',
-        articleId,
-        ownerUserId: userId,
-        suggestedLevel,
-        userComment: userComment ?? null,
-        previousLevel: article.nsfwLevel,
-        articleTitle: article.title ?? 'your article',
-      });
+      // Insert as Pending FIRST so the partial unique index
+      // (`ArticleRatingReview_pending_per_article`, WHERE status='Pending')
+      // serializes concurrent submissions for the same article — the loser of
+      // the race hits P2002 and is rejected here rather than producing a
+      // duplicate Actioned row + duplicate "approved" notification. We then
+      // promote the row via the race-safe resolve-existing path.
+      let pendingId: number;
+      try {
+        const created = await dbWrite.articleRatingReview.create({
+          data: {
+            articleId,
+            userId,
+            currentLevel: article.nsfwLevel,
+            suggestedLevel,
+            userComment,
+            status: ReportStatus.Pending,
+          },
+          select: { id: true },
+        });
+        pendingId = created.id;
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+          throw throwBadRequestError('A review is already pending for this article');
+        }
+        throw e;
+      }
 
-      logToAxiom({
-        type: 'info',
-        name: 'article-rating-review-auto-resolved',
-        articleId,
-        reviewId: auto.reviewId,
-        suggestedLevel,
-        derivedLevel: gate.derivedLevel,
-        entryPoint: 'submission',
-      }).catch();
+      try {
+        const auto = await autoResolveArticleRatingReview({
+          mode: 'resolve-existing',
+          reviewId: pendingId,
+          articleId,
+          ownerUserId: userId,
+          suggestedLevel,
+          previousLevel: article.nsfwLevel,
+          articleTitle: article.title ?? 'your article',
+        });
 
-      // Return the same shape as the normal Pending insert so callers (and the
-      // owner-facing UI that refetches `getArticleRatingReviewForOwner`) read
-      // the row uniformly. `status` and `appliedLevel` are now set, which the
-      // owner banner / modal will surface as "approved".
-      return auto.review;
+        logToAxiom({
+          type: 'info',
+          name: 'article-rating-review-auto-resolved',
+          articleId,
+          reviewId: auto.reviewId,
+          suggestedLevel,
+          derivedLevel: gate.derivedLevel,
+          entryPoint: 'submission',
+        }).catch();
+
+        return auto.review;
+      } catch (e) {
+        // Another resolver (a mod, or the scan-completion retry) won the race
+        // and promoted this row first. Return the row as-is; it is already
+        // resolved and the article mutation stands.
+        if (e instanceof AutoResolveRaceLost) {
+          return dbRead.articleRatingReview.findUniqueOrThrow({ where: { id: pendingId } });
+        }
+        throw e;
+      }
     }
   }
 
