@@ -1182,7 +1182,6 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
-      bundleKey: true,
       forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
     },
@@ -1198,11 +1197,15 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       // Deep-link into the per-slug Forgejo review repo so mods can
       // browse the actual code from the review modal.
       reviewRepoUrl: reviewRepoUrl(r.slug),
-      // PUSH-ORIGINATED requests (empty bundleSha256) have no review-org
-      // snapshot — link mods to the CANONICAL repo at the exact pushed sha
-      // instead, so they can review the real code rather than approve blind.
+      // PUSH-ORIGINATED requests have no review-org snapshot — link mods to the
+      // CANONICAL repo at the exact pushed sha instead, so they can review the
+      // real code rather than approve blind. Push rows are marked by empty
+      // bundle pointers (recordPendingFromPush writes bundleKey='' AND
+      // bundleSha256=''); bundleSha256 is already in this payload + NOT NULL, so
+      // it's the discriminator here (the fetch paths key off the equivalent
+      // bundleKey since they need the S3 path).
       pushCommitUrl:
-        !r.bundleKey && r.forgejoCommitSha
+        !r.bundleSha256 && r.forgejoCommitSha
           ? repoCommitUrl(r.slug, r.forgejoCommitSha)
           : null,
     })),
@@ -1240,7 +1243,6 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
-      bundleKey: true,
       forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
       reviewedBy: { select: { id: true, username: true, image: true } },
@@ -1292,7 +1294,6 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
       manifest: true,
       fileSummary: true,
       manifestDiffSummary: true,
-      bundleKey: true,
       forgejoCommitSha: true,
       submittedBy: { select: { id: true, username: true, image: true } },
       reviewedBy: { select: { id: true, username: true, image: true } },
