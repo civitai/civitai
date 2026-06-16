@@ -264,6 +264,37 @@ function getBaseClient(type: 'cache' | 'system') {
   const url = new URL(REDIS_URL);
   const connectionUrl = `${url.protocol}//${url.host}`;
 
+  // socketTimeout is scoped PER client kind. The CLUSTER (cache) client carries the
+  // 504-cascade structural fix — a silent half-open there parks every request handler.
+  // The SYSTEM client is single-node + mostly idle; applying the same aggressive 10s
+  // teardown to it (against the flaky single-replica sysRedis backend, which doesn't
+  // cleanly complete the TCP close) converted a transient half-open into a reconnect
+  // storm that ACCUMULATES half-closed sockets and wedged /api/health for hours. So the
+  // sys client uses REDIS_SYS_SOCKET_TIMEOUT_MS (default 0 = disabled → pre-#2556
+  // self-healing); the cache client keeps REDIS_SOCKET_TIMEOUT_MS.
+  const socketTimeoutMs =
+    type === 'system' ? env.REDIS_SYS_SOCKET_TIMEOUT_MS : env.REDIS_SOCKET_TIMEOUT_MS;
+
+  // Two coupled guards on the SYSTEM client (both system-only; the cache client keeps
+  // node-redis defaults — its socketTimeout tears the socket down and flushes the queue):
+  //
+  // 1. commandsQueueMaxLength — with socketTimeoutMs=0, a SILENT half-open is only
+  //    cleared by OS TCP keepalive (minutes), during which written-but-unanswered
+  //    commands pile in the reply queue. The cap fast-fails new commands once wedged
+  //    (the fail-open callers catch it) so the heap can't grow unbounded toward OOM.
+  // 2. disableOfflineQueue — while the socket is RECONNECTING (not ready), node-redis
+  //    would otherwise buffer commands in its offline write queue. Under sustained authed
+  //    load that buffer fills before the reconnect handshake (HELLO/AUTH/SELECT) can
+  //    enqueue — and the handshake goes through the SAME bounded queue — starving
+  //    recovery → a PERMANENT wedge. Rejecting offline commands immediately
+  //    (ClientOfflineError → fail-open) keeps the write queue empty so the handshake
+  //    always has room. Together: bounded heap on a half-open AND guaranteed recovery.
+  const isSystem = type === 'system';
+  const commandsQueueMaxLength =
+    isSystem && env.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH > 0
+      ? env.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH
+      : undefined;
+
   // Shared configuration
   const socketConfig = {
     reconnectStrategy(retries: number) {
@@ -284,10 +315,9 @@ function getBaseClient(type: 'cache' | 'system') {
     // ceiling = 504); parked commands then reject promptly and the client reconnects.
     // On a HEALTHY idle socket the keepalive PING (pingInterval, derived below) writes
     // every interval and keeps this timer reset, so it does NOT spuriously fire.
-    // Tunable via REDIS_SOCKET_TIMEOUT_MS (0/unset to disable).
-    ...(env.REDIS_SOCKET_TIMEOUT_MS > 0
-      ? { socketTimeout: env.REDIS_SOCKET_TIMEOUT_MS }
-      : {}),
+    // Tunable via REDIS_SOCKET_TIMEOUT_MS (cache) / REDIS_SYS_SOCKET_TIMEOUT_MS
+    // (system); 0/unset disables it (the system default is 0 — see socketTimeoutMs).
+    ...(socketTimeoutMs > 0 ? { socketTimeout: socketTimeoutMs } : {}),
   };
 
   const authConfig = {
@@ -303,8 +333,8 @@ function getBaseClient(type: 'cache' | 'system') {
   // is what prevents a healthy idle socket from spuriously firing socketTimeout. We CLAMP
   // to min(env, socketTimeout/2) so the invariant holds even if REDIS_PING_INTERVAL_MS is
   // mis-set >= socketTimeout. When socketTimeout is disabled (0) there is no idle timer
-  // to keep reset, so we just honor the configured ping interval.
-  const socketTimeoutMs = env.REDIS_SOCKET_TIMEOUT_MS;
+  // to keep reset, so we just honor the configured ping interval. (socketTimeoutMs is
+  // the per-client-kind value derived above — sys defaults to 0/disabled.)
   const pingInterval =
     socketTimeoutMs > 0
       ? Math.min(env.REDIS_PING_INTERVAL_MS, Math.floor(socketTimeoutMs / 2))
@@ -335,6 +365,8 @@ function getBaseClient(type: 'cache' | 'system') {
         ...authConfig,
         socket: socketConfig,
         pingInterval,
+        ...(commandsQueueMaxLength ? { commandsQueueMaxLength } : {}),
+        ...(isSystem ? { disableOfflineQueue: true } : {}),
       });
 
   // Common event handlers (note: cluster clients don't emit connect/ready events in node-redis v4.x)
@@ -576,28 +608,10 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
   };
 }
 
-/**
- * Apply the env-tunable per-command timeout to a fail-open read.
- *
- * Returns a node-redis command-options proxy (no new connection) whose commands
- * carry `{ timeout: REDIS_COMMAND_TIMEOUT_MS }`. node-redis arms an
- * `AbortSignal.timeout` per command that rejects a parked/slow command with a
- * `TimeoutError`. ⚠️ ONLY use this on callers that catch the throw and degrade —
- * at a non-fail-open site it would convert a 30s park into a 500.
- *
- * Returns the client unchanged when the timeout is disabled (env = 0).
- *
- * Caveat: node-redis does NOT propagate the per-command timeout into MULTI/pipeline
- * sub-commands, so this has no effect on `client.multi()` batches (those rely on the
- * socketTimeout structural fix instead).
- */
-export function withRedisCommandTimeout<C>(client: C): C {
-  const timeout = env.REDIS_COMMAND_TIMEOUT_MS;
-  if (!timeout || timeout <= 0) return client;
-  const withOpts = (client as any).withCommandOptions;
-  if (typeof withOpts !== 'function') return client;
-  return withOpts.call(client, { timeout }) as C;
-}
+// Wall-clock deadline for per-request sysRedis reads — defined in a leaf module so it
+// can be unit-tested without constructing the redis clients. Re-exported here because
+// callers import it from `~/server/redis/client`.
+export { withSysReadDeadline } from './sys-read-deadline';
 
 function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   const client = getBaseClient(type) as unknown as CustomRedisClient<K>;

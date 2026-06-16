@@ -59,6 +59,34 @@ export const serverSchema = z.object({
   // socket under the timeout. client.ts derives + clamps the ping interval to enforce
   // this even if the two envs are mis-set; see getBaseClient().
   REDIS_SOCKET_TIMEOUT_MS: z.coerce.number().default(10000),
+  // socketTimeout for the SYSTEM (sysRedis) client specifically. The structural
+  // 504-cascade fix above is needed on the CLUSTER (cache) client, where a silent
+  // half-open parks ALL request handlers. The system client is single-node and mostly
+  // idle, and the flaky single-replica sysRedis backend does not cleanly complete the
+  // TCP close on teardown — so the aggressive 10s socketTimeout there does NOT heal a
+  // blip, it ACCUMULATES half-closed sockets ([RxClosing TxClosing]) into a reconnect
+  // storm that wedges /api/health (the readiness probe) for hours. Default 0 = disabled
+  // → the sys client reverts to its pre-#2556 self-healing behavior (a sys half-open
+  // just blips the 5s health-check deadline and clears, no teardown storm). Tunable up
+  // if a real sys half-open guard is ever wanted, but it must be paired with a backend
+  // that closes cleanly. See getBaseClient().
+  REDIS_SYS_SOCKET_TIMEOUT_MS: z.coerce.number().default(0),
+  // Wall-clock deadline (ms) for EVERY per-request sysRedis read (the refreshToken
+  // MULTI and the single-command config/session reads). The sys client has no
+  // socketTimeout (above), and node-redis's per-command timeout can't bound a command
+  // once written nor any MULTI sub-command — so on a silent half-open a sys read parks
+  // (~OS-keepalive minutes) per request without this. Bounds the request handler and
+  // fails open. 0 disables it. See redis/sys-read-deadline.ts withSysReadDeadline().
+  REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(2000),
+  // Bound on the sys client's node-redis command queue. The sys client has no
+  // socketTimeout, so on a SILENT half-open it is only cleared by OS TCP keepalive
+  // (minutes), during which every authenticated request enqueues a MULTI that never
+  // drains → an UNBOUNDED queue → heap growth / OOM. Capping the queue makes new
+  // commands fast-fail (`The queue is full`) once wedged, which the fail-open callers
+  // catch — bounding the heap instead of OOMing the pod. 0 = unbounded (node-redis
+  // default). Only applied to the system client; the cache client self-bounds via its
+  // socketTimeout. See getBaseClient().
+  REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: z.coerce.number().default(10000),
   // Keepalive PING interval (ms). node-redis issues a `PING` every interval ONLY when
   // the socket is otherwise idle (a parked/in-flight command blocks it from being
   // written). Each PING is a write+reply round-trip that resets the socketTimeout idle
@@ -69,15 +97,6 @@ export const serverSchema = z.object({
   // (≈ half the 10s default socketTimeout). PING load is trivial: one tiny command per
   // idle node per interval (cluster: per node; a few nodes × pods × 0.2/s).
   REDIS_PING_INTERVAL_MS: z.coerce.number().default(5000),
-  // Per-command timeout (ms) applied ONLY to verified fail-open hot-path reads
-  // (refreshToken pipeline, needsUpdate/getClientConfigCached). node-redis arms an
-  // AbortSignal.timeout per command that rejects a parked/slow command with a
-  // TimeoutError — at these call sites a TimeoutError is caught and degrades (keep
-  // session / skip update banner), so it converts a 30s park into a fast fail-open,
-  // never a 500. Default is far above normal latency (<5ms) so it only fires on a
-  // genuine stall. Set to 0 to disable the per-command layer (socketTimeout still
-  // applies). Tunable for canary rollout.
-  REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().default(2000),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
