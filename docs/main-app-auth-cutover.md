@@ -210,14 +210,23 @@ target being in **this** device's set and fresh (<30d); `localStorage` holds zer
       Phase 5 deletes it, convert the redeem to a **hub-native legacy-token exchange** (decrypt the AES token →
       hub mints + links), or legacy localStorage accounts become unredeemable post-strip.
 
-**Cross-domain — remaining:**
+**Cross-domain — hub-native exchange (done, type-clean):**
 
-- [ ] **civitai.red** (different registrable domain — cookies don't cross): hub-minted ES256 **swap token** +
-      hub-native **exchange** (verify-only spoke can't mint → POST the swap token back to the hub, which mints a
-      civ-token the spoke stores in its own cookie). Same mechanism unlocks **localhost → auth.civitai.com** dev
-      login (localhost is just another cross-domain spoke). Needs `isSecureCookie()` to follow the app's own
-      base URL (`NEXT_PUBLIC_BASE_URL`) so an http-localhost spoke uses a non-secure cookie.
-- [ ] Validate e2e: same-domain switch + `.com ↔ .red` + localhost
+- [x] **Navigation-based flow** (`SameSite=Lax`-safe; a credentialed fetch can't carry the hub cookie cross-site):
+      spoke `/api/auth/sync` (no `swap`) → top-level redirect to hub `/api/auth/sync?callback=…&returnUrl=…` →
+      hub reads its own Lax cookie, mints a **single-use** swap token → redirects back to the spoke `?swap=…` →
+      spoke exchanges it at hub `POST /api/auth/exchange` (server-to-server, swap token IS the credential) →
+      sets THIS domain's own civ-token cookie → continues to returnUrl.
+- [x] **Single-use** swap tokens: `verifySwapToken` exposes the `jti`; the hub burns it (`swap:used:{jti}`,
+      `setNX` + TTL) so a token captured from the redirect URL can't be replayed.
+- [x] `isSecureCookie()` follows the **spoke's own** base URL (`NEXT_PUBLIC_BASE_URL`), so an http-localhost
+      spoke against the prod hub uses a non-secure cookie. **localhost → auth.civitai.com** dev login rides the
+      same flow (localhost is just another cross-domain spoke). Hub guards the redirect target (civitai-family +
+      localhost allowlist). Package: `createExchangeClient` (no hand-rolled hub call).
+- [ ] Validate e2e: same-domain switch + `.com ↔ .red` + localhost.
+- [ ] Follow-up: cross-domain login mints a session but doesn't link the spoke's **device set** (the exchange is
+      server-to-server, no device cookie) — so multi-account *on `.red`* needs a device link in the exchange.
+- [ ] STEP-H: the now-dead next-auth `account-switch-hub` receiver + `createAccountSwitchProvider` can be deleted.
 
 ### F. Moderator impersonation — 🔨 to do
 

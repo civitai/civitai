@@ -53,13 +53,9 @@ type AccountState = {
   accounts: CivitaiAccounts;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
-  // number → switch by userId: seamless device switch if fresh in the set, legacy-token redeem if mid-migration,
-  // else re-authenticate at the hub. EncryptedDataSchema / { swapToken } → cross-domain (.red) & impersonation,
-  // still via next-auth signIn (STEP-H-REMOVAL) until the hub-native exchange + strip land.
-  swapAccount: (
-    target: number | EncryptedDataSchema | { swapToken: string },
-    callbackUrl?: string
-  ) => Promise<void>;
+  // Switch by userId: seamless device switch if fresh in the set, legacy-token redeem if mid-migration, else
+  // re-authenticate at the hub. (Cross-domain .red now goes through the server /api/auth/sync flow, not here.)
+  swapAccount: (userId: number, callbackUrl?: string) => Promise<void>;
   removeAccount: (id: number) => Promise<void>;
   // Moderator impersonation (F) — start acting as `userId` / return to your own account. Both reload on success
   // and throw with a message on failure (the caller surfaces it). Hub-native: no client-held token, no ogAccount.
@@ -183,27 +179,12 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
   // roster + device set too. Until then it's identical to logout (the device set self-prunes after 30 idle days).
   const logoutAll = logout;
 
-  const swapAccount = async (
-    target: number | EncryptedDataSchema | { swapToken: string },
-    callbackUrl?: string
-  ) => {
+  const swapAccount = async (userId: number, callbackUrl?: string) => {
     const cb = callbackUrl ?? window.location.href;
-
-    // Cross-domain (.red) swap token + legacy AES civ-token still go through next-auth signIn.
-    // STEP-H-REMOVAL: replaced by the hub-native exchange.
-    if (typeof target !== 'number') {
-      if ('swapToken' in target) {
-        await signIn('account-switch-hub', { token: target.swapToken, callbackUrl: cb });
-      } else {
-        await signIn('account-switch', { callbackUrl: cb, ...target });
-      }
-      return;
-    }
-
-    const idStr = String(target);
+    const idStr = String(userId);
     // 1. Fresh in the device set → seamless switch (the hub mints a fresh civ-token; the proxy sets it).
     //    A false result means it raced out of the 30-day window since the list loaded → fall to re-login.
-    if (idStr in deviceAccounts && (await authClient.switchAccount(target))) {
+    if (idStr in deviceAccounts && (await authClient.switchAccount(userId))) {
       window.location.assign(cb);
       return;
     }
