@@ -20,6 +20,29 @@ import { handleLogError } from '~/server/utils/errorHandling';
 
 export type AutoApproveEntryPoint = 'submission' | 'scan-completion';
 
+/**
+ * Whether `upsertArticle` should re-snapshot `moderatorNsfwLevelBasis` on this
+ * save. We re-stamp whenever a moderator save asserts a NON-NULL override —
+ * even if the value is unchanged — so the basis reflects the mod's most recent
+ * intent rather than the first time the override was ever set (the residual
+ * gap that let a re-affirmed above-images override still be auto-cleared).
+ *
+ * Clearing the override (payloadOverride === null) returns false here; the
+ * caller writes a null basis for that case explicitly. An omitted field
+ * (undefined) leaves the existing basis untouched.
+ *
+ * Re-stamping is always safe: the basis is written as `derived` at stamp time,
+ * so it can only ever make a future auto-approve MORE conservative
+ * (`evaluateAutoApproveGate` gate #6 requires `derived < basis`).
+ */
+export function shouldRestampOverrideBasis(args: {
+  isModerator: boolean;
+  payloadOverride: number | null | undefined;
+  currentOverride: number | null;
+}): boolean {
+  return args.isModerator && args.payloadOverride != null;
+}
+
 type ArticleForGate = {
   id: number;
   status: ArticleStatus;

@@ -87,6 +87,7 @@ import {
   computeArticleDerivedNsfwLevel,
   evaluateAutoApproveGate,
   maybeAutoResolveDisputeAfterScan,
+  shouldRestampOverrideBasis,
 } from '~/server/services/article-rating-review.helpers';
 
 type ArticleRaw = {
@@ -1033,17 +1034,27 @@ export const upsertArticle = async ({
     // genuine content drop from an override deliberately set above the images
     // (which must not be auto-cleared by an owner dispute). `undefined` leaves
     // the column untouched; only an actual override change writes it.
+    // Lock/unlock the user picker only when the override VALUE changes.
     let moderatorNsfwLevelBasis: number | null | undefined = undefined;
     if (moderatorOverrideChanged) {
       const lockedSet = new Set<string>(data.lockedProperties ?? article.lockedProperties ?? []);
-      if (data.moderatorNsfwLevel != null) {
-        lockedSet.add('userNsfwLevel');
-        moderatorNsfwLevelBasis = (await computeArticleDerivedNsfwLevel(id as number)) ?? 0;
-      } else {
-        lockedSet.delete('userNsfwLevel');
-        moderatorNsfwLevelBasis = null;
-      }
+      if (data.moderatorNsfwLevel != null) lockedSet.add('userNsfwLevel');
+      else lockedSet.delete('userNsfwLevel');
       data.lockedProperties = Array.from(lockedSet);
+    }
+    // Re-snapshot the basis on every moderator assertion of a non-null override
+    // (even an unchanged re-affirm), and clear it when the override is cleared.
+    // See shouldRestampOverrideBasis for why aggressive re-stamping is safe.
+    if (!!isModerator && data.moderatorNsfwLevel === null) {
+      moderatorNsfwLevelBasis = null;
+    } else if (
+      shouldRestampOverrideBasis({
+        isModerator: !!isModerator,
+        payloadOverride: data.moderatorNsfwLevel,
+        currentOverride: article.moderatorNsfwLevel,
+      })
+    ) {
+      moderatorNsfwLevelBasis = (await computeArticleDerivedNsfwLevel(id as number)) ?? 0;
     }
 
     const republishing =
