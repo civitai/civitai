@@ -14,11 +14,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (req.method === 'DELETE') {
     const userId = Number(req.query.userId);
-    if (!Number.isFinite(userId)) return res.status(400).json({ ok: false });
+    if (!Number.isFinite(userId)) return res.status(400).json({ error: 'bad userId' });
     const ok = await deviceAccounts.remove(cookie, userId);
-    return res.status(ok ? 200 : 502).json({ ok });
+    if (!ok) return res.status(502).json({ error: 'remove failed' });
+    return res.status(200).json({ ok: true });
   }
 
+  // GET is a display endpoint — list (or [] when unauthenticated); the switcher just shows nothing.
   const accounts = await deviceAccounts.list(cookie);
   return res.status(200).json({ accounts });
 }

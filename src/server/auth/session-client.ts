@@ -4,15 +4,9 @@ import { setSessionCookie, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';
 import { decodeTokenClaim } from './token-claims';
 
-// The main app's handle to the centralized auth hub (thin-session model — docs/thin-session-token-design.md
-// and docs/main-app-auth-cutover.md). Going forward, user validation routes through this client instead of
-// next-auth's jwt()/session() callbacks:
-//   - validation  → getHubSession(req)         (verify cookie → shared redis cache → hub on miss)
-//   - refresh/invalidate already propagate to the hub: the main app SHARES the hub's redis, so the existing
-//     clearSessionCache / clearCacheByPattern busts of session:data2 are read by the hub on its next produce.
-//
-// Zero-config: the verifier, cache, hub URL all come from env / the verified token's `iss` (AUTH_JWKS_URI or
-// AUTH_JWT_PUBLIC_KEY, AUTH_JWT_ISSUER). Built lazily, so importing this module touches nothing until use.
+// The main app's handle to the centralized auth hub (thin-session model — docs/main-app-auth-cutover.md).
+// Validation routes through this client (getHubSession) instead of next-auth's jwt()/session(); refresh +
+// invalidate propagate via the shared redis. Zero-config from env; built lazily so import touches nothing.
 
 /**
  * Feature flag for the hub-backed session path (default OFF). When false, getServerAuthSession behaves
@@ -35,8 +29,7 @@ const sessionTokenClient = createSessionTokenClient();
 export async function getHubSession(req: {
   cookies?: Partial<Record<string, string>>;
 }): Promise<Session | null> {
-  // The hub's THIN cookie (`civ-token`), distinct from next-auth's legacy `civitai-token`. Read both the
-  // secure-prefixed (prod/https) and unprefixed (dev) names so it works in either environment.
+  // The hub's THIN cookie (`civ-token`, env-derived name), distinct from next-auth's legacy `civitai-token`.
   const token = req.cookies?.[sessionCookieName()];
   if (!token) return null;
   const user = await sessionClient.getSessionUser(token);

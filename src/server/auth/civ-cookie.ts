@@ -1,10 +1,9 @@
 import { sessionCookieName, deviceCookieName, isSecureCookie } from '@civitai/auth';
 import { decodeTokenClaim } from './token-claims';
 
-// Shared civ-token Set-Cookie assembly for the spoke proxies that receive a hub-minted token (account switch,
-// impersonate/exit, rolling refresh). The hub's own Set-Cookie can't cross a same-origin proxy back to the
-// browser, so each proxy re-sets the cookie on its OWN response — this keeps that one place. Cookie NAME +
-// secure-ness come from the package (single source); only the framework `setHeader` lives here.
+// Shared civ-token Set-Cookie assembly for the spoke proxies that receive a hub-minted token (switch,
+// impersonate/exit, rolling refresh) — the hub's Set-Cookie can't cross a same-origin proxy, so each proxy
+// re-sets the cookie on its own response. Cookie name + secure-ness come from the package (single source).
 const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN;
 const DEVICE_TTL_S = 30 * 24 * 60 * 60; // 30d rolling — matches the hub's device record TTL
 

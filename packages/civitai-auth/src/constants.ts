@@ -23,7 +23,5 @@ export const ACCOUNT_SWITCH_PROVIDER_ID = 'account-switch';
 export const SESSION_REFRESH_HEADER = 'x-session-refresh';
 export const SESSION_REFRESH_COOKIE = 'civ-session-refresh';
 
-// NB: the redis session key names (TOKEN_STATE / USER_TOKENS / ALL) are intentionally NOT
-// declared here — they're owned by @civitai/redis (REDIS_SYS_KEYS.SESSION.* /
-// REDIS_KEYS.SESSION.USER_TOKENS) and INJECTED into createSessionRegistry by the app, so there's
-// no second copy to drift and @civitai/auth takes no dependency on @civitai/redis.
+// NB: redis session key names (TOKEN_STATE / USER_TOKENS / ALL) are NOT declared here — they're owned by
+// @civitai/redis and injected into createSessionRegistry, so @civitai/auth takes no redis dependency.

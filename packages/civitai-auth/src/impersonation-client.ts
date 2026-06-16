@@ -1,14 +1,8 @@
 import { hubBaseUrl } from './hub';
 
-// IMPERSONATION CLIENT — the consumer-side interface to the hub's moderator-impersonation endpoints (section F).
-// Authorized purely by the BROWSER's forwarded session cookie: the hub gates `impersonate` on the requester's
-// own session being a MODERATOR (no internal token, no extra credential — that's the whole auth), and `exit`
-// on the current session carrying an `impersonatedBy` claim. A spoke proxies these; the hub URL/contract stays
-// in the package, never hand-rolled per app.
-//
-//   impersonate(cookie, userId) → POST {iss}/api/auth/impersonate       — mint a session for userId, stamped
-//                                                                          impersonatedBy = the moderator
-//   exit(cookie)                → POST {iss}/api/auth/impersonate/exit   — re-mint the moderator's own session
+// IMPERSONATION CLIENT — the hub's moderator-impersonation endpoints (section F). Authorized purely by the
+// BROWSER's forwarded session cookie: the hub gates `impersonate` on the requester being a MODERATOR (no
+// internal token, no extra credential), and `exit` on the session carrying an `impersonatedBy` claim.
 
 export interface ImpersonationClient {
   /**

@@ -1,11 +1,8 @@
 import { hubBaseUrl } from './hub';
 import { deviceCookieName, sessionCookieName } from './cookies';
 
-// SESSION-TOKEN CLIENT — hub operations on a single session token, authorized by the token ITSELF (not the
-// service secret the SessionClient uses, nor the device cookies the DeviceAccountClient forwards). A spoke
-// proxies these on the browser's behalf; the hub URL + contract stay in the package, never hand-rolled per app.
-//   refresh(token) → POST {iss}/api/auth/refresh   — rolling re-mint (same session, fresh window)
-//   revoke(token)  → POST {iss}/logout             — best-effort logout/revocation
+// SESSION-TOKEN CLIENT — hub operations on a single session token (rolling refresh + revoke), authorized by the
+// token ITSELF (a Bearer), not the service secret or the device cookies the sibling clients use.
 
 export interface SessionTokenClient {
   /**

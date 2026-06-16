@@ -1,4 +1,4 @@
-import { json } from '@sveltejs/kit';
+import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { verifier } from '$lib/server/auth/verifier';
 import { getSigner, SESSION_COOKIE } from '$lib/server/auth/session';
@@ -14,13 +14,12 @@ import { bearerToken } from '$lib/server/auth/request';
 // See docs/main-app-auth-cutover.md (section C). An expired token fails verification → 401 → re-login.
 export const POST: RequestHandler = async ({ request, cookies }) => {
   const token = bearerToken(request) || cookies.get(SESSION_COOKIE);
-  if (!token) return json({ error: 'unauthorized' }, { status: 401 });
+  if (!token) error(401, 'unauthorized');
 
   const claims = await verifier.verifyToken(token).catch(() => null);
   const userId = Number(claims?.sub);
   const jti = claims?.jti;
-  if (!claims || !Number.isFinite(userId) || !jti)
-    return json({ error: 'unauthorized' }, { status: 401 });
+  if (!claims || !Number.isFinite(userId) || !jti) error(401, 'unauthorized');
 
   const fresh = await getSigner().mintSessionToken(
     {

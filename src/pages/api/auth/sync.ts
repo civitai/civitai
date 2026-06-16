@@ -8,7 +8,7 @@ import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 const signer = maybeCreateSessionSigner();
 
 export default AuthedEndpoint(async function handler(req, res, user) {
-  if (req.method !== 'GET') return res.status(405).send('Method Not Allowed');
+  if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
 
   try {
     const userId = user.id;
@@ -17,6 +17,6 @@ export default AuthedEndpoint(async function handler(req, res, user) {
     return res.status(200).json({ token, swapToken, userId, username: user.username });
   } catch {
     // Don't leak the raw error/stack to the client.
-    return res.status(500).send('Failed to create sync token');
+    return res.status(500).json({ error: 'Failed to create sync token' });
   }
 });

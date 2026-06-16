@@ -1,15 +1,8 @@
 import { hubBaseUrl } from './hub';
 
-// DEVICE-ACCOUNT CLIENT — the consumer-side interface to the hub's per-device account set (multi-account
-// switching; docs/main-app-auth-cutover.md, section E). Unlike the SessionClient (token → user, service-authed),
-// these ops are authorized by the BROWSER's own cookies (civ-token + civ-device): a same-origin proxy forwards
-// the request's `Cookie` header to the hub, so the spoke never hand-rolls the hub URL/contract.
-//
-//   list(cookie)            → GET    {iss}/api/auth/accounts        — display-only linked-account list
-//   switch(cookie, userId)  → POST   {iss}/api/auth/switch          — authorize + mint a fresh civ-token
-//   remove(cookie, userId)  → DELETE {iss}/api/auth/accounts        — drop one account from this device's set
-//
-// The hub is the sole authority (membership + freshness + an active session); the spoke is a thin forwarder.
+// DEVICE-ACCOUNT CLIENT — the hub's per-device account set (multi-account switching; cutover doc E). Authorized
+// by the BROWSER's forwarded cookies (civ-token + civ-device), not a service token: a same-origin proxy passes
+// the request's Cookie header through. The hub is the sole authority (membership + freshness + active session).
 
 /** A linked account on the browser's device set — display only (no credentials leave the hub). */
 export interface DeviceAccount {

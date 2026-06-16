@@ -52,7 +52,7 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
   async function getSessionUser(token: string): Promise<SessionUser | null> {
     const claims = await verify(token);
     if (!claims) return null;
-    const userId = Number(claims.sub); // userId is always `sub` (`id`/`jti` is the token id)
+    const userId = Number(claims.sub);
     if (!Number.isFinite(userId)) return null;
 
     // 1. Shared-cache read — fail-open: a cache blip falls through to the hub fetch rather than throwing.

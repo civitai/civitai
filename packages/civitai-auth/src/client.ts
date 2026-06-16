@@ -1,10 +1,6 @@
-// BROWSER auth client (`@civitai/auth/client`). The calls a spoke makes from the BROWSER to its OWN same-origin
-// proxy routes — which forward to the hub via the server clients (createDeviceAccountClient / createImpersonation
-// Client). This is the ONE place client code talks to auth, so components never hand-roll a `fetch`.
-//
-// BROWSER-SAFE: imports nothing server-side (no jose / redis / env), so it's bundled into the client without
-// pulling server deps. The app MUST host these proxy routes (src/pages/api/auth/{accounts,switch,impersonate}).
-// Pure: no navigation side effects — callers decide whether/where to reload. See cutover doc (E/F).
+// BROWSER auth client (`@civitai/auth/client`) — the calls a spoke makes from the BROWSER to its own same-origin
+// proxy routes (which forward to the hub via the server clients). The ONE place client code talks to auth, so
+// components never hand-roll a fetch. BROWSER-SAFE (no jose/redis/env) and pure (no navigation — callers reload).
 
 /** A linked account on the browser's device set — display only (mirrors the hub's `/api/auth/accounts` row). */
 export interface DeviceAccountSummary {
