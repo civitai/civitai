@@ -199,6 +199,9 @@ export const ECO = {
   // Microsoft
   MAI: 71,
 
+  // Ideogram
+  Ideogram: 72,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -606,6 +609,15 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'MAI',
     familyId: 21,
     sortOrder: 160,
+  },
+
+  // Ideogram Family (familyId: 22)
+  {
+    id: ECO.Ideogram,
+    key: 'Ideogram',
+    displayName: 'Ideogram 4.0',
+    familyId: 22,
+    sortOrder: 170,
   },
 
   // HiDream Family (familyId: 19)
@@ -1869,6 +1881,7 @@ export const BM = {
   Lens: 88,
   Krea2: 89,
   MAI: 90,
+  Ideogram: 91,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2115,6 +2128,14 @@ export const licenses: LicenseRecord[] = [
     name: 'Microsoft AI Terms of Use',
     url: 'https://www.microsoft.com/en-us/servicesagreement',
   },
+  {
+    id: 37,
+    name: 'Ideogram Non-Commercial Model Agreement',
+    url: 'https://github.com/ideogram-oss/ideogram-4/model_licenses/LICENSE-IDEOGRAM-4-NON-COMMERCIAL',
+    notice:
+      'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement. All rights reserved. Copyright © Ideogram, Inc.',
+    disableMature: true,
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2228,6 +2249,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 21,
     name: 'Microsoft',
     description: "Microsoft AI's MAI family of image generation and editing models",
+  },
+  {
+    id: 22,
+    name: 'Ideogram',
+    description: "Ideogram, Inc.'s text-to-image generation models with strong typography",
   },
 ];
 
@@ -2419,6 +2445,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'video',
     ecosystemId: ECO.HyV1,
     licenseId: 11,
+  },
+
+  // Ideogram
+  {
+    id: BM.Ideogram,
+    name: 'Ideogram 4.0',
+    description: "Ideogram, Inc.'s text-to-image generation model with strong typography",
+    type: 'image',
+    ecosystemId: ECO.Ideogram,
+    licenseId: 37,
   },
 
   // Illustrious
