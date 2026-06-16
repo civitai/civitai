@@ -1255,8 +1255,10 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       ...r,
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
+      // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
+      // is the list-display discriminator (see listPendingRequests).
       pushCommitUrl:
-        !r.bundleKey && r.forgejoCommitSha
+        !r.bundleSha256 && r.forgejoCommitSha
           ? repoCommitUrl(r.slug, r.forgejoCommitSha)
           : null,
     })),
@@ -1306,8 +1308,10 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
       ...r,
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
+      // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
+      // is the list-display discriminator (see listPendingRequests).
       pushCommitUrl:
-        !r.bundleKey && r.forgejoCommitSha
+        !r.bundleSha256 && r.forgejoCommitSha
           ? repoCommitUrl(r.slug, r.forgejoCommitSha)
           : null,
     })),

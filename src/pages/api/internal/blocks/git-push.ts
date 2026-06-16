@@ -533,7 +533,7 @@ async function recordPendingFromPush(args: {
       '~/server/services/blocks/publish-request.service'
     );
     await enrichPushRequestRow(publishRequestId, args.slug, args.sha);
-  })();
+  })().catch(() => undefined); // guard the dynamic import itself (house convention: no unhandled rejection)
 }
 
 /**
