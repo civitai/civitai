@@ -5,7 +5,7 @@ import { BlockFallback } from './BlockFallback';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { grantedPageScopes, pageFallbackReason } from './pageBlockHostLogic';
-import { intersectSandbox } from './sandbox';
+import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 
@@ -108,7 +108,20 @@ export function PageBlockHost({
     }
   }, [iframeSrc]);
 
-  const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin });
+  // The EFFECTIVE sandbox handed to the iframe attribute below. Derive the
+  // transport's opaque-origin mode from the SAME string so the two can never
+  // drift: unverified (no allow-same-origin) → opaque frame → opaque transport;
+  // internal/verified (has allow-same-origin) → real origin → pinned transport.
+  const effectiveSandbox = useMemo(
+    () => intersectSandbox(sandbox, trustTier),
+    [sandbox, trustTier]
+  );
+  const opaqueOrigin = useMemo(
+    () => effectiveSandboxIsOpaque(effectiveSandbox),
+    [effectiveSandbox]
+  );
+
+  const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin, opaqueOrigin });
 
   // #3/#6: the scopes the minted JWT ACTUALLY carries (declared − missing).
   // See pageBlockHostLogic.grantedPageScopes. Posting `[]` (the old hardcode)
@@ -347,7 +360,7 @@ export function PageBlockHost({
         <iframe
           ref={iframeRef}
           src={iframeSrc}
-          sandbox={intersectSandbox(sandbox, trustTier)}
+          sandbox={effectiveSandbox}
           referrerPolicy="no-referrer"
           title={appName || blockId}
           data-testid="app-page-iframe"
