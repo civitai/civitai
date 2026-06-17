@@ -468,6 +468,8 @@ model User {
   articleReactions           ArticleReaction[]
   articles                   Article[]
   articleEngagements         ArticleEngagement[]
+  articleRatingReviewsSubmitted ArticleRatingReview[] @relation("ArticleRatingReviewSubmitter")
+  articleRatingReviewsResolved  ArticleRatingReview[] @relation("ArticleRatingReviewResolver")
   leaderboardResults         LeaderboardResult[]
   receivedReports            UserReport[]
   engagedImages              ImageEngagement[]
@@ -1845,6 +1847,28 @@ model ImageRatingRequest {
   @@id([imageId, userId])
 }
 
+model ArticleRatingReview {
+  id             Int          @id @default(autoincrement())
+  articleId      Int
+  article        Article      @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  userId         Int
+  user           User         @relation("ArticleRatingReviewSubmitter", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  resolvedAt     DateTime?
+  resolvedBy     Int?
+  resolver       User?        @relation("ArticleRatingReviewResolver", fields: [resolvedBy], references: [id], onDelete: SetNull)
+  currentLevel   Int
+  suggestedLevel Int
+  appliedLevel   Int?
+  userComment    String?
+  modComment     String?
+  status         ReportStatus @default(Pending)
+
+  @@index([status, createdAt])
+  @@index([userId])
+  @@index([articleId, createdAt(sort: Desc)])
+}
+
 model CollectionMetric {
   collection       Collection      @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   collectionId     Int
@@ -3161,6 +3185,12 @@ model Article {
   nsfwLevel        Int           @default(0)
   userNsfwLevel    Int           @default(0)
   moderatorNsfwLevel Int?
+  // Snapshot of the content-derived NSFW level (images + moderation floor) at
+  // the moment `moderatorNsfwLevel` was set. Lets the auto-approve gate tell
+  // "content genuinely dropped since the override" from "override was always
+  // above the images" — only the former may be auto-cleared. Null when no
+  // override is active (or a legacy override predating this column).
+  moderatorNsfwLevelBasis Int?
   lockedProperties String[]      @default([])
   status           ArticleStatus @default(Draft)
 
@@ -3175,6 +3205,7 @@ model Article {
   associations       ModelAssociations[]
   collectionItems    CollectionItem[]
   rewardsBonusEvents RewardsBonusEvent[]
+  ratingReviews      ArticleRatingReview[]
 
   @@index([status, ingestion, nsfwLevel])
 }

@@ -19,6 +19,7 @@ import {
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import {
   amIBlockedByUser,
   getBasicDataForUsers,
@@ -462,7 +463,16 @@ export const getPagedResourceReviews = async ({
     BlockedByUsers.getCached({ userId }),
     BlockedUsers.getCached({ userId }),
   ]);
-  const excludedUserIds = [...new Set(excludedUsers.flat().map((user) => user.id))];
+  // [hidden, blockedBy, blocked] — bound + dedup so a heavily-blocked viewer's
+  // (unbounded) blockedBy list can't blow past Postgres's 32767 bind-param cap on
+  // the raw NOT IN below (P2029). Same fix + safety-priority order as the comment
+  // surfaces; see boundExcludedUserIds.
+  const [hiddenUsers, blockedByUsers, blockedUsers] = excludedUsers;
+  const excludedUserIds = boundExcludedUserIds(
+    hiddenUsers.map((u) => u.id),
+    blockedByUsers.map((u) => u.id),
+    blockedUsers.map((u) => u.id)
+  );
   if (excludedUserIds.length) {
     AND.push(Prisma.sql`rr."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }

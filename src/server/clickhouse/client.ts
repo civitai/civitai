@@ -386,7 +386,7 @@ export class Tracker {
             message: `Tracker returned ${res.status}`,
           },
           'clickhouse'
-        ).catch(() => {});
+        ).catch(() => null);
         return;
       }
 
@@ -401,11 +401,16 @@ export class Tracker {
         {
           type: 'error',
           name: 'Failed to track (5xx, exhausted)',
-          details: { table, status: res.status, attempts: attempt, response: errBody.slice(0, 500) },
+          details: {
+            table,
+            status: res.status,
+            attempts: attempt,
+            response: errBody.slice(0, 500),
+          },
           message: `Tracker returned ${res.status} after ${attempt} attempts`,
         },
         'clickhouse'
-      ).catch(() => {});
+      ).catch(() => null);
     } catch (e) {
       const error = e as Error;
       // Network-level failure. Retry the same as 5xx.
@@ -423,7 +428,7 @@ export class Tracker {
           cause: error.cause,
         },
         'clickhouse'
-      ).catch(() => {});
+      ).catch(() => null);
     }
   }
 
@@ -675,6 +680,27 @@ export class Tracker {
     articleId: number;
   }) {
     return this.track('articleEngagements', values);
+  }
+
+  public articleRatingReview(values: {
+    articleId: number;
+    fromLevel: number;
+    toLevel: number;
+    hasComment: boolean;
+  }) {
+    return this.track('articleRatingReviews', values);
+  }
+
+  public articleRatingReviewResolved(values: {
+    reviewId: number;
+    articleId: number;
+    status: 'Actioned' | 'Unactioned';
+    // `null` (not 0) when no level was applied — 0 is a valid bitwise
+    // nsfwLevel slot and would skew approval metrics.
+    appliedLevel: number | null;
+    moderatorId: number;
+  }) {
+    return this.track('articleRatingReviewsResolved', values);
   }
 
   public tagEngagement(values: { type: TagEngagementType; tagId: number }) {

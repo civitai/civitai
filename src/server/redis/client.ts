@@ -1404,6 +1404,7 @@ export const REDIS_KEYS = {
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
+    RATING_REVIEW_RATE_LIMIT: 'article:nsfw-review-rate',
   },
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
