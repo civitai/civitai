@@ -45,7 +45,7 @@ export const strikeIssuedEmail = createEmail({
     // Only the sanitized public label is emailed — never the mod free-text
     // `description` (kept for in-app/Retool). Fall back to a neutral label.
     const reasonLabel =
-      strikeReasonPublicLabel[reason as StrikeReason] ?? 'Terms of Service violation';
+      strikeReasonPublicLabel[reason as StrikeReason] ?? 'Content violated our Terms of Service';
 
     return `
 <body style="background: ${color.background};">
@@ -79,7 +79,7 @@ export const strikeIssuedEmail = createEmail({
           <td style="padding: 10px 20px; font-size: 16px; line-height: 24px; font-family: Helvetica, Arial, sans-serif; color: ${
             color.text
           };">
-            A strike has been issued on your Civitai account due to a violation of our Terms of Service.
+            A strike has been issued on your Civitai account.
           </td>
         </tr>
         <tr>
@@ -156,12 +156,12 @@ export const strikeIssuedEmail = createEmail({
     const strikesUrl = `${getBaseUrl()}/user/account#strikes`;
     const tosUrl = `${getBaseUrl()}/content/tos`;
     const reasonLabel =
-      strikeReasonPublicLabel[reason as StrikeReason] ?? 'Terms of Service violation';
+      strikeReasonPublicLabel[reason as StrikeReason] ?? 'Content violated our Terms of Service';
     return `Strike Notice
 
 Hi ${username},
 
-A strike has been issued on your Civitai account due to a violation of our Terms of Service.
+A strike has been issued on your Civitai account.
 
 Reason:
 ${reasonLabel}

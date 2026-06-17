@@ -205,7 +205,7 @@ const featureFlags = createFeatureFlags({
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   licensingFee: { availability: ['user'], fliptKey: 'licensing-fee' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
-  strikes: ['mod', 'granted'],
+  strikes: ['public'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
   userPaymentConfiguration: {
     availability: ['granted'],

@@ -16,13 +16,13 @@ export const strikeStatusColorScheme: Record<string, MantineColor> = {
  * the strike email). Keep these neutral and non-explicit.
  */
 export const strikeReasonPublicLabel: Record<StrikeReason, string> = {
-  [StrikeReason.BlockedContent]: 'Blocked content',
-  [StrikeReason.RealisticMinorContent]: 'Realistic minor content',
-  [StrikeReason.CSAMContent]: 'Child safety violation',
-  [StrikeReason.TOSViolation]: 'Terms of Service violation',
-  [StrikeReason.HarassmentContent]: 'Harassment',
-  [StrikeReason.ProhibitedContent]: 'Prohibited content',
-  [StrikeReason.ManualModAction]: 'Moderator action',
+  [StrikeReason.BlockedContent]: 'Content violated our Terms of Service',
+  [StrikeReason.RealisticMinorContent]: 'Content violated our Terms of Service',
+  [StrikeReason.CSAMContent]: 'Content violated our Terms of Service',
+  [StrikeReason.TOSViolation]: 'Content violated our Terms of Service',
+  [StrikeReason.HarassmentContent]: 'Community Abuse',
+  [StrikeReason.ProhibitedContent]: 'Content violated our Terms of Service',
+  [StrikeReason.ManualModAction]: 'Content violated our Terms of Service',
 };
 
 export const createStrikeSchema = z.object({
