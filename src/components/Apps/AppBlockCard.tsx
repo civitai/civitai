@@ -28,6 +28,12 @@ export interface AppBlockCardProps {
    * not owned by the viewer; 0 = owned but no earnings yet (no chip).
    */
   ownedEarningCents?: number;
+  /**
+   * W10 — whether the viewer can open a full-page app (the `appBlocksPages`
+   * flag). When true AND the app declares a page (`manifest.hasPage`), an
+   * "Open app" link to `/apps/run/<slug>` is shown. Dark today (flag mod-only).
+   */
+  canOpenPage?: boolean;
 }
 
 function slotLabel(slotId?: string): string {
@@ -63,11 +69,13 @@ export function AppBlockCard({
   alreadySubscribed,
   onOpen,
   ownedEarningCents,
+  canOpenPage,
 }: AppBlockCardProps) {
   const manifest = block.manifest as {
     name?: string;
     description?: string;
     targets?: Array<{ slotId?: string }>;
+    hasPage?: boolean;
   };
   const [busy] = useState(false);
   const slot = manifest.targets?.[0]?.slotId;
@@ -151,19 +159,35 @@ export function AppBlockCard({
             normally. This is dark today (the page is mod-gated); it only
             matters once the segment is widened to anon.
           */}
-          <LoginRedirect reason="perform-action">
-            <Button
-              size="xs"
-              variant={alreadySubscribed ? 'default' : 'filled'}
-              leftSection={
-                alreadySubscribed ? <IconSettings size={14} /> : <IconPlugConnected size={14} />
-              }
-              loading={busy}
-              onClick={() => onOpen(block)}
-            >
-              {alreadySubscribed ? 'Manage' : 'Install'}
-            </Button>
-          </LoginRedirect>
+          <Group gap={6} wrap="nowrap">
+            {/* W10 — "Open app" link to the full-page route, shown only when the
+                app declares a page AND the viewer has the appBlocksPages flag
+                (dark today). The route itself 404s without the flag, so this is
+                belt-and-suspenders against showing a dead link. */}
+            {manifest.hasPage && canOpenPage && (
+              <Button
+                component={Link}
+                href={`/apps/run/${encodeURIComponent(block.blockId)}`}
+                size="xs"
+                variant="light"
+              >
+                Open app
+              </Button>
+            )}
+            <LoginRedirect reason="perform-action">
+              <Button
+                size="xs"
+                variant={alreadySubscribed ? 'default' : 'filled'}
+                leftSection={
+                  alreadySubscribed ? <IconSettings size={14} /> : <IconPlugConnected size={14} />
+                }
+                loading={busy}
+                onClick={() => onOpen(block)}
+              >
+                {alreadySubscribed ? 'Manage' : 'Install'}
+              </Button>
+            </LoginRedirect>
+          </Group>
         </Group>
       </Stack>
     </Card>
