@@ -223,6 +223,11 @@ const featureFlags = createFeatureFlags({
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
   appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
+  // App Blocks W10 — full-page apps (`/apps/run/<slug>`). A SEPARATE dark flag
+  // so the page surface enables independently of the master `app-blocks-enabled`
+  // gate. The page route + page-token mint require BOTH `appBlocks` AND
+  // `appBlocksPages`. Mod-only today; widened (Flipt segment) at W10 launch.
+  appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

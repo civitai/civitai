@@ -247,6 +247,31 @@ interface InstallOpts {
   settings?: Record<string, unknown>;
 }
 
+/**
+ * W10 — the page block shape the token mint consumes. Mirrors the `appBlock`
+ * sub-shape of {@link ResolvedBlockInstance} but carries NO modelId / install
+ * row (a page is stateless, entity=none).
+ */
+export interface PageBlockResolution {
+  appBlock: ResolvedBlockInstance['appBlock'];
+}
+
+/**
+ * W10 — the page block shape the SSR route consumes: just enough to render the
+ * full-bleed IframeHost (iframe.src + sandbox + trust tier) and mint a token
+ * (appBlockId). Public-display fields only; never the raw stored manifest.
+ */
+export interface PageBlockSsr {
+  appBlockId: string;
+  blockId: string;
+  appId: string;
+  iframeSrc: string;
+  sandbox: string;
+  trustTier: 'unverified' | 'verified' | 'internal';
+  name: string;
+  pageTitle: string;
+}
+
 interface UninstallOpts {
   modelId: number;
   appBlockId: string;
@@ -340,6 +365,19 @@ function manifestTargetsSlot(manifest: unknown, slotId: string): boolean {
     const cand = (t as { slotId?: unknown }).slotId;
     return typeof cand === 'string' && cand === slotId;
   });
+}
+
+/**
+ * W10 — does the manifest declare a full-page surface? A page app carries a
+ * `page: { path, title, icon? }` object (validated at registration time). Used
+ * to gate the page-mint + SSR resolve so a region/model-only app can't be
+ * opened as a full page.
+ */
+function manifestDeclaresPage(manifest: unknown): boolean {
+  const m = (manifest ?? {}) as { page?: unknown };
+  if (!m.page || typeof m.page !== 'object') return false;
+  const page = m.page as { path?: unknown };
+  return typeof page.path === 'string' && page.path.length > 0;
 }
 
 function resolveRenderMode(
@@ -1371,6 +1409,101 @@ export class BlockRegistry {
 
     // Unknown prefix → not a recognised blockInstanceId.
     return null;
+  }
+
+  /**
+   * W10 — resolve the STATELESS page block for an approved AppBlock id. A
+   * full-page app (`app.page` slot, entity=none) has NO install row: it is
+   * resolved directly from the approved `AppBlock` (Decision 2 — no migration).
+   * The synthetic block-instance id is `page_<appBlockId>`; this returns the
+   * page block shape the token mint needs (manifest + approvedScopes + app
+   * ceiling), or null when the id is missing / not approved (fail-closed, never
+   * leaks a non-approved app's data).
+   *
+   * `modelId`/`installedByUserId` are intentionally absent for a page —
+   * `source: 'platform_default'` is reused only as the closest non-install
+   * source label; the page path NEVER stamps a modelId and never grants money
+   * scopes (the mint enforces both).
+   */
+  static async resolvePageBlock(
+    appBlockId: string,
+    opts?: { db?: 'read' | 'write' }
+  ): Promise<PageBlockResolution | null> {
+    if (!appBlockId) return null;
+    const db = opts?.db === 'read' ? dbRead : dbWrite;
+    const ab = await db.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        approvedScopes: true,
+        app: { select: { allowedScopes: true } },
+      },
+    });
+    if (!ab || ab.status !== 'approved') return null;
+    const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
+    // A page app MUST declare a `page` block in its manifest. Without it the
+    // app is a region/model block and has no full-page surface to mint for.
+    if (!manifestDeclaresPage(manifest)) return null;
+    return {
+      appBlock: {
+        id: ab.id,
+        blockId: ab.blockId,
+        appId: ab.appId,
+        status: ab.status,
+        manifest,
+        approvedScopes: ab.approvedScopes ?? [],
+        app: ab.app ? { allowedScopes: ab.app.allowedScopes } : null,
+      },
+    };
+  }
+
+  /**
+   * W10 — resolve a page block by its `<slug>` (== AppBlock.block_id), for the
+   * SSR page route. Returns the approved app's id + manifest iframe.src + page
+   * descriptor, or null when no approved page app owns that slug (→ 404).
+   * `block_id` is unique per app, so the slug → app mapping is 1:1.
+   */
+  static async resolvePageBlockBySlug(
+    slug: string,
+    opts?: { db?: 'read' | 'write' }
+  ): Promise<PageBlockSsr | null> {
+    if (!slug) return null;
+    const db = opts?.db === 'read' ? dbRead : dbWrite;
+    const ab = await db.appBlock.findFirst({
+      where: { blockId: slug, status: 'approved' },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        manifest: true,
+      },
+    });
+    if (!ab) return null;
+    const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
+    if (!manifestDeclaresPage(manifest)) return null;
+    const iframe = (manifest.iframe ?? {}) as { src?: unknown };
+    const iframeSrc = typeof iframe.src === 'string' ? iframe.src : '';
+    const sandbox = typeof iframe.src === 'string' ? (iframe as { sandbox?: unknown }).sandbox : '';
+    const page = (manifest.page ?? {}) as { title?: unknown; icon?: unknown };
+    const name = typeof manifest.name === 'string' ? manifest.name : ab.blockId;
+    return {
+      appBlockId: ab.id,
+      blockId: ab.blockId,
+      appId: ab.appId,
+      iframeSrc,
+      sandbox: typeof sandbox === 'string' ? sandbox : '',
+      trustTier:
+        typeof manifest.trustTier === 'string' &&
+        (manifest.trustTier === 'verified' || manifest.trustTier === 'internal')
+          ? (manifest.trustTier as 'verified' | 'internal')
+          : 'unverified',
+      name,
+      pageTitle: typeof page.title === 'string' ? page.title : name,
+    };
   }
 
   static async installOnModel(opts: InstallOpts): Promise<{ blockInstanceId: string }> {

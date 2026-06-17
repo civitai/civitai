@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
+import { KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS } from '~/shared/constants/slot-registry';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
@@ -214,9 +215,14 @@ async function refundBlockBuzzSpend(
   });
 }
 
-// Free-form slot strings are a cache-busting surface for anon callers.
-// Bound to the explicit set we ship today; new slots ship by extending this.
-const KNOWN_SLOT_IDS = z.enum(['model.sidebar_top', 'model.below_images', 'model.actions_extra']);
+// Free-form slot strings are a cache-busting surface for anon callers. Bound
+// to the explicit model-slot set; the canonical source is now the slot registry
+// (src/shared/constants/slot-registry.ts) — re-exported under the SAME name so
+// the reuse sites below (listForModel/installOnModel/getEffectiveCheckpoint
+// inputs) are untouched and the model contract stays byte-identical. The page
+// slot is intentionally NOT in this enum: page tokens never flow through the
+// model slotContext / install procs.
+const KNOWN_SLOT_IDS = SLOT_KNOWN_SLOT_IDS;
 
 // JSON settings get echoed back to every BlockSlot consumer and stamped on the
 // JWT issuance side. Cap size to keep both budgets bounded.

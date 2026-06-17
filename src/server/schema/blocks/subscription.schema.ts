@@ -129,10 +129,16 @@ export type PublicBlockManifest = {
   name?: string;
   description?: string;
   targets?: Array<{ slotId?: string }>;
+  /**
+   * W10 — whether the app declares a full-page surface (opens at
+   * `/apps/run/<slug>`). A boolean ONLY (never the page path/internals) so the
+   * marketplace can show an "Open app" affordance without leaking config.
+   */
+  hasPage?: boolean;
 };
 
 /** Field names projected from the raw manifest into PublicBlockManifest. */
-export const PUBLIC_MANIFEST_FIELDS = ['name', 'description', 'targets'] as const;
+export const PUBLIC_MANIFEST_FIELDS = ['name', 'description', 'targets', 'hasPage'] as const;
 
 /**
  * Marketplace listing shape. install_count includes per-model installs and
@@ -183,6 +189,12 @@ export function toPublicBlockManifest(raw: unknown): PublicBlockManifest {
         return typeof slotId === 'string' ? { slotId } : null;
       })
       .filter((t): t is { slotId: string } => t !== null);
+  }
+  // W10 — surface ONLY a boolean: does the manifest declare a usable page
+  // (a `page` object with a non-empty string `path`)? Never the path itself.
+  const page = (m.page ?? null) as { path?: unknown } | null;
+  if (page && typeof page === 'object' && typeof page.path === 'string' && page.path.length > 0) {
+    out.hasPage = true;
   }
   return out;
 }
