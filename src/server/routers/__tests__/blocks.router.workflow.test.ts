@@ -1374,6 +1374,56 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       );
     });
 
+    it('derives sfwOnly:true from a green-domain ctx and forwards it into the canGenerate gate', async () => {
+      // The page branch mirrors model-version.controller: the gate context's
+      // sfwOnly is `ctx.domain === 'green'`. fakeCtx() omits domain (→ false),
+      // so a green ctx is the only way to exercise the SFW-gating branch — it
+      // must flow into resolveCanGenerateForVersions' context arg as true.
+      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller({ ...fakeCtx(), domain: 'green' } as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(gateCtx.sfwOnly).toBe(true);
+      // wildcards is independent and untouched here → still false.
+      expect(gateCtx.wildcardsEnabled).toBe(false);
+    });
+
+    it('derives wildcardsEnabled:true from ctx.features.wildcards and forwards it into the canGenerate gate', async () => {
+      // The page branch mirrors model-version.controller: the gate context's
+      // wildcardsEnabled is `!!ctx.features.wildcards`. fakeCtx() omits the flag
+      // (→ false), so an enabled-wildcards ctx is the only way to exercise this
+      // branch — it must flow into the gate context arg as true.
+      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      const ctx = fakeCtx();
+      const caller = blocksRouter.createCaller({
+        ...ctx,
+        features: { ...(ctx.features as object), wildcards: true },
+      } as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(gateCtx.wildcardsEnabled).toBe(true);
+      // green-domain is independent and untouched here → sfwOnly still false.
+      expect(gateCtx.sfwOnly).toBe(false);
+    });
+
     it('a page token whose picked model is NOT generatable → FORBIDDEN, no orchestrator call', async () => {
       mockVerifyBlockToken.mockResolvedValue(pageClaims());
       happyVersionLookup();

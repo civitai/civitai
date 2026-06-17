@@ -136,12 +136,23 @@ function isPageToken(claims: { ctx?: unknown }): boolean {
 
 // SECURITY-CRITICAL (W10). A page token has no model binding, so the model-
 // binding check (`ctxModelId === body.modelId`) that bounds a model slot does
-// NOT apply. The replacement bound is the platform's canonical generation-
-// entitlement gate: the REAL viewer must actually be allowed to generate
-// against the model they picked, exactly as the standard generation read paths
-// enforce (early-access locks, availability=Private, members-only usageControl,
-// generationCoverage). Without this, "any public model" would silently bypass
-// every per-model access gate.
+// NOT apply. The replacement bound is a PRE-SPEND slice of the platform's
+// generation-entitlement gate (`resolveCanGenerateForVersions` →
+// `getResourceCanGenerate`): the REAL viewer must clear availability,
+// generationCoverage, status, members-only usageControl, the hidden-gates set,
+// and base-model-supported. Without this, "any public model" would silently
+// bypass those per-model gates before we ever cost/reserve.
+//
+// SCOPE — what this gate does NOT cover: early-access `hasAccess` and the
+// availability=Private subscription requirement are NOT checked here.
+// `resolveCanGenerateForVersions` deliberately omits both. They are enforced
+// downstream by the orchestrator resource belt in `getGenerationResourceData`
+// (server/services/orchestrator/common.ts): `getResourceData` folds
+// `canGenerate = hasAccess && canGenerate` and the Private-resource path
+// throws without an active subscription — and BOTH the whatIf (estimate) and
+// the real (submit) steps run through that belt BEFORE any Buzz reservation.
+// DO NOT remove that belt assuming this pre-spend gate already covers
+// early-access / Private — it does not.
 //
 // Pass the REAL viewer context (their id + real isModerator + the request's
 // sfwOnly/wildcards flags) — never an elevated context. Today the viewer is
@@ -1432,7 +1443,10 @@ export const blocksRouter = router({
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
       // lets the viewer pick any model they're entitled to generate against, so
       // the modelId match is SKIPPED and replaced (below, after the version
-      // read) by the canonical generation-entitlement gate. See isPageToken.
+      // read) by the pre-spend availability/coverage gate
+      // (assertViewerCanGeneratePageModel). Early-access + Private-subscription
+      // entitlement is enforced separately by the orchestrator resource belt.
+      // See isPageToken / assertViewerCanGeneratePageModel.
       const isPage = isPageToken(claims);
       if (!isPage) {
         const ctxModelId = Number(
@@ -1459,9 +1473,10 @@ export const blocksRouter = router({
         input.body.modelId
       );
       const user = await getBlockSessionUser(userId);
-      // PAGE branch: enforce that the REAL viewer is entitled to generate
-      // against the model they picked. This is the security replacement for the
-      // model-binding check skipped above — fail-closed before any spend.
+      // PAGE branch: pre-spend availability/coverage gate on the model the REAL
+      // viewer picked (the security replacement for the skipped model-binding
+      // check) — fail-closed before any spend. Early-access + Private-sub
+      // entitlement is enforced downstream by the orchestrator resource belt.
       if (isPage) {
         await assertViewerCanGeneratePageModel({
           gate: buildGateVersion(resolved.gate),
@@ -1518,9 +1533,11 @@ export const blocksRouter = router({
       }
       // Context binding. MODEL token → body.modelId must match ctx.modelId.
       // PAGE token (ctx.entityType==='none') → no model binding; skip the match
-      // and enforce the canonical generation-entitlement gate after the version
-      // read instead (see estimateWorkflow for the same branch). The buzzBudget
-      // claim + per-user daily cap still bound spend identically for pages.
+      // and enforce the pre-spend availability/coverage gate after the version
+      // read instead (see estimateWorkflow for the same branch; early-access +
+      // Private-sub entitlement is left to the orchestrator resource belt). The
+      // buzzBudget claim + per-user daily cap still bound spend identically for
+      // pages.
       const isPage = isPageToken(claims);
       if (!isPage) {
         const ctxModelId = Number(
@@ -1551,9 +1568,10 @@ export const blocksRouter = router({
         input.body.modelId
       );
       const user = await getBlockSessionUser(userId);
-      // PAGE branch: the REAL viewer must be entitled to generate against the
-      // model they picked (replaces the skipped model-binding check) — fail
-      // closed BEFORE any reservation or orchestrator interaction.
+      // PAGE branch: pre-spend availability/coverage gate on the model the REAL
+      // viewer picked (replaces the skipped model-binding check) — fail closed
+      // BEFORE any reservation. Early-access + Private-sub entitlement is
+      // enforced downstream by the orchestrator resource belt (whatIf + real).
       if (isPage) {
         await assertViewerCanGeneratePageModel({
           gate: buildGateVersion(resolved.gate),
