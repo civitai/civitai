@@ -214,6 +214,10 @@ const EpochRow = ({
                     disabled={!currentUser?.isMember && !currentUser?.isModerator}
                     epochNumber={epoch.epochNumber}
                     data-activity="create:training-select"
+                    // Default render uses padding '12px 20px' on a fixed-height button, which
+                    // clips the 20px brush icon. py={8} gives the icon room (matches the same
+                    // fix applied to GenerateButton in ModelVersionDetails).
+                    py={8}
                   />
                 </SubscriptionRequiredBlock>
               )}

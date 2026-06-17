@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Training Step 3 - Design Variations</title>
+
+  <!-- Mantine v7 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/@mantine/core@7.17.4/styles.css">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Tabler Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.3.0/dist/tabler-icons.min.css">
+
+  <style>
+    :root {
+      --mantine-color-scheme: dark;
+    }
+    body {
+      background: #1a1b1e;
+      color: #c1c2c5;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 60px 20px;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 60px;
+    }
+    .header h1 {
+      font-size: 40px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 12px;
+    }
+    .header p {
+      color: #909296;
+      font-size: 16px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    .variants-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 24px;
+      margin-bottom: 40px;
+    }
+    .variant-card {
+      background: #25262b;
+      border: 1px solid #373a40;
+      border-radius: 12px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      transition: all 200ms ease;
+      cursor: pointer;
+    }
+    .variant-card:hover {
+      border-color: #7950f2;
+      background: #2c2e33;
+      transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(121, 80, 242, 0.15);
+    }
+    .variant-icon {
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(121, 80, 242, 0.15);
+      border-radius: 8px;
+      color: #7950f2;
+      font-size: 24px;
+    }
+    .variant-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .variant-description {
+      font-size: 13px;
+      color: #909296;
+      line-height: 1.6;
+      flex: 1;
+    }
+    .variant-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #7950f2;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 200ms ease;
+    }
+    .variant-link:hover {
+      gap: 12px;
+    }
+    .variant-link i {
+      font-size: 16px;
+    }
+    .features-section {
+      background: #25262b;
+      border: 1px solid #373a40;
+      border-radius: 12px;
+      padding: 32px;
+      margin-bottom: 40px;
+    }
+    .features-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 20px;
+    }
+    .features-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+    }
+    .feature-item {
+      display: flex;
+      gap: 12px;
+    }
+    .feature-icon {
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(64, 192, 87, 0.2);
+      border-radius: 6px;
+      color: #40c057;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .feature-text {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .feature-text strong {
+      font-size: 14px;
+      color: #fff;
+      font-weight: 600;
+    }
+    .feature-text span {
+      font-size: 12px;
+      color: #909296;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Step 3: Training Configuration</h1>
+      <p>Design variations for the Training Wizard Step 3 — featuring revised UI with collapsible sections, auto-sizing prompts, info popovers, and status badges</p>
+    </div>
+
+    <!-- Key Features -->
+    <div class="features-section">
+      <h2 class="features-title">Key Improvements</h2>
+      <div class="features-list">
+        <div class="feature-item">
+          <div class="feature-icon">
+            <i class="ti ti-check"></i>
+          </div>
+          <div class="feature-text">
+            <strong>Status Badges</strong>
+            <span>Sample Prompts show "3 ready" completion state</span>
+          </div>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon">
+            <i class="ti ti-check"></i>
+          </div>
+          <div class="feature-text">
+            <strong>Auto-Sizing Textareas</strong>
+            <span>Prompt inputs grow with content automatically</span>
+          </div>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon">
+            <i class="ti ti-check"></i>
+          </div>
+          <div class="feature-text">
+            <strong>Collapsible Advanced</strong>
+            <span>CFG & LoRA strength move to nested "Advanced" dropdown</span>
+          </div>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon">
+            <i class="ti ti-check"></i>
+          </div>
+          <div class="feature-text">
+            <strong>Prominent Core Params</strong>
+            <span>Steps and Checkpoints always visible; rest under "Advanced"</span>
+          </div>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon">
+            <i class="ti ti-check"></i>
+          </div>
+          <div class="feature-text">
+            <strong>Click-Triggered Popovers</strong>
+            <span>Info icons show context help on click, not hover</span>
+          </div>
+        </div>
+        <div class="feature-item">
+          <div class="feature-icon">
+            <i class="ti ti-check"></i>
+          </div>
+          <div class="feature-text">
+            <strong>Per-Image Context</strong>
+            <span>"Each image ~X times" calculated for Steps field</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Selected Design -->
+    <h2 style="font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 24px;">Selected Design</h2>
+    <div class="variants-grid">
+      <a href="step3-variant-a-card-grid.html" class="variant-card" style="text-decoration: none;">
+        <div class="variant-icon">
+          <i class="ti ti-layout-cards"></i>
+        </div>
+        <div>
+          <div class="variant-title">Variant A: Card Grid <span style="color:#40c057;font-size:13px;font-weight:600;">(chosen)</span></div>
+          <div class="variant-description">Clean card-based layout with Sample Prompts and Training Parameters in separate sections, each with nested collapsible Advanced settings. Best for readability and clear visual hierarchy.</div>
+        </div>
+        <div class="variant-link">
+          View mockup
+          <i class="ti ti-arrow-right"></i>
+        </div>
+      </a>
+    </div>
+
+    <!-- Notes -->
+    <div style="background: rgba(121, 80, 242, 0.08); border: 1px solid rgba(121, 80, 242, 0.2); border-radius: 12px; padding: 24px; margin-bottom: 40px;">
+      <div style="display: flex; gap: 12px;">
+        <i class="ti ti-info-circle" style="font-size: 20px; color: #7950f2; flex-shrink: 0; margin-top: 2px;"></i>
+        <div>
+          <div style="font-weight: 600; color: #fff; margin-bottom: 8px;">Design Notes</div>
+          <ul style="list-style: none; padding: 0; margin: 0; color: #c1c2c5; font-size: 13px; line-height: 1.6;">
+            <li>All variants follow Civitai's dark theme design system (Mantine v7 + Tailwind)</li>
+            <li>Info icons are click-triggered popovers (not hover tooltips) for better mobile experience</li>
+            <li>Prompt textareas auto-grow as users type — no manual resize needed</li>
+            <li>Status badges indicate completion state ("3 prompts ready")</li>
+            <li>Advanced sections are collapsible to reduce visual clutter on first load</li>
+            <li>Core parameters (Steps, Checkpoints) remain always visible for quick scanning</li>
+            <li>All mockups use realistic placeholder content (Anima model, standard engine, etc.)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

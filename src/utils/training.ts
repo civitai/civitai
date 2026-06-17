@@ -291,8 +291,7 @@ export const trainingModelInfo: {
     label: 'Standard',
     pretty: 'HiDream O1',
     type: 'hidream-o1',
-    description:
-      "HiDream.ai's 8B pixel-level unified transformer for text-to-image. Preview — settings, pricing, and results are subject to change.",
+    description: "HiDream.ai's 8B pixel-level unified transformer for text-to-image.",
     air: 'urn:air:hidreamo1:checkpoint:civitai:2618495@2939946',
     // Must match the canonical ecosystem key in basemodel.constants.ts
     // (`key: 'HiDream-O1'`). The value flows into ModelVersion.baseModel
@@ -306,11 +305,10 @@ export const trainingModelInfo: {
   },
   //
   anima: {
-    label: 'Base [v1.0]',
+    label: 'Base',
     pretty: 'Anima Base v1.0',
     type: 'anima',
-    description:
-      "CircleStone Labs' Anima image model (Base v1.0). Preview — settings, pricing, and results are subject to change.",
+    description: "CircleStone Labs' Anima image model (Base v1.0).",
     air: 'urn:air:anima:checkpoint:civitai:2458426@2945208',
     baseModel: 'Anima',
     isNew: true,
