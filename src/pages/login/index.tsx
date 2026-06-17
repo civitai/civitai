@@ -1,5 +1,6 @@
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { buildHubLoginRedirect } from '~/server/auth/login-redirect';
 import { isDev } from '~/env/other';
 
 // /login is now just a server-side redirect to the centralized hub (auth.civitai.com) — the hub owns the login
@@ -59,21 +60,15 @@ export const getServerSideProps = createServerSideProps({
       (ctx.req.headers['x-forwarded-proto'] as string | undefined) ??
       (host && !host.includes('localhost') ? 'https' : 'http');
     const origin = host ? `${proto}://${host}` : getBaseUrl();
-    const registrable = (h: string) => h.toLowerCase().split('.').slice(-2).join('.');
-    const crossSite = !!host && registrable(host) !== registrable(new URL(hubIssuer).host);
+    const destination = buildHubLoginRedirect({
+      origin,
+      hubIssuer,
+      dest: safeReturn,
+      reason: typeof reason === 'string' ? reason : undefined,
+      error: typeof error === 'string' ? error : undefined,
+      selectAccount: isSwitch,
+    });
 
-    const reasonQuery = typeof reason === 'string' && reason ? `&reason=${encodeURIComponent(reason)}` : '';
-    const postLoginPath = `/api/auth/post-login?dest=${encodeURIComponent(safeReturn)}${reasonQuery}`;
-    const landing = crossSite
-      ? `${origin}/api/auth/sync?returnUrl=${encodeURIComponent(postLoginPath)}`
-      : `${origin}${postLoginPath}`;
-
-    const hubLogin = new URL('/login', hubIssuer);
-    hubLogin.searchParams.set('returnUrl', landing);
-    if (typeof reason === 'string' && reason) hubLogin.searchParams.set('reason', reason);
-    if (typeof error === 'string' && error) hubLogin.searchParams.set('error', error);
-    if (isSwitch) hubLogin.searchParams.set('prompt', 'select_account');
-
-    return { redirect: { destination: hubLogin.toString(), permanent: false } };
+    return { redirect: { destination, permanent: false } };
   },
 });

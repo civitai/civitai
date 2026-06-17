@@ -7,6 +7,7 @@ import '~/utils/disable-router-prefetch';
 import { getCookie, getCookies, deleteCookie } from 'cookies-next';
 import type { Session } from '~/types/session';
 import { SessionProvider } from '~/providers/SessionProvider';
+import { resolveAuthGuard } from '~/server/auth/route-guard';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -503,22 +504,14 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // direct/SSR loads. A non-mod can't client-nav to these (the nav isn't shown to them) and the tRPC procedures
   // are the real data gate, so the client-nav gap is harmless.
   const guardPath = (request.url ?? '').split('?')[0];
-  const isModerator = !!session?.user?.isModerator;
+  const guard = resolveAuthGuard(guardPath, session, { isProd, isPreview });
   let guardTo: string | undefined;
-  if (
-    (guardPath.startsWith('/moderator') && !isModerator) ||
-    (guardPath.startsWith('/testing') && isProd && !isModerator)
-  ) {
-    // Login can't grant the missing permission (it would loop back here), so authed-but-unauthorized → home.
-    guardTo = session?.user ? '/' : `/login?returnUrl=${encodeURIComponent(guardPath)}`;
-  } else if (isPreview && !guardPath.startsWith('/login') && guardPath !== '/preview-restricted') {
-    // Preview deploys gate every page behind login + the moderator/testers allowlist.
-    if (!session?.user) {
-      guardTo = `/login?returnUrl=${encodeURIComponent(guardPath)}`;
-    } else if (!isModerator) {
-      const { checkPreviewAccess } = await import('~/server/auth/preview-access');
-      if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
-    }
+  if (guard && 'redirect' in guard) {
+    guardTo = guard.redirect;
+  } else if (guard && 'needsPreviewCheck' in guard && session?.user) {
+    // Logged-in non-moderator on a preview deploy → resolve the allowlist via Flipt (async, kept out of the guard).
+    const { checkPreviewAccess } = await import('~/server/auth/preview-access');
+    if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
   }
   if (guardTo && appContext.ctx.res) {
     appContext.ctx.res.writeHead(302, { Location: guardTo });
