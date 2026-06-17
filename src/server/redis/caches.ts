@@ -39,10 +39,14 @@ export const tagIdsForImagesCache = createCachedObject<{
   idKey: 'imageId',
   // 8h logical TTL. Measured live (2026-06-17) at ~1.7KB/key and ~16.85 GiB/shard
   // (~50 GiB cluster-wide) — the single largest next-redis-cluster consumer, NOT
-  // the ~4.4 GiB the prior comment assumed. The default SWR tail of a full extra
-  // `ttl` made the physical EX 16h, keeping cold keys resident an extra 8h for no
-  // benefit (SWR only needs to cover sub-second background revalidation). Trim the
-  // tail to 1h → physical EX 9h, cutting the resident cold-key window ~16h→9h.
+  // the ~4.4 GiB the prior comment assumed. The default SWR tail keeps the key
+  // resident for a full extra `ttl` past staleness (physical EX 16h); on an
+  // at-cap LRU cluster that tail is mostly evicted early anyway. Trim it to 1h
+  // (physical EX 9h) to cut resident memory. Trade-off: a key re-read only after
+  // the 8h–9h band (vs 8h–16h before) is now a blocking cold-miss (the fetch
+  // lock-winner re-queries Prisma inline) instead of a stale-serve — a small,
+  // non-zero miss uptick for sparsely-accessed images. Steadily-read keys are
+  // unaffected (they revalidate at the 8h logical boundary either way).
   ttl: CacheTTL.hour * 8,
   staleWhileRevalidateTtl: CacheTTL.hour,
   async lookupFn(imageId, fromWrite) {
@@ -1255,9 +1259,12 @@ export const postStatCache = createCachedObject<PostStatLookup>({
   key: REDIS_KEYS.CACHES.POST_STATS,
   idKey: 'postId',
   // 24h logical TTL. Measured live (2026-06-17) at ~8.2 GiB on next-redis-cluster
-  // (~8.6%, 3rd-largest consumer). The default SWR tail of a full extra `ttl` made
-  // the physical EX 48h, keeping cold post-stats resident an extra 24h for no
-  // benefit. Trim the tail to 1h → physical EX 25h.
+  // (~8.6%, 3rd-largest consumer). The default SWR tail keeps the key resident a
+  // full extra `ttl` past staleness (physical EX 48h). Trim it to 1h (physical
+  // EX 25h) to cut resident memory. Same trade-off as tagIdsForImagesCache: a
+  // post re-read only after the 24h–25h band (vs 24h–48h before) becomes a
+  // blocking cold-miss (inline PostMetric query) instead of a stale-serve;
+  // steadily-read posts are unaffected.
   ttl: CacheTTL.day,
   staleWhileRevalidateTtl: CacheTTL.hour,
   lookupFn: async (ids, fromWrite) => {
