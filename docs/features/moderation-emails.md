@@ -77,8 +77,8 @@ export { moderationActionEmail } from './moderation/moderationAction.email';
 - **account-unbanned** — standard reinstatement wording, no stored reason (`banDetails` is
   wiped on unban): "Your account has been reinstated and full access restored."
 - **restriction-upheld** — kept-decision wording + ToS link. `resolvedMessage` no longer emailed.
-- **appeal-rejected** — kept-decision wording + ToS link. (Still emails `resolvedMessage` —
-  see the gap note below.)
+- **appeal-rejected** — kept-decision wording + ToS link. `resolvedMessage` no longer emailed
+  (kept in the in-app appeal notification).
 - **restriction-overturned / appeal-approved** — positive wording, no reason, no link.
 
 ## Hook changes
@@ -153,6 +153,8 @@ in-app restriction notification) for appeal/Retool/audit — never emailed.
 - **Ban** — `reason` = `publicBanReasonLabel` only; `detailsExternal` dropped from email,
   still stored in `meta.banDetails`.
 - **Restriction** — `resolvedMessage` dropped from email; in-app notification keeps it.
+- **Appeal** — `resolvedMessage` dropped from `appeal-rejected` email; in-app appeal
+  notification keeps it.
 - **Strike** (`strikeIssued.email.ts`) — shows `strikeReasonPublicLabel` + ToS link instead
   of the raw `description`; `description` still stored on `UserStrike` and shown in-app/Retool.
 
@@ -172,12 +174,11 @@ sections are bold paragraphs, not headings, and the renderer has no `rehype-slug
 | ManualModAction | Moderator action |
 
 **Files touched:** `moderationAction.email.ts`, `strikeIssued.email.ts`,
-`user.service.ts` (`toggleBan`), `user-restriction.router.ts`, `strike.schema.ts`.
+`user.service.ts` (`toggleBan`), `user-restriction.router.ts`, `report.service.ts`
+(`resolveEntityAppeal`), `strike.schema.ts`.
 
-**Known gap:** the appeal path (`resolveEntityAppeal()`, `services/report.service.ts:706`)
-still passes `reason: resolvedMessage` to `appeal-rejected`, so moderator free-text is still
-emailed there. Ban / restriction / strike were stripped; appeals were not. Strip for
-consistency if the same targeting concern applies.
+Free-text is now stripped from every moderation email — ban, restriction, appeal, and
+strike — closing the inbox-targeting vector across all four surfaces.
 
 **Strike availability:** strikes remain `['dev','granted']` (not GA — Phase 1, no automated
 issuer), so the strike email only fires when a dev/granted moderator issues a strike. The

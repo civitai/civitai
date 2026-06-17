@@ -699,11 +699,14 @@ export async function resolveEntityAppeal({
     const recipient = recipientMap.get(recipientId);
     if (!recipient?.email) continue;
     try {
+      // Intentionally omit `resolvedMessage` from the email — moderator
+      // free-text is shown only in-app (notification above), never emailed,
+      // to avoid exposing potentially explicit/targeted prose. The TOS link in
+      // the email template provides the policy reference for rejected appeals.
       await moderationActionEmail.send({
         to: recipient.email,
         username: recipient.username ?? 'User',
         kind: approved ? 'appeal-approved' : 'appeal-rejected',
-        reason: resolvedMessage || undefined,
         items: userAppeals.map((a) => appealEntityLink(a.entityType, a.entityId)),
       });
     } catch (error) {
