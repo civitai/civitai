@@ -2,7 +2,6 @@ import { test as setup } from '@playwright/test';
 import fs from 'fs';
 import { SignJWT, importPKCS8, generateKeyPair, exportPKCS8 } from 'jose';
 import { v4 as uuid } from 'uuid';
-import { sessionCookieName } from '@civitai/auth';
 import {
   HUB_USERS,
   type HubRole,
@@ -73,8 +72,11 @@ setup('mint hub sessions', async () => {
   if (!HUB_URL) throw new Error('HUB_URL is required to mint hub sessions');
   const key = await resolveSigningKey();
 
-  // `__Secure-` prefix tracks the protocol exactly like the hub (https → __Secure-civ-token).
-  const cookieName = sessionCookieName(HUB_URL.startsWith('https://'));
+  // Cookie name derived locally (mirrors @civitai/auth's sessionCookieName) rather than imported: the package's
+  // main is raw TS with no "type":"module", which Playwright's ESM loader can't extract a named export from —
+  // and this setup is a project dependency, so that import would break the whole hub suite. The sibling
+  // preview-auth.setup.ts hardcodes its cookie name for the same reason. `__Secure-` prefix tracks the protocol.
+  const cookieName = `${HUB_URL.startsWith('https://') ? '__Secure-' : ''}civ-token`;
   const { hostname } = new URL(HUB_URL);
 
   fs.mkdirSync('e2e/.auth', { recursive: true });
