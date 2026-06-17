@@ -92,6 +92,7 @@ for (let i = 0; i < args.length; i++) {
 const command = positionalArgs[0];
 const commandArg = positionalArgs[1];
 const commandArg2 = positionalArgs[2];
+const commandArg3 = positionalArgs[3];
 
 if (!command) {
   console.error(`Usage: node query.mjs <command> [options]
@@ -349,6 +350,16 @@ async function main() {
         }
         const deleted = await client.del(commandArg);
         console.log(deleted ? `Deleted key: ${commandArg}` : 'Key not found');
+        break;
+      }
+
+      case 'hset': {
+        if (!commandArg || !commandArg2 || commandArg3 === undefined) {
+          console.error('Error: hset requires a key, field, and value');
+          process.exit(1);
+        }
+        const result = await client.hSet(commandArg, commandArg2, commandArg3);
+        console.log(`Set field "${commandArg2}" on "${commandArg}" (${result} field(s) added)`);
         break;
       }
 
