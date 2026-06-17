@@ -6,6 +6,11 @@
 
 > This doc is a handoff for another session. Findings were produced by four parallel deep reviews (hub / SDK / main-app integration / docs-vs-code) and de-duplicated. Findings **#1, #3, #5** below were re-verified against source directly; the rest are from the sub-reviews and should be spot-checked before acting on them.
 
+> **Freshness note (re-verified against HEAD, 2026-06-17, later same day):**
+> - ✅ **M1 RESOLVED** — NextAuth deleted from the main app (`[...nextauth].ts` + `next-auth-options.ts` gone; dependency dropped). *(Package note caveat: `@civitai/auth` still lists `next-auth` for the dynamic-import-only legacy `account-switch.ts` path — deliberate, do not remove until legacy accounts are unredeemable.)*
+> - ✅ **M4 RESOLVED** — `/login` is the hub redirect, `IframeHost`→popup, `discord/link-role` migrated.
+> - 🔴 **Still open, confirmed in source:** **B1** (`redirect.ts:14` substring check), **B2** (`registry.ts:19` `invalidateUserSessions` is an empty no-op stub — *worse* than "never called"), **B4** (`swap.ts:20` `return true` when Redis sys absent), **B5** (`.env.example:20-21` still RSA/RS256), **M2** (logout doesn't clear the device cookie; `logoutAll` is `logout`). All live in `apps/auth`/the package — untouched by the main-app cutover — so they ship to prod with the swap bridge unless fixed.
+
 ---
 
 ## TL;DR verdict

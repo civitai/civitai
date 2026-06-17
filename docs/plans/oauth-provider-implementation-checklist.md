@@ -94,6 +94,87 @@ For each: build the library's `Request`/`Response` from SvelteKit `request` (met
 
 ---
 
+## I. First-party cross-domain bridge → OIDC (do at migration, after §A–§H land)
+
+**Companion:** [../auth-login-simplification.md](../auth-login-simplification.md) (rationale, swap-vs-auth-code
+mapping, latency, cookie-safety analysis).
+
+**Why this section exists.** Today, first-party cross-domain login (a `civitai.red` user establishing a
+session, since `.red` can't read the hub's `.civitai.com` cookie) uses a **bespoke swap-token bridge**:
+`spoke /api/auth/sync` → hub `/api/auth/sync` (mint swap) → `spoke /api/auth/sync?swap=` → hub
+`/api/auth/exchange`. The swap flow is functionally a private re-implementation of the OAuth
+authorization-code flow. **Once §A–§H land** (the hub is a real OAuth/OIDC provider), we can retire the
+bespoke bridge and route first-party cross-domain login through the **same** `/authorize` + `/token`
+endpoints — one mechanism for first-party *and* third-party, with `state`/PKCE/`redirect_uri` hardening for
+free (this closes review findings **B1** open-redirect and **B4** swap-not-bound-to-spoke).
+
+> **The swap bridge ships to production NOW and stays as the long-term mechanism until this section is
+> executed.** That means its blockers must be fixed in the *current* prod push, independent of this work:
+> B1 (exact eTLD+1 allowlist, not `origin.includes('civitai')`), B4 (bind swap to redeeming spoke origin),
+> fail-closed when `REDIS_SYS_URL` is unset, and remove the redundant re-bounce. This §I is the *eventual*
+> replacement, not a prerequisite for launch.
+
+### Cookie safety — the load-bearing invariant
+
+Migrating the bridge does **NOT** disturb existing sessions, because the session cookie is decoupled from
+the bridge. `setSessionCookie()` ([../../src/server/auth/civ-cookie.ts](../../src/server/auth/civ-cookie.ts))
+writes the cookie from *any* hub-minted token via the package's `sessionCookieName()`/`isSecureCookie()`;
+per-request resolution ([../../src/server/auth/get-server-auth-session.ts](../../src/server/auth/get-server-auth-session.ts))
+verifies the thin ES256 token by `kid`/JWKS regardless of origin. So the `/token` exchange returns the same
+civ-token the swap exchange did, and the same `setSessionCookie` is called. **Users stay logged in across
+the migration** as long as:
+- [ ] the signing **`kid`** and the cookie **name/domain/secure** logic are unchanged (they live in
+  `@civitai/auth` — do not fork or re-derive them in this work); and
+- [ ] both bridges run **side-by-side** during the deploy window (no flag-flip that deletes swap before
+  auth-code is serving).
+
+### Register first-party color domains as trusted OIDC clients
+
+- [ ] Create one `OauthClient` per spoke origin (`civitai.com`, `civitai.red`, `civitai.green`,
+  `civitai.blue` — confirm the live set from `src/shared/constants/domain.constants.ts`).
+  - [ ] `redirect_uri` = each spoke's auth-code callback (e.g. `https://civitai.red/api/auth/callback`),
+    exact-match (same allowlist guarantee `AUTH_SPOKE_ORIGINS` gives today).
+  - [ ] **Trusted / first-party flag → consent screen skipped** (these are our own apps; never prompt).
+  - [ ] Scope = **full session identity**, not a third-party scope subset. These clients mint a *session*,
+    not a scoped API token. Decide whether to model this as a dedicated "session" grant or a `Full`-scope
+    trusted client — do **not** issue a browser-held access token; the result is the thin civ-token cookie
+    (BFF pattern).
+
+### Spoke change (replaces the swap initiate/receive)
+
+- [ ] Replace `src/pages/api/auth/sync.ts`'s two roles with:
+  - an **`/authorize` redirect** (initiate): build the hub `/authorize` URL with `client_id`,
+    `redirect_uri`, `state`, and a PKCE `code_challenge`; stash the verifier + state in a short-lived
+    cookie (mirrors the OAuth flow the hub already implements for third parties).
+  - a **`/api/auth/callback`** (receive): verify `state`, `POST hub /token` with `code` + PKCE `verifier`
+    (server-to-server), then call the **existing** `setSessionCookie(res, token, { host })`. **No
+    cookie-format change** → existing sessions unaffected.
+- [ ] Same-site `civitai.com` adopts this path too (this is the path-**unification** from
+  `auth-login-simplification.md` #4) — login-only latency, no per-request cost.
+
+### Bridge equivalence map (for the porter)
+
+| Swap bridge (delete) | Auth-code bridge (build) |
+| --- | --- |
+| spoke `/api/auth/sync` (initiate) | spoke `/authorize` redirect (+ PKCE verifier cookie) |
+| hub `/api/auth/sync` mint swap | hub `/authorize` issues code (existing §D endpoint) |
+| `?swap=` on the callback URL | `?code=&state=` on the `redirect_uri` |
+| spoke `/api/auth/sync?swap=` (receive) | spoke `/api/auth/callback` |
+| hub `/api/auth/exchange` | hub `/token` (existing §D endpoint) |
+| `createExchangeClient()` | the spoke's `/token` POST (reuse the OAuth token client) |
+
+### Cutover safety + delete-after
+
+- [ ] Ship `/authorize`+`/token` for first-party while `/api/auth/sync` + `/api/auth/exchange` remain live.
+- [ ] Watch swap-hit telemetry; only after it ≈ 0 (one full max session/cookie lifetime past cutover):
+  - [ ] delete `src/pages/api/auth/sync.ts`
+  - [ ] delete hub `routes/api/auth/sync/+server.ts` + `routes/api/auth/exchange/+server.ts`
+  - [ ] delete `createExchangeClient` + `mintSwapToken`/`verifySwapToken`/`consumeSwapToken` from `@civitai/auth` + hub
+  - [ ] retire `SYNC_PARAM` / `useDomainSync` if no longer referenced.
+- [ ] Never change cookie `name`/`kid` during this window — it's the thing keeping users signed in.
+
+---
+
 ## Hub env vars (for `auth.civitai.com`)
 
 The `.env` you're assembling needs these for the OAuth provider (beyond the existing session/JWKS/provider vars):
@@ -106,6 +187,14 @@ The `.env` you're assembling needs these for the OAuth provider (beyond the exis
 ---
 
 ## Open decisions (carried from the plan)
+
+> `@ai:` **Scope decision resolved (2026-06-17):** the OAuth-provider-into-hub migration (this entire
+> checklist, §A–§I) is **deferred** past the initial monorepo-bootstrap release — it's already large. The
+> provider surface is dormant in the main app today (id_token signing gated on `maybeCreateSessionSigner()`,
+> JWKS 404s until keys are set), so deferring is safe. **But** the swap-bridge blockers in §I's callout
+> (B1 / B4 / fail-closed-without-Redis) are NOT deferrable — the swap bridge ships now and stays until §I
+> executes, so they must be fixed in the current prod push. See
+> [../auth-hub-cutover-review-2026-06-17.md](../auth-hub-cutover-review-2026-06-17.md).
 
 1. **Buzz spend-limit at consent** — recommend fast-follow (ship authorize without it first).
 2. **OIDC always-on** — hub always has keys, so `id_token` issuance is on by default. Confirm intended.

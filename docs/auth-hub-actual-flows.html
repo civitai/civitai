@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Auth Hub ↔ Main App — Actual Flows (as implemented)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1117;--panel:#171a23;--panel2:#1e222e;--ink:#e6e8ee;--muted:#9aa3b2;--line:#2c3140;
+    --green:#3fb950;--blue:#58a6ff;--amber:#d29922;--red:#f85149;--accent:#bc8cff;--cyan:#39c5cf;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:0 0 90px;background:var(--bg);color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{padding:40px 24px 28px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#131722,var(--bg))}
+  .wrap{max-width:1140px;margin:0 auto;padding:0 24px}
+  h1{margin:0 0 6px;font-size:28px;letter-spacing:-.01em}
+  h2{margin:60px 0 4px;font-size:22px;letter-spacing:-.01em}
+  h3{margin:34px 0 4px;font-size:17px;color:#cdd3df}
+  .kicker{color:var(--cyan);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:60px 0 0;border-top:1px solid var(--line);padding-top:22px}
+  .sub{color:var(--muted);font-size:14px}
+  .lead{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:8px;padding:16px 18px;margin:22px 0}
+  .lead b{color:var(--accent)}
+  .diagram{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0;overflow-x:auto}
+  .note{color:var(--muted);font-size:14px;margin:10px 2px 0}
+  code{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:13px;color:#cdd3df}
+  .warn{border-left-color:var(--red)!important}
+  .warn b{color:var(--red)}
+  .cast{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:18px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px 14px}
+  .card h4{margin:0 0 4px;font-size:14px;color:var(--blue)}
+  .card p{margin:0;font-size:13px;color:var(--muted)}
+  .pill{font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap}
+  .pill.bug{background:rgba(248,81,73,.14);color:var(--red)}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td:first-child{color:var(--ink);font-weight:600;white-space:nowrap}
+  .foot{margin-top:50px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:18px}
+  a{color:var(--blue)}
+</style>
+</head>
+<body>
+<header><div class="wrap" style="padding:0">
+  <h1>Auth Hub ↔ Main App — Actual Flows</h1>
+  <div class="sub">As implemented on branch <code>monorepo-bootstrap</code> &middot; traced from source &middot; 2026-06-17 &middot; companion to <code>auth-hub-cutover-review-2026-06-17.md</code></div>
+</div></header>
+
+<div class="wrap">
+
+  <div class="lead">
+    <b>Why this is convoluted (one root cause):</b> the main app deploys to <b>two registrable domains</b> —
+    <code>civitai.com</code> (shares the hub's <code>.civitai.com</code> parent) and <code>civitai.red</code>
+    (does not). So the main app can't just let the browser talk to the hub. Instead it exposes a layer of
+    <b>same-origin <code>/api/auth/*</code> proxies</b> that attach the browser's cookies, call the hub
+    <b>server-to-server</b>, and <b>re-set the cookie locally</b> — because the hub's <code>Set-Cookie</code>
+    is scoped to <code>.civitai.com</code> and can't cross back to <code>.red</code>. Every flow below routes
+    through that proxy layer. On <code>civitai.com</code> some of these hops are technically redundant (the
+    cookie is already visible) but the same code path runs on both domains.
+  </div>
+
+  <div class="cast">
+    <div class="card"><h4>Browser</h4><p>The user's tab(s). Holds cookies, runs <code>SessionProvider</code>, <code>useDomainSync</code>, popup coordination.</p></div>
+    <div class="card"><h4>Spoke = main app</h4><p>Next.js on <code>civitai.com</code> <i>or</i> <code>civitai.red</code>. Its <code>/api/auth/*</code> routes are same-origin proxies + the SSR resolver.</p></div>
+    <div class="card"><h4>Hub</h4><p><code>auth.civitai.com</code> (SvelteKit). Sole producer of session data; mints all tokens; owns login UI, swap, switch, impersonate, identity.</p></div>
+    <div class="card"><h4>Shared Redis</h4><p><code>session:data2:&lt;userId&gt;</code> user cache + <code>TOKEN_STATE</code> revocation markers. Read by every spoke, written by the hub.</p></div>
+    <div class="card"><h4>Postgres</h4><p>Touched <b>only by the hub</b> when producing a fresh <code>SessionUser</code> on a cache miss.</p></div>
+    <div class="card"><h4>Cookies (4)</h4><p><code>civ-token</code> (session), <code>civ-device</code> (account roster), legacy <code>civitai-token</code> (NextAuth fallback, read-only), orchestrator cookie.</p></div>
+  </div>
+
+  <!-- ================= READING A SESSION ================= -->
+  <div class="kicker">A · Reading a session</div>
+
+  <h2>UC1 — Server-side resolution <span class="sub">(every SSR page &amp; API route)</span></h2>
+  <p class="note"><code>getServerAuthSession()</code> is a 4-level precedence ladder. First match wins; it memoizes onto <code>req.context.session</code>.
+    Source: <code>src/server/auth/get-server-auth-session.ts</code>.</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+    REQ["Incoming request"] --> MEMO{"req.context.session already set?"}
+    MEMO -->|yes| RET["return cached session"]
+    MEMO -->|no| BEARER{"Authorization Bearer or token query param present?"}
+    BEARER -->|yes| BT["getSessionFromBearerToken: hash to ApiKey lookup, user plus tokenScope/buzzLimit/subject"]
+    BT --> RET
+    BEARER -->|no| HUB{"civ-token cookie? getHubSession verifies ES256 locally"}
+    HUB -->|valid| CACHE["shared Redis session:data2 by id, then hub /api/auth/identity on miss"]
+    CACHE --> ROLL["maybeRollHubCookie: rolling refresh on activity"]
+    ROLL --> RET
+    HUB -->|none or invalid| LEG{"legacy civitai-token? getLegacySession jose JWE decode"}
+    LEG -->|valid| FRESH["getSessionUser by id, fresh from cache/DB"]
+    FRESH --> RET
+    LEG -->|none| NULL["return null, signed out"]
+
+    class BT,HUB,CACHE,ROLL hub
+    class LEG,FRESH legacy
+    classDef hub fill:#0d2741,stroke:#58a6ff,color:#e6e8ee
+    classDef legacy fill:#2b2207,stroke:#d29922,color:#e6e8ee
+    </pre>
+  </div>
+  <div class="lead warn"><b>Known issues (review):</b> the <code>?token=</code> query-string bearer is still accepted
+    (foot-gun, logs/Referer leakage); the <b>legacy JWE path enforces neither issuer nor audience</b> (B3) and has
+    no revocation gate, so during the cutover a legacy-cookie holder isn't rejected by <code>isRevoked</code>.</div>
+
+  <h2>UC2 — Client hydration <span class="sub">(SessionProvider / useSession — ~13 sites; useCurrentUser — ~317)</span></h2>
+  <p class="note">Source: <code>src/providers/SessionProvider.tsx</code>, <code>src/pages/api/auth/session.ts</code>. The provider is a first-party drop-in for <code>next-auth/react</code>.</p>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant B as Browser SessionProvider
+    participant S as Spoke /api/auth/session
+    participant SSR as getServerAuthSession
+    Note over B: SSR may seed the session prop, skipping the first fetch
+    B->>S: GET /api/auth/session on mount if no seed, plus focus / interval / update
+    S->>SSR: getServerAuthSession req,res
+    SSR-->>S: Session or null from the UC1 ladder
+    alt signed in
+      S-->>B: 200 with user plus expires, next-auth shape, expires synthesized +30d
+      Note over B: status authenticated
+    else signed out
+      S-->>B: 200 empty body, next-auth convention, not 401
+      Note over B: status unauthenticated
+    end
+    Note over B: non-2xx or network error keeps the current value, no signed-out flash
+    </pre>
+  </div>
+
+  <!-- ================= LOGGING IN ================= -->
+  <div class="kicker">B · Logging in</div>
+
+  <h2>UC3 — Login on civitai.com <span class="sub">(same-site — shares the hub parent domain)</span></h2>
+  <p class="note">Popup variant. Source: <code>openLoginPopup()</code> in <code>src/utils/auth-helpers.ts</code>, <code>post-login.ts</code>, <code>popup-done.tsx</code>. The hub's <code>.civitai.com</code> cookie is <b>directly readable</b> here — no swap needed.</p>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant T as Origin tab
+    participant P as Popup
+    participant H as Hub
+    participant PL as Spoke /api/auth/post-login
+    T->>P: window.open hub /login, returnUrl points at post-login then popup-done
+    P->>H: hub login UI, provider or email magic-link
+    H->>H: authenticate, mint civ-token, Set-Cookie Domain .civitai.com
+    H-->>P: 302 to civitai.com /api/auth/post-login
+    P->>PL: GET /api/auth/post-login, .civitai.com cookie visible same-site
+    PL->>PL: getServerAuthSession then runLoginSideEffects, uses reason
+    PL-->>P: 302 to /login/popup-done
+    Note over P: popup-done broadcasts LOGIN_POPUP_DONE on the same-origin channel
+    P-->>T: channel DONE
+    T->>T: close popup, then navigate to callbackUrl
+    Note over T,P: email magic-link tab has no opener, so it navigates itself to cb
+    </pre>
+  </div>
+
+  <h2>UC4 — Login on civitai.red <span class="sub">(cross-site — the convoluted one)</span></h2>
+  <p class="note">Same entry point detects cross-site (<code>registrableDomain</code> differs) and routes the landing through <code>/api/auth/sync</code>. The hub cookie is <b>not</b> readable on <code>.red</code>, so a swap-token round-trip mints a <code>.red</code>-local cookie. Source: <code>auth-helpers.ts</code>, spoke <code>sync.ts</code>, hub <code>sync/+server.ts</code>, hub <code>exchange</code>.</p>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant P as Popup on civitai.red
+    participant H as Hub
+    participant RS as red /api/auth/sync
+    participant HX as Hub /api/auth/exchange
+    participant PL as red /api/auth/post-login
+    P->>H: hub /login, returnUrl points at red /api/auth/sync
+    H->>H: authenticate, Set-Cookie .civitai.com, NOT visible to .red
+    H-->>P: 302 to red /api/auth/sync
+    P->>RS: GET /api/auth/sync, no swap yet
+    RS-->>P: 302 to hub /api/auth/sync, callback is red /api/auth/sync
+    P->>H: GET hub /api/auth/sync, top-level nav so Lax .civitai.com cookie rides along
+    H->>H: locals.user set, mintSwapToken single-use 60s, callback in AUTH_SPOKE_ORIGINS
+    H-->>P: 302 to red /api/auth/sync with swap token
+    P->>RS: GET /api/auth/sync with swap, Referrer-Policy no-referrer
+    RS->>HX: POST /api/auth/exchange with swap, server to server
+    HX-->>RS: returns full civ-token
+    RS->>RS: setSessionCookie, red civ-token
+    RS-->>P: 302 to /api/auth/post-login
+    P->>PL: GET /api/auth/post-login, civ-token now readable
+    PL-->>P: side-effects, 302 to popup-done, channel DONE to origin tab
+    </pre>
+  </div>
+  <div class="lead warn"><b>Known issues (review):</b> the swap token travels <b>in the URL</b> (logs/Referer; mitigated by single-use + 60s + <code>no-referrer</code>), is <b>not bound to the redeeming spoke</b> (B4), <code>/exchange</code> is unauthenticated + unrate-limited, and single-use <b>silently disables</b> if <code>REDIS_SYS_URL</code> is unset (<code>swap.ts</code> returns success). The hub's post-login redirect allowlist uses <code>origin.includes('civitai')</code> (B1, open redirect).</div>
+
+  <h2>UC4-simplified — remove the redundant re-bounce <span class="sub">(planned near-term, no architecture change)</span></h2>
+  <p class="note">Today's UC4 makes the browser bounce <b>spoke → hub → spoke → hub</b> just to obtain the swap token: after the hub login sets its cookie, it redirects to <code>red/api/auth/sync</code>, which immediately redirects <b>back</b> to <code>hub/api/auth/sync</code> only to mint the swap. The hub already knows the user is authenticated the moment login completes, so it can mint the swap <b>inline at login-completion</b> when the <code>returnUrl</code> targets an allowlisted spoke <code>/api/auth/sync</code> — redirecting straight to <code>red/api/auth/sync?swap=…</code>. That removes ~2 redirects. See <code>auth-login-simplification.md</code> (#2).</p>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant P as Popup on civitai.red
+    participant H as Hub
+    participant RS as red /api/auth/sync
+    participant HX as Hub /api/auth/exchange
+    Note over P,H: BEFORE, 4 redirects, the re-bounce is steps 3 and 4
+    P->>H: hub /login, returnUrl points at red /api/auth/sync
+    H-->>P: 302 to red /api/auth/sync, no swap
+    P->>RS: GET /api/auth/sync, no swap
+    RS-->>P: 302 back to hub /api/auth/sync to fetch the swap
+    P->>H: GET hub /api/auth/sync, Lax cookie rides along
+    H-->>P: 302 to red /api/auth/sync with swap token
+    P->>RS: GET /api/auth/sync with swap
+    RS->>HX: POST /api/auth/exchange, sets red civ-token
+    Note over P,H: AFTER, hub mints the swap at login-completion
+    P->>H: hub /login, returnUrl is red /api/auth/sync
+    H->>H: login completes, returnUrl is an allowlisted spoke sync, mint swap inline
+    H-->>P: 302 straight to red /api/auth/sync with swap token
+    P->>RS: GET /api/auth/sync with swap
+    RS->>HX: POST /api/auth/exchange, sets red civ-token
+    </pre>
+  </div>
+  <div class="lead"><b>Deferred to the OAuth migration (not now):</b> fully replacing the swap bridge with the standard OIDC authorization-code flow, and <b>unifying</b> the same-site (UC3) and cross-site (UC4) paths into one. That migration is <b>cookie-safe</b> — <code>setSessionCookie</code> writes the same civ-token regardless of how it was obtained, so existing sessions survive. Steps live in <code>docs/plans/oauth-provider-implementation-checklist.md</code> §I; rationale in <code>docs/auth-login-simplification.md</code>. Until then the swap bridge stays, with its B1/B4/fail-closed blockers fixed for production.</div>
+
+  <p class="note"><b>UC5 — Cross-domain sync on any page load:</b> <code>useDomainSync()</code> fires when a page loads carrying the <code>SYNC_PARAM</code> marker (set by a "sign in on this domain" link), stripping it and navigating to <code>/api/auth/sync?returnUrl=…</code> — i.e. it enters UC4 from the <code>RS</code> step. Source: <code>src/hooks/useDomainSync.tsx</code>.</p>
+
+  <!-- ================= LIFECYCLE OPS ================= -->
+  <div class="kicker">C · Session lifecycle (all via same-origin proxies)</div>
+
+  <h2>UC6 — Logout</h2>
+  <p class="note">Source: <code>handleSignOut()</code> → <code>src/pages/api/auth/logout.ts</code>.</p>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant L as Spoke /api/auth/logout
+    participant H as Hub revoke
+    B->>L: GET /api/auth/logout, callbackUrl is here
+    L->>H: sessionTokenClient.revoke civ-token, best-effort, never blocks
+    H->>H: mark jti invalid in TOKEN_STATE
+    L->>L: clear civ-token both prefixes across host-only, AUTH_COOKIE_DOMAIN, dot-host
+    L->>L: clear legacy civitai-token across domains, plus orchestrator cookie
+    L-->>B: 302 to callbackUrl, reloads signed-out
+    </pre>
+  </div>
+  <div class="lead warn"><b>Known issues (review M2):</b> logout does <b>not clear the <code>civ-device</code> cookie</b>, so the seamless account-switch set survives logout on shared machines; and <code>logoutAll</code> is a no-op alias for <code>logout</code> (no "sign out everywhere"). Also clears only the <b>current</b> jti, not all of a user's sessions.</div>
+
+  <h2>UC7 — Account switch <span class="sub">(device roster)</span></h2>
+  <p class="note">Source: <code>authProxy.switchAccount</code> → <code>src/pages/api/auth/switch.ts</code> → <code>createDeviceAccountClient</code>.</p>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant SW as Spoke /api/auth/switch
+    participant H as Hub /api/auth/switch
+    B->>SW: POST userId, sends civ-token plus civ-device cookies
+    SW->>H: deviceAccounts.switch forwards both cookies
+    H->>H: gate active session, target in this device set, not aged out
+    alt allowed
+      H-->>SW: returns fresh civ-token, device record slid
+      SW->>SW: setSessionCookie new civ-token, roll civ-device
+      SW-->>B: 200 ok with userId
+    else declined
+      H-->>SW: null
+      SW-->>B: 403, client falls back to re-login
+    end
+    </pre>
+  </div>
+
+  <h2>UC8 — Moderator impersonation</h2>
+  <p class="note">Source: <code>authProxy.impersonate / exitImpersonation</code> → <code>src/pages/api/auth/impersonate.ts</code> (AuthedEndpoint) → <code>createImpersonationClient</code>. The hub owns the permission gate, the <code>impersonatedBy</code> stamp, and the <code>ModActivity</code> audit. Does <b>not</b> touch the device set.</p>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant B as Browser moderator
+    participant IP as Spoke /api/auth/impersonate
+    participant H as Hub impersonate and exit
+    rect rgb(20,28,40)
+      Note over B,H: START, POST userId
+      B->>IP: POST userId, moderator civ-token cookie
+      IP->>H: impersonation.impersonate cookie and userId
+      H->>H: permission gate, mint civ-token stamped impersonatedBy, ModActivity audit
+      H-->>IP: token or null
+      IP->>IP: setSessionCookie token, 403 if null
+      IP-->>B: 200 ok
+    end
+    rect rgb(20,28,40)
+      Note over B,H: EXIT, DELETE
+      B->>IP: DELETE
+      IP->>H: impersonation.exit cookie, hub reads impersonatedBy
+      H-->>IP: original moderator token
+      IP->>IP: setSessionCookie token
+      IP-->>B: 200 ok
+    end
+    </pre>
+  </div>
+
+  <h2>Cookie reference</h2>
+  <table>
+    <thead><tr><th>Cookie</th><th>Set by</th><th>Scope</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>civ-token<br/><span class="sub">__Secure- in prod</span></td><td>Hub (civitai.com); spoke proxy (.red, switch, impersonate, sync)</td><td><code>.civitai.com</code> or host-only on <code>.red</code></td><td>Thin ES256 session token <code>{sub,jti,signedAt}</code></td></tr>
+      <tr><td>civ-device</td><td>Spoke proxy (switch/sync)</td><td>per-domain</td><td>Device account roster for seamless switching <span class="pill bug">not cleared on logout</span></td></tr>
+      <tr><td>civitai-token<br/><span class="sub">legacy NextAuth</span></td><td>Old NextAuth (still live)</td><td><code>.{host}</code></td><td>Read-only fallback during cutover (jose JWE decode) <span class="pill bug">no iss/aud check</span></td></tr>
+      <tr><td>orchestrator</td><td>Spoke</td><td>host-only</td><td>Generation service auth; cleared on logout</td></tr>
+    </tbody>
+  </table>
+
+  <div class="foot">
+    Diagrams render via Mermaid (CDN; needs internet). Sources cited inline are the authoritative reference.
+    "Known issues" callouts map to findings in <code>auth-hub-cutover-review-2026-06-17.md</code>. The
+    forward-looking "could this be plain OIDC?" comparison lives in <code>first-party-sso-vs-oauth-diagrams.html</code> /
+    <code>first-party-sso-vs-oauth-analysis.md</code> — this doc is strictly <b>what exists today</b>.
+  </div>
+</div>
+
+<script>
+  mermaid.initialize({startOnLoad:true,theme:'dark',
+    sequence:{useMaxWidth:true,wrap:true,mirrorActors:false,boxMargin:8},
+    flowchart:{curve:'basis',useMaxWidth:true},
+    themeVariables:{fontSize:'13px',fontFamily:'ui-sans-serif,system-ui,sans-serif'}});
+</script>
+</body>
+</html>
