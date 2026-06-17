@@ -1543,6 +1543,78 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       const incrKey = String(mockSysRedis.incrBy.mock.calls[0][0]);
       expect(incrKey).toMatch(/^system:blocks:buzz-cap:42:\d{4}-\d{2}-\d{2}$/);
     });
+
+    // ──────────────────── GA-gap: orchestrator resource belt ─────────────────
+    //
+    // The pre-spend gate (`resolveCanGenerateForVersions`) deliberately does NOT
+    // check early-access `hasAccess` or the `availability:Private` subscription
+    // requirement (see the SCOPE comment on assertViewerCanGeneratePageModel).
+    // Those are enforced DOWNSTREAM by the orchestrator resource belt
+    // (`getGenerationResourceData` → `getResourceData`, which folds
+    // `canGenerate = hasAccess && canGenerate` and throws on a Private resource
+    // without an active subscription). That belt runs INSIDE
+    // `createTextToImageStep`, and the whatIf step is built BEFORE any Buzz
+    // reservation.
+    //
+    // WHAT THIS PROVES: a page viewer who is NOT entitled to an early-access /
+    // Private model — but whose model PASSES the pre-spend gate (canGenerate is
+    // the DEFAULT true here, modelling the gate's deliberate blind spot) — is
+    // rejected by the belt at the whatIf step, BEFORE any reservation. The
+    // reservation path (`reserveBlockBuzzSpend`/incrBy) is never reached, so the
+    // viewer spends nothing.
+    //
+    // WHAT THIS DOES NOT PROVE: that getResourceData's REAL hasAccess/Private
+    // logic actually rejects those models — that logic is mocked away here (it
+    // lives in orchestrator/common.ts and is exercised by its own suite). This
+    // test pins the ORDERING + fail-shape contract (belt before spend, throw →
+    // no reservation), not the belt's internal entitlement maths. A DEPLOYED
+    // browser run against a real early-access / Private model is still required
+    // to prove end-to-end entitlement enforcement on the live page surface.
+    it('GA-gap: a page model that passes the pre-spend gate but is rejected by the orchestrator belt (early-access/Private) → no spend, no reservation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      // Pre-spend gate PASSES (default canGenerate:true) — modelling that the
+      // gate does NOT see early-access / Private entitlement.
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map([[99, { canGenerate: true }]])
+      );
+      // The orchestrator resource belt (inside createTextToImageStep) rejects an
+      // un-entitled early-access / Private resource. The whatIf step is the FIRST
+      // belt call in submit, and it is BEFORE the reservation.
+      mockCreateTextToImageStep.mockRejectedValueOnce(
+        new TRPCError({ code: 'FORBIDDEN', message: 'early access pass required' })
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      // The belt threw at the whatIf step — BEFORE any orchestrator submit and
+      // BEFORE any Buzz reservation. Nothing was spent.
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled(); // no reservation
+      expect(mockSysRedis.decrBy).not.toHaveBeenCalled(); // nothing to refund
+    });
+
+    // Companion: the same belt rejection on the ESTIMATE (whatIf) path — the
+    // pre-flight cost estimate also runs through createTextToImageStep, so an
+    // un-entitled model is rejected before a cost is ever returned to the page.
+    it('GA-gap: estimate of a belt-rejected (early-access/Private) page model → throws, no orchestrator submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      happyVersionLookup();
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map([[99, { canGenerate: true }]])
+      );
+      mockCreateTextToImageStep.mockRejectedValueOnce(
+        new TRPCError({ code: 'FORBIDDEN', message: 'this model requires a subscription' })
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
   });
 
   describe('REGRESSION — model token still enforces model binding', () => {

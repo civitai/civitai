@@ -405,6 +405,8 @@ describe('BlockManifestValidator', () => {
       [-5, 'negative'],
       [12.5, 'non-integer'],
       ['200' as unknown as number, 'string'],
+      [Infinity, 'Infinity'],
+      [Number.NaN, 'NaN'],
     ])('rejects a %s buzzBudgetPerGen (%s)', (value) => {
       const manifest = {
         ...VALID_MANIFEST,
