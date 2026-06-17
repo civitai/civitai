@@ -431,6 +431,10 @@ export const constants = {
   autoLabel: {
     labelTypes: ['tag', 'caption'] as const,
   },
+
+  // External URL for the article rating self-check guideline (hosted on education.civitai.com).
+  // TODO(article-nsfw-dispute): finalize the slug; this is a placeholder.
+  articleRatingGuidelineUrl: 'https://education.civitai.com/articles/article-rating-guidelines',
 } as const;
 
 export const maxOrchestratorImageFileSize = 24 * 1024 ** 2; // 24MB
