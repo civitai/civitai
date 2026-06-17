@@ -75,7 +75,7 @@ export function createServerSideProps<P>({
         ? await getServerProxySSGHelpers(context, session, features)
         : undefined;
 
-    const result = ((await resolver({
+    const result = ((await resolver?.({
       ctx: context,
       isClient,
       ssg,
@@ -115,7 +115,7 @@ type CreateServerSidePropsProps<P> = {
   /** Gate the page to moderators (replaces the edge `/moderator` route-guard). Resolves the session and
    *  redirects non-moderators before the resolver runs. */
   requireModerator?: boolean;
-  resolver: (
+  resolver?: (
     context: CustomGetServerSidePropsContext
   ) => Promise<GetServerSidePropsResult<P> | void>;
 };

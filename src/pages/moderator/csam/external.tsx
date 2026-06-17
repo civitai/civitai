@@ -31,6 +31,7 @@ import {
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { csamContentsDictionary } from '~/server/schema/csam.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
@@ -415,5 +416,7 @@ function ExternalCsamReportPage() {
     </Container>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default Page(ExternalCsamReportPage, { footer: null });

@@ -39,6 +39,7 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { useInView } from '~/hooks/useInView';
 import { NsfwLevel } from '~/server/common/enums';
 import type { SanityImage } from '~/server/routers/research.router';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -78,6 +79,8 @@ const useStore = create<StoreState>()(
     },
   }))
 );
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function RaterSanity() {
   const { data: images, isLoading } = trpc.research.raterGetSanityImages.useQuery(undefined, {

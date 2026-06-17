@@ -68,6 +68,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { ModReviewType, NsfwLevel } from '~/server/common/enums';
 import { resolveAppealSchema } from '~/server/schema/report.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import type { ImageModerationReviewQueueImage } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -124,6 +125,8 @@ const useStore = create<StoreState>()(
     },
   }))
 );
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function Images() {
   // const queryUtils = trpc.useUtils();

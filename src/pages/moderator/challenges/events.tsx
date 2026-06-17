@@ -21,6 +21,7 @@ import { useState } from 'react';
 import * as z from 'zod';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { challengeEventTitleColors } from '~/server/schema/challenge.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Meta } from '~/components/Meta/Meta';
@@ -383,3 +384,5 @@ export default function ModeratorChallengeEventsPage() {
     </>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });

@@ -4,6 +4,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChallengeUpsertForm } from '~/components/Challenge/ChallengeUpsertForm';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export default function CreateChallengePage() {
   const currentUser = useCurrentUser();
@@ -30,3 +31,5 @@ export default function CreateChallengePage() {
     </>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });

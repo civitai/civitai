@@ -17,7 +17,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
-import { useQueryClient , keepPreviousData} from '@tanstack/react-query';
+import { useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { upperFirst } from 'lodash-es';
@@ -45,6 +45,7 @@ import { constants } from '~/server/common/constants';
 import type { GetReportsProps } from '~/server/controllers/report.controller';
 import type { SetReportStatusInput } from '~/server/schema/report.schema';
 import { reportStatusColorScheme } from '~/server/schema/report.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -54,6 +55,8 @@ import { QS } from '~/utils/qs';
 import { getDisplayName, getModelUrl, splitUppercase } from '~/utils/string-helpers';
 
 import { trpc } from '~/utils/trpc';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 const limit = constants.reportingFilterDefaults.limit;
 
@@ -440,8 +443,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
 }
 
 const getReportLink = (report: ReportDetail) => {
-  if (report.model)
-    return getModelUrl({ modelId: report.model.id, modelName: report.model.name });
+  if (report.model) return getModelUrl({ modelId: report.model.id, modelName: report.model.name });
   else if (report.resourceReview) return `/reviews/${report.resourceReview.id}`;
   else if (report.comment)
     return `/models/${report.comment.modelId}/?dialog=commentThread&commentId=${
