@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { blockBuzzAttributionWriteCounter } from '~/server/prom/client';
@@ -488,6 +488,92 @@ export async function mintPayoutForOwner({
     ).catch(() => null);
 
     return { minted: true, payoutId, totalCents: netCents, rowCount: flipped.count };
+  });
+}
+
+export type RevertPayoutResult = {
+  /** Rows flipped paid_out → confirmed (payout_id/paid_out_at cleared). */
+  reverted: number;
+  /** Whether the ledger row was deleted (false if it was already gone). */
+  ledgerDeleted: boolean;
+};
+
+/**
+ * COMPENSATING REVERT for a minted-but-undisbursed payout.
+ *
+ * `withdrawAppRevenue` mints the ledger row + flips the contributing rows to
+ * `paid_out` BEFORE it calls Tipalti. If the Tipalti disbursement (or the
+ * tracking-record write that follows it) fails, the publisher would otherwise be
+ * stuck with a zero balance for money they never received. Because the mint
+ * moved NO actual money — it only changed row state and wrote an idempotency
+ * ledger row — the failure is fully reversible: we un-flip the `paid_out` rows
+ * for this `payoutId` back to `confirmed` (clearing `paid_out_at` + `payout_id`)
+ * AND delete the `block_attribution_payout` ledger row, in ONE transaction. The
+ * publisher's confirmed balance is restored exactly and they can retry (the next
+ * attempt generates a fresh ULID period_key, so it is not blocked by the
+ * now-deleted ledger row).
+ *
+ * Scoped strictly by `payoutId` (NOT by owner) so it can only ever touch the
+ * rows THIS mint flipped — it cannot accidentally revert a different period's
+ * payout for the same owner, and it cannot revert a clawback that was minted
+ * under a different payout. Idempotent: if the ledger row is already gone (a
+ * prior revert ran) the delete is a no-op and we still un-flip any stragglers.
+ *
+ * Deliberately verifies the deleted ledger row belonged to the expected owner
+ * (defense-in-depth: a caller can never delete another owner's payout by passing
+ * the wrong id). A mismatch throws — the caller should never reach this with a
+ * foreign payoutId.
+ */
+export async function revertPayoutMint({
+  payoutId,
+  appOwnerUserId,
+}: {
+  payoutId: string;
+  appOwnerUserId: number;
+}): Promise<RevertPayoutResult> {
+  return dbWrite.$transaction(async (tx: Prisma.TransactionClient): Promise<RevertPayoutResult> => {
+    // Defense-in-depth: confirm the ledger row (if present) is this owner's
+    // before we touch anything. A foreign payoutId is a programming error.
+    const ledger = await tx.blockAttributionPayout.findUnique({
+      where: { id: payoutId },
+      select: { id: true, appOwnerUserId: true },
+    });
+    if (ledger && ledger.appOwnerUserId !== appOwnerUserId) {
+      throw new Error(
+        `revertPayoutMint: payout ${payoutId} owner ${ledger.appOwnerUserId} != expected ${appOwnerUserId}`
+      );
+    }
+
+    // 1. Un-flip the rows this payout claimed. Scope by payoutId so only the
+    // exact rows minted here revert. Restore status='confirmed' so the net
+    // is immediately re-claimable on retry.
+    const reverted = await tx.blockBuzzAttribution.updateMany({
+      where: { payoutId, status: 'paid_out' },
+      data: { status: 'confirmed', paidOutAt: null, payoutId: null },
+    });
+
+    // 2. Delete the idempotency ledger row so it no longer counts as a paid
+    // period. The flip in (1) already removed the payout_id linkage.
+    let ledgerDeleted = false;
+    if (ledger) {
+      await tx.blockAttributionPayout.delete({ where: { id: payoutId } });
+      ledgerDeleted = true;
+    }
+
+    logToAxiom(
+      {
+        name: ATTRIBUTION_LOG_NAME,
+        type: 'warning',
+        message: `reverted payout mint ${payoutId} for owner ${appOwnerUserId} (disbursement failed)`,
+        payoutId,
+        appOwnerUserId,
+        reverted: reverted.count,
+        ledgerDeleted,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    return { reverted: reverted.count, ledgerDeleted };
   });
 }
 

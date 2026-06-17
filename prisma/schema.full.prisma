@@ -548,6 +548,7 @@ model User {
   blockBuzzAttributionsAsPurchaser BlockBuzzAttribution[]    @relation("BlockBuzzAttributionPurchaser")
   blockBuzzAttributionsAsAppOwner  BlockBuzzAttribution[]    @relation("BlockBuzzAttributionAppOwner")
   blockAttributionPayouts          BlockAttributionPayout[]  @relation("BlockAttributionPayoutOwner")
+  blockPayoutWithdrawals           BlockPayoutWithdrawal[]   @relation("BlockPayoutWithdrawalOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
@@ -2529,6 +2530,52 @@ model BlockAttributionPayout {
   @@unique([appOwnerUserId, periodKey], map: "block_attribution_payout_owner_period_uniq")
   @@index([appOwnerUserId, createdAt(sort: Desc)], map: "bap_owner_created_idx")
   @@map("block_attribution_payout")
+}
+
+/// PR1 (pull model) — tracking record for a publisher revenue-share
+/// DISBURSEMENT via Tipalti. One row per `withdrawAppRevenue` attempt.
+///
+/// This is the App-Blocks analogue of `CashWithdrawal`, but kept on its OWN
+/// table so app-revenue payouts (the "separate rail" that nets confirmed
+/// `block_buzz_attribution` share and pays it out WITHOUT ever touching the
+/// externally-owned Buzz cash accounts / creator-program pool) are never
+/// conflated with creator-program cash withdrawals.
+///
+/// `payoutId` links to the `block_attribution_payout` ledger row this
+/// disbursement realized. `status`:
+///   - 'pending_approval' — Tipalti payment batch created, waiting on the
+///     moderator-approval step (mirrors CashWithdrawal's terminal state here).
+///   - 'reverted'         — Tipalti (or this record's write) failed AFTER the
+///     mint; the mint was compensated (rows un-flipped, ledger row deleted) and
+///     the publisher's balance restored. Kept for audit.
+///
+/// Application-generated id (`bpw_<ulid>`), which is also the Tipalti refCode
+/// source — so the whole flow is retryable/idempotent off one id.
+model BlockPayoutWithdrawal {
+  id             String   @id
+  appOwnerUserId Int      @map("app_owner_user_id")
+  appOwner       User     @relation("BlockPayoutWithdrawalOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+  /// Links to the block_attribution_payout ledger row minted for this
+  /// disbursement. NULL only transiently before the mint (never persisted NULL
+  /// on a row that reached Tipalti).
+  payoutId       String?  @map("payout_id")
+  /// Net publisher share disbursed, in USD cents (matches the minted ledger
+  /// row's total_cents). Tipalti is paid cents/100.
+  amountCents    Int      @map("amount_cents")
+  /// Tipalti CashWithdrawalMethod used (snapshot of the payable method).
+  method         String
+  /// Tipalti refCode (== id, truncated to 16 chars by getWithdrawalRefCode).
+  refCode        String   @map("ref_code")
+  status         String   @default("pending_approval")
+  /// Tipalti paymentBatchId once the batch is created.
+  paymentBatchId String?  @map("payment_batch_id")
+  note           String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([appOwnerUserId, createdAt(sort: Desc)], map: "bpw_owner_created_idx")
+  @@index([payoutId], map: "bpw_payout_idx")
+  @@map("block_payout_withdrawal")
 }
 
 /// W5 v0.5 audit log — one row per successful scope-gated API call from

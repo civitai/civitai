@@ -41,6 +41,8 @@ const { mockDbRead, mockDbWrite, mockLog } = vi.hoisted(() => ({
     },
     blockAttributionPayout: {
       create: vi.fn(),
+      findUnique: vi.fn(),
+      delete: vi.fn(),
     },
     // Interactive transaction: run the callback against the same mock
     // (no real isolation needed in these unit tests).
@@ -65,6 +67,7 @@ import {
   mintPayoutForOwner,
   recordAttribution,
   REFUND_WINDOWS_DAYS,
+  revertPayoutMint,
   voidAttributionsForPayment,
 } from '../buzz-attribution.service';
 import type { BlockAttribution } from '~/server/schema/blocks/attribution.schema';
@@ -92,6 +95,8 @@ beforeEach(() => {
   mockDbWrite.blockBuzzAttribution.findMany.mockReset();
   mockDbWrite.blockBuzzAttribution.aggregate.mockReset();
   mockDbWrite.blockAttributionPayout.create.mockReset();
+  mockDbWrite.blockAttributionPayout.findUnique.mockReset();
+  mockDbWrite.blockAttributionPayout.delete.mockReset();
   // findMany defaults to "no paid_out rows" so existing void tests that
   // don't set it up exercise the no-clawback path.
   mockDbWrite.blockBuzzAttribution.findMany.mockResolvedValue([]);
@@ -570,6 +575,64 @@ describe('mintPayoutForOwner', () => {
     // The aggregate query only ever reads confirmed rows.
     const aggWhere = mockDbWrite.blockBuzzAttribution.aggregate.mock.calls[0][0].where;
     expect(aggWhere).toEqual({ appOwnerUserId: APP_OWNER_USER_ID, status: 'confirmed' });
+  });
+});
+
+describe('revertPayoutMint', () => {
+  const PAYOUT_ID = 'bba_payout_TEST';
+
+  it('un-flips paid_out rows → confirmed and deletes the ledger row', async () => {
+    mockDbWrite.blockAttributionPayout.findUnique.mockResolvedValueOnce({
+      id: PAYOUT_ID,
+      appOwnerUserId: APP_OWNER_USER_ID,
+    });
+    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 4 });
+    mockDbWrite.blockAttributionPayout.delete.mockResolvedValueOnce({});
+
+    const result = await revertPayoutMint({
+      payoutId: PAYOUT_ID,
+      appOwnerUserId: APP_OWNER_USER_ID,
+    });
+
+    expect(result).toEqual({ reverted: 4, ledgerDeleted: true });
+
+    // Rows un-flipped: scoped by payoutId, paid_out → confirmed, linkage cleared.
+    const flip = mockDbWrite.blockBuzzAttribution.updateMany.mock.calls[0][0];
+    expect(flip.where).toEqual({ payoutId: PAYOUT_ID, status: 'paid_out' });
+    expect(flip.data).toEqual({ status: 'confirmed', paidOutAt: null, payoutId: null });
+
+    // Ledger row deleted by id.
+    expect(mockDbWrite.blockAttributionPayout.delete).toHaveBeenCalledWith({
+      where: { id: PAYOUT_ID },
+    });
+  });
+
+  it('is idempotent when the ledger row is already gone (un-flips stragglers, no delete)', async () => {
+    mockDbWrite.blockAttributionPayout.findUnique.mockResolvedValueOnce(null);
+    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const result = await revertPayoutMint({
+      payoutId: PAYOUT_ID,
+      appOwnerUserId: APP_OWNER_USER_ID,
+    });
+
+    expect(result).toEqual({ reverted: 0, ledgerDeleted: false });
+    expect(mockDbWrite.blockAttributionPayout.delete).not.toHaveBeenCalled();
+  });
+
+  it('refuses to revert a payout that belongs to a different owner', async () => {
+    mockDbWrite.blockAttributionPayout.findUnique.mockResolvedValueOnce({
+      id: PAYOUT_ID,
+      appOwnerUserId: 12345, // not APP_OWNER_USER_ID
+    });
+
+    await expect(
+      revertPayoutMint({ payoutId: PAYOUT_ID, appOwnerUserId: APP_OWNER_USER_ID })
+    ).rejects.toThrow(/owner/);
+
+    // Nothing touched on a foreign payout.
+    expect(mockDbWrite.blockBuzzAttribution.updateMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.blockAttributionPayout.delete).not.toHaveBeenCalled();
   });
 });
 

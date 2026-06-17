@@ -98,3 +98,13 @@ export function newBlockAttributionPayoutId(): string {
 export function newAppUserScopeGrantId(): string {
   return `augr_${newUlid()}`;
 }
+
+/**
+ * Tracking record for a publisher revenue-share DISBURSEMENT (Tipalti). One per
+ * `withdrawAppRevenue` attempt; doubles as the Tipalti refCode source. Kept on
+ * its own `block_payout_withdrawal` table so app-revenue payouts are never
+ * conflated with creator-program `CashWithdrawal` rows (separate rail).
+ */
+export function newBlockPayoutWithdrawalId(): string {
+  return `bpw_${newUlid()}`;
+}
