@@ -45,6 +45,12 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
+// Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
+// dynamic import() inside assertViewerCanGeneratePageModel so the heavy
+// generation-service import graph (image.service → event-engine-common, etc.)
+// stays OUT of this router's static import graph — mirroring the existing
+// lazy import of recordScopeInvocation below.
+import type { ResolveCanGenerateVersion } from '~/server/services/generation/generation.service';
 import {
   buildTextToImageInput,
   resolveBlockVersionContext,
@@ -114,6 +120,73 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
       message: 'App Blocks is restricted to the civitai team',
     });
   }
+}
+
+// ---- W10 page generation spend --------------------------------------------
+//
+// A model-slot token's ctx is `{ modelId, slotId }` (the install binds the
+// generator to ONE model). A page-slot token's ctx is `{ slotId, entityType:
+// 'none' }` — a page is stateless, has NO model binding, and lets the viewer
+// pick ANY model they're entitled to generate against. `entityType === 'none'`
+// is the discriminator the mint stamps (see the page path in
+// block-tokens/index.ts); model tokens never carry `entityType`.
+function isPageToken(claims: { ctx?: unknown }): boolean {
+  return (claims.ctx as { entityType?: unknown } | undefined)?.entityType === 'none';
+}
+
+// SECURITY-CRITICAL (W10). A page token has no model binding, so the model-
+// binding check (`ctxModelId === body.modelId`) that bounds a model slot does
+// NOT apply. The replacement bound is the platform's canonical generation-
+// entitlement gate: the REAL viewer must actually be allowed to generate
+// against the model they picked, exactly as the standard generation read paths
+// enforce (early-access locks, availability=Private, members-only usageControl,
+// generationCoverage). Without this, "any public model" would silently bypass
+// every per-model access gate.
+//
+// Pass the REAL viewer context (their id + real isModerator + the request's
+// sfwOnly/wildcards flags) — never an elevated context. Today the viewer is
+// always a mod (assertViewerIsModerator), so they see mod-level access, which
+// is correct platform behaviour; when GA opens to non-mods the same gate bounds
+// them properly. Fail-closed: a version missing from the result Map → FORBIDDEN.
+async function assertViewerCanGeneratePageModel(opts: {
+  gate: ReturnType<typeof buildGateVersion>;
+  viewer: { id: number; isModerator: boolean };
+  sfwOnly: boolean;
+  wildcardsEnabled: boolean;
+}): Promise<void> {
+  const { gate, viewer, sfwOnly, wildcardsEnabled } = opts;
+  const { resolveCanGenerateForVersions } = await import(
+    '~/server/services/generation/generation.service'
+  );
+  const states = await resolveCanGenerateForVersions([gate], {
+    user: { id: viewer.id, isModerator: viewer.isModerator },
+    sfwOnly,
+    wildcardsEnabled,
+  });
+  const canGenerate = states.get(gate.id)?.canGenerate ?? false;
+  if (!canGenerate) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'model is not available for generation',
+    });
+  }
+}
+
+// Narrow the `gate` bag `resolveBlockVersionContext` returns into the exact
+// `ResolveCanGenerateVersion` shape (the DB column types are wider than the
+// gate's string enums). Centralised so estimate + submit can't drift.
+function buildGateVersion(gate: {
+  id: number;
+  status: string;
+  availability: string;
+  usageControl: string;
+  baseModel: string;
+  covered: boolean | null | undefined;
+  modelUserId: number;
+  modelType: string;
+  modelVersionAlias: unknown;
+}): ResolveCanGenerateVersion {
+  return gate as unknown as ResolveCanGenerateVersion;
 }
 
 // ---- Cumulative Buzz-spend cap (audit A7 / design-gaps H1) -----------------
@@ -1355,12 +1428,19 @@ export const blocksRouter = router({
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
-      // Context binding mirrors enforceContextBinding's models:read:self path —
-      // re-check here because the middleware version takes a NextApiRequest and
-      // we're in tRPC land.
-      const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
-      if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+      // Context binding. A MODEL token pins `ctx.modelId`; the body must match
+      // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
+      // lets the viewer pick any model they're entitled to generate against, so
+      // the modelId match is SKIPPED and replaced (below, after the version
+      // read) by the canonical generation-entitlement gate. See isPageToken.
+      const isPage = isPageToken(claims);
+      if (!isPage) {
+        const ctxModelId = Number(
+          (claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN
+        );
+        if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+        }
       }
       const userId = parseSubjectUserId(claims.sub);
       if (userId == null) {
@@ -1378,6 +1458,18 @@ export const blocksRouter = router({
         input.body.modelVersionId,
         input.body.modelId
       );
+      const user = await getBlockSessionUser(userId);
+      // PAGE branch: enforce that the REAL viewer is entitled to generate
+      // against the model they picked. This is the security replacement for the
+      // model-binding check skipped above — fail-closed before any spend.
+      if (isPage) {
+        await assertViewerCanGeneratePageModel({
+          gate: buildGateVersion(resolved.gate),
+          viewer: { id: userId, isModerator: !!user.isModerator },
+          sfwOnly: ctx.domain === 'green',
+          wildcardsEnabled: !!ctx.features.wildcards,
+        });
+      }
       const checkpoint = await resolveBlockCheckpoint({
         blockInstanceId: claims.blockInstanceId,
         modelId: resolved.modelId,
@@ -1387,7 +1479,6 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
-      const user = await getBlockSessionUser(userId);
       const token = await getOrchestratorToken(userId, ctx);
       const generateInput = buildTextToImageInput(input.body, {
         ...resolved,
@@ -1425,9 +1516,19 @@ export const blocksRouter = router({
       if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
       }
-      const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
-      if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+      // Context binding. MODEL token → body.modelId must match ctx.modelId.
+      // PAGE token (ctx.entityType==='none') → no model binding; skip the match
+      // and enforce the canonical generation-entitlement gate after the version
+      // read instead (see estimateWorkflow for the same branch). The buzzBudget
+      // claim + per-user daily cap still bound spend identically for pages.
+      const isPage = isPageToken(claims);
+      if (!isPage) {
+        const ctxModelId = Number(
+          (claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN
+        );
+        if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+        }
       }
       const userId = parseSubjectUserId(claims.sub);
       // Anon submit is not just forbidden — there's no buzz account to charge.
@@ -1449,6 +1550,18 @@ export const blocksRouter = router({
         input.body.modelVersionId,
         input.body.modelId
       );
+      const user = await getBlockSessionUser(userId);
+      // PAGE branch: the REAL viewer must be entitled to generate against the
+      // model they picked (replaces the skipped model-binding check) — fail
+      // closed BEFORE any reservation or orchestrator interaction.
+      if (isPage) {
+        await assertViewerCanGeneratePageModel({
+          gate: buildGateVersion(resolved.gate),
+          viewer: { id: userId, isModerator: !!user.isModerator },
+          sfwOnly: ctx.domain === 'green',
+          wildcardsEnabled: !!ctx.features.wildcards,
+        });
+      }
       const checkpoint = await resolveBlockCheckpoint({
         blockInstanceId: claims.blockInstanceId,
         modelId: resolved.modelId,
@@ -1458,7 +1571,6 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
-      const user = await getBlockSessionUser(userId);
       const token = await getOrchestratorToken(userId, ctx);
 
       // Prompt audit before any orchestrator interaction (mirrors what
