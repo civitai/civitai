@@ -36,7 +36,7 @@ else computes it. The hub:
 **Everyone else is a zero-config consumer** — main app, moderator, every spoke. One builder,
 `createSessionClient()`, is the whole consumer session surface (read + write); **no injectable config**:
 ```
-const session = createSessionClient();              // no args
+const session = createSessionClient({ isRevoked }); // shipped: revocation check injected
 const user = await session.getSessionUser(token);   // read
 await session.invalidate(userId);                   // write: bust
 const fresh = await session.refresh(userId);        // write: bust + re-produce
@@ -61,24 +61,24 @@ producer / injects `computeUser`" framing in the lower sections.)
 ### Status — package + hub BUILT (2026-06-11, uncommitted, all checks green)
 
 **`@civitai/auth` (consumer side) — DONE.**
-- `createSessionClient()` ([session-client.ts](../packages/civitai-auth/src/session-client.ts)) — ONE
+- `createSessionClient()` ([session-client.ts](../../packages/civitai-auth/src/session-client.ts)) — ONE
   zero-config builder for the whole consumer surface: `getSessionUser` (read) + `invalidate`/`refresh`
   (write). **NO injectable options**: verifier, cache client, hub URL, and service secret all come from env /
   the verified token's `iss`, so a consumer can't repoint verification, the identity fetch, or invalidation.
   `getSessionUser(token)` → verify → shared-cache read (fail-open) → single-flight → on miss
   `GET {iss}/api/auth/identity` → return. No `computeUser`, no write-through (the producer owns the cache
   write); a hub-unreachable cold miss → null. Tests mock the module boundaries (verify / redis / env / fetch).
-- `SessionUser` contract ([types.ts](../packages/civitai-auth/src/types.ts)) **unchanged** (frozen by
+- `SessionUser` contract ([types.ts](../../packages/civitai-auth/src/types.ts)) **unchanged** (frozen by
   decision — no `name`/extra fields right now).
 
 **`apps/auth` (the sole producer) — DONE.**
-- `produceSessionUser(userId)` ([session-producer.ts](../apps/auth/src/lib/server/auth/session-producer.ts)):
+- `produceSessionUser(userId)` ([session-producer.ts](../../apps/auth/src/lib/server/auth/session-producer.ts)):
   Kysely query (`jsonObjectFrom` profilePicture + product) → tier/subscription derivation → `permissions`
   from the system-permissions sysRedis cache (degraded-skip) → `allowAds`/`redBrowsingLevel` → assemble
   `SessionUser` → write the shared `session:data2:{userId}` cache (packed, real Dates).
-- Ban util ([ban.ts](../apps/auth/src/lib/server/auth/ban.ts)) — vendored `BanReasonCode` + public-label map
+- Ban util ([ban.ts](../../apps/auth/src/lib/server/auth/ban.ts)) — vendored `BanReasonCode` + public-label map
   + `getUserBanDetails`.
-- `GET /api/auth/identity` ([+server.ts](../apps/auth/src/routes/api/auth/identity/+server.ts)) — verify
+- `GET /api/auth/identity` ([+server.ts](../../apps/auth/src/routes/api/auth/identity/+server.ts)) — verify
   Bearer (revocation enforced) → **read-through** (`getOrProduceSessionUser`: cache when warm, produce on
   miss) → JSON; 401/404 = "no session".
 
@@ -120,7 +120,7 @@ thin deletes all of it.)
 
 ### Core principle (important nuance)
 **"Thin cookie" ≠ "thin `session.user`".** The cookie carries no data; the *resolve* produces the user,
-which can be as rich as today. And the resolve is **uniform across token formats** — for a thin RS256
+which can be as rich as today. And the resolve is **uniform across token formats** — for a thin ES256
 token *or* a legacy fat NextAuth JWE, we **ignore any embedded user and always resolve**. The token only
 ever supplies a verified `userId`.
 
@@ -231,7 +231,7 @@ available, and confirms the lean/rich line.)
 
 ## Implementation — `@civitai/auth`
 
-- **`src/verify.ts` (exposed at `@civitai/auth/verify`)** — `verifyToken(token)`: signature (RS256 via
+- **`src/verify.ts` (exposed at `@civitai/auth/verify`)** — `verifyToken(token)`: signature (ES256 via
   public key/JWKS, or legacy JWE) + expiry + issuer → lean claims or null. **No redis/db imports.**
 - **`src/session-user.ts` (server, `@civitai/auth`)** — `getSessionUser(token | userId)`: lazy redis+db;
   cache→db lean resolve + revocation (`bannedAt`, `sessionsValidAfter`, per-`jti` marker). Owns the

@@ -1,5 +1,7 @@
 # Main App — Auth Hub Support & `@civitai/auth` Consolidation
 
+> **SUPERSEDED (2026-06-17):** this doc describes the abandoned **fat RS256** token model. The shipped design is a **thin ES256** token (identity-only: `sub`/`jti`/`signedAt`, no embedded user) — see [thin-session-token-design.md](./thin-session-token-design.md). The 'fat RS256' framing below is historical.
+
 What the **main civitai app** needs for the auth-hub launch, split into (A) what's required to *support*
 the hub (done) and (B) consolidating the main app onto the `@civitai/auth` package so the session-marker
 protocol lives in one place (checklist item #12). See [auth-hub-launch-checklist.md](./auth-hub-launch-checklist.md).

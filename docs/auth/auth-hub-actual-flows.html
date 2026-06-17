@@ -195,7 +195,7 @@ sequenceDiagram
     participant H as Hub
     participant RS as red /api/auth/sync
     participant HX as Hub /api/auth/exchange
-    Note over P,H: BEFORE, 4 redirects, the re-bounce is steps 3 and 4
+    Note over P,H: BEFORE — the re-bounce (steps 3–4) adds ~2 redirects.
     P->>H: hub /login, returnUrl points at red /api/auth/sync
     H-->>P: 302 to red /api/auth/sync, no swap
     P->>RS: GET /api/auth/sync, no swap

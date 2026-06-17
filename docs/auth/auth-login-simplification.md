@@ -3,7 +3,7 @@
 **Author:** Claude (Opus 4.8) · **Date:** 2026-06-17 · **Status:** roadmap / decision-of-record
 **Companions:** [auth-hub-actual-flows.html](./auth-hub-actual-flows.html) (what exists today) ·
 [auth-hub-cutover-review-2026-06-17.md](./auth-hub-cutover-review-2026-06-17.md) (findings, incl. B1/B4) ·
-[plans/oauth-provider-implementation-checklist.md](./plans/oauth-provider-implementation-checklist.md) (§I — the migration step)
+[plans/oauth-provider-implementation-checklist.md](./oauth-provider-implementation-checklist.md) (§I — the migration step)
 
 > Read `auth-hub-actual-flows.html` first if you haven't — this doc assumes the UC1–UC8 flows and the
 > "B-number" review findings.
@@ -47,12 +47,12 @@ directly readable (UC3). Only cross-root colors need the bridge.
 ## Deferring the OAuth migration is cookie-safe (verified in source)
 
 **The session cookie is decoupled from the bridge mechanism.** `setSessionCookie()`
-([src/server/auth/civ-cookie.ts](../src/server/auth/civ-cookie.ts)) writes the cookie from *any*
+([src/server/auth/civ-cookie.ts](../../src/server/auth/civ-cookie.ts)) writes the cookie from *any*
 hub-minted token, using the package's `sessionCookieName()` / `isSecureCookie()` and a host-derived
 `Domain`. It does not care whether the token came from a swap exchange, an account switch, impersonation,
 or rolling refresh. The token is the hub's thin ES256 output, and every request resolves it the same way
 via `getServerAuthSession` → verify (JWKS) → shared Redis → hub on miss
-([src/server/auth/get-server-auth-session.ts](../src/server/auth/get-server-auth-session.ts)) — again
+([src/server/auth/get-server-auth-session.ts](../../src/server/auth/get-server-auth-session.ts)) — again
 independent of how the cookie was delivered.
 
 So when the bridge later becomes OIDC authorization-code, the `/token` exchange returns the **same**
@@ -136,7 +136,7 @@ In short: you pay once at the door, not on every request inside.
 2. **Defer** the OAuth-provider migration — safe (cookies survive).
 3. **At the migration:** adopt the OIDC auth-code bridge (#3) and **unify** the two paths (#4) in one move,
    onto the hardened standard path. Steps live in
-   [plans/oauth-provider-implementation-checklist.md](./plans/oauth-provider-implementation-checklist.md) §I.
+   [plans/oauth-provider-implementation-checklist.md](./oauth-provider-implementation-checklist.md) §I.
 
 What **doesn't** change at any step: the shared `.civitai.com` cookie for the subdomain family, the thin
 ES256 token, the signing `kid`, and the shared-Redis per-request resolution. The simplification only touches

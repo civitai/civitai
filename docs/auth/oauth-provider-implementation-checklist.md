@@ -96,7 +96,7 @@ For each: build the library's `Request`/`Response` from SvelteKit `request` (met
 
 ## I. First-party cross-domain bridge → OIDC (do at migration, after §A–§H land)
 
-**Companion:** [../auth-login-simplification.md](../auth-login-simplification.md) (rationale, swap-vs-auth-code
+**Companion:** [../auth-login-simplification.md](./auth-login-simplification.md) (rationale, swap-vs-auth-code
 mapping, latency, cookie-safety analysis).
 
 **Why this section exists.** Today, first-party cross-domain login (a `civitai.red` user establishing a
@@ -194,7 +194,7 @@ The `.env` you're assembling needs these for the OAuth provider (beyond the exis
 > JWKS 404s until keys are set), so deferring is safe. **But** the swap-bridge blockers in §I's callout
 > (B1 / B4 / fail-closed-without-Redis) are NOT deferrable — the swap bridge ships now and stays until §I
 > executes, so they must be fixed in the current prod push. See
-> [../auth-hub-cutover-review-2026-06-17.md](../auth-hub-cutover-review-2026-06-17.md).
+> [../auth-hub-cutover-review-2026-06-17.md](./auth-hub-cutover-review-2026-06-17.md).
 
 1. **Buzz spend-limit at consent** — recommend fast-follow (ship authorize without it first).
 2. **OIDC always-on** — hub always has keys, so `id_token` issuance is on by default. Confirm intended.

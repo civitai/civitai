@@ -1,5 +1,7 @@
 # Auth Verification Strategy — Shared Library (A) vs JWKS Hybrid (C)
 
+> **CORRECTION (2026-06-17):** the shipped 'Path C' uses **ES256 / EC P-256**, NOT RS256/RSA. Generate with `openssl ecparam -genkey -name prime256v1 -noout -out priv.pem` (then `openssl ec -in priv.pem -pubout -out pub.pem`) — an **RSA key now throws at boot** (`packages/civitai-auth/src/sign.ts` `assertEcP256`). Also: `getServerAuthSession` is fully cut over to the hub path; the '(not yet wired)' status notes below are historical.
+
 **Status:** decision doc / proposal · **Date:** 2026-06-09
 **Parent:** [centralized-auth-app.md](./centralized-auth-app.md) — that doc settles *topology* (hub issues, spokes verify). This doc settles **how a spoke verifies a session**, which determines whether auth changes force consumer redeploys.
 
@@ -7,15 +9,15 @@
 
 The `@civitai/auth` package and an **opt-in** Path-C wiring have landed (unstaged). Everything is a no-op until the RS256 keys are set, so the build/runtime are unchanged today.
 
-**Package** [`packages/civitai-auth/`](../packages/civitai-auth/) — `createAuthVerifier` (spoke: JWKS verify + legacy-JWE fallback + injected revocation), `createSessionSigner`/`maybeCreateSessionSigner` (hub: RS256 encode/decode, `publicJwks`, `mintSwapToken`), `createAccountSwitchProvider` (cross-root receiver), `createAuthMiddleware` (edge guard). Deps: `jose` + `next-auth` + `zod` only — no infra deps (revocation is injected).
+**Package** [`packages/civitai-auth/`](../../packages/civitai-auth/) — `createAuthVerifier` (spoke: JWKS verify + legacy-JWE fallback + injected revocation), `createSessionSigner`/`maybeCreateSessionSigner` (hub: RS256 encode/decode, `publicJwks`, `mintSwapToken`), `createAccountSwitchProvider` (cross-root receiver), `createAuthMiddleware` (edge guard). Deps: `jose` + `next-auth` + `zod` only — no infra deps (revocation is injected).
 
 **Wired (opt-in, off unless `AUTH_JWT_PRIVATE_KEY` + `AUTH_JWT_KID` set):**
 
-- Hub signer spread into next-auth `jwt:{encode,decode}` — [`next-auth-options.ts`](../src/server/auth/next-auth-options.ts). Callbacks unchanged.
-- JWKS endpoint [`/api/auth/jwks`](../src/pages/api/auth/jwks.ts) (point `AUTH_JWKS_URI` here; `.well-known` rewrite optional).
-- [`/api/auth/sync`](../src/pages/api/auth/sync.ts) additionally returns a signed `swapToken` (legacy AES `token` kept).
-- Main-app spoke verifier with **real** redis revocation injected — [`session-verifier.ts`](../src/server/auth/session-verifier.ts) (not yet on the request path).
-- Moderator spoke shim (signature-only) — [`apps/moderator/src/server/auth.ts`](../apps/moderator/src/server/auth.ts).
+- Hub signer spread into next-auth `jwt:{encode,decode}` — [`next-auth-options.ts`](../../src/server/auth/next-auth-options.ts). Callbacks unchanged.
+- JWKS endpoint [`/api/auth/jwks`](../../src/pages/api/auth/jwks.ts) (point `AUTH_JWKS_URI` here; `.well-known` rewrite optional).
+- [`/api/auth/sync`](../../src/pages/api/auth/sync.ts) additionally returns a signed `swapToken` (legacy AES `token` kept).
+- Main-app spoke verifier with **real** redis revocation injected — [`session-verifier.ts`](../../src/server/auth/session-verifier.ts) (not yet on the request path).
+- Moderator spoke shim (signature-only) — [`apps/moderator/src/server/auth.ts`](../../apps/moderator/src/server/auth.ts).
 
 **To turn Path C on:** generate an RSA keypair → set `AUTH_JWT_PRIVATE_KEY` (PKCS8) + `AUTH_JWT_PUBLIC_KEY` (SPKI) + `AUTH_JWT_KID` on the hub, `AUTH_JWKS_URI` + `AUTH_JWT_ISSUER` on spokes → run the HS256→RS256 migration window below.
 
@@ -156,6 +158,6 @@ In **either** path, the things that force coordinated consumer updates are the s
 ## Open questions
 
 - **Key storage** — where does the hub's private key live (env, cloud KMS, sealed secret)? KMS-backed signing keeps the private key off app hosts entirely.
-- **Token TTL vs revocation latency** — shorter session TTL shrinks the revocation-staleness window but raises re-sign frequency. Current `maxAge` is 30 days ([`next-auth-options.ts:157`](../src/server/auth/next-auth-options.ts#L157)); revisit for C.
+- **Token TTL vs revocation latency** — shorter session TTL shrinks the revocation-staleness window but raises re-sign frequency. Current `maxAge` is 30 days ([`next-auth-options.ts:157`](../../src/server/auth/next-auth-options.ts#L157)); revisit for C.
 - **Session payload audit** — confirm nothing sensitive rides in the JWT before moving from JWE (encrypted) to JWS (readable).
 - **civ-token** — confirm we convert the swap transport token to signed JWS in C so spokes stay secret-free.

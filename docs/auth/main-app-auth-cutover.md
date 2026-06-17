@@ -5,6 +5,10 @@ DECISION: strip NextAuth BEFORE ship (no flag-flip hybrid — see "Decision" bel
 account switching (E). Remaining: the 5-phase strip — resilient resolution, legacy `jose` decoder, E + F
 hub-native, replace `next-auth/react`, delete server NextAuth.
 
+> **UPDATE (2026-06-17):** the NextAuth strip (Phases 4–5) is **DONE on this branch.** `[...nextauth].ts`,
+> `next-auth-options.ts`, and `token-refresh.ts` are **deleted**; `SessionProvider.tsx` is the first-party
+> replacement for `next-auth/react`; and `next-auth` is gone from the root `package.json`.
+
 This is the main-app half of the thin-session migration — see [thin-session-token-design.md](./thin-session-token-design.md).
 The hub (`apps/auth`) is the sole **producer** + **issuer**; the main app becomes a **consumer** that reads a
 cookie → verifies → resolves the user via `@civitai/auth`'s `createSessionClient`.
@@ -27,7 +31,7 @@ that env — deployed, minting the session cookie, `/api/auth/identity` live, an
 
 ## What's implemented (this change)
 
-**Server validation — `getServerAuthSession`** ([src/server/auth/get-server-auth-session.ts](../src/server/auth/get-server-auth-session.ts)):
+**Server validation — `getServerAuthSession`** ([src/server/auth/get-server-auth-session.ts](../../src/server/auth/get-server-auth-session.ts)):
 - When `USE_HUB_SESSION=true`, the **cookie path** resolves via the hub: read the session cookie →
   `sessionClient.getSessionUser(token)` (verify → shared redis cache → hub `/api/auth/identity` on miss) →
   return the existing `Session` shape. Fails closed to `null`.
@@ -37,8 +41,8 @@ that env — deployed, minting the session cookie, `/api/auth/identity` live, an
   which reads the same shared `session:data2` cache (the hub's output) and computes on miss. So it keeps
   working through the transition without change.
 
-**The resolver + flag** ([src/server/auth/session-client.ts](../src/server/auth/session-client.ts)):
-- `sessionClient = createSessionClient()` (zero-config; env-driven).
+**The resolver + flag** ([src/server/auth/session-client.ts](../../src/server/auth/session-client.ts)):
+- `sessionClient = createSessionClient({ isRevoked })` (env-driven; revocation check injected).
 - `getHubSession(req)` — cookie → verify → resolve → `{ user }` (cast to `Session`; see the shape note below).
 - `USE_HUB_SESSION` — `process.env.USE_HUB_SESSION === 'true'` (default false).
 
@@ -76,7 +80,7 @@ if the hub is the thing that's down. The net shrinks every day and sacrifices th
 Instead the main app validates sessions **hub-independently**, so existing sessions survive a hub outage and
 only *new logins* are affected (the hub is the login authority either way — mitigate with hub HA).
 
-**Resolution model (`getServerAuthSession` / `createSessionClient`):**
+**Resolution model (`getServerAuthSession` / `createSessionClient({ isRevoked })`):**
 
 1. **Verify** `civ-token` LOCALLY with the hub's public key (`AUTH_JWT_PUBLIC_KEY`), not a JWKS fetch — no hub
    call to validate a token.
@@ -250,7 +254,7 @@ account).
 After phases 1–4 (resilient resolution, legacy decoder, E + F hub-native, client replaced):
 
 - [ ] Delete `src/pages/api/auth/[...nextauth].ts`, the `jwt()`/`session()` callbacks + providers + adapter in `next-auth-options.ts`, `token-refresh.ts`, the AES civ-token (`civ-token.ts`), and the legacy JWE encode/decode
-  - NB: the `src/pages/api/auth/civ-token.ts` **endpoint** is already caller-less (nothing fetches it) — it can be deleted **now**, ahead of Phase 5. Only the `civTokenDecrypt` **function** (in `~/server/auth/civ-token`) is still held, by `next-auth-options.ts` for legacy account-switch; that module deletes with next-auth-options.
+  - NB: the `src/pages/api/auth/civ-token.ts` **endpoint** is already caller-less (nothing fetches it) — it can be deleted **now**, ahead of Phase 5. **UPDATE (2026-06-17):** `next-auth-options.ts` is now **deleted**, so the `civTokenDecrypt` **function** (in `~/server/auth/civ-token`) has **no live consumer** — its only holder (the legacy account-switch path in `next-auth-options.ts`) is gone. The endpoint itself remains per the disposition list below.
 - [ ] **Replace** `next-auth/react` with a first-party `SessionProvider`/`useSession` over `/api/auth/session` (phase 4), then remove the `next-auth` + `next-auth/react` deps entirely
 - [ ] **Phase 4 — `UpdateRequiredWatcher` + `src/shared/constants/auth.constants.ts`:** the `SESSION_REFRESH_HEADER` branch calls next-auth's `update()` (→ JWT callback) and its server-side setter (`checkAndSetSessionHeaders`) is **already deleted**, so the branch is currently dead — invalidation now propagates via signals (`session-invalidation.ts`). Drop the session-refresh branch (or rewire it to the hub + import the constant from `@civitai/auth`, where `SESSION_REFRESH_HEADER`/`COOKIE` already live). Then **rehome `GENERATION_UPDATE_HEADER`** (a generation-panel signal, not auth) out of `auth.constants.ts` and **delete that file**.
 - [ ] The legacy `jose` `civitai-token` decoder (phase 2) stays read-only until those sessions age out, then deletes

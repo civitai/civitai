@@ -6,10 +6,15 @@
 
 > This doc is a handoff for another session. Findings were produced by four parallel deep reviews (hub / SDK / main-app integration / docs-vs-code) and de-duplicated. Findings **#1, #3, #5** below were re-verified against source directly; the rest are from the sub-reviews and should be spot-checked before acting on them.
 
-> **Freshness note (re-verified against HEAD, 2026-06-17, later same day):**
-> - ✅ **M1 RESOLVED** — NextAuth deleted from the main app (`[...nextauth].ts` + `next-auth-options.ts` gone; dependency dropped). *(Package note caveat: `@civitai/auth` still lists `next-auth` for the dynamic-import-only legacy `account-switch.ts` path — deliberate, do not remove until legacy accounts are unredeemable.)*
-> - ✅ **M4 RESOLVED** — `/login` is the hub redirect, `IframeHost`→popup, `discord/link-role` migrated.
-> - 🔴 **Still open, confirmed in source:** **B1** (`redirect.ts:14` substring check), **B2** (`registry.ts:19` `invalidateUserSessions` is an empty no-op stub — *worse* than "never called"), **B4** (`swap.ts:20` `return true` when Redis sys absent), **B5** (`.env.example:20-21` still RSA/RS256), **M2** (logout doesn't clear the device cookie; `logoutAll` is `logout`). All live in `apps/auth`/the package — untouched by the main-app cutover — so they ship to prod with the swap bridge unless fixed.
+> **Freshness note (re-verified + FIXED against HEAD, 2026-06-17, later same day). See
+> [plans/auth-prelaunch-action-checklist.md](./auth-prelaunch-action-checklist.md) for the live status.**
+> - ✅ **M1 / M4 already landed** — NextAuth deleted from the main app; `/login` is the hub redirect, social-login dropped, `discord/link-role` migrated. *(Caveat: `@civitai/auth` still lists `next-auth` for the dynamic-import-only legacy `account-switch.ts` path — deliberate; remove only once legacy accounts are unredeemable.)*
+> - ✅ **B1 FIXED** — `redirect.ts:14` substring check → exact eTLD+1 host allowlist (+ test).
+> - ⚠️ **B2 was a FALSE POSITIVE (corrected — my earlier note here was wrong).** Ban→revoke **already works**: the hub tracks each civ-token by its `jti` on mint (`session.ts:86,89`), `toggleBan` → `invalidateSession` marks `TOKEN_STATE[jti]='invalid'`, and the spoke `isRevoked` (`session-verifier.ts:21`) rejects it. The hub's `invalidateUserSessions` is unused/**redundant** (cleanup, not a hole). `registry.ts:19` is the Redis-*absent* no-op fallback, not the real impl. The real gap was test coverage — added `ban-session-revocation.test.ts` (5 cases, green).
+> - ✅ **B3 FIXED** — `verify.ts` pins `algorithms:['ES256']` + a `legacyEnabled` kill-switch. The "enforce issuer/audience on the legacy decrypt" part was **NOT-SAFELY-ACTIONABLE** (legacy JWEs carry no `iss`/`aud`; enforcing would break cutover login) — left as-is.
+> - ✅ **B4 FIXED (the actionable parts)** — `consumeSwapToken` fails **closed** without Redis; `/exchange` rate-limited. Origin-binding **deferred to the OIDC migration** (a self-asserted origin is cosmetic — the swap value is observable in the callback URL; real binding needs client auth).
+> - ✅ **B5 FIXED** — `.env.example`/launch-checklist RSA→EC P-256; boot-time `assertEcP256` in `sign.ts`.
+> - ✅ **M2 FIXED** — logout clears the device cookie; `logoutAll` now clears the whole device account set (a hub bulk-forget endpoint is still a follow-up).
 
 ---
 

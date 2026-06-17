@@ -1,6 +1,6 @@
 # Drop In-App Social Login Buttons from the Main App — Checklist
 
-**Status:** in progress · **Date:** 2026-06-17
+**Status:** complete · **Date:** 2026-06-17
 
 **Context:** All authentication now flows through the hub (auth.civitai.com) — `requireLogin` opens the hub
 login in a popup, and the hub owns the login UI + cookie issuance. The main app's in-page OAuth/social-login
@@ -59,9 +59,8 @@ main app; the code being moved to the hub is the *login* social-button UI, not t
   (`hubLoginUrl({ provider: 'discord', link: true, returnUrl })`); the hub requests `role_connections.write`
   and stores the granted scope on the Account, so the page detects it on return and pushes metadata. Dropped
   `SocialButton` + `handleSignIn` + `getProvidersInProcess` from this page; metadata-push + branded UI stay.
-  **Note:** `getProvidersInProcess` is NOT yet deletable — still used by `auth.router.ts`'s `getProviders`
-  endpoint (a next-auth-server holdout; move with the next-auth removal chunk — the endpoint itself has no
-  client callers, only a comment reference).
+  **Note (RESOLVED 2026-06-17):** `getProvidersInProcess` is **deleted** — `src/server/auth/get-providers-in-process.ts`
+  no longer exists and `auth.router.ts` no longer references it (removed with the next-auth strip).
 
 ## Package hygiene
 
@@ -185,9 +184,9 @@ Verified consumers (2026-06-17): `LoginContent` is used only by `/login` (fallba
 - [x] `src/components/Social/SocialLabel.tsx` — **deleted** (AccountsCard inlines its own icon+name now).
 - [x] `handleSignIn` (+ `HandleSignInOptions` + the now-orphaned `postLoginReturn`) removed from
   `src/utils/auth-helpers.ts`.
-- [ ] `getProvidersInProcess` (`src/server/auth/get-providers-in-process.ts`) — **NOT yet** (still used by
-  `auth.router.ts`). Defer to the next-auth removal chunk (verify the `getProviders` endpoint has no client
-  callers, then drop both).
+- [x] `getProvidersInProcess` (`src/server/auth/get-providers-in-process.ts`) — **deleted** (done with the
+  next-auth strip). The file no longer exists and `auth.router.ts` no longer references it. ~~NOT yet — still
+  used by `auth.router.ts`~~.
 
 - [x] Verify: main-app typecheck clean (running) + grep clean for remaining
   `Social`/`SocialButton`/`SocialLabel`/`handleSignIn`/`LoginContent`/`LoginModal`/`EmailLogin`/`SignInError`

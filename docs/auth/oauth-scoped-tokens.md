@@ -476,7 +476,7 @@ This means OAuth access tokens (which are stored as ApiKey rows) will work trans
 
 ## Addendum: OIDC `id_token` via the `@civitai/auth` hub (2026-06-09)
 
-**Context:** the OAuth server above made Civitai an OAuth2 provider + a *userinfo-based* pseudo-OIDC IdP — third parties get a code → access token → `/userinfo`. To match "Sign in with Google" exactly (a signed `id_token` the relying party verifies locally via JWKS, no userinfo round-trip), the only missing piece was a **signing key + JWKS**. The centralized-auth hub work ([centralized-auth-app.md](../centralized-auth-app.md), [auth-verification-strategy.md](../auth-verification-strategy.md)) provides exactly that — the same RS256 hub key + `/api/auth/jwks` endpoint serve both first-party session JWTs and third-party id_tokens.
+**Context:** the OAuth server above made Civitai an OAuth2 provider + a *userinfo-based* pseudo-OIDC IdP — third parties get a code → access token → `/userinfo`. To match "Sign in with Google" exactly (a signed `id_token` the relying party verifies locally via JWKS, no userinfo round-trip), the only missing piece was a **signing key + JWKS**. The centralized-auth hub work ([centralized-auth-app.md](./centralized-auth-app.md), [auth-verification-strategy.md](./auth-verification-strategy.md)) provides exactly that — the same RS256 hub key + `/api/auth/jwks` endpoint serve both first-party session JWTs and third-party id_tokens.
 
 **What landed (opt-in, off unless the hub RS256 keys are set):**
 

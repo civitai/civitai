@@ -20,18 +20,22 @@ only so they aren't bundled into a "revert all the debug stuff" pass.
 
 | File | What changed | Why it stays |
 | --- | --- | --- |
-| [src/components/AppLayout/FeatureLayout.tsx](../src/components/AppLayout/FeatureLayout.tsx) | Loader gate changed from `status === 'loading'` to `status === 'loading' && !data` | Prevents the page from blanking during in-flight `update()` calls when a session is already loaded. |
-| [src/store/signal-topics.store.ts](../src/store/signal-topics.store.ts) | New Zustand store holding registered signal topics | Moves topic-list state out of `SignalsProvider` so subscription changes don't fan out re-renders to every `useSignalContext` consumer. |
-| [src/components/Signals/SignalsProvider.tsx](../src/components/Signals/SignalsProvider.tsx) | Removed `registeredTopics` `useState` + context exposure; `register/release` now call the store imperatively | Same as above — eliminates the cascade where mounting one `MetricsLive` re-rendered every other one. |
-| [src/components/Auction/AuctionUtils.tsx](../src/components/Auction/AuctionUtils.tsx), [src/components/Auction/AuctionInfo.tsx](../src/components/Auction/AuctionInfo.tsx), [src/pages/testing/metrics-refcount.tsx](../src/pages/testing/metrics-refcount.tsx), [src/pages/testing/live-card-parity.tsx](../src/pages/testing/live-card-parity.tsx) | Read `registeredTopics` from `useSignalTopicsStore` instead of `useSignalContext` | Required follow-through from the `SignalsProvider` refactor above. |
-| [src/components/Signals/MetricSignalsRegistrar.tsx](../src/components/Signals/MetricSignalsRegistrar.tsx) | Skips `applyDelta` when the normalized payload has no truthy values | Server emits empty topic-only notifications; without this, every empty signal triggered selector runs across all `MetricsLive` consumers. |
-| [src/store/metric-signals.store.ts](../src/store/metric-signals.store.ts) | `applyDelta` returns the existing state object when no fields actually changed | Defense-in-depth for the same issue — preserves reference identity so Zustand subscribers don't re-run their selectors. |
+| [src/components/AppLayout/FeatureLayout.tsx](../../src/components/AppLayout/FeatureLayout.tsx) | Loader gate changed from `status === 'loading'` to `status === 'loading' && !data` | Prevents the page from blanking during in-flight `update()` calls when a session is already loaded. |
+| [src/store/signal-topics.store.ts](../../src/store/signal-topics.store.ts) | New Zustand store holding registered signal topics | Moves topic-list state out of `SignalsProvider` so subscription changes don't fan out re-renders to every `useSignalContext` consumer. |
+| [src/components/Signals/SignalsProvider.tsx](../../src/components/Signals/SignalsProvider.tsx) | Removed `registeredTopics` `useState` + context exposure; `register/release` now call the store imperatively | Same as above — eliminates the cascade where mounting one `MetricsLive` re-rendered every other one. |
+| [src/components/Auction/AuctionUtils.tsx](../../src/components/Auction/AuctionUtils.tsx), [src/components/Auction/AuctionInfo.tsx](../../src/components/Auction/AuctionInfo.tsx), [src/pages/testing/metrics-refcount.tsx](../../src/pages/testing/metrics-refcount.tsx), [src/pages/testing/live-card-parity.tsx](../../src/pages/testing/live-card-parity.tsx) | Read `registeredTopics` from `useSignalTopicsStore` instead of `useSignalContext` | Required follow-through from the `SignalsProvider` refactor above. |
+| [src/components/Signals/MetricSignalsRegistrar.tsx](../../src/components/Signals/MetricSignalsRegistrar.tsx) | Skips `applyDelta` when the normalized payload has no truthy values | Server emits empty topic-only notifications; without this, every empty signal triggered selector runs across all `MetricsLive` consumers. |
+| [src/store/metric-signals.store.ts](../../src/store/metric-signals.store.ts) | `applyDelta` returns the existing state object when no fields actually changed | Defense-in-depth for the same issue — preserves reference identity so Zustand subscribers don't re-run their selectors. |
 
 ---
 
 ## Files to revert (diagnostics only)
 
 ### 1. `src/server/auth/session-invalidation.ts`
+
+> **BEING RESOLVED NOW (2026-06-17):** the debug block at `session-invalidation.ts:50-71` is being
+> **REMOVED from the code in this same pass.** Its `stack.includes('next-auth-options')` guard is now dead
+> (that file is deleted), so the block always fired. After this removal, nothing remains here.
 
 Inside `refreshSession()`, remove the stack capture + Redis write block.
 
@@ -66,6 +70,9 @@ The function should end with the original `log(...)` line and the closing brace.
 
 ### 2. `src/server/auth/token-refresh.ts`
 
+> ✅ **already removed in the NextAuth cutover — no action.** `token-refresh.ts` is **deleted**, so these
+> `console.warn` calls are gone with it.
+
 Remove the three `console.warn` calls inside `refreshToken()`:
 
 - After `tokenState === 'invalid'` branch (around line 67-69):
@@ -93,6 +100,9 @@ Remove the three `console.warn` calls inside `refreshToken()`:
   ```
 
 ### 3. `src/server/auth/get-server-auth-session.ts`
+
+> ✅ **already removed in the NextAuth cutover — no action.** `checkAndSetSessionHeaders` (and its
+> `needsCookieRefresh`/header-setting machinery) is already gone from `get-server-auth-session.ts`.
 
 Three changes to undo:
 
@@ -128,6 +138,10 @@ Three changes to undo:
 
 ### 4. `src/server/redis/client.ts`
 
+> **Goes with §1.** Once §1's block is removed (this pass), `REFRESH_CAUSE` has no writer — drop the key
+> entry too. After §1 + §4, **none of this session-refresh instrumentation remains** (§2/§3/§5 were already
+> removed in the NextAuth cutover).
+
 Remove the `REFRESH_CAUSE` entry added to `REDIS_SYS_KEYS.SESSION`:
 
 ```ts
@@ -139,6 +153,9 @@ SESSION: {
 ```
 
 ### 5. `src/components/UpdateRequiredWatcher/UpdateRequiredWatcher.tsx`
+
+> ✅ **already removed in the NextAuth cutover — no action.** The session-refresh header handler these logs
+> lived in is gone (invalidation now propagates via signals), so there is nothing to revert here.
 
 Remove the three `console.warn` lines inside the fetch interceptor's session-refresh
 header handler:
@@ -194,7 +211,7 @@ The recommended **keep-set** for ongoing diagnostics — modest volume, useful
 signal — is: `metric:update received` (after the diagnostic line is removed,
 this one specifically is gone too — remove only if you also want to keep the
 short-circuit's silent behavior), `registerTopic` / `releaseTopic` (low-volume
-subscription transitions in [SignalsProvider.tsx](../src/components/Signals/SignalsProvider.tsx)),
+subscription transitions in [SignalsProvider.tsx](../../src/components/Signals/SignalsProvider.tsx)),
 and the `useMetricSubscription effect: subscribe/unsubscribe` lines.
 
 ## Redis cleanup (optional)

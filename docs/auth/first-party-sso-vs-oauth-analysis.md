@@ -1,7 +1,7 @@
 # First-Party SSO: Custom Swap-Token vs OIDC Authorization-Code (and a Converged Option)
 
 **Author:** Claude (Opus 4.8) · **Date:** 2026-06-17 · **Status:** analysis / decision input
-**Companion to:** [auth-hub-cutover-review-2026-06-17.md](./auth-hub-cutover-review-2026-06-17.md) · [plans/oauth-provider-to-auth-app.md](./plans/oauth-provider-to-auth-app.md) · [auth-hub-spoke-overview.md](./auth-hub-spoke-overview.md)
+**Companion to:** [auth-hub-cutover-review-2026-06-17.md](./auth-hub-cutover-review-2026-06-17.md) · [plans/oauth-provider-to-auth-app.md](./oauth-provider-to-auth-app.md) · [auth-hub-spoke-overview.md](./auth-hub-spoke-overview.md)
 
 > Handoff note for the other session: this is an architectural analysis, not a directive. It argues that the monorepo's first-party SSO mechanism (the bespoke hub-session-cookie + swap-token flow) is a hand-rolled subset of OAuth's authorization-code flow, weighs whether to use OAuth instead, and recommends a converged design. No code has been changed.
 

@@ -1,7 +1,7 @@
 # Migrate the OAuth2/OIDC Provider into `apps/auth`
 
 **Status:** plan / proposal · **Date:** 2026-06-10
-**Related:** [centralized-auth-app.md](../centralized-auth-app.md) (§1c, §3 — "oauth/* are natural tenants of the auth app") · [auth-verification-strategy.md](../auth-verification-strategy.md) · [oauth-scoped-tokens.md](./oauth-scoped-tokens.md)
+**Related:** [centralized-auth-app.md](./centralized-auth-app.md) (§1c, §3 — "oauth/* are natural tenants of the auth app") · [auth-verification-strategy.md](./auth-verification-strategy.md) · [oauth-scoped-tokens.md](./oauth-scoped-tokens.md)
 
 ## Goal
 

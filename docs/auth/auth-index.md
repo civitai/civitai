@@ -57,7 +57,7 @@ via JWKS. See the architecture spec and actual-flows first if you're new to it.
 | [main-app-auth-cutover.md](./main-app-auth-cutover.md) | Main-app cutover status + the "strip NextAuth before ship" decision. |
 | [auth-hub-main-app-changes.md](./auth-hub-main-app-changes.md) | Main-app support for the hub + `@civitai/auth` consolidation. ⚠️ Parts describe the abandoned **fat RS256** model — superseded by [thin-session-token-design.md](./thin-session-token-design.md). |
 | [auth-hub-launch-checklist.md](./auth-hub-launch-checklist.md) | Outstanding work before auth.civitai.com ships (infra/severity). ⚠️ #8/#11 fat-token framing superseded by the thin-token design. |
-| [plans/drop-main-app-social-login.md](./plans/drop-main-app-social-login.md) | Checklist for dropping in-app social-login buttons (largely landed). (2026-06-17) |
+| [plans/drop-main-app-social-login.md](./drop-main-app-social-login.md) | Checklist for dropping in-app social-login buttons (largely landed). (2026-06-17) |
 
 ## Reviews & findings
 
@@ -66,19 +66,19 @@ via JWKS. See the architecture spec and actual-flows first if you're new to it.
 | [auth-hub-cutover-review-2026-06-17.md](./auth-hub-cutover-review-2026-06-17.md) | **Latest** cutover review — blockers B1–B5, major M1–M4. (M1/M4 have since landed — see the freshness note at its top; remaining blockers are hub/package.) |
 | [auth-review-synthesis.md](./auth-review-synthesis.md) | Synthesis of two independent subagent reviews of the hub↔spoke work. (2026-06-15) |
 | [auth-cross-domain-review.md](./auth-cross-domain-review.md) | Review of the cross-domain swap-token exchange specifically. (2026-06-15) |
-| [plans/auth-prelaunch-action-checklist.md](./plans/auth-prelaunch-action-checklist.md) | **Consolidated to-do list** derived from all the docs — blockers, operational gaps, package boundary, doc hygiene, deferred work — with source locations. (2026-06-17) |
+| [plans/auth-prelaunch-action-checklist.md](./auth-prelaunch-action-checklist.md) | **Consolidated to-do list** derived from all the docs — blockers, operational gaps, package boundary, doc hygiene, deferred work — with source locations. (2026-06-17) |
 
 ## OAuth2/OIDC provider migration (deferred — see Current state)
 
 | Doc | Purpose |
 |---|---|
-| [plans/oauth-provider-to-auth-app.md](./plans/oauth-provider-to-auth-app.md) | The phased plan/rationale for moving the OAuth provider into the hub. (2026-06-10) |
-| [plans/oauth-provider-implementation-checklist.md](./plans/oauth-provider-implementation-checklist.md) | Actionable build checklist (incl. §I: first-party bridge → OIDC). Scope decision (open-Q #1) now answered — **deferred**. |
-| [plans/oauth-scoped-tokens.md](./plans/oauth-scoped-tokens.md) | OAuth server & scoped-tokens plan. |
-| [plans/oauth-scoped-tokens-checklist.md](./plans/oauth-scoped-tokens-checklist.md) | Scoped-tokens implementation checklist. |
-| [plans/oauth-scoped-tokens-review.md](./plans/oauth-scoped-tokens-review.md) | Scoped-tokens review checklist (pre-prod). |
-| [plans/oauth-resume-state.md](./plans/oauth-resume-state.md) | Resume state for the `feature/scoped-tokens` branch. |
-| [plans/oauth-developer-docs.md](./plans/oauth-developer-docs.md) | External-facing Civitai OAuth developer guide. |
+| [plans/oauth-provider-to-auth-app.md](./oauth-provider-to-auth-app.md) | The phased plan/rationale for moving the OAuth provider into the hub. (2026-06-10) |
+| [plans/oauth-provider-implementation-checklist.md](./oauth-provider-implementation-checklist.md) | Actionable build checklist (incl. §I: first-party bridge → OIDC). Scope decision (open-Q #1) now answered — **deferred**. |
+| [plans/oauth-scoped-tokens.md](./oauth-scoped-tokens.md) | OAuth server & scoped-tokens plan. |
+| [plans/oauth-scoped-tokens-checklist.md](./oauth-scoped-tokens-checklist.md) | Scoped-tokens implementation checklist. |
+| [plans/oauth-scoped-tokens-review.md](./oauth-scoped-tokens-review.md) | Scoped-tokens review checklist (pre-prod). |
+| [plans/oauth-resume-state.md](./oauth-resume-state.md) | Resume state for the `feature/scoped-tokens` branch. |
+| [plans/oauth-developer-docs.md](./oauth-developer-docs.md) | External-facing Civitai OAuth developer guide. |
 
 ## Operational / misc
 

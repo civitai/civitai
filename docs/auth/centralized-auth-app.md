@@ -1,7 +1,7 @@
 # Centralized Login/Authorization App + `@civitai/auth` SDK
 
 **Status:** analysis / proposal · **Date:** 2026-06-09
-**Related:** base-package rules (auto-memory: `monorepo-bootstrap-base-package-rules`) · [moderator-app-package-boundary.md](./moderator-app-package-boundary.md) · [monorepo-split-overview.md](./monorepo-split-overview.md) · [sync-account-utility-migration.md](./sync-account-utility-migration.md)
+**Related:** base-package rules (auto-memory: `monorepo-bootstrap-base-package-rules`) · [moderator-app-package-boundary.md](../moderator-app-package-boundary.md) · [monorepo-split-overview.md](../monorepo-split-overview.md) · [sync-account-utility-migration.md](../sync-account-utility-migration.md)
 
 ## Goal
 
@@ -15,8 +15,8 @@ Open question this doc settles: **do we still need a separate `@civitai/auth` pa
 
 ### 1a. Stateless sessions + subdomain cookie
 
-- **JWT session strategy** — [`next-auth-options.ts:156`](../src/server/auth/next-auth-options.ts#L156). Any app with `NEXTAUTH_SECRET` verifies a user with no DB round-trip. This is the linchpin.
-- **Dot-domain cookie** — [`next-auth-options.ts:527`](../src/server/auth/next-auth-options.ts#L527): `domain: NEXTAUTH_COOKIE_DOMAIN ?? '.' + hostname`, with the **`__Secure-`** prefix ([`libs/auth.ts`](../src/libs/auth.ts)) — not `__Host-` (which forbids `Domain` and would break sharing). So a `.civitai.com` cookie is already visible to every `*.civitai.com` subdomain.
+- **JWT session strategy** — [`next-auth-options.ts:156`](../../src/server/auth/next-auth-options.ts#L156). Any app with `NEXTAUTH_SECRET` verifies a user with no DB round-trip. This is the linchpin.
+- **Dot-domain cookie** — [`next-auth-options.ts:527`](../../src/server/auth/next-auth-options.ts#L527): `domain: NEXTAUTH_COOKIE_DOMAIN ?? '.' + hostname`, with the **`__Secure-`** prefix ([`libs/auth.ts`](../../src/libs/auth.ts)) — not `__Host-` (which forbids `Domain` and would break sharing). So a `.civitai.com` cookie is already visible to every `*.civitai.com` subdomain.
 
 ### 1b. The cross-ROOT-domain handoff is already implemented
 
@@ -37,7 +37,7 @@ link wrapped by syncAccount(url)
                                          → civTokenDecrypt → local .red session
 ```
 
-Files: [`syncAccount`](../src/utils/sync-account.ts) (builds the link) · [`useDomainSync`](../src/hooks/useDomainSync.tsx) (pulls on the destination) · [`/api/auth/sync`](../src/pages/api/auth/sync.ts) (mints the civ-token) · `account-switch` credentials provider in [`next-auth-options.ts`](../src/server/auth/next-auth-options.ts) · [`civ-token.ts`](../src/server/auth/civ-token.ts) (AES encrypt/decrypt of the userId transport token).
+Files: [`syncAccount`](../../src/utils/sync-account.ts) (builds the link) · [`useDomainSync`](../../src/hooks/useDomainSync.tsx) (pulls on the destination) · [`/api/auth/sync`](../../src/pages/api/auth/sync.ts) (mints the civ-token) · `account-switch` credentials provider in [`next-auth-options.ts`](../../src/server/auth/next-auth-options.ts) · [`civ-token.ts`](../../src/server/auth/civ-token.ts) (AES encrypt/decrypt of the userId transport token).
 
 **Implication:** the multi-root problem is solved. What we're changing is *topology*, not inventing a handoff.
 
@@ -133,7 +133,9 @@ A **thin-client / token-introspection** model: spokes hold zero shared TS and in
 
 ## 5. Caveats / remaining work
 
-1. **SameSite audit.** Cookies are `sameSite:'none'` for non-localhost ([`:522`](../src/server/auth/next-auth-options.ts#L522)). For same-root subdomain *navigation* (top-level GET redirects to/from the hub) `lax` suffices and is safer; `none` is only needed for credentialed cross-site `fetch`. Note `/api/auth/sync` is a credentialed cross-origin `fetch` → that path genuinely needs `none` + CORS. Audit per-cookie before tightening.
+1. **SameSite audit.** Cookies are `sameSite:'none'` for non-localhost ([`:522`](../../src/server/auth/next-auth-options.ts#L522)). For same-root subdomain *navigation* (top-level GET redirects to/from the hub) `lax` suffices and is safer; `none` is only needed for credentialed cross-site `fetch`. Note `/api/auth/sync` is a credentialed cross-origin `fetch` → that path genuinely needs `none` + CORS. Audit per-cookie before tightening.
+
+   > **RESOLVED** — the shipped thin-session `civ-token` cookie is `SameSite=Lax`; cross-root `/api/auth/sync` uses a top-level Lax navigation, not a credentialed `none` fetch.
 
 2. **Stateless logout / ban revocation.** A JWT can't be un-issued. We already have `session-invalidation` + `token-refresh` + a redis marker; the spoke verifier must check it (or tolerate staleness up to the refresh interval). This is the one place a spoke keeps a `@civitai/redis` dependency — fine, it's a base package.
 
@@ -141,7 +143,7 @@ A **thin-client / token-introspection** model: spokes hold zero shared TS and in
 
 4. **OAuth callbacks consolidate** to `auth.civitai.com/api/auth/callback/<provider>` — a simplification (one redirect URI per provider) matching the existing `auth.civitaic.com` preview precedent. Requires updating each provider console.
 
-5. **Per-domain theming + bounce-back.** The hub must preserve which root the user came from (carried in `callbackUrl`) to theme and redirect back. The existing `domainColor` override ([`:577-611`](../src/server/auth/next-auth-options.ts#L577-L611)) already models per-domain cookie behavior.
+5. **Per-domain theming + bounce-back.** The hub must preserve which root the user came from (carried in `callbackUrl`) to theme and redirect back. The existing `domainColor` override ([`:577-611`](../../src/server/auth/next-auth-options.ts#L577-L611)) already models per-domain cookie behavior.
 
 6. **`bearer-token.ts` / API keys** are DB-backed, not JWT. Decide whether key validation lives in the package (every app validates against the shared DB) or proxies to the hub. Lean: package — it's the same `@civitai/db` every spoke already has.
 
