@@ -385,7 +385,8 @@ export const AdvancedSettings = ({
   const isAiToolkit = features.trainingStepsPricing && selectedRun.params.engine === 'ai-toolkit';
 
   // A continuation run resumes from a prior epoch (continueFrom is the source AIR). When
-  // continuing, the engine is locked and Steps is fixed — hide those controls.
+  // continuing, the engine and base model are locked (hidden), but Steps and Checkpoints
+  // stay editable so the user can train more/fewer additional steps.
   const isContinuation = !!selectedRun.params.continueFrom;
 
   // For AI Toolkit, lead with the two length knobs in priority order — Steps (primary)

@@ -200,8 +200,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     fetchTrainingDataCaptions(thisModelVersion.id)
       .then((captions) => {
         if (!captions.length) return;
-        // Re-check: the user may have started typing while the zip downloaded.
-        const current = useTrainingImageStore.getState()[model.id]?.runs?.[selectedRunIndex];
+        // Re-check by run id (not array index): the user may have started typing — or the
+        // runs list may have been reordered — while the zip downloaded.
+        const current = useTrainingImageStore
+          .getState()
+          [model.id]?.runs?.find((r) => r.id === selectedRun.id);
         if (current && current.samplePrompts.some((p) => p && p.trim().length > 0)) return;
         const { prompts, overrides } = buildSamplePromptsFromCaptions(captions, thisMediaType);
         updateRun(model.id, thisMediaType, selectedRun.id, {

@@ -243,7 +243,9 @@ export const ModelSelect = ({
   const { data: announcement } = trpc.training.getAnnouncement.useQuery();
 
   const { updateRun } = trainingStore;
-  const blockedModels = status.blockedModels ?? [blockedCustomModels];
+  // blockedCustomModels is already a string[]; wrapping it in another array made
+  // blockedModels a string[][], so .includes() never matched the locally-blocked models.
+  const blockedModels = status.blockedModels ?? blockedCustomModels;
 
   // Detect whether the user has tweaked the advanced training params away from the
   // defaults for the current base. Auto-derived length knobs (steps/checkpoints/repeats/
