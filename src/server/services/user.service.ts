@@ -1662,14 +1662,16 @@ export const toggleBan = async ({
   if (!force && user.email) {
     try {
       if (!bannedAt) {
-        // Being banned: build a public-facing reason from the ban-reason label
-        // (public label only — never the private one) plus the moderator's
-        // external free text. Either piece may be absent.
-        const reasonParts = [
-          reasonCode ? banReasonDetails[reasonCode]?.publicBanReasonLabel : undefined,
-          detailsExternal,
-        ].filter((part): part is string => !!part && part.trim().length > 0);
-        const reason = reasonParts.length > 0 ? reasonParts.join(' — ') : undefined;
+        // Being banned: the email shows only the sanitized public ban-reason
+        // label (never the private label, and never the moderator's free-text
+        // `detailsExternal`). Free text is kept in `meta.banDetails` for the
+        // appeal/Retool flow but is never emailed — this avoids exposing
+        // explicit/targeted prose to the user. The TOS link in the email
+        // template provides the policy reference.
+        const publicLabel = reasonCode
+          ? banReasonDetails[reasonCode]?.publicBanReasonLabel
+          : undefined;
+        const reason = publicLabel && publicLabel.trim().length > 0 ? publicLabel : undefined;
 
         await moderationActionEmail.send({
           to: user.email,

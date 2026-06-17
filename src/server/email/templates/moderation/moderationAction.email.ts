@@ -1,6 +1,7 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
 import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { getBaseUrl } from '~/server/utils/url-helpers';
 
 export type ModerationActionKind =
   | 'account-banned'
@@ -103,6 +104,11 @@ export const moderationActionEmail = createEmail({
       !positive && reason
         ? `<p><strong>Reason:</strong><br/>${escapeHtml(reason)}</p>`
         : '';
+    // Negative outcomes link to the Terms of Service for a non-explicit policy
+    // reference (positive outcomes are good news and get no policy link).
+    const tosBlock = !positive
+      ? `<p>For more information, please review our <a href="${getBaseUrl()}/content/tos">Terms of Service</a>.</p>`
+      : '';
     const supportLine = positive ? '' : `<p>${SUPPORT_LINE}</p>`;
 
     // Affected-content list. Each label/url is user-adjacent data, so escape both.
@@ -123,6 +129,7 @@ export const moderationActionEmail = createEmail({
       <p>${intro}</p>
       ${itemsBlock}
       ${reasonBlock}
+      ${tosBlock}
       ${supportLine}
       <p>&mdash; ${SIGNATURE}</p>
     `;
@@ -146,6 +153,8 @@ export const moderationActionEmail = createEmail({
       for (const { url, label } of items) lines.push(url ? `- ${label}: ${url}` : `- ${label}`);
     }
     if (!positive && reason) lines.push('', `Reason:`, reason);
+    if (!positive)
+      lines.push('', `For more information, review our Terms of Service: ${getBaseUrl()}/content/tos`);
     if (!positive) lines.push('', SUPPORT_LINE);
     lines.push('', `— ${SIGNATURE}`);
 

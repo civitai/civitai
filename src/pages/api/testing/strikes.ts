@@ -2,20 +2,21 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import {
-  createStrike,
   evaluateStrikeEscalation,
   expireStrikes,
   getActiveStrikePoints,
   getStrikesForUser,
   processTimedUnmutes,
   shouldRateLimitStrike,
-  voidStrike,
   type EscalationAction,
 } from '~/server/services/strike.service';
 import type { UserMeta } from '~/server/schema/user.schema';
-import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
+import { StrikeStatus } from '~/shared/utils/prisma/enums';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
+// NOTE: the mutating `create` / `void` actions were moved to the attributed
+// Retool endpoint at src/pages/api/mod/retool/strike.ts (issuedBy/voidedBy =
+// calling moderator). This endpoint retains read + dry-run + job-trigger actions.
 const schema = z
   .object({
     action: z.enum([
@@ -23,19 +24,10 @@ const schema = z
       'get-active-points',
       'check-rate-limit',
       'evaluate-escalation',
-      'create',
-      'void',
       'expire',
       'unmute',
     ]),
     userId: z.coerce.number().optional(),
-    reason: z.string().optional(),
-    points: z.coerce.number().optional(),
-    description: z.string().optional(),
-    internalNotes: z.string().optional(),
-    expiresInDays: z.coerce.number().optional(),
-    strikeId: z.coerce.number().optional(),
-    voidReason: z.string().optional(),
     includeExpired: z
       .string()
       .optional()
@@ -51,26 +43,12 @@ const schema = z
       'get-active-points',
       'check-rate-limit',
       'evaluate-escalation',
-      'create',
     ];
     if (userActions.includes(data.action) && !data.userId) {
       ctx.addIssue({
         code: 'custom',
         message: `userId is required for action "${data.action}"`,
       });
-    }
-
-    if (data.action === 'create') {
-      if (!data.reason) {
-        ctx.addIssue({ code: 'custom', message: 'reason is required for action "create"' });
-      }
-      if (!data.description) {
-        ctx.addIssue({ code: 'custom', message: 'description is required for action "create"' });
-      }
-    }
-
-    if (data.action === 'void' && !data.strikeId) {
-      ctx.addIssue({ code: 'custom', message: 'strikeId is required for action "void"' });
     }
   });
 
@@ -137,87 +115,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     return res
       .status(200)
       .json({ action, userId, totalPoints: result.totalPoints, escalationAction: result.action });
-  }
-
-  // ── Create strike ──────────────────────────────────────────────────
-  if (action === 'create') {
-    if (dryRun) {
-      const user = await dbRead.user.findUnique({
-        where: { id: userId! },
-        select: { id: true, username: true },
-      });
-      if (!user) return res.status(404).json({ error: `User ${userId} not found` });
-
-      const reason = payload.reason as StrikeReason;
-      let isRateLimited = false;
-      if (reason !== StrikeReason.ManualModAction) {
-        isRateLimited = await shouldRateLimitStrike(userId!);
-      }
-
-      const expiresInDays = payload.expiresInDays ?? 30;
-      const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
-
-      return res.status(200).json({
-        action,
-        dryRun: true,
-        userId,
-        user,
-        wouldCreate: {
-          reason,
-          points: payload.points ?? 1,
-          description: payload.description,
-          internalNotes: payload.internalNotes,
-          expiresAt,
-          expiresInDays,
-        },
-        isRateLimited,
-        wouldBeSkipped: isRateLimited,
-      });
-    }
-
-    const strike = await createStrike({
-      userId: userId!,
-      reason: payload.reason as StrikeReason,
-      points: payload.points ?? 1,
-      description: payload.description!,
-      internalNotes: payload.internalNotes,
-      expiresInDays: payload.expiresInDays ?? 30,
-    });
-    return res.status(200).json({ action, strike });
-  }
-
-  // ── Void strike ────────────────────────────────────────────────────
-  if (action === 'void') {
-    if (dryRun) {
-      const strike = await dbRead.userStrike.findUnique({
-        where: { id: payload.strikeId! },
-        select: {
-          id: true,
-          userId: true,
-          status: true,
-          reason: true,
-          points: true,
-          createdAt: true,
-          expiresAt: true,
-        },
-      });
-      if (!strike) return res.status(404).json({ error: `Strike ${payload.strikeId} not found` });
-
-      return res.status(200).json({
-        action,
-        dryRun: true,
-        strike,
-        canVoid: strike.status === StrikeStatus.Active,
-        currentStatus: strike.status,
-      });
-    }
-
-    const strike = await voidStrike({
-      strikeId: payload.strikeId!,
-      voidReason: payload.voidReason ?? 'Voided via test endpoint',
-      voidedBy: -1, // System
-    });
-    return res.status(200).json({ action, strike });
   }
 
   // ── Expire strikes ─────────────────────────────────────────────────

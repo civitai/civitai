@@ -158,6 +158,10 @@ export const userRestrictionRouter = router({
     // Send transactional email mirroring the in-app notification
     try {
       if (restriction.user?.email) {
+        // Intentionally omit `resolvedMessage` from the email — moderator
+        // free-text is shown only in-app (notification above), never emailed,
+        // to avoid exposing potentially explicit/targeted prose. The TOS link
+        // in the email template provides the policy reference for upheld cases.
         await moderationActionEmail.send({
           to: restriction.user.email,
           username: restriction.user.username ?? 'User',
@@ -165,7 +169,6 @@ export const userRestrictionRouter = router({
             status === UserRestrictionStatus.Upheld
               ? 'restriction-upheld'
               : 'restriction-overturned',
-          reason: resolvedMessage || undefined,
         });
       }
     } catch (error) {
