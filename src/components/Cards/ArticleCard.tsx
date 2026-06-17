@@ -1,5 +1,5 @@
 import { Badge, Text } from '@mantine/core';
-import React, { memo } from 'react';
+import { memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
 import { slugit } from '~/utils/string-helpers';
@@ -29,7 +29,14 @@ export const ArticleCard = memo(function ArticleCard({ data, aspectRatio }: Prop
 });
 
 function ArticleCardContent({ data, aspectRatio }: Props) {
-  const { id, title, coverImage, publishedAt, user, tags, status } = data;
+  const { id, title, coverImage, publishedAt, user, tags, status, nsfwLevel } = data;
+  // Show the article's aggregate nsfwLevel on the card (badge + blur), not just
+  // the cover image's own level. Content images or a moderator/user override can
+  // raise the article above the cover's rating; lifting here keeps every feed
+  // consistent without relying on each backend query to lift it onto coverImage.
+  const image = coverImage
+    ? { ...coverImage, nsfwLevel: Math.max(nsfwLevel ?? 0, coverImage.nsfwLevel ?? 0) }
+    : undefined;
   const category = tags?.find((tag) => tag.isCategory);
   const currentUser = useCurrentUser();
   const canSeeStatus = !!currentUser && (currentUser.id === user.id || currentUser.isModerator);
@@ -41,7 +48,7 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
       aspectRatio={aspectRatio}
       contentType="article"
       contentId={id}
-      image={coverImage}
+      image={image}
       cosmetic={data.cosmetic?.data}
       header={
         <div className="flex w-full justify-between">

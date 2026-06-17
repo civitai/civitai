@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
+import { KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS } from '~/shared/constants/slot-registry';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
@@ -214,9 +215,14 @@ async function refundBlockBuzzSpend(
   });
 }
 
-// Free-form slot strings are a cache-busting surface for anon callers.
-// Bound to the explicit set we ship today; new slots ship by extending this.
-const KNOWN_SLOT_IDS = z.enum(['model.sidebar_top', 'model.below_images', 'model.actions_extra']);
+// Free-form slot strings are a cache-busting surface for anon callers. Bound
+// to the explicit model-slot set; the canonical source is now the slot registry
+// (src/shared/constants/slot-registry.ts) — re-exported under the SAME name so
+// the reuse sites below (listForModel/installOnModel/getEffectiveCheckpoint
+// inputs) are untouched and the model contract stays byte-identical. The page
+// slot is intentionally NOT in this enum: page tokens never flow through the
+// model slotContext / install procs.
+const KNOWN_SLOT_IDS = SLOT_KNOWN_SLOT_IDS;
 
 // JSON settings get echoed back to every BlockSlot consumer and stamped on the
 // JWT issuance side. Cap size to keep both budgets bounded.
@@ -308,7 +314,7 @@ export const blocksRouter = router({
       });
     }),
 
-  installOnModel: moderatorProcedure
+  installOnModel: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -326,7 +332,7 @@ export const blocksRouter = router({
       });
     }),
 
-  updateSettings: moderatorProcedure
+  updateSettings: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -347,7 +353,7 @@ export const blocksRouter = router({
    * so the NOT EXISTS subquery in listForModel suppresses platform defaults
    * for the same app_block_id. See plan §4 invariant.
    */
-  toggleEnabled: moderatorProcedure
+  toggleEnabled: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -1136,7 +1142,7 @@ export const blocksRouter = router({
    * `validateBlockSettings`). The client never becomes the source of truth for
    * what gets persisted.
    */
-  getInstallConfig: moderatorProcedure
+  getInstallConfig: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(z.object({ appBlockId: z.string().min(1).max(64) }))
     .query(async ({ ctx, input }) => {
@@ -1189,7 +1195,7 @@ export const blocksRouter = router({
    * (mirrors per-model install row shape); `viewer_personal` is a viewer
    * write (mirrors per-viewer override row shape).
    */
-  upsertSubscription: moderatorProcedure
+  upsertSubscription: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -1247,7 +1253,7 @@ export const blocksRouter = router({
    * (already deleted is a success); rows owned by another user raise
    * authorization at the service layer.
    */
-  deleteSubscription: moderatorProcedure
+  deleteSubscription: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(z.object({ subscriptionId: z.string().min(1).max(64) }))
     .mutation(async ({ ctx, input }) => {

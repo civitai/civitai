@@ -1086,7 +1086,7 @@ export const restoreModelHandler = async ({
 
     return model;
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -1250,7 +1250,7 @@ export const toggleModelLockHandler = async ({ input }: { input: ToggleModelLock
   try {
     await toggleLockModel(input);
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -1283,7 +1283,7 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
 
     return updatedModel;
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -1335,7 +1335,7 @@ export const declineReviewHandler = async ({
 
     return updatedModel;
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -1387,7 +1387,7 @@ export const changeModelModifierHandler = async ({
 
     return updatedModel;
   } catch (error) {
-    if (error instanceof TRPCError) error;
+    if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
@@ -1878,7 +1878,9 @@ export async function getModelCollectionShowcaseHandler({ input }: { input: GetB
 
     return {
       ...collection,
-      itemCount: itemCount.count,
+      // getCollectionItemCount uses GROUP BY, so an empty showcase collection
+      // (no accepted items) returns no row and itemCount is undefined — default to 0.
+      itemCount: Number(itemCount?.count ?? 0),
     };
   } catch (error) {
     throw throwDbError(error);

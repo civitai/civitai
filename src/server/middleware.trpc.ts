@@ -1,9 +1,12 @@
 import { TRPCError } from '@trpc/server';
-import { isDev, isProd, isTest } from '~/env/other';
+import { pack } from 'msgpackr';
+import { isDev, isPreview, isProd, isTest } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { hSetWithTTL } from '~/server/redis/atomic';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
@@ -128,8 +131,11 @@ export function rateLimit<TInput = any>(
   if (!Array.isArray(rateLimits)) rateLimits = [rateLimits];
 
   return middleware(async ({ ctx, input, next, path }) => {
-    // Skip if user is a moderator
-    if (ctx.user?.isModerator || isDev || isTest) return await next();
+    // Skip if user is a moderator, or in a non-prod env (dev/test/preview).
+    // Preview runs on the shared dev DB with a small set of CI smoke accounts, so
+    // per-account daily quotas (e.g. the new-post limit) get exhausted across many
+    // PR runs and the smoke suite fails deterministically — see civitai#2592.
+    if (ctx.user?.isModerator || isDev || isTest || isPreview) return await next();
 
     // Skip rate limiting if condition is provided and not met
     if (condition && !condition(input as TInput)) {
@@ -193,10 +199,33 @@ export function rateLimit<TInput = any>(
       attempts.push(Date.now());
       const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
       const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
-      await Promise.all([
-        redis.packed.hSet(cacheKey, hashKey, updatedAttempts),
-        redis.hExpire(cacheKey, hashKey, CacheTTL.day),
-      ]);
+      // Atomic packed-write: single EVAL replaces racy Promise.all([hSet, hExpire]).
+      //
+      // Fail-open wrapper (PR #2332 round-4 audit fix): without this
+      // try/catch, an in-flight EVAL throw during a sysRedis (cache
+      // client) failover would 500 every authed mutation that flows
+      // through this middleware. Trade-off documented under the
+      // `rate-limit-write-degraded` subtype: the current request is
+      // allowed through and the sliding-window quota under-counts the
+      // attempt until the next successful write. A sustained spike on
+      // that subtype = abuse-prevention effectively disabled, which
+      // ops should dashboard separately from generic write-degraded.
+      try {
+        await hSetWithTTL(
+          redis,
+          cacheKey,
+          hashKey,
+          pack(updatedAttempts),
+          CacheTTL.day * 1000
+        );
+      } catch (error) {
+        logSysRedisFailOpen(
+          'rate-limit-write-degraded',
+          'middleware.trpc.recordAttempt',
+          error,
+          { cacheKey, hashKey }
+        );
+      }
     };
 
     // When onlyCountSuccess is set, defer recording until the procedure succeeds

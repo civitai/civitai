@@ -42,6 +42,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   constants,
   EARLY_ACCESS_CONFIG,
+  isNonCommercialBaseModel,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -212,6 +213,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
   const baseModel = form.watch('baseModel') ?? 'SD 1.5';
+  // Non-commercial base models (e.g. Ideogram) can't be monetized — hide the
+  // licensing-fee and early-access controls for these versions.
+  const isNonCommercial = isNonCommercialBaseModel(baseModel);
   const recResources = form.watch('recommendedResources') ?? [];
   const [minStrength, maxStrength] = form.watch([
     'settings.minStrength',
@@ -224,9 +228,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
   const hasExistingLicensingFee = (version?.licensingFee ?? 0) > 0;
   const showLicensingFeeBlock =
-    !!features.licensingFee ||
-    hasExistingLicensingFee ||
-    existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash;
+    !isNonCommercial &&
+    (!!features.licensingFee ||
+      hasExistingLicensingFee ||
+      existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash);
   const showLicensingFeeSettlementCurrency =
     existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash ||
     !!currentUser?.isModerator;
@@ -246,6 +251,18 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
       }
     }
   }, [baseModel]);
+
+  // Non-commercial base models can't be monetized. The monetization controls are
+  // hidden (shouldUnregister is false, so their values would otherwise persist and
+  // be re-submitted, then rejected server-side with a confusing error). Clear them
+  // when switching to such a base model so the form can save.
+  useEffect(() => {
+    if (!isNonCommercial) return;
+    if ((form.getValues('licensingFee') ?? 0) > 0) form.setValue('licensingFee', 0);
+    if (form.getValues('monetization')) form.setValue('monetization', null);
+    if (form.getValues('earlyAccessConfig')) form.setValue('earlyAccessConfig', null);
+    if (form.getValues('useMonetization')) form.setValue('useMonetization', false);
+  }, [isNonCommercial]);
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     onError(error) {
@@ -376,6 +393,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const showEarlyAccessInput =
     !model?.poi && // POI models won't allow EA.
     !isPrivateModel &&
+    !isNonCommercial && // Non-commercial base models can't be monetized.
     (currentUser?.isModerator ||
       (maxEarlyAccessModels > 0 &&
         features.earlyAccessModel &&
@@ -798,8 +816,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     style={{ flexShrink: 0, marginTop: 2 }}
                   />
                   <Text size="xs" c="yellow">
-                    With a license fee set, this version stops earning creator compensation and
-                    tips — you earn through the license fee instead.
+                    With a license fee set, this version stops earning creator compensation and tips
+                    — you earn through the license fee instead.
                   </Text>
                 </Group>
               )}
@@ -853,6 +871,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 >
                   Learn more
                 </Text>
+              </Text>
+            </Alert>
+          )}
+          {isNonCommercial && (
+            <Alert color="yellow" title="Non-commercial base model">
+              <Text>
+                {baseModel} is licensed for non-commercial use only. This version cannot be
+                monetized (no licensing fees or paid early access) and commercial use is disabled.
               </Text>
             </Alert>
           )}
