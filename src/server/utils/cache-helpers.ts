@@ -151,15 +151,66 @@ export function createCachedArray<T extends object>({
   staleWhileRevalidate = true,
   staleWhileRevalidateTtl,
 }: CachedLookupOptions<T>) {
+  // --- Fail-open origin path (Redis-stall degradation) -------------------------------
+  // When a CLUSTER (cache) Redis read stalls/rejects — the #2556 socketTimeout (~10s) or
+  // the #2611 command-deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS) — the cachedArray read
+  // would otherwise throw uncaught → TRPCError → 500 (its mGet/set/del had NO try/catch,
+  // unlike fetchThroughCache). Instead degrade to a slow-but-working origin (DB) fetch of
+  // ALL requested ids and return it UNCACHED (we can't write while Redis is down). Single-
+  // flighted per (pod, key, id-set) via the shared failOpenInFlight map so a wedged client
+  // — which cold-misses MANY concurrent requests at once — can't stampede the DB. This is
+  // strictly no worse than today on these paths (a Redis stall already failed the request);
+  // it turns 500 into a slow 200. Mirrors fetchThroughCache's fail-open (cache-helpers.ts
+  // fetchThroughCacheFailOpen + the try/catch around redis.packed.get).
+  async function fetchFromOriginDegraded(distinctIds: number[]): Promise<T[]> {
+    const degradedResults = new Set<T>();
+    const dbResults: Record<string, T> = {};
+    // Same batching the cache-miss path uses (lookupFn capped at 10000 ids/call).
+    for (const batch of chunk(distinctIds, 10000)) {
+      const batchResults = await lookupFn([...batch] as number[]);
+      Object.assign(dbResults, batchResults);
+    }
+    for (const id of distinctIds) {
+      const result = dbResults[id];
+      if (result) degradedResults.add(result as T);
+    }
+    if (appendFn) await appendFn(degradedResults);
+    return [...degradedResults].map((x) => {
+      // Strip the internal cachedAt the same way the normal return does (degraded
+      // results from lookupFn won't have it, but a future appendFn might attach one).
+      if ('cachedAt' in x) delete x.cachedAt;
+      return x;
+    });
+  }
+
   async function fetch(ids: number[]) {
     if (!ids.length) return [] as T[];
+    const distinctIds = [...new Set(ids)];
     const results = new Set<T>();
     const cacheResults: T[] = [];
-    for (const batch of chunk([...new Set(ids)], 200)) {
-      const batchResults = await redis.packed.mGet<T>(
-        batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache)
+    try {
+      for (const batch of chunk(distinctIds, 200)) {
+        const batchResults = await redis.packed.mGet<T>(
+          batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache)
+        );
+        cacheResults.push(...batchResults.filter(isDefined));
+      }
+    } catch (err) {
+      // Redis READ failed (cluster stall / socketTimeout / command-deadline). The
+      // lookupFn itself is OUTSIDE this catch — a genuine DB/logic error from the origin
+      // still propagates (matches fetchThroughCache, which never wraps fetchFn). Degrade
+      // to a single-flighted origin fetch instead of a 500.
+      logSysRedisFailOpen('read-degraded', `createCachedArray mGet (cache cluster) [${key}]`, err, {
+        key,
+        ids: distinctIds.length,
+      });
+      return fetchThroughCacheFailOpen(
+        // Stable per-(pod, key, id-set) single-flight key. Sorted so id order doesn't
+        // fragment the in-flight share; the id-set scopes it so distinct fetches don't
+        // collide on the same `key`.
+        `cachedArray-failopen:${key}:${[...distinctIds].sort((a, b) => a - b).join(',')}`,
+        () => fetchFromOriginDegraded(distinctIds)
       );
-      cacheResults.push(...batchResults.filter(isDefined));
     }
     const cacheArray = cacheResults.filter((x) => x !== null) as T[];
     const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
@@ -171,7 +222,7 @@ export function createCachedArray<T extends object>({
     const ttlExpiry = new Date(Date.now() - ttl * 1000);
     const locks = new Set<RedisKeyTemplateCache>();
     let cacheHits = 0;
-    for (const id of [...new Set(ids)]) {
+    for (const id of distinctIds) {
       const cached = cache[id];
       if (cached) {
         if (cached.notFound) continue;
@@ -202,11 +253,26 @@ export function createCachedArray<T extends object>({
         toRevalidateIds.length
       );
 
-      const gotLocks = await Promise.all(
-        toRevalidateIds.map((id) =>
-          redis.setNxKeepTtlWithEx(`${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`, '1', 10)
-        )
-      );
+      let gotLocks: boolean[];
+      try {
+        gotLocks = await Promise.all(
+          toRevalidateIds.map((id) =>
+            redis.setNxKeepTtlWithEx(`${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`, '1', 10)
+          )
+        );
+      } catch (err) {
+        // Lock acquisition (a Redis WRITE) hit a cluster error. We already have a
+        // fresh-enough stale value for every toRevalidate id; serve it rather than
+        // 500. Mirrors fetchThroughCache's lock-error path (serve stale if we have
+        // it). The revalidation just doesn't happen this pass — cheap + correct.
+        logSysRedisFailOpen(
+          'write-degraded',
+          `createCachedArray revalidate-lock (cache cluster) [${key}]`,
+          err,
+          { key, ids: toRevalidateIds.length }
+        );
+        gotLocks = toRevalidateIds.map(() => false);
+      }
       for (let i = 0; i < toRevalidateIds.length; i++) {
         const id = toRevalidateIds[i];
         if (!gotLocks[i]) {
@@ -257,31 +323,49 @@ export function createCachedArray<T extends object>({
         cacheMissCounter.inc({ cache_name: key, cache_type: 'cachedArray' }, actualMisses);
       }
 
-      // then cache the results
+      // then cache the results. The DB lookup above already SUCCEEDED — a Redis WRITE
+      // failure here (cluster stall) must NOT turn a good origin fetch into a 500. Swallow
+      // it best-effort (the entry just isn't cached this pass); mirrors fetchThroughCache's
+      // best-effort set (cache-helpers.ts: the try/catch around redis.packed.set).
       const EX = resolveCacheExpiry(ttl, staleWhileRevalidate, staleWhileRevalidateTtl);
-      if (Object.keys(toCache).length > 0)
-        await Promise.all(
-          Object.entries(toCache).map(([id, cache]) =>
-            redis.packed.set(`${key}:${id}`, cache, { EX })
-          )
-        );
+      try {
+        if (Object.keys(toCache).length > 0)
+          await Promise.all(
+            Object.entries(toCache).map(([id, cache]) =>
+              redis.packed.set(`${key}:${id}`, cache, { EX })
+            )
+          );
 
-      // Use NX to avoid overwriting a value with a not found...
-      // notFoundTtl lets a caller cap negative-cache lifetime separately from
-      // positive results — useful when an empty lookupFn result is likely to
-      // be transient (async ingestion, replication lag) rather than truly empty.
-      if (Object.keys(toCacheNotFound).length > 0) {
-        const notFoundEX = notFoundTtl ?? EX;
-        await Promise.all(
-          Object.entries(toCacheNotFound).map(([id, cache]) =>
-            redis.packed.set(`${key}:${id}`, cache, { EX: notFoundEX, NX: true })
-          )
-        );
+        // Use NX to avoid overwriting a value with a not found...
+        // notFoundTtl lets a caller cap negative-cache lifetime separately from
+        // positive results — useful when an empty lookupFn result is likely to
+        // be transient (async ingestion, replication lag) rather than truly empty.
+        if (Object.keys(toCacheNotFound).length > 0) {
+          const notFoundEX = notFoundTtl ?? EX;
+          await Promise.all(
+            Object.entries(toCacheNotFound).map(([id, cache]) =>
+              redis.packed.set(`${key}:${id}`, cache, { EX: notFoundEX, NX: true })
+            )
+          );
+        }
+      } catch (err) {
+        logSysRedisFailOpen('write-degraded', `createCachedArray set (cache cluster) [${key}]`, err, {
+          key,
+        });
       }
     }
 
-    // Remove locks
-    if (locks.size > 0) await redis.del([...locks]);
+    // Remove locks (best-effort: a failed del just leaves the lock to expire via its
+    // 10s TTL — never let it mask the successful fetch result).
+    if (locks.size > 0)
+      await redis.del([...locks]).catch((err) =>
+        logSysRedisFailOpen(
+          'write-degraded',
+          `createCachedArray del-locks (cache cluster) [${key}]`,
+          err,
+          { key }
+        )
+      );
 
     if (appendFn) await appendFn(results);
 
@@ -453,25 +537,28 @@ type FetchThroughCacheOptions = {
 type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
 
 /**
- * Per-pod (per-process) single-flight map for the fail-open path ONLY.
+ * Per-pod (per-process) single-flight map for the cache fail-open paths.
  *
- * fetchThroughCache normally prevents an origin (DB/ClickHouse) stampede with a
- * REDIS-backed distributed lock: only the lock-winner runs `fetchFn`, everyone else
- * serves stale or waits. But that lock lives IN Redis — so when Redis itself stalls
- * (the PR #2556 socketTimeout now turns a stalled read into a ~10s throw instead of a
- * 30s-504), the lock is unreachable and the cross-pod single-flight is GONE. Several
- * fetchThroughCache `fetchFn`s are expensive DB/ClickHouse aggregations (buzz pool
- * SUM scans, featured-models, mod-rules, creator-program pool math). Naively
- * catch-and-call-fetchFn on every request across ~80 pods would convert a Redis
- * problem into a DB thundering-herd — a worse cascade.
+ * Both fetchThroughCache AND createCachedObject/Array.fetch normally prevent an origin
+ * (DB/ClickHouse) stampede with a REDIS-backed mechanism: fetchThroughCache uses a
+ * distributed lock (only the lock-winner runs `fetchFn`); the cachedArray path relies on
+ * the Redis cache itself absorbing the read. But those mechanisms live IN Redis — so when
+ * Redis itself stalls (the PR #2556 socketTimeout / #2611 command-deadline now turn a
+ * stalled read into a ~10s/15s throw instead of a 30s-504 or a 125s hang), the lock is
+ * unreachable and the cache returns nothing: the cross-request single-flight is GONE.
+ * Several origin fetches here are expensive (fetchThroughCache: buzz pool SUM scans,
+ * featured-models, mod-rules; cachedObject lookupFns: tag.getAll, user.getCreator,
+ * comment.getAll, image-meta, tag-ids-for-images DB queries). Naively catch-and-call the
+ * origin on every request across ~80 pods would convert a Redis problem into a DB
+ * thundering-herd — a worse cascade.
  *
- * This map degrades that gracefully: during a Redis outage, concurrent requests for
- * the SAME key on the SAME pod share ONE in-flight `fetchFn()` promise. That bounds
- * origin load to ≤ (distinct keys × pods) concurrent origin calls instead of
- * unbounded (× per-request concurrency). It is NOT cross-pod (that's what the Redis
- * lock was for and Redis is down), but it removes the per-pod multiplier, which is the
- * dominant term under a request flood. Entries are deleted as soon as the shared
- * promise settles, so the map only ever holds currently-degraded keys.
+ * This map degrades that gracefully: during a Redis stall, concurrent requests for the
+ * SAME key on the SAME pod share ONE in-flight origin promise. That bounds origin load to
+ * ≤ (distinct keys × pods) concurrent origin calls instead of unbounded (× per-request
+ * concurrency). It is NOT cross-pod (that's what the Redis lock was for and Redis is down),
+ * but it removes the per-pod multiplier, which is the dominant term under a request flood.
+ * Entries are deleted as soon as the shared promise settles, so the map only ever holds
+ * currently-degraded keys.
  */
 const failOpenInFlight = new Map<string, Promise<unknown>>();
 

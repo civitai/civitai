@@ -128,19 +128,26 @@ export const serverSchema = z.object({
   // time REJECTS — which makes the wrapped promise settle → `.finally(done)` fires → the
   // inflight gauge dec's AND the handler unparks with an error instead of a 125s hang.
   // The reject flows the SAME way an existing cluster read error already does (socketTimeout
-  // has rejected stuck commands down these paths since #2556): fetchThroughCache catches and
-  // fail-opens (degraded miss → slow 200); createCachedObject/Array.fetch does NOT catch, so
-  // it propagates (→ error/500) — same as any cluster error today, and strictly better than a
-  // 125s hang. Correct regardless of the exact node-redis internal cause.
+  // has rejected stuck commands down these paths since #2556): BOTH fetchThroughCache AND
+  // createCachedObject/Array.fetch now catch it and fail-open (degraded origin fetch → slow
+  // 200, single-flighted per pod to bound DB load). createCachedObject/Array.fetch was made
+  // fail-open in the same change that lowered this default — that is THIS deadline's safety
+  // net: before it, a deadline-reject down a cachedObject read propagated as a 500.
+  // Correct regardless of the exact node-redis internal cause.
   //
-  // Default 15000 (15s): ~650× over the ~23ms healthy-completion p99 (zero risk of
-  // clipping a legitimate slow command) and well below the ~125s client ceiling. Sits
-  // ABOVE REDIS_SOCKET_TIMEOUT_MS (10s) so it is a true BACKSTOP — socketTimeout still
-  // does the primary teardown when it works; this only catches the commands it doesn't.
+  // Default 3000 (3s): ~22× over the ~137ms healthy p99 (SLOWLOG max; p50 is sub-ms) so it
+  // will not clip a legitimate command — the cachedArray `mGet` is a Promise.all of
+  // individual per-key GETs, each independently wrapped by instrumentCommands, so no single
+  // wrapped command is a large multi-key op. BELOW REDIS_SOCKET_TIMEOUT_MS (10s) so the
+  // deadline (not socketTimeout) is now the EFFECTIVE cap: it unparks a stuck handler in 3s
+  // instead of 10s/125s. SAFE to be this aggressive only because the fail-open above turns a
+  // deadline-reject into a slow 200 rather than a 500. (Was 15000 — a 15s park per stuck
+  // command + a 500 because the cachedObject path didn't yet fail-open; both fixed here.)
   // 0 disables it. Cluster-scoped: the SYSTEM client is untouched (it uses
   // REDIS_SYS_READ_TIMEOUT_MS — see the #2556/#2586 sys-client regression). See
-  // redis/command-deadline.ts withCommandDeadline() + instrumentCommands().
-  REDIS_CLUSTER_COMMAND_TIMEOUT_MS: z.coerce.number().default(15000),
+  // redis/command-deadline.ts withCommandDeadline() + instrumentCommands() and
+  // utils/cache-helpers.ts (fetchThroughCache + createCachedArray fail-open).
+  REDIS_CLUSTER_COMMAND_TIMEOUT_MS: z.coerce.number().default(3000),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(

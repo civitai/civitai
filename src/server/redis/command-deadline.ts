@@ -24,10 +24,12 @@ import { env } from '~/env/server';
  * here — it is bounded separately by withSysReadDeadline / commandsQueueMaxLength, and a
  * blanket timeout on it caused the #2556/#2586 sys-client wedge. See client.ts.
  *
- * CONSUMER IMPACT: the reject is caught by the SAME fail-open paths that already catch a
- * cluster read error (cache-helpers fetchThroughCache + createCachedObject try/catch) →
- * a degraded cache miss → slow 200 (origin fetch), NOT a hard 500. Strictly better than
- * the 125s-then-499 it replaces.
+ * CONSUMER IMPACT: the reject is caught by the SAME fail-open paths that catch a cluster
+ * read error — cache-helpers `fetchThroughCache` AND `createCachedArray`/`createCachedObject`
+ * `.fetch` (the latter was made fail-open alongside lowering the deadline default; before
+ * that its mGet/set/del had NO try/catch and a reject surfaced as a 500). Both now degrade
+ * to a single-flighted origin fetch → slow 200, NOT a hard 500. Strictly better than the
+ * 125s-then-499 it replaces.
  *
  * `ms` defaults to REDIS_CLUSTER_COMMAND_TIMEOUT_MS; pass an explicit value in tests.
  * `<= 0` disables the guard (returns the input unchanged — no wrapper, no timer).
