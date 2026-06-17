@@ -130,7 +130,8 @@ export const serverSchema = z.object({
   // The reject flows the SAME way an existing cluster read error already does (socketTimeout
   // has rejected stuck commands down these paths since #2556): BOTH fetchThroughCache AND
   // createCachedObject/Array.fetch now catch it and fail-open (degraded origin fetch → slow
-  // 200, single-flighted per pod to bound DB load). createCachedObject/Array.fetch was made
+  // 200, bounded per pod against a DB stampede by per-id-set single-flight + per-ID
+  // coalescing — see cache-helpers.ts degradedIdInFlight). createCachedObject/Array.fetch was made
   // fail-open in the same change that lowered this default — that is THIS deadline's safety
   // net: before it, a deadline-reject down a cachedObject read propagated as a 500.
   // Correct regardless of the exact node-redis internal cause.

@@ -28,8 +28,10 @@ import { env } from '~/env/server';
  * read error — cache-helpers `fetchThroughCache` AND `createCachedArray`/`createCachedObject`
  * `.fetch` (the latter was made fail-open alongside lowering the deadline default; before
  * that its mGet/set/del had NO try/catch and a reject surfaced as a 500). Both now degrade
- * to a single-flighted origin fetch → slow 200, NOT a hard 500. Strictly better than the
- * 125s-then-499 it replaces.
+ * to an origin fetch → slow 200, NOT a hard 500. The cachedArray origin fetch is bounded
+ * against a DB stampede by per-id-set single-flight PLUS per-ID coalescing (so distinct
+ * overlapping feed pages share per-id DB results) — see cache-helpers.ts degradedIdInFlight.
+ * Strictly better than the 125s-then-499 it replaces.
  *
  * `ms` defaults to REDIS_CLUSTER_COMMAND_TIMEOUT_MS; pass an explicit value in tests.
  * `<= 0` disables the guard (returns the input unchanged — no wrapper, no timer).

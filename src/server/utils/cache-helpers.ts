@@ -155,24 +155,81 @@ export function createCachedArray<T extends object>({
   // When a CLUSTER (cache) Redis read stalls/rejects — the #2556 socketTimeout (~10s) or
   // the #2611 command-deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS) — the cachedArray read
   // would otherwise throw uncaught → TRPCError → 500 (its mGet/set/del had NO try/catch,
-  // unlike fetchThroughCache). Instead degrade to a slow-but-working origin (DB) fetch of
-  // ALL requested ids and return it UNCACHED (we can't write while Redis is down). Single-
-  // flighted per (pod, key, id-set) via the shared failOpenInFlight map so a wedged client
-  // — which cold-misses MANY concurrent requests at once — can't stampede the DB. This is
-  // strictly no worse than today on these paths (a Redis stall already failed the request);
-  // it turns 500 into a slow 200. Mirrors fetchThroughCache's fail-open (cache-helpers.ts
-  // fetchThroughCacheFailOpen + the try/catch around redis.packed.get).
+  // unlike fetchThroughCache). Instead degrade to a slow-but-working origin (DB) fetch and
+  // return it UNCACHED (we can't write while Redis is down). It turns 500 into a slow 200.
+  // Mirrors fetchThroughCache's fail-open (cache-helpers.ts fetchThroughCacheFailOpen + the
+  // try/catch around redis.packed.get).
+  //
+  // STAMPEDE BOUND (PER-ID coalescing): the per-id-set single-flight (failOpenInFlight) only
+  // collapses IDENTICAL id-sets — but the hot callers pass per-feed-page id lists, so under a
+  // full wedge each distinct page would otherwise be a separate DB call → a read flood. To
+  // bound it independent of id-set, this fetch only DB-looks-up the ids for this `key` that
+  // are NOT already in flight on this pod (degradedIdInFlight) and AWAITS the in-flight
+  // promise for the rest. Overlapping pages thus share per-id results → per-(key, pod) DB
+  // load is bounded by distinct concurrent ids, not by distinct id-sets. No fixed cap → no
+  // queue, no caller blocked behind a saturated semaphore. A genuine lookupFn error rejects
+  // the per-id promises (so it still propagates) and every entry is deleted on settle.
   async function fetchFromOriginDegraded(distinctIds: number[]): Promise<T[]> {
-    const degradedResults = new Set<T>();
-    const dbResults: Record<string, T> = {};
-    // Same batching the cache-miss path uses (lookupFn capped at 10000 ids/call).
-    for (const batch of chunk(distinctIds, 10000)) {
-      const batchResults = await lookupFn([...batch] as number[]);
-      Object.assign(dbResults, batchResults);
-    }
+    // Partition the requested ids into ones already being fetched (degraded) on this pod and
+    // ones we must originate ourselves. Reuse the in-flight promise for the former.
+    const reused: Promise<T | undefined>[] = [];
+    const toFetch: number[] = [];
     for (const id of distinctIds) {
-      const result = dbResults[id];
-      if (result) degradedResults.add(result as T);
+      const existing = degradedIdInFlight.get(`${key}:id:${id}`) as
+        | Promise<T | undefined>
+        | undefined;
+      if (existing) reused.push(existing);
+      else toFetch.push(id);
+    }
+
+    // For the ids we must originate: register ONE shared per-id promise each, all backed by a
+    // SINGLE batched lookupFn call. A concurrent overlapping request will reuse these via the
+    // map above instead of issuing its own DB call. resolve/reject deferreds let us settle
+    // each per-id promise once the shared batch returns (or fails).
+    const resolvers = new Map<number, (v: T | undefined) => void>();
+    const rejecters = new Map<number, (e: unknown) => void>();
+    const owned: Promise<T | undefined>[] = [];
+    for (const id of toFetch) {
+      const mapKey = `${key}:id:${id}`;
+      const p = new Promise<T | undefined>((resolve, reject) => {
+        resolvers.set(id, resolve);
+        rejecters.set(id, reject);
+      });
+      // Delete the in-flight entry as soon as THIS id settles (success or error) — matches the
+      // failOpenInFlight .finally(delete) pattern so nothing leaks under a sustained wedge.
+      p.finally(() => {
+        // Only delete if we still own this entry (defensive against a later same-id round).
+        if (degradedIdInFlight.get(mapKey) === p) degradedIdInFlight.delete(mapKey);
+      }).catch(() => undefined);
+      degradedIdInFlight.set(mapKey, p);
+      owned.push(p);
+    }
+
+    if (toFetch.length > 0) {
+      // Same batching the cache-miss path uses (lookupFn capped at 10000 ids/call).
+      const dbResults: Record<string, T> = {};
+      try {
+        for (const batch of chunk(toFetch, 10000)) {
+          const batchResults = await lookupFn([...batch] as number[]);
+          Object.assign(dbResults, batchResults);
+        }
+      } catch (err) {
+        // Genuine origin/DB error: reject EVERY per-id promise we own so the error propagates
+        // to this caller AND any concurrent request that joined via the in-flight map (it is
+        // NOT swallowed). The .finally above removes each map entry.
+        for (const id of toFetch) rejecters.get(id)?.(err);
+        throw err;
+      }
+      // Settle each owned per-id promise with its value (or undefined when not found).
+      for (const id of toFetch) resolvers.get(id)?.(dbResults[id]);
+    }
+
+    // Await both the ids we fetched and the ids we reused from a concurrent in-flight fetch.
+    const settled = await Promise.all([...reused, ...owned]);
+
+    const degradedResults = new Set<T>();
+    for (const result of settled) {
+      if (result) degradedResults.add(result);
     }
     if (appendFn) await appendFn(degradedResults);
     return [...degradedResults].map((x) => {
@@ -199,7 +256,11 @@ export function createCachedArray<T extends object>({
       // Redis READ failed (cluster stall / socketTimeout / command-deadline). The
       // lookupFn itself is OUTSIDE this catch — a genuine DB/logic error from the origin
       // still propagates (matches fetchThroughCache, which never wraps fetchFn). Degrade
-      // to a single-flighted origin fetch instead of a 500.
+      // to an origin fetch instead of a 500, bounded against a DB stampede by TWO layers:
+      //   (1) outer per-id-set single-flight (failOpenInFlight) collapses IDENTICAL id-sets;
+      //   (2) inner per-ID coalescing inside fetchFromOriginDegraded (degradedIdInFlight)
+      //       collapses OVERLAPPING id-sets (the feed-page case) so per-(key, pod) DB load is
+      //       bounded by distinct concurrent ids, not by the number of distinct pages.
       logSysRedisFailOpen('read-degraded', `createCachedArray mGet (cache cluster) [${key}]`, err, {
         key,
         ids: distinctIds.length,
@@ -553,14 +614,49 @@ type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
  * thundering-herd — a worse cascade.
  *
  * This map degrades that gracefully: during a Redis stall, concurrent requests for the
- * SAME key on the SAME pod share ONE in-flight origin promise. That bounds origin load to
- * ≤ (distinct keys × pods) concurrent origin calls instead of unbounded (× per-request
- * concurrency). It is NOT cross-pod (that's what the Redis lock was for and Redis is down),
- * but it removes the per-pod multiplier, which is the dominant term under a request flood.
- * Entries are deleted as soon as the shared promise settles, so the map only ever holds
- * currently-degraded keys.
+ * SAME single-flight key on the SAME pod share ONE in-flight origin promise. For
+ * fetchThroughCache the key is the cache key, so this bounds origin load to ≤ (distinct
+ * keys × pods). For createCachedArray the key is per-(cache-key, id-SET), so on its own this
+ * collapses only IDENTICAL id-sets — NOT distinct-but-overlapping feed pages; that residual
+ * stampede is bounded by a SECOND, per-ID layer (degradedIdInFlight, above
+ * createCachedArray), which collapses overlapping id-sets so per-(key, pod) DB load is
+ * bounded by distinct concurrent ids. Together they remove the per-pod multiplier, which is
+ * the dominant term under a request flood. Neither is cross-pod (that's what the Redis lock
+ * was for and Redis is down). Entries are deleted as soon as the shared promise settles, so
+ * the map only ever holds currently-degraded keys.
  */
 const failOpenInFlight = new Map<string, Promise<unknown>>();
+
+/**
+ * Per-(pod, cache-key, id) single-flight map for the createCachedArray degraded
+ * (Redis-read-failed) origin fetch.
+ *
+ * WHY (the #2616 audit gap): the per-id-set single-flight above (failOpenInFlight, keyed
+ * `cachedArray-failopen:<key>:<sorted-id-set>`) only collapses requests for an IDENTICAL
+ * id-set. The hot consumers — imageMetaCache.fetch(imageIds) / tagIdsForImagesCache.fetch
+ * (image.service.ts) — pass PER-FEED-PAGE id lists, so under a full cluster wedge (when
+ * EVERY mGet fails) each distinct page is a distinct key → a separate origin DB call. That
+ * turns a 500-storm into a DB read flood ∝ (active feed pages × concurrency × ~80 pods).
+ *
+ * This map dedups at the INDIVIDUAL-ID granularity instead: during a wedge a degraded fetch
+ * only DB-fetches the ids for a given cache `key` that aren't ALREADY in flight on this pod,
+ * and awaits the existing in-flight promise for the rest. Because adjacent feed pages overlap
+ * heavily, this collapses OVERLAPPING id-sets — not just identical ones — so per-(key, pod)
+ * DB origin load is bounded by the count of DISTINCT ids currently being fetched, NOT by the
+ * number of distinct id-sets/pages that arrive. No fixed concurrency cap, so there is no
+ * queue to grow and no caller that waits behind a saturated semaphore: a caller either shares
+ * an in-flight promise or contributes its genuinely-missing ids to a single batched DB call.
+ *
+ * Entries are deleted as soon as their promise settles (success OR error), so the map only
+ * ever holds ids currently being fetched — no leak under a sustained wedge. A genuine
+ * lookupFn/DB error rejects the shared per-id promise (and is deleted), so it still
+ * propagates to every awaiting caller rather than being swallowed.
+ *
+ * REACHED ONLY on the redis-read-FAILED path (fetchFromOriginDegraded). On the healthy path
+ * `mGet` succeeds and this map is never touched — so it cannot affect normal traffic or
+ * healthy-path latency; it only shapes DB load during a wedge.
+ */
+const degradedIdInFlight = new Map<string, Promise<unknown>>();
 
 function fetchThroughCacheFailOpen<T>(key: string, fetchFn: () => Promise<T>): Promise<T> {
   const existing = failOpenInFlight.get(key) as Promise<T> | undefined;

@@ -102,6 +102,56 @@ describe('createCachedArray.fetch — Redis read fail-open', () => {
     }
   });
 
+  it('coalesces OVERLAPPING id-sets at the id level — the shared ids are NOT double-fetched', async () => {
+    // The audit gap this guards: hot callers (imageMetaCache / tagIdsForImagesCache) pass
+    // per-feed-page id lists. Under a full wedge (EVERY mGet rejects) the per-id-SET single-
+    // flight does NOT collapse [1,2,3] vs [2,3,4] (distinct sets) — so without per-ID
+    // coalescing each page = a full independent DB fetch, flooding the DB ∝ pages. With it,
+    // the overlap {2,3} is fetched ONCE; total distinct ids fetched = {1,2,3,4}, not 3+3=6.
+    mGetMock.mockRejectedValue(new Error('redis cluster command timed out after 3000ms'));
+
+    // Gate the first batched DB call so the second request enters fail-open while the first's
+    // per-id promises (for 1,2,3) are still in flight — that's what lets it reuse 2 and 3.
+    let releaseFirst: () => void;
+    const firstGate = new Promise<void>((r) => (releaseFirst = r));
+    const fetchedIdBatches: number[][] = [];
+    let callCount = 0;
+    const lookupFn = vi.fn(async (ids: number[]) => {
+      fetchedIdBatches.push([...ids]);
+      callCount++;
+      if (callCount === 1) await firstGate; // hold the first DB call open
+      return Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<
+        string,
+        Row
+      >;
+    });
+
+    const cache = createCachedArray<Row>({ key: 'test:overlap' as never, idKey: 'id', lookupFn });
+
+    const first = cache.fetch([1, 2, 3]); // registers per-id in-flight for 1,2,3, awaits firstGate
+    // Let the first request register its per-id in-flight entries before the second starts.
+    await Promise.resolve();
+    await Promise.resolve();
+    const second = cache.fetch([2, 3, 4]); // should reuse 2,3 in-flight, only originate 4
+    // Let the second request reach its (only) DB call for the missing id (4).
+    await Promise.resolve();
+    await Promise.resolve();
+
+    releaseFirst!();
+    const [r1, r2] = await Promise.all([first, second]);
+
+    // Every distinct id fetched across ALL lookupFn calls — must be exactly {1,2,3,4} (the
+    // overlap counted once), proving per-id dedup. Not 6 (3+3), which is the unbounded flood.
+    const allFetched = new Set(fetchedIdBatches.flat());
+    expect([...allFetched].sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
+    expect(fetchedIdBatches.flat()).toHaveLength(4); // no id fetched twice
+
+    // Correctness: each request still gets ALL of its requested ids back.
+    expect(r1.map((x) => x.id).sort((a, b) => a - b)).toEqual([1, 2, 3]);
+    expect(r2.map((x) => x.id).sort((a, b) => a - b)).toEqual([2, 3, 4]);
+    expect(r2.find((x) => x.id === 2)?.name).toBe('db-2'); // the reused-from-first value
+  });
+
   it('does NOT swallow a genuine lookupFn (origin/DB) error — it must still propagate', async () => {
     mGetMock.mockRejectedValue(new Error('redis cluster command timed out after 3000ms'));
     const lookupFn = vi.fn(async () => {
