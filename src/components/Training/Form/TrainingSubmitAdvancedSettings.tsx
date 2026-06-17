@@ -783,10 +783,13 @@ export const AdvancedSettings = ({
               <Text>Training Settings</Text>
             </Accordion.Control>
             <Accordion.Panel>
-              {/* withBorder=false: the accordion item already draws the outer border, so the
-                  table's own border would double up against it. */}
+              {/* withBorder=false avoids doubling the table border against the accordion item;
+                  border-t adds back just the divider between the header and the first row. */}
               <DescriptionTable
                 withBorder={false}
+                paperProps={{
+                  style: { borderTop: '1px solid var(--mantine-color-default-border)' },
+                }}
                 labelWidth="200px"
                 items={orderedTrainingSettings
                   .filter((ts) => ts.name === 'maxTrainEpochs' || ts.name === 'targetSteps')
@@ -1203,6 +1206,9 @@ export const AdvancedSettings = ({
               </Card>
               <DescriptionTable
                 withBorder={false}
+                paperProps={{
+                  style: { borderTop: '1px solid var(--mantine-color-default-border)' },
+                }}
                 labelWidth="200px"
                 items={orderedTrainingSettings
                   // Steps & Checkpoints render in the always-visible block above for AI Toolkit.
