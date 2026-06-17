@@ -14,7 +14,7 @@
 // serialization (encode/decode) changes here — callbacks still build `token.user` via
 // getSessionUser, refreshToken, etc. The encoder just signs whatever the callbacks produced.
 import { randomUUID } from 'crypto';
-import { importPKCS8, importSPKI, exportJWK, SignJWT } from 'jose';
+import { importPKCS8, importSPKI, exportJWK, SignJWT, type CryptoKey } from 'jose';
 import type { JWTEncodeParams, JWTDecodeParams, JWT } from 'next-auth/jwt';
 import { loadAuthEnv } from './env';
 import { createAuthVerifier } from './verify';
@@ -24,6 +24,34 @@ import { createAuthVerifier } from './verify';
 // relying parties. The same hub key signs both, so EC P-256 keys are required (AUTH_JWT_PRIVATE_KEY /
 // AUTH_JWT_PUBLIC_KEY must be an EC keypair).
 const ALG = 'ES256';
+
+// Boot-time guard: ES256 demands an EC P-256 (prime256v1) private key. An RSA/Ed25519/etc. key is a
+// config error (out-of-date keygen docs are the classic cause) — without this, jose surfaces it as a
+// cryptic "Invalid key type" (or, on a jose version that imports it leniently, only at sign time).
+// We turn both cases into one actionable message naming the env var and the required key type. Works
+// on the WebCrypto CryptoKey jose returns: key.algorithm is { name: 'ECDSA', namedCurve: 'P-256' }.
+async function assertEcP256(imported: Promise<CryptoKey>): Promise<CryptoKey> {
+  let key: CryptoKey;
+  try {
+    key = await imported;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `[@civitai/auth] AUTH_JWT_PRIVATE_KEY must be an EC P-256 (prime256v1) key for ES256; ` +
+        `it failed to import as one (${reason}). Generate with: ` +
+        `openssl ecparam -genkey -name prime256v1 -noout -out priv.pem`
+    );
+  }
+  const alg = key.algorithm as { name?: string; namedCurve?: string };
+  if (alg?.name !== 'ECDSA' || alg?.namedCurve !== 'P-256') {
+    throw new Error(
+      `[@civitai/auth] AUTH_JWT_PRIVATE_KEY must be an EC P-256 (prime256v1) key for ES256; ` +
+        `got ${alg?.name ?? 'unknown'}${alg?.namedCurve ? ` (${alg.namedCurve})` : ''}. ` +
+        `Generate with: openssl ecparam -genkey -name prime256v1 -noout -out priv.pem`
+    );
+  }
+  return key;
+}
 
 export interface SessionSignerConfig {
   privateKeyPem?: string; // PKCS8
@@ -91,9 +119,12 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
   // UIs emit). jose needs real newlines, so convert escaped `\n` back.
   const normalizePem = (pem: string) => pem.replace(/\\n/g, '\n');
 
-  // Imported once, lazily — importing this module never touches process.env.
-  let _priv: ReturnType<typeof importPKCS8> | undefined;
-  const privateKey = () => (_priv ??= importPKCS8(normalizePem(cfg.privateKeyPem!), ALG));
+  // Imported once, lazily — importing this module never touches process.env. The import is wrapped
+  // by assertEcP256 so a misconfigured key (e.g. an RSA key from out-of-date keygen docs) fails fast
+  // with an actionable message instead of jose's cryptic "Invalid key type".
+  let _priv: Promise<CryptoKey> | undefined;
+  const privateKey = () =>
+    (_priv ??= assertEcP256(importPKCS8(normalizePem(cfg.privateKeyPem!), ALG)));
 
   // Decode reuses the spoke verifier so the hub accepts both new ES256 and (during the
   // migration window) legacy tokens it previously issued. Built lazily so a mint-only hub

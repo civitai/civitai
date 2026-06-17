@@ -32,6 +32,15 @@ export interface AuthVerifierConfig {
   publicKeyPem?: string;
   /** Migration-window only: secret to decode legacy next-auth JWE cookies. */
   legacySecret?: string;
+  /**
+   * Explicit kill-switch for the legacy next-auth JWE fallback. The legacy decode is a SECOND trust
+   * root (symmetric, no iss/aud — the old cookies never carried them), so it must be gated by an
+   * explicit decision, not merely inferred from `legacySecret` presence. Defaults to "on when a
+   * legacy secret is configured" to preserve migration-window behavior; set `false` at cutover to
+   * hard-disable legacy acceptance even while NEXTAUTH_SECRET is still in the env, then remove this
+   * whole branch once all legacy cookies have aged out.
+   */
+  legacyEnabled?: boolean;
   /** Injected revocation check (e.g. the sysRedis TOKEN_STATE marker). Fail-open inside. */
   isRevoked?: (claims: SessionClaims) => Promise<boolean> | boolean;
 }
@@ -68,6 +77,9 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     cookieName: config.cookieName ?? sessionCookieName(issuer?.startsWith('https://') ?? false),
     publicKeyPem: config.publicKeyPem ?? env.AUTH_JWT_PUBLIC_KEY,
     legacySecret: config.legacySecret ?? env.NEXTAUTH_SECRET,
+    // Explicit gate for the legacy JWE trust root. Default: enabled iff a legacy secret is present
+    // (preserves migration-window behavior); pass `legacyEnabled: false` to force it off at cutover.
+    legacyEnabled: config.legacyEnabled ?? true,
     isRevoked: config.isRevoked,
   };
 
@@ -81,7 +93,10 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
 
   // Branch so each jwtVerify call matches a single jose overload (KeyLike vs JWKS-getter).
   async function verifyAsymmetric(token: string) {
-    const opts = { issuer: cfg.issuer, audience: cfg.audience };
+    // Pin algorithms to ES256 explicitly: the trust root is the EC public key, but the allowed alg
+    // must NOT be inferred from the verification key (alg-confusion guard) — jose only ever accepts
+    // an ES256 signature here, never anything the header asks for.
+    const opts = { issuer: cfg.issuer, audience: cfg.audience, algorithms: [ALG] };
     return cfg.publicKeyPem ? jwtVerify(token, await localKey(), opts) : jwtVerify(token, jwks!, opts);
   }
 
@@ -106,9 +121,11 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
       } catch {
         return null; // bad signature / expired / wrong issuer
       }
-    } else if (cfg.legacySecret) {
+    } else if (cfg.legacyEnabled && cfg.legacySecret) {
       // Legacy next-auth JWE (encrypted, hkdf from NEXTAUTH_SECRET) — decoded with jose, no next-auth dep
-      // (legacy-cookie.ts). Returns null on a corrupt/foreign/expired cookie. Drop post-cutover.
+      // (legacy-cookie.ts). Gated behind the explicit `legacyEnabled` switch (a second, symmetric trust
+      // root with no iss/aud), not just secret presence. Returns null on a corrupt/foreign/expired
+      // cookie. Drop this branch post-cutover.
       claims = await decodeLegacySessionCookie(token, cfg.legacySecret);
     }
 

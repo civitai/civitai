@@ -94,3 +94,71 @@ describe('publicJwks', () => {
     expect(jwks.keys[0]).toMatchObject({ kid: 'test-1', use: 'sig', alg: 'ES256', kty: 'EC' });
   });
 });
+
+describe('private key curve assertion', () => {
+  it('accepts a valid EC P-256 key (mints without error)', async () => {
+    // The default `signer` is built from a P-256 keypair (see beforeAll); minting must succeed.
+    await expect(signer.mintSessionToken({ user: { id: 5 } })).resolves.toEqual(expect.any(String));
+  });
+
+  it('rejects an RSA key with a clear, actionable ES256/P-256 error', async () => {
+    const rsa = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    const rsaSigner = createSessionSigner({
+      privateKeyPem: rsa.privateKey,
+      publicKeyPem: rsa.publicKey,
+      kid: 'rsa-1',
+      issuer,
+      audience,
+      maxAge: 3600,
+    });
+    // The key is imported lazily on first mint; the assertion must fire there with our message.
+    await expect(rsaSigner.mintSessionToken({ user: { id: 5 } })).rejects.toThrow(
+      /AUTH_JWT_PRIVATE_KEY must be an EC P-256/
+    );
+  });
+
+  it('rejects a valid EC key on the WRONG curve (P-384) with the same actionable error', async () => {
+    // The classic near-miss: a genuine EC key, but secp384r1 (ES384) instead of P-256. jose binds
+    // the curve to the requested alg at import, so this must be rejected — an off-curve key would
+    // otherwise mint tokens spokes pinned to ES256 can never verify.
+    const ec384 = generateKeyPairSync('ec', {
+      namedCurve: 'secp384r1',
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    const signer384 = createSessionSigner({
+      privateKeyPem: ec384.privateKey,
+      publicKeyPem: ec384.publicKey,
+      kid: 'p384-1',
+      issuer,
+      audience,
+      maxAge: 3600,
+    });
+    await expect(signer384.mintSessionToken({ user: { id: 5 } })).rejects.toThrow(
+      /AUTH_JWT_PRIVATE_KEY must be an EC P-256/
+    );
+  });
+
+  it('rejects an Ed25519 key with the same actionable error', async () => {
+    // EdDSA, not ECDSA — must not slip through the EC-name check.
+    const ed = generateKeyPairSync('ed25519', {
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    const edSigner = createSessionSigner({
+      privateKeyPem: ed.privateKey,
+      publicKeyPem: ed.publicKey,
+      kid: 'ed-1',
+      issuer,
+      audience,
+      maxAge: 3600,
+    });
+    await expect(edSigner.mintSessionToken({ user: { id: 5 } })).rejects.toThrow(
+      /AUTH_JWT_PRIVATE_KEY must be an EC P-256/
+    );
+  });
+});

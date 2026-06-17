@@ -10,8 +10,24 @@ import {
 
 export { readReturnUrl, readSync };
 
-// Allow redirects to any civitai-* origin (mirrors the main app's isSafeCrossOriginRedirect).
-const isCivitaiOrigin = (origin: string) => origin.includes('civitai');
+// Allow redirects only to a civitai eTLD+1 (civitai.com / civitai.red) or a subdomain of one. An exact
+// host check — NOT a substring test: `origin.includes('civitai')` would accept civitai.evil.com,
+// evil-civitai.com, civitai.com.attacker.io, etc. (open redirect). The leading dot in the suffix checks
+// the subdomain boundary so `xcivitai.com` / `notcivitai.red` are rejected.
+const isCivitaiOrigin = (origin: string): boolean => {
+  let host: string;
+  try {
+    host = new URL(origin).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return (
+    host === 'civitai.com' ||
+    host.endsWith('.civitai.com') ||
+    host === 'civitai.red' ||
+    host.endsWith('.civitai.red')
+  );
+};
 
 export function buildPostLoginRedirect(
   returnUrl: string,
