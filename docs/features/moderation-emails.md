@@ -50,7 +50,7 @@ type ModerationActionEmailData = {
   to: string | null;
   username: string;
   kind: ModerationActionKind;
-  reason?: string;   // brief explanation (publicBanReasonLabel + detailsExternal / resolvedMessage)
+  reason?: string;   // sanitized label only (e.g. publicBanReasonLabel). Mod free-text is NOT emailed — see "Policy links + free-text removal" below.
   ctaUrl?: string;   // defaults to https://support.civitai.com on negative kinds
 };
 ```
@@ -68,13 +68,18 @@ export { moderationActionEmail } from './moderation/moderationAction.email';
 ```
 
 ### Copy
+> Updated 2026-06 — negative kinds now append a Terms of Service link and moderator
+> free-text is no longer emailed. See "Policy links + free-text removal" below.
 - **account-banned** — "Your Civitai account has been banned." + `publicBanReasonLabel`
-  (`banReasonDetails`, `server/common/constants.ts`) + `detailsExternal` free text.
-  **Use `publicBanReasonLabel`, never `privateBanReasonLabel`.**
+  (`banReasonDetails`, `server/common/constants.ts`) + ToS link.
+  **Use `publicBanReasonLabel`, never `privateBanReasonLabel`.** `detailsExternal` is no
+  longer emailed.
 - **account-unbanned** — standard reinstatement wording, no stored reason (`banDetails` is
   wiped on unban): "Your account has been reinstated and full access restored."
-- **restriction-upheld / appeal-rejected** — kept-decision wording + `resolvedMessage`.
-- **restriction-overturned / appeal-approved** — positive wording + `resolvedMessage`.
+- **restriction-upheld** — kept-decision wording + ToS link. `resolvedMessage` no longer emailed.
+- **appeal-rejected** — kept-decision wording + ToS link. (Still emails `resolvedMessage` —
+  see the gap note below.)
+- **restriction-overturned / appeal-approved** — positive wording, no reason, no link.
 
 ## Hook changes
 
@@ -127,6 +132,53 @@ Single choke point — the `mod/ban-user.ts` webhook routes through this service
 6. typecheck / lint.
 
 ## Resolved decisions
-- Unban / overturn copy → standard reinstatement wording (overturns include `resolvedMessage`).
+- Unban / overturn copy → standard reinstatement wording. Positive kinds carry no reason and
+  no ToS link (updated 2026-06).
 - `force` unban → **skip** email.
 - Negative emails → **Contact Support** CTA (`https://support.civitai.com`); no dead appeal link.
+
+## Policy links + free-text removal (update 2026-06)
+
+Mod-team follow-up. Two goals: (1) link emails to the ToS instead of a blunt reason, so
+users retaliate less from over-explicit text; (2) stop emailing moderator free-text — a mod
+could otherwise send a hateful/targeted message via the email.
+
+**Principle:** emails render only structured, pre-approved content (sanitized label + ToS
+link). Moderator free-text stays internal (`meta.banDetails`, `UserStrike.description`, the
+in-app restriction notification) for appeal/Retool/audit — never emailed.
+
+**Behavior:**
+- A `/content/tos` link is appended on **negative** kinds only (`account-banned`,
+  `restriction-upheld`, `appeal-rejected`). Positive kinds get no reason and no link.
+- **Ban** — `reason` = `publicBanReasonLabel` only; `detailsExternal` dropped from email,
+  still stored in `meta.banDetails`.
+- **Restriction** — `resolvedMessage` dropped from email; in-app notification keeps it.
+- **Strike** (`strikeIssued.email.ts`) — shows `strikeReasonPublicLabel` + ToS link instead
+  of the raw `description`; `description` still stored on `UserStrike` and shown in-app/Retool.
+
+Single ToS target — no per-reason-code page mapping, and no ToS section anchors (`tos.md`
+sections are bold paragraphs, not headings, and the renderer has no `rehype-slug`).
+
+**`strikeReasonPublicLabel`** (`src/server/schema/strike.schema.ts`):
+
+| StrikeReason | Email label |
+|---|---|
+| BlockedContent | Blocked content |
+| RealisticMinorContent | Realistic minor content |
+| CSAMContent | Child safety violation |
+| TOSViolation | Terms of Service violation |
+| HarassmentContent | Harassment |
+| ProhibitedContent | Prohibited content |
+| ManualModAction | Moderator action |
+
+**Files touched:** `moderationAction.email.ts`, `strikeIssued.email.ts`,
+`user.service.ts` (`toggleBan`), `user-restriction.router.ts`, `strike.schema.ts`.
+
+**Known gap:** the appeal path (`resolveEntityAppeal()`, `services/report.service.ts:706`)
+still passes `reason: resolvedMessage` to `appeal-rejected`, so moderator free-text is still
+emailed there. Ban / restriction / strike were stripped; appeals were not. Strip for
+consistency if the same targeting concern applies.
+
+**Strike availability:** strikes remain `['dev','granted']` (not GA — Phase 1, no automated
+issuer), so the strike email only fires when a dev/granted moderator issues a strike. The
+email changes above are independent of that flag.
