@@ -1465,7 +1465,8 @@ export class BlockRegistry {
    * W10 — resolve a page block by its `<slug>` (== AppBlock.block_id), for the
    * SSR page route. Returns the approved app's id + manifest iframe.src + page
    * descriptor, or null when no approved page app owns that slug (→ 404).
-   * `block_id` is unique per app, so the slug → app mapping is 1:1.
+   * `block_id` is GLOBALLY unique (`@@unique([blockId])`, the W1 C-3 constraint),
+   * so the slug → app mapping is guaranteed 1:1.
    */
   static async resolvePageBlockBySlug(
     slug: string,
