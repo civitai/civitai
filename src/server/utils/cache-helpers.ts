@@ -114,7 +114,30 @@ type CachedLookupOptions<T extends object> = {
   notFoundTtl?: number;
   dontCacheFn?: (data: T) => boolean;
   staleWhileRevalidate?: boolean;
+  // Length (seconds) of the stale-serve tail ADDED beyond the logical `ttl` —
+  // the window during which a stale value is served while a background
+  // revalidate runs. Defaults to `ttl`, which reproduces the historical
+  // `ttl * 2` physical expiry. Only consulted when `staleWhileRevalidate` is
+  // true. Shorten it to cut resident memory for caches whose stale tail is far
+  // larger than the sub-second revalidation actually needs.
+  staleWhileRevalidateTtl?: number;
 };
+/**
+ * Physical Redis EX (seconds) for a cached entry. The logical freshness window
+ * is `ttl`; with stale-while-revalidate the key must outlive that by a stale
+ * tail so a stale value can be served while a background revalidate runs.
+ * The tail defaults to a full `ttl` (historical `ttl * 2` behavior) but can be
+ * shortened per-cache via `staleWhileRevalidateTtl` to cut resident memory.
+ */
+export function resolveCacheExpiry(
+  ttl: number,
+  staleWhileRevalidate: boolean,
+  staleWhileRevalidateTtl?: number
+): number {
+  if (!staleWhileRevalidate) return ttl;
+  return ttl + (staleWhileRevalidateTtl ?? ttl);
+}
+
 export function createCachedArray<T extends object>({
   key,
   idKey,
@@ -126,6 +149,7 @@ export function createCachedArray<T extends object>({
   notFoundTtl,
   dontCacheFn,
   staleWhileRevalidate = true,
+  staleWhileRevalidateTtl,
 }: CachedLookupOptions<T>) {
   async function fetch(ids: number[]) {
     if (!ids.length) return [] as T[];
@@ -234,7 +258,7 @@ export function createCachedArray<T extends object>({
       }
 
       // then cache the results
-      const EX = staleWhileRevalidate ? ttl * 2 : ttl;
+      const EX = resolveCacheExpiry(ttl, staleWhileRevalidate, staleWhileRevalidateTtl);
       if (Object.keys(toCache).length > 0)
         await Promise.all(
           Object.entries(toCache).map(([id, cache]) =>
@@ -309,7 +333,9 @@ export function createCachedArray<T extends object>({
     const toCache = Object.fromEntries(
       updates.map((x) => [x[idKey], { ...x, cachedAt: invaliDate }])
     );
-    const EX = ttl * 2;
+    // invalidate is only wired up when staleWhileRevalidate is true (see the
+    // returned `bust`), so resolve the tail with SWR=true to honor any trim.
+    const EX = resolveCacheExpiry(ttl, true, staleWhileRevalidateTtl);
     if (Object.keys(toCache).length > 0)
       await Promise.all(
         Object.entries(toCache).map(([id, cache]) =>
@@ -330,7 +356,7 @@ export function createCachedArray<T extends object>({
       // returned to a caller — so running appendFn here only risks persisting
       // post-mutation shape to Redis. Leave it to fetch().
       const cachedAt = new Date();
-      const EX = staleWhileRevalidate ? ttl * 2 : ttl;
+      const EX = resolveCacheExpiry(ttl, staleWhileRevalidate, staleWhileRevalidateTtl);
       await Promise.all(
         Object.entries(results).map(([rid, x]) =>
           redis.packed.set(`${key}:${rid}`, { ...x, cachedAt }, { EX })
