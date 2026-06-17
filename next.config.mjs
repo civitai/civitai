@@ -32,6 +32,12 @@ export default defineNextConfig(
   withAxiom({
     env: {
       version: packageJson.version,
+      // The client login helpers need the hub origin. Reuse AUTH_JWT_ISSUER (the server's single hub-URL source)
+      // by exposing it to the client bundle as NEXT_PUBLIC_AUTH_HUB_URL — so there's no separate var to set. An
+      // explicit NEXT_PUBLIC_AUTH_HUB_URL still wins if provided. (AUTH_JWT_ISSUER is public: the JWT `iss` /
+      // JWKS origin.)
+      NEXT_PUBLIC_AUTH_HUB_URL:
+        process.env.NEXT_PUBLIC_AUTH_HUB_URL ?? process.env.AUTH_JWT_ISSUER,
     },
     // webpack: (config, options) => {
     //   if (isDev && !options.isServer) {

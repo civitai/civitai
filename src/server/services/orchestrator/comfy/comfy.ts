@@ -1,6 +1,6 @@
 import type { ComfyStepTemplate } from '@civitai/client';
 import { NsfwLevel, TimeSpan } from '@civitai/client';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type * as z from 'zod';
 import { maxRandomSeed } from '~/server/common/constants';
 import type { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';

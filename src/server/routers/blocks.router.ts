@@ -61,7 +61,7 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 
 /**
  * H-2: every blocks router procedure gates on the Flipt flag. When the

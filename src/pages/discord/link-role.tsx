@@ -9,29 +9,43 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons-react';
-import type { BuiltInProviderType } from 'next-auth/providers/index';
-import type { getProviders } from 'next-auth/react';
-import { getProvidersInProcess } from '~/server/auth/get-providers-in-process';
+import {
+  IconBrandDiscord,
+  IconCircleCheck,
+  IconExclamationMark,
+  IconHome,
+} from '@tabler/icons-react';
+import { hubLoginUrl } from '@civitai/auth/client';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { handleSignIn } from '~/utils/auth-helpers';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { SocialButton } from '~/components/Social/SocialButton';
 import { dbRead } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
 import { getUserDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { env } from '~/env/client';
 
-type NextAuthProviders = AsyncReturnType<typeof getProviders>;
 type Props = {
-  providers: NextAuthProviders | null;
   linked: boolean;
 };
 
+// Re-authorize Discord for the CURRENT user via the hub's account-LINKING flow (auth.civitai.com/login/discord
+// ?link=true). The hub requests the `role_connections.write` scope and stores the GRANTED scope on the Account,
+// so on return this page's getServerSideProps sees it and pushes the role-connection metadata. Replaces the old
+// in-app SocialButton + handleSignIn — the hub owns OAuth + scope storage now.
+function connectDiscord() {
+  const hub = env.NEXT_PUBLIC_AUTH_HUB_URL;
+  if (typeof window === 'undefined' || !hub) return;
+  window.location.href = hubLoginUrl(hub, {
+    provider: 'discord',
+    link: true,
+    returnUrl: `${window.location.origin}/discord/link-role`,
+  });
+}
+
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx }) => {
+  resolver: async ({ session }) => {
     if (!session?.user) {
       return {
         redirect: {
@@ -55,19 +69,14 @@ export const getServerSideProps = createServerSideProps({
         console.error(err);
       }
     }
-    // Build the provider list in-process instead of self-fetching
-    // /api/auth/providers — see ~/server/auth/get-providers-in-process. The
-    // un-timed self-fetch could otherwise stall this SSR render to the 30s
-    // gateway ceiling (504).
-    const providers = !linked ? getProvidersInProcess(ctx.req) : null;
 
     return {
-      props: { providers, linked },
+      props: { linked },
     };
   },
 });
 
-export default function LinkRole({ providers, linked }: Props) {
+export default function LinkRole({ linked }: Props) {
   return (
     <Container size="xs">
       <Paper radius="md" p="xl" withBorder>
@@ -98,14 +107,14 @@ export default function LinkRole({ providers, linked }: Props) {
             </Title>
             <Text>{`Take your Civitai accolades into Discord to get special roles and perks by connecting your account.`}</Text>
 
-            {providers?.discord && (
-              <SocialButton
-                size="lg"
-                key={providers.discord.name}
-                provider={providers.discord.id as BuiltInProviderType}
-                onClick={() => handleSignIn(providers.discord.id, '/discord/link-role')}
-              />
-            )}
+            <Button
+              size="lg"
+              leftSection={<IconBrandDiscord size={20} />}
+              onClick={connectDiscord}
+              className="bg-[#5865f2] hover:bg-[#4752c4]"
+            >
+              Connect Discord
+            </Button>
             <AlertWithIcon icon={<IconExclamationMark />} color="yellow">
               Even if you have already connected your Discord account, you will need to click the
               button to link your role.

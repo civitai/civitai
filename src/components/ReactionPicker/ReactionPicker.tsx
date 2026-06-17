@@ -2,7 +2,7 @@ import { Button, Group, Popover, Text, Tooltip } from '@mantine/core';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { IconMoodSmile, IconPlus } from '@tabler/icons-react';
 import { groupBy } from 'lodash-es';
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import { useSession } from '~/providers/SessionProvider';
 import { createContext, useContext, useMemo } from 'react';
 

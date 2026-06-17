@@ -1,9 +1,6 @@
 import { useLocalStorage, usePrevious } from '@mantine/hooks';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { authProxy } from '~/utils/auth-proxy';
-// STEP-H-REMOVAL: next-auth/react `signIn` (legacy account-switch credentials redeem) — goes in phase 5 with
-// the next-auth server. `useSession` is now the first-party provider.
-import { signIn } from 'next-auth/react';
 import { useSession } from '~/providers/SessionProvider';
 import { handleSignOut } from '~/utils/auth-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -207,14 +204,8 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
       window.location.assign(cb);
       return;
     }
-    // 2. Legacy-only account (mid-migration) → redeem its stored token, which links it to the device set.
-    //    STEP-H-REMOVAL: becomes a hub-native legacy-token exchange when next-auth account-switch is removed.
-    const legacy = legacyAccounts[idStr];
-    if (legacy && !(idStr in deviceAccounts)) {
-      await signIn('account-switch', { callbackUrl: cb, ...legacy.token });
-      return;
-    }
-    // 3. Aged out of the seamless window → re-authenticate this account at the hub.
+    // 2. Not seamlessly switchable (aged out of the device set, or a legacy account whose seamless next-auth
+    //    redeem was removed with next-auth) → re-authenticate this account at the hub.
     window.location.assign(getLoginLink({ returnUrl: cb, reason: 'switch-accounts' }));
   };
 

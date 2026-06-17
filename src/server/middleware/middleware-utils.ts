@@ -1,4 +1,4 @@
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type { NextRequest, NextResponse } from 'next/server';
 
 export type Middleware = {

@@ -18,18 +18,24 @@ export async function runLoginSideEffects({
   res,
   userId,
   isNewUser,
+  loginRedirectReason,
 }: {
   req: NextApiRequest;
   res: NextApiResponse;
   userId: number;
   isNewUser: boolean;
+  /** The login `reason`, now passed in via the post-login URL (re-homed off the legacy LoginContent cookie). */
+  loginRedirectReason?: string;
 }): Promise<void> {
   // Orchestrator service-auth cookie is reissued per-session; clear the stale one on (re)login.
   deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
 
   const source = req.cookies['ref_source'] as string;
   const landingPage = req.cookies['ref_landing_page'] as string;
-  const loginRedirectReason = req.cookies['ref_login_redirect_reason'] as string;
+  // Prefer the reason threaded through the post-login URL; fall back to the legacy `ref_login_redirect_reason`
+  // cookie (set by the old in-page LoginContent) during the transition until that UI is removed.
+  const reason =
+    loginRedirectReason ?? (req.cookies['ref_login_redirect_reason'] as string | undefined);
 
   const tracker = new Tracker(req, res);
   if (isNewUser) {
@@ -37,8 +43,8 @@ export async function runLoginSideEffects({
     await tracker.userActivity({ type: 'Registration', targetUserId: userId, source, landingPage });
 
     // Only source is set via the auth callback; userReferralCode requires finishing onboarding.
-    if (source || landingPage || loginRedirectReason) {
-      await createUserReferral({ id: userId, source, landingPage, loginRedirectReason });
+    if (source || landingPage || reason) {
+      await createUserReferral({ id: userId, source, landingPage, loginRedirectReason: reason });
     }
 
     await createNotification({

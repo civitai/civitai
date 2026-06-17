@@ -69,7 +69,7 @@ import {
   qwenSizes,
   grokSizes,
 } from '~/server/common/constants';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';

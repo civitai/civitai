@@ -42,8 +42,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     ? Date.now() - new Date(createdAt).getTime() < NEW_USER_WINDOW_MS
     : false;
 
+  // The login `reason` rides in this URL (re-homed off the legacy LoginContent cookie) so referral attribution
+  // still sees it without an in-page login surface.
+  const loginRedirectReason = typeof req.query.reason === 'string' ? req.query.reason : undefined;
+
   // Best-effort — a failure here must never strand the user on a blank page; they still reach `dest`.
-  await runLoginSideEffects({ req, res, userId: user.id, isNewUser }).catch(() => null);
+  await runLoginSideEffects({ req, res, userId: user.id, isNewUser, loginRedirectReason }).catch(
+    () => null
+  );
 
   res.redirect(302, dest);
 }

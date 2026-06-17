@@ -1,7 +1,7 @@
 import type { GetServerSidePropsContext, NextApiRequest, NextApiResponse } from 'next';
 // FINAL-CLEANUP: `Session` is the app-wide session return type; replace it with a first-party type when the
 // `next-auth` dependency is dropped. This is the only remaining next-auth reference here, and it's type-only.
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import {
   sessionCookieName,
   deviceCookieName,

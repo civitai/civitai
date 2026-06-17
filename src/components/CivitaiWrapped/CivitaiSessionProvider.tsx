@@ -1,8 +1,6 @@
-import type { Session, SessionUser } from 'next-auth';
-// STEP-H-REMOVAL: next-auth/react `signIn` (re-auth on refresh error) — goes in phase 5 with the next-auth server.
-import { signIn } from 'next-auth/react';
+import type { Session, SessionUser } from '~/types/session';
 import { useSession } from '~/providers/SessionProvider';
-import { createContext, useContext, useEffect, useMemo } from 'react';
+import { createContext, useContext, useMemo } from 'react';
 import { useDomainSync } from '~/hooks/useDomainSync';
 import { useAppContext } from '~/providers/AppProvider';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -101,10 +99,6 @@ export function CivitaiSessionProvider({
     settingsAutoplayGifs,
     verifiedBot,
   ]);
-
-  useEffect(() => {
-    if (data?.error === 'RefreshAccessTokenError') signIn();
-  }, [data?.error]);
 
   if (typeof window !== 'undefined') {
     window.isAuthed = sessionUser.type === 'authed';

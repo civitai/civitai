@@ -1,4 +1,4 @@
-import { SYNC_PARAM } from '@civitai/auth';
+import { SYNC_PARAM } from '@civitai/auth/client';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
 import { QS } from '~/utils/qs';
 

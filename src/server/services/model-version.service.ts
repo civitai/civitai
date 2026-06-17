@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, constants, nsfwRestrictedBaseModels } from '~/server/common/constants';

@@ -1,4 +1,4 @@
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import { getSessionUser } from './session-user';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { dbRead, dbWrite } from '~/server/db/client';

@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 // before any <Link> mounts — see the file for rationale.
 import '~/utils/disable-router-prefetch';
 import { getCookie, getCookies, deleteCookie } from 'cookies-next';
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import { SessionProvider } from '~/providers/SessionProvider';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
@@ -340,7 +340,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
-  let hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+  // Match BOTH session cookie families: the new hub `civ-token` / `__Secure-civ-token` AND the legacy
+  // next-auth `civitai-token` / `__Secure-civitai-token` (still honored during the cutover). Note the suffixes
+  // don't subsume each other — `civitai-token` does NOT end with `civ-token` — so both checks are required.
+  // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
+  let hasAuthCookie = Object.keys(cookies).some(
+    (x) => x.endsWith('civ-token') || x.endsWith('civitai-token')
+  );
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =

@@ -8,7 +8,9 @@ import { checkRateLimit } from '$lib/server/auth/rate-limit';
 
 // Start the upstream OAuth flow: stash state/PKCE-verifier + the returnUrl/sync we must honor
 // after login, in short-lived cookies, then redirect to the provider's consent screen.
-export const GET: RequestHandler = async ({ params, url, cookies, getClientAddress }) => {
+// `?link=true` is the account-LINKING intent (the "Connect <provider>" flow): it requires an active session
+// and tells the callback to attach the provider to the CURRENT user instead of logging in / creating one.
+export const GET: RequestHandler = async ({ params, url, cookies, locals, getClientAddress }) => {
   // Rate limit per IP — bounds redirect/cookie churn from someone hammering the login start.
   if (!(await checkRateLimit('oauth-start', getClientAddress(), 30, 60))) {
     error(429, 'Too many requests');
@@ -18,6 +20,9 @@ export const GET: RequestHandler = async ({ params, url, cookies, getClientAddre
   if (!provider || !provider.clientId() || !provider.clientSecret()) {
     error(404, 'Unknown or unconfigured provider');
   }
+
+  const link = url.searchParams.get('link') === 'true';
+  if (link && !locals.user) error(401, 'must be signed in to link an account');
 
   const redirectUri = `${url.origin}/login/${provider.id}/callback`;
   const state = randomBytes(16).toString('hex');
@@ -31,6 +36,12 @@ export const GET: RequestHandler = async ({ params, url, cookies, getClientAddre
   cookies.set('oauth_return', returnUrl, opts);
   if (sync) cookies.set('oauth_sync', sync, opts);
   else cookies.delete('oauth_sync', { path: '/' });
+  if (link) cookies.set('oauth_link', '1', opts);
+  else cookies.delete('oauth_link', { path: '/' });
 
-  redirect(302, buildAuthorizeUrl(provider, { redirectUri, state, codeChallenge }));
+  // `prompt` (e.g. select_account) is forwarded straight to the provider — it only affects the consent screen,
+  // so it needs no round-trip cookie like returnUrl/sync/link do.
+  const prompt = url.searchParams.get('prompt');
+
+  redirect(302, buildAuthorizeUrl(provider, { redirectUri, state, codeChallenge, prompt }));
 };

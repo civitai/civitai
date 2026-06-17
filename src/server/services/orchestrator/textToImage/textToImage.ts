@@ -1,6 +1,6 @@
 import type { Scheduler, TextToImageStepTemplate } from '@civitai/client';
 import { NsfwLevel, TimeSpan, type ImageJobNetworkParams } from '@civitai/client';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type * as z from 'zod';
 import { maxRandomSeed } from '~/server/common/constants';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';

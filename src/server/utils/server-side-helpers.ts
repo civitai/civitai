@@ -1,6 +1,6 @@
 import { createServerSideHelpers } from '@trpc/react-query/server';
 import type { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import superjson from 'superjson';
 import { Tracker } from '~/server/clickhouse/client';
 

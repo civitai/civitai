@@ -41,11 +41,39 @@ async function assignUsername(
   // Extremely unlikely (the random fallback collided 2×); leave username unset rather than throw.
 }
 
+/** Record the scope the provider actually GRANTED on an existing Account (ports legacy `updateAccountScope`).
+ *  No-op when no scope came back, so a token response without `scope` never wipes a stored one. */
+async function setAccountScope(
+  provider: string,
+  providerAccountId: string,
+  scope: string | null
+): Promise<void> {
+  if (!scope) return;
+  await db
+    .updateTable('Account')
+    .set({ scope })
+    .where('provider', '=', provider)
+    .where('providerAccountId', '=', providerAccountId)
+    .execute();
+}
+
+/** True if a user already exists for this exact email — used to allow EXISTING users with a `+`-alias email to
+ *  sign in while blocking NEW `+`-alias signups (the legacy plus-address anti-abuse gate). */
+export async function userExistsByEmail(email: string): Promise<boolean> {
+  const row = await db
+    .selectFrom('User')
+    .select('id')
+    .where('email', '=', email)
+    .executeTakeFirst();
+  return !!row;
+}
+
 // Resolve (or provision) a Civitai user for an upstream OAuth profile, then link the Account.
 // Mirrors NextAuth's adapter behavior: match by linked account → verified email → create.
 export async function findOrCreateUser(
   provider: string,
-  profile: NormalizedProfile
+  profile: NormalizedProfile,
+  scope: string | null = null
 ): Promise<SessionUser> {
   // 1. Already-linked account.
   const linked = await db
@@ -56,6 +84,9 @@ export async function findOrCreateUser(
     .executeTakeFirst();
 
   let userId = linked?.userId;
+  // Returning user — record any newly-granted scope (e.g. a Discord re-login that just approved
+  // role_connections.write), so the linked-roles flow sees it without a separate connect step.
+  if (linked) await setAccountScope(provider, profile.providerAccountId, scope);
 
   // 2. Otherwise link to an existing user by email — but ONLY if the provider VERIFIED it. This is
   //    the safe analogue of the main app's `allowDangerousEmailAccountLinking` (Google/GitHub):
@@ -78,6 +109,7 @@ export async function findOrCreateUser(
           type: 'oauth',
           provider,
           providerAccountId: profile.providerAccountId,
+          scope,
         })
         .execute();
     }
@@ -92,7 +124,9 @@ export async function findOrCreateUser(
         email: profile.email ?? null,
         username: null,
         name: profile.name ?? null,
-        image: profile.image ?? null,
+        // Legacy behavior: never store the provider's avatar — users set their own profile picture, and an
+        // unmoderated provider avatar shouldn't be displayed by default.
+        image: null,
         emailVerified: profile.email && profile.emailVerified ? new Date() : null,
       })
       .returning('id')
@@ -100,7 +134,7 @@ export async function findOrCreateUser(
     userId = created.id;
     await db
       .insertInto('Account')
-      .values({ userId, type: 'oauth', provider, providerAccountId: profile.providerAccountId })
+      .values({ userId, type: 'oauth', provider, providerAccountId: profile.providerAccountId, scope })
       .execute();
     await assignUsername(userId, [profile.email, profile.name, profile.username]);
   }
@@ -113,6 +147,41 @@ export async function findOrCreateUser(
     .executeTakeFirstOrThrow();
 
   return toSessionUser(row);
+}
+
+export type LinkResult = 'linked' | 'already-linked' | 'conflict';
+
+/**
+ * Attach an upstream OAuth provider to an EXISTING user's account — the "Connect" flow on the account page.
+ * Unlike findOrCreateUser this NEVER creates a user or establishes a session; it just adds the Account row for
+ * the already-signed-in user. Returns 'conflict' when that provider identity is already linked to a DIFFERENT
+ * user (the caller surfaces "already connected to another account"), 'already-linked' if it's this same user.
+ */
+export async function linkAccountToUser(
+  userId: number,
+  provider: string,
+  profile: NormalizedProfile,
+  scope: string | null = null
+): Promise<LinkResult> {
+  const existing = await db
+    .selectFrom('Account')
+    .select('userId')
+    .where('provider', '=', provider)
+    .where('providerAccountId', '=', profile.providerAccountId)
+    .executeTakeFirst();
+
+  if (existing) {
+    if (existing.userId !== userId) return 'conflict';
+    // Re-running "Connect" for the same user (e.g. to grant a new scope like Discord role_connections.write).
+    await setAccountScope(provider, profile.providerAccountId, scope);
+    return 'already-linked';
+  }
+
+  await db
+    .insertInto('Account')
+    .values({ userId, type: 'oauth', provider, providerAccountId: profile.providerAccountId, scope })
+    .execute();
+  return 'linked';
 }
 
 // Email magic-link sign-in: clicking the verified link proves email ownership, so the user is

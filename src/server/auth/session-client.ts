@@ -1,4 +1,4 @@
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import { createSessionClient, createSessionTokenClient, sessionCookieName } from '@civitai/auth';
 import { setSessionCookie, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';

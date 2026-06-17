@@ -13,7 +13,7 @@ const hashToken = (raw: string) =>
     .update(`${raw}${env.NEXTAUTH_SECRET ?? ''}`)
     .digest('hex');
 
-/** Issue a single-use token for `email`; returns the raw token to embed in the link. */
+/** Issue a token for `email`; returns the raw token to embed in the link. */
 export async function createVerificationToken(email: string): Promise<string> {
   const raw = randomBytes(32).toString('hex');
   await db
@@ -23,7 +23,11 @@ export async function createVerificationToken(email: string): Promise<string> {
   return raw;
 }
 
-/** Validate + consume (delete) a token. Returns true only if it matched and hadn't expired. */
+/**
+ * Validate a magic-link token. Intentionally NOT consumed on use: email scanners (Outlook ATP, Proofpoint)
+ * prefetch links and would otherwise burn a single-use token before the real click. The token stays valid for
+ * its TTL (replay bounded by it); expired rows are pruned on access. Matches the legacy NextAuth adapter.
+ */
 export async function consumeVerificationToken(email: string, raw: string): Promise<boolean> {
   const token = hashToken(raw);
   const row = await db
@@ -33,8 +37,10 @@ export async function consumeVerificationToken(email: string, raw: string): Prom
     .where('token', '=', token)
     .executeTakeFirst();
 
-  // Single-use: always delete the matched token.
-  await db.deleteFrom('VerificationToken').where('token', '=', token).execute();
-
-  return !!row && new Date(row.expires).getTime() > Date.now();
+  if (!row) return false;
+  if (new Date(row.expires).getTime() <= Date.now()) {
+    await db.deleteFrom('VerificationToken').where('token', '=', token).execute(); // expired → clean up + reject
+    return false;
+  }
+  return true;
 }

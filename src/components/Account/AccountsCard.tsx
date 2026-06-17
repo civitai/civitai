@@ -9,27 +9,48 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import type { BuiltInProviderType } from 'next-auth/providers/index';
-import { getProviders } from 'next-auth/react';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
-import { SocialLabel } from '~/components/Social/SocialLabel';
+import {
+  IconBrandDiscord,
+  IconBrandGithub,
+  IconBrandGoogle,
+  IconBrandReddit,
+} from '@tabler/icons-react';
+import { hubLoginUrl } from '@civitai/auth/client';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { handleSignIn } from '~/utils/auth-helpers';
+import { useAppContext } from '~/providers/AppProvider';
 import { trpc } from '~/utils/trpc';
 
-type NextAuthProviders = AsyncReturnType<typeof getProviders>;
+// OAuth providers shown in the connected-accounts list (id → display name + brand icon). This is main-app
+// account-management presentation; the hub owns the actual login providers (and their OAuth config) separately.
+const oauthProviderMeta = {
+  discord: { name: 'Discord', Icon: IconBrandDiscord },
+  github: { name: 'GitHub', Icon: IconBrandGithub },
+  google: { name: 'Google', Icon: IconBrandGoogle },
+  reddit: { name: 'Reddit', Icon: IconBrandReddit },
+} as const;
+type OAuthProviderId = keyof typeof oauthProviderMeta;
+
+// Start the hub's account-LINKING flow: navigate to auth.civitai.com/login/<provider>?link=true. The hub gates
+// on the active session, runs the OAuth, attaches the provider to the CURRENT user, and returns here (with
+// ?error=AccountNotLinked when that identity already belongs to another account).
+function connectAccount(providerId: string) {
+  const hub = env.NEXT_PUBLIC_AUTH_HUB_URL;
+  if (typeof window === 'undefined' || !hub) return;
+  window.location.href = hubLoginUrl(hub, {
+    provider: providerId,
+    link: true,
+    returnUrl: `${window.location.origin}/user/account#accounts`,
+  });
+}
 
 export function AccountsCard() {
   const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const { error } = useRouter().query;
+  const { availableOAuthProviders } = useAppContext();
   const { data: accounts = [] } = trpc.account.getAll.useQuery();
-
-  const [providers, setProviders] = useState<NextAuthProviders | null>(null);
-  useEffect(() => {
-    if (!providers) getProviders().then((providers) => setProviders(providers));
-  }, [providers]);
 
   const { mutate: deleteAccount, isPending: deletingAccount } = trpc.account.delete.useMutation({
     onSuccess: async () => {
@@ -37,7 +58,9 @@ export function AccountsCard() {
     },
   });
 
-  if (!providers) return null;
+  const oauthProviders = (Object.keys(oauthProviderMeta) as OAuthProviderId[]).filter((id) =>
+    availableOAuthProviders.includes(id)
+  );
   const canRemoveAccounts = accounts.length > 1 || currentUser?.emailVerified;
 
   return (
@@ -66,43 +89,40 @@ export function AccountsCard() {
           <LoadingOverlay visible={deletingAccount} />
           <Table striped withTableBorder>
             <Table.Tbody>
-              {Object.values(providers)
-                .filter((provider) => provider.type === 'oauth')
-                .map((provider) => {
-                  const account = accounts.find((account) => account.provider === provider.id);
-                  return (
-                    <Table.Tr key={provider.id}>
-                      <Table.Td>
-                        <Group justify="space-between">
-                          <SocialLabel
-                            key={provider.id}
-                            type={provider.id as BuiltInProviderType}
-                          />
-                          {!account ? (
-                            <Button
-                              variant="transparent"
-                              size="compact-sm"
-                              onClick={() =>
-                                handleSignIn(provider.id, '/user/account?connect=true#accounts')
-                              }
-                            >
-                              Connect
-                            </Button>
-                          ) : canRemoveAccounts ? (
-                            <Button
-                              variant="transparent"
-                              size="compact-sm"
-                              color="red"
-                              onClick={() => deleteAccount({ id: account.id })}
-                            >
-                              Remove
-                            </Button>
-                          ) : null}
+              {oauthProviders.map((id) => {
+                const { name, Icon } = oauthProviderMeta[id];
+                const account = accounts.find((account) => account.provider === id);
+                return (
+                  <Table.Tr key={id}>
+                    <Table.Td>
+                      <Group justify="space-between">
+                        <Group gap="xs">
+                          <Icon size={16} />
+                          {name}
                         </Group>
-                      </Table.Td>
-                    </Table.Tr>
-                  );
-                })}
+                        {!account ? (
+                          <Button
+                            variant="transparent"
+                            size="compact-sm"
+                            onClick={() => connectAccount(id)}
+                          >
+                            Connect
+                          </Button>
+                        ) : canRemoveAccounts ? (
+                          <Button
+                            variant="transparent"
+                            size="compact-sm"
+                            color="red"
+                            onClick={() => deleteAccount({ id: account.id })}
+                          >
+                            Remove
+                          </Button>
+                        ) : null}
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
             </Table.Tbody>
           </Table>
         </div>

@@ -3,7 +3,7 @@
 // from the shim.
 import { clickhouse } from '~/server/clickhouse/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';

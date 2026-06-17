@@ -10,14 +10,18 @@ import { sendVerificationEmail } from '$lib/server/email/verification.email';
 import { captchaSiteKey, verifyCaptchaToken } from '$lib/server/auth/captcha';
 import { getBlockedEmailDomains } from '$lib/server/auth/blocklist';
 import { checkRateLimit } from '$lib/server/auth/rate-limit';
+import { trackLoginRedirect } from '$lib/server/tracking';
+import { userExistsByEmail } from '$lib/server/auth/users';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const load: PageServerLoad = ({ url, locals }) => {
+export const load: PageServerLoad = ({ url, locals, getClientAddress, request }) => {
   const returnUrl = readReturnUrl(url);
   const sync = readSync(url);
   const reason = url.searchParams.get('reason');
   const error = url.searchParams.get('error');
+  // Forwarded to each provider link so e.g. the add-account flow (prompt=select_account) reaches the provider.
+  const prompt = url.searchParams.get('prompt');
 
   // Already signed in → bounce straight back to the real destination (with the sync marker
   // re-attached), unless the user wants to add/switch accounts. If there's no real returnUrl
@@ -28,12 +32,23 @@ export const load: PageServerLoad = ({ url, locals }) => {
     if (target && target !== '/') redirect(302, target);
   }
 
+  // Track the login reason as a LoginRedirect event (mirrors the old LoginContent). Only fires for a user shown
+  // the form — the signed-in case bounced above. Fire-and-forget.
+  if (reason) {
+    void trackLoginRedirect(reason, {
+      userId: locals.user?.id,
+      ip: getClientAddress(),
+      userAgent: request.headers.get('user-agent'),
+    });
+  }
+
   return {
     providers: listEnabledProviders(),
     emailEnabled: isEmailConfigured(),
     returnUrl,
     sync,
     error,
+    prompt,
     // Public Turnstile site key (delivered via SSR data, not a PUBLIC_ env var). The page renders
     // the widget only when it's set; the email action verifies the token server-side.
     turnstileSiteKey: captchaSiteKey() ?? null,
@@ -74,6 +89,12 @@ export const actions: Actions = {
     const domain = email.split('@')[1];
     if (domain && (await getBlockedEmailDomains()).includes(domain)) {
       return fail(400, { email, blockedDomain: true });
+    }
+
+    // 4. Plus-address anti-abuse: block NEW signups whose address contains '+', but let EXISTING users with a
+    //    '+' address still sign in (ports the legacy isAllowedToSignIn plus-address gate; skipped in dev).
+    if (!dev && email.includes('+') && !(await userExistsByEmail(email))) {
+      return fail(400, { email, plusBlocked: true });
     }
 
     try {

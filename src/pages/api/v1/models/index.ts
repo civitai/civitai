@@ -2,7 +2,7 @@ import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { CollectionType, ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 import type { SearchResponse } from 'meilisearch';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import * as z from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';

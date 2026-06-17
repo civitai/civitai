@@ -1,6 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { SYNC_PARAM } from '@civitai/auth';
+  import { SYNC_PARAM } from '@civitai/auth/client';
   import { buildWordmarkSvg, buildBadgeSvg, getHoliday } from '@civitai/brand';
   import {
     IconBrandDiscord,
@@ -32,6 +32,7 @@
   const href = (providerId: string) => {
     const params = new URLSearchParams({ returnUrl: data.returnUrl });
     if (data.sync) params.set(SYNC_PARAM, data.sync);
+    if (data.prompt) params.set('prompt', data.prompt);
     return `/login/${providerId}?${params.toString()}`;
   };
 
@@ -138,6 +139,9 @@
             {#if form?.captcha}<p class="error">Captcha verification failed. Please try again.</p>{/if}
             {#if form?.blockedDomain}
               <p class="error">That email domain isn't allowed. Try a different address.</p>
+            {/if}
+            {#if form?.plusBlocked}
+              <p class="error">Please use an email address without a "+" to sign up.</p>
             {/if}
             {#if form?.serverError}
               <p class="error">Something went wrong on our end. Please try again in a moment.</p>

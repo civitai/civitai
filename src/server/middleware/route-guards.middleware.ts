@@ -1,4 +1,4 @@
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type { NextRequest } from 'next/server';
 import { createMiddleware } from '~/server/middleware/middleware-utils';
 import { pathToRegexp } from 'path-to-regexp';

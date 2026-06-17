@@ -1,5 +1,9 @@
 import { createHash, randomBytes } from 'crypto';
 import { env } from '$env/dynamic/private';
+// Shared cross-app contract: the provider id set is defined once in @civitai/auth (the main app references the
+// same ids to render buttons + deep-link here). This file owns the hub-only OAuth config/secrets for each.
+import type { ProviderId } from '@civitai/auth';
+export type { ProviderId };
 
 // Minimal, dependency-free OAuth2 Authorization-Code + PKCE client. One generic flow drives
 // every provider via a small config table. Secrets are read lazily from env, so a provider
@@ -7,8 +11,6 @@ import { env } from '$env/dynamic/private';
 //
 // NOTE: this is the hub's *upstream* login (Civitai logging the user in via Google/Discord/…),
 // distinct from Civitai's own OAuth server that third parties use ("Sign in with Civitai").
-
-export type ProviderId = 'discord' | 'google' | 'github' | 'reddit';
 
 export interface NormalizedProfile {
   providerAccountId: string;
@@ -44,7 +46,9 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
     authorizeUrl: 'https://discord.com/oauth2/authorize',
     tokenUrl: 'https://discord.com/api/oauth2/token',
     userinfoUrl: 'https://discord.com/api/users/@me',
-    scope: 'identify email',
+    // `role_connections.write` powers the Discord Linked Roles flow (/discord/link-role) — the granted scope
+    // is stored on the Account so that page can detect it. Mirrors the legacy next-auth Discord scope.
+    scope: 'identify email role_connections.write',
     clientId: () => env.DISCORD_CLIENT_ID,
     clientSecret: () => env.DISCORD_CLIENT_SECRET,
     mapProfile: (p) => ({
@@ -143,7 +147,7 @@ export function createPkce() {
 
 export function buildAuthorizeUrl(
   provider: ProviderDef,
-  opts: { redirectUri: string; state: string; codeChallenge: string }
+  opts: { redirectUri: string; state: string; codeChallenge: string; prompt?: string | null }
 ): string {
   const url = new URL(provider.authorizeUrl);
   url.searchParams.set('response_type', 'code');
@@ -154,13 +158,17 @@ export function buildAuthorizeUrl(
   url.searchParams.set('code_challenge', opts.codeChallenge);
   url.searchParams.set('code_challenge_method', 'S256');
   if (provider.id === 'reddit') url.searchParams.set('duration', 'temporary');
+  // Forward an OIDC `prompt` (e.g. `select_account`) so the "add another account" flow can pick a DIFFERENT
+  // identity on the provider instead of silently reusing the current provider session. Only Google honors
+  // `select_account`; GitHub/Discord/Reddit ignore unknown values, so this is a safe no-op for them.
+  if (opts.prompt) url.searchParams.set('prompt', opts.prompt);
   return url.toString();
 }
 
 export async function exchangeCode(
   provider: ProviderDef,
   opts: { code: string; redirectUri: string; codeVerifier: string }
-): Promise<string> {
+): Promise<{ accessToken: string; scope: string | null }> {
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     code: opts.code,
@@ -182,9 +190,11 @@ export async function exchangeCode(
 
   const res = await fetch(provider.tokenUrl, { method: 'POST', headers, body });
   if (!res.ok) throw new Error(`[${provider.id}] token exchange failed: ${res.status}`);
-  const json = (await res.json()) as { access_token?: string };
+  const json = (await res.json()) as { access_token?: string; scope?: string };
   if (!json.access_token) throw new Error(`[${provider.id}] no access_token in response`);
-  return json.access_token;
+  // `scope` is the space-delimited set the provider actually GRANTED (may differ from what we requested if the
+  // user unchecked one). Stored on the Account so e.g. the Discord linked-roles flow can detect its scope.
+  return { accessToken: json.access_token, scope: json.scope ?? null };
 }
 
 export async function fetchProfile(

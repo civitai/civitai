@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { SYNC_PARAM } from '@civitai/auth';
+import { SYNC_PARAM } from '@civitai/auth/client';
 
 // Cross-domain login bootstrap trigger (section E). When a page loads carrying the sync marker (set by the hub
 // login redirect after authenticating, or by a "sign in on this domain" link), hand off to the server-side

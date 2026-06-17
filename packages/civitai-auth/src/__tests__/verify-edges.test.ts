@@ -76,7 +76,10 @@ describe('createAuthVerifier — wrong key / mismatched claims', () => {
   it('verifySwapToken extracts the userId on a fully-matching swap token', async () => {
     const token = await signer.mintSwapToken(7);
     const verifier = createAuthVerifier({ issuer, audience, publicKeyPem });
-    expect(await verifier.verifySwapToken(token)).toEqual({ userId: 7 });
+    // verifySwapToken returns the single-use jti alongside the userId.
+    const result = await verifier.verifySwapToken(token);
+    expect(result).toMatchObject({ userId: 7 });
+    expect(typeof result?.jti).toBe('string');
   });
 });
 

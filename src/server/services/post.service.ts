@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';

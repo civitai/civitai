@@ -54,4 +54,5 @@ export {
   type ReturnTargetOptions,
 } from './redirect';
 export * from './constants';
+export { hubLoginUrl, type ProviderId, type HubLoginUrlOptions } from './providers';
 export type { SessionUser, SessionClaims } from './types';

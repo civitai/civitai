@@ -1,6 +1,6 @@
 import type { ImageGenStepTemplate } from '@civitai/client';
 import { NsfwLevel, TimeSpan } from '@civitai/client';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type * as z from 'zod';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import type { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';

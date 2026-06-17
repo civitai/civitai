@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq, uniqBy } from 'lodash-es';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import {
