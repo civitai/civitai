@@ -628,8 +628,8 @@ export const AdvancedSettings = ({
           )}
         </Group>
         {imagesSeen !== undefined && (
-          <Text size="xs" c="dimmed">
-            Each image will be seen ~{imagesSeen} times
+          <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+            Each image seen ~{imagesSeen}×
           </Text>
         )}
       </Stack>
@@ -780,10 +780,13 @@ export const AdvancedSettings = ({
         >
           <Accordion.Item value="training">
             <Accordion.Control>
-              <Text>Training</Text>
+              <Text>Training Settings</Text>
             </Accordion.Control>
             <Accordion.Panel>
+              {/* withBorder=false: the accordion item already draws the outer border, so the
+                  table's own border would double up against it. */}
               <DescriptionTable
+                withBorder={false}
                 labelWidth="200px"
                 items={orderedTrainingSettings
                   .filter((ts) => ts.name === 'maxTrainEpochs' || ts.name === 'targetSteps')
@@ -1173,43 +1176,42 @@ export const AdvancedSettings = ({
               </Stack>
             </Accordion.Control>
             <Accordion.Panel>
-              <Stack p="sm" gap="sm">
-                <Card withBorder p="sm" radius="sm">
-                  <Group gap="sm" align="flex-start" wrap="nowrap">
-                    <ThemeIcon color="yellow" variant="light" radius="xl" size="md">
-                      <IconAlertTriangle size={18} />
-                    </ThemeIcon>
-                    <Stack gap={6}>
-                      <Text size="sm" fw={600}>
-                        Editing advanced parameters forfeits your refund
-                      </Text>
-                      <Text size="xs" c="dimmed">
-                        These defaults are tuned for your selected model. If you change them and the
-                        result is poor, the training is non-refundable. Steps and Checkpoints above
-                        are not affected.
-                      </Text>
-                      <Checkbox
-                        checked={acknowledgedAdvanced}
-                        onChange={(event) => setAcknowledgedAdvanced(event.currentTarget.checked)}
-                        label="I understand and want to edit the advanced parameters"
-                      />
-                    </Stack>
-                  </Group>
-                </Card>
-                <DescriptionTable
-                  labelWidth="200px"
-                  items={orderedTrainingSettings
-                    // Steps & Checkpoints render in the always-visible block above for AI Toolkit.
-                    .filter(
-                      (ts) =>
-                        !(
-                          isAiToolkit &&
-                          (ts.name === 'targetSteps' || ts.name === 'maxTrainEpochs')
-                        )
-                    )
-                    .map(buildRow)}
-                />
-              </Stack>
+              {/* The refund-acknowledgment card is inset (its own margin); the params table is
+                  flush and borderless so it matches the Training Settings card above (no L/R
+                  padding, no double border against the accordion item). */}
+              <Card withBorder p="sm" radius="sm" m="sm">
+                <Group gap="sm" align="flex-start" wrap="nowrap">
+                  <ThemeIcon color="yellow" variant="light" radius="xl" size="md">
+                    <IconAlertTriangle size={18} />
+                  </ThemeIcon>
+                  <Stack gap={6}>
+                    <Text size="sm" fw={600}>
+                      Editing advanced parameters forfeits your refund
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      These defaults are tuned for your selected model. If you change them and the
+                      result is poor, the training is non-refundable. Steps and Checkpoints above
+                      are not affected.
+                    </Text>
+                    <Checkbox
+                      checked={acknowledgedAdvanced}
+                      onChange={(event) => setAcknowledgedAdvanced(event.currentTarget.checked)}
+                      label="I understand and want to edit the advanced parameters"
+                    />
+                  </Stack>
+                </Group>
+              </Card>
+              <DescriptionTable
+                withBorder={false}
+                labelWidth="200px"
+                items={orderedTrainingSettings
+                  // Steps & Checkpoints render in the always-visible block above for AI Toolkit.
+                  .filter(
+                    (ts) =>
+                      !(isAiToolkit && (ts.name === 'targetSteps' || ts.name === 'maxTrainEpochs'))
+                  )
+                  .map(buildRow)}
+              />
             </Accordion.Panel>
           </Accordion.Item>
         )}
