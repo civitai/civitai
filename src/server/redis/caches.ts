@@ -1254,7 +1254,12 @@ type PostStatLookup = {
 export const postStatCache = createCachedObject<PostStatLookup>({
   key: REDIS_KEYS.CACHES.POST_STATS,
   idKey: 'postId',
+  // 24h logical TTL. Measured live (2026-06-17) at ~8.2 GiB on next-redis-cluster
+  // (~8.6%, 3rd-largest consumer). The default SWR tail of a full extra `ttl` made
+  // the physical EX 48h, keeping cold post-stats resident an extra 24h for no
+  // benefit. Trim the tail to 1h → physical EX 25h.
   ttl: CacheTTL.day,
+  staleWhileRevalidateTtl: CacheTTL.hour,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
     const postIds = Array.isArray(ids) ? ids : [ids];
