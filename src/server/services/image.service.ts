@@ -2722,7 +2722,14 @@ export async function getImagesFromFeedSearch(
       new CacheService(
         redis as unknown as IRedisClient,
         pgDbWrite as IDbClient,
-        clickhouse as IClickhouseClient
+        clickhouse as IClickhouseClient,
+        undefined,
+        // Back the feed's image→tagIds lookup with civitai's own warm, actively-invalidated
+        // tagIdsForImagesCache (msgpack string) instead of the retired event-engine-common
+        // `image:tagIds` Redis hash. Same {imageId, tags[]} shape + same WD14/Rekognition +
+        // styleTags/subjectTags filter, so it's a drop-in. Relieves next-redis-cluster memory.
+        (ids: number[]) =>
+          tagIdsForImagesCache.fetch(ids) as Promise<Record<number, { imageId: number; tags: number[] }>>
       )
     );
 
