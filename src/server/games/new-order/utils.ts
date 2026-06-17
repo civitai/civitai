@@ -850,8 +850,26 @@ export async function getVotingCooldownUntil(userId: number): Promise<number | n
 }
 
 /**
- * Get rate limit config from Redis. Returns null if unavailable — callers
- * should deny the vote when config is not available.
+ * Conservative fallback limits used ONLY when the Redis config key is *absent*
+ * (wiped, never seeded, or sysRedis data loss) — NOT when Redis itself is down.
+ *
+ * A missing `new-order:config` must degrade the game to sane limits instead of
+ * locking every voter out. On 2026-06-15 the key vanished and the rate limiter
+ * fail-closed on every vote, surfacing a permanent fake "60s cooldown" (the
+ * `cooldownUntil: 0` → `: 60` fallback in the service) that never cleared.
+ * These defaults keep prolific legit voters playing while still capping bots;
+ * mods re-tune the live values via the `mod/new-order/rate-limit-config` PUT.
+ */
+export const DEFAULT_VOTING_RATE_LIMIT_CONFIG: VotingRateLimitConfig = {
+  perMinute: 40,
+  perHour: 600,
+  perDay: 3000,
+};
+
+/**
+ * Get rate limit config from Redis. Returns null when the key is absent or
+ * sysRedis errors. `checkVotingRateLimit` treats null as "use defaults" (the
+ * game stays up); a truly unavailable `redis` client still fails closed.
  */
 export async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig | null> {
   try {
@@ -877,15 +895,21 @@ export async function checkVotingRateLimit(userId: number): Promise<{
     return DENIED_RESPONSE;
   }
 
-  const limits = await getVotingRateLimitConfig();
-  if (!limits) {
+  // Missing config is NOT the same failure as "Redis is down". A wiped/unseeded
+  // `new-order:config` must degrade to defaults so the game stays playable —
+  // fail-closing here locked every voter out on 2026-06-15. The `!redis` guard
+  // above and the catch below still fail closed for genuine Redis outages.
+  const configuredLimits = await getVotingRateLimitConfig();
+  const limits = configuredLimits ?? DEFAULT_VOTING_RATE_LIMIT_CONFIG;
+  if (!configuredLimits && Math.random() < 0.01) {
+    // Sampled — this is the steady-state degraded path while the key is missing,
+    // so it must stay observable (re-seed signal) without flooding Axiom.
     logToAxiom({
-      type: 'error',
-      name: 'new-order-rate-limit-unavailable',
-      details: { userId, reason: 'config-not-set' },
-      message: `Rate limiter denied vote for user ${userId}: rate limit config not set in Redis`,
+      type: 'warning',
+      name: 'new-order-rate-limit-config-missing',
+      details: { userId, reason: 'config-not-set-using-defaults' },
+      message: `new-order:config missing — rate limiter using built-in defaults for user ${userId}; re-seed the Redis config`,
     }).catch(() => null);
-    return DENIED_RESPONSE;
   }
 
   const now = Date.now();
