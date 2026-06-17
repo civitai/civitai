@@ -16,15 +16,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import {
-  IconArrowLeft,
-  IconBrush,
-  IconCube,
-  IconCurrencyDollar,
-  IconGitMerge,
-  IconPencil,
-  IconUser,
-} from '@tabler/icons-react';
+import { IconArrowLeft, IconCube, IconPencil } from '@tabler/icons-react';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
@@ -35,6 +27,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { Model3DPermissionIndicator } from '~/components/PermissionIndicator/Model3DPermissionIndicator';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { TagsInput } from '~/components/Tags/TagsInput';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -420,56 +413,13 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
                   disabled={!licenses}
                   placeholder={licenses ? undefined : 'Loading…'}
                 />
-                {/* Contextual permission icons — mirror the model page
-                    PermissionIndicator. Each icon tooltips the underlying
-                    permission so the owner can see at a glance what their
-                    chosen license actually allows. */}
+                {/* Contextual permission icons — driven by the shared
+                    Model3DPermissionIndicator so the badges + popover stay
+                    visually identical to the detail page footer (and to
+                    Models' PermissionIndicator). */}
                 {selectedLicense && (
-                  <Group gap={6} mt={4}>
-                    {[
-                      {
-                        allowed: selectedLicense.allowCommercialUse,
-                        label: selectedLicense.allowCommercialUse
-                          ? 'Commercial use allowed'
-                          : 'No commercial use',
-                        icon: <IconCurrencyDollar size={14} stroke={1.5} />,
-                      },
-                      {
-                        allowed: selectedLicense.allowDerivatives,
-                        label: selectedLicense.allowDerivatives
-                          ? 'Derivatives allowed'
-                          : 'No derivatives',
-                        icon: <IconGitMerge size={14} stroke={1.5} />,
-                      },
-                      {
-                        allowed: selectedLicense.allowRedistribution,
-                        label: selectedLicense.allowRedistribution
-                          ? 'Redistribution allowed'
-                          : 'No redistribution',
-                        icon: <IconBrush size={14} stroke={1.5} />,
-                      },
-                      {
-                        allowed: !selectedLicense.requireAttribution,
-                        label: selectedLicense.requireAttribution
-                          ? 'Attribution required'
-                          : 'No attribution required',
-                        icon: <IconUser size={14} stroke={1.5} />,
-                      },
-                    ].map(({ allowed, label, icon }) => (
-                      <Tooltip key={label} label={label} withArrow withinPortal>
-                        <Box
-                          className="flex size-6 items-center justify-center rounded"
-                          style={{
-                            backgroundColor: allowed
-                              ? 'rgba(64, 192, 87, 0.2)'
-                              : 'rgba(250, 82, 82, 0.2)',
-                            color: allowed ? '#40c057' : '#fa5252',
-                          }}
-                        >
-                          {icon}
-                        </Box>
-                      </Tooltip>
-                    ))}
+                  <Group gap={6} mt={4} align="center">
+                    <Model3DPermissionIndicator license={selectedLicense} size={24} />
                     {selectedLicense.description && (
                       <Text size="xs" c="dimmed" ml="xs" style={{ flex: 1 }}>
                         {selectedLicense.description}

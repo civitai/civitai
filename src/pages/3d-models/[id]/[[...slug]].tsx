@@ -15,23 +15,18 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import {
   IconBolt,
-  IconBrush,
   IconCube,
-  IconCurrencyDollar,
   IconDownload,
-  IconGitMerge,
   IconLicense,
   IconMessageCircle2,
   IconShare3,
   IconThumbDown,
   IconThumbUp,
-  IconUser,
   IconWand,
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
@@ -52,6 +47,7 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
+import { Model3DPermissionIndicator } from '~/components/PermissionIndicator/Model3DPermissionIndicator';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
@@ -236,30 +232,6 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const hasGenerationData = generationDetailItems.length > 0 || !!model3d.sourceImage;
 
   const license = model3d.license;
-  const licenseFeatures: Array<{ allowed: boolean; label: string; icon: JSX.Element }> = license
-    ? [
-        {
-          allowed: license.allowCommercialUse,
-          label: license.allowCommercialUse ? 'Commercial use allowed' : 'No commercial use',
-          icon: <IconCurrencyDollar size={14} stroke={1.5} />,
-        },
-        {
-          allowed: license.allowDerivatives,
-          label: license.allowDerivatives ? 'Derivatives allowed' : 'No derivatives',
-          icon: <IconGitMerge size={14} stroke={1.5} />,
-        },
-        {
-          allowed: license.allowRedistribution,
-          label: license.allowRedistribution ? 'Redistribution allowed' : 'No redistribution',
-          icon: <IconBrush size={14} stroke={1.5} />,
-        },
-        {
-          allowed: !license.requireAttribution,
-          label: license.requireAttribution ? 'Attribution required' : 'No attribution required',
-          icon: <IconUser size={14} stroke={1.5} />,
-        },
-      ]
-    : [];
 
   return (
     <>
@@ -674,8 +646,9 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 />
 
                 {/* Compact license footer — mirrors the model page footer:
-                    inline license name (small dimmed text) + tooltipped
-                    permission icons. No card wrapper. */}
+                    inline license name + tooltipped permission icons via
+                    Model3DPermissionIndicator (which shares its visual with
+                    Models' PermissionIndicator). No card wrapper. */}
                 {license && (
                   <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
                     <Group gap={4} wrap="wrap" align="center" style={{ flex: 1, minWidth: 0 }}>
@@ -687,23 +660,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                         {license.name}
                       </Text>
                     </Group>
-                    <Group gap={4} wrap="nowrap">
-                      {licenseFeatures.map(({ allowed, label, icon }) => (
-                        <Tooltip key={label} label={label} withArrow withinPortal position="top">
-                          <Box
-                            className="flex size-6 items-center justify-center rounded"
-                            style={{
-                              backgroundColor: allowed
-                                ? 'rgba(64, 192, 87, 0.2)'
-                                : 'rgba(250, 82, 82, 0.2)',
-                              color: allowed ? '#40c057' : '#fa5252',
-                            }}
-                          >
-                            {icon}
-                          </Box>
-                        </Tooltip>
-                      ))}
-                    </Group>
+                    <Model3DPermissionIndicator license={license} size={24} />
                   </Group>
                 )}
                 {license && model3d.licenseDetails && (
