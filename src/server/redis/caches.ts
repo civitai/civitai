@@ -37,9 +37,14 @@ export const tagIdsForImagesCache = createCachedObject<{
 }>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
   idKey: 'imageId',
-  // 8h TTL — 296B/key but ~16M keys/shard (~4.4 GiB).
-  // With stale-while-revalidate, effective Redis EX = 16h.
+  // 8h logical TTL. Measured live (2026-06-17) at ~1.7KB/key and ~16.85 GiB/shard
+  // (~50 GiB cluster-wide) — the single largest next-redis-cluster consumer, NOT
+  // the ~4.4 GiB the prior comment assumed. The default SWR tail of a full extra
+  // `ttl` made the physical EX 16h, keeping cold keys resident an extra 8h for no
+  // benefit (SWR only needs to cover sub-second background revalidation). Trim the
+  // tail to 1h → physical EX 9h, cutting the resident cold-key window ~16h→9h.
   ttl: CacheTTL.hour * 8,
+  staleWhileRevalidateTtl: CacheTTL.hour,
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
