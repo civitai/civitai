@@ -25,7 +25,8 @@
 BEGIN;
 
 CREATE TABLE "block_payout_withdrawal" (
-  -- Application-generated id: 'bpw_<ulid>'. Also the Tipalti refCode source.
+  -- Application-generated id: 'bpw_<ulid>'. The Tipalti refCode (ref_code) is
+  -- derived from it (prefix 'BPW' + the ULID tail, 16 chars).
   "id"                 TEXT PRIMARY KEY,
   "app_owner_user_id"  INTEGER NOT NULL REFERENCES "User"("id") ON DELETE RESTRICT,
   -- Links to the block_attribution_payout ledger row this disbursement
@@ -37,21 +38,32 @@ CREATE TABLE "block_payout_withdrawal" (
   "amount_cents"       INTEGER NOT NULL,
   -- Tipalti CashWithdrawalMethod snapshot.
   "method"             TEXT NOT NULL,
-  -- Tipalti refCode (== id truncated to 16 chars by getWithdrawalRefCode).
+  -- App-Blocks-rail Tipalti refCode (prefix 'BPW', 16 chars, derived from id).
+  -- The full refCode is stored + indexed so the webhook reconciles by exact
+  -- match (the refCode is NOT round-trippable into the id — Tipalti 16-char cap).
   "ref_code"           TEXT NOT NULL,
-  -- 'pending_approval' (Tipalti batch created, awaiting mod approval) or
-  -- 'reverted' (disbursement failed after the mint; mint was compensated and
-  -- the publisher's balance restored — kept for audit).
-  "status"             TEXT NOT NULL DEFAULT 'pending_approval',
+  -- The refCode Tipalti echoes back on the created payment batch. Persisted so
+  -- reconciliation can match either what we sent or what Tipalti returned.
+  "payment_ref_code"   TEXT,
+  -- State machine (see schema.full.prisma for the full doc):
+  --   'processing'       — row created; mint/Tipalti in progress.
+  --   'pending_approval' — Tipalti batch created, awaiting mod approval.
+  --   'completed'        — payment approved/completed (terminal, money sent).
+  --   'failed'           — disbursement/mint failed OR Tipalti declined; mint
+  --                        reverted + balance restored (terminal).
+  --   'no_balance'       — nothing to disburse at mint time (terminal, no money).
+  "status"             TEXT NOT NULL DEFAULT 'processing',
   "payment_batch_id"   TEXT,
   "note"               TEXT,
   "created_at"         TIMESTAMPTZ NOT NULL DEFAULT now(),
   "updated_at"         TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-  CONSTRAINT "block_payout_withdrawal_amount_positive_check"
-    CHECK ("amount_cents" > 0),
+  -- amount_cents starts at 0 ('processing' before the mint claims rows) and is
+  -- set to the minted total on disburse, so the floor is >= 0 (not > 0).
+  CONSTRAINT "block_payout_withdrawal_amount_nonneg_check"
+    CHECK ("amount_cents" >= 0),
   CONSTRAINT "block_payout_withdrawal_status_check"
-    CHECK ("status" IN ('pending_approval', 'reverted')),
+    CHECK ("status" IN ('processing', 'pending_approval', 'completed', 'failed', 'no_balance')),
   CONSTRAINT "block_payout_withdrawal_id_length_check"
     CHECK (char_length("id") BETWEEN 20 AND 48)
 );
@@ -63,5 +75,9 @@ CREATE INDEX "bpw_owner_created_idx"
 -- Find the withdrawal that realized a given payout ledger row.
 CREATE INDEX "bpw_payout_idx"
   ON "block_payout_withdrawal" ("payout_id");
+
+-- Webhook reconciliation: look up the row by the Tipalti refCode (exact match).
+CREATE INDEX "bpw_ref_code_idx"
+  ON "block_payout_withdrawal" ("ref_code");
 
 COMMIT;

@@ -1870,6 +1870,7 @@ export const blocksRouter = router({
           },
           topApps: [] as Array<{ appBlockId: string; shareCents: number; count: number }>,
           minWithdrawalCents: MIN_APP_REVENUE_PAYOUT_CENTS,
+          pendingWithdrawalCents: 0,
         };
       }
       const user = ctx.user as SessionUser;
@@ -1879,7 +1880,24 @@ export const blocksRouter = router({
         from: input?.from ? new Date(input.from) : undefined,
         to: input?.to ? new Date(input.to) : undefined,
       });
-      return { summary, topApps, minWithdrawalCents: MIN_APP_REVENUE_PAYOUT_CENTS };
+      // #6: in-flight withdrawal amount (rows already consuming the confirmed
+      // balance) so the UI / a caller can avoid offering a balance a withdrawal
+      // is already claiming. 'processing' rows carry amountCents 0 (set on
+      // disburse), so they contribute 0 here — only post-mint 'pending_approval'
+      // rows have a real claimed amount, which is the value worth surfacing.
+      const inflight = await dbRead.blockPayoutWithdrawal.aggregate({
+        where: {
+          appOwnerUserId: user.id,
+          status: { in: ['processing', 'pending_approval'] },
+        },
+        _sum: { amountCents: true },
+      });
+      return {
+        summary,
+        topApps,
+        minWithdrawalCents: MIN_APP_REVENUE_PAYOUT_CENTS,
+        pendingWithdrawalCents: inflight._sum.amountCents ?? 0,
+      };
     }),
 
   /**
@@ -1896,6 +1914,18 @@ export const blocksRouter = router({
    */
   withdrawMyAppRevenue: protectedProcedure
     .use(enforceAppBlocksFlag)
+    // Cheap extra guard against double-click / retry hammering the payout path
+    // (the per-owner advisory lock in mintPayoutForOwner is the real
+    // correctness guarantee; this just keeps the disbursement path from being
+    // spammed). 3 attempts / 10 min per user. Mods/dev/test exempt by the
+    // middleware itself.
+    .use(
+      rateLimit({
+        limit: 3,
+        period: 600,
+        errorMessage: 'Too many withdrawal attempts — please wait a few minutes.',
+      })
+    )
     .mutation(async ({ ctx }) => {
       const user = ctx.user as SessionUser;
       const { withdrawAppRevenue } = await import('~/server/services/blocks/payout.service');

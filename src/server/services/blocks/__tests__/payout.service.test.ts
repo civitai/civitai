@@ -41,7 +41,7 @@ const {
     userPaymentConfiguration: { findUnique: vi.fn() },
   },
   mockDbWrite: {
-    blockPayoutWithdrawal: { create: vi.fn() },
+    blockPayoutWithdrawal: { create: vi.fn(), update: vi.fn() },
   },
   mockLog: vi.fn(),
 }));
@@ -103,8 +103,9 @@ beforeEach(() => {
     totalCents: 25_000,
     rowCount: 5,
   });
-  mockPayTipalti.mockResolvedValue({ paymentBatchId: 'batch_1', paymentRefCode: 'CW777_x' });
+  mockPayTipalti.mockResolvedValue({ paymentBatchId: 'batch_1', paymentRefCode: 'BPWxxxxxxxxxxxx' });
   mockDbWrite.blockPayoutWithdrawal.create.mockResolvedValue({ id: 'bpw_1' });
+  mockDbWrite.blockPayoutWithdrawal.update.mockResolvedValue({ id: 'bpw_1' });
   mockRevert.mockResolvedValue({ reverted: 5, ledgerDeleted: true });
 });
 
@@ -179,8 +180,23 @@ describe('withdrawAppRevenue — preconditions', () => {
 });
 
 describe('withdrawAppRevenue — happy path', () => {
-  it('mints, flips, and pays Tipalti the DOLLAR amount (cents/100)', async () => {
+  it('creates the tracking row FIRST, mints, then pays Tipalti the DOLLAR amount (cents/100)', async () => {
     const result = await withdrawAppRevenue(OWNER);
+
+    // SAFE ORDERING (#3): the tracking row is created BEFORE the mint, in
+    // 'processing', carrying a BPW refCode the webhook can find.
+    expect(mockDbWrite.blockPayoutWithdrawal.create).toHaveBeenCalledTimes(1);
+    const created = mockDbWrite.blockPayoutWithdrawal.create.mock.calls[0][0].data;
+    expect(created.status).toBe('processing');
+    expect(created.appOwnerUserId).toBe(OWNER);
+    expect(created.payoutId).toBeNull();
+    expect(created.refCode).toMatch(/^BPW/);
+    expect(created.id).toMatch(/^bpw_/);
+
+    // The create happens before any Tipalti call.
+    expect(mockDbWrite.blockPayoutWithdrawal.create.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPayTipalti.mock.invocationCallOrder[0]
+    );
 
     // Minted under a unique, per-attempt period key.
     expect(mockMint).toHaveBeenCalledTimes(1);
@@ -189,20 +205,21 @@ describe('withdrawAppRevenue — happy path', () => {
     expect(typeof mintArg.periodKey).toBe('string');
     expect(mintArg.periodKey).toMatch(/^withdraw:/);
 
-    // Tipalti paid DOLLARS, byUserId -1 (the bank), to the owner.
+    // Tipalti paid DOLLARS, byUserId -1 (the bank), to the owner; refCode is BPW.
     expect(mockPayTipalti).toHaveBeenCalledTimes(1);
     const payArg = mockPayTipalti.mock.calls[0][0];
     expect(payArg.amount).toBe(250); // 25_000 cents / 100
     expect(payArg.toUserId).toBe(OWNER);
     expect(payArg.byUserId).toBe(-1);
+    expect(payArg.requestId).toMatch(/^BPW/);
 
-    // Tracking row written, linked to the payout, pending approval.
-    const rec = mockDbWrite.blockPayoutWithdrawal.create.mock.calls[0][0].data;
-    expect(rec.appOwnerUserId).toBe(OWNER);
-    expect(rec.payoutId).toBe('bba_payout_X');
-    expect(rec.amountCents).toBe(25_000);
-    expect(rec.status).toBe('pending_approval');
-    expect(rec.id).toMatch(/^bpw_/);
+    // On success the row is UPDATED to pending_approval with the batch id.
+    const upd = mockDbWrite.blockPayoutWithdrawal.update.mock.calls.map((c) => c[0].data);
+    const pending = upd.find((d) => d.status === 'pending_approval');
+    expect(pending).toBeTruthy();
+    expect(pending?.payoutId).toBe('bba_payout_X');
+    expect(pending?.amountCents).toBe(25_000);
+    expect(pending?.paymentBatchId).toBe('batch_1');
 
     // No revert on success.
     expect(mockRevert).not.toHaveBeenCalled();
@@ -215,50 +232,68 @@ describe('withdrawAppRevenue — happy path', () => {
   });
 });
 
-describe('withdrawAppRevenue — compensating revert', () => {
+describe('withdrawAppRevenue — compensating revert (pre-money failure)', () => {
   it('reverts the mint when Tipalti FAILS, preserving the balance, re-throwing', async () => {
     const tipaltiErr = new Error('Tipalti unreachable');
     mockPayTipalti.mockRejectedValueOnce(tipaltiErr);
 
     await expect(withdrawAppRevenue(OWNER)).rejects.toThrow(/Tipalti unreachable/);
 
-    // The mint was reverted for THIS payout + owner (balance restored).
+    // The mint was reverted for THIS payout + owner (balance restored). Safe:
+    // the failure happened BEFORE money moved.
     expect(mockRevert).toHaveBeenCalledTimes(1);
     expect(mockRevert).toHaveBeenCalledWith({ payoutId: 'bba_payout_X', appOwnerUserId: OWNER });
 
-    // The 'pending_approval' tracking row was NOT written (money never sent);
-    // an audit row marked 'reverted' is written instead.
-    const createdRows = mockDbWrite.blockPayoutWithdrawal.create.mock.calls.map((c) => c[0].data);
-    expect(createdRows.some((r) => r.status === 'pending_approval')).toBe(false);
-    const audit = createdRows.find((r) => r.status === 'reverted');
-    expect(audit).toBeTruthy();
-    // Revert succeeded → ledger row gone → audit row's payoutId is null (FK-safe).
-    expect(audit?.payoutId).toBeNull();
+    // The pre-created row is UPDATED to 'failed' (no 'pending_approval' update).
+    const upd = mockDbWrite.blockPayoutWithdrawal.update.mock.calls.map((c) => c[0].data);
+    expect(upd.some((d) => d.status === 'pending_approval')).toBe(false);
+    const failed = upd.find((d) => d.status === 'failed');
+    expect(failed).toBeTruthy();
+    // Revert succeeded → ledger row gone → payoutId cleared (FK-safe).
+    expect(failed?.payoutId).toBeNull();
   });
 
-  it('reverts when the tracking-record write fails AFTER a successful Tipalti call', async () => {
-    mockDbWrite.blockPayoutWithdrawal.create
-      .mockRejectedValueOnce(new Error('db write failed')) // the pending_approval row
-      .mockResolvedValueOnce({ id: 'bpw_audit' }); // the reverted audit row
-
-    await expect(withdrawAppRevenue(OWNER)).rejects.toThrow(/db write failed/);
-
-    expect(mockPayTipalti).toHaveBeenCalledTimes(1);
-    expect(mockRevert).toHaveBeenCalledWith({ payoutId: 'bba_payout_X', appOwnerUserId: OWNER });
-  });
-
-  it('keeps the payoutId on the audit row when the REVERT itself fails (manual intervention)', async () => {
+  it('keeps the payoutId + emits CRITICAL when the REVERT itself fails (manual intervention)', async () => {
     mockPayTipalti.mockRejectedValueOnce(new Error('Tipalti boom'));
     mockRevert.mockRejectedValueOnce(new Error('revert tx deadlock'));
 
     await expect(withdrawAppRevenue(OWNER)).rejects.toThrow(/Tipalti boom/);
 
-    const audit = mockDbWrite.blockPayoutWithdrawal.create.mock.calls
+    const failed = mockDbWrite.blockPayoutWithdrawal.update.mock.calls
       .map((c) => c[0].data)
-      .find((r) => r.status === 'reverted');
+      .find((d) => d.status === 'failed');
     // Revert failed → ledger row may still exist → keep the linkage + flag it.
-    expect(audit?.payoutId).toBe('bba_payout_X');
-    expect(audit?.note).toMatch(/manual intervention/i);
+    expect(failed?.payoutId).toBe('bba_payout_X');
+    expect(failed?.note).toMatch(/manual intervention/i);
+
+    // A CRITICAL alertable signal was emitted for the failed revert.
+    const critical = mockLog.mock.calls.find(
+      (c) => c[0]?.name === 'block-revenue-payout-critical-sent-not-recorded'
+    );
+    expect(critical).toBeTruthy();
+  });
+});
+
+describe('withdrawAppRevenue — success-path row update failure (money already sent)', () => {
+  it('does NOT revert, emits CRITICAL, and still returns success when the pending_approval update fails', async () => {
+    // create (processing) succeeds; the success-path update throws.
+    mockDbWrite.blockPayoutWithdrawal.update.mockRejectedValueOnce(new Error('db write failed'));
+
+    const result = await withdrawAppRevenue(OWNER);
+
+    // Money already moved → NEVER revert.
+    expect(mockPayTipalti).toHaveBeenCalledTimes(1);
+    expect(mockRevert).not.toHaveBeenCalled();
+
+    // CRITICAL alertable signal emitted.
+    const critical = mockLog.mock.calls.find(
+      (c) => c[0]?.name === 'block-revenue-payout-critical-sent-not-recorded'
+    );
+    expect(critical).toBeTruthy();
+
+    // The disbursement happened, so we surface success (the webhook reconciles
+    // the row off the persisted refCode) rather than tripping a double-pay retry.
+    expect(result).toMatchObject({ payoutId: 'bba_payout_X', amountCents: 25_000 });
   });
 });
 
@@ -271,6 +306,9 @@ describe('withdrawAppRevenue — idempotency / no double-pay', () => {
     expect(mockMint).toHaveBeenCalledTimes(1);
     expect(mockPayTipalti).not.toHaveBeenCalled();
     expect(mockRevert).not.toHaveBeenCalled();
+    // The pre-created row is marked no_balance (terminal, no money).
+    const upd = mockDbWrite.blockPayoutWithdrawal.update.mock.calls.map((c) => c[0].data);
+    expect(upd.some((d) => d.status === 'no_balance')).toBe(true);
   });
 
   it('does NOT call Tipalti when net is non-positive at mint time (clawback landed)', async () => {
@@ -282,5 +320,35 @@ describe('withdrawAppRevenue — idempotency / no double-pay', () => {
 
     expect(mockPayTipalti).not.toHaveBeenCalled();
     expect(mockRevert).not.toHaveBeenCalled();
+  });
+
+  it('does NOT call Tipalti when the mint flipped 0 rows (carriedForwardCents:0, rowCount:0)', async () => {
+    // The advisory-lock 0-flip guard returns minted:false with a 0 net — this
+    // is the losing-race shape. Must abort before Tipalti.
+    mockMint.mockResolvedValueOnce({ minted: false, carriedForwardCents: 0, rowCount: 0 });
+
+    await expect(withdrawAppRevenue(OWNER)).rejects.toThrow(/no confirmed app revenue/i);
+
+    expect(mockPayTipalti).not.toHaveBeenCalled();
+    expect(mockRevert).not.toHaveBeenCalled();
+  });
+
+  it('aborts (no Tipalti) and reverts if a minted result somehow carries a 0 amount', async () => {
+    // Belt-and-braces guard: minted:true but totalCents 0 must NOT reach Tipalti.
+    mockMint.mockResolvedValueOnce({
+      minted: true,
+      payoutId: 'bba_payout_zero',
+      totalCents: 0,
+      rowCount: 0,
+    });
+
+    await expect(withdrawAppRevenue(OWNER)).rejects.toThrow(/no confirmed app revenue/i);
+
+    expect(mockPayTipalti).not.toHaveBeenCalled();
+    // Safe pre-money revert of whatever the mint touched.
+    expect(mockRevert).toHaveBeenCalledWith({
+      payoutId: 'bba_payout_zero',
+      appOwnerUserId: OWNER,
+    });
   });
 });

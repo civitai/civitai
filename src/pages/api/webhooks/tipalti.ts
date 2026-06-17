@@ -8,8 +8,10 @@ import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import type { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 import { updateCashWithdrawal, userCashCache } from '~/server/services/creator-program.service';
+import { processBlockPayoutEvent } from '~/server/services/blocks/payout-webhook.service';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import { parseRefCodeToWithdrawalId } from '~/server/utils/creator-program.utils';
+import { isBlockPayoutRefCode } from '~/server/utils/app-block-ids';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 import { BuzzWithdrawalRequestStatus, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 
@@ -105,7 +107,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             paymentStatus: string;
           };
 
-          if (payment.refCode.startsWith('CW')) {
+          // App-Blocks payout rail — MUST be checked BEFORE the 'CW' branch so
+          // these don't misroute into the creator-program handler (which would
+          // 400 and leave the disbursement unreconciled forever). The BPW
+          // prefix can't collide with CW.
+          if (isBlockPayoutRefCode(payment.refCode)) {
+            await processBlockPayoutEvent(event);
+          } else if (payment.refCode.startsWith('CW')) {
             // Creator Program V2:
             await processCashWithdrawalEvent(event);
           } else {
@@ -121,7 +129,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         case 'paymentError': {
           const payment = event.eventData as { refCode: string; paymentStatus: string };
 
-          if (payment.refCode.startsWith('CW')) {
+          // App-Blocks payout rail first (see note above).
+          if (isBlockPayoutRefCode(payment.refCode)) {
+            await processBlockPayoutEvent(event);
+          } else if (payment.refCode.startsWith('CW')) {
             // Creator Program V2:
             await processCashWithdrawalEvent(event);
           } else {

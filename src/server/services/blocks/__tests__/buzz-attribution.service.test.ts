@@ -44,6 +44,10 @@ const { mockDbRead, mockDbWrite, mockLog } = vi.hoisted(() => ({
       findUnique: vi.fn(),
       delete: vi.fn(),
     },
+    // Per-owner advisory lock taken at the top of mintPayoutForOwner's txn.
+    // No-op in the unit harness (no real DB / concurrency) — the lock's
+    // serialization behavior needs an integration test (noted in the PR).
+    $executeRaw: vi.fn().mockResolvedValue(0),
     // Interactive transaction: run the callback against the same mock
     // (no real isolation needed in these unit tests).
     $transaction: vi.fn((fn: (tx: unknown) => unknown) => fn(mockDbWrite)),
@@ -97,6 +101,8 @@ beforeEach(() => {
   mockDbWrite.blockAttributionPayout.create.mockReset();
   mockDbWrite.blockAttributionPayout.findUnique.mockReset();
   mockDbWrite.blockAttributionPayout.delete.mockReset();
+  mockDbWrite.$executeRaw.mockClear();
+  mockDbWrite.$executeRaw.mockResolvedValue(0);
   // findMany defaults to "no paid_out rows" so existing void tests that
   // don't set it up exercise the no-clawback path.
   mockDbWrite.blockBuzzAttribution.findMany.mockResolvedValue([]);
@@ -503,6 +509,67 @@ describe('mintPayoutForOwner', () => {
     expect(flip.data.status).toBe('paid_out');
     expect(flip.data.payoutId).toBe(ledger.id);
     expect(flip.data.paidOutAt).toBeInstanceOf(Date);
+  });
+
+  it('takes a per-owner advisory lock at the top of the txn (serializes concurrent mints)', async () => {
+    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
+      _sum: { appOwnerShareCents: 1500 },
+      _count: 7,
+    });
+    mockDbWrite.blockAttributionPayout.create.mockResolvedValueOnce({});
+    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 7 });
+
+    await mintPayoutForOwner({ appOwnerUserId: APP_OWNER_USER_ID, periodKey: PERIOD });
+
+    // The advisory lock is acquired (the $executeRaw call) BEFORE the aggregate.
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.blockBuzzAttribution.aggregate.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('the LOSING concurrent attempt re-aggregates net 0 → minted:false (no double-claim)', async () => {
+    // Models the loser: after the winner committed (rows already paid_out), the
+    // loser acquires the lock, re-aggregates confirmed rows, sees 0 → carries
+    // forward without minting or flipping. This is the property the advisory
+    // lock guarantees in prod; here we assert the net<=0 branch handles it.
+    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
+      _sum: { appOwnerShareCents: 0 },
+      _count: 0,
+    });
+
+    const result = await mintPayoutForOwner({
+      appOwnerUserId: APP_OWNER_USER_ID,
+      periodKey: PERIOD,
+    });
+
+    expect(result).toEqual({ minted: false, carriedForwardCents: 0, rowCount: 0 });
+    expect(mockDbWrite.blockAttributionPayout.create).not.toHaveBeenCalled();
+    expect(mockDbWrite.blockBuzzAttribution.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('DEFENSE-IN-DEPTH: a 0-flip after a positive aggregate deletes the ledger row and returns minted:false', async () => {
+    // Aggregate saw a positive net and minted a ledger row, but the flip
+    // somehow touched 0 rows (would be a double-pay if reported payable). The
+    // guard must delete the just-created ledger row and return not-minted.
+    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
+      _sum: { appOwnerShareCents: 1500 },
+      _count: 7,
+    });
+    mockDbWrite.blockAttributionPayout.create.mockResolvedValueOnce({});
+    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 0 });
+    mockDbWrite.blockAttributionPayout.delete.mockResolvedValueOnce({});
+
+    const result = await mintPayoutForOwner({
+      appOwnerUserId: APP_OWNER_USER_ID,
+      periodKey: PERIOD,
+    });
+
+    expect(result).toEqual({ minted: false, carriedForwardCents: 0, rowCount: 0 });
+    // The ledger row created moments earlier was deleted in the same txn.
+    expect(mockDbWrite.blockAttributionPayout.delete).toHaveBeenCalledWith({
+      where: { id: expect.stringMatching(/^bba_payout_/) },
+    });
   });
 
   it('is idempotent on P2002 — no second flip, no throw', async () => {
