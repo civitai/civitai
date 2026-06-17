@@ -267,7 +267,14 @@ function resolveBuzzBudget(
 ): number | null {
   if (!scopes.includes('ai:write:budgeted')) return null;
   const raw = publisherSettings?.buzz_budget_per_gen;
-  const candidate = typeof raw === 'number' && Number.isFinite(raw) ? raw : BUZZ_BUDGET_DEFAULT;
+  // Defense-in-depth (audit should-fix): require an INTEGER, not merely a
+  // finite number. A fractional / Infinity / NaN / non-number value falls back
+  // to the platform default rather than flowing through to a fractional Buzz
+  // budget. This treats model slots and pages identically — both arrive here as
+  // `buzz_budget_per_gen` (the model path from install settings, the page path
+  // mapped from manifest `page.buzzBudgetPerGen`) and both clamp+gate the same
+  // way. A valid positive integer (the model-slot common case) is unchanged.
+  const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : BUZZ_BUDGET_DEFAULT;
   if (candidate <= 0) return 0; // sentinel — caller rejects with 422
   return Math.min(candidate, BUZZ_BUDGET_CAP);
 }
@@ -410,12 +417,33 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       res.status(404).json({ error: 'Page app not found' });
       return;
     }
+    // W10 generation spend: a page is stateless (no install settings row), so
+    // its per-gen Buzz budget is sourced from the APPROVED manifest's
+    // `page.buzzBudgetPerGen` field rather than from install settings. We map it
+    // onto the same `buzz_budget_per_gen` settings key the model path uses, so
+    // the existing resolveBuzzBudget(install.settings) calls below treat pages
+    // and model slots IDENTICALLY — the same arbiter, the same clamp, the same
+    // 422 on a non-positive value:
+    //   - manifest declares a finite number   → pass it through verbatim;
+    //     resolveBuzzBudget clamps >CAP to CAP and turns <=0 into the 0 sentinel
+    //     → 422 INVALID_BUZZ_BUDGET (fail-closed, never a silent 0-budget token).
+    //   - manifest omits it / non-number      → settings stay EMPTY so
+    //     resolveBuzzBudget falls back to BUZZ_BUDGET_DEFAULT.
+    // Passing a number through unconditionally (not pre-filtering to >0) keeps
+    // a non-positive manifest budget a HARD ERROR rather than a silent default,
+    // matching the model-slot contract.
+    const pageManifest = (page.appBlock.manifest ?? {}) as { page?: { buzzBudgetPerGen?: unknown } };
+    const manifestBudget = pageManifest.page?.buzzBudgetPerGen;
+    const pageSettings: Record<string, unknown> =
+      typeof manifestBudget === 'number' && Number.isFinite(manifestBudget)
+        ? { buzz_budget_per_gen: manifestBudget }
+        : {};
     resolved = {
       appBlock: page.appBlock,
       modelId: null,
       slotId: slotContext.slotId,
       installedByUserId: null,
-      settings: {},
+      settings: pageSettings,
     };
   } else {
     // MODEL PATH (unchanged). Use dbWrite (primary) so a freshly-suspended

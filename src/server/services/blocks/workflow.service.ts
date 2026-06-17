@@ -77,7 +77,17 @@ export async function resolveBlockVersionContext(modelVersionId: number, expecte
       baseModel: true,
       modelId: true,
       status: true,
-      model: { select: { id: true, type: true } },
+      // W10 generation spend: the extra fields below feed
+      // `resolveCanGenerateForVersions` so the PAGE branch in blocks.router can
+      // gate a viewer-picked model through the platform's canonical generation-
+      // entitlement check (early-access / availability / coverage / members-
+      // only). They are additive — the MODEL slot path never reads `gate`, so
+      // its behaviour is byte-identical to before this select grew.
+      availability: true,
+      usageControl: true,
+      meta: true,
+      generationCoverage: { select: { covered: true } },
+      model: { select: { id: true, type: true, userId: true } },
     },
   });
   if (!version || version.status !== 'Published') {
@@ -98,6 +108,22 @@ export async function resolveBlockVersionContext(modelVersionId: number, expecte
     modelVersionId: version.id,
     baseModel: version.baseModel,
     modelType: version.model.type,
+    // The fields `resolveCanGenerateForVersions` needs, shaped as
+    // `ResolveCanGenerateVersion` so the page branch can pass it straight
+    // through. `modelVersionAlias` is read from the version meta exactly as the
+    // standard generation read paths (model-version.controller) do.
+    gate: {
+      id: version.id,
+      status: version.status,
+      availability: version.availability,
+      usageControl: version.usageControl,
+      baseModel: version.baseModel,
+      covered: version.generationCoverage?.covered ?? false,
+      modelUserId: version.model.userId,
+      modelType: version.model.type,
+      modelVersionAlias:
+        (version.meta as { generationAlias?: unknown } | null)?.generationAlias ?? null,
+    },
   };
 }
 

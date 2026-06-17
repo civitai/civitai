@@ -162,6 +162,32 @@ const PAGE_BLOCK = (
   },
 });
 
+// OAuth bit that allows ai:write:budgeted (AIServicesWrite = 1<<15).
+const AI_WRITE_BIT = 1 << 15;
+
+// An approved page app that declares the W10 generation-spend scope plus an
+// (optional) manifest per-gen budget. The OAuth client allows ai:write:budgeted
+// and the scope is in the approved set, so the budget path — not an allowlist
+// gate — governs the outcome.
+const PAGE_BUDGET_BLOCK = (manifestBudget?: number) => ({
+  appBlock: {
+    id: 'apb_page',
+    blockId: 'hello-page',
+    appId: 'appblk-hello-page',
+    status: 'approved',
+    manifest: {
+      scopes: ['ai:write:budgeted'],
+      page: {
+        path: '/',
+        title: 'Hello',
+        ...(manifestBudget !== undefined ? { buzzBudgetPerGen: manifestBudget } : {}),
+      },
+    },
+    approvedScopes: ['ai:write:budgeted'],
+    app: { allowedScopes: AI_WRITE_BIT },
+  },
+});
+
 const pageBody = (overrides: Record<string, unknown> = {}) => ({
   blockInstanceId: 'page_apb_page',
   slotContext: { entityType: 'none', slotId: 'app.page', ...overrides },
@@ -234,14 +260,15 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect(signArg.scopes).toEqual(['apps:storage:read', 'apps:storage:write']);
   });
 
-  it('rejects a page manifest that declares a money scope (page hard rule)', async () => {
+  it('rejects a page manifest that declares a still-forbidden money scope (page hard rule)', async () => {
     // The OAuth client ALLOWS the money scope + it's in the approved set — so
     // the earlier OAuth/approved gates pass and the PAGE HARD RULE is what
     // rejects (proves the page-specific gate, not the generic allowlist).
+    // social:tip:self is NOT un-forbidden by W10 (only ai:write:budgeted is).
     mockBlockRegistry.resolvePageBlock.mockResolvedValue(
       PAGE_BLOCK(
-        ['apps:storage:read', 'ai:write:budgeted'],
-        ['apps:storage:read', 'ai:write:budgeted'],
+        ['apps:storage:read', 'social:tip:self'],
+        ['apps:storage:read', 'social:tip:self'],
         MONEY_BITS
       )
     );
@@ -254,7 +281,10 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
-  it.each([['buzz:read:self'], ['social:tip:self'], ['ai:write:budgeted']])(
+  // W10: ai:write:budgeted is INTENTIONALLY absent here — it is now allowed for
+  // pages (covered by the budget tests below). Only tipping + balance-read stay
+  // page-forbidden.
+  it.each([['buzz:read:self'], ['social:tip:self']])(
     'rejects forbidden page scope %s',
     async (scope) => {
       mockBlockRegistry.resolvePageBlock.mockResolvedValue(
@@ -318,6 +348,272 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     );
     expect(res._status).toBe(400);
     expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  // ───────────────────────── W10 generation spend ──────────────────────────
+  // A page can now mint an `ai:write:budgeted` token. The per-gen budget is
+  // sourced from the approved manifest's `page.buzzBudgetPerGen`, clamped to
+  // BUZZ_BUDGET_CAP (1000), defaulted to BUZZ_BUDGET_DEFAULT (10) when absent.
+  // (The user must have GRANTED ai:write:budgeted — consent — for it to be
+  // signed; we mock that grant in each case.)
+  describe('W10 generation-spend budget (ai:write:budgeted)', () => {
+    beforeEach(() => {
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: ['ai:write:budgeted'],
+        revokedAt: null,
+      });
+    });
+
+    it('mints with buzzBudget === manifest page.buzzBudgetPerGen', async () => {
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(200));
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.scopes).toEqual(['ai:write:budgeted']);
+      expect(signArg.buzzBudget).toBe(200);
+      // ctx is still the bare page ctx — no modelId.
+      expect(signArg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
+    });
+
+    it('clamps a manifest budget above the cap to BUZZ_BUDGET_CAP (1000)', async () => {
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(5000));
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.buzzBudget).toBe(1000);
+    });
+
+    it('falls back to BUZZ_BUDGET_DEFAULT (10) when the manifest omits a budget', async () => {
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(undefined));
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.buzzBudget).toBe(10);
+    });
+
+    it('422 INVALID_BUZZ_BUDGET when the manifest declares a <= 0 budget (fail-closed, no silent default)', async () => {
+      // An explicit non-positive manifest budget is a HARD ERROR — the mint
+      // does NOT silently coerce it to the default. (Belt-and-suspenders: the
+      // manifest validator also rejects a <=0 page.buzzBudgetPerGen at publish
+      // time — unit-covered in the validator test — so this should be
+      // unreachable in practice, but the mint stays fail-closed regardless.)
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(0));
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(422);
+      expect(res._body.error).toBe('INVALID_BUZZ_BUDGET');
+      expect(mockTokenService.sign).not.toHaveBeenCalled();
+    });
+
+    it('clamps to default when the manifest budget is a non-number (no 422)', async () => {
+      // A non-number page.buzzBudgetPerGen (validator should have rejected it,
+      // but be defensive) → settings stay empty → DEFAULT budget, not 422.
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(
+        PAGE_BUDGET_BLOCK('200' as unknown as number)
+      );
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.buzzBudget).toBe(10);
+    });
+
+    // ── Audit should-fix: integer enforcement in resolveBuzzBudget ──────────
+    // A fractional manifest budget reaches the mint as a finite number (the
+    // pageSettings mapper only filters non-finite/non-number), so the integer
+    // guard in resolveBuzzBudget is what stops a fractional Buzz budget. It
+    // must DEFAULT (10), not pass 12.5 through.
+    it('a fractional manifest budget (12.5) → integer default (10), never a fractional budget', async () => {
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(12.5));
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.buzzBudget).toBe(10);
+      expect(Number.isInteger(signArg.buzzBudget)).toBe(true);
+    });
+
+    it('an Infinity manifest budget → default (10), not an unbounded budget', async () => {
+      // Infinity is filtered by the pageSettings mapper (Number.isFinite false)
+      // → empty settings → resolveBuzzBudget default. Belt: even if it reached
+      // resolveBuzzBudget, Number.isInteger(Infinity) is false → default.
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(Infinity));
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.buzzBudget).toBe(10);
+    });
+
+    it('a NaN manifest budget → default (10), not a poisoned budget', async () => {
+      // NaN is a `number` but Number.isFinite(NaN) is false → filtered by the
+      // pageSettings mapper → empty settings → resolveBuzzBudget default. Belt:
+      // even if it reached resolveBuzzBudget, Number.isInteger(NaN) is false →
+      // default. Locks the third leg of the Number.isInteger guard (fractional /
+      // Infinity / NaN) — without it a NaN budget could short-circuit the
+      // downstream `buzzBudget <= 0` comparisons (NaN comparisons are always
+      // false) and slip a non-numeric budget into the signed token.
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(NaN));
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.buzzBudget).toBe(10);
+      expect(Number.isInteger(signArg.buzzBudget)).toBe(true);
+    });
+
+    it('a negative INTEGER manifest budget (-50) reaching the mint → 422 (fail-closed, no silent default)', async () => {
+      // A negative integer is a finite number → mapped into settings → reaches
+      // resolveBuzzBudget as an integer → candidate <= 0 → 0 sentinel → 422.
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(-50));
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(422);
+      expect(res._body.error).toBe('INVALID_BUZZ_BUDGET');
+      expect(mockTokenService.sign).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Audit: a MIXED manifest with one still-forbidden money scope is a HARD
+  // reject of the WHOLE request — the allowed ai:write:budgeted does not
+  // "rescue" the request when social:tip:self rides alongside it. ───────────
+  it('MIXED manifest [ai:write:budgeted, social:tip:self] → 403, whole request rejected', async () => {
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['ai:write:budgeted', 'social:tip:self'],
+      revokedAt: null,
+    });
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue({
+      appBlock: {
+        id: 'apb_page',
+        blockId: 'hello-page',
+        appId: 'appblk-hello-page',
+        status: 'approved',
+        manifest: {
+          scopes: ['ai:write:budgeted', 'social:tip:self'],
+          page: { path: '/', title: 'Hello' },
+        },
+        approvedScopes: ['ai:write:budgeted', 'social:tip:self'],
+        // Allow both bits so the OAuth/approved gates pass and the PAGE HARD
+        // RULE is what rejects (social:tip:self stays page-forbidden).
+        app: { allowedScopes: MONEY_BITS },
+      },
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+    expect(res._status).toBe(403);
+    // No partial mint — the whole request is rejected, no token signed.
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  // ── MODEL_INSTALL positive regression: the path the integer-enforcement fix
+  // most needs to leave untouched. A valid integer install budget mints
+  // verbatim (clamped only by the cap). ────────────────────────────────────
+  it('MODEL path regression: settings.buzz_budget_per_gen=200 + ai:write:budgeted → buzzBudget===200', async () => {
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      settings: { buzz_budget_per_gen: 200 },
+      appBlock: {
+        ...MODEL_INSTALL.appBlock,
+        manifest: { scopes: ['ai:write:budgeted'] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+      },
+    });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['ai:write:budgeted'],
+      revokedAt: null,
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+
+    expect(res._status).toBe(200);
+    expect(mockBlockRegistry.resolvePageBlock).not.toHaveBeenCalled();
+    const signArg = mockTokenService.sign.mock.calls[0][0];
+    expect(signArg.buzzBudget).toBe(200);
+    // Model ctx stays byte-identical: { modelId, slotId }, no entityType.
+    expect(signArg.ctx).toEqual({ modelId: 12345, slotId: 'model.sidebar_top' });
+  });
+
+  // ── Audit 🟡#2 — REGRESSION LOCK: the Number.isInteger guard now also affects
+  // the MODEL-slot path (both paths share resolveBuzzBudget). A FRACTIONAL
+  // install budget that PRE-PR would have flowed through verbatim (12.5) now
+  // falls back to the DEFAULT (10). This is the intended post-PR behavior — a
+  // model slot can never carry a fractional Buzz budget either. Documented here
+  // so a future change can't silently re-loosen the integer guard for models.
+  it('MODEL path regression: a FRACTIONAL install budget (12.5) → DEFAULT 10 (post-PR integer behavior)', async () => {
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      settings: { buzz_budget_per_gen: 12.5 },
+      appBlock: {
+        ...MODEL_INSTALL.appBlock,
+        manifest: { scopes: ['ai:write:budgeted'] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 1 << 15 /* AIServicesWrite */ },
+      },
+    });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['ai:write:budgeted'],
+      revokedAt: null,
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+
+    expect(res._status).toBe(200);
+    const signArg = mockTokenService.sign.mock.calls[0][0];
+    expect(signArg.buzzBudget).toBe(10);
+    expect(Number.isInteger(signArg.buzzBudget)).toBe(true);
+  });
+
+  // ── Anon page mint: when the pages flag is widened to the public (anon passes
+  // both gates), the consent-gated `ai:write:budgeted` scope is STRIPPED from
+  // the anon token — an anon viewer can never mint a spend-capable page token.
+  // Mirrors the model-path anon-strip in index.test.ts. (Today the flag is
+  // mod-only so anon is 403'd at the gate — this proves the strip is the belt
+  // that keeps anon safe IF the flag is ever widened.)
+  it('anon page mint (flag public): ai:write:budgeted is STRIPPED, not signed', async () => {
+    (mockFlags.getFeatureFlags as any).mockImplementation(() => ({
+      appBlocks: true,
+      appBlocksPages: true,
+    }));
+    mockSession.value = null; // anonymous — no grant ledger
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(200));
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+    expect(res._status).toBe(200);
+    const signArg = mockTokenService.sign.mock.calls[0][0];
+    // SECURITY INVARIANT: no money scope in an anon token. ai:write:budgeted is
+    // consent-gated, so it is withheld for anon → the anon page token carries
+    // NO spend scope and NO buzzBudget.
+    expect(signArg.scopes).not.toContain('ai:write:budgeted');
+    expect(signArg.buzzBudget).toBeUndefined();
+    expect(signArg.userId).toBeNull();
   });
 
   it('BYTE-IDENTICAL model path: ctx is exactly { modelId, slotId } (no entityType) for generate-from-model', async () => {
