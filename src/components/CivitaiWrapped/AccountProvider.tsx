@@ -191,9 +191,27 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     await handleSignOut();
   };
 
-  // TODO(E): once the hub exposes a "forget this device's whole account set" call, logoutAll should clear the
-  // roster + device set too. Until then it's identical to logout (the device set self-prunes after 30 idle days).
-  const logoutAll = logout;
+  // "Sign out everywhere on this browser": forget the ENTIRE device account set, not just the current session.
+  //
+  // The hub has no single "forget this device's whole account set" endpoint yet (it only exposes
+  // DELETE /api/auth/accounts?userId=N for one account at a time — see apps/auth/.../api/auth/accounts), so we
+  // fan that out over every account in the live device set. We await the hub removals BEFORE handleSignOut()
+  // navigates away (a full-page redirect that would otherwise cancel in-flight fetches). We also drop the local
+  // roster + legacy token store so the switcher shows nothing, and logout() below clears the HttpOnly device
+  // cookie server-side — so even an account that raced the removeAccount call can't be switched back into.
+  //
+  // TODO(E): replace the per-account fan-out with a single hub "forget this device" endpoint
+  // (e.g. DELETE /api/auth/accounts with no userId, clearing the whole device set + busting the device cookie)
+  // so this is atomic and doesn't depend on the client-visible account list being complete.
+  const logoutAll = async () => {
+    // Best-effort: remove every seamlessly-switchable account from the hub device set. Awaited so the requests
+    // land before the logout redirect tears the page down. `authProxy.removeAccount` already swallows errors.
+    await Promise.all(Object.keys(deviceAccounts).map((id) => authProxy.removeAccount(Number(id))));
+    // Drop the durable display roster and the legacy token store — the user asked to forget all accounts here.
+    setRoster({});
+    setLegacyAccounts({});
+    await logout();
+  };
 
   const swapAccount = async (userId: number, callbackUrl?: string) => {
     const cb = callbackUrl ?? window.location.href;
