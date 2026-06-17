@@ -1,13 +1,21 @@
 import { Box } from '@mantine/core';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BlockFallback } from './BlockFallback';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { grantedPageScopes, pageFallbackReason } from './pageBlockHostLogic';
+import { resolveRequestConsent } from './requestConsentGate';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+
+// Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
+// clicks an action whose consent-gated scope the page token is missing. Mirrors
+// IframeHost's dynamic import (SSR-disabled).
+const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: false });
 
 /**
  * W10 — full-page App Block host. Renders a block as a FULL-VIEWPORT surface
@@ -72,6 +80,10 @@ export interface PageBlockHostProps {
   tokenError?: boolean;
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
+  /** Re-mint the page token after a consent grant so it carries the newly
+   *  granted scopes (pushed to the iframe via TOKEN_REFRESH). Mirrors
+   *  IframeHost.onConsentGranted → useBlockToken.refresh. */
+  onConsentGranted?: () => void;
 }
 
 export function PageBlockHost({
@@ -92,6 +104,7 @@ export function PageBlockHost({
   tokenError,
   viewer,
   theme,
+  onConsentGranted,
 }: PageBlockHostProps) {
   const router = useRouter();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -272,6 +285,51 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage]);
+
+  // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
+  // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
+  // the page money scope is enabled) asks the host to open the consent UI when
+  // the user clicks an action that needs that capability (e.g. Generate),
+  // instead of a prompt on load. Mirrors IframeHost's REQUEST_CONSENT handler
+  // exactly: we grant ONLY the missing set the MINT computed (`missingScopes` —
+  // server-known truth), NOT any scopes the block claims; the gate also pins
+  // status === 'ready' so a pre-handshake block can't pop a permission modal
+  // before any interaction (same posture as NAVIGATE). On grant we re-mint the
+  // token (onConsentGranted → useBlockToken.refresh); the new scopes flow to the
+  // iframe via the TOKEN_REFRESH push above and the block retries — there is no
+  // host→block reply (fire-and-forget).
+  //
+  // This was the W10 page-consent gap: the page surface (#2606) carried no money
+  // scopes, so no consent handler was needed; #2612 enabled the page money scope
+  // but never ported this handler from IframeHost, so REQUEST_CONSENT fired into
+  // the void and the block hung on "confirm in the Civitai dialog".
+  useEffect(() => {
+    const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', () => {
+      // PageBlockHost's local Status carries an extra terminal `'error'` variant
+      // (a hard mint failure) the shared gate's HostStatus union doesn't model.
+      // The gate only ever grants when status === 'ready', and `'error'` is a
+      // disjoint terminal state (the iframe isn't even rendered), so collapse it
+      // to a non-ready sentinel before delegating — semantics are unchanged (it
+      // would return null either way), this just satisfies the union type.
+      const gateStatus = status === 'error' ? 'no_token' : status;
+      const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
+      if (scopesToGrant == null) return; // not ready, or nothing missing — drop
+      dialogStore.trigger({
+        component: BlockConsentModal,
+        props: {
+          appBlockId,
+          // PageBlockHost surfaces the app name as `appName` (the model host
+          // uses `install.manifest.name`).
+          blockName: appName,
+          missingScopes: scopesToGrant,
+          onGranted: () => {
+            onConsentGranted?.();
+          },
+        },
+      });
+    });
+    return off;
+  }, [onMessage, status, missingScopes, appBlockId, appName, onConsentGranted]);
 
   // Deep-link bridge — block requests in-page navigation. The block may push a
   // new sub-path WITHIN its own page space; we constrain it to the page route so

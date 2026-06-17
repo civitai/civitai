@@ -128,7 +128,11 @@ export default function AppPage(props: PageProps) {
   // `missingScopes` lets PageBlockHost compute the REAL granted set (declared −
   // missing) for BLOCK_INIT; `needsConsent`/`error` let it surface a terminal
   // state instead of hanging at `no_token`.
-  const { token, expiresAt, needsConsent, missingScopes, error } = useBlockToken(
+  // `refresh` re-mints the page token after a consent grant so the new scopes
+  // flow to the block via TOKEN_REFRESH (wired to PageBlockHost.onConsentGranted,
+  // mirroring how IframeHost re-mints on REQUEST_CONSENT). The rotated token's
+  // TOKEN_REFRESH push delivers the granted scopes and the block retries.
+  const { token, expiresAt, needsConsent, missingScopes, error, refresh } = useBlockToken(
     install,
     context
   );
@@ -159,6 +163,7 @@ export default function AppPage(props: PageProps) {
           tokenError={error != null}
           viewer={viewer}
           theme={theme}
+          onConsentGranted={refresh}
         />
       </Box>
     </>
