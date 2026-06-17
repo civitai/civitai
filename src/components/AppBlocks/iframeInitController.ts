@@ -67,7 +67,11 @@ export const INIT_RETRY_INTERVAL_MS = 400;
  * the node vitest env (mirrors hostRenderDecision / resolveRequestSignIn).
  */
 export function shouldStartInit(args: {
-  status: 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
+  // Accepts the model IframeHost statuses plus the W10 page host's `error`
+  // terminal state. The gate only fires for `loading`, so any non-loading
+  // status (terminal or otherwise) is a no-op — widening the union is
+  // backward-compatible.
+  status: 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
   hasToken: boolean;
   checkpointLoading: boolean;
 }): boolean {

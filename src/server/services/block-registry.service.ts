@@ -270,6 +270,10 @@ export interface PageBlockSsr {
   trustTier: 'unverified' | 'verified' | 'internal';
   name: string;
   pageTitle: string;
+  /** #3/#6: the page manifest's declared scopes. The host computes the ACTUAL
+   *  granted set (declared − missingScopes from the mint) for BLOCK_INIT, so the
+   *  block sees the real scopes it has rather than a hardcoded empty array. */
+  scopes: string[];
 }
 
 interface UninstallOpts {
@@ -1481,6 +1485,13 @@ export class BlockRegistry {
         blockId: true,
         appId: true,
         manifest: true,
+        // #2: the AppBlock.trustTier COLUMN is the authoritative, mod-controlled
+        // trust tier. It must drive the iframe sandbox — NOT `manifest.trustTier`,
+        // which is a publisher-self-declared field (using it reintroduces the C1
+        // trust-tier self-escalation class for the page sandbox). Mirrors the
+        // model render path, which reads the `trust_tier` column (see
+        // resolveRenderMode + the `r.trust_tier` raw select used by listForModel).
+        trustTier: true,
       },
     });
     if (!ab) return null;
@@ -1488,22 +1499,38 @@ export class BlockRegistry {
     if (!manifestDeclaresPage(manifest)) return null;
     const iframe = (manifest.iframe ?? {}) as { src?: unknown };
     const iframeSrc = typeof iframe.src === 'string' ? iframe.src : '';
-    const sandbox = typeof iframe.src === 'string' ? (iframe as { sandbox?: unknown }).sandbox : '';
+    // #7: extract the sandbox from `iframe.sandbox` independently — the prior
+    // gate on `typeof iframe.src === 'string'` was misleading (sandbox presence
+    // has nothing to do with src being a string). Harmless before (src/sandbox
+    // are written together) but wrong; gate on the field actually being read.
+    const sandbox = typeof iframe === 'object' && iframe !== null
+      ? (iframe as { sandbox?: unknown }).sandbox
+      : '';
     const page = (manifest.page ?? {}) as { title?: unknown; icon?: unknown };
     const name = typeof manifest.name === 'string' ? manifest.name : ab.blockId;
+    // #3/#6: surface the page's declared scopes so the host can compute the
+    // ACTUAL granted scope set (declared − missing) for BLOCK_INIT, mirroring
+    // IframeHost. Money/spend scopes are rejected at mint for a page, so this is
+    // effectively the consent-exempt ambient set (apps:storage:*) once approved.
+    const declaredScopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
+      ? ((manifest as { scopes: unknown[] }).scopes.filter(
+          (s): s is string => typeof s === 'string'
+        ))
+      : [];
     return {
       appBlockId: ab.id,
       blockId: ab.blockId,
       appId: ab.appId,
       iframeSrc,
       sandbox: typeof sandbox === 'string' ? sandbox : '',
+      // #2: use the COLUMN (authoritative), never `manifest.trustTier`.
       trustTier:
-        typeof manifest.trustTier === 'string' &&
-        (manifest.trustTier === 'verified' || manifest.trustTier === 'internal')
-          ? (manifest.trustTier as 'verified' | 'internal')
+        ab.trustTier === 'verified' || ab.trustTier === 'internal'
+          ? (ab.trustTier as 'verified' | 'internal')
           : 'unverified',
       name,
       pageTitle: typeof page.title === 'string' ? page.title : name,
+      scopes: declaredScopes,
     };
   }
 

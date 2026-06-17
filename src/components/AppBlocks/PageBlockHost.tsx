@@ -1,8 +1,10 @@
 import { Box } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BlockFallback } from './BlockFallback';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { grantedPageScopes, pageFallbackReason } from './pageBlockHostLogic';
 import { intersectSandbox } from './sandbox';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
@@ -34,7 +36,7 @@ import type { BlockInitPayload, PageContext } from './types';
 const BLOCK_READY_TIMEOUT_MS = 10_000;
 const TOKEN_WAIT_TIMEOUT_MS = 15_000;
 
-type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
+type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 
 export interface PageBlockHostProps {
   /** AppBlock id (`apb_*`) — used to build the BLOCK_INIT ids + trust chrome. */
@@ -54,6 +56,20 @@ export interface PageBlockHostProps {
   /** The minted, viewer-scoped page token (no money scopes). */
   token: string | null;
   expiresAt: string | null;
+  /** #3/#6: the page manifest's declared scopes. The host posts the ACTUAL
+   *  granted set (declared − missingScopes) in BLOCK_INIT so the block sees the
+   *  scopes the JWT actually carries (e.g. `apps:storage:*`), not `[]`. */
+  declaredScopes: string[];
+  /** #3/#6: consent-gated scopes withheld from the token (reported by the mint).
+   *  Trimmed from the wrapped `token.scopes` so the block's capability check is
+   *  accurate, and used to surface a consent-needed terminal state. */
+  missingScopes?: string[];
+  /** #3/#6: true when the app's approved manifest declares scopes the viewer has
+   *  not granted (the token still mints with the granted subset). */
+  needsConsent?: boolean;
+  /** #3/#6: the token mint errored. Surface an error state instead of hanging at
+   *  `no_token`. */
+  tokenError?: boolean;
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
 }
@@ -70,6 +86,10 @@ export function PageBlockHost({
   slug,
   token,
   expiresAt,
+  declaredScopes,
+  missingScopes,
+  needsConsent,
+  tokenError,
   viewer,
   theme,
 }: PageBlockHostProps) {
@@ -89,6 +109,14 @@ export function PageBlockHost({
   }, [iframeSrc]);
 
   const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin });
+
+  // #3/#6: the scopes the minted JWT ACTUALLY carries (declared − missing).
+  // See pageBlockHostLogic.grantedPageScopes. Posting `[]` (the old hardcode)
+  // lied to the block about its capabilities.
+  const grantedScopes = useMemo<string[]>(
+    () => grantedPageScopes(declaredScopes, missingScopes),
+    [declaredScopes, missingScopes]
+  );
 
   // Current sub-path under /apps/run/<slug>/<...path> (no leading slash). Read
   // from the router so a popstate / back-forward reflects into the block.
@@ -121,9 +149,10 @@ export function PageBlockHost({
         // initSent only fires after token is present (gated below); the
         // controller posts the freshest payload via the ref.
         raw: token ?? '',
-        // A page token carries only viewer-scoped ambient scopes (apps:storage:*)
-        // — never money scopes. The block reads scopes off the wrapped token.
-        scopes: [],
+        // #3/#6: the REAL granted scopes the JWT carries (page = viewer-scoped
+        // ambient `apps:storage:*`; never money). Posting `[]` lied to the block
+        // about the capabilities it holds.
+        scopes: grantedScopes,
         expiresAt: expiresAt ?? '',
       },
       context: buildContext(),
@@ -132,7 +161,7 @@ export function PageBlockHost({
       theme,
       renderMode: 'iframe',
     }),
-    [appId, blockId, blockInstanceId, buildContext, expiresAt, token, viewer, theme]
+    [appId, blockId, blockInstanceId, buildContext, expiresAt, grantedScopes, token, viewer, theme]
   );
   buildInitPayloadRef.current = buildInitPayload;
 
@@ -161,6 +190,16 @@ export function PageBlockHost({
     };
   }, [token, status, sendInitOnce]);
 
+  // #3/#6: the mint errored (no token will arrive). Surface an `error` state
+  // immediately rather than waiting out the no_token timeout — a hard mint
+  // failure is terminal. (`needsConsent` is NOT terminal: the token still mints
+  // with the granted subset, so the block loads; we only thread the consent
+  // signal into the wrapped scopes above.)
+  useEffect(() => {
+    if (!tokenError || token) return;
+    setStatus((current) => (current === 'loading' ? 'error' : current));
+  }, [tokenError, token]);
+
   // Token never resolves → surface a no_token state instead of an endless
   // skeleton.
   useEffect(() => {
@@ -174,8 +213,10 @@ export function PageBlockHost({
   // Push a TOKEN_REFRESH when the token rotates after init.
   useEffect(() => {
     if (!initSentRef.current || !token) return;
-    send('TOKEN_REFRESH', { token: { raw: token, scopes: [], expiresAt: expiresAt ?? '' } });
-  }, [token, expiresAt, send]);
+    send('TOKEN_REFRESH', {
+      token: { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' },
+    });
+  }, [token, expiresAt, grantedScopes, send]);
 
   // Answer a block-initiated REQUEST_TOKEN.
   useEffect(() => {
@@ -187,11 +228,11 @@ export function PageBlockHost({
           : undefined;
       send('TOKEN_REFRESH_RESPONSE', {
         ...(requestId ? { requestId } : {}),
-        token: { raw: token, scopes: [], expiresAt: expiresAt ?? '' },
+        token: { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' },
       });
     });
     return off;
-  }, [token, expiresAt, send, onMessage]);
+  }, [token, expiresAt, grantedScopes, send, onMessage]);
 
   // BLOCK_READY → ready.
   useEffect(() => {
@@ -250,6 +291,20 @@ export function PageBlockHost({
     send('ROUTE_CHANGED', { subPath });
   }, [subPath, status, send]);
 
+  // #5: page-visibility SUSPEND / RESUME — tell the block to pause work when its
+  // tab is hidden and resume when shown (mirrors IframeHost). Only wired once the
+  // block is ready so a pre-handshake block isn't told to suspend/resume before
+  // it can listen.
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const handler = () => {
+      if (document.visibilityState === 'visible') send('RESUME');
+      else send('SUSPEND');
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, [status, send]);
+
   // SUSPEND on unmount.
   useEffect(() => {
     return () => {
@@ -258,10 +313,13 @@ export function PageBlockHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Terminal-failure collapse — same anti-spoof posture as IframeHost: a failed
-  // page block shows the trust chrome + nothing (never a fake page).
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';
+
+  // #4: terminal-state fallback — render a BlockFallback message INSIDE the page
+  // frame instead of a blank viewport. See pageBlockHostLogic.pageFallbackReason
+  // for the status→reason mapping + the anti-spoof rationale.
+  const fallbackReason = pageFallbackReason(status);
 
   return (
     <Box
@@ -276,6 +334,13 @@ export function PageBlockHost({
       }}
       data-testid="app-page-frame"
       data-block-instance-id={blockInstanceId}
+      // #3/#6: surface the consent signal as an observable attribute. The page
+      // token still mints with the granted subset (so the block loads — consent
+      // is NOT terminal here), but a block requesting an ungranted consent-gated
+      // scope drives its own REQUEST_CONSENT against the missing set. This makes
+      // the host-known signal visible to the block frame / debugging rather than
+      // silently swallowed.
+      data-needs-consent={needsConsent ? 'true' : 'false'}
     >
       <AppBlockChrome blockInstanceId={blockInstanceId} appName={appName} />
       {showIframe ? (
@@ -296,6 +361,10 @@ export function PageBlockHost({
             pointerEvents: isReady ? 'auto' : 'none',
           }}
         />
+      ) : fallbackReason ? (
+        <Box style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }} data-testid="app-page-fallback">
+          <BlockFallback reason={fallbackReason} blockName={appName} />
+        </Box>
       ) : null}
     </Box>
   );

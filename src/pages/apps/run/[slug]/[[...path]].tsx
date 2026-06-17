@@ -36,6 +36,9 @@ interface PageProps {
   sandbox: string;
   trustTier: 'unverified' | 'verified' | 'internal';
   slug: string;
+  /** #3/#6: the page manifest's declared scopes, used to compute the actual
+   *  granted set (declared − missingScopes) for BLOCK_INIT. */
+  scopes: string[];
 }
 
 export const getServerSideProps = createServerSideProps<PageProps>({
@@ -67,13 +70,15 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         sandbox: page.sandbox,
         trustTier: page.trustTier,
         slug: page.blockId,
+        scopes: page.scopes,
       },
     };
   },
 });
 
 export default function AppPage(props: PageProps) {
-  const { appBlockId, blockId, appId, appName, iframeSrc, sandbox, trustTier, slug } = props;
+  const { appBlockId, blockId, appId, appName, iframeSrc, sandbox, trustTier, slug, scopes } =
+    props;
   const currentUser = useCurrentUser();
   const colorScheme = useComputedColorScheme('dark');
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
@@ -91,13 +96,17 @@ export default function AppPage(props: PageProps) {
       blockId,
       appId,
       appBlockId,
-      manifest: { name: appName, iframe: { src: iframeSrc, minHeight: 200, maxHeight: null, resizable: true, sandbox } },
+      manifest: {
+        name: appName,
+        scopes,
+        iframe: { src: iframeSrc, minHeight: 200, maxHeight: null, resizable: true, sandbox },
+      },
       publisherSettings: {},
       enabled: true,
       renderMode: 'iframe',
       trustTier,
     }),
-    [appBlockId, appId, appName, blockId, blockInstanceId, iframeSrc, sandbox, trustTier]
+    [appBlockId, appId, appName, blockId, blockInstanceId, iframeSrc, sandbox, scopes, trustTier]
   );
 
   // The slotContext POSTed to /api/v1/block-tokens. entityType:'none' selects
@@ -115,7 +124,14 @@ export default function AppPage(props: PageProps) {
     [slug, currentUser, theme]
   );
 
-  const { token, expiresAt } = useBlockToken(install, context);
+  // #3/#6: take the consent signal + error from the mint, not just token/expiry.
+  // `missingScopes` lets PageBlockHost compute the REAL granted set (declared −
+  // missing) for BLOCK_INIT; `needsConsent`/`error` let it surface a terminal
+  // state instead of hanging at `no_token`.
+  const { token, expiresAt, needsConsent, missingScopes, error } = useBlockToken(
+    install,
+    context
+  );
 
   const viewer = currentUser
     ? { id: currentUser.id, username: currentUser.username ?? null }
@@ -137,6 +153,10 @@ export default function AppPage(props: PageProps) {
           slug={slug}
           token={token}
           expiresAt={expiresAt}
+          declaredScopes={scopes}
+          missingScopes={missingScopes}
+          needsConsent={needsConsent}
+          tokenError={error != null}
           viewer={viewer}
           theme={theme}
         />
