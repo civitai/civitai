@@ -145,3 +145,8 @@ apps/*/.next/
 # Lighthouse CI — runtime config (cookie-injected) + report output, never committed
 lighthouserc.runtime.json
 .lighthouseci/
+
+# Playwright hub e2e generated artifacts
+apps/auth/e2e/playwright-report/
+apps/auth/e2e/test-results/
+apps/auth/e2e/.auth/
