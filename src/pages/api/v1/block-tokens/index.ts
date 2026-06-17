@@ -267,7 +267,14 @@ function resolveBuzzBudget(
 ): number | null {
   if (!scopes.includes('ai:write:budgeted')) return null;
   const raw = publisherSettings?.buzz_budget_per_gen;
-  const candidate = typeof raw === 'number' && Number.isFinite(raw) ? raw : BUZZ_BUDGET_DEFAULT;
+  // Defense-in-depth (audit should-fix): require an INTEGER, not merely a
+  // finite number. A fractional / Infinity / NaN / non-number value falls back
+  // to the platform default rather than flowing through to a fractional Buzz
+  // budget. This treats model slots and pages identically — both arrive here as
+  // `buzz_budget_per_gen` (the model path from install settings, the page path
+  // mapped from manifest `page.buzzBudgetPerGen`) and both clamp+gate the same
+  // way. A valid positive integer (the model-slot common case) is unchanged.
+  const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : BUZZ_BUDGET_DEFAULT;
   if (candidate <= 0) return 0; // sentinel — caller rejects with 422
   return Math.min(candidate, BUZZ_BUDGET_CAP);
 }
