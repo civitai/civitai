@@ -44,6 +44,7 @@ export function createServerSideProps<P>({
   useSSG,
   useSession = false,
   prefetch = 'once',
+  requireModerator = false,
 }: CreateServerSidePropsProps<P>) {
   return async function (
     context: GetServerSidePropsContext
@@ -51,7 +52,22 @@ export function createServerSideProps<P>({
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     const session =
       ((context.req as any)['session'] as Session | null) ??
-      (useSession || !isClient ? await getServerAuthSession(context) : null);
+      (useSession || requireModerator || !isClient ? await getServerAuthSession(context) : null);
+
+    // Page-level moderator gate (replaces the edge route-guard — the thin hub civ-token can't resolve the full
+    // user in the edge runtime). Anon → login; authed-non-moderator → home (login can't grant the permission
+    // and would loop back here). Runs on SSR AND client-nav data fetches.
+    if (requireModerator && !session?.user?.isModerator) {
+      return {
+        redirect: {
+          destination: session?.user
+            ? '/'
+            : `/login?returnUrl=${encodeURIComponent(context.resolvedUrl)}`,
+          permanent: false,
+        },
+      };
+    }
+
     const features = await getFeatureFlagsAsync({ user: session?.user, req: context.req });
 
     const ssg =
@@ -96,6 +112,9 @@ type CreateServerSidePropsProps<P> = {
   useSSG?: boolean;
   useSession?: boolean;
   prefetch?: 'always' | 'once';
+  /** Gate the page to moderators (replaces the edge `/moderator` route-guard). Resolves the session and
+   *  redirects non-moderators before the resolver runs. */
+  requireModerator?: boolean;
   resolver: (
     context: CustomGetServerSidePropsContext
   ) => Promise<GetServerSidePropsResult<P> | void>;

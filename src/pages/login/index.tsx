@@ -51,12 +51,25 @@ export const getServerSideProps = createServerSideProps({
     // No hub configured → nowhere to log in; degrade to home rather than render a dead page.
     if (!hubIssuer) return { redirect: { destination: '/', permanent: false } };
 
-    const postLogin = new URL('/api/auth/post-login', getBaseUrl());
-    postLogin.searchParams.set('dest', safeReturn);
-    if (typeof reason === 'string' && reason) postLogin.searchParams.set('reason', reason);
+    // Land back on the user's OWN origin (the request host), not a fixed primary — so a civitai.red user stays
+    // on .red instead of bouncing to green. Cross-site relative to the hub, wrap in /api/auth/sync first so this
+    // domain mints its own cookie before post-login runs (mirrors the popup path's hubLoginEntryUrl).
+    const host = (ctx.req.headers['x-forwarded-host'] ?? ctx.req.headers.host) as string | undefined;
+    const proto =
+      (ctx.req.headers['x-forwarded-proto'] as string | undefined) ??
+      (host && !host.includes('localhost') ? 'https' : 'http');
+    const origin = host ? `${proto}://${host}` : getBaseUrl();
+    const registrable = (h: string) => h.toLowerCase().split('.').slice(-2).join('.');
+    const crossSite = !!host && registrable(host) !== registrable(new URL(hubIssuer).host);
+
+    const reasonQuery = typeof reason === 'string' && reason ? `&reason=${encodeURIComponent(reason)}` : '';
+    const postLoginPath = `/api/auth/post-login?dest=${encodeURIComponent(safeReturn)}${reasonQuery}`;
+    const landing = crossSite
+      ? `${origin}/api/auth/sync?returnUrl=${encodeURIComponent(postLoginPath)}`
+      : `${origin}${postLoginPath}`;
 
     const hubLogin = new URL('/login', hubIssuer);
-    hubLogin.searchParams.set('returnUrl', postLogin.toString());
+    hubLogin.searchParams.set('returnUrl', landing);
     if (typeof reason === 'string' && reason) hubLogin.searchParams.set('reason', reason);
     if (typeof error === 'string' && error) hubLogin.searchParams.set('error', error);
     if (isSwitch) hubLogin.searchParams.set('prompt', 'select_account');
