@@ -127,9 +127,11 @@ export const serverSchema = z.object({
   // This races `_execute` against a rejecting timer so a command that doesn't settle in
   // time REJECTS — which makes the wrapped promise settle → `.finally(done)` fires → the
   // inflight gauge dec's AND the handler unparks with an error instead of a 125s hang.
-  // The reject is consumed by the SAME fail-open paths that already catch a cluster read
-  // error (cache-helpers fetchThroughCache / createCachedObject): a degraded miss → slow
-  // 200, NOT a 500. Correct regardless of the exact node-redis internal cause.
+  // The reject flows the SAME way an existing cluster read error already does (socketTimeout
+  // has rejected stuck commands down these paths since #2556): fetchThroughCache catches and
+  // fail-opens (degraded miss → slow 200); createCachedObject/Array.fetch does NOT catch, so
+  // it propagates (→ error/500) — same as any cluster error today, and strictly better than a
+  // 125s hang. Correct regardless of the exact node-redis internal cause.
   //
   // Default 15000 (15s): ~650× over the ~23ms healthy-completion p99 (zero risk of
   // clipping a legitimate slow command) and well below the ~125s client ceiling. Sits
