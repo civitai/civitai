@@ -1,13 +1,10 @@
-import type { SessionUser } from '~/types/session';
 import type { NextRequest, NextResponse } from 'next/server';
 
 export type Middleware = {
   matcher: string[];
-  useSession?: boolean;
   shouldRun?: (request: NextRequest) => boolean;
   handler: (ctx: {
     request: NextRequest;
-    user: SessionUser | null;
     redirect: (to: string) => NextResponse;
   }) => Promise<NextResponse | void>;
 };

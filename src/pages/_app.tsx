@@ -39,7 +39,7 @@ import { ToursProvider } from '~/components/Tours/ToursProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { env } from '~/env/client';
-import { isDev, isProd } from '~/env/other';
+import { isDev, isPreview, isProd } from '~/env/other';
 import { civitaiTokenCookieName } from '~/libs/auth';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
@@ -496,6 +496,33 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // → client refetch when hasAuthCookie is true and session is null).
     deleteCookie(civitaiTokenCookieName, appContext.ctx);
     hasAuthCookie = false;
+  }
+
+  // Auth route guards, moved off the edge middleware (the thin hub civ-token can't resolve the full user in the
+  // edge runtime — see preview-access.ts / route-guards). Runs here in Node with the resolved session, catching
+  // direct/SSR loads. A non-mod can't client-nav to these (the nav isn't shown to them) and the tRPC procedures
+  // are the real data gate, so the client-nav gap is harmless.
+  const guardPath = (request.url ?? '').split('?')[0];
+  const isModerator = !!session?.user?.isModerator;
+  let guardTo: string | undefined;
+  if (
+    (guardPath.startsWith('/moderator') && !isModerator) ||
+    (guardPath.startsWith('/testing') && isProd && !isModerator)
+  ) {
+    // Login can't grant the missing permission (it would loop back here), so authed-but-unauthorized → home.
+    guardTo = session?.user ? '/' : `/login?returnUrl=${encodeURIComponent(guardPath)}`;
+  } else if (isPreview && !guardPath.startsWith('/login') && guardPath !== '/preview-restricted') {
+    // Preview deploys gate every page behind login + the moderator/testers allowlist.
+    if (!session?.user) {
+      guardTo = `/login?returnUrl=${encodeURIComponent(guardPath)}`;
+    } else if (!isModerator) {
+      const { checkPreviewAccess } = await import('~/server/auth/preview-access');
+      if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
+    }
+  }
+  if (guardTo && appContext.ctx.res) {
+    appContext.ctx.res.writeHead(302, { Location: guardTo });
+    appContext.ctx.res.end();
   }
 
   return {

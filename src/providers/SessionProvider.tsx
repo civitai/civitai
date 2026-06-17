@@ -10,12 +10,11 @@ import {
   type ReactNode,
 } from 'react';
 
-// First-party replacement for next-auth/react's `SessionProvider` + `useSession` (cutover phase 4). The session
-// is the hub's thin civ-token; the rich user is resolved server-side and exposed by GET /api/auth/session in
-// next-auth's `{ user, expires }` shape — so this keeps the exact `useSession()` contract the ~13 call sites
-// already use (`{ data, status, update }`), no per-site rewrites. NB: `Session` is still the next-auth type;
-// phase 5 swaps it for a first-party type app-wide. signIn/signOut/getProviders remain on next-auth/react until
-// phase 5 (they're coupled to the next-auth server endpoints).
+// First-party replacement for the old next-auth/react `SessionProvider` + `useSession`. The session is the hub's
+// thin civ-token; the rich user is resolved server-side and exposed by GET /api/auth/session in the `{ user,
+// expires }` shape — keeping the exact `useSession()` contract (`{ data, status, update }`) the call sites use.
+// next-auth is fully removed: login is hub-driven (popup / full-page redirect), sign-out hits /api/auth/logout,
+// and `Session` is the first-party type from ~/types/session.
 
 type SessionStatus = 'authenticated' | 'unauthenticated' | 'loading';
 

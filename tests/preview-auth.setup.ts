@@ -1,6 +1,7 @@
 import { test as setup } from '@playwright/test';
 import fs from 'fs';
-import { encode } from 'next-auth/jwt';
+import { EncryptJWT } from 'jose';
+import { hkdfSync } from 'node:crypto';
 import { v4 as uuid } from 'uuid';
 import { PREVIEW_USERS, type PreviewRole, storageStatePath } from './preview-fixtures';
 
@@ -39,6 +40,12 @@ const PREVIEW_URL = process.env.PREVIEW_URL;
 const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https preview => __Secure- prefix
 const MAX_AGE_S = 30 * 24 * 60 * 60;
 
+// Mint the LEGACY next-auth v4 session cookie (a `dir`/`A256GCM` JWE, HKDF-derived key) WITHOUT next-auth, which
+// is now removed. The app still ACCEPTS it via @civitai/auth's decodeLegacySessionCookie during the cutover, so
+// this mirrors that decoder's key derivation exactly.
+const ENC_INFO = 'NextAuth.js Generated Encryption Key';
+const derivedKey = (secret: string) => new Uint8Array(hkdfSync('sha256', secret, '', ENC_INFO, 32));
+
 async function mintStorageState(role: PreviewRole): Promise<string> {
   const u = PREVIEW_USERS[role];
 
@@ -59,7 +66,11 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
   };
 
   const token = { user, sub: String(u.id), id: uuid(), signedAt: Date.now() };
-  const value = await encode({ token, secret: SECRET as string, maxAge: MAX_AGE_S });
+  const value = await new EncryptJWT(token)
+    .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
+    .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) + MAX_AGE_S)
+    .encrypt(derivedKey(SECRET as string));
 
   const { hostname } = new URL(PREVIEW_URL as string);
   const storageState = {

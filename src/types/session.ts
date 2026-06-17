@@ -5,9 +5,9 @@ import type {
 } from '~/server/schema/user.schema';
 import type { getUserBanDetails } from '~/utils/user-helpers';
 
-// First-party session types (NextAuth cutover phase 5) — replaces the `declare module 'next-auth'` augmentation
-// in src/types/next-auth.d.ts. The app imports `Session`/`SessionUser` from here instead of from 'next-auth', so
-// the type no longer depends on the next-auth package. `UserFilePreferences` is an ambient global (global.d.ts).
+// First-party session types — the app imports `Session`/`SessionUser` from here (not from 'next-auth'), so the
+// types don't depend on the next-auth package (now fully removed). `UserFilePreferences` is an ambient global
+// (global.d.ts).
 
 /** The rich user attached to a session (was next-auth's augmented `SessionUser`/`ExtendedUser`). */
 export interface SessionUser {

@@ -1,10 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 
-// next-auth/react's SessionProvider + useSession (and the ~317 useCurrentUser sites) poll this endpoint. It
-// shadows the old [...nextauth] catch-all for exactly /api/auth/session and returns the hub-resolved session
-// (civ-token, or a legacy civitai-token via the jose decoder) in next-auth's `{ user, expires }` shape, so the
-// client half is unchanged until the first-party provider replaces next-auth/react.
+// The first-party SessionProvider + useSession (and the ~317 useCurrentUser sites) poll this endpoint. It returns
+// the hub-resolved session (civ-token, or a legacy civitai-token via the jose decoder) in the `{ user, expires }`
+// shape the client expects. (Replaced the old next-auth [...nextauth] /api/auth/session route.)
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const session = await getServerAuthSession({ req, res });
   if (!session?.user) {
