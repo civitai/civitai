@@ -1127,10 +1127,21 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  // 4h TTL to bound Redis memory — image-meta is ~2.8KB/key (~2.3 GiB / ~1% of
-  // the cluster per the 2026-06-09 keyspace audit; the tag caches are the heavy
-  // consumers, not this one). With stale-while-revalidate, effective Redis EX = 8h.
+  // 4h logical TTL. image-meta is ~2.8KB/key; on next-redis-cluster the cache
+  // sits behind tag-ids-for-images (~16.85 GiB/shard) and post-stats (~8.2 GiB)
+  // as a top-3 consumer of an at-cap LRU cluster (3×32 GiB maxmemory, evicting
+  // ~250 keys/s/shard, ~100% used for hours — verified live 2026-06-17). The
+  // default SWR tail keeps every key resident for a full extra `ttl` past
+  // staleness (physical EX 8h). Trim it to 1h (physical EX 5h) to cut the
+  // resident set the cache wants to hold, matching tagIdsForImagesCache /
+  // postStatCache. Trade-off: a key re-read only in the 4h–5h-old band (vs
+  // 4h–8h before) is now a blocking cold-miss (the lock-winner re-queries
+  // Prisma inline on dbRead) instead of a stale-serve — but at cap those tail
+  // keys are exactly what LRU evicts first anyway, so steadily-read images are
+  // unaffected. Do NOT shorten the logical 4h ttl: that would convert the hot
+  // working set into misses and stampede dbRead.
   ttl: CacheTTL.hour * 4,
+  staleWhileRevalidateTtl: CacheTTL.hour,
 });
 
 type ImageWithMetadata = {
@@ -1152,8 +1163,11 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  // 4h TTL — same rationale as imageMetaCache.
+  // 4h logical TTL + 1h SWR tail (physical EX 5h) — same rationale as
+  // imageMetaCache: bound the resident set on the at-cap next-redis-cluster
+  // without shortening the freshness window.
   ttl: CacheTTL.hour * 4,
+  staleWhileRevalidateTtl: CacheTTL.hour,
 });
 
 export const thumbnailCache = createCachedObject<{
