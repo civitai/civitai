@@ -177,9 +177,6 @@ sections are bold paragraphs, not headings, and the renderer has no `rehype-slug
 `user.service.ts` (`toggleBan`), `user-restriction.router.ts`, `report.service.ts`
 (`resolveEntityAppeal`), `strike.schema.ts`.
 
-Free-text is now stripped from every moderation email — ban, restriction, appeal, and
-strike — closing the inbox-targeting vector across all four surfaces.
-
 **Strike availability:** strikes remain `['dev','granted']` (not GA — Phase 1, no automated
 issuer), so the strike email only fires when a dev/granted moderator issues a strike. The
 email changes above are independent of that flag.
