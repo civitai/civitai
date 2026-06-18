@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * W3 flow A — buzz SPEND attribution service coverage. The interesting
- * surface is:
- *   - server-derived author bounty (gross USD from Buzz, share via the
- *     active spend rate card)
+ * W3 flow A — buzz SPEND attribution service coverage. TRACK-ONLY (mirrors
+ * #2629's membership rework): the write records the EVENT + the money BASIS
+ * (gross USD value of the Buzz burned) only — NO rate card is applied at write
+ * time. The author bounty is deferred to a payout-time backpay over
+ * status='tracked' rows. The interesting surface is:
+ *   - track-only row shape: status='tracked', author_share=0,
+ *     spend_share_pct=0, rate_card_version='unrated', gross recorded
+ *   - the write NEVER calls computeSpendShare (the share is deferred)
  *   - self-spend wash (spender == app owner → voided + 0 share)
- *   - internal-owner wash (app owner ∈ internalAppOwnerUserIds)
+ *   - internal-owner wash (app owner ∈ internalAppOwnerUserIds → voided)
  *   - idempotency via the (workflow_id, app_block_id) UNIQUE (P2002)
  *   - missing-app guard
  *   - the platform-funded-bounty ledger invariant (0 ≤ share ≤ gross)
@@ -48,10 +52,26 @@ vi.mock('~/server/logging/client', () => ({
   },
 }));
 
+// Spy on computeSpendShare so the track-only contract is testable: the write
+// must NEVER call it (the bounty is deferred to payout). Everything else from
+// rate-card stays real.
+const computeSpendShareSpy = vi.hoisted(() => vi.fn());
+vi.mock('../rate-card', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../rate-card')>();
+  return {
+    ...actual,
+    computeSpendShare: (...args: Parameters<typeof actual.computeSpendShare>) => {
+      computeSpendShareSpy(...args);
+      return actual.computeSpendShare(...args);
+    },
+  };
+});
+
 import {
   AttributionAppMissingError,
   buzzSpendToUsdCents,
   recordSpendAttribution,
+  UNRATED_RATE_CARD_VERSION,
   type RecordSpendAttributionInput,
 } from '../buzz-attribution.service';
 import { ACTIVE_RATE_CARD } from '../rate-card';
@@ -97,6 +117,7 @@ beforeEach(() => {
   mockDbRead.blockSpendAttribution.findUnique.mockReset();
   mockDbWrite.blockSpendAttribution.create.mockReset();
   mockLog.mockReset();
+  computeSpendShareSpy.mockReset();
   // Default: app exists, owned by a different user than the spender.
   mockDbRead.oauthClient.findUnique.mockResolvedValue({
     id: APP_ID,
@@ -117,7 +138,7 @@ describe('buzzSpendToUsdCents', () => {
 });
 
 describe('recordSpendAttribution', () => {
-  it('writes exactly one pending row with author=appBlock owner, gross=USD cost, share=cost×rate (floored)', async () => {
+  it('TRACK-ONLY: writes exactly one tracked row — event + gross, author=0, NO rate stamped', async () => {
     const res = await recordSpendAttribution(fakeInput());
 
     // Exactly one write.
@@ -128,32 +149,51 @@ describe('recordSpendAttribution', () => {
 
     // Author is the appBlock's owning OauthClient user (server-derived).
     expect(data.appOwnerUserId).toBe(APP_OWNER_USER_ID);
-    // Gross = USD value of the Buzz burned: 5000 Buzz -> 500 cents.
+    // MONEY BASIS recorded: gross = USD value of the Buzz burned (5000 -> 500).
     expect(data.grossValueCents).toBe(500);
-    // Share = gross * active spend rate, floored.
-    const expectedShare = Math.floor((500 * ACTIVE_RATE_CARD.spendSharePct) / 100);
-    expect(data.appOwnerShareCents).toBe(expectedShare);
-    expect(data.spendSharePct).toBe(ACTIVE_RATE_CARD.spendSharePct);
-    // Not self-spend → pending, not voided.
-    expect(data.status).toBe('pending');
+    // NO rate applied at write: author share 0, pct 0, version 'unrated'.
+    expect(data.appOwnerShareCents).toBe(0);
+    expect(data.spendSharePct).toBe(0);
+    expect(data.rateCardVersion).toBe(UNRATED_RATE_CARD_VERSION);
+    expect(data.rateCardVersion).not.toBe(ACTIVE_RATE_CARD.version);
+    // The write must NOT consult the spend rate card — the bounty is deferred.
+    expect(computeSpendShareSpy).not.toHaveBeenCalled();
+    // Not self/internal → tracked (share-pending), not voided.
+    expect(data.status).toBe('tracked');
     expect(data.voidedReason).toBeNull();
     // Server-derived context preserved.
     expect(data.appId).toBe(APP_ID);
     expect(data.appBlockId).toBe(APP_BLOCK_ID);
     expect(data.workflowId).toBe(WORKFLOW_ID);
     expect(data.userId).toBe(SPENDER_ID);
-    expect(data.rateCardVersion).toBe(ACTIVE_RATE_CARD.version);
+    expect(res.row.status).toBe('tracked');
   });
 
-  it('ledger invariant: 0 ≤ author_share ≤ gross (platform-funded bounty)', async () => {
+  it('ledger invariant: 0 ≤ author_share ≤ gross — and author is always 0 at write (track-only)', async () => {
     await recordSpendAttribution(fakeInput({ buzzAmount: 123456 }));
     const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(data.grossValueCents).toBeGreaterThan(0);
     expect(data.appOwnerShareCents).toBeGreaterThanOrEqual(0);
     expect(data.appOwnerShareCents).toBeLessThanOrEqual(data.grossValueCents);
-    // And re-derivable from the stamped rate.
-    expect(data.appOwnerShareCents).toBe(
-      Math.floor((data.grossValueCents * data.spendSharePct) / 100)
-    );
+    // Track-only: no rate baked in, so the share is identically 0.
+    expect(data.appOwnerShareCents).toBe(0);
+    expect(data.spendSharePct).toBe(0);
+  });
+
+  it('MUTATION-CHECK: author share + pct are 0 regardless of the active rate card (no rate applied)', async () => {
+    // Active card defines spendSharePct=5 (a non-zero placeholder). A
+    // track-only write must NOT apply it — author stays 0 and version stays
+    // 'unrated' even though the card carries a real rate. If the write
+    // regressed to applying computeSpendShare/the 5% card, these assertions
+    // (and the not-called spy) would fail.
+    expect(ACTIVE_RATE_CARD.spendSharePct).toBe(5);
+    await recordSpendAttribution(fakeInput({ buzzAmount: 100000 })); // $100 gross
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(data.grossValueCents).toBe(10000);
+    expect(data.appOwnerShareCents).toBe(0);
+    expect(data.spendSharePct).toBe(0);
+    expect(data.rateCardVersion).toBe(UNRATED_RATE_CARD_VERSION);
+    expect(computeSpendShareSpy).not.toHaveBeenCalled();
   });
 
   it('self-spend (spender == app owner) → voided, zero share', async () => {
@@ -168,6 +208,26 @@ describe('recordSpendAttribution', () => {
     expect(data.appOwnerShareCents).toBe(0);
     expect(data.spendSharePct).toBe(0);
     expect(res.row.status).toBe('voided');
+  });
+
+  it('internal-owner (app owner ∈ internalAppOwnerUserIds) → voided, zero share', async () => {
+    // The owner is a different user than the spender (so NOT self-spend), but
+    // sits on the active card's internal-owner list — its rows must still be
+    // voided so they never enter the backpay. Temporarily inject the owner
+    // into the real list (restored after), since V5 ships with an empty list.
+    const internalList = ACTIVE_RATE_CARD.internalAppOwnerUserIds;
+    internalList.push(APP_OWNER_USER_ID);
+    try {
+      const res = await recordSpendAttribution(fakeInput());
+      const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+      expect(data.status).toBe('voided');
+      expect(data.voidedReason).toBe('internal_owner');
+      expect(data.appOwnerShareCents).toBe(0);
+      expect(data.spendSharePct).toBe(0);
+      expect(res.row.status).toBe('voided');
+    } finally {
+      internalList.pop();
+    }
   });
 
   it('idempotency: a second call for the same workflow returns the existing row, no second write', async () => {

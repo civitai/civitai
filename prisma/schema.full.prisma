@@ -2601,14 +2601,17 @@ model BlockSpendAttribution {
   blockInstanceId    String   @map("block_instance_id")
   modelId            Int?     @map("model_id")
 
-  rateCardVersion    String   @map("rate_card_version")
-  /// The spend rev-share percentage stamped at write time.
-  spendSharePct      Int      @map("spend_share_pct")
-  appOwnerShareCents Int      @map("app_owner_share_cents")
+  /// TRACK-ONLY: no rate applied at write time. 'unrated' sentinel until the
+  /// payout-time backpay stamps the signed-off version.
+  rateCardVersion    String   @default("unrated") @map("rate_card_version")
+  /// 0 at write time; the payout-time backpay computes the real bounty.
+  spendSharePct      Int      @default(0) @map("spend_share_pct")
+  appOwnerShareCents Int      @default(0) @map("app_owner_share_cents")
   appOwnerUserId     Int      @map("app_owner_user_id")
   appOwner           User     @relation("BlockSpendAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
 
-  status             String   @default("pending")
+  /// 'tracked' (track-only event) | pending | confirmed | voided | paid_out | held.
+  status             String   @default("tracked")
   /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
   /// refund path, so this is never 'refund'/'chargeback'.
   voidedReason       String?  @map("voided_reason")
