@@ -248,3 +248,181 @@ describe('validateBuzzPurchaseAttribution', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// W3 flow B — page Buzz PURCHASE attribution (`page_<appBlockId>`).
+//
+// A page purchase carries NO modelId/slotId. The validator must re-derive it
+// to `viewer_global` via the resolver's `page` source BEFORE the model-path
+// modelId/slotId gate, and must keep the FIN-1 forge-resistance invariant
+// (a forged scope / app is corrected; an unresolvable page is stripped).
+// ---------------------------------------------------------------------------
+const PAGE_APP_ID = 'app_page';
+const PAGE_APP_BLOCK_ID = 'apb_page';
+const PAGE_INSTANCE = `page_${PAGE_APP_BLOCK_ID}`;
+
+/** Metadata a page surface would carry — NO modelId, NO slotId. */
+function pageMetadata(over: Record<string, unknown> = {}) {
+  return {
+    type: 'buzzPurchase',
+    unitAmount: 100,
+    buzzAmount: 1000,
+    userId: SESSION_USER,
+    buzzType: 'yellow',
+    blockAppId: PAGE_APP_ID,
+    blockAppBlockId: PAGE_APP_BLOCK_ID,
+    blockInstanceId: PAGE_INSTANCE,
+    blockScope: 'viewer_global',
+    // deliberately no blockModelId / blockSlotId — a page has neither.
+    ...over,
+  } as Record<string, unknown> & {
+    userId?: unknown;
+    blockAppId?: string | null;
+    blockInstanceId?: string | null;
+  };
+}
+
+/** What resolveBlockInstance's `page` branch returns (modelId=0 sentinel). */
+function resolvedPage(over: Record<string, unknown> = {}) {
+  return {
+    source: 'page',
+    modelId: 0,
+    slotId: '',
+    enabled: true,
+    settings: {},
+    installedByUserId: null,
+    appBlock: {
+      id: PAGE_APP_BLOCK_ID,
+      blockId: 'blk_page',
+      appId: PAGE_APP_ID,
+      status: 'approved',
+      manifest: {},
+      approvedScopes: [],
+      app: null,
+    },
+    ...over,
+  };
+}
+
+describe('validateBuzzPurchaseAttribution — page surface (flow B)', () => {
+  it('resolves a page purchase to viewer_global (no modelId/slotId needed)', async () => {
+    mockResolve.mockResolvedValueOnce(resolvedPage());
+    const out = await validateBuzzPurchaseAttribution({
+      metadata: pageMetadata(),
+      sessionUserId: SESSION_USER,
+    });
+
+    // The resolver was called with the page instance + session user.
+    expect(mockResolve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blockInstanceId: PAGE_INSTANCE,
+        viewerUserId: SESSION_USER,
+        db: 'write',
+      })
+    );
+    expect(out.blockScope).toBe('viewer_global');
+    expect(out.blockAppId).toBe(PAGE_APP_ID);
+    expect(out.blockAppBlockId).toBe(PAGE_APP_BLOCK_ID);
+    expect(out.blockInstanceId).toBe(PAGE_INSTANCE);
+    expect(out.userId).toBe(SESSION_USER);
+    // No modelId is stamped on a page row — the 0 sentinel must NOT leak.
+    expect(out.blockModelId).toBeUndefined();
+  });
+
+  it('FIN-1 — corrects a forged high-rate scope on a page instance to viewer_global', async () => {
+    // Attacker stamps viewer_personal (25%) on a page_* id to mint a wider cut.
+    mockResolve.mockResolvedValueOnce(resolvedPage());
+    const out = await validateBuzzPurchaseAttribution({
+      metadata: pageMetadata({ blockScope: 'viewer_personal' }),
+      sessionUserId: SESSION_USER,
+    });
+    // Server re-derives from source='page' → viewer_global (0% on the card).
+    expect(out.blockScope).toBe('viewer_global');
+  });
+
+  it('FIN-1 — overwrites a forged blockAppId with the resolved page app', async () => {
+    mockResolve.mockResolvedValueOnce(resolvedPage());
+    const out = await validateBuzzPurchaseAttribution({
+      metadata: pageMetadata({ blockAppId: 'app_confederate', blockAppBlockId: 'apb_confederate' }),
+      sessionUserId: SESSION_USER,
+    });
+    expect(out.blockAppId).toBe(PAGE_APP_ID);
+    expect(out.blockAppBlockId).toBe(PAGE_APP_BLOCK_ID);
+  });
+
+  it('FIN-1 — strips attribution when the page does not resolve (non-approved / non-page app)', async () => {
+    mockResolve.mockResolvedValueOnce(null);
+    const out = await validateBuzzPurchaseAttribution({
+      metadata: pageMetadata({ blockInstanceId: 'page_apb_forged' }),
+      sessionUserId: SESSION_USER,
+    });
+    expect(out.blockAppId).toBeUndefined();
+    expect(out.blockInstanceId).toBeUndefined();
+    expect(out.blockScope).toBeUndefined();
+    // purchase preserved (no throw)
+    expect(out.buzzAmount).toBe(1000);
+    expect(out.userId).toBe(SESSION_USER);
+  });
+
+  it('FIN-1 — strips a forged modelId off a page row (page has no model entity)', async () => {
+    // An attacker tacks a blockModelId onto a page instance hoping it rides
+    // along. stripBlockKeys clears it and the page branch never re-stamps one.
+    mockResolve.mockResolvedValueOnce(resolvedPage());
+    const out = await validateBuzzPurchaseAttribution({
+      metadata: pageMetadata({ blockModelId: '999', blockSlotId: 'model.sidebar_top' }),
+      sessionUserId: SESSION_USER,
+    });
+    expect(out.blockModelId).toBeUndefined();
+    expect(out.blockSlotId).toBeUndefined();
+    expect(out.blockScope).toBe('viewer_global');
+  });
+
+  it('strips a page instance whose resolver returns a non-page source (defense in depth)', async () => {
+    // Should never happen (the resolver page branch always sets source='page'),
+    // but if a future bug returned some other source for a page_* id we must
+    // NOT silently bucket it — strip instead.
+    mockResolve.mockResolvedValueOnce(resolvedPage({ source: 'viewer_subscription' }));
+    const out = await validateBuzzPurchaseAttribution({
+      metadata: pageMetadata(),
+      sessionUserId: SESSION_USER,
+    });
+    expect(out.blockAppId).toBeUndefined();
+    expect(out.blockScope).toBeUndefined();
+  });
+
+  it('strips (does not throw) when the resolver throws on a page instance', async () => {
+    mockResolve.mockRejectedValueOnce(new Error('db down'));
+    const out = await validateBuzzPurchaseAttribution({
+      metadata: pageMetadata(),
+      sessionUserId: SESSION_USER,
+    });
+    expect(out.blockAppId).toBeUndefined();
+    expect(out.buzzAmount).toBe(1000);
+  });
+
+  it('VECTOR 1 still applies on the page path — spender spoof is rejected before resolve', async () => {
+    await expect(
+      validateBuzzPurchaseAttribution({
+        metadata: pageMetadata({ userId: 999 }),
+        sessionUserId: SESSION_USER,
+      })
+    ).rejects.toThrow(/error while creating your order/i);
+    expect(mockResolve).not.toHaveBeenCalled();
+  });
+
+  it('REGRESSION — a model-slot purchase still derives its existing scope (page branch does not intercept it)', async () => {
+    // The model path must be unaffected: a bus_view_ instance still goes
+    // through the modelId/slotId gate + resolves to viewer_personal.
+    mockResolve.mockResolvedValueOnce(resolvedInstance());
+    const out = await validateBuzzPurchaseAttribution({
+      metadata: blockMetadata(),
+      sessionUserId: SESSION_USER,
+    });
+    expect(out.blockScope).toBe('viewer_personal');
+    expect(out.blockModelId).toBe(String(MODEL_ID));
+    // model path passes modelId+slotId to the resolver
+    expect(mockResolve).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: MODEL_ID, slotId: SLOT })
+    );
+  });
+});
