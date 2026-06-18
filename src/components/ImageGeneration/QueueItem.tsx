@@ -1140,23 +1140,62 @@ function Model3DQueueCardOutputs({
         </Button>
         {/* Download the orchestrator's presigned URLs directly. URLs are
             short-lived, so this is "download now or never" — same constraint
-            as Save 3D Model (after which we copy them to our own S3). When
-            the polyGen output carries `variants` (FBX alongside the primary
-            GLB), expose every format as a menu item. */}
+            as Save 3D Model (after which we copy them to our own S3). The
+            polyGen output can carry up to ~12 files (base + rigged +
+            animated + walking + running, each with their own glb / fbx /
+            armature siblings); flatten them all into the menu. */}
         {(() => {
-          const variants =
-            model3dBlob?.type === 'model3d' ? model3dBlob.variants ?? [] : [];
-          const formats =
-            isComplete && modelUrl
-              ? [
-                  { format: modelFormat, url: modelUrl },
-                  ...variants
-                    .filter((v) => !!v.url)
-                    .map((v) => ({ format: v.format, url: v.url })),
-                ]
-              : [];
+          // Each downloadable file is one (variant label, format, url) row.
+          // Labels mirror the variant taxonomy used by Model3DFile.variant
+          // server-side so a user's downloaded files match what shows up
+          // later on the saved Model3D detail page.
+          type DownloadEntry = { label: string; format: string; url: string };
+          const entries: DownloadEntry[] = [];
 
-          if (!formats.length) {
+          if (isComplete && model3dBlob?.type === 'model3d') {
+            const pushAsset = (
+              label: string,
+              asset:
+                | {
+                    format: string;
+                    url: string;
+                    fbx?: { format: string; url: string };
+                    armature?: { format: string; url: string };
+                  }
+                | undefined
+            ) => {
+              if (!asset?.url) return;
+              entries.push({ label, format: asset.format, url: asset.url });
+              if (asset.fbx?.url)
+                entries.push({
+                  label,
+                  format: asset.fbx.format,
+                  url: asset.fbx.url,
+                });
+              if (asset.armature?.url)
+                entries.push({
+                  label: `${label} (armature)`,
+                  format: asset.armature.format,
+                  url: asset.armature.url,
+                });
+            };
+
+            // Base mesh: the primary GLB + its alternate-format sibling
+            // (lives on the legacy `variants[]` array, where polygen still
+            // emits the base FBX).
+            if (modelUrl) entries.push({ label: 'Base', format: modelFormat, url: modelUrl });
+            for (const v of model3dBlob.variants ?? []) {
+              if (v?.url) entries.push({ label: 'Base', format: v.format, url: v.url });
+            }
+
+            // New sibling meshes from @civitai/client 0.2.0-beta.72.
+            pushAsset('Rigged', model3dBlob.rigged);
+            pushAsset('Animated', model3dBlob.animated);
+            pushAsset('Walking', model3dBlob.basicAnimations?.walking);
+            pushAsset('Running', model3dBlob.basicAnimations?.running);
+          }
+
+          if (!entries.length) {
             return (
               <Button
                 variant="light"
@@ -1170,9 +1209,9 @@ function Model3DQueueCardOutputs({
             );
           }
 
-          // One format — keep the simple anchor.
-          if (formats.length === 1) {
-            const f = formats[0];
+          // Single file — anchor button, no menu.
+          if (entries.length === 1) {
+            const f = entries[0];
             return (
               <Button
                 component="a"
@@ -1190,7 +1229,16 @@ function Model3DQueueCardOutputs({
             );
           }
 
-          // Two or more formats — menu with one item per format.
+          // Build deterministic filenames + collision-safe React keys.
+          // Variant labels go into the filename so the user's filesystem
+          // can tell rigged.glb apart from base.glb after a "save all" sweep.
+          const slug = (s: string) =>
+            s.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+          const filename = (e: DownloadEntry) =>
+            e.label === 'Base'
+              ? `civitai-3d-${request.id}.${e.format}`
+              : `civitai-3d-${request.id}.${slug(e.label)}.${e.format}`;
+
           return (
             <Menu position="bottom-end" withinPortal>
               <Menu.Target>
@@ -1204,17 +1252,19 @@ function Model3DQueueCardOutputs({
                 </Button>
               </Menu.Target>
               <Menu.Dropdown>
-                {formats.map((f) => (
+                {entries.map((e, i) => (
                   <Menu.Item
-                    key={f.format}
+                    key={`${e.label}-${e.format}-${i}`}
                     component="a"
-                    href={f.url}
-                    download={`civitai-3d-${request.id}.${f.format}`}
+                    href={e.url}
+                    download={filename(e)}
                     target="_blank"
                     rel="noopener noreferrer"
                     leftSection={<IconDownload size={14} stroke={2} />}
                   >
-                    {f.format.toUpperCase()}
+                    {e.label === 'Base'
+                      ? e.format.toUpperCase()
+                      : `${e.label} · ${e.format.toUpperCase()}`}
                   </Menu.Item>
                 ))}
               </Menu.Dropdown>
