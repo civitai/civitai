@@ -6310,6 +6310,11 @@ model Model3DFile {
   url               String
   sizeKB            Float
   format            String
+  // Variant discriminator. Lets a single Model3D carry multiple glb/fbx
+  // exports for the same generation — base, rigged, animated, walking
+  // (with armature sibling), running (with armature sibling). Defaults to
+  // "primary" so existing rows + non-PolyGen ingest paths are unaffected.
+  variant           String         @default("primary")
   isPrimary         Boolean        @default(false)
   metadata          Json?
   virusScanResult   ScanResultCode @default(Success)
@@ -6320,7 +6325,7 @@ model Model3DFile {
   exists            Boolean?
   createdAt         DateTime       @default(now())
 
-  @@unique([model3dId, format])
+  @@unique([model3dId, format, variant])
   @@index([model3dId], type: Hash)
 }
 

@@ -4623,6 +4623,7 @@ export interface Model3DFile {
   url: string;
   sizeKB: number;
   format: string;
+  variant: string;
   isPrimary: boolean;
   metadata: JsonValue | null;
   virusScanResult: ScanResultCode;

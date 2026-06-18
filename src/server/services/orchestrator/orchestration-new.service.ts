@@ -1471,6 +1471,7 @@ export async function whatIfFromGraph({
 
 import type {
   AudioBlob,
+  BasicAnimationsBlobs,
   ImageBlob,
   Model3dBlob,
   NsfwLevel,
@@ -1532,27 +1533,61 @@ export interface NormalizedAudioOutput extends NormalizedBlobBase {
 }
 
 /**
+ * A 3D file inside a `NormalizedModel3DAsset`. Mirrors the per-blob fields
+ * already used in `NormalizedModel3DOutput.variants[]` so the client can
+ * treat any 3D file uniformly.
+ */
+export type NormalizedModel3DFile = {
+  id: string;
+  format: string;
+  url: string;
+  available: boolean;
+  urlExpiresAt?: string | null;
+};
+
+/**
+ * A semantically distinct 3D mesh bundle (e.g. the rigged variant, the
+ * animated variant, a walking-template). Carries the primary mesh plus
+ * optional alternate-format export and armature-only sibling — both
+ * optional because not every emitter produces them.
+ */
+export type NormalizedModel3DAsset = NormalizedModel3DFile & {
+  /** Alternate-format export of this same asset (e.g. FBX of the GLB). */
+  fbx?: NormalizedModel3DFile;
+  /** Armature/skeleton-only export — `basicAnimations` entries only. */
+  armature?: NormalizedModel3DFile;
+};
+
+/**
  * Normalized 3D-model output (PolyGen). A single output represents one
  * generated mesh; the primary URL points at the canonical format (GLB),
- * `variants` carries alternate-format exports (e.g. FBX), and the
- * thumbnail fields carry a 2D preview image suitable for queue/grid cards
- * — the in-browser 3D viewer mounts only on detail pages to avoid
+ * `variants` carries alternate-format exports of the BASE mesh (e.g.
+ * FBX of the same GLB), and `rigged` / `animated` / `basicAnimations`
+ * carry semantically distinct sibling meshes when the workflow was asked
+ * to emit them (`enableRigging` / `enableAnimation` on the PolyGen input).
+ *
+ * The thumbnail fields carry a 2D preview image suitable for queue/grid
+ * cards — the in-browser 3D viewer mounts only on detail pages to avoid
  * spinning up N WebGL contexts in the feed.
  */
 export interface NormalizedModel3DOutput extends NormalizedBlobBase {
   type: 'model3d';
   format: string;
-  variants?: Array<{
-    id: string;
-    format: string;
-    url: string;
-    available: boolean;
-    urlExpiresAt?: string | null;
-  }>;
+  /** Alternate-format exports of the BASE mesh. The PolyGen base FBX lands here. */
+  variants?: NormalizedModel3DFile[];
   thumbnailId?: string | null;
   thumbnailUrl?: string | null;
   thumbnailUrlExpiresAt?: string | null;
   thumbnailNsfwLevel?: NsfwLevel;
+  /** Rigged sibling mesh (PolyGen `riggedModel` + optional `riggedFbxModel`). */
+  rigged?: NormalizedModel3DAsset;
+  /** Animated sibling mesh (PolyGen `animatedModel` + optional `animatedFbxModel`). */
+  animated?: NormalizedModel3DAsset;
+  /** Motion templates (PolyGen `basicAnimations`). Each entry carries its own armature-only export. */
+  basicAnimations?: {
+    walking?: NormalizedModel3DAsset;
+    running?: NormalizedModel3DAsset;
+  };
 }
 
 /** Normalized output (image, video, audio, or 3D model) from a workflow step. */
@@ -1789,10 +1824,17 @@ type StepWithOutput = WorkflowStep & {
     // For aceStepAudio: blob.type is 'audio' (audio-only) or 'video' (audio + cover image).
     blob?: ImageBlob | VideoBlob | AudioBlob;
     // PolyGen: composite output with a primary 3D model, optional alternate-
-    // format export, and a 2D preview thumbnail.
+    // format export, a 2D preview thumbnail, and optional rigged / animated
+    // / motion-template sibling meshes (each with their own glb + fbx
+    // exports, plus armature-only siblings for basicAnimations entries).
     model?: Model3dBlob;
     fbxModel?: Model3dBlob;
     thumbnail?: ImageBlob;
+    riggedModel?: Model3dBlob;
+    riggedFbxModel?: Model3dBlob;
+    animatedModel?: Model3dBlob;
+    animatedFbxModel?: Model3dBlob;
+    basicAnimations?: BasicAnimationsBlobs;
     errors?: string[];
     externalTOSViolation?: boolean;
     message?: string;
@@ -1812,6 +1854,11 @@ type NormalizedBlobItem =
   | (Model3dBlob & {
       fbxModel?: Model3dBlob | null;
       thumbnail?: ImageBlob | null;
+      riggedModel?: Model3dBlob | null;
+      riggedFbxModel?: Model3dBlob | null;
+      animatedModel?: Model3dBlob | null;
+      animatedFbxModel?: Model3dBlob | null;
+      basicAnimations?: BasicAnimationsBlobs | null;
     });
 
 /**
@@ -1849,9 +1896,10 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
         return [{ ...(output.blob as VideoBlob), type: 'video' as const }];
       return [{ ...(output.blob as AudioBlob), type: 'audio' as const }];
     case 'polyGen':
-      // Bundle the primary 3D model with its alternate-format sibling and
-      // preview thumbnail in a single item — the format step turns this into
-      // one NormalizedModel3DOutput with variants[] + thumbnail fields.
+      // Bundle every PolyGen sibling onto a single item — the format step
+      // turns this into one NormalizedModel3DOutput per generated mesh
+      // (regardless of how many rigged/animated/motion-template variants
+      // the workflow emitted).
       if (!output.model) return [];
       return [
         {
@@ -1859,6 +1907,11 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
           type: 'model3d' as const,
           fbxModel: output.fbxModel ?? null,
           thumbnail: output.thumbnail ?? null,
+          riggedModel: output.riggedModel ?? null,
+          riggedFbxModel: output.riggedFbxModel ?? null,
+          animatedModel: output.animatedModel ?? null,
+          animatedFbxModel: output.animatedFbxModel ?? null,
+          basicAnimations: output.basicAnimations ?? null,
         },
       ];
     default:
@@ -1904,26 +1957,62 @@ export function formatStepOutputs(
     if (item.type === 'model3d') {
       const fbx = item.fbxModel ?? undefined;
       const thumb = item.thumbnail ?? undefined;
+
+      // Shape a single Model3D blob into a NormalizedModel3DFile. Inlined
+      // here (rather than a free helper) to keep the discriminated-union
+      // formatter readable; the body is tiny.
+      const toFile = (blob: Model3dBlob): NormalizedModel3DFile => ({
+        id: blob.id,
+        format: blob.format,
+        url: blob.url as string,
+        available: blob.available,
+        urlExpiresAt: blob.urlExpiresAt,
+      });
+      // Bundle a primary blob with its optional FBX sibling + armature
+      // sibling into a NormalizedModel3DAsset. Each top-level
+      // semantically-distinct mesh (rigged, animated, walking, running)
+      // gets one of these.
+      const toAsset = (
+        primary: Model3dBlob | null | undefined,
+        fbxBlob: Model3dBlob | null | undefined,
+        armatureBlob: Model3dBlob | null | undefined
+      ): NormalizedModel3DAsset | undefined => {
+        if (!primary) return undefined;
+        return {
+          ...toFile(primary),
+          fbx: fbxBlob ? toFile(fbxBlob) : undefined,
+          armature: armatureBlob ? toFile(armatureBlob) : undefined,
+        };
+      };
+
+      const ba = item.basicAnimations ?? undefined;
+      const walking = toAsset(
+        ba?.walkingModel,
+        ba?.walkingFbxModel,
+        ba?.walkingArmatureModel
+      );
+      const running = toAsset(
+        ba?.runningModel,
+        ba?.runningFbxModel,
+        ba?.runningArmatureModel
+      );
+
       return {
         ...base,
         type: 'model3d' as const,
         url: item.url as string,
         format: item.format,
-        variants: fbx
-          ? [
-              {
-                id: fbx.id,
-                format: fbx.format,
-                url: fbx.url as string,
-                available: fbx.available,
-                urlExpiresAt: fbx.urlExpiresAt,
-              },
-            ]
-          : undefined,
+        // Kept for back-compat: the base FBX still surfaces in `variants[]`
+        // for older consumers (queue card download dropdown, image viewer).
+        variants: fbx ? [toFile(fbx)] : undefined,
         thumbnailId: thumb?.id,
         thumbnailUrl: thumb?.url,
         thumbnailUrlExpiresAt: thumb?.urlExpiresAt,
         thumbnailNsfwLevel: thumb?.nsfwLevel,
+        rigged: toAsset(item.riggedModel, item.riggedFbxModel, null),
+        animated: toAsset(item.animatedModel, item.animatedFbxModel, null),
+        basicAnimations:
+          walking || running ? { walking, running } : undefined,
       } satisfies NormalizedModel3DOutput;
     }
 

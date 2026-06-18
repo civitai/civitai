@@ -7,6 +7,8 @@ import type {
   NormalizedImageOutput,
   NormalizedVideoOutput,
   NormalizedAudioOutput,
+  NormalizedModel3DAsset,
+  NormalizedModel3DFile,
   NormalizedModel3DOutput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
@@ -524,7 +526,16 @@ export class Model3DBlob extends BlobData {
   declare thumbnailUrl?: string | null;
   declare thumbnailUrlExpiresAt?: string | null;
   declare thumbnailNsfwLevel?: NsfwLevel;
+  // Sibling meshes from the PolyGen workflow. All `declare`-d for the
+  // same Object.assign-survival reason as the rest of this class.
+  declare rigged?: Model3DAsset;
+  declare animated?: Model3DAsset;
+  declare basicAnimations?: { walking?: Model3DAsset; running?: Model3DAsset };
   constructor(args: BlobConstructorArgs & { data: NormalizedModel3DOutput }) {
     super(args);
   }
 }
+
+/** Re-export of the asset shape used by Model3DBlob's sibling-mesh fields. */
+export type Model3DFile = NormalizedModel3DFile;
+export type Model3DAsset = NormalizedModel3DAsset;

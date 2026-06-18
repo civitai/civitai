@@ -63,6 +63,11 @@ const model3dFileSelect = {
   url: true,
   sizeKB: true,
   format: true,
+  // Surfaced so the detail page / download dropdown can label a file's
+  // semantic role (primary / rigged / animated / walking / running /
+  // walking-armature / running-armature) — the format alone isn't
+  // enough to distinguish, e.g., the base GLB from the rigged GLB.
+  variant: true,
   isPrimary: true,
   metadata: true,
   virusScanResult: true,
@@ -1155,6 +1160,14 @@ export const upsertModel3DFromWorkflow = async ({
     format: string;
     sizeKB: number;
     isPrimary: boolean;
+    /**
+     * Variant discriminator — matches the column on Model3DFile. Omit
+     * (or pass "primary") for the textured base mesh; the polygen
+     * handler tags rigged / animated / walking / running variants here
+     * so the `(model3dId, format, variant)` unique constraint can let
+     * them coexist.
+     */
+    variant?: string;
   }>;
 }): Promise<{ id: number; created: boolean }> => {
   return dbWrite.$transaction(async (tx) => {
@@ -1191,6 +1204,7 @@ export const upsertModel3DFromWorkflow = async ({
           sizeKB: f.sizeKB,
           format: f.format,
           isPrimary: f.isPrimary,
+          variant: f.variant ?? 'primary',
         })),
         skipDuplicates: true,
       });

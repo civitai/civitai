@@ -90,14 +90,34 @@ export async function handlePolyGenWorkflowResult(
   const licenseId = args.licenseId ?? DEFAULT_MODEL3D_LICENSE_ID;
 
   // ---------------------------------------------------------------------------
-  // 1. Collect + normalize the 3D blobs (model + optional fbxModel)
+  // 1. Collect + normalize every PolyGen output blob with its variant tag.
+  //
+  // A single workflow can emit up to ~12 files for a fully-rigged +
+  // animated generation: base (glb + fbx), rigged (glb + fbx), animated
+  // (glb + fbx), walking (glb + fbx + armature), running (glb + fbx +
+  // armature). The `variant` discriminator on Model3DFile is what lets
+  // them coexist under the `(model3dId, format, variant)` unique index.
   // ---------------------------------------------------------------------------
-  const blobs: { format: string; blob: Model3dBlob }[] = [];
-  if (output.model) {
-    blobs.push({ format: normalizeFormat(output.model.format), blob: output.model });
-  }
-  if (output.fbxModel) {
-    blobs.push({ format: normalizeFormat(output.fbxModel.format), blob: output.fbxModel });
+  const blobs: { format: string; variant: string; blob: Model3dBlob }[] = [];
+  const pushBlob = (variant: string, blob: Model3dBlob | undefined | null) => {
+    if (!blob) return;
+    blobs.push({ format: normalizeFormat(blob.format), variant, blob });
+  };
+
+  pushBlob('primary', output.model);
+  pushBlob('primary', output.fbxModel);
+  pushBlob('rigged', output.riggedModel);
+  pushBlob('rigged', output.riggedFbxModel);
+  pushBlob('animated', output.animatedModel);
+  pushBlob('animated', output.animatedFbxModel);
+  const ba = output.basicAnimations;
+  if (ba) {
+    pushBlob('walking', ba.walkingModel);
+    pushBlob('walking', ba.walkingFbxModel);
+    pushBlob('walking-armature', ba.walkingArmatureModel);
+    pushBlob('running', ba.runningModel);
+    pushBlob('running', ba.runningFbxModel);
+    pushBlob('running-armature', ba.runningArmatureModel);
   }
 
   if (blobs.length === 0) {
@@ -108,7 +128,7 @@ export async function handlePolyGenWorkflowResult(
   // 2. Copy each model blob into our S3 (`3d/<uuid>.<format>`)
   // ---------------------------------------------------------------------------
   const copiedFiles: CopiedModelFile[] = [];
-  for (const { format, blob } of blobs) {
+  for (const { format, variant, blob } of blobs) {
     const copied = await copyModel3dBlobToS3(blob, format);
     if (!copied) {
       // A failing blob copy isn't an immediate hard stop if at least one
@@ -119,10 +139,11 @@ export async function handlePolyGenWorkflowResult(
         message: 'Failed to copy model3d blob',
         workflowId,
         format,
+        variant,
       }).catch(() => undefined);
       continue;
     }
-    copiedFiles.push(copied);
+    copiedFiles.push({ ...copied, variant });
   }
 
   if (copiedFiles.length === 0) {
@@ -149,12 +170,20 @@ export async function handlePolyGenWorkflowResult(
     sourceImageId,
     licenseId,
     generationParams: generationParams as Prisma.InputJsonValue,
-    files: copiedFiles.map(({ url, format, sizeKB }) => ({
-      name: deriveFileName(workflowId, format),
+    files: copiedFiles.map(({ url, format, sizeKB, variant }) => ({
+      // File name includes the variant so the Save-to-Library download
+      // dropdown doesn't end up with multiple "<wf>.glb" entries — the
+      // ones from rigged/animated/walking/running need to be
+      // distinguishable on disk after a user downloads them all.
+      name: deriveFileName(workflowId, format, variant ?? 'primary'),
       url,
       format,
       sizeKB,
-      isPrimary: format === PRIMARY_FORMAT,
+      // The textured base GLB is the only file that should sign in as
+      // primary — the viewer mounts it and the gallery thumbnail is
+      // derived from it. Rigged/animated/template glbs are NOT primary.
+      isPrimary: format === PRIMARY_FORMAT && (variant ?? 'primary') === 'primary',
+      variant: variant ?? 'primary',
     })),
   });
 
@@ -205,6 +234,12 @@ type CopiedModelFile = {
   url: string;
   /** File size in kilobytes (Model3DFile.sizeKB) */
   sizeKB: number;
+  /**
+   * Variant discriminator for the Model3DFile row — populated by the
+   * caller after a successful copy. See `pushBlob` in
+   * `handlePolyGenWorkflowResult` for the canonical variant strings.
+   */
+  variant?: string;
 };
 
 /**
@@ -372,9 +407,20 @@ function contentTypeForFormat(format: string): string {
 /**
  * Suggested file name for a Model3DFile row. Kept here (not in
  * model3d.service) so swap-in of the service layer doesn't change names.
+ *
+ * The primary variant keeps the historical `<wf>.<format>` shape so
+ * existing files (uploaded before the variant column landed) stay
+ * indistinguishable from a re-ingested primary. Non-primary variants
+ * encode the variant into the filename so downloaded files don't
+ * collide when an owner saves the whole bundle to disk.
  */
-export function deriveFileName(workflowId: string, format: string): string {
-  return `${workflowId}.${format}`;
+export function deriveFileName(
+  workflowId: string,
+  format: string,
+  variant: string = 'primary'
+): string {
+  if (variant === 'primary') return `${workflowId}.${format}`;
+  return `${workflowId}.${variant}.${format}`;
 }
 
 /** Re-export so consumers can pluck the constants without importing the helper. */
