@@ -1843,9 +1843,32 @@ export const blocksRouter = router({
           const { recordSpendAttribution } = await import(
             '~/server/services/blocks/buzz-attribution.service'
           );
+          // Accrue the author bounty off the REALIZED debit, not the
+          // whatif preflight ESTIMATE (`cost`). `snapshotFromWorkflow`
+          // surfaces the REAL submit's `workflow.cost.total` onto
+          // `snapshot.cost.total` (see workflow.service.ts:~49,61), read
+          // from the SAME resolved `submitted` snapshot this handler
+          // already holds (no re-fetch). The realized value is what the
+          // platform actually took, so the bounty matches the spend
+          // (the `share_le_gross` intent). This closes: (a) estimate >
+          // realized over-accrual; (b) a cache-hit / 0-realized that
+          // would otherwise still accrue off a non-zero estimate (author
+          // paid for a gen that cost nothing); (c) queue/surge/tier drift
+          // landing on platform bounty liability. Fall back to the
+          // estimate ONLY when the realized value is absent on the
+          // snapshot (e.g. a snapshot that carries no cost).
+          //
+          // SYBIL CAP NOTE (audit 🟡-2): there is NO per-APP aggregate
+          // accrual cap here — only the per-(USER, UTC-day) Buzz SPEND
+          // reservation above. A Sybil ring of many viewers could mint
+          // unbounded platform-funded bounty toward ONE app. This is
+          // accrual-only + mod-gated today, so it is not a merge blocker,
+          // but a per-app earnings cap / velocity check is a HARD
+          // prerequisite before the spend flow opens to non-mods (track
+          // alongside the Slice-4 payout gate + the rate sign-off).
           await recordSpendAttribution({
             userId,
-            buzzAmount: Math.ceil(cost),
+            buzzAmount: Math.ceil(snapshot.cost?.total ?? cost),
             workflowId: spendWorkflowId,
             appId: claims.appId,
             appBlockId: claims.appBlockId,
