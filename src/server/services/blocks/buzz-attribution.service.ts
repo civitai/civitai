@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { blockBuzzAttributionWriteCounter } from '~/server/prom/client';
@@ -393,6 +393,15 @@ export type MintPayoutResult =
   | { minted: false; carriedForwardCents: number; rowCount: number };
 
 /**
+ * Fixed lock domain (key1) for the per-owner payout advisory lock. The 2-arg
+ * `pg_advisory_xact_lock(key1 int, key2 int)` form namespaces the lock by
+ * (domain, ownerId) so it can NEVER collide with an advisory lock taken
+ * elsewhere in the codebase for a different purpose on the same integer. Picked
+ * once; do not reuse this value for any other advisory-lock domain.
+ */
+const PAYOUT_MINT_LOCK_DOMAIN = 0x6270_7761; // 'bpwa' (block-payout-withdrawal-advisory)
+
+/**
  * Idempotently MINT a payout ledger entry for one publisher for one
  * period, and flip the contributing confirmed rows to paid_out — all in
  * a single transaction.
@@ -423,6 +432,20 @@ export async function mintPayoutForOwner({
   periodKey: string;
 }): Promise<MintPayoutResult> {
   return dbWrite.$transaction(async (tx: Prisma.TransactionClient): Promise<MintPayoutResult> => {
+    // 0. PER-OWNER SERIALIZATION (money-correctness blocker #1). Take a
+    // transaction-scoped advisory lock keyed on (domain, ownerId) at the very
+    // top of the txn. Two concurrent withdrawals for the SAME owner (double
+    // click / retry / racing requests) now serialize here: the winner runs the
+    // aggregate→flip→commit; the loser BLOCKS until the winner commits, then
+    // re-runs step 1 against the post-flip state, sees net 0, and returns
+    // `minted:false` — so it can never pay Tipalti for already-paid rows.
+    //
+    // pg_advisory_xact_lock auto-releases on COMMIT/ROLLBACK (no manual unlock,
+    // no leak on error). Without this, READ COMMITTED + no row lock let both
+    // txns read the same confirmed rows and both "succeed" (one flips 0 rows but
+    // returned totalCents from its pre-flip aggregate → double-pay).
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${PAYOUT_MINT_LOCK_DOMAIN}::int, ${appOwnerUserId}::int)`;
+
     // 1. Aggregate this owner's payable rows. status='confirmed'
     // naturally includes negative entry_type='clawback' rows, so the net
     // already accounts for carry-forward debt.
@@ -473,6 +496,33 @@ export async function mintPayoutForOwner({
       },
     });
 
+    // 5. DEFENSE-IN-DEPTH (money-correctness blocker #1). The aggregate in (1)
+    // and the flip in (4) are now serialized by the advisory lock, so a winner
+    // that aggregated a positive net MUST flip those same rows — `flipped.count`
+    // should equal `rowCount`. But if we ever flip ZERO rows we MUST NOT report
+    // a payable amount: a 0-flip means nothing was actually claimed, yet
+    // `netCents` (the pre-flip aggregate) is still > 0 → the caller would pay
+    // Tipalti for money no row backs (double-pay). So treat a 0-flip as
+    // NOT MINTED: delete the just-created ledger row in THIS txn (so the
+    // idempotency key is freed for a clean retry) and return minted:false. With
+    // the advisory lock this branch is unreachable; it closes the invariant.
+    if (flipped.count === 0) {
+      await tx.blockAttributionPayout.delete({ where: { id: payoutId } });
+      logToAxiom(
+        {
+          name: ATTRIBUTION_LOG_NAME,
+          type: 'warning',
+          message: `mint flipped 0 rows for owner ${appOwnerUserId} (${periodKey}) — treating as not-minted`,
+          appOwnerUserId,
+          periodKey,
+          netCents,
+          rowCount,
+        },
+        'webhooks'
+      ).catch(() => null);
+      return { minted: false, carriedForwardCents: 0, rowCount: 0 };
+    }
+
     logToAxiom(
       {
         name: ATTRIBUTION_LOG_NAME,
@@ -488,6 +538,102 @@ export async function mintPayoutForOwner({
     ).catch(() => null);
 
     return { minted: true, payoutId, totalCents: netCents, rowCount: flipped.count };
+  });
+}
+
+export type RevertPayoutResult = {
+  /** Rows flipped paid_out → confirmed (payout_id/paid_out_at cleared). */
+  reverted: number;
+  /** Whether the ledger row was deleted (false if it was already gone). */
+  ledgerDeleted: boolean;
+};
+
+/**
+ * COMPENSATING REVERT for a minted-but-undisbursed payout.
+ *
+ * `withdrawAppRevenue` mints the ledger row + flips the contributing rows to
+ * `paid_out` BEFORE it calls Tipalti. If the Tipalti disbursement (or the
+ * tracking-record write that follows it) fails, the publisher would otherwise be
+ * stuck with a zero balance for money they never received. Because the mint
+ * moved NO actual money — it only changed row state and wrote an idempotency
+ * ledger row — the failure is fully reversible: we un-flip the `paid_out` rows
+ * for this `payoutId` back to `confirmed` (clearing `paid_out_at` + `payout_id`)
+ * AND delete the `block_attribution_payout` ledger row, in ONE transaction. The
+ * publisher's confirmed balance is restored exactly and they can retry (the next
+ * attempt generates a fresh ULID period_key, so it is not blocked by the
+ * now-deleted ledger row).
+ *
+ * Scoped strictly by `payoutId` (NOT by owner) so it can only ever touch the
+ * rows THIS mint flipped — it cannot accidentally revert a different period's
+ * payout for the same owner, and it cannot revert a clawback that was minted
+ * under a different payout. Idempotent: if the ledger row is already gone (a
+ * prior revert ran) the delete is a no-op and we still un-flip any stragglers.
+ *
+ * Deliberately verifies the deleted ledger row belonged to the expected owner
+ * (defense-in-depth: a caller can never delete another owner's payout by passing
+ * the wrong id). A mismatch throws — the caller should never reach this with a
+ * foreign payoutId.
+ *
+ * INVARIANT (audit #5): the hard-delete of the ledger row below is only ever
+ * reachable BEFORE money has moved. `withdrawAppRevenue` (the only caller) now
+ * orders the flow so this revert runs ONLY on the Tipalti-disbursement FAILURE
+ * path — i.e. before a successful `payToTipaltiAccount`. After a SUCCESSFUL
+ * disbursement the caller never invokes revert (it leaves rows `paid_out` and
+ * reconciles via the webhook instead). So a hard delete here can never erase the
+ * ledger for money that was actually sent. Do NOT add a post-success caller of
+ * this function; if reconciliation ever needs to unwind a SENT-then-failed
+ * payment, that must restore balance via a clawback row, not this hard delete.
+ */
+export async function revertPayoutMint({
+  payoutId,
+  appOwnerUserId,
+}: {
+  payoutId: string;
+  appOwnerUserId: number;
+}): Promise<RevertPayoutResult> {
+  return dbWrite.$transaction(async (tx: Prisma.TransactionClient): Promise<RevertPayoutResult> => {
+    // Defense-in-depth: confirm the ledger row (if present) is this owner's
+    // before we touch anything. A foreign payoutId is a programming error.
+    const ledger = await tx.blockAttributionPayout.findUnique({
+      where: { id: payoutId },
+      select: { id: true, appOwnerUserId: true },
+    });
+    if (ledger && ledger.appOwnerUserId !== appOwnerUserId) {
+      throw new Error(
+        `revertPayoutMint: payout ${payoutId} owner ${ledger.appOwnerUserId} != expected ${appOwnerUserId}`
+      );
+    }
+
+    // 1. Un-flip the rows this payout claimed. Scope by payoutId so only the
+    // exact rows minted here revert. Restore status='confirmed' so the net
+    // is immediately re-claimable on retry.
+    const reverted = await tx.blockBuzzAttribution.updateMany({
+      where: { payoutId, status: 'paid_out' },
+      data: { status: 'confirmed', paidOutAt: null, payoutId: null },
+    });
+
+    // 2. Delete the idempotency ledger row so it no longer counts as a paid
+    // period. The flip in (1) already removed the payout_id linkage.
+    let ledgerDeleted = false;
+    if (ledger) {
+      await tx.blockAttributionPayout.delete({ where: { id: payoutId } });
+      ledgerDeleted = true;
+    }
+
+    logToAxiom(
+      {
+        name: ATTRIBUTION_LOG_NAME,
+        type: 'warning',
+        message: `reverted payout mint ${payoutId} for owner ${appOwnerUserId} (disbursement failed)`,
+        payoutId,
+        appOwnerUserId,
+        reverted: reverted.count,
+        ledgerDeleted,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    return { reverted: reverted.count, ledgerDeleted };
   });
 }
 

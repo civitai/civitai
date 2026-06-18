@@ -72,6 +72,43 @@ export const APP_BLOCKS_PIPELINE_FLAG = 'app-blocks-pipeline-enabled';
 export const APP_BLOCKS_RUNTIME_FLAG = 'app-blocks-runtime-enabled';
 
 /**
+ * Dedicated GLOBAL flag for the publisher REVENUE-PAYOUT rail (PR1, pull model).
+ *
+ * `withdrawAppRevenue` (the publisher-initiated, full-balance withdrawal that
+ * mints a `block_attribution_payout` ledger row and disburses the net confirmed
+ * App-Block revenue share via Tipalti — the "separate rail" that NEVER touches
+ * the externally-owned Buzz cash accounts) gates on this flag FIRST. With the
+ * flag off, `withdrawAppRevenue` throws before doing anything — no mint, no
+ * Tipalti call, no money moves.
+ *
+ * ## Why a SEPARATE flag (not the user-visibility / pipeline / runtime flags)
+ *
+ * Paying real money is a strictly higher-stakes lever than "users can see
+ * blocks", "the build machine can run", or "deployed blocks' tokens verify".
+ * Those can all be lit for the mod-gated internal launch while disbursement
+ * stays dark. A dedicated flag lets money movement be turned on LAST, by itself,
+ * after the read-only revenue dashboard has been validated against live data.
+ *
+ * Evaluated globally (entityId='global', empty context) — it is a kill-switch
+ * for the disbursement subsystem, not a per-user visibility gate (per-user
+ * authorization is the ownership scoping on the tRPC proc + the Tipalti-payable
+ * preconditions inside `withdrawAppRevenue`). So it MUST be a PLAIN GLOBAL
+ * BOOLEAN in Flipt (base `enabled`, NO segment) — a segment-targeted flag would
+ * never match a global eval and silently leave payouts DARK.
+ *
+ * Fail-safe (DEFAULTS CLOSED): the flag does not exist yet — it is created in
+ * Flipt only AFTER this merges. A missing flag (or an unreachable Flipt) →
+ * `isFlipt` returns `false` → `withdrawAppRevenue` refuses → no money moves on
+ * merge. This is the load-bearing invariant: merging this PR moves zero dollars.
+ *
+ * OPERATOR NOTE — to turn payouts ON: create `app-blocks-payout-enabled` in
+ * Flipt as a plain global boolean and set base `enabled: true`. To pause
+ * disbursement instantly, flip it back to `false` (or delete it) — the next
+ * `withdrawAppRevenue` call refuses without a redeploy.
+ */
+export const APP_BLOCKS_PAYOUT_FLAG = 'app-blocks-payout-enabled';
+
+/**
  * Server-side check for the App Blocks feature flag.
  *
  * ## Three-axis flag model
@@ -214,4 +251,20 @@ export async function isAppBlocksPipelineEnabled(): Promise<boolean> {
  */
 export async function isAppBlocksRuntimeEnabled(): Promise<boolean> {
   return isFlipt(APP_BLOCKS_RUNTIME_FLAG);
+}
+
+/**
+ * GLOBAL gate for the publisher REVENUE-PAYOUT rail (PR1, pull model).
+ *
+ * Evaluates the dedicated `app-blocks-payout-enabled` flag with no user context
+ * (entityId='global', empty context). `withdrawAppRevenue` checks this FIRST and
+ * refuses if it returns `false`, so no mint and no Tipalti disbursement can
+ * happen until this is explicitly turned on.
+ *
+ * DEFAULTS CLOSED: the flag is created in Flipt only AFTER this merges, so a
+ * missing flag (or unreachable Flipt) → `false` → payouts stay dark → no money
+ * moves on merge. See APP_BLOCKS_PAYOUT_FLAG for the operator runbook.
+ */
+export async function isAppBlocksPayoutEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_PAYOUT_FLAG);
 }

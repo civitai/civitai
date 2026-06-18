@@ -39,6 +39,7 @@ import {
   getRecentAttributionsForOwner,
   getRevenueForOwner,
 } from '~/server/services/blocks/buzz-attribution.service';
+import { MIN_APP_REVENUE_PAYOUT_CENTS } from '~/server/services/blocks/payout.service';
 import {
   getRepresentativeBaseModel,
   resolveBlockCheckpoint,
@@ -1967,6 +1968,104 @@ export const blocksRouter = router({
         appBlockId: input.appBlockId,
       });
       return { summary, topApps, recentAttributions };
+    }),
+
+  /**
+   * PR1 — developer-track revenue read for the publisher's OWN App-Block
+   * revenue (pending / confirmed / paid-out / voided + topApps). Owner-scoped
+   * to `ctx.user.id`; `getRevenueForOwner` filters by `app_owner_user_id`, so a
+   * caller can only ever see their own balances. `protectedProcedure` (NOT
+   * moderator-gated) so it follows the developer track — but
+   * `enforceAppBlocksFlag` still gates it behind the live mod-segmented
+   * `app-blocks-enabled` flag, so it stays dark for non-mods until the
+   * visibility segment is widened at launch.
+   *
+   * Read-only — surfaces the confirmed balance the publisher can withdraw via
+   * `withdrawMyAppRevenue`. (Distinct from the moderator `getMyRevenue` above,
+   * which also returns the recent-attributions feed.)
+   */
+  getMyAppRevenue: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z
+        .object({
+          appBlockId: z.string().min(1).max(64).optional(),
+          from: z.string().datetime().optional(),
+          to: z.string().datetime().optional(),
+        })
+        .optional()
+    )
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return {
+          summary: {
+            pending: { count: 0, grossCents: 0, shareCents: 0 },
+            confirmed: { count: 0, grossCents: 0, shareCents: 0 },
+            paidOut: { count: 0, grossCents: 0, shareCents: 0 },
+            voided: { count: 0, grossCents: 0 },
+          },
+          topApps: [] as Array<{ appBlockId: string; shareCents: number; count: number }>,
+          minWithdrawalCents: MIN_APP_REVENUE_PAYOUT_CENTS,
+          pendingWithdrawalCents: 0,
+        };
+      }
+      const user = ctx.user as SessionUser;
+      const { summary, topApps } = await getRevenueForOwner({
+        ownerUserId: user.id,
+        appBlockId: input?.appBlockId,
+        from: input?.from ? new Date(input.from) : undefined,
+        to: input?.to ? new Date(input.to) : undefined,
+      });
+      // #6: in-flight withdrawal amount (rows already consuming the confirmed
+      // balance) so the UI / a caller can avoid offering a balance a withdrawal
+      // is already claiming. 'processing' rows carry amountCents 0 (set on
+      // disburse), so they contribute 0 here — only post-mint 'pending_approval'
+      // rows have a real claimed amount, which is the value worth surfacing.
+      const inflight = await dbRead.blockPayoutWithdrawal.aggregate({
+        where: {
+          appOwnerUserId: user.id,
+          status: { in: ['processing', 'pending_approval'] },
+        },
+        _sum: { amountCents: true },
+      });
+      return {
+        summary,
+        topApps,
+        minWithdrawalCents: MIN_APP_REVENUE_PAYOUT_CENTS,
+        pendingWithdrawalCents: inflight._sum.amountCents ?? 0,
+      };
+    }),
+
+  /**
+   * PR1 — publisher-initiated, full-balance withdrawal of App-Block revenue
+   * share over the separate Tipalti rail (pull model). Owner-scoped: it acts on
+   * `ctx.user.id` ONLY, so a caller can never withdraw another publisher's
+   * revenue. The service refuses unless the dedicated `app-blocks-payout-enabled`
+   * Flipt flag is on (defaults closed) — so this mutation moves NO money until
+   * that flag is explicitly flipped, independent of merging this code.
+   *
+   * `enforceAppBlocksFlag` (the visibility gate) ALSO guards it, so it is doubly
+   * dark pre-launch. See `withdrawAppRevenue` for the mint → disburse → revert
+   * invariant.
+   */
+  withdrawMyAppRevenue: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    // Cheap extra guard against double-click / retry hammering the payout path
+    // (the per-owner advisory lock in mintPayoutForOwner is the real
+    // correctness guarantee; this just keeps the disbursement path from being
+    // spammed). 3 attempts / 10 min per user. Mods/dev/test exempt by the
+    // middleware itself.
+    .use(
+      rateLimit({
+        limit: 3,
+        period: 600,
+        errorMessage: 'Too many withdrawal attempts — please wait a few minutes.',
+      })
+    )
+    .mutation(async ({ ctx }) => {
+      const user = ctx.user as SessionUser;
+      const { withdrawAppRevenue } = await import('~/server/services/blocks/payout.service');
+      return withdrawAppRevenue(user.id);
     }),
 
   /**
