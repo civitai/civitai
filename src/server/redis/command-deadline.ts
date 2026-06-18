@@ -26,8 +26,8 @@ import { env } from '~/env/server';
  *
  * CONSUMER IMPACT: the reject is caught by the SAME fail-open paths that catch a cluster
  * read error — cache-helpers `fetchThroughCache` AND `createCachedArray`/`createCachedObject`
- * `.fetch` (the latter was made fail-open alongside lowering the deadline default; before
- * that its mGet/set/del had NO try/catch and a reject surfaced as a 500). Both now degrade
+ * `.fetch` (the latter was made fail-open in the same change that added this consumer note;
+ * before that its mGet/set/del had NO try/catch and a reject surfaced as a 500). Both now degrade
  * to an origin fetch → slow 200, NOT a hard 500. The cachedArray origin fetch is bounded
  * against a DB stampede by per-id single-flight (overlapping feed pages share per-id DB
  * results) — see cache-helpers.ts degradedIdInFlight. Strictly better than the 125s-then-499
