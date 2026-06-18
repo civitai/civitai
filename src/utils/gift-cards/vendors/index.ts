@@ -5,9 +5,11 @@ import { waifuWayVendor } from './waifu-way';
 import { lewtDropVendor } from './lewt-drop';
 import { royalCdKeysVendor } from './royal-cd-keys';
 import { cryptoVendor } from './crypto';
+import { fungiesVendor } from './fungies';
 
 const vendorRegistry: VendorRegistry = {
   crypto: cryptoVendor,
+  fungies: fungiesVendor,
   kinguin: kinguinVendor,
   buybuzz: buybuzzVendor,
   'waifu-way': waifuWayVendor,

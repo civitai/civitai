@@ -8,6 +8,7 @@ import { waifuWayVendor } from '~/utils/gift-cards/vendors/waifu-way';
 import { lewtDropVendor } from '~/utils/gift-cards/vendors/lewt-drop';
 import { royalCdKeysVendor } from '~/utils/gift-cards/vendors/royal-cd-keys';
 import { cryptoVendor } from '~/utils/gift-cards/vendors/crypto';
+import { fungiesVendor } from '~/utils/gift-cards/vendors/fungies';
 
 /**
  * Vendor configuration with optional Flipt flag for dynamic enablement.
@@ -19,6 +20,7 @@ const vendorConfigs: Array<{
   fliptFlag?: FLIPT_FEATURE_FLAGS;
 }> = [
   { vendor: cryptoVendor, fliptFlag: FLIPT_FEATURE_FLAGS.GIFT_CARD_VENDOR_CRYPTO },
+  { vendor: fungiesVendor, fliptFlag: FLIPT_FEATURE_FLAGS.GIFT_CARD_VENDOR_FUNGIES },
   { vendor: kinguinVendor },
   { vendor: buybuzzVendor },
   { vendor: waifuWayVendor, fliptFlag: FLIPT_FEATURE_FLAGS.GIFT_CARD_VENDOR_WAIFU_WAY },

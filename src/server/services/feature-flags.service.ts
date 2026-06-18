@@ -190,6 +190,12 @@ const featureFlags = createFeatureFlags({
   annualMemberships: ['dev'],
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
+  // Master kill switch for the entire gift-card experience (the /gift-cards page
+  // AND the buzz-page banner). Blue/red domains only (green is excluded by the
+  // domain availability above). Driven by the `gift-cards` Flipt flag — mod
+  // rollout today, widen the Flipt segment to launch. Flip the Flipt flag off to
+  // instantly kill the page + banner everywhere.
+  giftCards: { availability: ['blue', 'red', 'public'], fliptKey: 'gift-cards' },
   coinbasePayments: [],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
