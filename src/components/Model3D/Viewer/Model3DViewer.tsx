@@ -237,8 +237,18 @@ export function Model3DViewer({
     let cancelled = false;
     let animationId = 0;
 
+    // Animation playback. Walking / running / animated GLBs from Meshy ship
+    // with the animation embedded as a glTF `AnimationClip` referencing the
+    // mesh's skeleton. The `mixer` is built on-demand inside the loader
+    // callback (we don't know until then whether the file has any clips);
+    // `clock.getDelta()` drives time forward each render frame.
+    const clock = new THREE.Clock();
+    let mixer: THREE.AnimationMixer | null = null;
+
     const animate = () => {
       animationId = requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+      mixer?.update(delta);
       controls.update();
       renderer.render(scene, camera);
     };
@@ -249,6 +259,14 @@ export function Model3DViewer({
       (gltf) => {
         if (cancelled) return;
         const model = gltf.scene;
+        // Start the first embedded animation (if any). Meshy ships a single
+        // clip per animated GLB — picking index 0 covers the present cases
+        // and is forward-compatible: an enhancement could later switch
+        // between clips here without changing the loader/mixer wiring.
+        if (gltf.animations.length > 0) {
+          mixer = new THREE.AnimationMixer(model);
+          mixer.clipAction(gltf.animations[0]).play();
+        }
         // Center the model and fit it to the camera
         const box = new THREE.Box3().setFromObject(model);
         const size = box.getSize(new THREE.Vector3());

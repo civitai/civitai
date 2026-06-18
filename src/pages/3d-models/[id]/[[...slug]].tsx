@@ -54,6 +54,7 @@ import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
 import { Model3DGallery } from '~/components/Model3D/Gallery/Model3DGallery';
 import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
+import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -71,8 +72,11 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 // Dynamic, ssr-disabled import — three.js needs WebGL which only exists in the browser.
-const Model3DViewer = dynamic(
-  () => import('~/components/Model3D/Viewer/Model3DViewer').then((m) => m.Model3DViewer),
+const Model3DVariantViewer = dynamic(
+  () =>
+    import('~/components/Model3D/Viewer/Model3DVariantViewer').then(
+      (m) => m.Model3DVariantViewer
+    ),
   {
     ssr: false,
     loading: () => (
@@ -136,12 +140,21 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const files = filesData?.files ?? [];
   const primaryFile = useMemo(() => files.find((f) => f.isPrimary) ?? files[0], [files]);
 
-  const [selectedFormat, setSelectedFormat] = useState<string | null>(null);
-  useEffect(() => {
-    if (primaryFile && !selectedFormat) setSelectedFormat(primaryFile.format);
-  }, [primaryFile, selectedFormat]);
+  // Files are keyed on the download Select by a compound `${variant}__${format}`
+  // string — `format` alone collides as soon as the PolyGen workflow emits
+  // both `base.glb` and `rigged.glb`. Existing rows pre-dating the variant
+  // column default to "primary" via the migration, so the compound key is
+  // safe across the upgrade window.
+  const getFileKey = (f: { format: string; variant?: string | null }) =>
+    `${f.variant ?? 'primary'}__${f.format}`;
 
-  const selectedFile = files.find((f) => f.format === selectedFormat) ?? primaryFile ?? null;
+  const [selectedFileKey, setSelectedFileKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (primaryFile && !selectedFileKey) setSelectedFileKey(getFileKey(primaryFile));
+  }, [primaryFile, selectedFileKey]);
+
+  const selectedFile =
+    files.find((f) => getFileKey(f) === selectedFileKey) ?? primaryFile ?? null;
 
   const handleDownload = () => {
     if (!selectedFile?.downloadUrl) {
@@ -213,15 +226,48 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isDraft = model3d.status === Model3DStatus.Draft;
   const isUnpublished = model3d.status === Model3DStatus.Unpublished;
 
-  // Format dropdown shows just the format + size — the filename is implicit
-  // (we kick off the download with the resolved primary/variant filename) so
-  // the download card stays compact.
+  // Capitalized human-readable variant label. The DB stores the variant
+  // discriminator in kebab-case (e.g., "walking-armature"); this turns it
+  // into "Walking armature" for the download Select. "primary" surfaces
+  // as "Base" so the textured root mesh aligns with the queue card's
+  // variant picker terminology.
+  const formatVariantLabel = (variant: string | null | undefined) => {
+    const v = variant ?? 'primary';
+    if (v === 'primary') return 'Base';
+    return v
+      .split('-')
+      .map((p, i) => (i === 0 ? p[0].toUpperCase() + p.slice(1) : p))
+      .join(' ');
+  };
+
+  // Files dropdown shows variant + format + size so the user can pick a
+  // specific (variant, format) pair when the workflow emitted siblings
+  // (e.g., base.glb + rigged.glb + animated.glb all coexist under one
+  // Model3D after my variant migration).
   const formatOptions = files.map((f) => ({
-    value: f.format,
-    label: `${f.format.toUpperCase()} · ${(f.sizeKB / 1024).toFixed(1)} MB${
-      f.isPrimary ? ' · primary' : ''
-    }`,
+    value: getFileKey(f),
+    label: `${formatVariantLabel(f.variant)} · ${f.format.toUpperCase()} · ${(
+      f.sizeKB / 1024
+    ).toFixed(1)} MB${f.isPrimary ? ' · primary' : ''}`,
   }));
+
+  // Viewable variants for the inline three.js viewer — GLB only (GLTFLoader
+  // doesn't speak FBX) and armature-only meshes filtered out (they'd
+  // render as empty space with no visible geometry). Embedded animations
+  // on walking/running play automatically via the viewer's AnimationMixer.
+  const viewableVariants: Model3DViewableVariant[] = files
+    .filter(
+      (f) =>
+        f.format.toLowerCase() === 'glb' && !(f.variant ?? 'primary').endsWith('-armature')
+    )
+    .map((f) => ({
+      key: getFileKey(f),
+      label: formatVariantLabel(f.variant),
+      url: f.downloadUrl ?? f.url,
+      format: f.format,
+      sizeKB: f.sizeKB,
+    }));
+  const initialViewerKey = primaryFile ? getFileKey(primaryFile) : undefined;
 
   const tippedAmountTotal = (model3d.metric?.tippedAmountCount ?? 0) + tippedAmount;
 
@@ -390,15 +436,17 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             <ContainerGrid2.Col span={{ base: 12, md: 8 }} order={{ base: 2, md: 1 }}>
               <Stack gap="md">
                 <Card withBorder radius="md" p={0} className="overflow-hidden">
-                  {primaryFile ? (
-                    <Model3DViewer
+                  {viewableVariants.length > 0 ? (
+                    <Model3DVariantViewer
                       // Use the resolved/presigned downloadUrl so the browser
                       // can actually fetch the GLB — the raw `url` may point
                       // at a bucket the public delivery worker doesn't
-                      // authorize.
-                      url={primaryFile.downloadUrl ?? primaryFile.url}
-                      format={primaryFile.format}
-                      sizeKB={primaryFile.sizeKB}
+                      // authorize. The wrapper exposes a top-left Select to
+                      // switch between Base / Rigged / Animated / Walking /
+                      // Running variants; walking/running auto-play their
+                      // embedded animations via the viewer's AnimationMixer.
+                      variants={viewableVariants}
+                      initialKey={initialViewerKey}
                     />
                   ) : (
                     <Box className="flex min-h-[420px] items-center justify-center bg-dark-7 p-6">
@@ -451,9 +499,9 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     <Stack gap="xs">
                       <Select
                         data={formatOptions}
-                        value={selectedFormat}
-                        onChange={setSelectedFormat}
-                        aria-label="File format"
+                        value={selectedFileKey}
+                        onChange={setSelectedFileKey}
+                        aria-label="File variant + format"
                       />
                       <Button
                         leftSection={<IconDownload size={16} />}

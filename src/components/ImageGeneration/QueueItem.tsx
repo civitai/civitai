@@ -86,6 +86,7 @@ import type {
 } from '~/shared/orchestrator/workflow-data';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getModelUrl } from '~/utils/string-helpers';
+import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
 import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
@@ -947,10 +948,14 @@ function CanUpgradeBlock({
 }
 
 // Lazy-mounted so the GLB loader bundle only ships for users who actually
-// toggle the inline preview on. Multiple cards in the feed can each open
-// their own viewer; the user controls the count via the toggle button.
-const Model3DViewerDynamic = dynamic(
-  () => import('~/components/Model3D/Viewer/Model3DViewer').then((m) => m.Model3DViewer),
+// toggle the inline preview on. The variant-aware wrapper handles
+// switching between Base / Rigged / Animated / Walking / Running on its
+// own; it falls through to Model3DViewer for the actual three.js mount.
+const Model3DVariantViewerDynamic = dynamic(
+  () =>
+    import('~/components/Model3D/Viewer/Model3DVariantViewer').then(
+      (m) => m.Model3DVariantViewer
+    ),
   { ssr: false }
 );
 
@@ -995,6 +1000,31 @@ function Model3DQueueCardOutputs({
   const modelUrl = model3dBlob?.type === 'model3d' ? model3dBlob.url ?? null : null;
   const modelFormat =
     model3dBlob?.type === 'model3d' ? model3dBlob.format ?? 'glb' : 'glb';
+
+  // Viewable variants — GLB-only siblings the inline three.js viewer can
+  // mount (FBX isn't supported by GLTFLoader, armature-only files render
+  // as empty space). Walking / running play their embedded animations
+  // the moment they're selected via the viewer's AnimationMixer.
+  const viewableVariants: Model3DViewableVariant[] = (() => {
+    if (model3dBlob?.type !== 'model3d') return [];
+    const isViewable = (fmt: string) => fmt.toLowerCase() === 'glb';
+    const list: Model3DViewableVariant[] = [];
+    if (modelUrl && isViewable(modelFormat))
+      list.push({ key: 'base', label: 'Base', url: modelUrl, format: modelFormat });
+    const pushAsset = (
+      key: string,
+      label: string,
+      asset: { url: string; format: string } | undefined
+    ) => {
+      if (asset?.url && isViewable(asset.format))
+        list.push({ key, label, url: asset.url, format: asset.format });
+    };
+    pushAsset('rigged', 'Rigged', model3dBlob.rigged);
+    pushAsset('animated', 'Animated', model3dBlob.animated);
+    pushAsset('walking', 'Walking', model3dBlob.basicAnimations?.walking);
+    pushAsset('running', 'Running', model3dBlob.basicAnimations?.running);
+    return list;
+  })();
 
   const showSpinner = pending || processing;
   // Terminal failure states — workflow won't produce a thumbnail. The
@@ -1049,15 +1079,16 @@ function Model3DQueueCardOutputs({
         className="relative flex aspect-square items-center justify-center overflow-hidden border"
         style={{ minHeight: 240 }}
       >
-        {viewerOpen && modelUrl ? (
+        {viewerOpen && viewableVariants.length ? (
           <>
-            {/* `compact` switches the viewer's container to `h-full` so it
-                fills its parent TwCard instead of imposing the default
-                `min-h-[480px]` which would overflow the aspect-square
-                queue card. */}
-            <Model3DViewerDynamic
-              url={modelUrl}
-              format={modelFormat}
+            {/* Variant-aware viewer — switches between Base / Rigged /
+                Animated / Walking / Running via the wrapper's top-left
+                Select. Walking and Running auto-play their embedded
+                animations (AnimationMixer wired into Model3DViewer). The
+                `compact` switch makes the viewer fill its parent TwCard
+                instead of imposing min-h-[480px]. */}
+            <Model3DVariantViewerDynamic
+              variants={viewableVariants}
               compact
               className="size-full"
             />
