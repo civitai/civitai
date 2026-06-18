@@ -1,5 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
+import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -129,6 +130,9 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     mocks.estimate.mockReset();
     mocks.poll.mockReset();
     mocks.cancel.mockReset();
+    // dialogStore is a module-level zustand store shared across tests — reset it
+    // (the OPEN_BUZZ_PURCHASE handler triggers a dialog on it).
+    useDialogStore.getState().closeAll();
   });
 
   test('ESTIMATE_WORKFLOW forwards to estimateWorkflow with the page token and posts ESTIMATE_RESULT', async () => {
@@ -217,6 +221,140 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_poll', snapshot });
     });
+    replies.stop();
+  });
+
+  test('CANCEL_WORKFLOW forwards workflowId and posts WORKFLOW_CANCELED', async () => {
+    const snapshot = { workflowId: 'wf_cancel', status: 'canceled' };
+    mocks.cancel.mockResolvedValue({ snapshot });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('CANCEL_WORKFLOW', { requestId: 'rq_cancel', workflowId: 'wf_cancel' });
+
+    await vi.waitFor(() => {
+      expect(mocks.cancel).toHaveBeenCalledWith({ blockToken: 'tok_abc', workflowId: 'wf_cancel' });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('WORKFLOW_CANCELED');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_cancel', snapshot });
+    });
+    replies.stop();
+  });
+
+  test('CANCEL_WORKFLOW error path posts a failureSnapshot-shaped WORKFLOW_CANCELED (no hang)', async () => {
+    mocks.cancel.mockRejectedValue(new Error('not the owner'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('CANCEL_WORKFLOW', { requestId: 'rq_cancel_err', workflowId: 'wf_cancel' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('WORKFLOW_CANCELED');
+      if (!r) throw new Error('no reply yet');
+      // failureSnapshot shape: non-empty 'failed' workflowId (the SDK validator
+      // drops an empty workflowId) + status + message — so the block never hangs.
+      expect(r.payload).toEqual({
+        requestId: 'rq_cancel_err',
+        snapshot: { workflowId: 'failed', status: 'failed', error: 'not the owner' },
+      });
+    });
+    replies.stop();
+  });
+
+  test('OPEN_BUZZ_PURCHASE after BLOCK_READY opens BuyBuzzModal then posts BUZZ_PURCHASE_RESULT', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+
+    postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_buzz', suggestedAmount: 1000 });
+
+    // The host opens the spend modal via the shared dialogStore (same store the
+    // model host uses; the modal is a dynamic import that needs a real tRPC
+    // provider, so we assert against the store rather than rendering it).
+    await vi.waitFor(() => {
+      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    });
+    const dialog = useDialogStore.getState().dialogs[0];
+    const dialogProps = dialog.props as {
+      minBuzzAmount?: number;
+      attribution?: unknown;
+      onPurchaseSuccess: () => void;
+    };
+    expect(dialogProps.minBuzzAmount).toBe(1000);
+    // (c) Page attribution is OMITTED — deriveScopeFromInstanceId('page_apb_test')
+    // returns null, so the host passes NO attribution scope to the spend modal.
+    expect(dialogProps.attribution).toBeUndefined();
+
+    // Simulate a successful purchase, then close the modal (BuyBuzzModal's
+    // onPurchaseSuccess flips `purchased`; the dialog onClose posts the reply).
+    dialogProps.onPurchaseSuccess();
+    dialog.options?.onClose?.();
+
+    await vi.waitFor(() => {
+      const r = replies.last('BUZZ_PURCHASE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      // (b) reply carries the matching requestId + { purchased }.
+      expect(r.payload).toEqual({ requestId: 'rq_buzz', purchased: true });
+    });
+    replies.stop();
+  });
+
+  test('OPEN_BUZZ_PURCHASE close without a purchase posts purchased:false', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_buzz_cancel' });
+
+    await vi.waitFor(() => {
+      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    });
+    const dialog = useDialogStore.getState().dialogs[0];
+    // Close WITHOUT calling onPurchaseSuccess (user dismissed the modal).
+    dialog.options?.onClose?.();
+
+    await vi.waitFor(() => {
+      const r = replies.last('BUZZ_PURCHASE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_buzz_cancel', purchased: false });
+    });
+    replies.stop();
+  });
+
+  test('OPEN_BUZZ_PURCHASE clamps an over-cap suggestedAmount to BUZZ_PURCHASE_AMOUNT_CAP', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    // 1_000_000 >> the 50_000 cap → the spend modal must be seeded at the cap so
+    // a malicious block can't pre-fill an absurd amount.
+    postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_buzz_cap', suggestedAmount: 1_000_000 });
+
+    await vi.waitFor(() => {
+      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    });
+    const dialogProps = useDialogStore.getState().dialogs[0].props as { minBuzzAmount?: number };
+    expect(dialogProps.minBuzzAmount).toBe(50_000);
+  });
+
+  test('OPEN_BUZZ_PURCHASE before BLOCK_READY is dropped (no pre-handshake spend modal)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    // Do NOT drive to ready — fire while status is still 'loading'.
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+    const replies = listenForReply();
+
+    postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_buzz_early', suggestedAmount: 1000 });
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    expect(replies.last('BUZZ_PURCHASE_RESULT')).toBeUndefined();
     replies.stop();
   });
 
