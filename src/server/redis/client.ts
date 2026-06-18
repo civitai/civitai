@@ -43,16 +43,6 @@ interface ClientCommandOptions extends QueueCommandOptions {
 // type CommandType = CommandOptions<ClientCommandOptions>;
 type CommandType = ClientCommandOptions;
 
-// Opaque per-node handle for the cursor-exposing scan primitive (scanNodes /
-// scanNodeStep). One per cluster master, or a single handle for sentinel/single.
-export type ScanNodeHandle = {
-  id: string;
-  scan: (
-    cursor: string,
-    options?: { TYPE?: string; MATCH?: string; COUNT?: number }
-  ) => Promise<{ keys: string[]; cursor: string | number }>;
-};
-
 interface CustomRedisClient<K extends RedisKeyTemplates>
   extends Omit<
     RedisClientType,
@@ -96,14 +86,6 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
     COUNT?: number;
     cursor?: string;
   }): AsyncGenerator<string[], void, unknown>;
-  // Cursor-exposing scan primitive (see impl) — only used by clearCacheByPattern's
-  // resilient drain so a deadline-clipped SCAN step can be retried/resumed.
-  scanNodes(): Promise<ScanNodeHandle[]>;
-  scanNodeStep(
-    handle: ScanNodeHandle,
-    cursor: string,
-    options?: { TYPE?: string; MATCH?: string; COUNT?: number }
-  ): Promise<{ keys: string[]; cursor: string }>;
   packed: {
     get<T>(key: K): Promise<T | null>;
     // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
@@ -941,50 +923,6 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       // Single node mode: use original native scanIterator
       yield* originalScanIterator(options);
     }
-  };
-
-  // Cursor-EXPOSING scan primitive for clearCacheByPattern's resilient drain.
-  //
-  // `scanIterator` (above) hides the SCAN cursor inside its generator, so a
-  // single deadline-clipped SCAN step (the `withCommandDeadline(_execute)` wrap
-  // rejects when a shard is memory-pressured) throws out of the `for await` and
-  // KILLS the iterator — the cursor is lost and the rest of the keyspace is never
-  // scanned, leaving matching keys un-deleted (stale cache until natural TTL).
-  //
-  // These two methods let a caller drive SCAN node-by-node with an EXPLICIT
-  // cursor, so a clipped step can be retried from the SAME cursor (bounded) and
-  // a node can be resumed mid-drain instead of restarting from scratch. This is
-  // the ONLY consumer; the happy-path iterator is unchanged.
-  //
-  // `scanNodes()` returns one opaque handle per master (cluster), or a single
-  // handle for sentinel/single — each handle owns the node-scoped `scan(...)`.
-  // `scanNodeStep(handle, cursor, options)` issues ONE SCAN and returns the
-  // keys + the NEXT cursor ('0' = node exhausted).
-  client.scanNodes = async function () {
-    if (baseClient.masters) {
-      const masters = await baseClient.masters;
-      const handles = [] as ScanNodeHandle[];
-      for (const master of masters) {
-        const nodeClient = await baseClient.nodeClient(master);
-        // Identify the node for log/resume context; address shape varies by
-        // node-redis version, so fall back through the common fields.
-        const id =
-          master?.address ??
-          (master?.host != null ? `${master.host}:${master.port ?? ''}` : undefined) ??
-          master?.id ??
-          'master';
-        handles.push({ id, scan: (cursor, opts) => nodeClient.scan(cursor, opts) });
-      }
-      return handles;
-    }
-    // Sentinel + single both expose `scan` on the base client and present as one
-    // logical keyspace.
-    return [{ id: isSentinelClient ? 'sentinel' : 'single', scan: (cursor, opts) => baseClient.scan(cursor, opts) }];
-  };
-
-  client.scanNodeStep = async function (handle: ScanNodeHandle, cursor, options) {
-    const reply = await handle.scan(cursor, options);
-    return { keys: reply.keys as string[], cursor: String(reply.cursor) };
   };
 
   // Wrap mGet to avoid CROSSSLOT errors - fetch keys individually
