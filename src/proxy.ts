@@ -6,14 +6,12 @@ export async function proxy(request: NextRequest) {
   return runMiddlewares(request);
 }
 
-// See "Matching Paths" below to learn more
+// Proxy always runs on the Node.js runtime in Next 16 (not the Edge sandbox), so the route guards
+// can use full Node APIs — needed for the thin-session migration, where they resolve the user from
+// redis/db (`getSessionUser`) instead of reading it from the cookie. Self-hosted, so no infra change.
+// See thin-session-token-design.md. Only `matcher` is allowed here now — `runtime` and route-segment
+// `api` config are rejected in a Proxy file.
 export const config = {
-  // Run the middleware in the Node.js runtime (not the Edge sandbox) so it can use full Node APIs —
-  // needed for the thin-session migration, where route guards resolve the user from redis/db
-  // (`getSessionUser`) instead of reading it from the cookie. Behavior is unchanged today (the chain
-  // still decodes via next-auth `getToken`, which is runtime-agnostic). Self-hosted, so no infra
-  // change — the middleware already runs inside the Node server process. See thin-session-token-design.md.
-  runtime: 'nodejs',
   matcher: [
     '/', // Home page
     '/((?!api|_next|favicon.ico|region-blocked|fonts|sounds|robots.txt|site.webmanifest).*)', // Removed 'images' exclusion to allow image pages to be processed
@@ -26,9 +24,4 @@ export const config = {
     // '/models/:path*',
     '/user/:path*',
   ],
-  api: {
-    bodyParser: {
-      sizeLimit: '10mb',
-    },
-  },
 };
