@@ -183,6 +183,7 @@ export const model3dRouter = router({
     .input(getModel3DFilesSchema)
     .query(({ input, ctx }) => getModel3DFiles({ input, user: ctx.user })),
   getRelatedPosts: publicProcedure
+    .use(isFlagProtected('model3dFeed'))
     .input(getModel3DRelatedPostsSchema)
     .query(({ input, ctx }) => getModel3DRelatedPosts({ input, user: ctx.user })),
 

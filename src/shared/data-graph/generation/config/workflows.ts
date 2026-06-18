@@ -610,6 +610,21 @@ export function filterWorkflowsByGatedEcosystems<T extends { workflows: Workflow
 }
 
 /**
+ * Returns the feature-flag name a workflow requires, or `undefined` when
+ * the workflow is universally available. Server-side request handlers
+ * (e.g. orchestrator `generateFromGraph` / `whatIfFromGraph`) MUST consult
+ * this and reject submissions that lack the flag — `filterWorkflowsByFeatureFlags`
+ * only hides the option in the picker UI, so a crafted request payload would
+ * otherwise bypass the gate.
+ */
+export function getRequiredFeatureFlagForWorkflow(
+  workflowId: string | undefined
+): string | undefined {
+  if (!workflowId) return undefined;
+  return workflowConfigByKey.get(workflowId)?.featureFlag;
+}
+
+/**
  * Drop workflow options whose `featureFlag` is set to a flag that's disabled
  * for this user. Workflows without a `featureFlag` are always kept.
  *
