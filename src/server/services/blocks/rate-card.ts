@@ -32,6 +32,23 @@ export type RateCard = {
    */
   spendSharePct: number;
   /**
+   * W3 flow C — MEMBERSHIP / subscription attribution.
+   *
+   * The percentage of a block-initiated membership payment's NET (gross -
+   * provider fee) paid to the app author, applied per PAID INVOICE. Unlike
+   * a one-shot Buzz purchase, a subscription bills recurringly: by the
+   * renewals-pay policy each paid invoice (subscription_create AND
+   * subscription_cycle) is tracked.
+   *
+   * ⚠️ NOT applied at attribution-write time. As of the TRACK-ONLY rework
+   * (#2629), this percentage is computed at PAYOUT time as a backpay over
+   * `status='tracked'` rows, NOT stamped onto the row when it's written.
+   * One flat rate for subscription (no install-scope dimension): a
+   * membership purchase resolves to the single `subscription` scope.
+   * PLACEHOLDER pending monetization sign-off.
+   */
+  subscriptionSharePct: number;
+  /**
    * Apps owned by these userIds always pay 0% to publisher — internal
    * civitai apps where the "share" is meaningless because the same
    * legal entity owns both sides of the transaction.
@@ -89,6 +106,10 @@ export const RATE_CARD_V1: RateCard = {
   // no spend row was ever stamped under V1 (the spend flow is net-new),
   // and V1 is not the active card.
   spendSharePct: 0,
+  // Net-new subscription dimension (W3 flow C). 0% — behavior-preserving:
+  // no subscription row was ever stamped under V1 (flow C is net-new), and
+  // V1 is not the active card.
+  subscriptionSharePct: 0,
   internalAppOwnerUserIds: [],
   effectiveFrom: '2026-05-25',
 };
@@ -133,6 +154,9 @@ export const RATE_CARD_V2: RateCard = {
   // Net-new spend dimension (W3 flow A). 0% — behavior-preserving (no V2
   // spend row ever existed; V2 is not the active card).
   spendSharePct: 0,
+  // Net-new subscription dimension (W3 flow C). 0% — behavior-preserving
+  // (no V2 subscription row ever existed; V2 is not the active card).
+  subscriptionSharePct: 0,
   internalAppOwnerUserIds: [
     // Populate with civitai team userIds before going live. Empty for
     // now — none of the load-bearing paths read this list yet, but the
@@ -162,6 +186,7 @@ export const RATE_CARD_V2: RateCard = {
  *
  * `spendSharePct` is carried at 0% on V3 — V3 predates the spend flow and
  * stamped only purchase rows. The spend flow (W3 flow A) ships under V4.
+ * `subscriptionSharePct` is likewise 0% — flow C ships under V5.
  */
 export const RATE_CARD_V3: RateCard = {
   version: 'v3',
@@ -177,6 +202,7 @@ export const RATE_CARD_V3: RateCard = {
     viewer_global: 0,
   },
   spendSharePct: 0,
+  subscriptionSharePct: 0,
   internalAppOwnerUserIds: [
     // Same as V2 — populate with civitai team userIds before going live.
   ],
@@ -233,13 +259,92 @@ export const RATE_CARD_V4: RateCard = {
   },
   // PLACEHOLDER 5% platform-funded bounty — see the doc block above.
   spendSharePct: 5,
+  // Net-new subscription dimension (W3 flow C). 0% on V4 — behavior-
+  // preserving (V4 stamped only spend + purchase rows; flow C ships under
+  // V5). A percentage change is a new card, not an edit to V4.
+  subscriptionSharePct: 0,
   internalAppOwnerUserIds: [
     // Same as V3 — populate with civitai team userIds before going live.
   ],
   effectiveFrom: '2026-06-18',
 };
 
-export const ACTIVE_RATE_CARD: RateCard = RATE_CARD_V4;
+/**
+ * V5 — adds the W3 flow C MEMBERSHIP / subscription rev-share
+ * (`subscriptionSharePct`).
+ *
+ * Carries V4's purchase percentages (15/15/25/0/0) AND its spend bounty
+ * (5%) UNCHANGED, and DEFINES `subscriptionSharePct: 15` as the PLACEHOLDER
+ * subscription rate.
+ *
+ * ⚠️ NOT APPLIED AT ATTRIBUTION-WRITE TIME. As of the TRACK-ONLY rework
+ *    (PR #2629), `recordSubscriptionAttribution` does NOT call
+ *    `computeSubscriptionShare` and does NOT stamp this percentage onto the
+ *    row. Membership attribution rows are written `status='tracked'` with
+ *    `app_owner_share_cents = 0`, `subscription_share_pct = 0`, and
+ *    `rate_card_version = 'unrated'` — they record the EVENT + the money
+ *    BASIS (gross + provider_fee) only. The author share is deferred to
+ *    PAYOUT TIME: the future payout rail (Slice 4) reads `status='tracked'`
+ *    rows and computes `author_share = net × <signed-off subscriptionSharePct>`
+ *    as a clean retroactive BACKPAY, then transitions them to a
+ *    computed/confirmed state. Because the rows carry gross+fee, the
+ *    backpay computation is exact.
+ *
+ *    WHY: committing a share at this placeholder 15% before monetization
+ *    sign-off would lock those rows to the placeholder rate (the
+ *    immutability doctrine pays each row out under its STAMPED snapshot
+ *    forever). Recording the gross/fee now and applying the signed-off rate
+ *    later removes that placeholder-rate liability from the ledger while
+ *    preserving the full purchase trail.
+ *
+ * ⚠️ PLACEHOLDER RATE — `subscriptionSharePct: 15` mirrors the
+ *    publisher-purchase floor (15%) as a CONSERVATIVE STARTING DEFAULT
+ *    pending monetization sign-off. Recurring revenue is structurally
+ *    different (LTV-weighted, renewals compound), so leadership may choose
+ *    a DIFFERENT number than one-shot purchase. It is the rate the eventual
+ *    payout/backpay WILL apply, pending sign-off — not a final figure.
+ *
+ * ACCOUNTING MODEL (at payout, NOT at write) — same THREE-WAY split as a
+ *    Buzz purchase (NOT the platform-funded bounty model of spend): a
+ *    membership payment is a real card transaction. provider_fee comes off
+ *    the top, the author share is `subscriptionSharePct` % of the NET
+ *    (gross - fee), the platform keeps the remainder. At write time the
+ *    tracked row sets `platform_share = net` and `author_share = 0`, so the
+ *    conservation invariant (fee + platform + author = gross) still holds;
+ *    the backpay re-splits net into platform/author at payout.
+ *
+ * RENEWALS-PAY POLICY (⚠️ FLAGGED for sign-off, scope §C/E#3): one
+ *    attribution row per PAID invoice means renewals (subscription_cycle)
+ *    are tracked just like the initial purchase (subscription_create), so
+ *    the backpay will pay each renewal. This is the default. A
+ *    "first-invoice-only" policy is a service-level gate (write only on
+ *    subscription_create) — no card change.
+ *
+ * When the signed-off rate lands, add a V6 with the agreed % and leave V5
+ * in place (cards are immutable). `computeSubscriptionShare` below remains
+ * for the payout-time backpay to call against the signed-off card.
+ */
+export const RATE_CARD_V5: RateCard = {
+  version: 'v5',
+  publisherSharePctByScope: {
+    // Carried from V4 verbatim — a percentage change is a new card.
+    per_model_install: 15,
+    publisher_all_my_models: 15,
+    viewer_personal: 25,
+    platform_default: 0,
+    viewer_global: 0,
+  },
+  // Carried from V4 verbatim.
+  spendSharePct: 5,
+  // PLACEHOLDER 15% subscription rev-share — see the doc block above.
+  subscriptionSharePct: 15,
+  internalAppOwnerUserIds: [
+    // Same as V4 — populate with civitai team userIds before going live.
+  ],
+  effectiveFrom: '2026-06-18',
+};
+
+export const ACTIVE_RATE_CARD: RateCard = RATE_CARD_V5;
 
 /**
  * Result of running a (gross, fee, scope) tuple through the active rate
@@ -373,5 +478,78 @@ export function computeSpendShare({
     rateCardVersion: rateCard.version,
     spendSharePct: sharePct,
     appOwnerShareCents,
+  };
+}
+
+/**
+ * Result of running a (gross, fee, owner) tuple through the active card's
+ * SUBSCRIPTION dimension (W3 flow C). A membership payment is a real card
+ * transaction split three ways (like a Buzz purchase), so this carries the
+ * same fee / platform / author fields as RateCardSplit. The sum of the
+ * three `*_cents` fields equals the gross — the migration's CHECK enforces
+ * this for entry_type='charge' rows.
+ */
+export type SubscriptionShareResult = {
+  rateCardVersion: string;
+  subscriptionSharePct: number;
+  appOwnerShareCents: number;
+  platformShareCents: number;
+  providerFeeCents: number;
+};
+
+/**
+ * Compute the publisher / platform / provider-fee split for a single
+ * block-initiated MEMBERSHIP payment (one paid invoice).
+ *
+ * ⚠️ PAYOUT-TIME ONLY. This is NOT called by `recordSubscriptionAttribution`
+ * anymore (the TRACK-ONLY rework, #2629). Membership rows are written
+ * `status='tracked'` with a 0 share and no stamped rate. This function is
+ * retained for the future payout rail (Slice 4) to call against the
+ * signed-off card, computing each tracked row's author share as a backpay.
+ *
+ * Same order of operations as computeRateCardSplit: provider fee off the
+ * top, the author share is `subscriptionSharePct` % of the NET
+ * (gross - fee), the platform gets the remainder. The three-way sum always
+ * equals the gross by construction (the platform absorbs the sub-cent floor
+ * remainder), so the migration's conservation CHECK holds.
+ *
+ * Special cases (mirror computeRateCardSplit):
+ *   - `isSelfPurchase` (subscriber == app owner) → author share 0. Caller
+ *     sets status='voided', voided_reason='self_purchase'.
+ *   - `appOwnerUserId` ∈ `internalAppOwnerUserIds` → author share 0
+ *     (internal civitai app — same legal entity on both sides).
+ *
+ * Defensive: a provider fee greater than gross (refund/dispute edge) is
+ * clamped to gross → author 0, platform 0 — the platform absorbs the loss.
+ */
+export function computeSubscriptionShare({
+  rateCard = ACTIVE_RATE_CARD,
+  grossCents,
+  providerFeeCents,
+  isSelfPurchase,
+  appOwnerUserId,
+}: {
+  rateCard?: RateCard;
+  grossCents: number;
+  providerFeeCents: number;
+  isSelfPurchase: boolean;
+  appOwnerUserId: number;
+}): SubscriptionShareResult {
+  const safeGross = Math.max(0, Math.floor(grossCents));
+  const safeFee = Math.max(0, Math.min(safeGross, Math.floor(providerFeeCents)));
+  const net = safeGross - safeFee;
+
+  const isInternal = rateCard.internalAppOwnerUserIds.includes(appOwnerUserId);
+  const sharePct =
+    isSelfPurchase || isInternal ? 0 : rateCard.subscriptionSharePct ?? 0;
+  const appOwnerShareCents = Math.floor((net * sharePct) / 100);
+  const platformShareCents = net - appOwnerShareCents;
+
+  return {
+    rateCardVersion: rateCard.version,
+    subscriptionSharePct: sharePct,
+    appOwnerShareCents,
+    platformShareCents,
+    providerFeeCents: safeFee,
   };
 }

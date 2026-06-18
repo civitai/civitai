@@ -3,10 +3,12 @@ import {
   ACTIVE_RATE_CARD,
   computeRateCardSplit,
   computeSpendShare,
+  computeSubscriptionShare,
   RATE_CARD_V1,
   RATE_CARD_V2,
   RATE_CARD_V3,
   RATE_CARD_V4,
+  RATE_CARD_V5,
   type RateCard,
 } from '../rate-card';
 
@@ -30,6 +32,7 @@ describe('computeRateCardSplit', () => {
       viewer_global: 0,
     },
     spendSharePct: 10,
+    subscriptionSharePct: 0,
     internalAppOwnerUserIds: [42],
     effectiveFrom: '2026-01-01',
   };
@@ -183,7 +186,7 @@ describe('computeRateCardSplit', () => {
     }
   });
 
-  it('defaults to ACTIVE_RATE_CARD (now V4) when no rateCard is passed', () => {
+  it('defaults to ACTIVE_RATE_CARD (now V5) when no rateCard is passed', () => {
     const split = computeRateCardSplit({
       grossCents: 1000,
       providerFeeCents: 0,
@@ -192,10 +195,10 @@ describe('computeRateCardSplit', () => {
       appOwnerUserId: 1,
     });
     expect(split.rateCardVersion).toBe(ACTIVE_RATE_CARD.version);
-    expect(split.rateCardVersion).toBe(RATE_CARD_V4.version);
-    expect(ACTIVE_RATE_CARD).toBe(RATE_CARD_V4);
-    // V4 carries V3's purchase percentages unchanged (the spend dimension
-    // is the only addition), so per_model_install is still 15%.
+    expect(split.rateCardVersion).toBe(RATE_CARD_V5.version);
+    expect(ACTIVE_RATE_CARD).toBe(RATE_CARD_V5);
+    // V5 carries V4's purchase percentages unchanged (the subscription
+    // dimension is the only addition), so per_model_install is still 15%.
     expect(split.appOwnerShareCents).toBe(150);
   });
 
@@ -219,7 +222,7 @@ describe('computeRateCardSplit', () => {
     ).toBe(1000);
   });
 
-  it('viewer_global on the ACTIVE card (V4) also pays 0% with conservation', () => {
+  it('viewer_global on the ACTIVE card (V5) also pays 0% with conservation', () => {
     const split = computeRateCardSplit({
       grossCents: 4999,
       providerFeeCents: 217,
@@ -227,7 +230,7 @@ describe('computeRateCardSplit', () => {
       isSelfPurchase: false,
       appOwnerUserId: 7,
     });
-    expect(split.rateCardVersion).toBe('v4');
+    expect(split.rateCardVersion).toBe('v5');
     expect(split.appOwnerShareCents).toBe(0);
     expect(
       split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents
@@ -317,6 +320,7 @@ describe('computeSpendShare', () => {
       viewer_global: 0,
     },
     spendSharePct: 10,
+    subscriptionSharePct: 0,
     internalAppOwnerUserIds: [42],
     effectiveFrom: '2026-01-01',
   };
@@ -385,17 +389,21 @@ describe('computeSpendShare', () => {
     expect(res.appOwnerShareCents).toBe(0);
   });
 
-  it('V4 is the active card and carries the placeholder spend rate', () => {
-    expect(ACTIVE_RATE_CARD.version).toBe('v4');
-    expect(ACTIVE_RATE_CARD).toBe(RATE_CARD_V4);
-    // The placeholder is non-zero (the spend flow pays something) but
-    // conservative. If this number changes, it's a deliberate sign-off
-    // decision — update the test alongside the new card.
+  it('V5 is the active card; V4/V5 carry the placeholder spend rate', () => {
+    expect(ACTIVE_RATE_CARD.version).toBe('v5');
+    expect(ACTIVE_RATE_CARD).toBe(RATE_CARD_V5);
+    // The spend placeholder (non-zero, conservative) was introduced in V4
+    // and carried into V5 verbatim. If this number changes, it's a
+    // deliberate sign-off decision — update the test alongside the new card.
     expect(RATE_CARD_V4.spendSharePct).toBe(5);
-    expect(RATE_CARD_V4.spendSharePct).toBeGreaterThan(0);
-    // Purchase percentages carried from V3 unchanged.
+    expect(RATE_CARD_V5.spendSharePct).toBe(5);
+    expect(ACTIVE_RATE_CARD.spendSharePct).toBeGreaterThan(0);
+    // Purchase percentages carried from V3 unchanged through V4 and V5.
     expect(RATE_CARD_V4.publisherSharePctByScope).toEqual(
       RATE_CARD_V3.publisherSharePctByScope
+    );
+    expect(RATE_CARD_V5.publisherSharePctByScope).toEqual(
+      RATE_CARD_V4.publisherSharePctByScope
     );
   });
 
@@ -403,5 +411,163 @@ describe('computeSpendShare', () => {
     expect(RATE_CARD_V1.spendSharePct).toBe(0);
     expect(RATE_CARD_V2.spendSharePct).toBe(0);
     expect(RATE_CARD_V3.spendSharePct).toBe(0);
+  });
+});
+
+/**
+ * W3 flow C — MEMBERSHIP / subscription rev-share math. A membership
+ * payment is a real card transaction split THREE ways (NOT the
+ * platform-funded bounty model of spend), so the invariants mirror
+ * computeRateCardSplit's:
+ *   - fee + platform + author = gross (the SQL CHECK, entry_type='charge')
+ *   - self-purchase / internal-owner -> author 0
+ *   - floor so the platform absorbs the sub-cent remainder
+ */
+describe('computeSubscriptionShare', () => {
+  // Fixed 20% card so the test is stable when the live placeholder moves.
+  const fixedCard: RateCard = {
+    version: 'sub-test',
+    publisherSharePctByScope: {
+      per_model_install: 0,
+      publisher_all_my_models: 0,
+      viewer_personal: 0,
+      platform_default: 0,
+      viewer_global: 0,
+    },
+    spendSharePct: 0,
+    subscriptionSharePct: 20,
+    internalAppOwnerUserIds: [42],
+    effectiveFrom: '2026-01-01',
+  };
+
+  it('splits a clean membership invoice three ways, conservation holds', () => {
+    const split = computeSubscriptionShare({
+      rateCard: fixedCard,
+      grossCents: 1000,
+      providerFeeCents: 50,
+      isSelfPurchase: false,
+      appOwnerUserId: 1,
+    });
+    // net = 950, 20% of 950 = 190, platform 760.
+    expect(split.providerFeeCents).toBe(50);
+    expect(split.appOwnerShareCents).toBe(190);
+    expect(split.platformShareCents).toBe(760);
+    expect(split.subscriptionSharePct).toBe(20);
+    expect(
+      split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents
+    ).toBe(1000);
+    expect(split.rateCardVersion).toBe('sub-test');
+  });
+
+  it('zeroes author share on self-purchase (subscriber == owner)', () => {
+    const split = computeSubscriptionShare({
+      rateCard: fixedCard,
+      grossCents: 1000,
+      providerFeeCents: 50,
+      isSelfPurchase: true,
+      appOwnerUserId: 99,
+    });
+    expect(split.appOwnerShareCents).toBe(0);
+    expect(split.subscriptionSharePct).toBe(0);
+    expect(split.platformShareCents).toBe(950);
+  });
+
+  it('zeroes author share for an internal civitai-owned app', () => {
+    const split = computeSubscriptionShare({
+      rateCard: fixedCard,
+      grossCents: 1000,
+      providerFeeCents: 50,
+      isSelfPurchase: false,
+      appOwnerUserId: 42, // ∈ internalAppOwnerUserIds
+    });
+    expect(split.appOwnerShareCents).toBe(0);
+    expect(split.subscriptionSharePct).toBe(0);
+  });
+
+  it('floors fractional cents so the author never overcollects', () => {
+    // gross 999, fee 0, 20% → 199.8 → 199, platform absorbs the .8c.
+    const split = computeSubscriptionShare({
+      rateCard: fixedCard,
+      grossCents: 999,
+      providerFeeCents: 0,
+      isSelfPurchase: false,
+      appOwnerUserId: 1,
+    });
+    expect(split.appOwnerShareCents).toBe(199);
+    expect(split.platformShareCents).toBe(800);
+    expect(split.appOwnerShareCents + split.platformShareCents).toBe(999);
+  });
+
+  it('clamps a provider fee that exceeds gross', () => {
+    const split = computeSubscriptionShare({
+      rateCard: fixedCard,
+      grossCents: 100,
+      providerFeeCents: 500,
+      isSelfPurchase: false,
+      appOwnerUserId: 1,
+    });
+    expect(split.providerFeeCents).toBe(100);
+    expect(split.appOwnerShareCents).toBe(0);
+    expect(split.platformShareCents).toBe(0);
+    expect(
+      split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents
+    ).toBe(100);
+  });
+
+  it('V5 is the active card and carries the placeholder subscription rate', () => {
+    expect(ACTIVE_RATE_CARD.version).toBe('v5');
+    expect(RATE_CARD_V5.subscriptionSharePct).toBe(15);
+    expect(RATE_CARD_V5.subscriptionSharePct).toBeGreaterThan(0);
+    const split = computeSubscriptionShare({
+      grossCents: 1000,
+      providerFeeCents: 0,
+      isSelfPurchase: false,
+      appOwnerUserId: 1,
+    });
+    expect(split.rateCardVersion).toBe('v5');
+    // 15% of 1000 = 150.
+    expect(split.appOwnerShareCents).toBe(150);
+    expect(split.platformShareCents).toBe(850);
+  });
+
+  it('older cards (V1-V4) carry a 0% subscription rate (flow C is net-new in V5)', () => {
+    expect(RATE_CARD_V1.subscriptionSharePct).toBe(0);
+    expect(RATE_CARD_V2.subscriptionSharePct).toBe(0);
+    expect(RATE_CARD_V3.subscriptionSharePct).toBe(0);
+    expect(RATE_CARD_V4.subscriptionSharePct).toBe(0);
+  });
+
+  it('V5 carries V4 verbatim (purchase + spend) and only adds the subscription rate', () => {
+    // Immutability: V5 must not silently drift V4's stamped values.
+    expect(RATE_CARD_V5.publisherSharePctByScope).toEqual(
+      RATE_CARD_V4.publisherSharePctByScope
+    );
+    expect(RATE_CARD_V5.spendSharePct).toBe(RATE_CARD_V4.spendSharePct);
+    // Sanity on the carried V4 numbers (15/15/25/0/0, spend 5) so a future
+    // edit to V4 can't silently change V5's "carried" assertion.
+    expect(RATE_CARD_V4.publisherSharePctByScope).toMatchObject({
+      per_model_install: 15,
+      publisher_all_my_models: 15,
+      viewer_personal: 25,
+      platform_default: 0,
+      viewer_global: 0,
+    });
+    expect(RATE_CARD_V4.spendSharePct).toBe(5);
+    // The subscription rate is the ONLY thing V5 changes.
+    expect(RATE_CARD_V5.subscriptionSharePct).toBe(15);
+    expect(RATE_CARD_V4.subscriptionSharePct).toBe(0);
+  });
+
+  it('a row stamped under V5 pays V5 rates forever (immutability)', () => {
+    const split = computeSubscriptionShare({
+      rateCard: RATE_CARD_V5,
+      grossCents: 2000,
+      providerFeeCents: 0,
+      isSelfPurchase: false,
+      appOwnerUserId: 1,
+    });
+    expect(split.rateCardVersion).toBe('v5');
+    expect(split.subscriptionSharePct).toBe(15);
+    expect(split.appOwnerShareCents).toBe(300);
   });
 });
