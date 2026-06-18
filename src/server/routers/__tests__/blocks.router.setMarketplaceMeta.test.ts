@@ -250,12 +250,16 @@ describe('blocks.getFeaturedBlocks — anon-capable, dark behind the flag (F-E E
     const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
     const result = await caller.getFeaturedBlocks({ limit: 12 });
     expect(result).toEqual({ items: featured });
-    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12);
+    // PAGE-ONLY LAUNCH GATE (#2622): a non-mod/anon caller passes launchOnly=true
+    // so the featured rail carries launch (page) apps only.
+    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12, true);
   });
 
-  it('moderator (the live state today): served', async () => {
+  it('moderator (the live state today): served — sees ALL featured apps (launchOnly=false)', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     await caller.getFeaturedBlocks({ limit: 12 });
     expect(mockGetFeaturedBlocks).toHaveBeenCalledTimes(1);
+    // Mods bypass the page-only launch gate → launchOnly=false (all apps).
+    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12, false);
   });
 });
