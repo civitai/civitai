@@ -75,7 +75,12 @@ export function Model3DVariantViewer({
   if (!selected) return null;
 
   return (
-    <div className={`relative ${className ?? ''}`}>
+    // `size-full` on the wrapper guarantees both the absolutely-positioned
+    // picker and the underlying viewer have a defined box to lay out in.
+    // In compact mode the inner Model3DViewer's `h-full` only works if its
+    // own Stack ancestor has a resolved height — we make sure of that by
+    // passing `size-full` through.
+    <div className={`relative size-full ${className ?? ''}`}>
       {variants.length > 1 && (
         // Overlay the picker on the viewer rather than reserving layout
         // above it — keeps the viewer's aspect-square box uniform between
@@ -115,6 +120,11 @@ export function Model3DVariantViewer({
         format={selected.format}
         sizeKB={selected.sizeKB}
         compact={compact}
+        // Compact mode's three.js container is `h-full` of its Stack
+        // parent; the Stack needs `size-full` itself or it collapses to
+        // content height (which is 0 before the GLB resolves) — which is
+        // exactly the "toggle visible, viewport empty" bug.
+        className={compact ? 'size-full' : undefined}
       />
     </div>
   );

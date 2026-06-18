@@ -276,10 +276,21 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
           onClick={(e: React.MouseEvent) => e.stopPropagation()}
         >
           {previewUrl ? (
+            // `size-full` matters for `compact`: the viewer's three.js
+            // container uses `h-full` (vs. the default `min-h-[480px]`),
+            // which only works when its Stack ancestor has a resolved
+            // height. Without an explicit `className` here the Stack
+            // collapses to content size (= 0 until the GLB resolves),
+            // which is the "feed preview opens to a blank box" bug. The
+            // wrapping Box's `inset={0}` already gives us a real pixel
+            // height to chain off of. Variant picker is deliberately
+            // omitted on the feed card — only the base mesh is loaded
+            // via `primaryFile`, so there's no choice to expose.
             <Model3DViewer
               url={previewUrl}
               format={primaryFile?.format ?? 'glb'}
               compact
+              className="size-full"
             />
           ) : (
             <Group justify="center" align="center" h="100%">
