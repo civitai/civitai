@@ -92,7 +92,7 @@ vi.mock('~/server/services/blocks/publish-request.service', () => ({
 // The schema module is real (we want its actual validation), but it pulls only
 // zod — safe to load.
 
-import handler from '../submit-version';
+import handler from '~/pages/api/v1/blocks/submit-version';
 
 // Personal-access (user-type) key: `getSessionFromBearerToken` sets
 // subject = { type: 'apiKey' } when the ApiKey row has clientId == null.
