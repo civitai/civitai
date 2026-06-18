@@ -224,8 +224,15 @@ export function createCachedArray<T extends object>({
     }
 
     const settled = await Promise.all(distinctIds.map((id) => byId.get(id) as Promise<T | undefined>));
+    // Clone each record before returning it. The per-id single-flight shares ONE object
+    // reference across every concurrent caller for that id — but appendFn mutates records IN
+    // PLACE (e.g. caches.ts cosmeticCache: `record.id = record.cosmeticId; delete
+    // record.cosmeticId`) and we strip cachedAt below. Without a clone, two overlapping
+    // degraded fetches would corrupt each other's results. The healthy path is immune (each
+    // request decodes its own objects from msgpack); this restores that isolation. Shallow is
+    // enough — the appendFns reassign/delete TOP-LEVEL fields.
     const degraded = new Set<T>();
-    for (const r of settled) if (r) degraded.add(r);
+    for (const r of settled) if (r) degraded.add({ ...r } as T);
     if (appendFn) await appendFn(degraded);
     return [...degraded].map((x) => {
       if ('cachedAt' in x) delete x.cachedAt;

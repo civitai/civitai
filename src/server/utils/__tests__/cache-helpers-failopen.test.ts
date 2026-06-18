@@ -182,6 +182,55 @@ describe('createCachedArray.fetch — per-id single-flight (DB stampede bound)',
   });
 });
 
+describe('createCachedArray.fetch — HEALTHY path (regression guard)', () => {
+  it('serves cache hits without an origin fetch, fetches+caches only the misses', async () => {
+    // id 1 is a fresh cache hit; id 2 is a miss. mGet returns one slot per key.
+    mGetMock.mockResolvedValue([{ id: 1, name: 'cached-1', cachedAt: new Date() }, null]);
+    const lookupFn = vi.fn(async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<string, Row>
+    );
+    const cache = createCachedArray<Row>({ key: 'test:healthy' as never, idKey: 'id', lookupFn });
+
+    const result = await cache.fetch([1, 2]);
+
+    // Origin fetched ONLY the miss (id 2), never the hit (id 1) → no degraded path.
+    expect(lookupFn).toHaveBeenCalledTimes(1);
+    expect(lookupFn).toHaveBeenCalledWith([2]);
+    expect(result.find((r) => r.id === 1)?.name).toBe('cached-1'); // from cache
+    expect(result.find((r) => r.id === 2)?.name).toBe('db-2'); // from origin
+    expect(setMock).toHaveBeenCalled(); // the miss was written back
+  });
+});
+
+describe('createCachedArray.fetch — degraded shared-object isolation (H2)', () => {
+  it('clones per caller so two overlapping degraded fetches with mutating appendFns do not corrupt each other', async () => {
+    mGetMock.mockRejectedValue(REDIS_TIMEOUT());
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const lookupFn = vi.fn(async (ids: number[]) => {
+      await gate;
+      return Object.fromEntries(ids.map((id) => [id, { id, name: `db-${id}` }])) as Record<string, Row>;
+    });
+    // appendFn mutates the record in place (mirrors cosmeticCache/modelTagCache).
+    const appendFn = async (rows: Set<Row>) => {
+      for (const r of rows) r.name = `${r.name}-appended`;
+    };
+    const cache = createCachedArray<Row>({ key: 'test:share' as never, idKey: 'id', lookupFn, appendFn });
+
+    const p1 = cache.fetch([1, 2]);
+    await flush();
+    const p2 = cache.fetch([2, 3]); // overlaps on id 2 → shares the in-flight promise
+    await flush();
+    release();
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    // Without the clone, id 2's shared object would be appended TWICE ("db-2-appended-appended").
+    expect(r1.find((r) => r.id === 2)?.name).toBe('db-2-appended');
+    expect(r2.find((r) => r.id === 2)?.name).toBe('db-2-appended');
+  });
+});
+
 describe('createCachedObject.fetch — fail-open + best-effort writes', () => {
   it('fails open to a keyed Record from the origin when the read rejects', async () => {
     mGetMock.mockRejectedValue(REDIS_TIMEOUT());
