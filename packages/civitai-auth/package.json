@@ -15,7 +15,6 @@
   "dependencies": {
     "@civitai/redis": "workspace:*",
     "jose": "^6.0.11",
-    "next-auth": "^4.24.5",
     "zod": "^4.0.17"
   },
   "devDependencies": {

@@ -2,7 +2,6 @@
 // See docs/auth-verification-strategy.md and docs/centralized-auth-app.md.
 //
 //  SPOKE (every app):   createAuthVerifier — local verify, no per-request hop.
-//                       createAccountSwitchProvider — cross-root session receiver.
 //                       createAuthMiddleware — edge route guard.
 //  HUB   (apps/auth):    createSessionSigner / maybeCreateSessionSigner — ES256 issuance,
 //                       JWKS endpoint, swap-token + id_token minting.
@@ -27,8 +26,6 @@ export { createExchangeClient } from './exchange-client'; // cross-domain swap-t
 export type { ExchangeClient } from './exchange-client';
 export { createSessionSigner, maybeCreateSessionSigner } from './sign';
 export type { SessionSigner, SessionSignerConfig } from './sign';
-export { createAccountSwitchProvider } from './account-switch';
-export type { AccountSwitchConfig } from './account-switch';
 export { createAuthMiddleware } from './middleware';
 export type { AuthMiddlewareConfig } from './middleware';
 export {

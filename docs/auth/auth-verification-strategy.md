@@ -9,7 +9,7 @@
 
 The `@civitai/auth` package and an **opt-in** Path-C wiring have landed (unstaged). Everything is a no-op until the RS256 keys are set, so the build/runtime are unchanged today.
 
-**Package** [`packages/civitai-auth/`](../../packages/civitai-auth/) — `createAuthVerifier` (spoke: JWKS verify + legacy-JWE fallback + injected revocation), `createSessionSigner`/`maybeCreateSessionSigner` (hub: RS256 encode/decode, `publicJwks`, `mintSwapToken`), `createAccountSwitchProvider` (cross-root receiver), `createAuthMiddleware` (edge guard). Deps: `jose` + `next-auth` + `zod` only — no infra deps (revocation is injected).
+**Package** [`packages/civitai-auth/`](../../packages/civitai-auth/) — `createAuthVerifier` (spoke: JWKS verify + legacy-JWE fallback + injected revocation), `createSessionSigner`/`maybeCreateSessionSigner` (hub: ES256 `mintSessionToken`/`mintSwapToken`/`mintIdToken`, `publicJwks`), `createAuthMiddleware` (edge guard). Deps: `jose` + `zod` only — `next-auth` was dropped once the cutover completed (the legacy `civitai-token` JWE is decoded with a standalone `jose` reimplementation in `legacy-cookie.ts`, no `next-auth` dependency). No infra deps (revocation is injected).
 
 **Wired (opt-in, off unless `AUTH_JWT_PRIVATE_KEY` + `AUTH_JWT_KID` set):**
 

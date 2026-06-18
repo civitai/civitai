@@ -230,7 +230,8 @@ target being in **this** device's set and fresh (<30d); `localStorage` holds zer
 - [ ] Validate e2e: same-domain switch + `.com ↔ .red` + localhost.
 - [ ] Follow-up: cross-domain login mints a session but doesn't link the spoke's **device set** (the exchange is
       server-to-server, no device cookie) — so multi-account *on `.red`* needs a device link in the exchange.
-- [ ] STEP-H: the now-dead next-auth `account-switch-hub` receiver + `createAccountSwitchProvider` can be deleted.
+- [x] STEP-H: the now-dead next-auth `account-switch-hub` receiver + `createAccountSwitchProvider` are **deleted**
+      (`packages/civitai-auth/src/account-switch.ts` removed + its `index.ts` export).
 
 ### F. Moderator impersonation — 🔨 to do
 
@@ -276,7 +277,7 @@ exhaustive removal list — the goal is **zero `next-auth` references** left aft
 | `src/components/UpdateRequiredWatcher/UpdateRequiredWatcher.tsx` | `SESSION_REFRESH_HEADER` branch → next-auth `update()`; setter already deleted so it's dead | Phase 4: drop the session-refresh branch (signals replace it) or rewire to the hub; keep the generation-update branch |
 | `src/shared/constants/auth.constants.ts` | `SESSION_REFRESH_HEADER`/`COOKIE` (dup'd in `@civitai/auth`, `update()`-coupled) + `GENERATION_UPDATE_HEADER` (generation, not auth) | Phase 4: rehome `GENERATION_UPDATE_HEADER`; delete file |
 | `src/pages/api/auth/civ-token.ts` | dead AES civ-token endpoint (no callers) | delete (can go now, ahead of Phase 5) |
-| `next-auth` + `next-auth/react` deps | imports app-wide (incl. ~317 `useSession`/`useCurrentUser` sites via the client shim) | remove the dep; keep a thin client shim or replace |
+| `next-auth` + `next-auth/react` deps | imports app-wide (incl. ~317 `useSession`/`useCurrentUser` sites via the client shim) | ✅ **done** — `next-auth` dropped from the root app (first-party `SessionProvider`) **and** from `@civitai/auth` (the last two imports — `account-switch.ts` + `sign.ts`'s `encode`/`decode` shims — removed). No `next-auth` package import remains in `src/` or `packages/`. |
 
 > **Rule for new work:** any code that imports or relies on NextAuth gets a `STEP-H-REMOVAL:` marker comment
 > **and** a row in this table. That's how we guarantee a clean rip-out with no lingering `next-auth` references.
