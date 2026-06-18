@@ -323,11 +323,12 @@ beforeEach(() => {
     written: true,
     row: {
       id: 'bsa_x',
-      status: 'pending',
+      // TRACK-ONLY: the write records the event + gross only — no rate applied.
+      status: 'tracked',
       appOwnerShareCents: 0,
       spendSharePct: 0,
       grossValueCents: 0,
-      rateCardVersion: 'v4',
+      rateCardVersion: 'unrated',
       voidedReason: null,
     },
   });
