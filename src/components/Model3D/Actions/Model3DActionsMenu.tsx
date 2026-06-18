@@ -13,11 +13,14 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import {
+  IconAlertTriangle,
   IconArchive,
+  IconBan,
   IconDotsVertical,
   IconFlag,
   IconPencil,
   IconPhotoShield,
+  IconRadar2,
   IconRestore,
   IconShieldCheck,
   IconTrash,
@@ -31,9 +34,15 @@ import {
   browsingLevels,
   browsingLevelLabels,
 } from '~/shared/constants/browsingLevel.constants';
+import { HideModel3DButton } from '~/components/HideModel3DButton/HideModel3DButton';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
+import { useRescanImage } from '~/components/Image/hooks/useRescanImage';
+import { useReportCsamImages } from '~/components/Image/image.utils';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { NsfwLevel } from '~/server/common/enums';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -86,6 +95,7 @@ export function Model3DActionsMenu({
   triggerSize = 'lg',
 }: Model3DActionsMenuProps) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
   const [nsfwModalOpen, setNsfwModalOpen] = useState(false);
   const [pendingLevel, setPendingLevel] = useState<NsfwLevel>(
@@ -98,10 +108,16 @@ export function Model3DActionsMenu({
   const isOwner = !!currentUser && currentUser.id === model3d.userId;
   const isModerator = !!currentUser?.isModerator;
   const canReport = showReport && !!currentUser && !isOwner && !isModerator;
+  // Logged-in non-owner users (mod or not) can hide content from / block the
+  // owner. Mods see these in addition to their mod tools — same as how the
+  // image card menu surfaces them.
+  const canHideUser = !!currentUser && !isOwner;
   // Render only when at least one section will have visible items. The card
   // surface enables the Report path for any logged-in user; the detail page
-  // keeps the original owner/mod gate by leaving `showReport` false.
-  if (!isOwner && !isModerator && !canReport) return null;
+  // keeps the original owner/mod gate by leaving `showReport` false. The
+  // hide-user / block-user items also satisfy this gate for any logged-in
+  // non-owner viewer.
+  if (!isOwner && !isModerator && !canReport && !canHideUser) return null;
 
   const isDeleted = model3d.status === Model3DStatus.Deleted;
   const isUnpublished = model3d.status === Model3DStatus.Unpublished;
@@ -161,6 +177,40 @@ export function Model3DActionsMenu({
     },
     onError: onError('set NSFW level'),
   });
+
+  // Mod-only flag toggles. The router exposes a single endpoint keyed by
+  // `field` (`tosViolation` / `poi` / `minor` / `nsfw` / `unlisted`) so we
+  // wire one mutation and dispatch on click. Optimistic-cache busts: the
+  // server's `setModel3DNsfwLevel` already refreshes the `getById` cache
+  // tag; this path runs through `getInfinite` so we re-invalidate both.
+  const toggleFlagMutation = trpc.model3d.moderation.toggleFlag.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: 'Flag updated' });
+      await invalidate();
+    },
+    onError: onError('toggle flag'),
+  });
+
+  // Thumbnail-Image-scoped mod helpers — both reuse the canonical Image
+  // pipelines so behavior matches what mods are used to from the regular
+  // image / model card menus.
+  const rescanImage = useRescanImage();
+  const reportCsamMutation = useReportCsamImages();
+  const handleRescanThumbnail = () => {
+    if (!model3d.thumbnailImageId) return;
+    rescanImage({ imageId: model3d.thumbnailImageId });
+  };
+  const handleReportCsam = () => {
+    if (!model3d.thumbnailImageId) return;
+    if (features.csamReports) {
+      window.open(
+        `/moderator/csam/${model3d.userId}?imageId=${model3d.thumbnailImageId}`,
+        '_blank'
+      );
+    } else {
+      reportCsamMutation.mutate({ imageIds: [model3d.thumbnailImageId] });
+    }
+  };
 
   const confirmPublish = () =>
     openConfirmModal({
@@ -384,24 +434,92 @@ export function Model3DActionsMenu({
               >
                 Set NSFW Level…
               </Menu.Item>
+
+              {/* Boolean flag toggles. The same endpoint that backs the
+                  image card menu — one mutation keyed by `field`. */}
+              <Menu.Item
+                leftSection={<IconFlag size={14} stroke={1.5} />}
+                onClick={() =>
+                  toggleFlagMutation.mutate({ id: model3d.id, field: 'minor' })
+                }
+                disabled={toggleFlagMutation.isPending}
+              >
+                {model3d.minor ? 'Remove minor flag' : 'Flag as minor'}
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconFlag size={14} stroke={1.5} />}
+                onClick={() =>
+                  toggleFlagMutation.mutate({ id: model3d.id, field: 'poi' })
+                }
+                disabled={toggleFlagMutation.isPending}
+              >
+                {model3d.poi ? 'Remove POI flag' : 'Flag as POI'}
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconBan size={14} stroke={1.5} />}
+                onClick={() =>
+                  toggleFlagMutation.mutate({ id: model3d.id, field: 'tosViolation' })
+                }
+                disabled={toggleFlagMutation.isPending}
+              >
+                {model3d.tosViolation
+                  ? 'Clear TOS Violation'
+                  : 'Remove as TOS Violation'}
+              </Menu.Item>
+
+              {/* Thumbnail-scoped mod helpers. Disabled when the model
+                  hasn't materialized its thumbnail yet (very fresh draft
+                  before the polygen handler ingests the preview PNG). */}
+              {model3d.thumbnailImageId && (
+                <>
+                  <Menu.Item
+                    leftSection={<IconRadar2 size={14} stroke={1.5} />}
+                    onClick={handleRescanThumbnail}
+                  >
+                    Rescan thumbnail image
+                  </Menu.Item>
+                  <Menu.Item
+                    leftSection={<IconAlertTriangle size={14} stroke={1.5} />}
+                    onClick={handleReportCsam}
+                  >
+                    Report CSAM
+                  </Menu.Item>
+                </>
+              )}
+            </>
+          )}
+
+          {/* User-side hide/block + Report. The user-side items are
+              available to any logged-in non-owner (mods see them too,
+              alongside their mod tools). Report is gated to non-mod
+              non-owner only — mods don't need to report a Model3D they
+              can directly action. */}
+          {canHideUser && (
+            <>
+              {(isOwner || isModerator) && <Menu.Divider />}
+              <HideModel3DButton
+                as="menu-item"
+                model3dId={model3d.id}
+                ownerUserId={model3d.userId}
+              />
+              <HideUserButton as="menu-item" userId={model3d.userId} />
+              <BlockUserButton as="menu-item" userId={model3d.userId} />
             </>
           )}
 
           {canReport && (
-            <>
-              <Menu.Item
-                leftSection={<IconFlag size={14} stroke={1.5} />}
-                color="red.6"
-                onClick={() =>
-                  openReportModal({
-                    entityType: ReportEntity.Model3D,
-                    entityId: model3d.id,
-                  })
-                }
-              >
-                Report
-              </Menu.Item>
-            </>
+            <Menu.Item
+              leftSection={<IconFlag size={14} stroke={1.5} />}
+              color="red.6"
+              onClick={() =>
+                openReportModal({
+                  entityType: ReportEntity.Model3D,
+                  entityId: model3d.id,
+                })
+              }
+            >
+              Report
+            </Menu.Item>
           )}
         </Menu.Dropdown>
       </Menu>

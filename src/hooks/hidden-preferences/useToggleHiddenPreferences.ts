@@ -5,6 +5,7 @@ import { trpc } from '~/utils/trpc';
 const kindMap = {
   image: 'hiddenImages',
   model: 'hiddenModels',
+  model3d: 'hiddenModel3Ds',
   tag: 'hiddenTags',
   user: 'hiddenUsers',
   blockedUser: 'blockedUsers',
@@ -32,6 +33,7 @@ export const useToggleHiddenPreferences = () => {
           old = {
             hiddenImages: [],
             hiddenModels: [],
+            hiddenModel3Ds: [],
             hiddenUsers: [],
             hiddenTags: [],
             blockedUsers: [],
@@ -74,6 +76,7 @@ export const useUpdateHiddenPreferences = () => {
         old = {
           hiddenImages: [],
           hiddenModels: [],
+          hiddenModel3Ds: [],
           hiddenUsers: [],
           hiddenTags: [],
           blockedUsers: [],

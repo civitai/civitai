@@ -170,8 +170,15 @@ function filterPreferences<
 
   const isModerator = !!currentUser?.isModerator;
   const { key, value } = paired<BaseDataTypeMap>(type, data);
-  const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, moderatedTags, systemHiddenTags } =
-    hiddenPreferences;
+  const {
+    hiddenModels,
+    hiddenModel3Ds,
+    hiddenImages,
+    hiddenTags,
+    hiddenUsers,
+    moderatedTags,
+    systemHiddenTags,
+  } = hiddenPreferences;
   const maxSelectedLevel = Math.max(...parseBitwiseBrowsingLevel(browsingLevel));
   const maxBrowsingLevel = Flags.maxValue(browsingLevel);
 
@@ -693,6 +700,10 @@ function filterPreferences<
         const userId = m.user.id;
         const isOwner = userId === currentUser?.id;
         if (!canViewNsfw && (hasNsfwWords(m.name ?? '') || m.nsfw === true)) return false;
+        if (hiddenModel3Ds.get(m.id)) {
+          hidden.models++;
+          return false;
+        }
         if ((isOwner || isModerator) && m.nsfwLevel === 0) return true;
         if (!Flags.intersects(m.nsfwLevel, browsingLevel)) {
           hidden.browsingLevel++;
