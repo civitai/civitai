@@ -10,8 +10,8 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 export type CacheTarget = 'main' | 'sys';
 
 // The clearCacheByPattern* helpers use only the cross-client methods
-// (scanIterator, del); typed as `any` here to bridge the cache vs sys key-template
-// generics without forcing every caller to know which client they're hitting.
+// (scanNodes/scanNodeStep, del); typed as `any` here to bridge the cache vs sys
+// key-template generics without forcing every caller to know which client they're hitting.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getCacheClient(target: CacheTarget = 'main'): any {
   return target === 'sys' ? sysRedis : redis;
@@ -762,6 +762,27 @@ export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
   await redis.packed.set(key, toCache, { KEEPTTL: true });
 }
 
+// Bounded retry-with-tiny-backoff for a single clipped (deadline-rejected) Redis
+// step inside the clearCacheByPattern* drain. A transient clip (a SCAN/del step
+// that exceeded REDIS_CLUSTER_COMMAND_TIMEOUT_MS on a memory-pressured shard) must
+// NOT abort the whole invalidation — we retry the SAME step a few times so a single
+// clip doesn't lose the iteration. On exhaustion the LAST error is thrown so the
+// caller can log + decide (best-effort continue), never an infinite loop.
+const SCAN_STEP_MAX_ATTEMPTS = 4; // initial try + 3 retries
+const SCAN_STEP_BACKOFF_MS = 50;
+async function withScanStepRetry<T>(step: () => Promise<T>): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < SCAN_STEP_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await step();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < SCAN_STEP_MAX_ATTEMPTS - 1) await sleep(SCAN_STEP_BACKOFF_MS * (attempt + 1));
+    }
+  }
+  throw lastErr;
+}
+
 /**
  * ⚠️ DANGER — DO NOT call on a hot path (per-request / per-mutation cache busts).
  *
@@ -793,30 +814,93 @@ export async function clearCacheByPattern(
   const cleared: string[] = [];
 
   if (!pattern.includes('*')) {
-    await client.del(pattern);
-    cleared.push(pattern);
+    // Exact key — retry a clipped del so a single transient clip doesn't leave it stale.
+    try {
+      await withScanStepRetry(() => client.del(pattern));
+      cleared.push(pattern);
+    } catch (err) {
+      // Surface (don't pretend success): an exact-key bust that fully failed is a
+      // stale-key gap. Best-effort: log + return what we cleared (nothing here).
+      logSysRedisFailOpen('write-degraded', `clearCacheByPattern del (exact) [${pattern}]`, err, {
+        pattern,
+        partial: true,
+        target,
+      });
+    }
     onProgress?.(cleared.length);
     return cleared;
   }
 
-  // Use cluster's scanIterator which handles scanning all nodes
+  // Drive SCAN node-by-node with an EXPLICIT cursor (scanNodes/scanNodeStep) so a
+  // deadline-clipped SCAN step can be retried from the SAME cursor (bounded) instead
+  // of killing the iterator mid-keyspace and leaving matching keys un-deleted (the
+  // residual stale-cache risk this guards against). On exhausted retries we log
+  // loudly with the node+cursor and continue best-effort (clear as much as possible),
+  // rather than silently aborting the whole invalidation.
   log('Scanning cache with pattern:', pattern, 'target:', target);
-  const stream = client.scanIterator({ MATCH: pattern, COUNT: 10000 });
+  const clearedSet = new Set<string>();
+  const nodes = await client.scanNodes();
 
-  for await (const keys of stream) {
-    const newKeys = (keys as RedisKeyTemplates[]).filter((key) => !cleared.includes(key));
-    log('Total keys:', cleared.length, 'Adding:', newKeys.length);
-    if (newKeys.length === 0) continue;
+  for (const node of nodes) {
+    let cursor = '0';
+    do {
+      let step: { keys: string[]; cursor: string };
+      try {
+        const startCursor = cursor;
+        step = await withScanStepRetry(() =>
+          client.scanNodeStep(node, startCursor, { MATCH: pattern, COUNT: 10000 })
+        );
+      } catch (err) {
+        // SCAN step still clipped after bounded retries — we cannot safely advance
+        // this node's cursor (we'd skip the unscanned tail). Surface the gap and
+        // move on to the next node best-effort. The unscanned keys survive to TTL.
+        logSysRedisFailOpen('write-degraded', `clearCacheByPattern SCAN [${pattern}]`, err, {
+          pattern,
+          node: node.id,
+          cursor,
+          partial: true,
+          target,
+        });
+        break;
+      }
+      cursor = step.cursor;
 
-    const batches = chunk(newKeys, 10000);
-    for (let i = 0; i < batches.length; i++) {
-      log('Clearing batch:', i + 1, 'of', batches.length);
-      // Delete keys one at a time to avoid CROSSSLOT errors on the main cluster.
-      await Promise.all(batches[i].map((key) => client.del(key)));
-      cleared.push(...batches[i]);
-      log('Cleared batch:', i + 1, 'of', batches.length);
-      onProgress?.(cleared.length);
-    }
+      const newKeys = (step.keys as RedisKeyTemplates[]).filter((key) => !clearedSet.has(key));
+      log('Total keys:', clearedSet.size, 'Adding:', newKeys.length);
+      if (newKeys.length === 0) continue;
+
+      const batches = chunk(newKeys, 10000);
+      for (let i = 0; i < batches.length; i++) {
+        log('Clearing batch:', i + 1, 'of', batches.length);
+        // Delete keys one at a time to avoid CROSSSLOT errors on the main cluster.
+        // Retry a clipped del per-key so a transient clip doesn't drop the key.
+        const results = await Promise.allSettled(
+          batches[i].map((key) =>
+            withScanStepRetry(() => client.del(key)).then(() => key)
+          )
+        );
+        for (let j = 0; j < results.length; j++) {
+          const r = results[j];
+          if (r.status === 'fulfilled') {
+            if (!clearedSet.has(r.value)) {
+              clearedSet.add(r.value);
+              cleared.push(r.value);
+            }
+          } else {
+            // A key whose del exhausted retries — log it (stale) and keep going.
+            logSysRedisFailOpen('write-degraded', `clearCacheByPattern del [${pattern}]`, r.reason, {
+              pattern,
+              key: batches[i][j],
+              node: node.id,
+              partial: true,
+              target,
+            });
+          }
+        }
+        log('Cleared batch:', i + 1, 'of', batches.length);
+        onProgress?.(cleared.length);
+      }
+    } while (cursor !== '0');
   }
 
   log('Done clearing cache. Total cleared:', cleared.length);
@@ -855,38 +939,89 @@ export async function clearCacheByPatterns(
   const exact = perPattern.filter((p) => !p.pattern.includes('*'));
   const globbed = perPattern.filter((p) => p.pattern.includes('*'));
 
-  // Fast path for exact keys — no scan needed.
+  // Fast path for exact keys — no scan needed. Retry a clipped del; log + continue
+  // (don't abort the whole multi-pattern bust) if it fully fails.
   for (const p of exact) {
-    await client.del(p.pattern as RedisKeyTemplates);
-    p.cleared.push(p.pattern);
+    try {
+      await withScanStepRetry(() => client.del(p.pattern as RedisKeyTemplates));
+      p.cleared.push(p.pattern);
+    } catch (err) {
+      logSysRedisFailOpen(
+        'write-degraded',
+        `clearCacheByPatterns del (exact) [${p.pattern}]`,
+        err,
+        { pattern: p.pattern, partial: true, target }
+      );
+    }
   }
 
   if (globbed.length > 0) {
+    // Single-pass drain across all nodes with an EXPLICIT cursor (see
+    // clearCacheByPattern) so a deadline-clipped SCAN step is retried/resumed
+    // rather than killing the whole pass and leaving matching keys stale.
     log('Scanning cache for', globbed.length, 'patterns in a single pass, target:', target);
-    const stream = client.scanIterator({ MATCH: '*', COUNT: 10000 });
+    const nodes = await client.scanNodes();
 
-    for await (const keys of stream) {
-      const toDelete: RedisKeyTemplates[] = [];
-      for (const key of keys as RedisKeyTemplates[]) {
-        for (const p of globbed) {
-          if (p.regex.test(key)) {
-            p.cleared.push(key);
-            toDelete.push(key);
-            break;
+    for (const node of nodes) {
+      let cursor = '0';
+      do {
+        let step: { keys: string[]; cursor: string };
+        try {
+          const startCursor = cursor;
+          step = await withScanStepRetry(() =>
+            client.scanNodeStep(node, startCursor, { MATCH: '*', COUNT: 10000 })
+          );
+        } catch (err) {
+          // SCAN step clipped past retries — surface the gap (every globbed pattern
+          // may be under-cleared on this node's unscanned tail) and continue.
+          logSysRedisFailOpen('write-degraded', 'clearCacheByPatterns SCAN', err, {
+            patterns: globbed.map((p) => p.pattern),
+            node: node.id,
+            cursor,
+            partial: true,
+            target,
+          });
+          break;
+        }
+        cursor = step.cursor;
+
+        const toDelete: { key: RedisKeyTemplates; bucket: (typeof globbed)[number] }[] = [];
+        for (const key of step.keys as RedisKeyTemplates[]) {
+          for (const p of globbed) {
+            if (p.regex.test(key)) {
+              toDelete.push({ key, bucket: p });
+              break;
+            }
           }
         }
-      }
-      if (toDelete.length === 0) continue;
+        if (toDelete.length === 0) continue;
 
-      const batches = chunk(toDelete, 10000);
-      for (const batch of batches) {
-        await Promise.all(batch.map((key) => client.del(key)));
-      }
-      const total = perPattern.reduce((s, p) => s + p.cleared.length, 0);
-      onProgress?.({
-        total,
-        perPattern: perPattern.map((p) => ({ pattern: p.pattern, cleared: p.cleared.length })),
-      });
+        const batches = chunk(toDelete, 10000);
+        for (const batch of batches) {
+          const results = await Promise.allSettled(
+            batch.map((entry) => withScanStepRetry(() => client.del(entry.key)).then(() => entry))
+          );
+          for (let j = 0; j < results.length; j++) {
+            const r = results[j];
+            if (r.status === 'fulfilled') {
+              r.value.bucket.cleared.push(r.value.key);
+            } else {
+              logSysRedisFailOpen('write-degraded', 'clearCacheByPatterns del', r.reason, {
+                key: batch[j].key,
+                pattern: batch[j].bucket.pattern,
+                node: node.id,
+                partial: true,
+                target,
+              });
+            }
+          }
+        }
+        const total = perPattern.reduce((s, p) => s + p.cleared.length, 0);
+        onProgress?.({
+          total,
+          perPattern: perPattern.map((p) => ({ pattern: p.pattern, cleared: p.cleared.length })),
+        });
+      } while (cursor !== '0');
     }
   } else {
     const total = perPattern.reduce((s, p) => s + p.cleared.length, 0);
