@@ -3,19 +3,28 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BlockFallback } from './BlockFallback';
+import { failureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { grantedPageScopes, pageFallbackReason } from './pageBlockHostLogic';
 import { resolveRequestConsent } from './requestConsentGate';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
+import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
+import { trpc } from '~/utils/trpc';
 
 // Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
 // clicks an action whose consent-gated scope the page token is missing. Mirrors
 // IframeHost's dynamic import (SSR-disabled).
 const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: false });
+
+// Buy-Buzz modal for the page money path's OPEN_BUZZ_PURCHASE handler (the
+// insufficient-Buzz top-up CTA). Mirrors IframeHost's dynamic import.
+const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 
 /**
  * W10 — full-page App Block host. Renders a block as a FULL-VIEWPORT surface
@@ -43,6 +52,11 @@ const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: fa
 
 const BLOCK_READY_TIMEOUT_MS = 10_000;
 const TOKEN_WAIT_TIMEOUT_MS = 15_000;
+
+// Hard cap on a block-suggested Buy-Buzz amount (mirrors IframeHost) — clamps a
+// malicious/huge `suggestedAmount` so the spend modal can't be pre-seeded with
+// an absurd value. The user still picks freely.
+const BUZZ_PURCHASE_AMOUNT_CAP = 50_000;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 
@@ -383,6 +397,210 @@ export function PageBlockHost({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Money path: the @civitai/blocks-react useBuzzWorkflow bridge ───────────
+  //
+  // This was the SECOND W10 page gap (after consent). #2606 shipped pages with
+  // NO money scopes, so the workflow bridge wasn't needed; #2612 added the
+  // page-money server runtime + #2615 ported consent — but this host never
+  // ported the workflow handlers from IframeHost. A page block calling
+  // estimate/submit/poll/cancel (via useBuzzWorkflow) posts
+  // ESTIMATE_WORKFLOW / SUBMIT_WORKFLOW / POLL_WORKFLOW / CANCEL_WORKFLOW into
+  // the void → no blocks.* tRPC call → the SDK request hung to its 120s timeout
+  // with no network call and no error. We mirror IframeHost EXACTLY: forward to
+  // the same blocks.* mutations with the page `token` prop as `blockToken`, and
+  // every path (success OR thrown) MUST post a reply (failure-shape snapshot via
+  // failureSnapshot on throw) so the block's transport never hangs.
+  //
+  // Server-side blocks.{estimate,submit,poll,cancel}Workflow already enforce the
+  // page token's scope + budget + entitlement gate (#2612); the host just
+  // forwards the (untrusted, server-schema-validated) `body`/`workflowId` + the
+  // token. No client-side gating is added here.
+  //
+  // token is a PROP here (string | null) — PageBlockHost does NOT use
+  // useBlockToken (that's the page route). A null token means the block never
+  // rendered a usable money surface; we drop such a request without a reply (the
+  // block can't have legitimately fired a workflow without a token, and the mint
+  // path surfaces no_token/error terminal states above). A missing requestId is
+  // likewise dropped without replying — mirrors IframeHost.
+  const submitWorkflowMutation = trpc.blocks.submitWorkflow.useMutation();
+  const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
+  const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
+  const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
+
+  // SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
+      'SUBMIT_WORKFLOW',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || !token) return;
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await submitWorkflowMutation.mutateAsync({
+            blockToken: token,
+            // Schema-validated server-side; the host never trusts this shape.
+            body: raw.body as never,
+          });
+          send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+        } catch (err) {
+          send('WORKFLOW_SUBMITTED', { requestId, snapshot: failureSnapshot(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, submitWorkflowMutation]);
+
+  // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
+      'ESTIMATE_WORKFLOW',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || !token) return;
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await estimateWorkflowMutation.mutateAsync({
+            blockToken: token,
+            body: raw.body as never,
+          });
+          send('ESTIMATE_RESULT', { requestId, snapshot });
+        } catch (err) {
+          send('ESTIMATE_RESULT', { requestId, snapshot: failureSnapshot(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, estimateWorkflowMutation]);
+
+  // POLL_WORKFLOW → blocks.pollWorkflow → WORKFLOW_STATUS.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
+      'POLL_WORKFLOW',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.workflowId !== 'string' ||
+          raw.workflowId.length === 0 ||
+          !token
+        ) {
+          return;
+        }
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await pollWorkflowMutation.mutateAsync({
+            blockToken: token,
+            workflowId: raw.workflowId,
+          });
+          send('WORKFLOW_STATUS', { requestId, snapshot });
+        } catch (err) {
+          send('WORKFLOW_STATUS', { requestId, snapshot: failureSnapshot(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, pollWorkflowMutation]);
+
+  // CANCEL_WORKFLOW → blocks.cancelWorkflow → WORKFLOW_CANCELED. Ownership is
+  // enforced server-side by the viewer's orchestrator token.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
+      'CANCEL_WORKFLOW',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.workflowId !== 'string' ||
+          raw.workflowId.length === 0 ||
+          !token
+        ) {
+          return;
+        }
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await cancelWorkflowMutation.mutateAsync({
+            blockToken: token,
+            workflowId: raw.workflowId,
+          });
+          send('WORKFLOW_CANCELED', { requestId, snapshot });
+        } catch (err) {
+          send('WORKFLOW_CANCELED', { requestId, snapshot: failureSnapshot(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, cancelWorkflowMutation]);
+
+  // OPEN_BUZZ_PURCHASE → BUZZ_PURCHASE_RESULT. The generator's insufficient-Buzz
+  // top-up CTA. Gate on BLOCK_READY (+ payload validity) via the shared
+  // resolveBuzzPurchaseRequest predicate so a pre-handshake block can't summon
+  // the spend modal before any interaction (same posture as the model host).
+  //
+  // DEVIATION from IframeHost (intentional, documented): the model host derives
+  // earnings attribution from the install context (deriveScopeFromInstanceId on
+  // the `mbi_*`/`bus_*`/`pdb_*` instanceId prefix + modelId/slotId). The PAGE
+  // instanceId is `page_<appBlockId>`, which deriveScopeFromInstanceId does NOT
+  // recognise → returns null → attribution is omitted, exactly as IframeHost
+  // already handles an unknown prefix ("skip attribution; the webhook treats it
+  // as a regular buzz purchase"). There is no page-scoped earnings bucket today,
+  // so a page top-up is an unattributed purchase. We invent NO new attribution
+  // behavior — when/if a page earnings scope exists, extend
+  // deriveScopeFromInstanceId (the single client-side prefix→scope mapper) and
+  // this falls through automatically.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; suggestedAmount?: unknown } | undefined>(
+      'OPEN_BUZZ_PURCHASE',
+      (raw) => {
+        // PageBlockHost's local Status carries an extra terminal `'error'`
+        // variant the shared gate's HostStatus union doesn't model; collapse it
+        // to a non-ready sentinel (the gate only ever opens when status ===
+        // 'ready', so this is semantics-preserving) — same shim as the consent
+        // gate above.
+        const gateStatus = status === 'error' ? 'no_token' : status;
+        const requestId = resolveBuzzPurchaseRequest(gateStatus, raw);
+        if (requestId == null || !raw) return; // !raw implied; narrows for TS
+        const rawAmount =
+          typeof raw.suggestedAmount === 'number' && Number.isFinite(raw.suggestedAmount)
+            ? raw.suggestedAmount
+            : undefined;
+        const amount =
+          rawAmount != null
+            ? Math.min(Math.max(Math.floor(rawAmount), 0), BUZZ_PURCHASE_AMOUNT_CAP)
+            : undefined;
+        // Page instanceId prefix is unrecognised → null → no attribution (see
+        // the DEVIATION note above). Kept structurally identical to IframeHost
+        // so a future page-scope only needs the prefix mapper extended.
+        const scope = deriveScopeFromInstanceId(blockInstanceId);
+        const attribution = scope
+          ? {
+              appId,
+              appBlockId,
+              blockInstanceId,
+              scope,
+            }
+          : undefined;
+        let purchased = false;
+        dialogStore.trigger<BuyBuzzModalProps>({
+          // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
+          // against each other in the dialog store's exists-check.
+          id: `block-buy-buzz-${requestId}`,
+          component: BuyBuzzModal,
+          props: {
+            minBuzzAmount: amount,
+            attribution,
+            onPurchaseSuccess: () => {
+              purchased = true;
+            },
+          },
+          options: {
+            onClose: () => {
+              send('BUZZ_PURCHASE_RESULT', { requestId, purchased });
+            },
+          },
+        });
+      }
+    );
+    return off;
+  }, [onMessage, send, status, appId, appBlockId, blockInstanceId]);
 
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';

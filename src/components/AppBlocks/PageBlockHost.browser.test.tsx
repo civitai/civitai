@@ -1,9 +1,28 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
-import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+
+// PageBlockHost now wires the money-path workflow bridge, which calls
+// `trpc.blocks.*.useMutation()` at render — that needs the tRPC Context (the
+// `withTRPC` HoC) the network-free component scaffold doesn't provide. Mock the
+// tRPC client so these consent-focused tests stay network-free and mount the
+// component without a real tRPC provider. The workflow mutations are exercised
+// in PageBlockHostWorkflow.browser.test.tsx; here they're inert stubs.
+vi.mock('~/utils/trpc', () => ({
+  trpc: {
+    blocks: {
+      submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
+  },
+}));
+
+// eslint-disable-next-line import/first
+import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 
 /**
  * W10 lazy-consent gap regression (page surface).
