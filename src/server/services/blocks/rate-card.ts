@@ -35,11 +35,19 @@ export type RateCard = {
 // leadership" section of
 // claudedocs/app-blocks-buzz-attribution-handoff-2026-05-25.md.
 //
-// Two cards defined: V1 (the original spec placeholder, 20/20/25/0)
-// and V2 (the recommended starting point, 15/15/25/0). Rate cards
-// are immutable — past attribution rows stamp their version at
-// write time and pay out under it forever. To change percentages,
-// add a V3, leave V1/V2 in place for the rows that referenced them.
+// Three cards defined: V1 (the original spec placeholder, 20/20/25/0),
+// V2 (the recommended starting point, 15/15/25/0) and V3 (V2 + the
+// new W10 page scope `viewer_global` at 0%). Rate cards are immutable
+// — past attribution rows stamp their version at write time and pay
+// out under it forever. To change percentages, add a V4, leave
+// V1/V2/V3 in place for the rows that referenced them.
+//
+// `viewer_global` (W10 page purchase, flow B) is a PLACEHOLDER 0% on
+// every card — no historical row ever used it (the scope is net-new
+// in this PR), so adding it at 0% to V1/V2 is behavior-preserving for
+// their stamped rows. Page revenue is largely platform-counterfactual,
+// so 0% is the v1 launch number; a real publisher share for pages
+// needs monetization-leadership sign-off and lands as a future card.
 //
 // Open items still to confirm:
 //   - Final cuts. V2 starts lower; raising is politically easier
@@ -62,6 +70,9 @@ export const RATE_CARD_V1: RateCard = {
     publisher_all_my_models: 20,
     viewer_personal: 25,
     platform_default: 0,
+    // Net-new scope (W10 page purchase). No V1 row ever used it; 0% is
+    // behavior-preserving for this card's stamped rows.
+    viewer_global: 0,
   },
   internalAppOwnerUserIds: [],
   effectiveFrom: '2026-05-25',
@@ -100,6 +111,9 @@ export const RATE_CARD_V2: RateCard = {
     // Mod-promoted on the platform's behalf — publisher already earns
     // via reach / install funnel, no extra share.
     platform_default: 0,
+    // Net-new scope (W10 page purchase). No V2 row ever used it; 0% is
+    // behavior-preserving for this card's stamped rows.
+    viewer_global: 0,
   },
   internalAppOwnerUserIds: [
     // Populate with civitai team userIds before going live. Empty for
@@ -112,7 +126,42 @@ export const RATE_CARD_V2: RateCard = {
   effectiveFrom: '2026-05-26',
 };
 
-export const ACTIVE_RATE_CARD: RateCard = RATE_CARD_V2;
+/**
+ * V3 — adds the W10 page-purchase scope (`viewer_global`, flow B).
+ *
+ * Carries V2's percentages UNCHANGED (15/15/25/0) and adds
+ * `viewer_global: 0`. This is the first card emitted for page purchases:
+ * a Buzz purchase made inside a full-page app is TRACKED (a
+ * block_buzz_attribution row is written) but pays the author 0% for now —
+ * page revenue is largely platform-counterfactual, and shipping at 0%
+ * (rather than not tracking at all) means the row history exists so a
+ * later, signed-off non-zero card can be applied going forward without
+ * losing the pre-decision purchase trail.
+ *
+ * PLACEHOLDER — a real publisher share for pages needs monetization
+ * leadership sign-off. When that lands, add a V4 with the agreed % and
+ * leave V3 in place for the rows stamped under it (cards are immutable).
+ */
+export const RATE_CARD_V3: RateCard = {
+  version: 'v3',
+  publisherSharePctByScope: {
+    // Carried from V2 verbatim — do NOT change these here; a percentage
+    // change is a new card, not an edit to V3.
+    per_model_install: 15,
+    publisher_all_my_models: 15,
+    viewer_personal: 25,
+    platform_default: 0,
+    // W10 page purchase — placeholder 0%, raise via a future card after
+    // monetization sign-off.
+    viewer_global: 0,
+  },
+  internalAppOwnerUserIds: [
+    // Same as V2 — populate with civitai team userIds before going live.
+  ],
+  effectiveFrom: '2026-06-18',
+};
+
+export const ACTIVE_RATE_CARD: RateCard = RATE_CARD_V3;
 
 /**
  * Result of running a (gross, fee, scope) tuple through the active rate

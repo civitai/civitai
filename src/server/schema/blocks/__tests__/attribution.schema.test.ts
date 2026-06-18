@@ -26,8 +26,20 @@ describe('deriveScopeFromInstanceId', () => {
     ['bus_pub_01HZK', 'publisher_all_my_models'],
     ['bus_view_01HZK', 'viewer_personal'],
     ['pdb_01HZK', 'platform_default'],
+    // W3 flow B: page surface (W10) → viewer_global. `page_<appBlockId>`.
+    ['page_apb_01HZK', 'viewer_global'],
   ] as const)('maps %s to %s', (id, scope) => {
     expect(deriveScopeFromInstanceId(id)).toBe(scope);
+  });
+
+  it('maps a page_ instance to viewer_global (flow B) and leaves the others unchanged', () => {
+    expect(deriveScopeFromInstanceId('page_apb_xyz')).toBe('viewer_global');
+    // The pre-existing prefixes are unchanged by the new branch.
+    expect(deriveScopeFromInstanceId('mbi_x')).toBe('publisher_all_my_models');
+    expect(deriveScopeFromInstanceId('bki_x')).toBe('publisher_all_my_models');
+    expect(deriveScopeFromInstanceId('bus_pub_x')).toBe('publisher_all_my_models');
+    expect(deriveScopeFromInstanceId('bus_view_x')).toBe('viewer_personal');
+    expect(deriveScopeFromInstanceId('pdb_x')).toBe('platform_default');
   });
 
   it('no longer emits the stale per_model_install bucket for any live prefix (L-M2)', () => {

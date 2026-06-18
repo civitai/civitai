@@ -220,7 +220,14 @@ export type ResolvedBlockSource =
   | 'install'
   | 'platform_default'
   | 'publisher_subscription'
-  | 'viewer_subscription';
+  | 'viewer_subscription'
+  // W10 full-page app (`page_<appBlockId>`, entity=none). A page is stateless:
+  // it has NO install row, NO model entity, and resolves directly from the
+  // approved AppBlock (see resolvePageBlock). Used by the FIN-1
+  // buzz-attribution re-derivation to bucket a page purchase as
+  // `viewer_global` (SOURCE_TO_SCOPE in attribution-validator.service.ts).
+  // `modelId` is the 0 sentinel for this source — a page never pins a model.
+  | 'page';
 
 export interface ResolvedBlockInstance {
   source: ResolvedBlockSource;
@@ -1067,6 +1074,46 @@ export class BlockRegistry {
   }): Promise<ResolvedBlockInstance | null> {
     const { blockInstanceId, modelId, slotId, viewerUserId } = opts;
     const db = opts.db === 'read' ? dbRead : dbWrite;
+
+    // page_<app_block_id> — W10 full-page app, entity=none (FIN-1 re-derive).
+    //
+    // A page is STATELESS: no install row, no model entity, no per-owner /
+    // per-viewer predicate. It is "viewer-global" — any viewer who can load
+    // the page can transact inside it, so the only authoritative check is that
+    // the cited AppBlock is APPROVED and actually declares a page surface
+    // (exactly resolvePageBlock's contract). modelId/slotId/viewerUserId are
+    // intentionally ignored for this source. This branch exists so the
+    // buzz-attribution validator re-derives a page purchase to a single
+    // source (`page` → `viewer_global`) rather than trusting the client
+    // `blockScope`; a forged scope on a `page_*` id is corrected, and a
+    // `page_*` id for a non-approved / non-page app fails to resolve (→ the
+    // validator strips attribution, fail-safe).
+    //
+    // NOTE: this resolver path is read-only re-derivation for attribution. The
+    // TOKEN MINT page path (block-tokens/index.ts) deliberately does NOT route
+    // through here — it builds its own `resolved` from resolvePageBlock with
+    // the page-specific budget/scope gates. Both call resolvePageBlock, so they
+    // agree on which page apps exist.
+    if (blockInstanceId.startsWith('page_')) {
+      const appBlockId = blockInstanceId.slice('page_'.length);
+      if (!appBlockId) return null;
+      const page = await BlockRegistry.resolvePageBlock(appBlockId, {
+        db: opts.db === 'read' ? 'read' : 'write',
+      });
+      if (!page) return null;
+      return {
+        source: 'page',
+        // A page has no model entity. 0 is the documented sentinel; the
+        // attribution validator omits blockModelId for the `page` source so
+        // a 0 never lands on a row.
+        modelId: 0,
+        slotId,
+        enabled: true,
+        settings: {},
+        installedByUserId: null,
+        appBlock: page.appBlock,
+      };
+    }
 
     // mbi_* / bki_* — historical per-model install ids. Since the 2026-05-30
     // kill_per_model_installs migration, these resolve via block_user

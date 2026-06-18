@@ -58,6 +58,11 @@ const SOURCE_TO_SCOPE: Record<ResolvedBlockSource, BlockAttributionScope> = {
   publisher_subscription: 'publisher_all_my_models',
   viewer_subscription: 'viewer_personal',
   platform_default: 'platform_default',
+  // W10 page surface (`page_<appBlockId>`, entity=none). A Buzz purchase made
+  // inside a full-page app re-derives to `viewer_global` — the page has no
+  // model entity and is viewer-chosen. Placeholder publisher share is 0% (see
+  // rate-card.ts); raise via a future card after monetization sign-off.
+  page: 'viewer_global',
 };
 
 /**
@@ -169,6 +174,102 @@ export async function validateBuzzPurchaseAttribution<
       'webhooks'
     ).catch(() => null);
     return stripBlockKeys(base);
+  }
+
+  // -----------------------------------------------------------------
+  // W10 page surface (`page_<appBlockId>`) — flow B page-purchase path.
+  //
+  // A page purchase carries NO modelId/slotId (a page is stateless,
+  // entity=none), so it must be re-derived BEFORE the model-path
+  // modelId/slotId gate below — otherwise that gate would strip every page
+  // purchase. We still re-derive SERVER-SIDE (never trust the client): the
+  // resolver's `page` namespace authoritatively confirms the cited AppBlock
+  // is approved + declares a page surface, and returns `source: 'page'` →
+  // SOURCE_TO_SCOPE['page'] = 'viewer_global'. So:
+  //   - a forged high-rate `blockScope` on a `page_*` id is corrected to
+  //     viewer_global (the rate-card pays 0% for it — no minting a wider cut);
+  //   - a forged `blockAppId` is overwritten with the resolved page's app;
+  //   - a `page_*` id for a non-approved / non-page app fails to resolve →
+  //     attribution is STRIPPED (fail-safe), purchase proceeds un-attributed.
+  // No `blockModelId` is stamped (a page has no model entity; the resolver's
+  // sentinel modelId=0 is intentionally NOT written onto the row).
+  // -----------------------------------------------------------------
+  if (String(blockInstanceId).startsWith('page_')) {
+    let pageResolved;
+    try {
+      pageResolved = await BlockRegistry.resolveBlockInstance({
+        blockInstanceId: String(blockInstanceId),
+        // modelId/slotId are ignored by the resolver's page branch but the
+        // signature requires them. 0/'' are inert sentinels.
+        modelId: 0,
+        slotId: '',
+        viewerUserId: sessionUserId,
+        db: 'write',
+      });
+    } catch (err) {
+      logToAxiom(
+        {
+          name: LOG_NAME,
+          type: 'error',
+          message: 'stripped attribution: resolveBlockInstance threw (page)',
+          sessionUserId,
+          blockInstanceId: String(blockInstanceId),
+          error: (err as Error)?.message,
+        },
+        'webhooks'
+      ).catch(() => null);
+      return stripBlockKeys(base);
+    }
+
+    if (!pageResolved || pageResolved.source !== 'page') {
+      logToAxiom(
+        {
+          name: LOG_NAME,
+          type: 'warning',
+          message: 'stripped attribution: page instance did not resolve',
+          sessionUserId,
+          blockInstanceId: String(blockInstanceId),
+          clientAppId: String(appId),
+          clientScope: String(base[ATTRIBUTION_METADATA_KEYS.scope] ?? ''),
+        },
+        'webhooks'
+      ).catch(() => null);
+      return stripBlockKeys(base);
+    }
+
+    const pageScope = SOURCE_TO_SCOPE[pageResolved.source];
+    const pageFields: Record<string, string> = {
+      [ATTRIBUTION_METADATA_KEYS.appId]: pageResolved.appBlock.appId,
+      [ATTRIBUTION_METADATA_KEYS.appBlockId]: pageResolved.appBlock.id,
+      [ATTRIBUTION_METADATA_KEYS.blockInstanceId]: String(blockInstanceId),
+      [ATTRIBUTION_METADATA_KEYS.scope]: pageScope,
+      // intentionally NO modelId — a page has no model entity.
+    };
+    // stripBlockKeys clears any client-supplied blockModelId/blockSlotId too,
+    // so a forged modelId can never ride along on a page row.
+    const pageOut = { ...stripBlockKeys(base), ...pageFields } as T;
+
+    if (
+      String(appId) !== pageResolved.appBlock.appId ||
+      String(base[ATTRIBUTION_METADATA_KEYS.scope] ?? '') !== pageScope
+    ) {
+      logToAxiom(
+        {
+          name: LOG_NAME,
+          type: 'info',
+          message: 'corrected forged/mismatched page attribution fields',
+          sessionUserId,
+          blockInstanceId: String(blockInstanceId),
+          clientAppId: String(appId),
+          derivedAppId: pageResolved.appBlock.appId,
+          clientScope: String(base[ATTRIBUTION_METADATA_KEYS.scope] ?? ''),
+          derivedScope: pageScope,
+        },
+        'webhooks'
+      ).catch(() => null);
+    }
+
+    return pageOut as T;
   }
 
   // -----------------------------------------------------------------
