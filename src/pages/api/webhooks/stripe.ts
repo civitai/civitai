@@ -30,6 +30,7 @@ import {
   AttributionAppMissingError,
   recordAttribution,
   voidAttributionsForPayment,
+  voidSubscriptionAttributionsForInvoice,
 } from '~/server/services/blocks/buzz-attribution.service';
 import { extractAttribution } from '~/server/schema/blocks/attribution.schema';
 
@@ -385,6 +386,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 log({
                   type: 'error',
                   stage: 'block-attribution-void',
+                  eventType: event.type,
+                  sourceEventId,
+                  error: (err as Error)?.message,
+                });
+                return 0;
+              });
+
+              // W3 flow C — also void/clawback any membership (subscription)
+              // attribution row keyed on this invoice. block_buzz_attribution
+              // is keyed on the PI id, but block_subscription_attribution is
+              // keyed on the invoice_id (the per-period anchor). The loop
+              // already resolves the parent invoiceId from the PI, so this
+              // matches both keys. Like the buzz void: paid_out rows write a
+              // negative clawback that nets out of the publisher's next
+              // payout; pending/confirmed rows just void.
+              await voidSubscriptionAttributionsForInvoice({
+                paymentProvider: 'stripe',
+                invoiceId: sourceEventId,
+                reason: event.type === 'charge.refunded' ? 'refund' : 'chargeback',
+              }).catch((err) => {
+                log({
+                  type: 'error',
+                  stage: 'block-subscription-attribution-void',
                   eventType: event.type,
                   sourceEventId,
                   error: (err as Error)?.message,

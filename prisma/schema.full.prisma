@@ -552,6 +552,8 @@ model User {
   blockAttributionPayouts          BlockAttributionPayout[]  @relation("BlockAttributionPayoutOwner")
   blockSpendAttributionsAsSpender  BlockSpendAttribution[]   @relation("BlockSpendAttributionSpender")
   blockSpendAttributionsAsAppOwner BlockSpendAttribution[]   @relation("BlockSpendAttributionAppOwner")
+  blockSubscriptionAttributionsAsPurchaser BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionPurchaser")
+  blockSubscriptionAttributionsAsAppOwner  BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
@@ -2219,6 +2221,7 @@ model OauthClient {
   appBlocks      AppBlock[]
   buzzAttributions BlockBuzzAttribution[]
   spendAttributions BlockSpendAttribution[] @relation("BlockSpendAttributionApp")
+  subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
 
   @@index([userId])
 }
@@ -2286,6 +2289,7 @@ model AppBlock {
   userSubscriptions  BlockUserSubscription[]
   buzzAttributions   BlockBuzzAttribution[]
   spendAttributions  BlockSpendAttribution[] @relation("BlockSpendAttributionAppBlock")
+  subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppBlock")
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
   userScopeGrants    AppUserScopeGrant[]
@@ -2618,6 +2622,89 @@ model BlockSpendAttribution {
   @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bsa_publisher_dashboard_idx")
   @@index([appBlockId, attributedAt(sort: Desc)], map: "bsa_app_block_dashboard_idx")
   @@map("block_spend_attribution")
+}
+
+/// W3 flow C — App Blocks MEMBERSHIP / subscription attribution.
+///
+/// One row PER PAID INVOICE per app block: a block-initiated membership
+/// (recurring subscription) purchase credits the app author a revenue
+/// share on each paid invoice. The recurring-revenue sibling of
+/// BlockBuzzAttribution (one-shot card purchase) and BlockSpendAttribution
+/// (internal Buzz burn).
+///
+/// ACCOUNTING: a membership payment IS a real card transaction (gross USD,
+/// real provider fee), so it uses the SAME three-way split as
+/// BlockBuzzAttribution — author share is carved out of the net per the
+/// active rate card's subscription percentage. The three-way conservation
+/// invariant holds for entry_type='charge' rows (see the migration CHECK).
+///
+/// RENEWALS-PAY: one row per invoice_id means each renewal
+/// (subscription_cycle) accrues a share by default. The service can gate
+/// the write to billing_reason='subscription_create' for a first-only
+/// policy without a schema change. ⚠️ FLAGGED for monetization sign-off.
+///
+/// Clawback (entry_type='clawback') carries negative shares for a refund /
+/// proration of a previously paid-out period; nets out in the payout
+/// aggregate (mirrors BlockBuzzAttribution's clawback carry-forward).
+///
+/// Idempotent on (invoice_id, app_block_id): a webhook retry for the same
+/// invoice is a no-op.
+///
+/// Application-generated id (`bsu_<ulid>`).
+model BlockSubscriptionAttribution {
+  id                   String   @id
+  userId               Int      @map("user_id")
+  user                 User     @relation("BlockSubscriptionAttributionPurchaser", fields: [userId], references: [id], onDelete: Restrict)
+  buzzAmount           Int      @default(0) @map("buzz_amount")
+  buzzType             String   @default("yellow") @map("buzz_type")
+  /// Gross USD value of the invoice, in cents.
+  grossValueCents      Int      @map("gross_value_cents")
+
+  paymentProvider      String   @map("payment_provider")
+  /// Per-period idempotency anchor — each renewal has its own invoice_id.
+  invoiceId            String   @map("invoice_id")
+  /// Groups the periods of one subscription.
+  subscriptionId       String?  @map("subscription_id")
+  /// subscription_create | subscription_cycle | subscription_update.
+  billingReason        String?  @map("billing_reason")
+  periodStart          DateTime? @map("period_start") @db.Timestamptz(6)
+  periodEnd            DateTime? @map("period_end") @db.Timestamptz(6)
+
+  appId                String   @map("app_id")
+  app                  OauthClient @relation("BlockSubscriptionAttributionApp", fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId           String   @map("app_block_id")
+  appBlock             AppBlock @relation("BlockSubscriptionAttributionAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+  blockInstanceId      String   @map("block_instance_id")
+  scope                String
+  modelId              Int?     @map("model_id")
+  tier                 String?
+
+  rateCardVersion      String   @map("rate_card_version")
+  /// The subscription rev-share percentage stamped at write time.
+  subscriptionSharePct Int      @map("subscription_share_pct")
+  appOwnerShareCents   Int      @map("app_owner_share_cents")
+  platformShareCents   Int      @map("platform_share_cents")
+  providerFeeCents     Int      @map("provider_fee_cents")
+  appOwnerUserId       Int      @map("app_owner_user_id")
+  appOwner             User     @relation("BlockSubscriptionAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+
+  status               String   @default("pending")
+  /// 'charge' (forward) | 'clawback' (negative carry-forward on refund/proration).
+  entryType            String   @default("charge") @map("entry_type")
+  /// 'refund' / 'chargeback' / 'proration' / 'self_purchase' / 'internal_owner' / 'manual_review'.
+  voidedReason         String?  @map("voided_reason")
+  attributedAt         DateTime @default(now()) @map("attributed_at") @db.Timestamptz(6)
+  confirmedAt          DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  voidedAt             DateTime? @map("voided_at") @db.Timestamptz(6)
+  paidOutAt            DateTime? @map("paid_out_at") @db.Timestamptz(6)
+  payoutId             String?  @map("payout_id")
+
+  @@unique([invoiceId, appBlockId], map: "block_subscription_attribution_invoice_app_uniq")
+  @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bsu_publisher_dashboard_idx")
+  @@index([appBlockId, attributedAt(sort: Desc)], map: "bsu_app_block_dashboard_idx")
+  @@index([subscriptionId], map: "bsu_subscription_idx")
+  @@index([paymentProvider, invoiceId], map: "bsu_invoice_idx")
+  @@map("block_subscription_attribution")
 }
 
 /// W5 v0.5 audit log — one row per successful scope-gated API call from

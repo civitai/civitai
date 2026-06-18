@@ -352,6 +352,20 @@ export const blockSpendAttributionWriteCounter = registerCounterWithLabels({
   labelNames: ['status'] as const,
 });
 
+// App Blocks MEMBERSHIP / subscription attribution (W3 flow C)
+// One row written per PAID invoice of a block-initiated membership
+// purchase. `status` ∈ 'pending'|'voided' at write time (voided =
+// self-purchase/internal-owner zero-share row); 'duplicate' marks an
+// idempotent no-op (same invoice webhook retried); 'clawback' marks a
+// negative carry-forward row written on refund/proration of a paid-out
+// period. `billing_reason' tells subscription_create (initial) from
+// subscription_cycle (renewal) so renewals-pay is observable.
+export const blockSubscriptionAttributionWriteCounter = registerCounterWithLabels({
+  name: 'block_subscription_attribution_total',
+  help: 'Block membership/subscription attribution rows written',
+  labelNames: ['provider', 'status', 'billing_reason'] as const,
+});
+
 // App Blocks KV datastore (W4-v0)
 // `op` ∈ get|set|delete|list|getQuota; `outcome` ∈ ok|unauthorized|
 // not_found|payload_too_large|quota_exceeded|error. Read-only counters

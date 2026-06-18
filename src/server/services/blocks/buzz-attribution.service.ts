@@ -4,6 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   blockBuzzAttributionWriteCounter,
   blockSpendAttributionWriteCounter,
+  blockSubscriptionAttributionWriteCounter,
 } from '~/server/prom/client';
 import {
   type BlockAttribution,
@@ -13,8 +14,14 @@ import {
   newBlockAttributionPayoutId,
   newBlockBuzzAttributionId,
   newBlockSpendAttributionId,
+  newBlockSubscriptionAttributionId,
 } from '~/server/utils/app-block-ids';
-import { computeRateCardSplit, computeSpendShare, ACTIVE_RATE_CARD } from './rate-card';
+import {
+  computeRateCardSplit,
+  computeSpendShare,
+  computeSubscriptionShare,
+  ACTIVE_RATE_CARD,
+} from './rate-card';
 
 export type AttributionPaymentProvider = 'stripe' | 'paddle' | 'nowpayments';
 
@@ -463,6 +470,430 @@ export async function recordSpendAttribution(
     }
     throw err;
   }
+}
+
+// ---------------------------------------------------------------
+// W3 flow C — MEMBERSHIP / subscription attribution
+// ---------------------------------------------------------------
+
+const SUBSCRIPTION_ATTRIBUTION_LOG_NAME = 'block-subscription-attribution';
+
+/**
+ * The single membership-attribution scope. A membership purchase has no
+ * install scope the way a Buzz purchase does (the user bought a recurring
+ * platform subscription, not an app install) — it resolves to one flat
+ * `subscription` category. Kept as a const so the rate card / row writers
+ * agree on the literal.
+ */
+export const SUBSCRIPTION_ATTRIBUTION_SCOPE = 'subscription' as const;
+
+export type RecordSubscriptionAttributionInput = {
+  /** The subscriber (purchaser). Trusted: derived from the invoice's customer→User. */
+  userId: number;
+  /** Membership monthly Buzz bonus for this invoice (analytics only). */
+  buzzAmount?: number;
+  buzzType?: string;
+  /** Gross USD of the invoice, in cents (Stripe invoice amount_paid). */
+  usdAmountCents: number;
+  /** Provider fee in cents — taken off the top before author share. */
+  providerFeeCents: number;
+  paymentProvider: AttributionPaymentProvider;
+  /** Per-period idempotency anchor — the invoice id. */
+  invoiceId: string;
+  /** Subscription id (groups the periods). */
+  subscriptionId?: string | null;
+  /** subscription_create | subscription_cycle | subscription_update. */
+  billingReason?: string | null;
+  periodStart?: Date | null;
+  periodEnd?: Date | null;
+  /** Membership tier at write time (analytics). */
+  tier?: string | null;
+  /**
+   * Server-derived block attribution (already FIN-1 re-derived at checkout
+   * and stamped onto the subscription metadata; the webhook reads it back
+   * and re-confirms the app owner here). appId/appBlockId/blockInstanceId
+   * are authoritative; scope/modelId are analytics.
+   */
+  attribution: Pick<BlockAttribution, 'appId' | 'appBlockId' | 'blockInstanceId' | 'modelId'>;
+};
+
+export type RecordSubscriptionAttributionResult = {
+  /** False when the (invoice, app) UNIQUE blocked a duplicate write. */
+  written: boolean;
+  row: {
+    id: string;
+    status: string;
+    appOwnerShareCents: number;
+    platformShareCents: number;
+    providerFeeCents: number;
+    subscriptionSharePct: number;
+    grossValueCents: number;
+    rateCardVersion: string;
+    voidedReason: string | null;
+  };
+};
+
+/**
+ * Record a revenue share for one PAID INVOICE of a block-initiated
+ * membership (recurring subscription) purchase. Idempotent on
+ * `(invoice_id, app_block_id)` — a webhook retry for the same invoice is a
+ * no-op (P2002 caught + treated as already-written). Each RENEWAL invoice
+ * has its own invoice_id, so it writes its OWN row — this is the
+ * RENEWALS-PAY policy (flagged for sign-off; the caller can gate to
+ * billing_reason='subscription_create' for a first-only policy).
+ *
+ * ACCOUNTING: a membership payment IS a real card transaction, so the
+ * three-way split applies (provider fee off the top, author share % of the
+ * net, platform keeps the rest) — same as recordAttribution, NOT the
+ * platform-funded bounty model of spend. The conservation invariant
+ * (fee + platform + author = gross) holds and is enforced by the migration
+ * CHECK on entry_type='charge'.
+ *
+ * This function moves NO money and touches NO BuzzTransaction — the buzz
+ * grant + reward happen in manageInvoicePaid before this is called. A
+ * failed write here MUST NOT break membership provisioning (the caller
+ * fires it best-effort / fire-and-forget).
+ *
+ * Self-purchase (subscriber == app owner) and internal-owner apps write a
+ * voided, zero-share row so the audit trail exists but nothing enters the
+ * payout pipeline (mirrors recordAttribution's self-purchase wash).
+ */
+export async function recordSubscriptionAttribution(
+  input: RecordSubscriptionAttributionInput
+): Promise<RecordSubscriptionAttributionResult> {
+  const {
+    userId,
+    buzzAmount = 0,
+    buzzType = 'yellow',
+    usdAmountCents,
+    providerFeeCents,
+    paymentProvider,
+    invoiceId,
+    subscriptionId = null,
+    billingReason = null,
+    periodStart = null,
+    periodEnd = null,
+    tier = null,
+    attribution,
+  } = input;
+
+  // Resolve + snapshot the app owner (mirrors recordAttribution). No owner
+  // -> nothing to pay -> abort (don't write an orphan row).
+  const app = await dbRead.oauthClient.findUnique({
+    where: { id: attribution.appId },
+    select: { id: true, userId: true },
+  });
+  if (!app) {
+    logToAxiom(
+      {
+        name: SUBSCRIPTION_ATTRIBUTION_LOG_NAME,
+        type: 'warning',
+        message: `subscription attribution app not found (skipping write): ${attribution.appId}`,
+        appId: attribution.appId,
+        paymentProvider,
+        invoiceId,
+      },
+      'webhooks'
+    ).catch(() => null);
+    throw new AttributionAppMissingError(attribution.appId);
+  }
+
+  const isSelfPurchase = userId === app.userId;
+  const split = computeSubscriptionShare({
+    grossCents: usdAmountCents,
+    providerFeeCents,
+    isSelfPurchase,
+    appOwnerUserId: app.userId,
+  });
+
+  // Void zero-share rows that are zero because of WHO bought/owns (not
+  // because the rate is 0%) so they never enter the payout pipeline. A
+  // legitimately rate-0% row stays 'pending' — a real attribution we want
+  // to confirm/aggregate so a later non-zero card applies going forward.
+  const isInternal = ACTIVE_RATE_CARD.internalAppOwnerUserIds.includes(app.userId);
+  const voidedReason = isSelfPurchase
+    ? 'self_purchase'
+    : isInternal
+    ? 'internal_owner'
+    : null;
+  const status = voidedReason ? 'voided' : 'pending';
+  const voidedAt = voidedReason ? new Date() : null;
+
+  const id = newBlockSubscriptionAttributionId();
+
+  try {
+    const created = await dbWrite.blockSubscriptionAttribution.create({
+      data: {
+        id,
+        userId,
+        buzzAmount: Math.max(0, Math.floor(buzzAmount)),
+        buzzType,
+        grossValueCents: Math.max(0, Math.floor(usdAmountCents)),
+        paymentProvider,
+        invoiceId,
+        subscriptionId,
+        billingReason,
+        periodStart,
+        periodEnd,
+        appId: attribution.appId,
+        appBlockId: attribution.appBlockId,
+        blockInstanceId: attribution.blockInstanceId,
+        scope: SUBSCRIPTION_ATTRIBUTION_SCOPE,
+        modelId: attribution.modelId ?? null,
+        tier,
+        rateCardVersion: split.rateCardVersion,
+        subscriptionSharePct: split.subscriptionSharePct,
+        appOwnerShareCents: split.appOwnerShareCents,
+        platformShareCents: split.platformShareCents,
+        providerFeeCents: split.providerFeeCents,
+        appOwnerUserId: app.userId,
+        status,
+        entryType: 'charge',
+        voidedReason,
+        voidedAt,
+      },
+      select: {
+        id: true,
+        status: true,
+        appOwnerShareCents: true,
+        platformShareCents: true,
+        providerFeeCents: true,
+        subscriptionSharePct: true,
+        grossValueCents: true,
+        rateCardVersion: true,
+        voidedReason: true,
+      },
+    });
+
+    logToAxiom(
+      {
+        name: SUBSCRIPTION_ATTRIBUTION_LOG_NAME,
+        type: 'info',
+        message: `subscription attribution written ${created.id}`,
+        attributionId: created.id,
+        appId: attribution.appId,
+        appBlockId: attribution.appBlockId,
+        paymentProvider,
+        invoiceId,
+        subscriptionId,
+        billingReason,
+        usdAmountCents,
+        appOwnerShareCents: split.appOwnerShareCents,
+        platformShareCents: split.platformShareCents,
+        providerFeeCents: split.providerFeeCents,
+        subscriptionSharePct: split.subscriptionSharePct,
+        rateCardVersion: split.rateCardVersion,
+        status,
+        voidedReason,
+        isSelfPurchase,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    try {
+      blockSubscriptionAttributionWriteCounter.inc({
+        provider: paymentProvider,
+        status,
+        billing_reason: billingReason ?? 'unknown',
+      });
+    } catch {
+      // swallow — metric write must never back-pressure the webhook path
+    }
+
+    return { written: true, row: created };
+  } catch (err) {
+    // Idempotency: a webhook retry for the same invoice lands on the
+    // (invoice_id, app_block_id) UNIQUE → P2002. Return the pre-existing
+    // row so callers treat first-write + retry uniformly.
+    const code = (err as { code?: unknown })?.code;
+    if (code === 'P2002') {
+      const existing = await dbRead.blockSubscriptionAttribution.findUnique({
+        where: {
+          invoiceId_appBlockId: { invoiceId, appBlockId: attribution.appBlockId },
+        },
+        select: {
+          id: true,
+          status: true,
+          appOwnerShareCents: true,
+          platformShareCents: true,
+          providerFeeCents: true,
+          subscriptionSharePct: true,
+          grossValueCents: true,
+          rateCardVersion: true,
+          voidedReason: true,
+        },
+      });
+      if (existing) {
+        try {
+          blockSubscriptionAttributionWriteCounter.inc({
+            provider: paymentProvider,
+            status: 'duplicate',
+            billing_reason: billingReason ?? 'unknown',
+          });
+        } catch {
+          // swallow
+        }
+        return { written: false, row: existing };
+      }
+    }
+    throw err;
+  }
+}
+
+/** Synthetic invoice_id suffix for subscription clawback rows so they don't
+ * collide with the original charge row's (invoice_id, app_block_id) UNIQUE.
+ * A second refund webhook for the same invoice hits P2002 on this synthetic
+ * key → we skip the duplicate clawback. */
+const SUBSCRIPTION_CLAWBACK_INVOICE_SUFFIX = ':clawback';
+
+/**
+ * Void the subscription-attribution rows for one paid invoice in response
+ * to a refund / chargeback / proration, mirroring
+ * voidAttributionsForPayment. Idempotent — voiding an already-voided row is
+ * a no-op.
+ *
+ * Refund handling depends on whether the money already left:
+ *   - pending / confirmed rows (never paid): just void. No clawback — the
+ *     publisher was never paid, so there's no debt to recover.
+ *   - paid_out rows: void the original AND write a NEGATIVE carry-forward
+ *     entry_type='clawback' row (status='confirmed', negative shares). The
+ *     payout aggregator nets this debt out of the publisher's next mint.
+ *
+ * Cancellation policy: a cancellation mid-period that keeps the
+ * already-paid period (no refund) is NOT a clawback — the author keeps the
+ * period already earned. Only a refund/proration that actually returns
+ * money to the subscriber claws back. The caller (the refund webhook)
+ * decides which: this fn is invoked only when money is being returned.
+ *
+ * Clawback idempotency: each clawback row reuses the original's
+ * (app_block_id) with a synthetic invoice_id '<orig>:clawback', so the
+ * (invoice_id, app_block_id) UNIQUE makes a second refund webhook a no-op.
+ *
+ * Returns the count of original rows voided (clawbacks counted in the log).
+ */
+export async function voidSubscriptionAttributionsForInvoice({
+  paymentProvider,
+  invoiceId,
+  reason,
+}: {
+  paymentProvider: AttributionPaymentProvider;
+  invoiceId: string;
+  reason: 'refund' | 'chargeback' | 'proration' | 'manual_review';
+}): Promise<number> {
+  // Snapshot the already-paid_out rows BEFORE voiding so we can mint their
+  // clawbacks. Only paid_out rows generate debt. Writing clawbacks BEFORE
+  // the void is the crash-safety ordering (same rationale as
+  // voidAttributionsForPayment).
+  const paidOutRows = await dbWrite.blockSubscriptionAttribution.findMany({
+    where: { paymentProvider, invoiceId, status: 'paid_out', entryType: 'charge' },
+    select: {
+      appOwnerShareCents: true,
+      appOwnerUserId: true,
+      userId: true,
+      buzzType: true,
+      appId: true,
+      appBlockId: true,
+      blockInstanceId: true,
+      scope: true,
+      modelId: true,
+      tier: true,
+      subscriptionId: true,
+      billingReason: true,
+      rateCardVersion: true,
+      subscriptionSharePct: true,
+    },
+  });
+
+  let clawbackCount = 0;
+  for (const orig of paidOutRows) {
+    const clawbackId = newBlockSubscriptionAttributionId();
+    try {
+      await dbWrite.blockSubscriptionAttribution.create({
+        data: {
+          id: clawbackId,
+          userId: orig.userId,
+          buzzAmount: 0,
+          buzzType: orig.buzzType,
+          // Negative gross + negative author share. platform/fee 0 on the
+          // clawback (the conservation CHECK is scoped to entry_type=
+          // 'charge', so a clawback's gross need not three-way sum).
+          grossValueCents: -orig.appOwnerShareCents,
+          paymentProvider,
+          // Synthetic invoice id so the (invoice, app_block) UNIQUE both
+          // avoids colliding with the original AND dedupes repeat refunds.
+          invoiceId: `${invoiceId}${SUBSCRIPTION_CLAWBACK_INVOICE_SUFFIX}`,
+          subscriptionId: orig.subscriptionId,
+          billingReason: orig.billingReason,
+          appId: orig.appId,
+          appBlockId: orig.appBlockId,
+          blockInstanceId: orig.blockInstanceId,
+          scope: orig.scope,
+          modelId: orig.modelId,
+          tier: orig.tier,
+          rateCardVersion: orig.rateCardVersion,
+          subscriptionSharePct: orig.subscriptionSharePct,
+          appOwnerShareCents: -orig.appOwnerShareCents,
+          platformShareCents: 0,
+          providerFeeCents: 0,
+          appOwnerUserId: orig.appOwnerUserId,
+          status: 'confirmed',
+          entryType: 'clawback',
+          voidedReason: null,
+          confirmedAt: new Date(),
+        },
+      });
+      clawbackCount += 1;
+    } catch (err) {
+      const code = (err as { code?: unknown })?.code;
+      if (code === 'P2002') continue;
+      throw err;
+    }
+  }
+
+  const result = await dbWrite.blockSubscriptionAttribution.updateMany({
+    where: {
+      paymentProvider,
+      invoiceId,
+      entryType: 'charge',
+      status: { in: ['pending', 'confirmed', 'paid_out'] },
+    },
+    data: {
+      status: 'voided',
+      voidedReason: reason,
+      voidedAt: new Date(),
+    },
+  });
+
+  if (result.count > 0 || clawbackCount > 0) {
+    logToAxiom(
+      {
+        name: SUBSCRIPTION_ATTRIBUTION_LOG_NAME,
+        type: 'info',
+        message:
+          `voided ${result.count} subscription attribution row(s) for ${invoiceId}` +
+          (clawbackCount > 0 ? ` + ${clawbackCount} clawback row(s)` : ''),
+        paymentProvider,
+        invoiceId,
+        reason,
+        count: result.count,
+        clawbackCount,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    try {
+      if (clawbackCount > 0) {
+        blockSubscriptionAttributionWriteCounter.inc(
+          { provider: paymentProvider, status: 'clawback', billing_reason: 'unknown' },
+          clawbackCount
+        );
+      }
+    } catch {
+      // swallow
+    }
+  }
+
+  return result.count;
 }
 
 /** Synthetic payment_transaction_id suffix for clawback rows so they don't
