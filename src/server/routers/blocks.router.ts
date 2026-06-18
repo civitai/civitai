@@ -1,6 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS } from '~/shared/constants/slot-registry';
+import {
+  KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
+  isLaunchSlot,
+  PAGE_SLOT_ID,
+} from '~/shared/constants/slot-registry';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
@@ -342,6 +346,54 @@ async function assertCanManageBlocks(
   if (row.userId !== ctx.user.id) throw throwAuthorizationError('Not the model owner');
 }
 
+/**
+ * PAGE-ONLY LAUNCH GATE (install path). Rejects a non-launch slot for the
+ * public (non-moderator) audience; moderators are grandfathered (the live
+ * mod-only model-slot apps keep installing). Mod status is the server-stamped
+ * session flag (`ctx.user?.isModerator`), the same source every other belt in
+ * this router uses. `isLaunchSlot` is the single source of truth for "in the
+ * launch surface" — no hardcoded slot id here.
+ */
+function assertLaunchSlotForCaller(
+  ctx: { user?: { id: number; isModerator?: boolean } },
+  slotId: string
+) {
+  if (ctx.user?.isModerator) return; // grandfather mods
+  if (isLaunchSlot(slotId)) return; // launch (page) slots are public-OK
+  throw new TRPCError({
+    code: 'FORBIDDEN',
+    message: 'This app type isn’t available yet.',
+  });
+}
+
+/**
+ * Manifest-level variant of {@link assertLaunchSlotForCaller} for the
+ * subscription path, where the slot isn't an input — it's implied by the app's
+ * manifest targets. A model-slot app (the only kind that takes a subscription;
+ * page apps are stateless and never subscribed) is non-launch, so a non-mod is
+ * rejected. A moderator is grandfathered. An app is launch-eligible iff it
+ * declares a page AND `app.page` is a launch slot (mirrors the service's
+ * isAppLaunchEligible / the public-read filter, keeping the allowlist the single
+ * source of truth).
+ */
+function assertLaunchAppForCaller(
+  ctx: { user?: { id: number; isModerator?: boolean } },
+  manifest: unknown
+) {
+  if (ctx.user?.isModerator) return; // grandfather mods
+  const declaresPage =
+    !!manifest &&
+    typeof (manifest as { page?: unknown }).page === 'object' &&
+    (manifest as { page?: unknown }).page !== null &&
+    typeof (manifest as { page?: { path?: unknown } }).page?.path === 'string' &&
+    ((manifest as { page: { path: string } }).page.path?.length ?? 0) > 0;
+  if (isLaunchSlot(PAGE_SLOT_ID) && declaresPage) return; // a launch page app
+  throw new TRPCError({
+    code: 'FORBIDDEN',
+    message: 'This app type isn’t available yet.',
+  });
+}
+
 async function resolveModelIdFromBlockInstance(blockInstanceId: string): Promise<number> {
   // B2 (same posture as above): dbWrite for the ownership-relevant lookup.
   // updateSettings is publisher-only and only ever operates on pinned
@@ -410,6 +462,13 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       await assertCanManageBlocks(ctx, input.modelId);
+      // PAGE-ONLY LAUNCH GATE: installOnModel only ever targets a MODEL slot
+      // (KNOWN_SLOT_IDS is the 3 model slots; the page slot never flows here),
+      // so every model-slot install is a non-launch slot. Reject it for the
+      // public (non-mod) audience; moderators are grandfathered so the live
+      // mod-only generate-from-model install path is untouched. `isLaunchSlot`
+      // is the single source of truth (not a hardcoded check on the slot id).
+      assertLaunchSlotForCaller(ctx, input.slotId);
       return BlockRegistry.installOnModel({
         ...input,
         installedByUserId: ctx.user!.id,
@@ -1059,7 +1118,12 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [], nextCursor: undefined };
       }
-      return BlockRegistry.listAvailable(input);
+      // PAGE-ONLY LAUNCH GATE: the public (non-mod) audience sees launch (page)
+      // apps only; moderators are grandfathered (see everything, incl. the
+      // mod-only model-slot apps like generate-from-model). Mod status comes
+      // from the server-stamped session `ctx.user?.isModerator` (cannot be
+      // spoofed client-side — same source as every other belt in this router).
+      return BlockRegistry.listAvailable(input, !ctx.user?.isModerator);
     }),
 
   /**
@@ -1111,7 +1175,15 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         throw throwNotFoundError('App block not found');
       }
-      const detail = await BlockRegistry.getAppDetail(input.appBlockId);
+      // PAGE-ONLY LAUNCH GATE: a non-mod hitting a non-launch (model-slot) app
+      // gets the SAME NOT_FOUND posture as a missing/unapproved app — the
+      // service returns null for it under launchOnly, so no model-app detail
+      // leaks to the public. Mods (grandfathered) see every app. Mod status is
+      // the server-stamped session flag.
+      const detail = await BlockRegistry.getAppDetail(
+        input.appBlockId,
+        !ctx.user?.isModerator
+      );
       if (!detail) throw throwNotFoundError('App block not found');
       return detail;
     }),
@@ -1150,7 +1222,12 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [] };
       }
-      const items = await BlockRegistry.getFeaturedBlocks(input.limit);
+      // PAGE-ONLY LAUNCH GATE: same public-vs-mod split as listAvailable — the
+      // non-mod featured rail carries launch (page) apps only; mods see all.
+      const items = await BlockRegistry.getFeaturedBlocks(
+        input.limit,
+        !ctx.user?.isModerator
+      );
       return { items };
     }),
 
@@ -1302,6 +1379,12 @@ export const blocksRouter = router({
       if (block.status !== 'approved') {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
       }
+      // PAGE-ONLY LAUNCH GATE: a subscription only ever attaches a MODEL-slot
+      // app (page apps are stateless — Decision 2 — and never subscribed), so
+      // for the public (non-mod) audience this is always a non-launch app and is
+      // rejected. Moderators are grandfathered. Resolves launch-eligibility from
+      // the app's manifest (declares a page) since the slot isn't an input here.
+      assertLaunchAppForCaller(ctx, block.manifest);
       // Manifest-driven settings validation. The 4KB cap from the router-
       // level settingsSchema has already fired; this pass enforces the
       // per-field shape declared in the manifest. Manifests without a

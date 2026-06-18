@@ -238,8 +238,25 @@ describe('blocks.listAvailable (public)', () => {
       slotId: 'model.sidebar_top',
       limit: 5,
     });
+    // PAGE-ONLY LAUNCH GATE: the router passes a second `launchOnly` arg =
+    // `!isModerator`. For this MODERATOR caller it's `false` (grandfather — sees
+    // everything).
     expect(mockListAvailable).toHaveBeenCalledWith(
-      expect.objectContaining({ query: 'generate', slotId: 'model.sidebar_top', limit: 5 })
+      expect.objectContaining({ query: 'generate', slotId: 'model.sidebar_top', limit: 5 }),
+      false
+    );
+  });
+
+  it('passes launchOnly=true to the service for a NON-MOD caller (public sees page apps only)', async () => {
+    mockListAvailable.mockResolvedValue({ items: [], nextCursor: undefined });
+    // Force the flag ON for a non-mod (models the post-launch segment-widen) so
+    // the call reaches the service and we can assert the launchOnly arg.
+    mockIsAppBlocksEnabled.mockImplementation(async () => true);
+    const caller = blocksRouter.createCaller(authedCtx(42, false) as never);
+    await caller.listAvailable({ limit: 20 });
+    expect(mockListAvailable).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 20 }),
+      true
     );
   });
 
@@ -481,10 +498,24 @@ describe('Layer 1 — install procs widened to protectedProcedure (owner-scoped,
   describe('installOnModel', () => {
     const input = { modelId: 7, appBlockId: 'ab_x', slotId: 'model.sidebar_top' as const };
 
-    it('(a) non-mod OWNER + flag ON → installs (assertCanManageBlocks owner path)', async () => {
+    // PAGE-ONLY LAUNCH GATE: installOnModel only ever targets a MODEL slot, which
+    // is a non-launch slot — so a non-mod OWNER is now rejected even with the
+    // flag ON + owning the model (the launch gate is layered ON TOP of the owner
+    // check). This supersedes the pre-launch-gate "(a) non-mod OWNER installs".
+    it('(a) non-mod OWNER + flag ON → FORBIDDEN (model slot is non-launch), never installs', async () => {
       mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
       mockInstallOnModel.mockResolvedValue({ id: 'install_1' });
       const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      await expect(caller.installOnModel(input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockInstallOnModel).not.toHaveBeenCalled();
+    });
+
+    // GRANDFATHER: a MODERATOR can still install a model slot (the live mod-only
+    // generate-from-model path is untouched).
+    it('(a-mod) MODERATOR + flag ON → installs (grandfather; model slot allowed for mods)', async () => {
+      mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
+      mockInstallOnModel.mockResolvedValue({ id: 'install_1' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, true) as never);
       await caller.installOnModel(input);
       expect(mockInstallOnModel).toHaveBeenCalledWith(
         expect.objectContaining({ modelId: 7, appBlockId: 'ab_x', installedByUserId: OWNER_ID })
@@ -586,7 +617,26 @@ describe('Layer 1 — install procs widened to protectedProcedure (owner-scoped,
       settings: {},
     };
 
-    it('(a) non-mod OWNER (the caller) + flag ON → upserts, stamping ctx.user.id (NOT input)', async () => {
+    // PAGE-ONLY LAUNCH GATE: a subscription only ever attaches a MODEL-slot app
+    // (manifest has no page) — a non-launch app — so a non-mod is now rejected
+    // even with the flag ON. This supersedes the pre-launch-gate "(a) non-mod
+    // OWNER upserts".
+    it('(a) non-mod + flag ON + MODEL-slot app → FORBIDDEN (non-launch app), never upserts', async () => {
+      mockDbReadAppBlockFindUnique.mockResolvedValue({
+        blockId: 'g',
+        status: 'approved',
+        approvedScopes: [],
+        manifest: {}, // model app (no page field)
+      });
+      mockUpsertSubscription.mockResolvedValue({ id: 'bus_new' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      await expect(caller.upsertSubscription(input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockUpsertSubscription).not.toHaveBeenCalled();
+    });
+
+    // GRANDFATHER: a MODERATOR can still subscribe to a model-slot app, stamping
+    // ctx.user.id (NOT input). Keeps the pre-launch-gate owner-scoping invariant.
+    it('(a-mod) MODERATOR + flag ON + model app → upserts, stamping ctx.user.id (NOT input)', async () => {
       mockDbReadAppBlockFindUnique.mockResolvedValue({
         blockId: 'g',
         status: 'approved',
@@ -594,7 +644,7 @@ describe('Layer 1 — install procs widened to protectedProcedure (owner-scoped,
         manifest: {},
       });
       mockUpsertSubscription.mockResolvedValue({ id: 'bus_new' });
-      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, true) as never);
       await caller.upsertSubscription(input);
       // userId is stamped server-side from the session, never from input.
       expect(mockUpsertSubscription).toHaveBeenCalledWith(
