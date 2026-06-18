@@ -239,3 +239,55 @@ describe('manageInvoicePaid — attribution write payload (no regression)', () =
     expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('manageInvoicePaid — Checkout-Session race fallback is scoped to subscription_create', () => {
+  // Returns a stripe-client mock whose checkout.sessions.list is a tracked spy
+  // resolving to `sessionMeta`, so a test can assert whether the fallback ran.
+  function stripeClientWithSession(sessionMeta: Record<string, string> | undefined) {
+    const list = vi.fn().mockResolvedValue({ data: sessionMeta ? [{ metadata: sessionMeta }] : [] });
+    mockGetServerStripe.mockResolvedValue({
+      checkout: { sessions: { list } },
+      charges: { retrieve: vi.fn() },
+    });
+    return list;
+  }
+
+  it('subscription_create with empty subscription metadata → falls back to the Checkout Session (race preserved)', async () => {
+    const list = stripeClientWithSession({ ...ATTRIBUTION_BAG });
+    await manageInvoicePaid(
+      fakeInvoice({
+        billing_reason: 'subscription_create',
+        subscription_details: { metadata: {} },
+      } as Partial<Stripe.Invoice>)
+    );
+    // The attribution race fallback fires for the FIRST invoice and recovers
+    // the block attribution from the parent Checkout Session.
+    expect(mockRecordSubscriptionAttribution).toHaveBeenCalledTimes(1);
+    expect(mockRecordSubscriptionAttribution.mock.calls[0][0].attribution.appId).toBe(APP_ID);
+    // Two list calls here: the unrelated ref_code fallback (no ref_code present)
+    // AND the attribution fallback. The cycle test below shows the attribution
+    // one is gone on renewals — i.e. exactly one fewer call.
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it('subscription_cycle with empty subscription metadata → attribution fallback is skipped (trim)', async () => {
+    const list = stripeClientWithSession({ ...ATTRIBUTION_BAG });
+    await manageInvoicePaid(
+      fakeInvoice({
+        billing_reason: 'subscription_cycle',
+        subscription_details: { metadata: {} },
+      } as Partial<Stripe.Invoice>)
+    );
+    // A real block renewal always carries the block keys (copied onto the
+    // subscription at creation), so an empty-metadata renewal genuinely has no
+    // attribution. The trim skips the Checkout-Session lookup → NO row recovered
+    // even though the session DID have block metadata.
+    expect(mockRecordSubscriptionAttribution).not.toHaveBeenCalled();
+    // Only ONE list call remains: the pre-existing ref_code fallback. The
+    // attribution fallback's extra round-trip is trimmed on renewals (was 2 in
+    // the create case above).
+    expect(list).toHaveBeenCalledTimes(1);
+    // Membership still provisioned.
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+});
