@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   ALL_SLOT_IDS,
   isKnownSlotId,
+  isLaunchSlot,
   isPageSlot,
   KNOWN_SLOT_IDS,
+  LAUNCH_SLOT_IDS,
   MODEL_SLOT_IDS,
   PAGE_FORBIDDEN_SCOPES,
   PAGE_SLOT_ID,
@@ -82,5 +84,44 @@ describe('slot-registry (Phase 0 foundation)', () => {
   it('only model + none entities are present in the registry today', () => {
     const entities = new Set(Object.values(SLOT_REGISTRY).map((s) => s.entity));
     expect(entities).toEqual(new Set(['model', 'none']));
+  });
+
+  // ---------------------------------------------------------------------------
+  // PAGE-ONLY LAUNCH GATE — the public-audience launch allowlist.
+  // ---------------------------------------------------------------------------
+  describe('LAUNCH_SLOT_IDS / isLaunchSlot (page-only launch allowlist)', () => {
+    it('the launch allowlist is exactly the page slot today', () => {
+      expect([...LAUNCH_SLOT_IDS]).toEqual(['app.page']);
+      // The page slot id constant IS the launch slot — they can't drift.
+      expect([...LAUNCH_SLOT_IDS]).toContain(PAGE_SLOT_ID);
+    });
+
+    it('isLaunchSlot is TRUE for the page slot', () => {
+      expect(isLaunchSlot('app.page')).toBe(true);
+      expect(isLaunchSlot(PAGE_SLOT_ID)).toBe(true);
+    });
+
+    it('isLaunchSlot is FALSE for every model slot (model slots are mod-only at launch)', () => {
+      for (const id of MODEL_SLOT_IDS) {
+        expect(isLaunchSlot(id), `model slot "${id}" must NOT be a launch slot`).toBe(false);
+      }
+      expect(isLaunchSlot('model.sidebar_top')).toBe(false);
+      expect(isLaunchSlot('model.below_images')).toBe(false);
+      expect(isLaunchSlot('model.actions_extra')).toBe(false);
+    });
+
+    it('isLaunchSlot is FALSE for an unknown / arbitrary slot id', () => {
+      expect(isLaunchSlot('not.a.slot')).toBe(false);
+      expect(isLaunchSlot('')).toBe(false);
+    });
+
+    // The launch surface must be a SUBSET of the page slots — a model slot must
+    // never sneak in (that would expose model apps to the public). This locks
+    // the invariant a future widen has to consciously break.
+    it('every launch slot is a page slot (no model slot in the launch surface)', () => {
+      for (const id of LAUNCH_SLOT_IDS) {
+        expect(isPageSlot(id), `launch slot "${id}" must be a page slot`).toBe(true);
+      }
+    });
   });
 });

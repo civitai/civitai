@@ -24,7 +24,7 @@ import {
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
-import { isPageSlot, PAGE_FORBIDDEN_SCOPES } from '~/shared/constants/slot-registry';
+import { isLaunchSlot, isPageSlot, PAGE_FORBIDDEN_SCOPES } from '~/shared/constants/slot-registry';
 import {
   getGrantedScopes,
   partitionByConsent,
@@ -477,6 +477,21 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const block = install.appBlock;
   if (!block || block.status !== 'approved') {
     res.status(403).json({ error: 'Block is not approved' });
+    return;
+  }
+
+  // PAGE-ONLY LAUNCH GATE (belt at the mint — defense-in-depth over the install
+  // path). The public (non-moderator) audience may only mint a token for a
+  // LAUNCH slot (page apps). A non-mod model-slot install shouldn't exist after
+  // the install-path gate, but the mint refuses one anyway. Moderators are
+  // grandfathered so the live mod-only generate-from-model model-slot token
+  // keeps minting. Mod status is the server-stamped session flag (same source
+  // the per-call assertViewerIsModerator belts use), so it can't be spoofed.
+  // `isLaunchSlot` is the single source of truth; the page path naturally
+  // passes (app.page IS a launch slot) and is unchanged.
+  const isModerator = session?.user?.isModerator === true;
+  if (!isModerator && !isLaunchSlot(install.slotId)) {
+    res.status(403).json({ error: 'This app type isn’t available yet.' });
     return;
   }
 

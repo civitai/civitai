@@ -260,6 +260,30 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     expect(signArg.scopes).toEqual(['apps:storage:read', 'apps:storage:write']);
   });
 
+  it('PAGE-ONLY LAUNCH GATE: a NON-MOD can still mint a page token (launch belt must NOT hide page apps)', async () => {
+    // The page-only launch gate restricts the PUBLIC to launch (page) slots —
+    // it must NOT block the page path itself (that would defeat the purpose).
+    // app.page IS a launch slot, so a non-mod with both page flags on mints a
+    // page token exactly like a mod. (Flag the non-mod ON to model the launch
+    // segment-widen; otherwise the appBlocks/appBlocksPages gates would 403
+    // first, masking the launch-belt behaviour under test.)
+    const NON_MOD = { user: { id: 7, isModerator: false, bannedAt: null } } as any;
+    mockSession.value = NON_MOD;
+    (mockFlags.getFeatureFlags as any).mockImplementation(() => ({
+      appBlocks: true,
+      appBlocksPages: true,
+    }));
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(
+      PAGE_BLOCK(['apps:storage:read', 'apps:storage:write'])
+    );
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+    // 200 — the launch belt passes for a page slot regardless of mod status.
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects a page manifest that declares a still-forbidden money scope (page hard rule)', async () => {
     // The OAuth client ALLOWS the money scope + it's in the approved set — so
     // the earlier OAuth/approved gates pass and the PAGE HARD RULE is what
