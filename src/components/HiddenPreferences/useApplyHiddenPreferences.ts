@@ -684,6 +684,46 @@ function filterPreferences<
         return true;
       });
       return { items: challenges, hidden };
+    case 'model3d': {
+      // Model3D feed gate. Mirrors the `'models'` branch but without a child
+      // image gallery (the card surfaces a single thumbnail blurred client-side
+      // via `ImageGuard2`, see `Model3DCard`) — so there's no `images`
+      // sub-filter to apply here, just the per-row checks.
+      const model3ds = value.filter((m) => {
+        const userId = m.user.id;
+        const isOwner = userId === currentUser?.id;
+        if (!canViewNsfw && (hasNsfwWords(m.name ?? '') || m.nsfw === true)) return false;
+        if ((isOwner || isModerator) && m.nsfwLevel === 0) return true;
+        if (!Flags.intersects(m.nsfwLevel, browsingLevel)) {
+          hidden.browsingLevel++;
+          return false;
+        }
+        if (userId && hiddenUsers.get(userId)) {
+          hidden.users++;
+          return false;
+        }
+        for (const tag of m.tags ?? []) {
+          if (hiddenTags.get(tag)) {
+            hidden.tags++;
+            return false;
+          }
+          if (systemHiddenTags.get(tag) && !isOwner) {
+            hidden.tags++;
+            return false;
+          }
+        }
+        if (m.minor && minorDisabled) {
+          hidden.minor++;
+          return false;
+        }
+        if (m.poi && poiDisabled && !isOwner) {
+          hidden.poi++;
+          return false;
+        }
+        return true;
+      });
+      return { items: model3ds, hidden };
+    }
     default:
       throw new Error('unhandled hidden user preferences filter type');
   }
@@ -823,6 +863,17 @@ type BaseChallenge = {
   createdBy: { id: number };
 };
 
+type BaseModel3D = {
+  id: number;
+  user: { id: number };
+  tags?: number[];
+  nsfwLevel: number;
+  nsfw?: boolean;
+  name?: string | null;
+  minor?: boolean;
+  poi?: boolean;
+};
+
 export type BaseDataTypeMap = {
   images: BaseImage[];
   models: BaseModel[];
@@ -835,4 +886,5 @@ export type BaseDataTypeMap = {
   tools: BaseTool[];
   comics: BaseComic[];
   challenges: BaseChallenge[];
+  model3d: BaseModel3D[];
 };

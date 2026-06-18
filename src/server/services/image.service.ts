@@ -141,7 +141,10 @@ import {
 import type { ImageModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
-import { queueComicsForPanelImages } from '~/server/services/nsfwLevels.service';
+import {
+  queueComicsForPanelImages,
+  queueModel3DForThumbnailImage,
+} from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { getVotableTags2 } from '~/server/services/tag.service';
@@ -6524,6 +6527,13 @@ export async function updateImageNsfwLevel({
         data: { status },
       });
     }
+    // If this image is the thumbnail of a Model3D, enqueue the parent
+    // Model3D for nsfwLevel recompute. Without this, a moderator clamping
+    // the thumbnail's nsfwLevel via the image mod surface would leave
+    // `Model3D.nsfwLevel` (and the denormalized `Model3DMetric.nsfwLevel`)
+    // stale — the parent row's level is derived from the thumbnail alone
+    // (`updateModel3DNsfwLevels` in `nsfwLevels.service.ts`).
+    await queueModel3DForThumbnailImage(id);
     await trackModActivity(userId, {
       entityType: 'image',
       entityId: id,

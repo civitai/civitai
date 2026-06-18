@@ -289,8 +289,12 @@ function BlurToggle({
   const imageFlagRight = showImageFlag ? <ImageFlagSection label={imageFlag} /> : undefined;
   const imageFlagStyles = showImageFlag ? { section: imageFlagRightSectionStyles } : undefined;
 
-  if (safe || alwaysVisible) {
-    const isOwnerOrModerator = currentUser?.isModerator || (userId && currentUser?.id === userId);
+  const isOwnerOrModerator = currentUser?.isModerator || (userId && currentUser?.id === userId);
+
+  // Safe content (SFW or NSFW already-revealed-from-blur): no toggle is
+  // needed. Render the level badge for any viewer when `alwaysVisible` is
+  // set, otherwise keep the legacy mod-/owner-/imageFlag-only behavior.
+  if (safe) {
     if (isOwnerOrModerator || alwaysVisible) {
       return (
         <Badge
@@ -323,6 +327,11 @@ function BlurToggle({
     return null;
   }
 
+  // Non-safe (NSFW + currently blurred OR revealed-but-still-NSFW under
+  // user's blur preference): the badge is the toggle. When
+  // `alwaysVisible` is set, prepend the level label inside the same
+  // pill so the viewer still sees the rating without sacrificing the
+  // show/hide affordance.
   return (
     <Badge
       component="button"
@@ -333,7 +342,14 @@ function BlurToggle({
       {...badgeProps}
       onClick={toggle}
     >
-      {show ? <IconEyeOff size={14} strokeWidth={2.5} /> : <IconEye size={14} strokeWidth={2.5} />}
+      <span className="inline-flex items-center gap-1">
+        {alwaysVisible && (
+          <span className="font-bold leading-none">
+            {getBrowsingLevelLabel(browsingLevel)}
+          </span>
+        )}
+        {show ? <IconEyeOff size={14} strokeWidth={2.5} /> : <IconEye size={14} strokeWidth={2.5} />}
+      </span>
     </Badge>
   );
 }

@@ -11,6 +11,10 @@ import {
   isB2Url,
 } from '~/utils/s3-utils';
 import { MetricTimeframe, Model3DStatus, TagTarget } from '~/shared/utils/prisma/enums';
+import {
+  allBrowsingLevelsFlag,
+  parseBitwiseBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -138,6 +142,10 @@ const model3dListSelect = {
   thumbnailImage: { select: imageSelect },
   user: { select: userWithCosmeticsSelect },
   metric: true,
+  // Tags drive client-side `useApplyHiddenPreferences` filtering on the feed.
+  // The hook's `'model3d'` branch reads a flat number[] of tagIds, mirroring
+  // the `'models'` branch (`models.tags = tagsOnModels.map(x => x.tagId)`).
+  tags: { select: { tagId: true } },
 } satisfies Prisma.Model3DSelect;
 
 // ---------------------------------------------------------------------------
@@ -339,6 +347,7 @@ export const getModel3DsInfinite = async ({
   period,
   rigged,
   animated,
+  browsingLevel,
   user,
 }: GetModel3DsInfiniteInput & { user?: SessionUser | null }) => {
   try {
@@ -403,6 +412,48 @@ export const getModel3DsInfinite = async ({
       AND.push({ generationParams: { path: ['enableAnimation'], equals: true } });
     }
 
+    // Browsing-level shield. `Model3D.nsfwLevel` is derived from the single
+    // thumbnail Image (`updateModel3DNsfwLevels`), so the stored value is
+    // always a single-bit NsfwLevel power-of-2 — we can use a plain `in`
+    // against the bits unpacked from the requested browsing flag instead of
+    // dropping to raw SQL for a bitwise AND (the Model feed has to bit_or
+    // across versions, so it uses Meilisearch + raw SQL; we don't need that
+    // here).
+    //
+    // Mirrors the Image feed shape (image.service.ts ~L1732):
+    //   `(nsfwLevel & browsingLevel) != 0 AND nsfwLevel != 0`
+    //
+    // Two clauses, applied independently:
+    //   1. Unrated gate: `nsfwLevel != 0` for everyone EXCEPT mods + owners
+    //      of the scoped query (their own profile tab). This applies even
+    //      when the browsing-level bitmask is 0 / unresolved — without this
+    //      clause, a client briefly sending `browsingLevel=0` (e.g. before
+    //      `useBrowsingLevelDebounced` resolves on first paint) would leak
+    //      unrated items into the public feed.
+    //   2. Browsing-level bitmask: the standard rating intersection.
+    const isOwnerScoped =
+      !!user &&
+      ((!!userId && userId === user.id) ||
+        (!!username && !!user.username && username === user.username));
+    const canSeeUnrated = isModerator || isOwnerScoped;
+
+    if (!canSeeUnrated) {
+      AND.push({ nsfwLevel: { not: 0 } });
+    }
+
+    const effectiveBrowsingLevel = browsingLevel ?? allBrowsingLevelsFlag;
+    const allowedLevels = parseBitwiseBrowsingLevel(effectiveBrowsingLevel);
+    if (allowedLevels.length > 0) {
+      if (canSeeUnrated) {
+        // Owners + mods may still see their unrated drafts (nsfwLevel = 0).
+        AND.push({
+          OR: [{ nsfwLevel: { in: allowedLevels } }, { nsfwLevel: 0 }],
+        });
+      } else {
+        AND.push({ nsfwLevel: { in: allowedLevels } });
+      }
+    }
+
     // Period filter — clamps the feed to rows published (or, for unpublished
     // owner views, created) inside the requested window. Mirrors the regular
     // models feed's "date posted" dropdown.
@@ -442,7 +493,7 @@ export const getModel3DsInfinite = async ({
     })();
 
     const take = Math.min(limit, 100);
-    const items = await dbRead.model3D.findMany({
+    const rows = await dbRead.model3D.findMany({
       take: take + 1,
       where: { AND },
       cursor: cursor ? { id: cursor } : undefined,
@@ -451,10 +502,18 @@ export const getModel3DsInfinite = async ({
     });
 
     let nextCursor: number | undefined;
-    if (items.length > take) {
-      const nextItem = items.pop();
+    if (rows.length > take) {
+      const nextItem = rows.pop();
       nextCursor = nextItem?.id;
     }
+
+    // Flatten `tags: [{ tagId }]` → `tags: number[]` so the client-side
+    // `useApplyHiddenPreferences` hook can apply tag-based filtering with
+    // the same shape it uses for the `'models'` branch.
+    const items = rows.map(({ tags, ...rest }) => ({
+      ...rest,
+      tags: tags.map((t) => t.tagId),
+    }));
 
     return { items, nextCursor };
   } catch (error) {

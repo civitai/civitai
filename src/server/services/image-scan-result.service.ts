@@ -44,6 +44,7 @@ import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import {
   queueComicsForPanelImage,
+  queueModel3DForThumbnailImage,
   updateComicNsfwLevelsForImage,
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
@@ -1000,6 +1001,12 @@ async function applyIngestionSideEffects({
     // it so the next index pass re-evaluates visibility against the
     // moderation gates in `comics.search-index.ts:WHERE`.
     await queueComicsForPanelImage(image.id);
+    // If this image is the thumbnail of a Model3D, enqueue the parent
+    // Model3D for nsfwLevel recompute. A Blocked thumbnail (level 32) must
+    // be reflected on `Model3D.nsfwLevel` so the row drops out of any
+    // browsingLevel that doesn't include Blocked, mirroring the
+    // Image → Article cover flow.
+    await queueModel3DForThumbnailImage(image.id);
     return;
   }
 
@@ -1023,6 +1030,12 @@ async function applyIngestionSideEffects({
     // Scanned, `needsReview` may have been set, which the index treats
     // as a visibility gate.
     await queueComicsForPanelImage(image.id);
+    // If this image is the thumbnail of a Model3D row, enqueue the parent
+    // Model3D for nsfwLevel recompute. The Model3D's level is derived from
+    // its thumbnail alone (see `updateModel3DNsfwLevels` in
+    // `nsfwLevels.service.ts`), so a fresh scan on the thumbnail Image is
+    // the trigger that propagates a rating up to the parent row.
+    await queueModel3DForThumbnailImage(image.id);
 
     await queueImageSearchIndexUpdate({
       ids: [image.id],

@@ -11,12 +11,13 @@ import {
   comicsSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { enqueueJobs } from '~/server/services/job-queue.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { CollectionItemStatus, EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 async function getImageConnectedEntities(imageIds: number[]) {
@@ -744,5 +745,51 @@ export async function queueComicsForPanelImages(imageIds: number[]) {
   const projectIds = [...new Set(panels.map((p) => p.projectId))];
   await comicsSearchIndex.queueUpdate(
     projectIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+}
+
+/**
+ * Enqueue the Model3D row(s) whose `thumbnailImageId === imageId` for an
+ * `UpdateNsfwLevel` job. Called by the image-scan side-effects path so a
+ * fresh thumbnail nsfwLevel propagates up to `Model3D.nsfwLevel` /
+ * `Model3DMetric.nsfwLevel` on the next `update-nsfw-levels` cron tick
+ * (`src/server/jobs/job-queue.ts`).
+ *
+ * Cheap single-row read — the FK is `@unique`, so this matches at most one
+ * Model3D row. We still loop in case the lookup widens in the future.
+ * Safe to fire-and-forget — no-op when the image isn't a Model3D thumbnail.
+ */
+export async function queueModel3DForThumbnailImage(imageId: number) {
+  const model3ds = await dbRead.model3D.findMany({
+    where: { thumbnailImageId: imageId },
+    select: { id: true },
+  });
+  if (!model3ds.length) return;
+  await enqueueJobs(
+    model3ds.map((m) => ({
+      entityId: m.id,
+      entityType: EntityType.Model3D,
+      type: JobQueueType.UpdateNsfwLevel,
+    }))
+  );
+}
+
+/**
+ * Batched variant of {@link queueModel3DForThumbnailImage}. Used by
+ * moderator bulk paths (block/unblock/appeal) that touch many images at once.
+ */
+export async function queueModel3DsForThumbnailImages(imageIds: number[]) {
+  if (!imageIds.length) return;
+  const model3ds = await dbRead.model3D.findMany({
+    where: { thumbnailImageId: { in: imageIds } },
+    select: { id: true },
+  });
+  if (!model3ds.length) return;
+  await enqueueJobs(
+    model3ds.map((m) => ({
+      entityId: m.id,
+      entityType: EntityType.Model3D,
+      type: JobQueueType.UpdateNsfwLevel,
+    }))
   );
 }

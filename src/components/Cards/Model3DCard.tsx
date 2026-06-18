@@ -89,6 +89,15 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
   const hasStats =
     downloadCount > 0 || commentCount > 0 || reactionCount > 0 || tippedAmountCount > 0;
 
+  // The browsing-level shield + Blur-Mature-Content blur both key off the
+  // image's `nsfwLevel`. `nullish-coalesce` with `?? ` would pin the value
+  // at `0` when the thumbnail Image hasn't been scanned yet — which leaves
+  // a freshly-rated Model3D rendered unblurred even though its own
+  // `Model3D.nsfwLevel` is already set (and a viewer with `blurNsfw=true`
+  // would expect the blur). `Math.max` picks the higher of the two so we
+  // can't lose level information.
+  const effectiveNsfwLevel = Math.max(thumbnailImage?.nsfwLevel ?? 0, nsfwLevel ?? 0);
+
   return (
     <Box pos="relative">
       <AspectRatioImageCard
@@ -96,6 +105,11 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
         contentType="model3d"
         contentId={id}
         aspectRatio="portrait"
+        // Pin the corner browsing-level badge on for every viewer — matches
+        // the rating chip users expect on Images / Models. The centered
+        // "This image is rated X" overlay (rendered by ImageGuard2) still
+        // owns the click-to-reveal toggle when the thumbnail is blurred.
+        alwaysVisibleBadge
         image={
           thumbnailImage
             ? {
@@ -108,36 +122,44 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
                 height: thumbnailImage.height,
                 hash: thumbnailImage.hash,
                 userId: thumbnailImage.userId,
-                nsfwLevel: thumbnailImage.nsfwLevel ?? nsfwLevel,
+                nsfwLevel: effectiveNsfwLevel,
               }
             : undefined
         }
-        header={
+        header={({ safe }) => (
+          // `safe` is ImageGuard2's `show` value (true = thumbnail revealed,
+          // either because the content is SFW or because the user clicked
+          // the centered Show overlay). We piggyback on it to gate the
+          // Preview action — otherwise clicking Preview would mount the
+          // 3D viewer over the blurred thumbnail and bypass the shield.
+          // The Actions menu stays available (Report etc. don't expose
+          // content). When the thumbnail is blurred we suppress the button
+          // entirely; the centered "This image is rated X" overlay tells
+          // the user to click Show first.
           <Group gap={4} justify="flex-end" wrap="nowrap" className="w-full">
-            {/* No "3D" eyebrow badge — the whole feed is 3D models, so it's
-                redundant. If we ever surface NSFW level on the card, it
-                replaces the top-left slot here. */}
             <Group gap={4} wrap="nowrap">
-              <Tooltip
-                label={previewing ? 'Close preview' : 'Preview in-line'}
-                withinPortal
-                position="left"
-              >
-                <ActionIcon
-                  variant="filled"
-                  color="dark"
-                  radius="xl"
-                  size="sm"
-                  aria-label={previewing ? 'Close preview' : 'Preview 3D model'}
-                  onClick={(e: React.MouseEvent) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    setPreviewing((v) => !v);
-                  }}
+              {safe && (
+                <Tooltip
+                  label={previewing ? 'Close preview' : 'Preview in-line'}
+                  withinPortal
+                  position="left"
                 >
-                  <IconEye size={14} stroke={2} />
-                </ActionIcon>
-              </Tooltip>
+                  <ActionIcon
+                    variant="filled"
+                    color="dark"
+                    radius="xl"
+                    size="sm"
+                    aria-label={previewing ? 'Close preview' : 'Preview 3D model'}
+                    onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      setPreviewing((v) => !v);
+                    }}
+                  >
+                    <IconEye size={14} stroke={2} />
+                  </ActionIcon>
+                </Tooltip>
+              )}
               {/* Actions dropdown — owner/mod get full controls, any logged-in
                   user gets the Report action. Internally guards visibility, so
                   signed-out users see nothing rendered. */}
@@ -160,7 +182,7 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
               />
             </Group>
           </Group>
-        }
+        )}
         footer={
           <Stack gap={6} className="w-full">
             <UserAvatarSimple

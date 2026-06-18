@@ -9,10 +9,12 @@ import {
 import { keepPreviousData } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 import { useCallback, useMemo } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { Model3DCard } from '~/components/Cards/Model3DCard';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
@@ -94,6 +96,12 @@ function Model3DsPage() {
   const tags = tagsData?.items ?? [];
 
   // ---- Feed -------------------------------------------------------------------
+  // The server-side `getModel3DsInfinite` SQL filter clamps Model3D.nsfwLevel
+  // to bits inside `browsingLevel` (see `model3d.service.ts`), so passing the
+  // current browsing level here gives us paging-correct counts. The client-
+  // side `useApplyHiddenPreferences` below applies the per-user hidden-image /
+  // hidden-user / hidden-tag overlay that lives only in the browser session.
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, isFetching, isRefetching, hasNextPage, fetchNextPage } =
     trpc.model3d.getInfinite.useInfiniteQuery(
       {
@@ -103,6 +111,7 @@ function Model3DsPage() {
         tagIds: activeTagId ? [activeTagId] : undefined,
         rigged: rigged || undefined,
         animated: animated || undefined,
+        browsingLevel,
       },
       {
         getNextPageParam: (last) => last.nextCursor,
@@ -110,7 +119,12 @@ function Model3DsPage() {
       }
     );
 
-  const items = data?.pages.flatMap((p) => p.items) ?? [];
+  const rawItems = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data?.pages]);
+  const { items, loadingPreferences } = useApplyHiddenPreferences({
+    type: 'model3d',
+    data: rawItems,
+    isRefetching,
+  });
 
   return (
     <>
@@ -155,7 +169,7 @@ function Model3DsPage() {
             </TwScrollX>
           )}
 
-          {isLoading ? (
+          {isLoading || loadingPreferences ? (
             <Center p="xl">
               <Loader size="xl" />
             </Center>
