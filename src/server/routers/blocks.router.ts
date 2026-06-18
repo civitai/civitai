@@ -1821,6 +1821,42 @@ export const blocksRouter = router({
         /* swallowed inside helper */
       });
 
+      // W3 flow A — buzz SPEND attribution (author bounty). The block
+      // burned the viewer's own Buzz on this generation; accrue the app
+      // author's platform-funded bounty share. EVERYTHING is server-derived
+      // from the VERIFIED token claims (appId/appBlockId/blockInstanceId
+      // from the JWT, spender from `sub`, author looked up from the app's
+      // OauthClient) — there is NO client-supplied attribution, so spend is
+      // inherently forge-safe. Idempotent on (workflowId, appBlockId), so a
+      // re-poll / retry can't double-attribute. Fire-and-forget with its
+      // own try/catch (mirrors recordScopeInvocation): a failed attribution
+      // write must NEVER break the generation — the Buzz was already spent
+      // and the snapshot is already the user-facing source of truth.
+      //
+      // Only fire on a REAL workflow id. A returned 'failed' sentinel
+      // snapshot (the over-budget / insufficient-budget path above returns
+      // early before we get here, but the orchestrator can also resolve to
+      // a 'failed' status without queueing) has no generation to attribute.
+      const spendWorkflowId = snapshot.workflowId;
+      if (spendWorkflowId && spendWorkflowId !== 'failed' && snapshot.status !== 'failed') {
+        void (async () => {
+          const { recordSpendAttribution } = await import(
+            '~/server/services/blocks/buzz-attribution.service'
+          );
+          await recordSpendAttribution({
+            userId,
+            buzzAmount: Math.ceil(cost),
+            workflowId: spendWorkflowId,
+            appId: claims.appId,
+            appBlockId: claims.appBlockId,
+            blockInstanceId: claims.blockInstanceId,
+            modelId: resolved.modelId,
+          });
+        })().catch(() => {
+          /* best-effort: a failed attribution write never breaks submit */
+        });
+      }
+
       return { snapshot: autoClaim ? { ...snapshot, autoClaim } : snapshot };
     }),
 

@@ -95,6 +95,10 @@ export function newBlockAttributionPayoutId(): string {
   return `bba_payout_${newUlid()}`;
 }
 
+export function newBlockSpendAttributionId(): string {
+  return `bsa_${newUlid()}`;
+}
+
 export function newAppUserScopeGrantId(): string {
   return `augr_${newUlid()}`;
 }
