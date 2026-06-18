@@ -151,6 +151,21 @@ describe('resolveBlockVersionContext', () => {
       modelVersionId: 99,
       baseModel: 'SDXL 1.0',
       modelType: 'Checkpoint',
+      // `gate` is the additive entitlement context the resolver now returns
+      // (early-access / availability / coverage / members-only). This mock only
+      // stubs id/baseModel/status/model, so the optional gate fields resolve to
+      // undefined and coverage defaults to false.
+      gate: {
+        id: 99,
+        status: 'Published',
+        availability: undefined,
+        usageControl: undefined,
+        baseModel: 'SDXL 1.0',
+        covered: false,
+        modelUserId: undefined,
+        modelType: 'Checkpoint',
+        modelVersionAlias: null,
+      },
     });
   });
 
