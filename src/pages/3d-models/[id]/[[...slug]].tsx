@@ -47,7 +47,7 @@ import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { Meta } from '~/components/Meta/Meta';
+import { Gated } from '~/components/Gated/Gated';
 import { Model3DPermissionIndicator } from '~/components/PermissionIndicator/Model3DPermissionIndicator';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
@@ -294,14 +294,21 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const license = model3d.license;
 
   return (
-    <>
-      <Meta
-        title={`${model3d.name} | 3D Models | Civitai`}
-        description={model3d.description?.slice(0, 200) ?? '3D model on Civitai'}
-        canonical={`/3d-models/${model3d.id}`}
-        images={model3d.thumbnailImage ?? undefined}
-        deIndex={isDraft || isUnpublished}
-      />
+    // Gate access on green: NSFW 3D models redirect to civitai.red (same
+    // behaviour Model/Article/Comic/etc. use). `Gated` owns the Meta tag
+    // when it renders, so the page no longer emits `<Meta>` directly —
+    // that keeps the paywall structured-data + .paywalled-content wrapper
+    // contract intact for verified-bot rendering.
+    <Gated
+      contentNsfwLevel={model3d.nsfwLevel ?? 0}
+      meta={{
+        title: `${model3d.name} | 3D Models | Civitai`,
+        description: model3d.description?.slice(0, 200) ?? '3D model on Civitai',
+        canonical: `/3d-models/${model3d.id}`,
+        images: model3d.thumbnailImage ?? undefined,
+        deIndex: isDraft || isUnpublished,
+      }}
+    >
       <Container size="xl" pos="relative" className="pb-8">
         <LoadingOverlay visible={isRefetching} />
 
@@ -772,7 +779,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           model3d={{ id, userId: model3d.userId, minor: model3d.minor }}
         />
       </Box>
-    </>
+    </Gated>
   );
 }
 
