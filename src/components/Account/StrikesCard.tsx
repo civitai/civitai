@@ -7,6 +7,18 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { UserScoreDisplay } from './UserScoreDisplay';
 
+// The strike email links to `/user/account#strikes`. This card sits near the
+// bottom of the page and only renders its `id` once data loads, so the browser's
+// native hash scroll fires too early. A stable callback ref scrolls the card into
+// view the moment its node mounts (post-load). `scroll-margin-top` (globals.css
+// `[id]`) clears the fixed header. Module-level so its identity stays stable —
+// an inline ref would re-run on every render.
+function scrollToStrikesIfHashed(node: HTMLDivElement | null) {
+  if (node && typeof window !== 'undefined' && window.location.hash === '#strikes') {
+    node.scrollIntoView({ block: 'start' });
+  }
+}
+
 export function StrikesCard() {
   const currentUser = useCurrentUser();
   const scores = currentUser?.meta?.scores;
@@ -32,7 +44,7 @@ export function StrikesCard() {
   const strikes = strikesData?.strikes ?? [];
 
   return (
-    <Card withBorder id="strikes">
+    <Card withBorder id="strikes" ref={scrollToStrikesIfHashed}>
       <Stack gap="lg">
         {/* Header */}
         <Group justify="space-between" align="center">

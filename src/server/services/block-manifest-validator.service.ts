@@ -1,4 +1,5 @@
 import { validateBlockScopesAgainstOauthClient } from '~/shared/constants/block-scope.constants';
+import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
 
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
 
@@ -26,14 +27,70 @@ interface RawManifest {
    * exposed.
    */
   publicSettingsKeys?: unknown;
+  /**
+   * Slot targets the app installs into (model-page slots). Each entry's
+   * `slotId` MUST be a known registered slot id — previously UN-validated
+   * (pre-existing gap, closed in W10).
+   */
+  targets?: unknown;
+  /**
+   * W10 — optional full-page surface descriptor. When present, the app can be
+   * opened as a standalone full page at `/apps/run/<slug>`. `path` is the
+   * sub-path the page mounts at (must start with `/`). `buzzBudgetPerGen` is the
+   * optional per-generation Buzz budget the page's `ai:write:budgeted` tokens are
+   * minted with (a page is stateless, so unlike a model slot the budget cannot
+   * come from an install settings row — it comes from this manifest field,
+   * server-clamped to the per-gen cap; omitted ⇒ the platform default).
+   */
+  page?: unknown;
+  /**
+   * Config-as-code (CLI `page-vite` template). OPTIONAL + backward-compatible —
+   * manifests without these still validate. The datapacket-talos build recipe
+   * that HONORS these is a separate follow-up; the validator only has to ACCEPT
+   * them so the CLI's generated manifest isn't rejected at submit time.
+   *
+   * `buildCommand` — the command the build sandbox runs to produce the bundle.
+   *   SECURITY: dev-supplied + executes in the build sandbox (gotcha #61: the
+   *   sandbox is already unprivileged, network-isolated, credential-less). The
+   *   shape-allowlist below is DEFENSE-IN-DEPTH against pipeline/YAML/shell
+   *   injection — it bounds the string to a small set of known-safe build
+   *   invocations and rejects shell metacharacters, so even if the sandbox were
+   *   weakened the command can't fan out into arbitrary shell.
+   * `outputDir` — the relative dir the build emits into (served as the bundle).
+   *   Must be a safe RELATIVE path (no leading '/', no '..' traversal). Default
+   *   `dist` when omitted.
+   */
+  buildCommand?: unknown;
+  outputDir?: unknown;
   [key: string]: unknown;
 }
 
-const ALLOWED_CONTENT_RATINGS = new Set(['g', 'pg', 'pg13', 'r', 'x']);
-const ALLOWED_RENDER_MODES = new Set(['iframe', 'inline', 'hybrid']);
-const ALLOWED_TRUST_TIERS = new Set(['unverified', 'verified', 'internal']);
+export const ALLOWED_CONTENT_RATINGS = new Set(['g', 'pg', 'pg13', 'r', 'x']);
+export const ALLOWED_RENDER_MODES = new Set(['iframe', 'inline', 'hybrid']);
+export const ALLOWED_TRUST_TIERS = new Set(['unverified', 'verified', 'internal']);
 
 const SCOPE_RE = /^[a-z0-9_]+(?::[a-z0-9_]+){1,3}$/;
+
+// Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
+// field comment in RawManifest). The build sandbox is already isolated; this
+// keeps the command AUDITABLE + bounds it to a small, documented set of safe
+// build invocations so a dev-supplied string can't smuggle a shell pipeline or
+// YAML/command injection into the build recipe.
+//
+// Accepted shapes (anchored, no surrounding whitespace permitted):
+//   - `npm run <script>` / `pnpm run <script>` / `yarn run <script>`
+//     where <script> is a package.json script name: [a-zA-Z0-9:_-]+
+//   - `vite build` or `npx vite build`
+// Anything else — extra args, flags, shell metacharacters, multiple commands —
+// is rejected. The separate SHELL_METACHAR_RE below is a redundant second gate
+// so the rejection reason is explicit when a metachar is what tripped it.
+const BUILD_COMMAND_MAX_LENGTH = 128;
+const BUILD_COMMAND_RE =
+  /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
+// Shell metacharacters that must never appear in a buildCommand. Checked first
+// so the error is specific ("contains shell metacharacters") rather than the
+// generic allowlist-miss message.
+const SHELL_METACHAR_RE = /[;|&$`<>(){}\\!*?\[\]'"\n\r]/;
 
 // Min/max for the iframe height envelope. The host clamps incoming
 // RESIZE_IFRAME to these bounds, but rejecting absurd values at
@@ -403,6 +460,137 @@ export class BlockManifestValidator {
         errors.push('iframe.sandbox must be a non-empty string');
       } else {
         validateSandbox(iframe.sandbox, tierForSandbox, errors);
+      }
+    }
+
+    // W10 (+ pre-existing gap closure): validate `targets[].slotId`. Each target
+    // must be an object whose `slotId` is a KNOWN registered slot id. This was
+    // previously UN-validated — a manifest could declare an arbitrary slot
+    // string that listForModel / the registry would never match (silent
+    // mis-install). Optional (a page-only app may have no model targets).
+    if (m.targets !== undefined) {
+      if (!Array.isArray(m.targets)) {
+        errors.push('targets must be an array');
+      } else {
+        if (m.targets.length > 16) {
+          errors.push('targets must contain at most 16 entries');
+        }
+        for (const t of m.targets) {
+          if (!t || typeof t !== 'object') {
+            errors.push('each target must be an object');
+            continue;
+          }
+          const slotId = (t as { slotId?: unknown }).slotId;
+          if (typeof slotId !== 'string' || slotId.length === 0) {
+            errors.push('each target must carry a non-empty slotId string');
+            continue;
+          }
+          if (!isKnownSlotId(slotId)) {
+            errors.push(`target slotId "${slotId}" is not a known slot`);
+            continue;
+          }
+          // A model-page target must be a model (region) slot, not the page
+          // slot — the page surface is declared via the `page` field, not a
+          // `targets` entry.
+          if (isPageSlot(slotId)) {
+            errors.push(`target slotId "${slotId}" is the page slot — declare a full page via the "page" field, not targets`);
+          }
+        }
+      }
+    }
+
+    // W10 — validate the optional `page` descriptor. When present it must be an
+    // object with a string `path` that starts with '/'; `title` is required
+    // (shown in the host chrome) and `icon` is an optional string. A page app
+    // also needs an iframe.src (validated above) — that is the bundle the page
+    // route iframes.
+    if (m.page !== undefined) {
+      if (!m.page || typeof m.page !== 'object' || Array.isArray(m.page)) {
+        errors.push('page must be an object');
+      } else {
+        const page = m.page as {
+          path?: unknown;
+          title?: unknown;
+          icon?: unknown;
+          buzzBudgetPerGen?: unknown;
+        };
+        if (typeof page.path !== 'string' || page.path.length === 0) {
+          errors.push('page.path must be a non-empty string');
+        } else if (!page.path.startsWith('/')) {
+          errors.push('page.path must start with "/"');
+        } else if (page.path.length > 256) {
+          errors.push('page.path must be ≤256 chars');
+        }
+        if (typeof page.title !== 'string' || page.title.length === 0) {
+          errors.push('page.title must be a non-empty string');
+        } else if (page.title.length > 128) {
+          errors.push('page.title must be ≤128 chars');
+        }
+        if (page.icon !== undefined && (typeof page.icon !== 'string' || page.icon.length > 128)) {
+          errors.push('page.icon must be a string ≤128 chars');
+        }
+        // W10 generation spend — optional per-gen Buzz budget for the page's
+        // `ai:write:budgeted` tokens. Must be a positive, finite integer when
+        // present (the mint handler clamps it to BUZZ_BUDGET_CAP, so an over-cap
+        // value isn't rejected here — it's silently capped at issuance — but a
+        // non-positive / non-integer / non-finite value is a manifest bug).
+        if (page.buzzBudgetPerGen !== undefined) {
+          const b = page.buzzBudgetPerGen;
+          if (typeof b !== 'number' || !Number.isFinite(b) || !Number.isInteger(b) || b <= 0) {
+            errors.push('page.buzzBudgetPerGen must be a positive integer');
+          }
+        }
+        // A page app must ship an iframe block (the bundle the full page mounts).
+        if (!m.iframe || typeof m.iframe !== 'object') {
+          errors.push('a manifest declaring "page" must also declare an iframe block');
+        }
+      }
+    }
+
+    // Config-as-code: buildCommand (optional). dev-supplied + runs in the build
+    // sandbox — shape-constrain it (defense-in-depth) to a documented allowlist
+    // and reject shell metacharacters. Optional + backward-compatible: a manifest
+    // without buildCommand still validates.
+    if (m.buildCommand !== undefined) {
+      if (typeof m.buildCommand !== 'string') {
+        errors.push('buildCommand must be a string');
+      } else if (m.buildCommand.length === 0) {
+        errors.push('buildCommand must be a non-empty string');
+      } else if (m.buildCommand.length > BUILD_COMMAND_MAX_LENGTH) {
+        errors.push(`buildCommand must be ≤${BUILD_COMMAND_MAX_LENGTH} chars`);
+      } else if (SHELL_METACHAR_RE.test(m.buildCommand)) {
+        errors.push('buildCommand must not contain shell metacharacters');
+      } else if (!BUILD_COMMAND_RE.test(m.buildCommand)) {
+        errors.push(
+          'buildCommand must match an allowed build invocation ' +
+            '(e.g. "npm run build", "pnpm run <script>", "vite build", "npx vite build")'
+        );
+      }
+    }
+
+    // Config-as-code: outputDir (optional). A safe RELATIVE path the build emits
+    // into. No leading '/', no '..' traversal, no backslashes / NUL. Default is
+    // `dist` (applied downstream when omitted — the validator only enforces the
+    // shape of an explicit value). Optional + backward-compatible.
+    if (m.outputDir !== undefined) {
+      if (typeof m.outputDir !== 'string') {
+        errors.push('outputDir must be a string');
+      } else if (m.outputDir.length === 0) {
+        errors.push('outputDir must be a non-empty string');
+      } else if (m.outputDir.length > 256) {
+        errors.push('outputDir must be ≤256 chars');
+      } else if (m.outputDir.startsWith('/')) {
+        errors.push('outputDir must be a relative path (no leading "/")');
+      } else if (
+        // Reject any path traversal segment ('..'), backslash separators, NUL,
+        // and Windows drive prefixes (C:\). Split on both separators so a
+        // `foo/../bar` or `foo\..\bar` traversal is caught regardless of OS form.
+        m.outputDir.includes('\0') ||
+        m.outputDir.includes('\\') ||
+        /(^|\/)\.\.(\/|$)/.test(m.outputDir) ||
+        /^[a-zA-Z]:/.test(m.outputDir)
+      ) {
+        errors.push('outputDir must not contain path traversal ("..") or absolute/Windows paths');
       }
     }
 

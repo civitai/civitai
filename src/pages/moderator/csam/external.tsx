@@ -271,7 +271,7 @@ function ExternalCsamReportPage() {
               <Stack>
                 <Text fw={600}>Reported user (required)</Text>
                 <Group grow align="flex-start">
-                  <InputNumber name="userId" label="Civitai user id" withAsterisk />
+                  <InputNumber name="userId" label="Civitai user id" format="default" withAsterisk />
                   <InputText name="email" label="Email" withAsterisk />
                 </Group>
               </Stack>
@@ -293,7 +293,7 @@ function ExternalCsamReportPage() {
                 />
                 <Divider label="Ban-evasion / secondary account" labelPosition="left" />
                 <Group grow align="flex-start">
-                  <InputNumber name="secondaryUserId" label="Secondary user id" />
+                  <InputNumber name="secondaryUserId" label="Secondary user id" format="default" />
                   <InputText name="secondaryEmail" label="Secondary email" />
                 </Group>
               </Stack>

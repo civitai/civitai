@@ -23,6 +23,7 @@ import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
@@ -36,8 +37,19 @@ import type {
 } from '~/server/schema/blocks/subscription.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
+import { MODEL_SLOT_IDS, type ModelSlotId } from '~/shared/constants/slot-registry';
 
-type SlotFilter = 'model.sidebar_top' | 'model.below_images' | 'model.actions_extra';
+// Marketplace slot filter — model-entity region slots ONLY. Derived from the
+// registry's MODEL_SLOT_IDS so the new `page` slot (entity=none) never pollutes
+// the model-page slot filter. Adding a model slot to the registry adds it here
+// automatically; adding a page slot does not.
+type SlotFilter = ModelSlotId;
+
+const MODEL_SLOT_FILTER_LABELS: Record<ModelSlotId, string> = {
+  'model.sidebar_top': 'Model sidebar',
+  'model.below_images': 'Below images',
+  'model.actions_extra': 'Model actions',
+};
 
 const SORT_OPTIONS: { value: MarketplaceSort; label: string }[] = [
   { value: 'popular', label: 'Most popular' },
@@ -158,7 +170,10 @@ export default function AppsPage() {
   // marketplace cards owned by the viewer. Visible only to the owner;
   // the trPC procedure is guarded so other users get nothing back.
   const { data: myAppsRaw } = trpc.blocks.getMyApps.useQuery(undefined, {
-    enabled: !!features.appBlocks && !!currentUser,
+    // getMyApps is a moderatorProcedure — gate on the same developer predicate as
+    // the rest of the funnel so a non-developer never fires it (today: mod-only;
+    // post-W11-widen: only app developers, not every logged-in marketplace viewer).
+    enabled: !!features.appBlocks && isAppDeveloper(currentUser),
   });
   const earningsByAppBlockId = useMemo(() => {
     type AppRow = { id: string; lifetimeShareCents: number };
@@ -265,9 +280,11 @@ export default function AppsPage() {
           >
             <Group gap={6}>
               <Chip value="">All slots</Chip>
-              <Chip value="model.sidebar_top">Model sidebar</Chip>
-              <Chip value="model.below_images">Below images</Chip>
-              <Chip value="model.actions_extra">Model actions</Chip>
+              {MODEL_SLOT_IDS.map((slot) => (
+                <Chip key={slot} value={slot}>
+                  {MODEL_SLOT_FILTER_LABELS[slot]}
+                </Chip>
+              ))}
             </Group>
           </Chip.Group>
 
@@ -282,6 +299,7 @@ export default function AppsPage() {
               subsByBlock={subsByBlock}
               onOpen={handleOpen}
               earningsByAppBlockId={earningsByAppBlockId}
+              canOpenPage={!!features.appBlocksPages}
             />
           )}
           {showRails && newItems.length > 0 && (
@@ -291,6 +309,7 @@ export default function AppsPage() {
               subsByBlock={subsByBlock}
               onOpen={handleOpen}
               earningsByAppBlockId={earningsByAppBlockId}
+              canOpenPage={!!features.appBlocksPages}
             />
           )}
 
@@ -312,7 +331,7 @@ export default function AppsPage() {
               probeLoading={probeLoading && hasActiveFilters}
               hasActiveFilters={hasActiveFilters}
               onClearFilters={clearFilters}
-              canSubmit={!!currentUser?.isModerator}
+              canSubmit={isAppDeveloper(currentUser)}
             />
           ) : (
             <>
@@ -324,6 +343,7 @@ export default function AppsPage() {
                       alreadySubscribed={subsByBlock.has(block.id)}
                       onOpen={handleOpen}
                       ownedEarningCents={earningsByAppBlockId.get(block.id)}
+                      canOpenPage={!!features.appBlocksPages}
                     />
                   </Grid.Col>
                 ))}
@@ -436,12 +456,14 @@ function MarketplaceRail({
   subsByBlock,
   onOpen,
   earningsByAppBlockId,
+  canOpenPage,
 }: {
   title: string;
   blocks: AvailableBlock[];
   subsByBlock: Map<string, Partial<Record<SubscriptionScope, SubscriptionRecord>>>;
   onOpen: (block: AvailableBlock) => void;
   earningsByAppBlockId: Map<string, number>;
+  canOpenPage: boolean;
 }) {
   return (
     <Stack gap="xs">
@@ -454,6 +476,7 @@ function MarketplaceRail({
               alreadySubscribed={subsByBlock.has(block.id)}
               onOpen={onOpen}
               ownedEarningCents={earningsByAppBlockId.get(block.id)}
+              canOpenPage={canOpenPage}
             />
           </Grid.Col>
         ))}
@@ -467,7 +490,7 @@ function SubmitAppLink() {
   // to non-mods, so the worst case if the gate slips is a clear server-
   // side rejection rather than a silent leak.
   const user = useCurrentUser();
-  if (!user?.isModerator) return null;
+  if (!isAppDeveloper(user)) return null;
   return (
     <Button
       component={Link}

@@ -1,7 +1,7 @@
 import { getUserContentSettings } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { checkTosUpdate } from '~/server/services/content.service';
+import { getTosMeta } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import { getUserFollows } from '~/server/redis/caches';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
@@ -13,23 +13,21 @@ export default PublicEndpoint(
       // Use the content-settings view so SSR initialData matches the tRPC
       // getSettings response shape (JSON settings + User-column toggles).
       const settings = await getUserContentSettings(session?.user?.id ?? -1);
-      // tosUpdate + announcements + following all only need (session, settings) —
-      // compute them concurrently to keep this hot per-bootstrap route off the
-      // critical path. announcements + following swallow their own errors
-      // (`.catch`) so they can never reject the Promise.all and drop the critical
-      // settings/session payload; tosUpdate can still throw to the outer catch
-      // (preserving prior behaviour).
+      // tosMeta + announcements + following are computed concurrently to keep this
+      // hot per-bootstrap route off the critical path. announcements + following
+      // swallow their own errors (`.catch`) so they can never reject the Promise.all
+      // and drop the critical settings/session payload; tosMeta (static, no user
+      // input) can still throw to the outer catch (preserving prior behaviour).
       const domainColor = getRequestDomainColor(req);
-      const [tosUpdate, announcements, following] = await Promise.all([
-        // Compute the `content.checkTosUpdate` result here (server-only API route)
-        // so `_app` getInitialProps can SSR-seed that query WITHOUT importing
+      const [tosMeta, announcements, following] = await Promise.all([
+        // Resolve the static per-domain ToS metadata here (server-only API route)
+        // so `_app` getInitialProps can deliver it WITHOUT importing
         // `content.service` — which pulls `fs/promises` into `_app`'s client-bundled
-        // graph and breaks the build. Domain fallback matches createContext's
-        // `getRequestDomainColor(req) ?? 'blue'` so the seed stays byte-identical to
-        // a live `checkTosUpdate` fetch.
-        session?.user
-          ? checkTosUpdate({ domainColor: domainColor ?? 'blue', userSettings: settings })
-          : Promise.resolve(undefined),
+        // graph and breaks the build. The show/hide decision is computed client-side
+        // against the seeded `user.getSettings`, so this is user-independent and we
+        // can resolve it for everyone (it's cheap + cached). Domain fallback matches
+        // createContext's `getRequestDomainColor(req) ?? 'blue'`.
+        getTosMeta({ domainColor: domainColor ?? 'blue' }),
         // SSR-seed the ambient `announcement.getAnnouncements` query (fires on every
         // bootstrap, anon + authed). Computed here — NOT in `_app` getInitialProps —
         // because `announcement.service` is server-only and importing it into `_app`
@@ -52,7 +50,7 @@ export default PublicEndpoint(
       ]);
       res.status(200).json({
         settings,
-        tosUpdate,
+        tosMeta,
         announcements,
         following,
         session: session?.user && Object.keys(session.user).length > 0 ? session : null,

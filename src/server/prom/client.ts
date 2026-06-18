@@ -2,7 +2,13 @@
 // definitions, and registers the DB pool-depth gauges here — they compose the db
 // pools + prom helpers, which is app-level glue, not infrastructure.
 import client from 'prom-client';
-import { PROM_PREFIX } from '@civitai/telemetry/client';
+import {
+  PROM_PREFIX,
+  redisCommandsInflight,
+  redisCommandDuration,
+  sysredisSentinelTopologyChangesCounter,
+  sysredisSentinelClientErrorsCounter,
+} from '@civitai/telemetry/client';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
@@ -10,6 +16,18 @@ import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { bulkheadSnapshot } from '~/server/utils/request-bulkhead';
 
 export * from '@civitai/telemetry/client';
+
+// Bridge to @civitai/redis via globalThis: the redis client lives in a package that must NOT
+// statically import prom-client (it's reachable from the client bundle), so it reads these metric
+// handles off globalThis at command/connect time (getRedisMetrics()/attachSysSentinelListeners).
+// Publishing here — where prom-client is already loaded — captures all four directly. No eager
+// reader exists; consumed only from redis/client.ts function bodies.
+(globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
+  redisCommandsInflight,
+  redisCommandDuration,
+  sysredisSentinelTopologyChangesCounter,
+  sysredisSentinelClientErrorsCounter,
+};
 
 // pgPoolAcquireHistogram is registered in @civitai/db's db-helpers, not here, to avoid
 // a module-init cycle (this module imports pgDb → db-helpers, which would import the

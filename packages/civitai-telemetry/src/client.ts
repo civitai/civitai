@@ -254,6 +254,79 @@ export const blockBuzzAttributionWriteCounter = registerCounterWithLabels({
   labelNames: ['provider', 'scope', 'status'] as const,
 });
 
+// App Blocks buzz-SPEND attribution (one row per block-initiated spend).
+export const blockSpendAttributionWriteCounter = registerCounterWithLabels({
+  name: 'block_spend_attribution_total',
+  help: 'Block buzz spend attribution rows written',
+  labelNames: ['status'] as const,
+});
+
+// App Blocks MEMBERSHIP / subscription attribution (one row per paid invoice of a
+// block-initiated membership purchase).
+export const blockSubscriptionAttributionWriteCounter = registerCounterWithLabels({
+  name: 'block_subscription_attribution_total',
+  help: 'Block membership/subscription attribution rows written',
+  labelNames: ['provider', 'status', 'billing_reason'] as const,
+});
+
+// createCachedArray cluster-read fail-open (PR #2611): degraded-fetch + ids sent to origin, by cache name.
+export const cacheFailOpenDegradedCounter = registerCounterWithLabels({
+  name: 'cache_failopen_degraded_total',
+  help: 'createCachedArray cluster-read fail-open: degraded-fetch calls by cache name',
+  labelNames: ['cache_name'] as const,
+});
+export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
+  name: 'cache_failopen_origin_fetch_total',
+  help: 'createCachedArray fail-open: ids sent to origin (lookupFn) by cache name — deduped DB load',
+  labelNames: ['cache_name'] as const,
+});
+
+// Redis per-command instrumentation — read by @civitai/redis via the globalThis bridge the app's
+// prom shim publishes (see src/server/prom/client.ts). inflight gauge + duration histogram.
+export const redisCommandsInflight = registerGaugeWithLabels({
+  name: 'redis_commands_inflight',
+  help: 'In-flight node-redis commands by client (cluster vs sys); climbs toward the queue ceiling during a half-open stall',
+  labelNames: ['client'] as const,
+});
+export const redisCommandDuration = registerHistogram({
+  name: 'redis_command_duration_seconds',
+  help: 'node-redis command wall-clock duration by client; the long tail (~30s bucket) is the half-open command-queue park',
+  labelNames: ['client'] as const,
+  // Up to 30s to capture the parked-command tail that maps onto the Traefik 30s ceiling → 504.
+  buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
+});
+
+// sysRedis Sentinel observability. Uses the `civitai_sysredis_*` metric prefix (NOT civitai_app_*)
+// to match the dashboard naming, so it needs its own registrar.
+const SYSREDIS_PREFIX = 'civitai_sysredis_';
+function registerSysredisCounter<T extends string>({
+  name,
+  help,
+  labelNames,
+}: {
+  name: string;
+  help: string;
+  labelNames: readonly T[];
+}) {
+  // HMR-safe registration (see registerCounterWithLabels).
+  try {
+    return new client.Counter({ name: SYSREDIS_PREFIX + name, help, labelNames });
+  } catch {
+    return client.register.getSingleMetric(SYSREDIS_PREFIX + name) as Counter<T>;
+  }
+}
+
+export const sysredisSentinelTopologyChangesCounter = registerSysredisCounter({
+  name: 'sentinel_topology_changes_total',
+  help: 'sysRedis sentinel topology-change events (failover, sentinel-set change, etc.)',
+  labelNames: ['type', 'host', 'deployment'] as const,
+});
+export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
+  name: 'sentinel_client_errors_total',
+  help: 'sysRedis sentinel sub-client errors (per-pod TCP/protocol errors against masters/replicas)',
+  labelNames: ['type', 'host', 'deployment'] as const,
+});
+
 // App Blocks KV datastore (op ∈ get|set|delete|list|getQuota; outcome ∈ ok|unauthorized|…).
 export const appStorageOpsCounter = registerCounterWithLabels({
   name: 'app_blocks_storage_ops_total',

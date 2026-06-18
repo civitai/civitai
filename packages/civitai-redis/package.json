@@ -4,6 +4,10 @@
   "private": true,
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "dependencies": {
     "lodash-es": "^4.17.21",
     "msgpackr": "^1.10.2",
@@ -12,6 +16,7 @@
     "zod": "^4.0.17"
   },
   "devDependencies": {
-    "@types/lodash-es": "^4.17.7"
+    "@types/lodash-es": "^4.17.7",
+    "vitest": "^4.0.18"
   }
 }

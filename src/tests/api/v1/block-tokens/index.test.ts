@@ -575,14 +575,23 @@ describe('POST /api/v1/block-tokens', () => {
   // consent-gated `:self`/owned/money/tip scope STRIPPED), instead of a 403.
   // ==========================================================================
 
-  it('anon mint (flag public): issues a token with money/self scopes STRIPPED, not 403', async () => {
+  // PAGE-ONLY LAUNCH GATE: an anon caller is a non-moderator, and these bodies
+  // mint a MODEL slot (model.sidebar_top) — a NON-launch slot. The launch belt
+  // therefore rejects the mint with 403 BEFORE the anon scope-strip runs. (The
+  // anon scope-strip invariant — money/self scopes withheld for anon — is now
+  // exercised on the PAGE path, where a non-mod CAN mint: see
+  // src/tests/api/v1/block-tokens/page-mint.test.ts.) These two tests previously
+  // asserted the pre-launch-gate "anon mints a model-slot token with scopes
+  // stripped, not 403"; under page-only launch that path is closed for non-mods.
+  it('anon mint (flag public) + MODEL slot: rejected by the page-only launch belt (403), never signs', async () => {
     const flagMod = await import('~/server/services/feature-flags.service');
-    // Flag widened to public: anon now passes the mint gate.
+    // Flag widened to public: anon now passes the master appBlocks flag gate…
     (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       appBlocks: true,
     });
-    mockSession.value = null; // anonymous
-    // generate-from-model's real manifest: models:read:self + ai:write:budgeted.
+    mockSession.value = null; // anonymous (non-mod)
+    // generate-from-model's real manifest: models:read:self + ai:write:budgeted,
+    // on a MODEL slot (RESOLVED_INSTALL.slotId = model.sidebar_top).
     mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
       ...RESOLVED_INSTALL,
       appBlock: {
@@ -595,59 +604,34 @@ describe('POST /api/v1/block-tokens', () => {
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
-    expect(res._status).toBe(200);
-    expect(mockTokenService.sign).toHaveBeenCalled();
-    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as {
-      scopes: string[];
-      userId: number | null;
-    };
-    // SECURITY INVARIANT: no money/owned/tip scope in an anon token. The
-    // consent-gated strip is the COMPLEMENT of CONSENT_EXEMPT_SCOPES, so every
-    // gated `:self`/owned/money/tip scope is withheld.
-    expect(signArgs.scopes).not.toContain('ai:write:budgeted');
-    expect(signArgs.scopes).not.toContain('buzz:read:self');
-    expect(signArgs.scopes).not.toContain('user:read:self');
-    expect(signArgs.scopes).not.toContain('social:tip:self');
-    expect(signArgs.scopes).not.toContain('media:read:owned');
-    // models:read:self is consent-exempt (allow-by-default — it's the public
-    // model on the page the block is mounted on), so it SURVIVES for anon. For
-    // generate-from-model (models:read:self + ai:write:budgeted) the anon-safe
-    // subset is therefore exactly [models:read:self].
-    expect(signArgs.scopes).toEqual(['models:read:self']);
-    // sub is anon (userId null on the sign call).
-    expect(signArgs.userId).toBeNull();
-    // No consent prompt for anon — the host converts gated actions to sign-in.
-    const body = res._body as { needsConsent: boolean; missingScopes: string[] };
-    expect(body.needsConsent).toBe(false);
-    expect(body.missingScopes).toEqual([]);
+    // …but the model slot is non-launch → 403 from the launch belt, no token.
+    expect(res._status).toBe(403);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
-  it('anon mint (flag public): consent-exempt apps:storage:* survives the strip', async () => {
-    // Belt-and-suspenders: a manifest mixing a money scope with a consent-exempt
-    // ambient scope keeps only the exempt one for anon. Proves the strip is the
-    // COMPLEMENT of the exempt set, not a hand-maintained money denylist.
+  it('authed NON-MOD mint (flag public) + MODEL slot: rejected by the launch belt (403)', async () => {
+    // The defense-in-depth belt also catches an AUTHENTICATED non-mod (a model
+    // install shouldn't exist for them after the install-path gate, but the mint
+    // refuses anyway). Mods are unaffected (covered by 'authed-mod mint' below).
     const flagMod = await import('~/server/services/feature-flags.service');
     (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       appBlocks: true,
     });
-    mockSession.value = null;
+    mockSession.value = { user: { id: 77, bannedAt: null, isModerator: false } } as never;
     mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
       ...RESOLVED_INSTALL,
       appBlock: {
         ...RESOLVED_INSTALL.appBlock,
-        manifest: { scopes: ['apps:storage:read', 'ai:write:budgeted', 'buzz:read:self'] },
-        approvedScopes: ['apps:storage:read', 'ai:write:budgeted', 'buzz:read:self'],
-        app: { allowedScopes: 0xffffffff },
+        manifest: { scopes: ['models:read:self'] },
+        approvedScopes: ['models:read:self'],
+        app: { allowedScopes: 4 },
       },
     });
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
-    expect(res._status).toBe(200);
-    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { scopes: string[] };
-    expect(signArgs.scopes).toEqual(['apps:storage:read']);
-    expect(signArgs.scopes).not.toContain('ai:write:budgeted');
-    expect(signArgs.scopes).not.toContain('buzz:read:self');
+    expect(res._status).toBe(403);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
   it('authed-mod mint: unchanged — manifest scopes sign when granted', async () => {

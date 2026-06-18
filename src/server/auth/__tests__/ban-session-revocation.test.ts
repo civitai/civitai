@@ -38,6 +38,24 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock('~/server/redis/client', () => ({ sysRedis: h.sysRedis, ...h.KEYS }));
+// session-invalidation marks TOKEN_STATE via the atomic eval helper (hSetMultiWithTTL); the
+// fake sysRedis above has no `eval`, so stub the helper to write straight to the in-memory hash.
+vi.mock('~/server/redis/atomic', () => ({
+  hSetWithTTL: async (_c: unknown, key: string, field: string, value: string | number) => {
+    const m = h.hashes.get(key) ?? new Map<string, string>();
+    m.set(field, String(value));
+    h.hashes.set(key, m);
+  },
+  hSetMultiWithTTL: async (
+    _c: unknown,
+    key: string,
+    fields: Record<string, string | number>
+  ) => {
+    const m = h.hashes.get(key) ?? new Map<string, string>();
+    for (const [f, v] of Object.entries(fields)) m.set(f, String(v));
+    h.hashes.set(key, m);
+  },
+}));
 vi.mock('~/server/utils/cache-helpers', () => ({ clearCacheByPattern: async () => {} }));
 vi.mock('~/server/auth/session-cache', () => ({ clearSessionCache: async () => {} }));
 vi.mock('~/utils/signal-client', () => ({ signalClient: { send: async () => {} } }));

@@ -50,9 +50,11 @@ export function ModerationNav() {
         // { label: 'Sanity Images', href: '/moderator/research/rater-sanity' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
+        { label: 'Article Ratings Review', href: '/moderator/article-rating-review' },
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
+        { label: 'Grant Cosmetics', href: '/moderator/cosmetics/grant' },
         // {
         //   label: 'Paddle Adjustments',
         //   href: '/moderator/paddle/adjustments',

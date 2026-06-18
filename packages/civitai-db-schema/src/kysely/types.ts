@@ -286,8 +286,17 @@ export type AppBlockPublishRequest = {
   rejection_reason: string | null;
   approval_notes: string | null;
   forgejo_commit_sha: string | null;
+  deploy_state: string | null;
+  deploy_detail: string | null;
+  deploy_updated_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+};
+export type AppDevForgejoIdentity = {
+  user_id: number;
+  forgejo_username: string;
+  forgejo_token_encrypted: string;
+  created_at: Generated<Timestamp>;
 };
 export type Appeal = {
   id: Generated<number>;
@@ -334,6 +343,7 @@ export type Article = {
   nsfwLevel: Generated<number>;
   userNsfwLevel: Generated<number>;
   moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: Generated<string[]>;
   status: Generated<ArticleStatus>;
 };
@@ -427,6 +437,20 @@ export type ArticleRank = {
   tippedAmountCountMonthRank: Generated<number>;
   tippedAmountCountYearRank: Generated<number>;
   tippedAmountCountAllTimeRank: Generated<number>;
+};
+export type ArticleRatingReview = {
+  id: Generated<number>;
+  articleId: number;
+  userId: number;
+  createdAt: Generated<Timestamp>;
+  resolvedAt: Timestamp | null;
+  resolvedBy: number | null;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: Generated<ReportStatus>;
 };
 export type ArticleReaction = {
   id: Generated<number>;
@@ -634,6 +658,104 @@ export type BlockScopeInvocation = {
   endpoint: string;
   status_code: number;
   invoked_at: Generated<Timestamp>;
+};
+export type BlockSpendAttribution = {
+  id: string;
+  user_id: number;
+  buzz_amount: number;
+  buzz_type: Generated<string>;
+  /**
+   * USD value of the Buzz burned (buzzDollarRatio 1000:1 -> cents).
+   * Recorded for reporting — it is platform revenue, NOT a split pool.
+   */
+  gross_value_cents: number;
+  /**
+   * Orchestrator workflow id — the idempotency anchor.
+   */
+  workflow_id: string;
+  app_id: string;
+  app_block_id: string;
+  block_instance_id: string;
+  model_id: number | null;
+  rate_card_version: string;
+  /**
+   * The spend rev-share percentage stamped at write time.
+   */
+  spend_share_pct: number;
+  app_owner_share_cents: number;
+  app_owner_user_id: number;
+  status: Generated<string>;
+  /**
+   * 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
+   * refund path, so this is never 'refund'/'chargeback'.
+   */
+  voided_reason: string | null;
+  attributed_at: Generated<Timestamp>;
+  confirmed_at: Timestamp | null;
+  voided_at: Timestamp | null;
+  paid_out_at: Timestamp | null;
+  payout_id: string | null;
+};
+export type BlockSubscriptionAttribution = {
+  id: string;
+  user_id: number;
+  buzz_amount: Generated<number>;
+  buzz_type: Generated<string>;
+  /**
+   * Gross USD value of the invoice, in cents.
+   */
+  gross_value_cents: number;
+  payment_provider: string;
+  /**
+   * Per-period idempotency anchor — each renewal has its own invoice_id.
+   */
+  invoice_id: string;
+  /**
+   * Groups the periods of one subscription.
+   */
+  subscription_id: string | null;
+  /**
+   * subscription_create | subscription_cycle | subscription_update.
+   */
+  billing_reason: string | null;
+  period_start: Timestamp | null;
+  period_end: Timestamp | null;
+  app_id: string;
+  app_block_id: string;
+  block_instance_id: string;
+  scope: string;
+  model_id: number | null;
+  tier: string | null;
+  /**
+   * TRACK-ONLY (#2629): no rate applied at write time. 'unrated' sentinel
+   * until the payout-time backpay stamps the signed-off version.
+   */
+  rate_card_version: Generated<string>;
+  /**
+   * 0 at write time; the payout-time backpay computes the real share.
+   */
+  subscription_share_pct: Generated<number>;
+  app_owner_share_cents: Generated<number>;
+  platform_share_cents: number;
+  provider_fee_cents: number;
+  app_owner_user_id: number;
+  /**
+   * 'tracked' (track-only event) | pending | confirmed | voided | paid_out | held.
+   */
+  status: Generated<string>;
+  /**
+   * 'charge' (forward) | 'clawback' (negative carry-forward on refund/proration).
+   */
+  entry_type: Generated<string>;
+  /**
+   * 'refund' / 'chargeback' / 'proration' / 'self_purchase' / 'internal_owner' / 'manual_review'.
+   */
+  voided_reason: string | null;
+  attributed_at: Generated<Timestamp>;
+  confirmed_at: Timestamp | null;
+  voided_at: Timestamp | null;
+  paid_out_at: Timestamp | null;
+  payout_id: string | null;
 };
 export type BlockUserSettings = {
   block_instance_id: string;
@@ -3399,12 +3521,14 @@ export type DB = {
   ApiKey: ApiKey;
   app_block_publish_requests: AppBlockPublishRequest;
   app_blocks: AppBlock;
+  app_dev_forgejo_identity: AppDevForgejoIdentity;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   Article: Article;
   ArticleEngagement: ArticleEngagement;
   ArticleMetric: ArticleMetric;
   ArticleRank: ArticleRank;
+  ArticleRatingReview: ArticleRatingReview;
   ArticleReaction: ArticleReaction;
   ArticleReport: ArticleReport;
   ArticleStat: ArticleStat;
@@ -3416,6 +3540,8 @@ export type DB = {
   block_attribution_payout: BlockAttributionPayout;
   block_buzz_attribution: BlockBuzzAttribution;
   block_scope_invocations: BlockScopeInvocation;
+  block_spend_attribution: BlockSpendAttribution;
+  block_subscription_attribution: BlockSubscriptionAttribution;
   block_user_settings: BlockUserSettings;
   block_user_subscriptions: BlockUserSubscription;
   BlockedImage: BlockedImage;

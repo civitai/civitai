@@ -253,16 +253,37 @@ const {
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
 export async function purgeResizeCache({ url }: { url: string }) {
-  // Purge from new cache bucket
-  const { items } = await getImageS3Client().listObjects({
-    bucket: env.S3_IMAGE_CACHE_BUCKET,
-    prefix: url,
-  });
-  const keys = items.map((x) => x.Key).filter(isDefined);
-  if (keys.length) {
-    await getImageS3Client().deleteManyObjects({
+  // Best-effort: purge resized variants from the image-cache bucket. This is a
+  // cache invalidation, NOT a source-of-truth write — a stale resized variant is
+  // self-healing (re-derived on next request) and must never fail the caller's
+  // mutation. The S3 client here talks to an S3-compatible proxy
+  // (S3_IMAGE_UPLOAD_ENDPOINT); when that proxy returns a non-S3 body (e.g. a
+  // plain-text "404 page not found" from the proxy front-end), the AWS SDK's
+  // deserializer throws `char '4' is not expected.:1:1` which previously
+  // surfaced as a 500 on post.updateImage (hideMeta toggle). Swallow + log so a
+  // flaky/non-conforming cache proxy can't break image edits. (The deleteImage
+  // caller already wraps this in try/catch — this makes the contract intrinsic.)
+  try {
+    const { items } = await getImageS3Client().listObjects({
       bucket: env.S3_IMAGE_CACHE_BUCKET,
-      keys,
+      prefix: url,
+    });
+    const keys = items.map((x) => x.Key).filter(isDefined);
+    if (keys.length) {
+      await getImageS3Client().deleteManyObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET,
+        keys,
+      });
+    }
+  } catch (err) {
+    logToAxiom({
+      type: 'warning',
+      name: 'purge-resize-cache',
+      message: 'resize-cache purge failed',
+      imageKey: url,
+      error: safeError(err),
+    }).catch(() => {
+      // swallow — best effort logging
     });
   }
 
@@ -1295,7 +1316,7 @@ export const getAllImages = async (
   }
 
   if (username && !targetUserId) {
-    if (!prefetchedTargetUser) throw new Error('User not found');
+    if (!prefetchedTargetUser) throw throwNotFoundError('User not found');
     targetUserId = prefetchedTargetUser.id;
   }
 
@@ -2173,6 +2194,7 @@ export const getAllImagesIndex = async (
     thumbnails,
     imageMetrics,
     tagIdsVar,
+    tagsVar,
   ] = await withSpan('image:getAllImagesIndex:parallelFetch', async () =>
     Promise.all([
       // These enrichment fetches are independent (each takes pre-computed
@@ -2199,8 +2221,18 @@ export const getAllImagesIndex = async (
       // Search results from BitDex don't include tagIds (too expensive to store),
       // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
+      include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
     ])
   );
+
+  const tagsByImageId = tagsVar
+    ? tagsVar.reduce((acc, tag) => {
+        const arr = acc.get(tag.imageId);
+        if (arr) arr.push(tag);
+        else acc.set(tag.imageId, [tag]);
+        return acc;
+      }, new Map<number, typeof tagsVar>())
+    : undefined;
 
   const mergedData = withSpan('image:getAllImagesIndex:transform', () =>
     searchResults.map(({ publishedAtUnix, ...sr }) => {
@@ -2249,7 +2281,7 @@ export const getAllImagesIndex = async (
         cosmetic: imageCosmetics?.[sr.id] ?? null,
         // TODO fix below
         availability: Availability.Public,
-        tags: [], // needed?
+        tags: tagsByImageId?.get(sr.id) ?? [],
         name: null, // leave
         scannedAt: null, // remove
         mimeType: null, // need?
@@ -2690,7 +2722,14 @@ export async function getImagesFromFeedSearch(
       new CacheService(
         redis as unknown as IRedisClient,
         pgDbWrite as IDbClient,
-        clickhouse as IClickhouseClient
+        clickhouse as IClickhouseClient,
+        undefined,
+        // Back the feed's image→tagIds lookup with civitai's own warm, actively-invalidated
+        // tagIdsForImagesCache (msgpack string) instead of the retired event-engine-common
+        // `image:tagIds` Redis hash. Same {imageId, tags[]} shape + same WD14/Rekognition +
+        // styleTags/subjectTags filter, so it's a drop-in. Relieves next-redis-cluster memory.
+        (ids: number[]) =>
+          tagIdsForImagesCache.fetch(ids) as Promise<Record<number, { imageId: number; tags: number[] }>>
       )
     );
 
@@ -2909,7 +2948,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const targetUser =
       (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
       (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
-    if (!targetUser) throw new Error('User not found');
+    if (!targetUser) throw throwNotFoundError('User not found');
     userId = targetUser.id;
 
     logToAxiom(
@@ -3763,7 +3802,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const targetUser =
       (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
       (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
-    if (!targetUser) throw new Error('User not found');
+    if (!targetUser) throw throwNotFoundError('User not found');
     userId = targetUser.id;
 
     logToAxiom(
@@ -4429,9 +4468,47 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   }
 }
 
-const getImageMetricsObject = async (data: { id: number }[]) => {
+// Lazily-built MetricService over the watcher-fed `metrics:*` cache, reused
+// across calls (this is the hot feed path) rather than reconstructed per call.
+let _imageMetricService: MetricService | null = null;
+const getImageMetricService = () =>
+  (_imageMetricService ??= new MetricService(
+    clickhouse as IClickhouseClient,
+    redis as unknown as IRedisClient
+  ));
+
+type ImageMetricsObject = Awaited<ReturnType<typeof imageMetricsCache.fetch>>;
+
+const getImageMetricsObject = async (data: { id: number }[]): Promise<ImageMetricsObject> => {
   try {
-    return await imageMetricsCache.fetch(data.map((d) => d.id));
+    const ids = data.map((d) => d.id);
+
+    // Cutover kill switch. When ON, read image metrics from the watcher-fed
+    // `metrics:*` cache (MetricService). Default OFF keeps the legacy in-app
+    // `entitymetric:*` path, so merging this is a no-op; flip the flag to roll
+    // over, and flip back (then bust `metrics:*`) to revert instantly. The
+    // legacy write path is intentionally left intact so flip-back stays warm.
+    const fromWatcher = await getFliptBoolean(FLIPT_FEATURE_FLAGS.IMAGE_METRICS_FROM_WATCHER);
+    if (fromWatcher) {
+      const metrics = await getImageMetricService().fetch('Image', ids);
+      const result: ImageMetricsObject = {};
+      for (const id of ids) {
+        const m = metrics[id];
+        result[id] = {
+          imageId: id,
+          reactionLike: m?.Like || null,
+          reactionHeart: m?.Heart || null,
+          reactionLaugh: m?.Laugh || null,
+          reactionCry: m?.Cry || null,
+          comment: m?.commentCount || null,
+          collection: m?.Collection || null,
+          buzz: m?.tippedAmount || null,
+        };
+      }
+      return result;
+    }
+
+    return await imageMetricsCache.fetch(ids);
   } catch (e) {
     const error = e as Error;
     logToAxiom(

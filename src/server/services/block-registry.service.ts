@@ -30,6 +30,7 @@ import type {
 } from '~/server/schema/blocks/subscription.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { toPublicBlockManifest, toPublicScreenshots } from '~/server/schema/blocks/subscription.schema';
+import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 
 const CACHE_TTL_SECONDS = 60;
 export const MAX_BLOCKS_PER_SLOT = 3;
@@ -219,7 +220,14 @@ export type ResolvedBlockSource =
   | 'install'
   | 'platform_default'
   | 'publisher_subscription'
-  | 'viewer_subscription';
+  | 'viewer_subscription'
+  // W10 full-page app (`page_<appBlockId>`, entity=none). A page is stateless:
+  // it has NO install row, NO model entity, and resolves directly from the
+  // approved AppBlock (see resolvePageBlock). Used by the FIN-1
+  // buzz-attribution re-derivation to bucket a page purchase as
+  // `viewer_global` (SOURCE_TO_SCOPE in attribution-validator.service.ts).
+  // `modelId` is the 0 sentinel for this source — a page never pins a model.
+  | 'page';
 
 export interface ResolvedBlockInstance {
   source: ResolvedBlockSource;
@@ -245,6 +253,35 @@ interface InstallOpts {
   slotId: string;
   installedByUserId: number;
   settings?: Record<string, unknown>;
+}
+
+/**
+ * W10 — the page block shape the token mint consumes. Mirrors the `appBlock`
+ * sub-shape of {@link ResolvedBlockInstance} but carries NO modelId / install
+ * row (a page is stateless, entity=none).
+ */
+export interface PageBlockResolution {
+  appBlock: ResolvedBlockInstance['appBlock'];
+}
+
+/**
+ * W10 — the page block shape the SSR route consumes: just enough to render the
+ * full-bleed IframeHost (iframe.src + sandbox + trust tier) and mint a token
+ * (appBlockId). Public-display fields only; never the raw stored manifest.
+ */
+export interface PageBlockSsr {
+  appBlockId: string;
+  blockId: string;
+  appId: string;
+  iframeSrc: string;
+  sandbox: string;
+  trustTier: 'unverified' | 'verified' | 'internal';
+  name: string;
+  pageTitle: string;
+  /** #3/#6: the page manifest's declared scopes. The host computes the ACTUAL
+   *  granted set (declared − missingScopes from the mint) for BLOCK_INIT, so the
+   *  block sees the real scopes it has rather than a hardcoded empty array. */
+  scopes: string[];
 }
 
 interface UninstallOpts {
@@ -340,6 +377,59 @@ function manifestTargetsSlot(manifest: unknown, slotId: string): boolean {
     const cand = (t as { slotId?: unknown }).slotId;
     return typeof cand === 'string' && cand === slotId;
   });
+}
+
+/**
+ * W10 — does the manifest declare a full-page surface? A page app carries a
+ * `page: { path, title, icon? }` object (validated at registration time). Used
+ * to gate the page-mint + SSR resolve so a region/model-only app can't be
+ * opened as a full page.
+ */
+function manifestDeclaresPage(manifest: unknown): boolean {
+  const m = (manifest ?? {}) as { page?: unknown };
+  if (!m.page || typeof m.page !== 'object') return false;
+  const page = m.page as { path?: unknown };
+  return typeof page.path === 'string' && page.path.length > 0;
+}
+
+/**
+ * PAGE-ONLY LAUNCH GATE — the app-level predicate behind the slot-level
+ * `isLaunchSlot` allowlist (src/shared/constants/slot-registry.ts).
+ *
+ * The public (non-mod) marketplace exposes launch slots only. The ONLY launch
+ * slot today is `app.page`, and a page app is identified at the app level by
+ * declaring its page surface (the `page` field — never a `targets[]` entry; the
+ * manifest validator forbids `app.page` in targets). So "this app's slot is a
+ * launch slot" ⇔ "this app declares a page". `manifestDeclaresPage` is reused so
+ * the launch check and the page-mint / SSR-resolve path agree on what a page is.
+ *
+ * Gated on `isLaunchSlot(PAGE_SLOT_ID)` so the slot-registry allowlist stays the
+ * single source of truth: if `app.page` were ever removed from
+ * `LAUNCH_SLOT_IDS`, this returns false for every app and the public surface
+ * goes (correctly) empty — no separate edit here.
+ */
+function isAppLaunchEligible(manifest: unknown): boolean {
+  return isLaunchSlot(PAGE_SLOT_ID) && manifestDeclaresPage(manifest);
+}
+
+/**
+ * The SQL embodiment of {@link isAppLaunchEligible}, applied in the public
+ * marketplace queries when the caller is a non-moderator (`launchOnly`).
+ *
+ * Returns a Prisma.sql predicate that keeps ONLY launch-eligible (page) apps:
+ *   - while `app.page` is a launch slot: `manifest->'page'->>'path'` is a
+ *     non-empty string (the same "declares a page" test `manifestDeclaresPage`
+ *     applies in JS — `->>` yields NULL for a missing/non-string path);
+ *   - if `app.page` is no longer a launch slot: `false` (public surface empty),
+ *     mirroring `isAppLaunchEligible`.
+ *
+ * For a moderator caller the router passes `launchOnly=false` → this is omitted
+ * entirely (grandfather: mods see/install/mint everything).
+ */
+function launchOnlySqlFilter(launchOnly: boolean): Prisma.Sql {
+  if (!launchOnly) return Prisma.sql`TRUE`;
+  if (!isLaunchSlot(PAGE_SLOT_ID)) return Prisma.sql`FALSE`;
+  return Prisma.sql`COALESCE(ab.manifest->'page'->>'path', '') <> ''`;
 }
 
 function resolveRenderMode(
@@ -985,6 +1075,46 @@ export class BlockRegistry {
     const { blockInstanceId, modelId, slotId, viewerUserId } = opts;
     const db = opts.db === 'read' ? dbRead : dbWrite;
 
+    // page_<app_block_id> — W10 full-page app, entity=none (FIN-1 re-derive).
+    //
+    // A page is STATELESS: no install row, no model entity, no per-owner /
+    // per-viewer predicate. It is "viewer-global" — any viewer who can load
+    // the page can transact inside it, so the only authoritative check is that
+    // the cited AppBlock is APPROVED and actually declares a page surface
+    // (exactly resolvePageBlock's contract). modelId/slotId/viewerUserId are
+    // intentionally ignored for this source. This branch exists so the
+    // buzz-attribution validator re-derives a page purchase to a single
+    // source (`page` → `viewer_global`) rather than trusting the client
+    // `blockScope`; a forged scope on a `page_*` id is corrected, and a
+    // `page_*` id for a non-approved / non-page app fails to resolve (→ the
+    // validator strips attribution, fail-safe).
+    //
+    // NOTE: this resolver path is read-only re-derivation for attribution. The
+    // TOKEN MINT page path (block-tokens/index.ts) deliberately does NOT route
+    // through here — it builds its own `resolved` from resolvePageBlock with
+    // the page-specific budget/scope gates. Both call resolvePageBlock, so they
+    // agree on which page apps exist.
+    if (blockInstanceId.startsWith('page_')) {
+      const appBlockId = blockInstanceId.slice('page_'.length);
+      if (!appBlockId) return null;
+      const page = await BlockRegistry.resolvePageBlock(appBlockId, {
+        db: opts.db === 'read' ? 'read' : 'write',
+      });
+      if (!page) return null;
+      return {
+        source: 'page',
+        // A page has no model entity. 0 is the documented sentinel; the
+        // attribution validator omits blockModelId for the `page` source so
+        // a 0 never lands on a row.
+        modelId: 0,
+        slotId,
+        enabled: true,
+        settings: {},
+        installedByUserId: null,
+        appBlock: page.appBlock,
+      };
+    }
+
     // mbi_* / bki_* — historical per-model install ids. Since the 2026-05-30
     // kill_per_model_installs migration, these resolve via block_user
     // _subscriptions.block_instance_id (the UNIQUE column the migration
@@ -1371,6 +1501,125 @@ export class BlockRegistry {
 
     // Unknown prefix → not a recognised blockInstanceId.
     return null;
+  }
+
+  /**
+   * W10 — resolve the STATELESS page block for an approved AppBlock id. A
+   * full-page app (`app.page` slot, entity=none) has NO install row: it is
+   * resolved directly from the approved `AppBlock` (Decision 2 — no migration).
+   * The synthetic block-instance id is `page_<appBlockId>`; this returns the
+   * page block shape the token mint needs (manifest + approvedScopes + app
+   * ceiling), or null when the id is missing / not approved (fail-closed, never
+   * leaks a non-approved app's data).
+   *
+   * `modelId`/`installedByUserId` are intentionally absent for a page —
+   * `source: 'platform_default'` is reused only as the closest non-install
+   * source label; the page path NEVER stamps a modelId and never grants money
+   * scopes (the mint enforces both).
+   */
+  static async resolvePageBlock(
+    appBlockId: string,
+    opts?: { db?: 'read' | 'write' }
+  ): Promise<PageBlockResolution | null> {
+    if (!appBlockId) return null;
+    const db = opts?.db === 'read' ? dbRead : dbWrite;
+    const ab = await db.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        approvedScopes: true,
+        app: { select: { allowedScopes: true } },
+      },
+    });
+    if (!ab || ab.status !== 'approved') return null;
+    const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
+    // A page app MUST declare a `page` block in its manifest. Without it the
+    // app is a region/model block and has no full-page surface to mint for.
+    if (!manifestDeclaresPage(manifest)) return null;
+    return {
+      appBlock: {
+        id: ab.id,
+        blockId: ab.blockId,
+        appId: ab.appId,
+        status: ab.status,
+        manifest,
+        approvedScopes: ab.approvedScopes ?? [],
+        app: ab.app ? { allowedScopes: ab.app.allowedScopes } : null,
+      },
+    };
+  }
+
+  /**
+   * W10 — resolve a page block by its `<slug>` (== AppBlock.block_id), for the
+   * SSR page route. Returns the approved app's id + manifest iframe.src + page
+   * descriptor, or null when no approved page app owns that slug (→ 404).
+   * `block_id` is GLOBALLY unique (`@@unique([blockId])`, the W1 C-3 constraint),
+   * so the slug → app mapping is guaranteed 1:1.
+   */
+  static async resolvePageBlockBySlug(
+    slug: string,
+    opts?: { db?: 'read' | 'write' }
+  ): Promise<PageBlockSsr | null> {
+    if (!slug) return null;
+    const db = opts?.db === 'read' ? dbRead : dbWrite;
+    const ab = await db.appBlock.findFirst({
+      where: { blockId: slug, status: 'approved' },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        manifest: true,
+        // #2: the AppBlock.trustTier COLUMN is the authoritative, mod-controlled
+        // trust tier. It must drive the iframe sandbox — NOT `manifest.trustTier`,
+        // which is a publisher-self-declared field (using it reintroduces the C1
+        // trust-tier self-escalation class for the page sandbox). Mirrors the
+        // model render path, which reads the `trust_tier` column (see
+        // resolveRenderMode + the `r.trust_tier` raw select used by listForModel).
+        trustTier: true,
+      },
+    });
+    if (!ab) return null;
+    const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
+    if (!manifestDeclaresPage(manifest)) return null;
+    const iframe = (manifest.iframe ?? {}) as { src?: unknown };
+    const iframeSrc = typeof iframe.src === 'string' ? iframe.src : '';
+    // #7: extract the sandbox from `iframe.sandbox` independently — the prior
+    // gate on `typeof iframe.src === 'string'` was misleading (sandbox presence
+    // has nothing to do with src being a string). Harmless before (src/sandbox
+    // are written together) but wrong; gate on the field actually being read.
+    const sandbox = typeof iframe === 'object' && iframe !== null
+      ? (iframe as { sandbox?: unknown }).sandbox
+      : '';
+    const page = (manifest.page ?? {}) as { title?: unknown; icon?: unknown };
+    const name = typeof manifest.name === 'string' ? manifest.name : ab.blockId;
+    // #3/#6: surface the page's declared scopes so the host can compute the
+    // ACTUAL granted scope set (declared − missing) for BLOCK_INIT, mirroring
+    // IframeHost. Money/spend scopes are rejected at mint for a page, so this is
+    // effectively the consent-exempt ambient set (apps:storage:*) once approved.
+    const declaredScopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
+      ? ((manifest as { scopes: unknown[] }).scopes.filter(
+          (s): s is string => typeof s === 'string'
+        ))
+      : [];
+    return {
+      appBlockId: ab.id,
+      blockId: ab.blockId,
+      appId: ab.appId,
+      iframeSrc,
+      sandbox: typeof sandbox === 'string' ? sandbox : '',
+      // #2: use the COLUMN (authoritative), never `manifest.trustTier`.
+      trustTier:
+        ab.trustTier === 'verified' || ab.trustTier === 'internal'
+          ? (ab.trustTier as 'verified' | 'internal')
+          : 'unverified',
+      name,
+      pageTitle: typeof page.title === 'string' ? page.title : name,
+      scopes: declaredScopes,
+    };
   }
 
   static async installOnModel(opts: InstallOpts): Promise<{ blockInstanceId: string }> {
@@ -2224,7 +2473,12 @@ export class BlockRegistry {
    * null), which is fine while the surface is dark.
    */
   static async listAvailable(
-    input: ListAvailableInput
+    input: ListAvailableInput,
+    // PAGE-ONLY LAUNCH GATE: when true (a non-moderator caller — the router
+    // passes `!ctx.user?.isModerator`), the marketplace returns ONLY
+    // launch-eligible (page) apps. Defaults false (moderator / internal callers
+    // see everything — grandfather). See launchOnlySqlFilter / isLaunchSlot.
+    launchOnly = false
   ): Promise<{ items: AvailableBlock[]; nextCursor?: string }> {
     const { slotId, query, category, sort, cursor, limit } = input;
     type Row = {
@@ -2295,6 +2549,8 @@ export class BlockRegistry {
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'
+        -- PAGE-ONLY LAUNCH GATE: non-mod callers see launch (page) apps only.
+        AND ${launchOnlySqlFilter(launchOnly)}
         AND (
           ${slotFilter}::text IS NULL
           OR ab.manifest @> ${slotFilter}::jsonb
@@ -2369,7 +2625,14 @@ export class BlockRegistry {
    * app — the router maps that to NOT_FOUND so a non-approved app's data can
    * never be enumerated by id.
    */
-  static async getAppDetail(appBlockId: string): Promise<PublicAppDetail | null> {
+  static async getAppDetail(
+    appBlockId: string,
+    // PAGE-ONLY LAUNCH GATE: when true (non-mod caller), a non-launch (model)
+    // app resolves to null — the router maps that to the SAME NOT_FOUND a
+    // missing/unapproved app produces, so a non-mod can't enumerate or read a
+    // model-slot app's detail. Defaults false (mods see everything).
+    launchOnly = false
+  ): Promise<PublicAppDetail | null> {
     type Row = {
       id: string;
       block_id: string;
@@ -2411,6 +2674,11 @@ export class BlockRegistry {
     // a non-approved row returns null exactly like a missing one — never its
     // data. (The marketplace install mutations apply the same approved gate.)
     if (!row || row.status !== 'approved') return null;
+    // PAGE-ONLY LAUNCH GATE (non-mod): a non-launch (model-slot) app is
+    // indistinguishable from a missing one to the public — return null so the
+    // router surfaces NOT_FOUND (no detail leak). isAppLaunchEligible reuses the
+    // same "declares a page" predicate as the listing filter + the page mint.
+    if (launchOnly && !isAppLaunchEligible(row.manifest)) return null;
     return {
       id: row.id,
       blockId: row.block_id,
@@ -2457,7 +2725,12 @@ export class BlockRegistry {
    * No cursor: the featured set is a small curated list (rail above the grid),
    * capped by `limit` (≤24); paginating a staff-pick rail isn't a requirement.
    */
-  static async getFeaturedBlocks(limit: number): Promise<AvailableBlock[]> {
+  static async getFeaturedBlocks(
+    limit: number,
+    // PAGE-ONLY LAUNCH GATE: non-mod callers get launch (page) apps only;
+    // mods see every featured app. Defaults false. See launchOnlySqlFilter.
+    launchOnly = false
+  ): Promise<AvailableBlock[]> {
     type Row = {
       id: string;
       block_id: string;
@@ -2482,6 +2755,8 @@ export class BlockRegistry {
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'
+        -- PAGE-ONLY LAUNCH GATE: non-mod callers see launch (page) apps only.
+        AND ${launchOnlySqlFilter(launchOnly)}
         AND ab.featured = true
       ORDER BY ab.featured_order ASC NULLS LAST,
                install_count DESC,

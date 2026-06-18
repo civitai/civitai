@@ -47,7 +47,7 @@ import type { TRPCClientErrorBase } from '@trpc/client';
 import type { TRPCDefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BlockSlot } from '~/components/AppBlocks/BlockSlot';
@@ -83,6 +83,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
+import { ModelTensorMetadata } from '~/components/Model/ModelVersions/ModelTensorMetadata';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
@@ -114,7 +115,13 @@ import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { baseModelLicenses, CAROUSEL_LIMIT, constants } from '~/server/common/constants';
+import {
+  baseModelLicenses,
+  CAROUSEL_LIMIT,
+  constants,
+  getEffectiveCommercialUse,
+  getRestrictedNsfwLevelsForBaseModel,
+} from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -231,6 +238,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ...groupedFiles.otherFormatVariants,
     ];
   }, [groupedFiles]);
+  const tensorMetadataEnabled = detailAccordions.includes('tensor-metadata');
+
+  // Shared active-file selection: the download variant picker drives it, and the
+  // Tensors panel follows it (instead of having its own file selector).
+  const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
 
   // Check if this is a component-only model (no model files, only components)
   const isComponentOnlyModel =
@@ -459,6 +471,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${version.meta?.customMessage || 'No reason provided.'}`;
   const license = baseModelLicenses[version.baseModel];
+  // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
+  // Both are derived per displayed version rather than stored on the model.
+  const baseModelRestrictsMature =
+    getRestrictedNsfwLevelsForBaseModel(version.baseModel).length > 0;
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =
     constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0') &&
@@ -478,9 +494,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           {/* Owner-only banner: lists publisher_all_my_models subscriptions
               that would render here so the model owner can opt out of any
               specific subscription for this model. Hidden for non-owners. */}
-          {isOwner && (
-            <PublisherSubscriptionBanner modelId={model.id} modelType={model.type} />
-          )}
+          {isOwner && <PublisherSubscriptionBanner modelId={model.id} modelType={model.type} />}
           {model.mode !== ModelModifier.TakenDown && mobile && (
             <ModelCarousel
               modelId={model.id}
@@ -510,11 +524,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               creatorUserId: model.user.id,
               viewerUserId: user?.id ?? null,
               viewerUsername: user?.username ?? null,
-              viewerStatus: user?.bannedAt
-                ? 'banned'
-                : user?.muted
-                ? 'muted'
-                : 'active',
+              viewerStatus: user?.bannedAt ? 'banned' : user?.muted ? 'muted' : 'active',
               viewerNsfwEnabled: viewerShowNsfw,
               theme: colorScheme === 'dark' ? 'dark' : 'light',
             }}
@@ -876,6 +886,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       versionId={version.id}
                       modelType={model.type}
                       userPreferences={user?.filePreferences}
+                      selectedFileId={selectedFileId}
+                      onSelectFileId={setSelectedFileId}
                       canDownload={canDownload}
                       downloadPrice={
                         !hasDownloadPermissions &&
@@ -1574,6 +1586,14 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>
+            {isDownloadable && modelFilesVisible.length > 0 && (
+              <ModelTensorMetadata
+                files={modelFilesVisible}
+                userPreferences={user?.filePreferences}
+                enabled={tensorMetadataEnabled}
+                selectedFileId={selectedFileId}
+              />
+            )}
             {version.recommendedResources && version.recommendedResources.length > 0 && (
               <Accordion.Item value="recommended-resources">
                 <Accordion.Control>Recommended Resources</Accordion.Control>
@@ -1753,7 +1773,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
           )}
 
           <Group justify="space-between" align="flex-start" wrap="nowrap">
-            {model.type === 'Checkpoint' && (
+            {(model.type === 'Checkpoint' || !!license || model.licenses.length > 0) && (
               <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
                 <Group gap={4} wrap="wrap" align="center">
                   <IconLicense size={16} />
@@ -1805,7 +1825,20 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 ))}
               </Stack>
             )}
-            <PermissionIndicator permissions={model} ml="auto" />
+            <PermissionIndicator
+              permissions={{
+                ...model,
+                // Permissions are derived per displayed version from its base model:
+                // non-commercial base models (e.g. Ideogram) force commercial use off,
+                // and mature-restricted base models force SFW-only generation.
+                allowCommercialUse: getEffectiveCommercialUse(
+                  model.allowCommercialUse,
+                  version.baseModel
+                ),
+                sfwOnly: model.sfwOnly || baseModelRestrictsMature,
+              }}
+              ml="auto"
+            />
           </Group>
           {license?.notice && (
             <Text size="xs" c="dimmed">

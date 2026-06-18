@@ -11,6 +11,11 @@ import { createLogger } from '~/utils/logging';
 // Re-export the key definitions, types, and factory for other consumers.
 export * from '@civitai/redis/client';
 
+// Wall-clock deadline for per-request sysRedis reads — an app-side leaf (reads ~/env/server) so
+// it's unit-testable without building the clients. Re-exported here because callers import it
+// from '~/server/redis/client'.
+export { withSysReadDeadline } from './sys-read-deadline';
+
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var __civitaiRedisClients: RedisClients | undefined;
@@ -34,18 +39,3 @@ const clients: RedisClients = env.IS_BUILD
 
 export const redis = clients.redis;
 export const sysRedis = clients.sysRedis;
-
-/**
- * Wrap a redis client so each command rejects after REDIS_COMMAND_TIMEOUT_MS. ONLY for fail-open callers
- * that catch + degrade (at a non-fail-open site it turns a 30s park into a 500). Returns the client
- * unchanged when the timeout is disabled (env = 0) or the client lacks `withCommandOptions`. Note:
- * node-redis does NOT propagate the per-command timeout into MULTI/pipeline sub-commands.
- */
-export function withRedisCommandTimeout<C>(client: C): C {
-  const timeout = env.REDIS_COMMAND_TIMEOUT_MS;
-  if (!timeout || timeout <= 0) return client;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const withOpts = (client as any).withCommandOptions;
-  if (typeof withOpts !== 'function') return client;
-  return withOpts.call(client, { timeout }) as C;
-}

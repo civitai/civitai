@@ -1,7 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { blockBuzzAttributionWriteCounter } from '~/server/prom/client';
+import {
+  blockBuzzAttributionWriteCounter,
+  blockSpendAttributionWriteCounter,
+  blockSubscriptionAttributionWriteCounter,
+} from '~/server/prom/client';
 import {
   type BlockAttribution,
   type BlockAttributionScope,
@@ -9,8 +13,18 @@ import {
 import {
   newBlockAttributionPayoutId,
   newBlockBuzzAttributionId,
+  newBlockSpendAttributionId,
+  newBlockSubscriptionAttributionId,
 } from '~/server/utils/app-block-ids';
-import { computeRateCardSplit, ACTIVE_RATE_CARD } from './rate-card';
+import {
+  computeRateCardSplit,
+  computeSpendShare,
+  // NOTE: computeSubscriptionShare is intentionally NOT imported here.
+  // Membership attribution is TRACK-ONLY (#2629) — no rate is applied at
+  // write time. The share is computed at payout time (Slice 4) as a backpay
+  // against the signed-off rate over status='tracked' rows.
+  ACTIVE_RATE_CARD,
+} from './rate-card';
 
 export type AttributionPaymentProvider = 'stripe' | 'paddle' | 'nowpayments';
 
@@ -233,6 +247,596 @@ export class AttributionAppMissingError extends Error {
     this.name = 'AttributionAppMissingError';
     this.appId = appId;
   }
+}
+
+// ---------------------------------------------------------------
+// W3 flow A — buzz SPEND attribution (author bounty)
+// ---------------------------------------------------------------
+
+const SPEND_ATTRIBUTION_LOG_NAME = 'block-spend-attribution';
+
+/**
+ * buzzDollarRatio (1000 Buzz = $1 USD) -> Buzz to USD cents. Local
+ * constant (rather than importing the whole constants module into the
+ * service) and documented inline. $1 = 100 cents, so 1000 Buzz = 100
+ * cents => 1 cent per 10 Buzz.
+ */
+const BUZZ_PER_USD = 1000;
+export function buzzSpendToUsdCents(buzzAmount: number): number {
+  // Floor so we never over-state the spend's USD value (which would
+  // over-pay the bounty). e.g. 4999 Buzz -> 499 cents (not 500).
+  return Math.floor((Math.max(0, buzzAmount) / BUZZ_PER_USD) * 100);
+}
+
+export type RecordSpendAttributionInput = {
+  /** The viewer (spender). Server-derived from the verified token's `sub`. */
+  userId: number;
+  /** Buzz the generation burned (the orchestrator-computed cost). */
+  buzzAmount: number;
+  /** Yellow / blue / etc — mirrors BuzzTransaction.fromAccountType. */
+  buzzType?: string;
+  /** Orchestrator workflow id — the idempotency anchor. */
+  workflowId: string;
+  /** OauthClient.id — server-derived from the verified token's `appId`. */
+  appId: string;
+  /** AppBlock.id — server-derived from the verified token's `appBlockId`. */
+  appBlockId: string;
+  /** Block instance id — server-derived from the verified token. */
+  blockInstanceId: string;
+  /** Optional: model the generation ran against (analytics only). */
+  modelId?: number | null;
+};
+
+export type RecordSpendAttributionResult = {
+  /** False when the (workflow, app) UNIQUE blocked a duplicate write. */
+  written: boolean;
+  row: {
+    id: string;
+    status: string;
+    appOwnerShareCents: number;
+    spendSharePct: number;
+    grossValueCents: number;
+    rateCardVersion: string;
+    voidedReason: string | null;
+  };
+};
+
+/**
+ * Record an author bounty for a block-initiated generation that SPENT the
+ * viewer's own Buzz. Idempotent on `(workflow_id, app_block_id)` — a
+ * re-poll / retry / re-submit of the same workflow is a no-op.
+ *
+ * EVERYTHING is server-derived from the verified block-token claims by
+ * the caller (submitWorkflow): appId/appBlockId/blockInstanceId come from
+ * the JWT, the spender from `sub`, and the author is looked up here from
+ * the AppBlock's owning OauthClient. There is NO client-supplied
+ * attribution field — spend is server-initiated via the token, so it is
+ * inherently forge-safe (unlike the purchase/Paddle path, which must
+ * re-derive client metadata via validateBuzzPurchaseAttribution).
+ *
+ * ACCOUNTING: the bounty is platform-funded (paid ON TOP of the spend),
+ * not a cut of the viewer's Buzz. See rate-card.ts RATE_CARD_V4 and the
+ * migration. This function moves NO money and touches NO BuzzTransaction
+ * — it writes a derived audit/payout row. A failed write never affects
+ * the generation (the caller fires it best-effort / fire-and-forget).
+ *
+ * Self-spend (spender == app owner) and internal-owner apps write a
+ * voided, zero-share row so the audit trail exists but nothing enters the
+ * payout pipeline (mirrors recordAttribution's self-purchase wash).
+ */
+export async function recordSpendAttribution(
+  input: RecordSpendAttributionInput
+): Promise<RecordSpendAttributionResult> {
+  const {
+    userId,
+    buzzAmount,
+    buzzType = 'yellow',
+    workflowId,
+    appId,
+    appBlockId,
+    blockInstanceId,
+    modelId = null,
+  } = input;
+
+  // Resolve + snapshot the app owner (mirrors recordAttribution). The
+  // OauthClient is the source of truth for "who owns this app"; we
+  // snapshot userId onto the row so a future reassignment doesn't
+  // re-route past payouts. No owner -> nothing to pay -> abort.
+  const app = await dbRead.oauthClient.findUnique({
+    where: { id: appId },
+    select: { id: true, userId: true },
+  });
+  if (!app) {
+    logToAxiom(
+      {
+        name: SPEND_ATTRIBUTION_LOG_NAME,
+        type: 'warning',
+        message: `spend attribution app not found (skipping write): ${appId}`,
+        appId,
+        workflowId,
+      },
+      'webhooks'
+    ).catch(() => null);
+    throw new AttributionAppMissingError(appId);
+  }
+
+  const grossValueCents = buzzSpendToUsdCents(buzzAmount);
+  const isSelfSpend = userId === app.userId;
+  const share = computeSpendShare({
+    grossValueCents,
+    isSelfSpend,
+    appOwnerUserId: app.userId,
+  });
+
+  // Void zero-share rows that are zero because of WHO spent/owns (not
+  // because the rate is 0%) so they never enter the payout pipeline. A
+  // legitimately rate-0% row stays 'pending' — it carries no money but is
+  // a real attribution we want to confirm/aggregate (so a later non-zero
+  // card change applies going forward).
+  const isInternal = ACTIVE_RATE_CARD.internalAppOwnerUserIds.includes(app.userId);
+  const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
+  const status = voidedReason ? 'voided' : 'pending';
+  const voidedAt = voidedReason ? new Date() : null;
+
+  const id = newBlockSpendAttributionId();
+
+  try {
+    const created = await dbWrite.blockSpendAttribution.create({
+      data: {
+        id,
+        userId,
+        buzzAmount: Math.max(0, Math.floor(buzzAmount)),
+        buzzType,
+        grossValueCents,
+        workflowId,
+        appId,
+        appBlockId,
+        blockInstanceId,
+        modelId,
+        rateCardVersion: share.rateCardVersion,
+        spendSharePct: share.spendSharePct,
+        appOwnerShareCents: share.appOwnerShareCents,
+        appOwnerUserId: app.userId,
+        status,
+        voidedReason,
+        voidedAt,
+      },
+      select: {
+        id: true,
+        status: true,
+        appOwnerShareCents: true,
+        spendSharePct: true,
+        grossValueCents: true,
+        rateCardVersion: true,
+        voidedReason: true,
+      },
+    });
+
+    logToAxiom(
+      {
+        name: SPEND_ATTRIBUTION_LOG_NAME,
+        type: 'info',
+        message: `spend attribution written ${created.id}`,
+        attributionId: created.id,
+        appId,
+        appBlockId,
+        workflowId,
+        buzzAmount,
+        grossValueCents,
+        spendSharePct: share.spendSharePct,
+        appOwnerShareCents: share.appOwnerShareCents,
+        rateCardVersion: share.rateCardVersion,
+        status,
+        voidedReason,
+        isSelfSpend,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    try {
+      blockSpendAttributionWriteCounter.inc({ status });
+    } catch {
+      // swallow — metric write must never back-pressure the caller
+    }
+
+    return { written: true, row: created };
+  } catch (err) {
+    // Idempotency: a re-poll / retry / re-submit that races the original
+    // write lands on the (workflow_id, app_block_id) UNIQUE -> P2002.
+    // Return the pre-existing row so callers treat first-write and retry
+    // uniformly. Duck-type the Prisma error code (the class isn't always
+    // constructible when the generated client is stale in tests).
+    const code = (err as { code?: unknown })?.code;
+    if (code === 'P2002') {
+      const existing = await dbRead.blockSpendAttribution.findUnique({
+        where: {
+          workflowId_appBlockId: { workflowId, appBlockId },
+        },
+        select: {
+          id: true,
+          status: true,
+          appOwnerShareCents: true,
+          spendSharePct: true,
+          grossValueCents: true,
+          rateCardVersion: true,
+          voidedReason: true,
+        },
+      });
+      if (existing) {
+        try {
+          blockSpendAttributionWriteCounter.inc({ status: 'duplicate' });
+        } catch {
+          // swallow
+        }
+        return { written: false, row: existing };
+      }
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------
+// W3 flow C — MEMBERSHIP / subscription attribution
+// ---------------------------------------------------------------
+
+const SUBSCRIPTION_ATTRIBUTION_LOG_NAME = 'block-subscription-attribution';
+
+/**
+ * The single membership-attribution scope. A membership purchase has no
+ * install scope the way a Buzz purchase does (the user bought a recurring
+ * platform subscription, not an app install) — it resolves to one flat
+ * `subscription` category. Kept as a const so the rate card / row writers
+ * agree on the literal.
+ */
+export const SUBSCRIPTION_ATTRIBUTION_SCOPE = 'subscription' as const;
+
+/**
+ * Sentinel `rate_card_version` for TRACK-ONLY membership rows (#2629). No
+ * rate card is applied at attribution-write time, so no real version is
+ * stamped — the row records the money basis (gross + fee) and the share is
+ * computed at payout time (Slice 4) as a backpay. A row carrying this
+ * sentinel + status='tracked' is "share-pending": the payout rail re-stamps
+ * the signed-off version when it computes the share.
+ */
+export const UNRATED_RATE_CARD_VERSION = 'unrated' as const;
+
+export type RecordSubscriptionAttributionInput = {
+  /** The subscriber (purchaser). Trusted: derived from the invoice's customer→User. */
+  userId: number;
+  /** Membership monthly Buzz bonus for this invoice (analytics only). */
+  buzzAmount?: number;
+  buzzType?: string;
+  /** Gross USD of the invoice, in cents (Stripe invoice amount_paid). */
+  usdAmountCents: number;
+  /** Provider fee in cents — taken off the top before author share. */
+  providerFeeCents: number;
+  paymentProvider: AttributionPaymentProvider;
+  /** Per-period idempotency anchor — the invoice id. */
+  invoiceId: string;
+  /** Subscription id (groups the periods). */
+  subscriptionId?: string | null;
+  /** subscription_create | subscription_cycle | subscription_update. */
+  billingReason?: string | null;
+  periodStart?: Date | null;
+  periodEnd?: Date | null;
+  /** Membership tier at write time (analytics). */
+  tier?: string | null;
+  /**
+   * Server-derived block attribution (already FIN-1 re-derived at checkout
+   * and stamped onto the subscription metadata; the webhook reads it back
+   * and re-confirms the app owner here). appId/appBlockId/blockInstanceId
+   * are authoritative; scope/modelId are analytics.
+   */
+  attribution: Pick<BlockAttribution, 'appId' | 'appBlockId' | 'blockInstanceId' | 'modelId'>;
+};
+
+export type RecordSubscriptionAttributionResult = {
+  /** False when the (invoice, app) UNIQUE blocked a duplicate write. */
+  written: boolean;
+  row: {
+    id: string;
+    status: string;
+    appOwnerShareCents: number;
+    platformShareCents: number;
+    providerFeeCents: number;
+    subscriptionSharePct: number;
+    grossValueCents: number;
+    rateCardVersion: string;
+    voidedReason: string | null;
+  };
+};
+
+/**
+ * Record a revenue share for one PAID INVOICE of a block-initiated
+ * membership (recurring subscription) purchase. Idempotent on
+ * `(invoice_id, app_block_id)` — a webhook retry for the same invoice is a
+ * no-op (P2002 caught + treated as already-written). Each RENEWAL invoice
+ * has its own invoice_id, so it writes its OWN row — this is the
+ * RENEWALS-PAY policy (flagged for sign-off; the caller can gate to
+ * billing_reason='subscription_create' for a first-only policy).
+ *
+ * ⚠️ TRACK-ONLY (#2629). This write records the ATTRIBUTION EVENT + the
+ * MONEY BASIS (gross + provider_fee) only. It does NOT apply the rate card
+ * and does NOT bake an author share. The row is written:
+ *   - status               = 'tracked'  (share-pending, not yet computed)
+ *   - app_owner_share_cents = 0
+ *   - subscription_share_pct= 0         (no rate applied)
+ *   - rate_card_version     = 'unrated' (no version stamped)
+ *   - platform_share_cents  = net (gross - fee), so the conservation CHECK
+ *                             (fee + platform + author = gross) still holds
+ *                             with author = 0.
+ * The author share is DEFERRED to PAYOUT time: the future payout rail
+ * (Slice 4) reads status='tracked' rows and computes
+ * author_share = net × <signed-off subscriptionSharePct> as a clean
+ * retroactive BACKPAY, then transitions them to a computed/confirmed state.
+ * Because the tracked row carries gross + fee, that computation is exact.
+ *
+ * WHY: committing a share at the placeholder rate before monetization
+ * sign-off would lock these immutable rows to the placeholder (each row
+ * pays out under its STAMPED snapshot forever). Recording the basis now and
+ * applying the signed-off rate later removes the placeholder-rate liability.
+ *
+ * This function moves NO money and touches NO BuzzTransaction — the buzz
+ * grant + reward happen in manageInvoicePaid before this is called. A
+ * failed write here MUST NOT break membership provisioning (the caller
+ * fires it best-effort / fire-and-forget).
+ *
+ * Self-purchase (subscriber == app owner) and internal-owner apps write a
+ * voided, zero-share row so the audit trail exists but nothing is ever
+ * backpaid (mirrors recordAttribution's self-purchase wash).
+ */
+export async function recordSubscriptionAttribution(
+  input: RecordSubscriptionAttributionInput
+): Promise<RecordSubscriptionAttributionResult> {
+  const {
+    userId,
+    buzzAmount = 0,
+    buzzType = 'yellow',
+    usdAmountCents,
+    providerFeeCents,
+    paymentProvider,
+    invoiceId,
+    subscriptionId = null,
+    billingReason = null,
+    periodStart = null,
+    periodEnd = null,
+    tier = null,
+    attribution,
+  } = input;
+
+  // Resolve + snapshot the app owner (mirrors recordAttribution). No owner
+  // -> nothing to pay -> abort (don't write an orphan row).
+  const app = await dbRead.oauthClient.findUnique({
+    where: { id: attribution.appId },
+    select: { id: true, userId: true },
+  });
+  if (!app) {
+    logToAxiom(
+      {
+        name: SUBSCRIPTION_ATTRIBUTION_LOG_NAME,
+        type: 'warning',
+        message: `subscription attribution app not found (skipping write): ${attribution.appId}`,
+        appId: attribution.appId,
+        paymentProvider,
+        invoiceId,
+      },
+      'webhooks'
+    ).catch(() => null);
+    throw new AttributionAppMissingError(attribution.appId);
+  }
+
+  const isSelfPurchase = userId === app.userId;
+  const isInternal = ACTIVE_RATE_CARD.internalAppOwnerUserIds.includes(app.userId);
+
+  // TRACK-ONLY money basis: record gross + provider_fee, defer the share.
+  // NO rate card is applied here (no computeSubscriptionShare call). The
+  // backpay (Slice 4) re-splits `net` into platform/author at the signed-off
+  // rate. Today: author = 0, platform = net, so the conservation CHECK
+  // (fee + platform + author = gross) holds.
+  const safeGross = Math.max(0, Math.floor(usdAmountCents));
+  const safeFee = Math.max(0, Math.min(safeGross, Math.floor(providerFeeCents)));
+  const net = safeGross - safeFee;
+  const appOwnerShareCents = 0;
+  const platformShareCents = net;
+  const providerFeeCentsFinal = safeFee;
+  // No rate applied → no version stamped (sentinel) and 0%.
+  const rateCardVersion = UNRATED_RATE_CARD_VERSION;
+  const subscriptionSharePct = 0;
+
+  // Void rows that are zero because of WHO bought/owns so they are never
+  // backpaid. Otherwise the row is 'tracked' — share-pending, awaiting the
+  // payout-time backpay at the signed-off rate.
+  const voidedReason = isSelfPurchase
+    ? 'self_purchase'
+    : isInternal
+    ? 'internal_owner'
+    : null;
+  const status = voidedReason ? 'voided' : 'tracked';
+  const voidedAt = voidedReason ? new Date() : null;
+
+  const id = newBlockSubscriptionAttributionId();
+
+  try {
+    const created = await dbWrite.blockSubscriptionAttribution.create({
+      data: {
+        id,
+        userId,
+        buzzAmount: Math.max(0, Math.floor(buzzAmount)),
+        buzzType,
+        grossValueCents: safeGross,
+        paymentProvider,
+        invoiceId,
+        subscriptionId,
+        billingReason,
+        periodStart,
+        periodEnd,
+        appId: attribution.appId,
+        appBlockId: attribution.appBlockId,
+        blockInstanceId: attribution.blockInstanceId,
+        scope: SUBSCRIPTION_ATTRIBUTION_SCOPE,
+        modelId: attribution.modelId ?? null,
+        tier,
+        rateCardVersion,
+        subscriptionSharePct,
+        appOwnerShareCents,
+        platformShareCents,
+        providerFeeCents: providerFeeCentsFinal,
+        appOwnerUserId: app.userId,
+        status,
+        entryType: 'charge',
+        voidedReason,
+        voidedAt,
+      },
+      select: {
+        id: true,
+        status: true,
+        appOwnerShareCents: true,
+        platformShareCents: true,
+        providerFeeCents: true,
+        subscriptionSharePct: true,
+        grossValueCents: true,
+        rateCardVersion: true,
+        voidedReason: true,
+      },
+    });
+
+    logToAxiom(
+      {
+        name: SUBSCRIPTION_ATTRIBUTION_LOG_NAME,
+        type: 'info',
+        message: `subscription attribution written ${created.id}`,
+        attributionId: created.id,
+        appId: attribution.appId,
+        appBlockId: attribution.appBlockId,
+        paymentProvider,
+        invoiceId,
+        subscriptionId,
+        billingReason,
+        usdAmountCents,
+        appOwnerShareCents,
+        platformShareCents,
+        providerFeeCents: providerFeeCentsFinal,
+        subscriptionSharePct,
+        rateCardVersion,
+        status,
+        voidedReason,
+        isSelfPurchase,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    try {
+      blockSubscriptionAttributionWriteCounter.inc({
+        provider: paymentProvider,
+        status,
+        billing_reason: billingReason ?? 'unknown',
+      });
+    } catch {
+      // swallow — metric write must never back-pressure the webhook path
+    }
+
+    return { written: true, row: created };
+  } catch (err) {
+    // Idempotency: a webhook retry for the same invoice lands on the
+    // (invoice_id, app_block_id) UNIQUE → P2002. Return the pre-existing
+    // row so callers treat first-write + retry uniformly.
+    const code = (err as { code?: unknown })?.code;
+    if (code === 'P2002') {
+      const existing = await dbRead.blockSubscriptionAttribution.findUnique({
+        where: {
+          invoiceId_appBlockId: { invoiceId, appBlockId: attribution.appBlockId },
+        },
+        select: {
+          id: true,
+          status: true,
+          appOwnerShareCents: true,
+          platformShareCents: true,
+          providerFeeCents: true,
+          subscriptionSharePct: true,
+          grossValueCents: true,
+          rateCardVersion: true,
+          voidedReason: true,
+        },
+      });
+      if (existing) {
+        try {
+          blockSubscriptionAttributionWriteCounter.inc({
+            provider: paymentProvider,
+            status: 'duplicate',
+            billing_reason: billingReason ?? 'unknown',
+          });
+        } catch {
+          // swallow
+        }
+        return { written: false, row: existing };
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * Void the subscription-attribution rows for one paid invoice in response
+ * to a refund / chargeback / proration. Idempotent — voiding an
+ * already-voided row is a no-op.
+ *
+ * ⚠️ TRACK-ONLY (#2629). Membership rows are written status='tracked' with
+ * app_owner_share_cents = 0 and are NEVER paid out (no rate is applied until
+ * the payout-time backpay). A refunded purchase must simply be VOIDED before
+ * any backpay runs so the future payout rail never computes a share for it.
+ *
+ * There is NO negative carry-forward clawback to write: with author = 0 on
+ * every tracked row, a void leaves nothing owed. (Once the payout rail
+ * exists and transitions tracked → paid_out with a real share, a refund of
+ * an already-paid period WILL need a clawback — that belongs to the payout
+ * slice, written against the rate it actually paid. This function only has
+ * to neutralize unpaid tracked rows, which the void below does.)
+ *
+ * Returns the count of rows voided.
+ */
+export async function voidSubscriptionAttributionsForInvoice({
+  paymentProvider,
+  invoiceId,
+  reason,
+}: {
+  paymentProvider: AttributionPaymentProvider;
+  invoiceId: string;
+  reason: 'refund' | 'chargeback' | 'proration' | 'manual_review';
+}): Promise<number> {
+  // Void the forward 'charge' rows for this invoice that haven't already
+  // been voided. 'tracked' is the live track-only state; pending/confirmed/
+  // paid_out are included defensively so a future payout-promoted row is
+  // also neutralized here (the paid-out clawback is the payout slice's job).
+  const result = await dbWrite.blockSubscriptionAttribution.updateMany({
+    where: {
+      paymentProvider,
+      invoiceId,
+      entryType: 'charge',
+      status: { in: ['tracked', 'pending', 'confirmed', 'paid_out'] },
+    },
+    data: {
+      status: 'voided',
+      voidedReason: reason,
+      voidedAt: new Date(),
+    },
+  });
+
+  if (result.count > 0) {
+    logToAxiom(
+      {
+        name: SUBSCRIPTION_ATTRIBUTION_LOG_NAME,
+        type: 'info',
+        message: `voided ${result.count} subscription attribution row(s) for ${invoiceId}`,
+        paymentProvider,
+        invoiceId,
+        reason,
+        count: result.count,
+      },
+      'webhooks'
+    ).catch(() => null);
+  }
+
+  return result.count;
 }
 
 /** Synthetic payment_transaction_id suffix for clawback rows so they don't

@@ -38,6 +38,15 @@ export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 // clamps these server-side, so these are UX guard rails rather than the source of truth.
 export const AI_TOOLKIT_EPOCHS = { default: 10, min: 1, max: 20 } as const;
 
+// "Save every N steps" bounds — the secondary length knob. Kept here so the input config
+// and the per-run seeds stay in sync (seeds must clamp to >= min, not 1).
+export const AI_TOOLKIT_SAVE_EVERY = { default: 200, min: 50, max: 5000, step: 50 } as const;
+
+/** Seed "Save every" so the run starts at ~AI_TOOLKIT_EPOCHS.default checkpoints, never
+ *  below the input minimum even if the step default is small. */
+export const aiToolkitSaveEveryDefault = (steps: number): number =>
+  Math.max(AI_TOOLKIT_SAVE_EVERY.min, Math.round(steps / AI_TOOLKIT_EPOCHS.default));
+
 export const aiToolkitStepDefault = (baseType: TrainingBaseModelType): number =>
   baseType === 'ltx2' || baseType === 'ltx23' ? 3000 : baseType === 'anima' ? 1500 : 2000;
 
@@ -282,8 +291,7 @@ export const trainingModelInfo: {
     label: 'Standard',
     pretty: 'HiDream O1',
     type: 'hidream-o1',
-    description:
-      "HiDream.ai's 8B pixel-level unified transformer for text-to-image. Preview — settings, pricing, and results are subject to change.",
+    description: "HiDream.ai's 8B pixel-level unified transformer for text-to-image.",
     air: 'urn:air:hidreamo1:checkpoint:civitai:2618495@2939946',
     // Must match the canonical ecosystem key in basemodel.constants.ts
     // (`key: 'HiDream-O1'`). The value flows into ModelVersion.baseModel
@@ -297,11 +305,10 @@ export const trainingModelInfo: {
   },
   //
   anima: {
-    label: 'Base [v1.0]',
+    label: 'Base',
     pretty: 'Anima Base v1.0',
     type: 'anima',
-    description:
-      "CircleStone Labs' Anima image model (Base v1.0). Preview — settings, pricing, and results are subject to change.",
+    description: "CircleStone Labs' Anima image model (Base v1.0).",
     air: 'urn:air:anima:checkpoint:civitai:2458426@2945208',
     baseModel: 'Anima',
     isNew: true,

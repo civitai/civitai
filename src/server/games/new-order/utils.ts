@@ -4,6 +4,8 @@ import { CacheTTL } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { hSetWithTTL, zAddWithTTL } from '~/server/redis/atomic';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
@@ -31,16 +33,48 @@ function createCounter<TId extends number | string = number | string>({
   ordered,
 }: CounterOptions<TId>) {
   async function setCacheValue(id: TId, value: number) {
+    // Fail-open wrappers (PR #2332 round-4 audit fix): a sysRedis
+    // failover (Phase 4) during a judgment write would otherwise 500 the
+    // submission. The counter is a cache mirror of ClickHouse-truth
+    // counts (the `fetchCount` callback) — a missed write reverts to a
+    // cache miss on the next read and re-hydrates from source. Subtype
+    // `write-degraded` matches session-invalidation.updateSessionState.
+    // Preserve the `ttl === 0` bypass: PEXPIRE/HPEXPIRE with 0ms would
+    // DELETE the key/field (see atomic.ts header — that's why the
+    // helpers' ttlMs > 0 guard exists).
     if (ordered) {
-      const promises: Promise<unknown>[] = [
-        sysRedis.zAdd(key, { score: value, value: id.toString() }),
-      ];
-      if (ttl !== 0) promises.push(sysRedis.expire(key, ttl));
-      await Promise.all(promises);
+      if (ttl !== 0) {
+        // Atomic single-EVAL replaces racy Promise.all([zAdd, expire]).
+        // ttl===0 path stays bare zAdd — PEXPIRE with 0ms would DELETE the key.
+        try {
+          await zAddWithTTL(sysRedis, key, value, id.toString(), ttl * 1000);
+        } catch (error) {
+          logSysRedisFailOpen(
+            'write-degraded',
+            'new-order.createCounter.zAdd',
+            error,
+            { key, id }
+          );
+        }
+      } else {
+        await sysRedis.zAdd(key, { score: value, value: id.toString() });
+      }
     } else {
-      const promises: Promise<unknown>[] = [sysRedis.hSet(key, id.toString(), value)];
-      if (ttl !== 0) promises.push(sysRedis.hExpire(key, id.toString(), ttl));
-      await Promise.all(promises);
+      if (ttl !== 0) {
+        // Atomic single-EVAL replaces racy Promise.all([hSet, hExpire]).
+        try {
+          await hSetWithTTL(sysRedis, key, id.toString(), value, ttl * 1000);
+        } catch (error) {
+          logSysRedisFailOpen(
+            'write-degraded',
+            'new-order.createCounter.hSet',
+            error,
+            { key, id }
+          );
+        }
+      } else {
+        await sysRedis.hSet(key, id.toString(), value);
+      }
     }
   }
 
@@ -816,8 +850,26 @@ export async function getVotingCooldownUntil(userId: number): Promise<number | n
 }
 
 /**
- * Get rate limit config from Redis. Returns null if unavailable — callers
- * should deny the vote when config is not available.
+ * Conservative fallback limits used ONLY when the Redis config key is *absent*
+ * (wiped, never seeded, or sysRedis data loss) — NOT when Redis itself is down.
+ *
+ * A missing `new-order:config` must degrade the game to sane limits instead of
+ * locking every voter out. On 2026-06-15 the key vanished and the rate limiter
+ * fail-closed on every vote, surfacing a permanent fake "60s cooldown" (the
+ * `cooldownUntil: 0` → `: 60` fallback in the service) that never cleared.
+ * These defaults keep prolific legit voters playing while still capping bots;
+ * mods re-tune the live values via the `mod/new-order/rate-limit-config` PUT.
+ */
+export const DEFAULT_VOTING_RATE_LIMIT_CONFIG: VotingRateLimitConfig = {
+  perMinute: 40,
+  perHour: 600,
+  perDay: 3000,
+};
+
+/**
+ * Get rate limit config from Redis. Returns null when the key is absent or
+ * sysRedis errors. `checkVotingRateLimit` treats null as "use defaults" (the
+ * game stays up); a truly unavailable `redis` client still fails closed.
  */
 export async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig | null> {
   try {
@@ -843,15 +895,21 @@ export async function checkVotingRateLimit(userId: number): Promise<{
     return DENIED_RESPONSE;
   }
 
-  const limits = await getVotingRateLimitConfig();
-  if (!limits) {
+  // Missing config is NOT the same failure as "Redis is down". A wiped/unseeded
+  // `new-order:config` must degrade to defaults so the game stays playable —
+  // fail-closing here locked every voter out on 2026-06-15. The `!redis` guard
+  // above and the catch below still fail closed for genuine Redis outages.
+  const configuredLimits = await getVotingRateLimitConfig();
+  const limits = configuredLimits ?? DEFAULT_VOTING_RATE_LIMIT_CONFIG;
+  if (!configuredLimits && Math.random() < 0.01) {
+    // Sampled — this is the steady-state degraded path while the key is missing,
+    // so it must stay observable (re-seed signal) without flooding Axiom.
     logToAxiom({
-      type: 'error',
-      name: 'new-order-rate-limit-unavailable',
-      details: { userId, reason: 'config-not-set' },
-      message: `Rate limiter denied vote for user ${userId}: rate limit config not set in Redis`,
+      type: 'warning',
+      name: 'new-order-rate-limit-config-missing',
+      details: { userId, reason: 'config-not-set-using-defaults' },
+      message: `new-order:config missing — rate limiter using built-in defaults for user ${userId}; re-seed the Redis config`,
     }).catch(() => null);
-    return DENIED_RESPONSE;
   }
 
   const now = Date.now();

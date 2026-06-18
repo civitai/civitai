@@ -12,7 +12,7 @@ import { resolveRequestSignIn } from './requestSignInGate';
 import { resolveRequestConsent } from './requestConsentGate';
 import { hideBlock } from './hiddenBlocks';
 import { sanitizeAppChromeName } from './appChromeName';
-import { intersectSandbox } from './sandbox';
+import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { projectBlockInitContext, projectBlockInitViewer } from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { usePostMessage } from './usePostMessage';
@@ -252,7 +252,20 @@ export function IframeHost({
     }
   }, [iframeSrc]);
 
-  const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin });
+  // The EFFECTIVE sandbox handed to the iframe attribute below. Derive the
+  // transport's opaque-origin mode from the SAME string so they can never
+  // drift: unverified (no allow-same-origin) → opaque frame → opaque transport;
+  // internal/verified (has allow-same-origin) → real origin → pinned transport.
+  const effectiveSandbox = useMemo(
+    () => intersectSandbox(install.manifest.iframe?.sandbox, install.trustTier),
+    [install.manifest.iframe?.sandbox, install.trustTier]
+  );
+  const opaqueOrigin = useMemo(
+    () => effectiveSandboxIsOpaque(effectiveSandbox),
+    [effectiveSandbox]
+  );
+
+  const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin, opaqueOrigin });
 
   // applyHeight is wrapped so the postMessage subscribers keep a stable
   // reference even though install.manifest is stable across renders.
@@ -297,10 +310,16 @@ export function IframeHost({
   // can display the budget without a JWT decode. Only present when the token
   // actually carries ai:write:budgeted (i.e. after consent); absent otherwise —
   // a budget cap is meaningless without the spend scope it bounds.
+  //
+  // Must stay in lockstep with the server's `resolveBuzzBudget`
+  // (src/pages/api/v1/block-tokens/index.ts): require an INTEGER (not merely a
+  // finite number) so a fractional / Infinity / NaN value falls back to the
+  // default here exactly as the server mints it — otherwise the UI would show a
+  // per-gen budget the server never signed.
   const buzzBudget = useMemo<number | undefined>(() => {
     if (!grantedScopes.includes('ai:write:budgeted')) return undefined;
     const raw = install.publisherSettings?.buzz_budget_per_gen;
-    const candidate = typeof raw === 'number' && Number.isFinite(raw) ? raw : 10;
+    const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : 10;
     if (candidate <= 0) return undefined;
     return Math.min(candidate, 1000);
   }, [grantedScopes, install.publisherSettings]);
@@ -1158,7 +1177,7 @@ export function IframeHost({
         // H-6: client-side sandbox allowlist intersection — defense in depth
         // against a future server-side bypass that lets a dangerous token
         // reach the iframe attribute.
-        sandbox={intersectSandbox(install.manifest.iframe?.sandbox, install.trustTier)}
+        sandbox={effectiveSandbox}
         // H-6: no-referrer keeps the model page URL out of the publisher's
         // server logs.
         referrerPolicy="no-referrer"

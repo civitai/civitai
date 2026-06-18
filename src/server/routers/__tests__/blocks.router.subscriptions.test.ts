@@ -19,25 +19,35 @@ const {
   mockListAvailable,
   mockUpsertSubscription,
   mockDeleteSubscription,
+  mockInstallOnModel,
+  mockUpdateSettings,
+  mockToggleEnabled,
   mockIsAppBlocksEnabled,
   mockDbReadAppBlockFindUnique,
+  mockDbWriteModelFindUnique,
+  mockDbWriteSubscriptionFindUnique,
   mockGetUserBuzzAccounts,
 } = vi.hoisted(() => ({
   mockListUserSubscriptions: vi.fn(),
   mockListAvailable: vi.fn(),
   mockUpsertSubscription: vi.fn(),
   mockDeleteSubscription: vi.fn(async () => undefined),
+  mockInstallOnModel: vi.fn(),
+  mockUpdateSettings: vi.fn(async () => undefined),
+  mockToggleEnabled: vi.fn(async () => undefined),
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockDbReadAppBlockFindUnique: vi.fn(),
+  mockDbWriteModelFindUnique: vi.fn(),
+  mockDbWriteSubscriptionFindUnique: vi.fn(),
   mockGetUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
 }));
 
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
     listForModel: vi.fn(),
-    installOnModel: vi.fn(),
-    updateSettings: vi.fn(),
-    toggleEnabled: vi.fn(),
+    installOnModel: mockInstallOnModel,
+    updateSettings: mockUpdateSettings,
+    toggleEnabled: mockToggleEnabled,
     uninstallFromModel: vi.fn(),
     listUserSubscriptions: mockListUserSubscriptions,
     listAvailable: mockListAvailable,
@@ -52,7 +62,11 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: { appBlock: { findUnique: mockDbReadAppBlockFindUnique } },
-  dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
+  dbWrite: {
+    modelBlockInstall: { findUnique: vi.fn() },
+    model: { findUnique: mockDbWriteModelFindUnique },
+    blockUserSubscription: { findUnique: mockDbWriteSubscriptionFindUnique },
+  },
 }));
 // Mock the heavy peer modules the router imports so the import graph
 // stays cheap and we don't accidentally hit live deps.
@@ -107,6 +121,20 @@ vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: mockGetUserBuzzAccounts,
 }));
+// blocks.router imports `rateLimit` from middleware.trpc, which transitively
+// pulls in user-preferences.service → caches.ts → tag.selector (a top-level
+// `Prisma.validator(...)` call). In a fresh worktree the generated Prisma client
+// can't be produced (NixOS engine fetch), so evaluating that chain throws at
+// import time. Mock middleware.trpc with a pass-through `rateLimit` middleware
+// (built from the real, lightweight `middleware` factory) to cut the chain —
+// rate-limiting isn't under test here. (Same shim the sibling
+// blocks.router.getInstallConfig.test.ts / flag-gate.test.ts use.)
+vi.mock('~/server/middleware.trpc', async () => {
+  const { middleware } = await import('~/server/trpc');
+  return {
+    rateLimit: () => middleware(({ next }) => next()),
+  };
+});
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -147,7 +175,12 @@ beforeEach(() => {
   mockListAvailable.mockReset();
   mockUpsertSubscription.mockReset();
   mockDeleteSubscription.mockReset();
+  mockInstallOnModel.mockReset();
+  mockUpdateSettings.mockReset();
+  mockToggleEnabled.mockReset();
   mockDbReadAppBlockFindUnique.mockReset();
+  mockDbWriteModelFindUnique.mockReset();
+  mockDbWriteSubscriptionFindUnique.mockReset();
   mockIsAppBlocksEnabled.mockReset();
   mockIsAppBlocksEnabled.mockImplementation(async () => true);
 });
@@ -205,8 +238,25 @@ describe('blocks.listAvailable (public)', () => {
       slotId: 'model.sidebar_top',
       limit: 5,
     });
+    // PAGE-ONLY LAUNCH GATE: the router passes a second `launchOnly` arg =
+    // `!isModerator`. For this MODERATOR caller it's `false` (grandfather — sees
+    // everything).
     expect(mockListAvailable).toHaveBeenCalledWith(
-      expect.objectContaining({ query: 'generate', slotId: 'model.sidebar_top', limit: 5 })
+      expect.objectContaining({ query: 'generate', slotId: 'model.sidebar_top', limit: 5 }),
+      false
+    );
+  });
+
+  it('passes launchOnly=true to the service for a NON-MOD caller (public sees page apps only)', async () => {
+    mockListAvailable.mockResolvedValue({ items: [], nextCursor: undefined });
+    // Force the flag ON for a non-mod (models the post-launch segment-widen) so
+    // the call reaches the service and we can assert the launchOnly arg.
+    mockIsAppBlocksEnabled.mockImplementation(async () => true);
+    const caller = blocksRouter.createCaller(authedCtx(42, false) as never);
+    await caller.listAvailable({ limit: 20 });
+    expect(mockListAvailable).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 20 }),
+      true
     );
   });
 
@@ -377,60 +427,28 @@ describe('blocks.deleteSubscription (guarded)', () => {
 });
 
 /**
- * Phase 2 — App Blocks is moderator-only until GA. The ~23 management
- * procedures were converted from `guardedProcedure` (= any verified, not-muted
- * user) to `moderatorProcedure` (= protectedProcedure.use(isMod)). A NON-mod
- * but otherwise-valid verified user must now get FORBIDDEN from every one of
- * them. We sample a representative spread (install management, publish-request
- * review, subscription writes, revenue reads) — they all share the same
- * procedure builder, so one regression in `moderatorProcedure` would flip the
- * whole set.
+ * Layer 1 (App Blocks launch gate-lift) — the six own-data INSTALL procedures
+ * (installOnModel, updateSettings, toggleEnabled, getInstallConfig,
+ * upsertSubscription, deleteSubscription) were widened
+ * `moderatorProcedure → protectedProcedure`, keeping `.use(enforceAppBlocksFlag)`.
+ *
+ * The change is INERT until the Flipt segment widen because the flag stays
+ * mod-segmented: a non-mod sees the flag OFF → `enforceAppBlocksFlag` throws
+ * UNAUTHORIZED before the body. Once the segment widens (flag ON for a non-mod),
+ * the procedure is OWNER-SCOPED — a non-mod OWNER can act; a non-mod NON-owner
+ * is rejected; per-user writes stamp `ctx.user.id` (never input).
+ *
+ * upsertSubscription/deleteSubscription/installOnModel were previously asserted
+ * as FORBIDDEN-for-non-mod here (the old Phase-2 mod gate). That belt is gone by
+ * design for these own-data procs; the coverage now lives in the
+ * 'Layer 1 — install procs widened to protectedProcedure' describe below. The
+ * procedures kept in THIS block (mod-review queue + revenue/apps developer reads)
+ * remain mod-gated.
  */
-describe('Phase 2 — management procedures reject non-mod verified users (FORBIDDEN)', () => {
+describe('Phase 2 — mod-only procedures reject non-mod verified users (FORBIDDEN)', () => {
   function nonMod() {
     return blocksRouter.createCaller(authedCtx(42, false) as never);
   }
-
-  it('upsertSubscription → FORBIDDEN', async () => {
-    await expect(
-      nonMod().upsertSubscription({
-        appBlockId: 'ab_x',
-        scope: 'viewer_personal',
-        targetModelTypes: null,
-        targetBaseModels: null,
-        settings: {},
-      })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(mockUpsertSubscription).not.toHaveBeenCalled();
-    // The app-block lookup must not even run — isMod gates before the body.
-    expect(mockDbReadAppBlockFindUnique).not.toHaveBeenCalled();
-  });
-
-  it('deleteSubscription → FORBIDDEN', async () => {
-    await expect(
-      nonMod().deleteSubscription({ subscriptionId: 'bus_x' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(mockDeleteSubscription).not.toHaveBeenCalled();
-  });
-
-  // NOTE: listMySubscriptions / listMyScopeGrants / listMyAppActivity /
-  // listMyScopeInvocations + the own-data management actions (uninstallFromModel,
-  // setSubscriptionPinnedVersion) were GA-relaxed moderator→protected (gotcha
-  // #66) — they're own-data and self-scoped, so a non-mod is NO LONGER FORBIDDEN.
-  // The non-mod happy path for listMySubscriptions is asserted in the
-  // 'blocks.listMySubscriptions (guarded)' describe above. The procedures kept
-  // in this block (install/upsert/delete + the mod-review queue + revenue/apps)
-  // remain mod-gated.
-
-  it('installOnModel → FORBIDDEN', async () => {
-    await expect(
-      nonMod().installOnModel({
-        modelId: 7,
-        appBlockId: 'ab_x',
-        slotId: 'model.sidebar_top',
-      })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-  });
 
   it('listPendingRequests (mod queue) → FORBIDDEN', async () => {
     await expect(nonMod().listPendingRequests({ limit: 20 })).rejects.toMatchObject({
@@ -450,5 +468,242 @@ describe('Phase 2 — management procedures reject non-mod verified users (FORBI
 
   it('getMyApps → FORBIDDEN', async () => {
     await expect(nonMod().getMyApps()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
+
+/**
+ * Layer 1 (App Blocks launch gate-lift) — the six own-data INSTALL procedures
+ * were widened `moderatorProcedure → protectedProcedure` while KEEPING
+ * `.use(enforceAppBlocksFlag)`. For each we assert the three invariants that make
+ * the swap safe + provably inert:
+ *
+ *   (a) non-mod OWNER + flag ON  → succeeds (owner-scoped, not mod-scoped);
+ *   (b) non-mod NON-owner + flag ON → authorization error (owner check holds);
+ *   (c) flag OFF → blocked (UNAUTHORIZED on mutations / empty-soft on the query),
+ *       which is the LIVE state for every non-mod today (mod-segmented flag) —
+ *       hence the change is inert until the Flipt segment widen.
+ *
+ * `fakePerUserFlag` mirrors the live mod-segmented `app-blocks-enabled` rule
+ * (ON iff the caller is a moderator) for the (c) cases; the (a)/(b) cases force
+ * the flag ON to model the post-widen world.
+ */
+function fakePerUserFlag(opts?: { user?: { isModerator?: boolean } }) {
+  return Promise.resolve(!!opts?.user?.isModerator);
+}
+
+describe('Layer 1 — install procs widened to protectedProcedure (owner-scoped, inert until flip)', () => {
+  const OWNER_ID = 100;
+  const OTHER_ID = 200;
+
+  describe('installOnModel', () => {
+    const input = { modelId: 7, appBlockId: 'ab_x', slotId: 'model.sidebar_top' as const };
+
+    // PAGE-ONLY LAUNCH GATE: installOnModel only ever targets a MODEL slot, which
+    // is a non-launch slot — so a non-mod OWNER is now rejected even with the
+    // flag ON + owning the model (the launch gate is layered ON TOP of the owner
+    // check). This supersedes the pre-launch-gate "(a) non-mod OWNER installs".
+    it('(a) non-mod OWNER + flag ON → FORBIDDEN (model slot is non-launch), never installs', async () => {
+      mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
+      mockInstallOnModel.mockResolvedValue({ id: 'install_1' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      await expect(caller.installOnModel(input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockInstallOnModel).not.toHaveBeenCalled();
+    });
+
+    // GRANDFATHER: a MODERATOR can still install a model slot (the live mod-only
+    // generate-from-model path is untouched).
+    it('(a-mod) MODERATOR + flag ON → installs (grandfather; model slot allowed for mods)', async () => {
+      mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
+      mockInstallOnModel.mockResolvedValue({ id: 'install_1' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, true) as never);
+      await caller.installOnModel(input);
+      expect(mockInstallOnModel).toHaveBeenCalledWith(
+        expect.objectContaining({ modelId: 7, appBlockId: 'ab_x', installedByUserId: OWNER_ID })
+      );
+    });
+
+    it('(b) non-mod NON-owner + flag ON → UNAUTHORIZED, never installs', async () => {
+      mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
+      const caller = blocksRouter.createCaller(authedCtx(OTHER_ID, false) as never);
+      await expect(caller.installOnModel(input)).rejects.toBeInstanceOf(TRPCError);
+      expect(mockInstallOnModel).not.toHaveBeenCalled();
+    });
+
+    it('(c) flag OFF (live for a non-mod) → UNAUTHORIZED before the body, never installs', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      await expect(caller.installOnModel(input)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockDbWriteModelFindUnique).not.toHaveBeenCalled();
+      expect(mockInstallOnModel).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateSettings', () => {
+    const input = { blockInstanceId: 'bus_pinned', settings: { foo: 'bar' } };
+
+    it('(a) non-mod OWNER + flag ON → updates (resolves model → owner check passes)', async () => {
+      mockDbWriteSubscriptionFindUnique.mockResolvedValue({ targetModelIds: [7] });
+      mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      const out = await caller.updateSettings(input);
+      expect(out).toEqual({ ok: true });
+      expect(mockUpdateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ blockInstanceId: 'bus_pinned', modelId: 7 })
+      );
+    });
+
+    it('(b) non-mod NON-owner + flag ON → UNAUTHORIZED, never updates', async () => {
+      mockDbWriteSubscriptionFindUnique.mockResolvedValue({ targetModelIds: [7] });
+      mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
+      const caller = blocksRouter.createCaller(authedCtx(OTHER_ID, false) as never);
+      await expect(caller.updateSettings(input)).rejects.toBeInstanceOf(TRPCError);
+      expect(mockUpdateSettings).not.toHaveBeenCalled();
+    });
+
+    it('(c) flag OFF (live for a non-mod) → UNAUTHORIZED before the body', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      await expect(caller.updateSettings(input)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockDbWriteSubscriptionFindUnique).not.toHaveBeenCalled();
+      expect(mockUpdateSettings).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('toggleEnabled', () => {
+    const input = { blockInstanceId: 'bus_pinned', enabled: false };
+
+    it('(a) non-mod OWNER + flag ON → toggles (owner check on resolved model)', async () => {
+      mockDbWriteSubscriptionFindUnique.mockResolvedValue({
+        appBlockId: 'ab_x',
+        slotId: 'model.sidebar_top',
+        targetModelIds: [7],
+      });
+      mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      const out = await caller.toggleEnabled(input);
+      expect(out).toEqual({ ok: true });
+      expect(mockToggleEnabled).toHaveBeenCalledWith(
+        expect.objectContaining({ modelId: 7, appBlockId: 'ab_x', enabled: false })
+      );
+    });
+
+    it('(b) non-mod NON-owner + flag ON → UNAUTHORIZED before mutating', async () => {
+      mockDbWriteSubscriptionFindUnique.mockResolvedValue({
+        appBlockId: 'ab_x',
+        slotId: 'model.sidebar_top',
+        targetModelIds: [7],
+      });
+      mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
+      const caller = blocksRouter.createCaller(authedCtx(OTHER_ID, false) as never);
+      await expect(caller.toggleEnabled(input)).rejects.toBeInstanceOf(TRPCError);
+      expect(mockToggleEnabled).not.toHaveBeenCalled();
+    });
+
+    it('(c) flag OFF (live for a non-mod) → UNAUTHORIZED before the body', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      await expect(caller.toggleEnabled(input)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockDbWriteSubscriptionFindUnique).not.toHaveBeenCalled();
+      expect(mockToggleEnabled).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('upsertSubscription', () => {
+    const input = {
+      appBlockId: 'ab_x',
+      scope: 'viewer_personal' as const,
+      targetModelTypes: null,
+      targetBaseModels: null,
+      settings: {},
+    };
+
+    // PAGE-ONLY LAUNCH GATE: a subscription only ever attaches a MODEL-slot app
+    // (manifest has no page) — a non-launch app — so a non-mod is now rejected
+    // even with the flag ON. This supersedes the pre-launch-gate "(a) non-mod
+    // OWNER upserts".
+    it('(a) non-mod + flag ON + MODEL-slot app → FORBIDDEN (non-launch app), never upserts', async () => {
+      mockDbReadAppBlockFindUnique.mockResolvedValue({
+        blockId: 'g',
+        status: 'approved',
+        approvedScopes: [],
+        manifest: {}, // model app (no page field)
+      });
+      mockUpsertSubscription.mockResolvedValue({ id: 'bus_new' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      await expect(caller.upsertSubscription(input)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockUpsertSubscription).not.toHaveBeenCalled();
+    });
+
+    // GRANDFATHER: a MODERATOR can still subscribe to a model-slot app, stamping
+    // ctx.user.id (NOT input). Keeps the pre-launch-gate owner-scoping invariant.
+    it('(a-mod) MODERATOR + flag ON + model app → upserts, stamping ctx.user.id (NOT input)', async () => {
+      mockDbReadAppBlockFindUnique.mockResolvedValue({
+        blockId: 'g',
+        status: 'approved',
+        approvedScopes: [],
+        manifest: {},
+      });
+      mockUpsertSubscription.mockResolvedValue({ id: 'bus_new' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, true) as never);
+      await caller.upsertSubscription(input);
+      // userId is stamped server-side from the session, never from input.
+      expect(mockUpsertSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: OWNER_ID, appBlockId: 'ab_x' })
+      );
+    });
+
+    it('(b) non-mod + flag ON + app NOT approved → BAD_REQUEST, never upserts', async () => {
+      // The "owner" boundary for a per-user subscription is the approved-app gate
+      // + the session-stamped userId; a non-approved app is rejected outright.
+      mockDbReadAppBlockFindUnique.mockResolvedValue({ blockId: 'g', status: 'pending' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      await expect(caller.upsertSubscription(input)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockUpsertSubscription).not.toHaveBeenCalled();
+    });
+
+    it('(c) flag OFF (live for a non-mod) → UNAUTHORIZED before the body', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      await expect(caller.upsertSubscription(input)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockDbReadAppBlockFindUnique).not.toHaveBeenCalled();
+      expect(mockUpsertSubscription).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteSubscription', () => {
+    const input = { subscriptionId: 'bus_x' };
+
+    it('(a) non-mod OWNER + flag ON → forwards subscriptionId + session userId to the owner-checking service', async () => {
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      const out = await caller.deleteSubscription(input);
+      expect(out).toEqual({ ok: true });
+      // The service rejects when existing.userId !== opts.userId; the router
+      // always passes ctx.user.id (never an input userId), so a non-mod can only
+      // delete their OWN subscription.
+      expect(mockDeleteSubscription).toHaveBeenCalledWith({
+        subscriptionId: 'bus_x',
+        userId: OWNER_ID,
+      });
+    });
+
+    it('(b) non-mod NON-owner + flag ON → service throws authorization, surfaced by the router', async () => {
+      // Model the service-layer owner check (existing.userId !== opts.userId).
+      mockDeleteSubscription.mockRejectedValue(
+        new TRPCError({ code: 'UNAUTHORIZED', message: 'Not the subscription owner' })
+      );
+      const caller = blocksRouter.createCaller(authedCtx(OTHER_ID, false) as never);
+      await expect(caller.deleteSubscription(input)).rejects.toBeInstanceOf(TRPCError);
+      expect(mockDeleteSubscription).toHaveBeenCalledWith({
+        subscriptionId: 'bus_x',
+        userId: OTHER_ID,
+      });
+    });
+
+    it('(c) flag OFF (live for a non-mod) → UNAUTHORIZED before the body', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, false) as never);
+      await expect(caller.deleteSubscription(input)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockDeleteSubscription).not.toHaveBeenCalled();
+    });
   });
 });

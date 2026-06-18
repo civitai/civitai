@@ -14,6 +14,7 @@ import {
 } from '~/server/schema/user-restriction.schema';
 import type { BlockedPromptEntry } from '~/server/services/orchestrator/promptAuditing';
 import { debugAuditPrompt, type DebugAuditMatch } from '~/utils/metadata/audit';
+import { moderationActionEmail } from '~/server/email/templates';
 import { createNotification } from '~/server/services/notification.service';
 import {
   bustPromptAllowlistCache,
@@ -99,7 +100,12 @@ export const userRestrictionRouter = router({
 
     const restriction = await dbRead.userRestriction.findUnique({
       where: { id: userRestrictionId },
-      select: { id: true, userId: true, status: true },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+        user: { select: { email: true, username: true } },
+      },
     });
 
     if (!restriction) throw new Error('Restriction record not found');
@@ -148,6 +154,31 @@ export const userRestrictionRouter = router({
       userId: restriction.userId,
       details: { resolvedMessage: resolvedMessage ?? '' },
     }).catch();
+
+    // Send transactional email mirroring the in-app notification
+    try {
+      if (restriction.user?.email) {
+        // Intentionally omit `resolvedMessage` from the email — moderator
+        // free-text is shown only in-app (notification above), never emailed,
+        // to avoid exposing potentially explicit/targeted prose. The TOS link
+        // in the email template provides the policy reference for upheld cases.
+        await moderationActionEmail.send({
+          to: restriction.user.email,
+          username: restriction.user.username ?? 'User',
+          kind:
+            status === UserRestrictionStatus.Upheld
+              ? 'restriction-upheld'
+              : 'restriction-overturned',
+        });
+      }
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'restriction-email-failed',
+        message: (error as Error).message,
+        error,
+      });
+    }
 
     logToAxiom({
       name: 'user-restriction-resolved',

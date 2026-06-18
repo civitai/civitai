@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TRPCError } from '@trpc/server';
 
 /**
  * Coverage for `blocks.getInstallConfig` — the authenticated source the install
@@ -238,22 +237,54 @@ describe('blocks.getInstallConfig', () => {
     });
   });
 
-  // SECURITY: the gate. These FAIL if moderatorProcedure is relaxed to
-  // public/protected — the install-config (manifest internals) must stay
-  // restricted to the same audience that can install, ahead of the public
-  // launch (segment widen).
-  it('DENIES a non-mod authed caller (FORBIDDEN) — manifest lookup never runs', async () => {
+  // SECURITY: the gate. Layer 1 widened getInstallConfig moderatorProcedure →
+  // protectedProcedure (keeping enforceAppBlocksFlag), so the live control is the
+  // mod-segmented appBlocks flag, NOT a hardcoded isModerator belt. For a non-mod
+  // / anon caller the flag is OFF today → enforceAppBlocksFlag marks the query
+  // disabled → the proc fail-soft returns empty config and the manifest lookup
+  // never runs (nothing leaks pre-launch). These tests model the live (dark) flag
+  // by resolving it from the caller's mod status, mirroring the production rule.
+  function fakePerUserFlag(opts?: { user?: { isModerator?: boolean } }) {
+    return Promise.resolve(!!opts?.user?.isModerator);
+  }
+
+  it('non-mod authed caller, flag dark (live): empty config — manifest lookup never runs', async () => {
+    mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
     const caller = blocksRouter.createCaller(authedCtx(7, false) as never);
+    const out = await caller.getInstallConfig({ appBlockId: 'ab_x' });
+    expect(out).toEqual({ settings: {}, scopes: [] });
+    expect(mockDbReadAppBlockFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('anon caller → UNAUTHORIZED (protectedProcedure auth gate) — manifest lookup never runs', async () => {
+    // getInstallConfig is now protectedProcedure, so the auth middleware rejects
+    // an anon caller (UNAUTHORIZED) BEFORE enforceAppBlocksFlag even runs — there
+    // is no logged-in owner/installer to serve. The manifest never loads.
+    mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
+    const caller = blocksRouter.createCaller(anonCtx() as never);
     await expect(caller.getInstallConfig({ appBlockId: 'ab_x' })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
+      code: 'UNAUTHORIZED',
     });
     expect(mockDbReadAppBlockFindUnique).not.toHaveBeenCalled();
   });
 
-  it('DENIES an anon caller — manifest lookup never runs', async () => {
-    const caller = blocksRouter.createCaller(anonCtx() as never);
-    await expect(caller.getInstallConfig({ appBlockId: 'ab_x' })).rejects.toBeInstanceOf(TRPCError);
-    expect(mockDbReadAppBlockFindUnique).not.toHaveBeenCalled();
+  // Layer 1 launch behavior (post Flipt segment widen): once the flag is ON for a
+  // non-mod, getInstallConfig serves them the SAME approved-only install config a
+  // mod gets — proving it is owner-/installer-capable, not mod-gated. The
+  // approved + manifest∩approvedScopes projection is unchanged (still no leak).
+  it('non-mod authed caller WITH the flag lit: returns the approved install config', async () => {
+    mockIsAppBlocksEnabled.mockImplementation(async () => true);
+    mockDbReadAppBlockFindUnique.mockResolvedValue({
+      status: 'approved',
+      manifest: APPROVED_MANIFEST,
+      approvedScopes: ['ai:write:budgeted', 'models:read:self'],
+    });
+    const caller = blocksRouter.createCaller(authedCtx(7, false) as never);
+    const out = await caller.getInstallConfig({ appBlockId: 'ab_x' });
+    expect(out.scopes).toEqual(['ai:write:budgeted', 'models:read:self']);
+    expect(Object.keys(out.settings)).toEqual(['buzz_budget_per_gen']);
+    expect(out).not.toHaveProperty('trustTier');
+    expect(out).not.toHaveProperty('iframe');
   });
 
   it('fail-soft returns empty (no manifest lookup) when the appBlocks flag is dark', async () => {

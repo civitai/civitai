@@ -478,6 +478,8 @@ model User {
   articleReactions           ArticleReaction[]
   articles                   Article[]
   articleEngagements         ArticleEngagement[]
+  articleRatingReviewsSubmitted ArticleRatingReview[] @relation("ArticleRatingReviewSubmitter")
+  articleRatingReviewsResolved  ArticleRatingReview[] @relation("ArticleRatingReviewResolver")
   leaderboardResults         LeaderboardResult[]
   receivedReports            UserReport[]
   engagedImages              ImageEngagement[]
@@ -558,10 +560,15 @@ model User {
   blockBuzzAttributionsAsPurchaser BlockBuzzAttribution[]    @relation("BlockBuzzAttributionPurchaser")
   blockBuzzAttributionsAsAppOwner  BlockBuzzAttribution[]    @relation("BlockBuzzAttributionAppOwner")
   blockAttributionPayouts          BlockAttributionPayout[]  @relation("BlockAttributionPayoutOwner")
+  blockSpendAttributionsAsSpender  BlockSpendAttribution[]   @relation("BlockSpendAttributionSpender")
+  blockSpendAttributionsAsAppOwner BlockSpendAttribution[]   @relation("BlockSpendAttributionAppOwner")
+  blockSubscriptionAttributionsAsPurchaser BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionPurchaser")
+  blockSubscriptionAttributionsAsAppOwner  BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
   appUserScopeGrants         AppUserScopeGrant[]
+  appDevForgejoIdentity      AppDevForgejoIdentity?
 
   @@index([deletedAt])
 }
@@ -1854,6 +1861,28 @@ model ImageRatingRequest {
   @@id([imageId, userId])
 }
 
+model ArticleRatingReview {
+  id             Int          @id @default(autoincrement())
+  articleId      Int
+  article        Article      @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  userId         Int
+  user           User         @relation("ArticleRatingReviewSubmitter", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  resolvedAt     DateTime?
+  resolvedBy     Int?
+  resolver       User?        @relation("ArticleRatingReviewResolver", fields: [resolvedBy], references: [id], onDelete: SetNull)
+  currentLevel   Int
+  suggestedLevel Int
+  appliedLevel   Int?
+  userComment    String?
+  modComment     String?
+  status         ReportStatus @default(Pending)
+
+  @@index([status, createdAt])
+  @@index([userId])
+  @@index([articleId, createdAt(sort: Desc)])
+}
+
 model CollectionMetric {
   collection       Collection      @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   collectionId     Int
@@ -2201,6 +2230,8 @@ model OauthClient {
   consents       OauthConsent[]
   appBlocks      AppBlock[]
   buzzAttributions BlockBuzzAttribution[]
+  spendAttributions BlockSpendAttribution[] @relation("BlockSpendAttributionApp")
+  subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
 
   @@index([userId])
 }
@@ -2267,6 +2298,8 @@ model AppBlock {
   platformDefault    PlatformDefaultBlock?
   userSubscriptions  BlockUserSubscription[]
   buzzAttributions   BlockBuzzAttribution[]
+  spendAttributions  BlockSpendAttribution[] @relation("BlockSpendAttributionAppBlock")
+  subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppBlock")
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
   userScopeGrants    AppUserScopeGrant[]
@@ -2318,6 +2351,9 @@ model AppBlockPublishRequest {
   rejectionReason       String?   @map("rejection_reason")
   approvalNotes         String?   @map("approval_notes")
   forgejoCommitSha      String?   @map("forgejo_commit_sha")                                // populated on approve after Forgejo commit succeeds
+  deployState           String?   @map("deploy_state")                                      // Phase 2 build/deploy lifecycle (approved requests): building|deploying|live|failed
+  deployDetail          String?   @map("deploy_detail")                                      // human-readable detail, primarily the failure reason
+  deployUpdatedAt       DateTime? @map("deploy_updated_at") @db.Timestamptz(6)              // last deploy_state transition
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -2537,6 +2573,153 @@ model BlockAttributionPayout {
   @@map("block_attribution_payout")
 }
 
+/// W3 flow A — App Blocks buzz SPEND attribution (author bounty).
+///
+/// One row per block-initiated generation that spends the VIEWER's own
+/// Buzz balance. Distinct from BlockBuzzAttribution (which covers card
+/// PURCHASES from inside a block): a spend has no payment provider, no
+/// provider fee, no refund/clawback lifecycle.
+///
+/// ACCOUNTING: the author share is a PLATFORM-FUNDED BOUNTY paid on top
+/// of the spend, NOT a slice carved out of the viewer's Buzz. The viewer
+/// burned 100% of their Buzz on the generation (platform revenue); the
+/// author bounty is a separate platform expense sized as a percentage of
+/// the spend's USD value. There is therefore NO three-way conservation
+/// invariant (unlike the purchase table) — see the migration for detail.
+///
+/// Idempotent on (workflow_id, app_block_id): a re-poll / retry /
+/// re-submit of the same workflow is a no-op.
+///
+/// Application-generated id (`bsa_<ulid>`).
+model BlockSpendAttribution {
+  id                 String   @id
+  userId             Int      @map("user_id")
+  user               User     @relation("BlockSpendAttributionSpender", fields: [userId], references: [id], onDelete: Restrict)
+  buzzAmount         Int      @map("buzz_amount")
+  buzzType           String   @default("yellow") @map("buzz_type")
+  /// USD value of the Buzz burned (buzzDollarRatio 1000:1 -> cents).
+  /// Recorded for reporting — it is platform revenue, NOT a split pool.
+  grossValueCents    Int      @map("gross_value_cents")
+
+  /// Orchestrator workflow id — the idempotency anchor.
+  workflowId         String   @map("workflow_id")
+
+  appId              String   @map("app_id")
+  app                OauthClient @relation("BlockSpendAttributionApp", fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId         String   @map("app_block_id")
+  appBlock           AppBlock @relation("BlockSpendAttributionAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+  blockInstanceId    String   @map("block_instance_id")
+  modelId            Int?     @map("model_id")
+
+  rateCardVersion    String   @map("rate_card_version")
+  /// The spend rev-share percentage stamped at write time.
+  spendSharePct      Int      @map("spend_share_pct")
+  appOwnerShareCents Int      @map("app_owner_share_cents")
+  appOwnerUserId     Int      @map("app_owner_user_id")
+  appOwner           User     @relation("BlockSpendAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+
+  status             String   @default("pending")
+  /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
+  /// refund path, so this is never 'refund'/'chargeback'.
+  voidedReason       String?  @map("voided_reason")
+  attributedAt       DateTime @default(now()) @map("attributed_at") @db.Timestamptz(6)
+  confirmedAt        DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  voidedAt           DateTime? @map("voided_at") @db.Timestamptz(6)
+  paidOutAt          DateTime? @map("paid_out_at") @db.Timestamptz(6)
+  payoutId           String?  @map("payout_id")
+
+  @@unique([workflowId, appBlockId], map: "block_spend_attribution_workflow_app_uniq")
+  @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bsa_publisher_dashboard_idx")
+  @@index([appBlockId, attributedAt(sort: Desc)], map: "bsa_app_block_dashboard_idx")
+  @@map("block_spend_attribution")
+}
+
+/// W3 flow C — App Blocks MEMBERSHIP / subscription attribution.
+///
+/// One row PER PAID INVOICE per app block: a block-initiated membership
+/// (recurring subscription) purchase credits the app author a revenue
+/// share on each paid invoice. The recurring-revenue sibling of
+/// BlockBuzzAttribution (one-shot card purchase) and BlockSpendAttribution
+/// (internal Buzz burn).
+///
+/// ACCOUNTING: a membership payment IS a real card transaction (gross USD,
+/// real provider fee), so it uses the SAME three-way split as
+/// BlockBuzzAttribution — author share is carved out of the net per the
+/// active rate card's subscription percentage. The three-way conservation
+/// invariant holds for entry_type='charge' rows (see the migration CHECK).
+///
+/// RENEWALS-PAY: one row per invoice_id means each renewal
+/// (subscription_cycle) accrues a share by default. The service can gate
+/// the write to billing_reason='subscription_create' for a first-only
+/// policy without a schema change. ⚠️ FLAGGED for monetization sign-off.
+///
+/// Clawback (entry_type='clawback') carries negative shares for a refund /
+/// proration of a previously paid-out period; nets out in the payout
+/// aggregate (mirrors BlockBuzzAttribution's clawback carry-forward).
+///
+/// Idempotent on (invoice_id, app_block_id): a webhook retry for the same
+/// invoice is a no-op.
+///
+/// Application-generated id (`bsu_<ulid>`).
+model BlockSubscriptionAttribution {
+  id                   String   @id
+  userId               Int      @map("user_id")
+  user                 User     @relation("BlockSubscriptionAttributionPurchaser", fields: [userId], references: [id], onDelete: Restrict)
+  buzzAmount           Int      @default(0) @map("buzz_amount")
+  buzzType             String   @default("yellow") @map("buzz_type")
+  /// Gross USD value of the invoice, in cents.
+  grossValueCents      Int      @map("gross_value_cents")
+
+  paymentProvider      String   @map("payment_provider")
+  /// Per-period idempotency anchor — each renewal has its own invoice_id.
+  invoiceId            String   @map("invoice_id")
+  /// Groups the periods of one subscription.
+  subscriptionId       String?  @map("subscription_id")
+  /// subscription_create | subscription_cycle | subscription_update.
+  billingReason        String?  @map("billing_reason")
+  periodStart          DateTime? @map("period_start") @db.Timestamptz(6)
+  periodEnd            DateTime? @map("period_end") @db.Timestamptz(6)
+
+  appId                String   @map("app_id")
+  app                  OauthClient @relation("BlockSubscriptionAttributionApp", fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId           String   @map("app_block_id")
+  appBlock             AppBlock @relation("BlockSubscriptionAttributionAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+  blockInstanceId      String   @map("block_instance_id")
+  scope                String
+  modelId              Int?     @map("model_id")
+  tier                 String?
+
+  /// TRACK-ONLY (#2629): no rate applied at write time. 'unrated' sentinel
+  /// until the payout-time backpay stamps the signed-off version.
+  rateCardVersion      String   @default("unrated") @map("rate_card_version")
+  /// 0 at write time; the payout-time backpay computes the real share.
+  subscriptionSharePct Int      @default(0) @map("subscription_share_pct")
+  appOwnerShareCents   Int      @default(0) @map("app_owner_share_cents")
+  platformShareCents   Int      @map("platform_share_cents")
+  providerFeeCents     Int      @map("provider_fee_cents")
+  appOwnerUserId       Int      @map("app_owner_user_id")
+  appOwner             User     @relation("BlockSubscriptionAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+
+  /// 'tracked' (track-only event) | pending | confirmed | voided | paid_out | held.
+  status               String   @default("tracked")
+  /// 'charge' (forward) | 'clawback' (negative carry-forward on refund/proration).
+  entryType            String   @default("charge") @map("entry_type")
+  /// 'refund' / 'chargeback' / 'proration' / 'self_purchase' / 'internal_owner' / 'manual_review'.
+  voidedReason         String?  @map("voided_reason")
+  attributedAt         DateTime @default(now()) @map("attributed_at") @db.Timestamptz(6)
+  confirmedAt          DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  voidedAt             DateTime? @map("voided_at") @db.Timestamptz(6)
+  paidOutAt            DateTime? @map("paid_out_at") @db.Timestamptz(6)
+  payoutId             String?  @map("payout_id")
+
+  @@unique([invoiceId, appBlockId], map: "block_subscription_attribution_invoice_app_uniq")
+  @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bsu_publisher_dashboard_idx")
+  @@index([appBlockId, attributedAt(sort: Desc)], map: "bsu_app_block_dashboard_idx")
+  @@index([subscriptionId], map: "bsu_subscription_idx")
+  @@index([paymentProvider, invoiceId], map: "bsu_invoice_idx")
+  @@map("block_subscription_attribution")
+}
+
 /// W5 v0.5 audit log — one row per successful scope-gated API call from
 /// block-scope.middleware.ts. Surfaced on /apps/installed Activity tab,
 /// interleaved with BlockBuzzAttribution rows so the user sees paid and
@@ -2593,6 +2776,29 @@ model AppUserScopeGrant {
 
   @@unique([userId, appBlockId], map: "app_user_scope_grants_user_app_uniq")
   @@map("app_user_scope_grants")
+}
+
+/// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
+/// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
+/// first time a developer requests git access to one of their apps.
+///
+/// The Forgejo user is `restricted:true` and granted `write` ONLY on its own
+/// civitai-apps/<slug> repo(s), so a push parks a pending review request but can
+/// NEVER deploy without mod approval (the no-trust-on-push gate is unchanged).
+///
+/// `forgejo_token_encrypted` holds the user's own Forgejo PAT (sha1, scope
+/// `write:repository`), AES-256-GCM-encrypted at rest keyed on NEXTAUTH_SECRET.
+/// It is the SOURCE OF TRUTH for the token: Forgejo can't recover a user's
+/// password, so the token is minted once at provision and re-read thereafter,
+/// never re-minted. A GDPR delete of the User cascades this row away.
+model AppDevForgejoIdentity {
+  userId                Int      @id @map("user_id")
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  forgejoUsername       String   @map("forgejo_username")
+  forgejoTokenEncrypted String   @map("forgejo_token_encrypted")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("app_dev_forgejo_identity")
 }
 
 model OauthConsent {
@@ -3144,6 +3350,12 @@ model Article {
   nsfwLevel        Int           @default(0)
   userNsfwLevel    Int           @default(0)
   moderatorNsfwLevel Int?
+  // Snapshot of the content-derived NSFW level (images + moderation floor) at
+  // the moment `moderatorNsfwLevel` was set. Lets the auto-approve gate tell
+  // "content genuinely dropped since the override" from "override was always
+  // above the images" — only the former may be auto-cleared. Null when no
+  // override is active (or a legacy override predating this column).
+  moderatorNsfwLevelBasis Int?
   lockedProperties String[]      @default([])
   status           ArticleStatus @default(Draft)
 
@@ -3158,6 +3370,7 @@ model Article {
   associations       ModelAssociations[]
   collectionItems    CollectionItem[]
   rewardsBonusEvents RewardsBonusEvent[]
+  ratingReviews      ArticleRatingReview[]
 
   @@index([status, ingestion, nsfwLevel])
 }

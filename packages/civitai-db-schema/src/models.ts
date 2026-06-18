@@ -528,6 +528,8 @@ export interface User {
   articleReactions?: ArticleReaction[];
   articles?: Article[];
   articleEngagements?: ArticleEngagement[];
+  articleRatingReviewsSubmitted?: ArticleRatingReview[];
+  articleRatingReviewsResolved?: ArticleRatingReview[];
   leaderboardResults?: LeaderboardResult[];
   receivedReports?: UserReport[];
   engagedImages?: ImageEngagement[];
@@ -604,10 +606,15 @@ export interface User {
   blockBuzzAttributionsAsPurchaser?: BlockBuzzAttribution[];
   blockBuzzAttributionsAsAppOwner?: BlockBuzzAttribution[];
   blockAttributionPayouts?: BlockAttributionPayout[];
+  blockSpendAttributionsAsSpender?: BlockSpendAttribution[];
+  blockSpendAttributionsAsAppOwner?: BlockSpendAttribution[];
+  blockSubscriptionAttributionsAsPurchaser?: BlockSubscriptionAttribution[];
+  blockSubscriptionAttributionsAsAppOwner?: BlockSubscriptionAttribution[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
+  appDevForgejoIdentity?: AppDevForgejoIdentity | null;
 }
 
 export interface CustomerSubscription {
@@ -1470,6 +1477,24 @@ export interface ImageRatingRequest {
   weight: number;
 }
 
+export interface ArticleRatingReview {
+  id: number;
+  articleId: number;
+  article?: Article;
+  userId: number;
+  user?: User;
+  createdAt: Date;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+  resolver?: User | null;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: ReportStatus;
+}
+
 export interface CollectionMetric {
   collection?: Collection;
   collectionId: number;
@@ -1712,6 +1737,8 @@ export interface OauthClient {
   consents?: OauthConsent[];
   appBlocks?: AppBlock[];
   buzzAttributions?: BlockBuzzAttribution[];
+  spendAttributions?: BlockSpendAttribution[];
+  subscriptionAttributions?: BlockSubscriptionAttribution[];
 }
 
 export interface AppBlock {
@@ -1743,6 +1770,8 @@ export interface AppBlock {
   platformDefault?: PlatformDefaultBlock | null;
   userSubscriptions?: BlockUserSubscription[];
   buzzAttributions?: BlockBuzzAttribution[];
+  spendAttributions?: BlockSpendAttribution[];
+  subscriptionAttributions?: BlockSubscriptionAttribution[];
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
   userScopeGrants?: AppUserScopeGrant[];
@@ -1770,6 +1799,9 @@ export interface AppBlockPublishRequest {
   rejectionReason: string | null;
   approvalNotes: string | null;
   forgejoCommitSha: string | null;
+  deployState: string | null;
+  deployDetail: string | null;
+  deployUpdatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1863,6 +1895,72 @@ export interface BlockAttributionPayout {
   createdAt: Date;
 }
 
+export interface BlockSpendAttribution {
+  id: string;
+  userId: number;
+  user?: User;
+  buzzAmount: number;
+  buzzType: string;
+  grossValueCents: number;
+  workflowId: string;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  blockInstanceId: string;
+  modelId: number | null;
+  rateCardVersion: string;
+  spendSharePct: number;
+  appOwnerShareCents: number;
+  appOwnerUserId: number;
+  appOwner?: User;
+  status: string;
+  voidedReason: string | null;
+  attributedAt: Date;
+  confirmedAt: Date | null;
+  voidedAt: Date | null;
+  paidOutAt: Date | null;
+  payoutId: string | null;
+}
+
+export interface BlockSubscriptionAttribution {
+  id: string;
+  userId: number;
+  user?: User;
+  buzzAmount: number;
+  buzzType: string;
+  grossValueCents: number;
+  paymentProvider: string;
+  invoiceId: string;
+  subscriptionId: string | null;
+  billingReason: string | null;
+  periodStart: Date | null;
+  periodEnd: Date | null;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  blockInstanceId: string;
+  scope: string;
+  modelId: number | null;
+  tier: string | null;
+  rateCardVersion: string;
+  subscriptionSharePct: number;
+  appOwnerShareCents: number;
+  platformShareCents: number;
+  providerFeeCents: number;
+  appOwnerUserId: number;
+  appOwner?: User;
+  status: string;
+  entryType: string;
+  voidedReason: string | null;
+  attributedAt: Date;
+  confirmedAt: Date | null;
+  voidedAt: Date | null;
+  paidOutAt: Date | null;
+  payoutId: string | null;
+}
+
 export interface BlockScopeInvocation {
   id: bigint;
   userId: number;
@@ -1886,6 +1984,14 @@ export interface AppUserScopeGrant {
   grantedScopes: string[];
   grantedAt: Date;
   revokedAt: Date | null;
+}
+
+export interface AppDevForgejoIdentity {
+  userId: number;
+  user?: User;
+  forgejoUsername: string;
+  forgejoTokenEncrypted: string;
+  createdAt: Date;
 }
 
 export interface OauthConsent {
@@ -2319,6 +2425,7 @@ export interface Article {
   nsfwLevel: number;
   userNsfwLevel: number;
   moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
   status: ArticleStatus;
   thread?: Thread | null;
@@ -2332,6 +2439,7 @@ export interface Article {
   associations?: ModelAssociations[];
   collectionItems?: CollectionItem[];
   rewardsBonusEvents?: RewardsBonusEvent[];
+  ratingReviews?: ArticleRatingReview[];
 }
 
 export interface PressMention {

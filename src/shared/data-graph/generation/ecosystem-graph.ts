@@ -83,9 +83,6 @@ function supportsEnhancedCompatibility(ecosystem: string, modelId?: number): boo
   return EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(ecosystem) && modelId !== fluxUltraAirId;
 }
 
-/** Hard kill-switch for the `enhancedCompatibility` toggle. Flip to re-enable. */
-const ENHANCED_COMPATIBILITY_ENABLED = false;
-
 /**
  * Whether the given ecosystem/model pair runs through sdcpp and qualifies for
  * the 2-for-1 quantity bonus. Superset of `supportsEnhancedCompatibility` —
@@ -393,10 +390,7 @@ export const ecosystemGraph = new DataGraph<
       const modelId = 'model' in ctx ? ctx.model?.id : undefined;
       return {
         ...enhancedCompatibilityNode(),
-        when:
-          ENHANCED_COMPATIBILITY_ENABLED &&
-          ctx.workflow === 'txt2img' &&
-          supportsEnhancedCompatibility(ctx.ecosystem, modelId),
+        when: ctx.workflow === 'txt2img' && supportsEnhancedCompatibility(ctx.ecosystem, modelId),
       };
     },
     ['workflow', 'ecosystem', 'model']

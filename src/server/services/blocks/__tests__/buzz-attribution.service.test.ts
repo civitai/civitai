@@ -68,6 +68,7 @@ import {
   voidAttributionsForPayment,
 } from '../buzz-attribution.service';
 import type { BlockAttribution } from '~/server/schema/blocks/attribution.schema';
+import { ACTIVE_RATE_CARD } from '../rate-card';
 
 const APP_ID = 'app_test';
 const APP_BLOCK_ID = 'apb_test';
@@ -138,13 +139,18 @@ describe('recordAttribution', () => {
     expect(dataArg.status).toBe('pending');
     expect(dataArg.voidedReason).toBeNull();
     expect(dataArg.providerFeeCents).toBe(50);
-    // net 950 * 15% (v2 per_model_install) = 142.5 → floor 142
+    // net 950 * 15% per_model_install = 142.5 → floor 142. The active card
+    // (V2→V3→V4) has carried per_model_install at 15% verbatim, so the math
+    // is version-stable; only the stamped version label tracks ACTIVE.
     expect(dataArg.appOwnerShareCents).toBe(142);
     expect(dataArg.platformShareCents).toBe(808);
     expect(
       dataArg.providerFeeCents + dataArg.platformShareCents + dataArg.appOwnerShareCents
     ).toBe(1000);
-    expect(dataArg.rateCardVersion).toBe('v2');
+    // Pin to the active card's version rather than a literal so this doesn't
+    // go stale every time ACTIVE_RATE_CARD advances (it was stale at 'v2'
+    // through the V3 bump).
+    expect(dataArg.rateCardVersion).toBe(ACTIVE_RATE_CARD.version);
     expect(dataArg.id).toMatch(/^bba_/);
   });
 

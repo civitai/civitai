@@ -154,14 +154,20 @@ describe('blocks.getAppDetail — anon-capable, dark behind the flag (F-E E2)', 
     const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
     const result = await caller.getAppDetail(input);
     expect(result).toEqual(PUBLIC_DETAIL);
-    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1');
+    // PAGE-ONLY LAUNCH GATE: an anon caller is non-mod → launchOnly=true is
+    // passed to the service (which restricts to page apps; that filtering is
+    // covered in block-registry.page-only-launch.test.ts — here the service is
+    // mocked, so we only assert the forwarded arg).
+    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', true);
   });
 
-  it('moderator (the live state today): served', async () => {
+  it('moderator (the live state today): served, launchOnly=false (grandfather)', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const result = await caller.getAppDetail(input);
     expect(result).toEqual(PUBLIC_DETAIL);
     expect(mockGetAppDetail).toHaveBeenCalledTimes(1);
+    // A moderator sees everything → launchOnly=false.
+    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', false);
   });
 
   it('NOT_FOUND when the service returns null (missing / non-approved app)', async () => {

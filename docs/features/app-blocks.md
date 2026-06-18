@@ -209,6 +209,22 @@ are admin-controlled fields. Any value supplied in the manifest body is
 ignored on insert (forced to `unverified`/`iframe`) and 403'd on update
 if it differs from the current row.
 
+`iframe.src` is also platform-owned: the only valid value is the per-app
+subdomain root (`https://<slug>.<APPS_DOMAIN>/`), so the developer **omits it**
+and the platform stamps it from the slug at submit + approve + git-push (see
+`server/services/blocks/manifest-normalize.ts`). Any dev-supplied `iframe.src`
+is overwritten. Other `iframe` fields (`minHeight`, `sandbox`) stay
+developer-authored. This is why a developer never has to hand-author a
+subdomain that doesn't exist until their app is approved.
+
+### Bundle contents
+
+A submitted ZIP needs only **`block.manifest.json`** at the root plus your app
+(`index.html` + `src/` + whatever your build emits). A `Dockerfile` /
+`nginx.conf` are **not required** — the build pipeline injects its own
+platform-owned recipe and ignores (and drops) any tenant-supplied build files
+(audit A8/BUILD-1 Phase 2). Shipping them is harmless but inert.
+
 ## Known gaps before Phase 2 admin tool ships
 
 ### Cache invalidation on `app_blocks.status` transitions (audit-10 H3)
