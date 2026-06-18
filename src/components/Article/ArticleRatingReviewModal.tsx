@@ -1,7 +1,6 @@
-import { Anchor, Badge, Button, Group, Modal, Select, Stack, Text, Textarea } from '@mantine/core';
+import { Badge, Button, Group, Modal, Select, Stack, Text, Textarea } from '@mantine/core';
 import { useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { constants } from '~/server/common/constants';
 import { browsingLevels, getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -92,8 +91,6 @@ export default function ArticleRatingReviewModal({
   const currentLabel = getBrowsingLevelLabel(currentLevel);
   const commentLength = comment.length;
 
-  const guidelineUrl = constants.articleRatingGuidelineUrl;
-
   return (
     <Modal {...dialog} title="Request rating review" size="md">
       <Stack gap="md">
@@ -137,13 +134,6 @@ export default function ArticleRatingReviewModal({
             {commentLength}/{COMMENT_MAX}
           </Text>
         </Stack>
-        <Text size="xs" c="dimmed">
-          Before submitting, review the{' '}
-          <Anchor href={guidelineUrl} target="_blank" rel="noopener noreferrer">
-            article rating guidelines
-          </Anchor>{' '}
-          to see what mods look at.
-        </Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={dialog.onClose} disabled={mutation.isPending}>
             Cancel
