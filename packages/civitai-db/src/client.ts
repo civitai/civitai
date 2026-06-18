@@ -33,7 +33,7 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
         // Negative lookahead for no more numbers, ie. replace $1 in '$1' but not '$11'
         const re = new RegExp('\\$' + ((i as number) + 1) + '(?!\\d)', 'g');
         // If string, will quote - if bool or numeric, will not - does the job here
-        if (typeof params[i] === 'string') params[i] = "'" + params[i].replace("'", "\\'") + "'";
+        if (typeof params[i] === 'string') params[i] = "'" + params[i].replace(/'/g, "\\'") + "'";
         query = query.replace(re, params[i]);
       }
 
@@ -65,7 +65,7 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
         const params = JSON.parse(e.params);
         for (let i = 0; i < params.length; i++) {
           const re = new RegExp('\\$' + ((i as number) + 1) + '(?!\\d)', 'g');
-          if (typeof params[i] === 'string') params[i] = "'" + params[i].replace("'", "\\'") + "'";
+          if (typeof params[i] === 'string') params[i] = "'" + params[i].replace(/'/g, "\\'") + "'";
           query = query.replace(re, params[i]);
         }
         console.log(query);
