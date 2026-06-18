@@ -957,128 +957,154 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     // attribution was stamped onto the subscription metadata at checkout
     // (createSubscribeSession). Read it back and write ONE attribution row
     // per PAID invoice (RENEWALS-PAY: subscription_create AND
-    // subscription_cycle both accrue a share — flagged for sign-off; gate
-    // to subscription_create here for a first-only policy).
+    // subscription_cycle both accrue a share).
+    //
+    // Proration policy: gate the attribution write to billing_reason IN
+    // (subscription_create, subscription_cycle) — EXCLUDE subscription_update.
+    // A mid-cycle upgrade emits a `subscription_update` PRORATION invoice
+    // (the upgrade delta for the rest of the period) AND, at the period
+    // boundary, a `subscription_cycle` invoice for the full new price. The
+    // UNIQUE(invoice_id, app_block_id) only dedups the SAME invoice; the
+    // proration and the cycle invoice are DISTINCT invoice_ids covering
+    // OVERLAPPING value, so attributing both would over-accrue (proration
+    // delta + full cycle) for that period. We therefore do NOT separately
+    // attribute proration deltas — the period's subscription_cycle invoice
+    // captures its value. (The buzz grant / recordMembershipPaymentReward /
+    // ref_code logic above is intentionally LEFT firing for subscription_update
+    // so an upgrade still grants Buzz / records the membership reward; only
+    // this attribution write is gated.) Revisit if per-period proration
+    // sharing is ever wanted — the alternative is a per-(subscription_id,
+    // period_start) dedup that attributes the delta and reconciles against the
+    // cycle invoice instead of skipping subscription_update.
     //
     // Best-effort: a failed attribution write MUST NOT break membership
     // provisioning (the buzz grant + reward above already happened). The
     // (invoice_id, app_block_id) UNIQUE makes a webhook retry idempotent.
     // -----------------------------------------------------------------
-    try {
-      const blockAttribution = extractAttribution(
-        subscriptionMetadata as Record<string, string | number | null | undefined>
-      );
-      let resolvedAttribution = blockAttribution;
-      let attributionSource: 'metadata' | 'fallback-session' | 'none' = blockAttribution
-        ? 'metadata'
-        : 'none';
+    const ATTRIBUTABLE_BILLING_REASONS = ['subscription_create', 'subscription_cycle'] as const;
+    const isAttributableBillingReason =
+      !!invoice.billing_reason &&
+      (ATTRIBUTABLE_BILLING_REASONS as readonly string[]).includes(invoice.billing_reason);
+    // $0 invoices (proration fully covered by credit balance, etc.) carry no
+    // NEW money to share — skip the write to avoid creating benign-but-noisy
+    // pending zero-everything rows that the confirm-pending cron promotes
+    // forever. amount_paid is the correct basis (you only share new money).
+    const grossUsdCents = invoice.amount_paid ?? invoice.total ?? 0;
+    if (isAttributableBillingReason && grossUsdCents > 0) {
+      try {
+        const blockAttribution = extractAttribution(
+          subscriptionMetadata as Record<string, string | number | null | undefined>
+        );
+        let resolvedAttribution = blockAttribution;
+        let attributionSource: 'metadata' | 'fallback-session' | 'none' = blockAttribution
+          ? 'metadata'
+          : 'none';
 
-      // Webhook-ordering race (same as ref_code): invoice.paid for a
-      // brand-new subscription can land before checkout.session.completed
-      // copied the metadata onto the Subscription. Fall back to the parent
-      // Checkout Session's metadata so the FIRST invoice isn't lost.
-      if (!resolvedAttribution && invoice.subscription) {
-        const subId =
-          typeof invoice.subscription === 'string'
-            ? invoice.subscription
-            : invoice.subscription.id;
-        try {
-          const stripeClient = await getServerStripe();
-          if (stripeClient) {
-            const sessions = await stripeClient.checkout.sessions.list({
-              subscription: subId,
-              limit: 1,
-            });
-            const sessionMeta = sessions.data[0]?.metadata ?? undefined;
-            const fromSession = extractAttribution(
-              sessionMeta as Record<string, string | number | null | undefined> | undefined
-            );
-            if (fromSession) {
-              resolvedAttribution = fromSession;
-              attributionSource = 'fallback-session';
-            }
-          }
-        } catch (err) {
-          handleLogError(err as Error);
-        }
-      }
-
-      if (resolvedAttribution) {
-        // Pull the actual Stripe fee off the charge's balance transaction
-        // (same as the buzz-purchase path). Best-effort: a 0 fee just means
-        // the publisher gets a slightly higher (net===gross) share.
-        let providerFeeCents = 0;
-        if (stripeChargeId) {
+        // Webhook-ordering race (same as ref_code): invoice.paid for a
+        // brand-new subscription can land before checkout.session.completed
+        // copied the metadata onto the Subscription. Fall back to the parent
+        // Checkout Session's metadata so the FIRST invoice isn't lost.
+        if (!resolvedAttribution && invoice.subscription) {
+          const subId =
+            typeof invoice.subscription === 'string'
+              ? invoice.subscription
+              : invoice.subscription.id;
           try {
             const stripeClient = await getServerStripe();
             if (stripeClient) {
-              const charge = await stripeClient.charges.retrieve(stripeChargeId, {
-                expand: ['balance_transaction'],
+              const sessions = await stripeClient.checkout.sessions.list({
+                subscription: subId,
+                limit: 1,
               });
-              const balanceTx = charge.balance_transaction;
-              if (balanceTx && typeof balanceTx !== 'string') {
-                providerFeeCents = balanceTx.fee ?? 0;
+              const sessionMeta = sessions.data[0]?.metadata ?? undefined;
+              const fromSession = extractAttribution(
+                sessionMeta as Record<string, string | number | null | undefined> | undefined
+              );
+              if (fromSession) {
+                resolvedAttribution = fromSession;
+                attributionSource = 'fallback-session';
               }
             }
-          } catch {
-            // best-effort; leave fee at 0
+          } catch (err) {
+            handleLogError(err as Error);
           }
         }
 
-        const line = invoice.lines.data.find((l) => l.price?.product === billedProduct?.id);
-        const periodStart = line?.period?.start
-          ? new Date(line.period.start * 1000)
-          : null;
-        const periodEnd = line?.period?.end ? new Date(line.period.end * 1000) : null;
+        if (resolvedAttribution) {
+          // Pull the actual Stripe fee off the charge's balance transaction
+          // (same as the buzz-purchase path). Best-effort: a 0 fee just means
+          // the publisher gets a slightly higher (net===gross) share.
+          let providerFeeCents = 0;
+          if (stripeChargeId) {
+            try {
+              const stripeClient = await getServerStripe();
+              if (stripeClient) {
+                const charge = await stripeClient.charges.retrieve(stripeChargeId, {
+                  expand: ['balance_transaction'],
+                });
+                const balanceTx = charge.balance_transaction;
+                if (balanceTx && typeof balanceTx !== 'string') {
+                  providerFeeCents = balanceTx.fee ?? 0;
+                }
+              }
+            } catch {
+              // best-effort; leave fee at 0
+            }
+          }
 
-        const { recordSubscriptionAttribution } = await import(
-          '~/server/services/blocks/buzz-attribution.service'
-        );
-        await recordSubscriptionAttribution({
-          userId: user.id,
-          buzzAmount: billedProductMeta.monthlyBuzz ?? 0,
-          buzzType: (billedProductMeta.buzzType as string) ?? 'yellow',
-          usdAmountCents: invoice.amount_paid ?? invoice.total ?? 0,
-          providerFeeCents,
-          paymentProvider: 'stripe',
-          invoiceId: invoice.id,
-          subscriptionId:
-            typeof invoice.subscription === 'string'
-              ? invoice.subscription
-              : invoice.subscription?.id ?? null,
-          billingReason: invoice.billing_reason ?? null,
-          periodStart,
-          periodEnd,
-          tier: billedProductMeta.tier ?? null,
-          attribution: resolvedAttribution,
-        });
+          const line = invoice.lines.data.find((l) => l.price?.product === billedProduct?.id);
+          const periodStart = line?.period?.start ? new Date(line.period.start * 1000) : null;
+          const periodEnd = line?.period?.end ? new Date(line.period.end * 1000) : null;
 
+          const { recordSubscriptionAttribution } = await import(
+            '~/server/services/blocks/buzz-attribution.service'
+          );
+          await recordSubscriptionAttribution({
+            userId: user.id,
+            buzzAmount: billedProductMeta.monthlyBuzz ?? 0,
+            buzzType: (billedProductMeta.buzzType as string) ?? 'yellow',
+            usdAmountCents: grossUsdCents,
+            providerFeeCents,
+            paymentProvider: 'stripe',
+            invoiceId: invoice.id,
+            subscriptionId:
+              typeof invoice.subscription === 'string'
+                ? invoice.subscription
+                : invoice.subscription?.id ?? null,
+            billingReason: invoice.billing_reason ?? null,
+            periodStart,
+            periodEnd,
+            tier: billedProductMeta.tier ?? null,
+            attribution: resolvedAttribution,
+          });
+
+          logToAxiom(
+            {
+              name: 'invoice-paid-block-attribution',
+              refereeId: user.id,
+              invoiceId: invoice.id,
+              appId: resolvedAttribution.appId,
+              appBlockId: resolvedAttribution.appBlockId,
+              billingReason: invoice.billing_reason,
+              source: attributionSource,
+            },
+            'webhooks'
+          ).catch(() => null);
+        }
+      } catch (attrErr) {
+        // Never fail membership provisioning on an attribution write.
         logToAxiom(
           {
             name: 'invoice-paid-block-attribution',
+            type: 'error',
             refereeId: user.id,
             invoiceId: invoice.id,
-            appId: resolvedAttribution.appId,
-            appBlockId: resolvedAttribution.appBlockId,
-            billingReason: invoice.billing_reason,
-            source: attributionSource,
+            message: 'block subscription attribution write failed',
+            error: (attrErr as Error)?.message,
           },
           'webhooks'
         ).catch(() => null);
       }
-    } catch (attrErr) {
-      // Never fail membership provisioning on an attribution write.
-      logToAxiom(
-        {
-          name: 'invoice-paid-block-attribution',
-          type: 'error',
-          refereeId: user.id,
-          invoiceId: invoice.id,
-          message: 'block subscription attribution write failed',
-          error: (attrErr as Error)?.message,
-        },
-        'webhooks'
-      ).catch(() => null);
     }
 
     // Renewals (subscription_cycle) often arrive without a paired
