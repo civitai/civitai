@@ -36,7 +36,11 @@ interface RawManifest {
   /**
    * W10 — optional full-page surface descriptor. When present, the app can be
    * opened as a standalone full page at `/apps/run/<slug>`. `path` is the
-   * sub-path the page mounts at (must start with `/`).
+   * sub-path the page mounts at (must start with `/`). `buzzBudgetPerGen` is the
+   * optional per-generation Buzz budget the page's `ai:write:budgeted` tokens are
+   * minted with (a page is stateless, so unlike a model slot the budget cannot
+   * come from an install settings row — it comes from this manifest field,
+   * server-clamped to the per-gen cap; omitted ⇒ the platform default).
    */
   page?: unknown;
   [key: string]: unknown;
@@ -464,7 +468,12 @@ export class BlockManifestValidator {
       if (!m.page || typeof m.page !== 'object' || Array.isArray(m.page)) {
         errors.push('page must be an object');
       } else {
-        const page = m.page as { path?: unknown; title?: unknown; icon?: unknown };
+        const page = m.page as {
+          path?: unknown;
+          title?: unknown;
+          icon?: unknown;
+          buzzBudgetPerGen?: unknown;
+        };
         if (typeof page.path !== 'string' || page.path.length === 0) {
           errors.push('page.path must be a non-empty string');
         } else if (!page.path.startsWith('/')) {
@@ -479,6 +488,17 @@ export class BlockManifestValidator {
         }
         if (page.icon !== undefined && (typeof page.icon !== 'string' || page.icon.length > 128)) {
           errors.push('page.icon must be a string ≤128 chars');
+        }
+        // W10 generation spend — optional per-gen Buzz budget for the page's
+        // `ai:write:budgeted` tokens. Must be a positive, finite integer when
+        // present (the mint handler clamps it to BUZZ_BUDGET_CAP, so an over-cap
+        // value isn't rejected here — it's silently capped at issuance — but a
+        // non-positive / non-integer / non-finite value is a manifest bug).
+        if (page.buzzBudgetPerGen !== undefined) {
+          const b = page.buzzBudgetPerGen;
+          if (typeof b !== 'number' || !Number.isFinite(b) || !Number.isInteger(b) || b <= 0) {
+            errors.push('page.buzzBudgetPerGen must be a positive integer');
+          }
         }
         // A page app must ship an iframe block (the bundle the full page mounts).
         if (!m.iframe || typeof m.iframe !== 'object') {

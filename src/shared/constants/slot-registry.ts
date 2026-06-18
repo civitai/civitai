@@ -155,16 +155,28 @@ export function isKnownSlotId(id: string): id is SlotId {
 
 /**
  * Money/spend scopes a `page` (viewer-scoped, entity=none) token must NEVER
- * carry. A page has no model entity and no per-content install to attribute
- * spend against, so granting these would be unbounded. This is the belt over
- * the manifest + approved-scope intersection: even if an app's approved
- * manifest declared them, a `kind==='page'` mint rejects them.
+ * carry. This is the belt over the manifest + approved-scope intersection: even
+ * if an app's approved manifest declared one of these, a `kind==='page'` mint
+ * rejects it.
+ *
+ * W10 generation spend: `ai:write:budgeted` is NO LONGER forbidden for pages.
+ * A page is stateless (no install settings row), so its per-generation budget
+ * comes from the approved manifest's `page.buzzBudgetPerGen` field — server-read,
+ * clamped to BUZZ_BUDGET_CAP, defaulted to BUZZ_BUDGET_DEFAULT when the manifest
+ * omits it (see resolveBuzzBudget in the mint handler). Page generation spend is
+ * therefore bounded by exactly the same two limits a model slot is: the per-gen
+ * `buzzBudget` claim AND the per-user daily cap (BLOCK_BUZZ_CAP_PER_DAY in
+ * blocks.router.ts) — neither is bypassed for pages.
+ *
+ * The two scopes below STAY forbidden for pages:
+ *   - `social:tip:self` — tipping is NOT gated by the buzzBudget cost-preflight,
+ *     so the manifest budget cap does not bound it. On a stateless page (no
+ *     per-content owner to attribute against, no per-gen cost ceiling) a tip
+ *     scope would be effectively unbounded spend, so it remains rejected.
+ *   - `buzz:read:self` — balance read isn't needed to spend a bounded budget,
+ *     and a page (entity=none) has no reason to read the viewer's balance.
  */
-export const PAGE_FORBIDDEN_SCOPES = [
-  'ai:write:budgeted',
-  'buzz:read:self',
-  'social:tip:self',
-] as const;
+export const PAGE_FORBIDDEN_SCOPES = ['buzz:read:self', 'social:tip:self'] as const;
 
 /** Does the slot render a full standalone page (W10)? */
 export function isPageSlot(id: string): boolean {

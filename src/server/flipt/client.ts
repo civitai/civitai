@@ -9,6 +9,10 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   ENTITY_METRIC_NO_CACHE_BUST = 'entity-metric-no-cache-bust',
+  // When ON, image metric counts are read from the watcher-fed `metrics:*`
+  // cache (MetricService) instead of the legacy in-app `entitymetric:*` cache.
+  // Default OFF — reversible kill switch for the metrics-source cutover.
+  IMAGE_METRICS_FROM_WATCHER = 'image-metrics-from-watcher',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 

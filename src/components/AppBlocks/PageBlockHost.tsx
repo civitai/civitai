@@ -1,13 +1,52 @@
 import { Box } from '@mantine/core';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BlockFallback } from './BlockFallback';
+import { failureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { grantedPageScopes, pageFallbackReason } from './pageBlockHostLogic';
-import { intersectSandbox } from './sandbox';
+import { resolveRequestConsent } from './requestConsentGate';
+import { resolveRequestSignIn } from './requestSignInGate';
+import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
+import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
+import { trpc } from '~/utils/trpc';
+
+// Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
+// clicks an action whose consent-gated scope the page token is missing. Mirrors
+// IframeHost's dynamic import (SSR-disabled).
+const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: false });
+
+// Buy-Buzz modal for the page money path's OPEN_BUZZ_PURCHASE handler (the
+// insufficient-Buzz top-up CTA). Mirrors IframeHost's dynamic import.
+const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
+
+// Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
+// for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
+// so a block can ask the host to start the civitai login flow when the user
+// clicks an action that needs auth/money. SSR-disabled to match IframeHost's
+// dynamic import (the modal pulls in client-only providers).
+const LoginModal = dynamic(() => import('~/components/Login/LoginModal'), { ssr: false });
+
+// Normalise a thrown storage error into a string the block can surface. Mirrors
+// IframeHost.storageErrorMessage EXACTLY — the apps.storage.* procs throw
+// TRPCErrors with explicit code+message strings (UNAUTHORIZED, PAYLOAD_TOO_LARGE,
+// quota_exceeded, …); we forward the message and never throw upward, so the
+// block's host-mediated storage request rejects cleanly instead of hanging to
+// the SDK's 30s timeout.
+function storageErrorMessage(err: unknown): string {
+  if (err && typeof err === 'object' && 'message' in err) {
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === 'string' && message.length > 0) return message;
+  }
+  return 'storage request failed';
+}
 
 /**
  * W10 — full-page App Block host. Renders a block as a FULL-VIEWPORT surface
@@ -35,6 +74,11 @@ import type { BlockInitPayload, PageContext } from './types';
 
 const BLOCK_READY_TIMEOUT_MS = 10_000;
 const TOKEN_WAIT_TIMEOUT_MS = 15_000;
+
+// Hard cap on a block-suggested Buy-Buzz amount (mirrors IframeHost) — clamps a
+// malicious/huge `suggestedAmount` so the spend modal can't be pre-seeded with
+// an absurd value. The user still picks freely.
+const BUZZ_PURCHASE_AMOUNT_CAP = 50_000;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 
@@ -72,6 +116,10 @@ export interface PageBlockHostProps {
   tokenError?: boolean;
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
+  /** Re-mint the page token after a consent grant so it carries the newly
+   *  granted scopes (pushed to the iframe via TOKEN_REFRESH). Mirrors
+   *  IframeHost.onConsentGranted → useBlockToken.refresh. */
+  onConsentGranted?: () => void;
 }
 
 export function PageBlockHost({
@@ -92,6 +140,7 @@ export function PageBlockHost({
   tokenError,
   viewer,
   theme,
+  onConsentGranted,
 }: PageBlockHostProps) {
   const router = useRouter();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -108,7 +157,20 @@ export function PageBlockHost({
     }
   }, [iframeSrc]);
 
-  const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin });
+  // The EFFECTIVE sandbox handed to the iframe attribute below. Derive the
+  // transport's opaque-origin mode from the SAME string so the two can never
+  // drift: unverified (no allow-same-origin) → opaque frame → opaque transport;
+  // internal/verified (has allow-same-origin) → real origin → pinned transport.
+  const effectiveSandbox = useMemo(
+    () => intersectSandbox(sandbox, trustTier),
+    [sandbox, trustTier]
+  );
+  const opaqueOrigin = useMemo(
+    () => effectiveSandboxIsOpaque(effectiveSandbox),
+    [effectiveSandbox]
+  );
+
+  const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin, opaqueOrigin });
 
   // #3/#6: the scopes the minted JWT ACTUALLY carries (declared − missing).
   // See pageBlockHostLogic.grantedPageScopes. Posting `[]` (the old hardcode)
@@ -260,6 +322,51 @@ export function PageBlockHost({
     return off;
   }, [onMessage]);
 
+  // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
+  // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
+  // the page money scope is enabled) asks the host to open the consent UI when
+  // the user clicks an action that needs that capability (e.g. Generate),
+  // instead of a prompt on load. Mirrors IframeHost's REQUEST_CONSENT handler
+  // exactly: we grant ONLY the missing set the MINT computed (`missingScopes` —
+  // server-known truth), NOT any scopes the block claims; the gate also pins
+  // status === 'ready' so a pre-handshake block can't pop a permission modal
+  // before any interaction (same posture as NAVIGATE). On grant we re-mint the
+  // token (onConsentGranted → useBlockToken.refresh); the new scopes flow to the
+  // iframe via the TOKEN_REFRESH push above and the block retries — there is no
+  // host→block reply (fire-and-forget).
+  //
+  // This was the W10 page-consent gap: the page surface (#2606) carried no money
+  // scopes, so no consent handler was needed; #2612 enabled the page money scope
+  // but never ported this handler from IframeHost, so REQUEST_CONSENT fired into
+  // the void and the block hung on "confirm in the Civitai dialog".
+  useEffect(() => {
+    const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', () => {
+      // PageBlockHost's local Status carries an extra terminal `'error'` variant
+      // (a hard mint failure) the shared gate's HostStatus union doesn't model.
+      // The gate only ever grants when status === 'ready', and `'error'` is a
+      // disjoint terminal state (the iframe isn't even rendered), so collapse it
+      // to a non-ready sentinel before delegating — semantics are unchanged (it
+      // would return null either way), this just satisfies the union type.
+      const gateStatus = status === 'error' ? 'no_token' : status;
+      const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
+      if (scopesToGrant == null) return; // not ready, or nothing missing — drop
+      dialogStore.trigger({
+        component: BlockConsentModal,
+        props: {
+          appBlockId,
+          // PageBlockHost surfaces the app name as `appName` (the model host
+          // uses `install.manifest.name`).
+          blockName: appName,
+          missingScopes: scopesToGrant,
+          onGranted: () => {
+            onConsentGranted?.();
+          },
+        },
+      });
+    });
+    return off;
+  }, [onMessage, status, missingScopes, appBlockId, appName, onConsentGranted]);
+
   // Deep-link bridge — block requests in-page navigation. The block may push a
   // new sub-path WITHIN its own page space; we constrain it to the page route so
   // a block can't navigate the host off to an arbitrary path. `path` is an
@@ -313,6 +420,430 @@ export function PageBlockHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Money path: the @civitai/blocks-react useBuzzWorkflow bridge ───────────
+  //
+  // This was the SECOND W10 page gap (after consent). #2606 shipped pages with
+  // NO money scopes, so the workflow bridge wasn't needed; #2612 added the
+  // page-money server runtime + #2615 ported consent — but this host never
+  // ported the workflow handlers from IframeHost. A page block calling
+  // estimate/submit/poll/cancel (via useBuzzWorkflow) posts
+  // ESTIMATE_WORKFLOW / SUBMIT_WORKFLOW / POLL_WORKFLOW / CANCEL_WORKFLOW into
+  // the void → no blocks.* tRPC call → the SDK request hung to its 120s timeout
+  // with no network call and no error. We mirror IframeHost EXACTLY: forward to
+  // the same blocks.* mutations with the page `token` prop as `blockToken`, and
+  // every path (success OR thrown) MUST post a reply (failure-shape snapshot via
+  // failureSnapshot on throw) so the block's transport never hangs.
+  //
+  // Server-side blocks.{estimate,submit,poll,cancel}Workflow already enforce the
+  // page token's scope + budget + entitlement gate (#2612); the host just
+  // forwards the (untrusted, server-schema-validated) `body`/`workflowId` + the
+  // token. No client-side gating is added here.
+  //
+  // token is a PROP here (string | null) — PageBlockHost does NOT use
+  // useBlockToken (that's the page route). A null token means the block never
+  // rendered a usable money surface; we drop such a request without a reply (the
+  // block can't have legitimately fired a workflow without a token, and the mint
+  // path surfaces no_token/error terminal states above). A missing requestId is
+  // likewise dropped without replying — mirrors IframeHost.
+  const submitWorkflowMutation = trpc.blocks.submitWorkflow.useMutation();
+  const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
+  const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
+  const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
+
+  // SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
+      'SUBMIT_WORKFLOW',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || !token) return;
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await submitWorkflowMutation.mutateAsync({
+            blockToken: token,
+            // Schema-validated server-side; the host never trusts this shape.
+            body: raw.body as never,
+          });
+          send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+        } catch (err) {
+          send('WORKFLOW_SUBMITTED', { requestId, snapshot: failureSnapshot(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, submitWorkflowMutation]);
+
+  // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
+      'ESTIMATE_WORKFLOW',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || !token) return;
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await estimateWorkflowMutation.mutateAsync({
+            blockToken: token,
+            body: raw.body as never,
+          });
+          send('ESTIMATE_RESULT', { requestId, snapshot });
+        } catch (err) {
+          send('ESTIMATE_RESULT', { requestId, snapshot: failureSnapshot(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, estimateWorkflowMutation]);
+
+  // POLL_WORKFLOW → blocks.pollWorkflow → WORKFLOW_STATUS.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
+      'POLL_WORKFLOW',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.workflowId !== 'string' ||
+          raw.workflowId.length === 0 ||
+          !token
+        ) {
+          return;
+        }
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await pollWorkflowMutation.mutateAsync({
+            blockToken: token,
+            workflowId: raw.workflowId,
+          });
+          send('WORKFLOW_STATUS', { requestId, snapshot });
+        } catch (err) {
+          send('WORKFLOW_STATUS', { requestId, snapshot: failureSnapshot(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, pollWorkflowMutation]);
+
+  // CANCEL_WORKFLOW → blocks.cancelWorkflow → WORKFLOW_CANCELED. Ownership is
+  // enforced server-side by the viewer's orchestrator token.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
+      'CANCEL_WORKFLOW',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.workflowId !== 'string' ||
+          raw.workflowId.length === 0 ||
+          !token
+        ) {
+          return;
+        }
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await cancelWorkflowMutation.mutateAsync({
+            blockToken: token,
+            workflowId: raw.workflowId,
+          });
+          send('WORKFLOW_CANCELED', { requestId, snapshot });
+        } catch (err) {
+          send('WORKFLOW_CANCELED', { requestId, snapshot: failureSnapshot(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, cancelWorkflowMutation]);
+
+  // OPEN_BUZZ_PURCHASE → BUZZ_PURCHASE_RESULT. The generator's insufficient-Buzz
+  // top-up CTA. Gate on BLOCK_READY (+ payload validity) via the shared
+  // resolveBuzzPurchaseRequest predicate so a pre-handshake block can't summon
+  // the spend modal before any interaction (same posture as the model host).
+  //
+  // DEVIATION from IframeHost (intentional, documented): the model host derives
+  // earnings attribution from the install context (deriveScopeFromInstanceId on
+  // the `mbi_*`/`bus_*`/`pdb_*` instanceId prefix + modelId/slotId). The PAGE
+  // instanceId is `page_<appBlockId>`, which deriveScopeFromInstanceId does NOT
+  // recognise → returns null → attribution is omitted, exactly as IframeHost
+  // already handles an unknown prefix ("skip attribution; the webhook treats it
+  // as a regular buzz purchase"). There is no page-scoped earnings bucket today,
+  // so a page top-up is an unattributed purchase. We invent NO new attribution
+  // behavior — when/if a page earnings scope exists, extend
+  // deriveScopeFromInstanceId (the single client-side prefix→scope mapper) and
+  // this falls through automatically.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; suggestedAmount?: unknown } | undefined>(
+      'OPEN_BUZZ_PURCHASE',
+      (raw) => {
+        // PageBlockHost's local Status carries an extra terminal `'error'`
+        // variant the shared gate's HostStatus union doesn't model; collapse it
+        // to a non-ready sentinel (the gate only ever opens when status ===
+        // 'ready', so this is semantics-preserving) — same shim as the consent
+        // gate above.
+        const gateStatus = status === 'error' ? 'no_token' : status;
+        const requestId = resolveBuzzPurchaseRequest(gateStatus, raw);
+        if (requestId == null || !raw) return; // !raw implied; narrows for TS
+        const rawAmount =
+          typeof raw.suggestedAmount === 'number' && Number.isFinite(raw.suggestedAmount)
+            ? raw.suggestedAmount
+            : undefined;
+        const amount =
+          rawAmount != null
+            ? Math.min(Math.max(Math.floor(rawAmount), 0), BUZZ_PURCHASE_AMOUNT_CAP)
+            : undefined;
+        // Page instanceId prefix is unrecognised → null → no attribution (see
+        // the DEVIATION note above). Kept structurally identical to IframeHost
+        // so a future page-scope only needs the prefix mapper extended.
+        const scope = deriveScopeFromInstanceId(blockInstanceId);
+        const attribution = scope
+          ? {
+              appId,
+              appBlockId,
+              blockInstanceId,
+              scope,
+            }
+          : undefined;
+        let purchased = false;
+        dialogStore.trigger<BuyBuzzModalProps>({
+          // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
+          // against each other in the dialog store's exists-check.
+          id: `block-buy-buzz-${requestId}`,
+          component: BuyBuzzModal,
+          props: {
+            minBuzzAmount: amount,
+            attribution,
+            onPurchaseSuccess: () => {
+              purchased = true;
+            },
+          },
+          options: {
+            onClose: () => {
+              send('BUZZ_PURCHASE_RESULT', { requestId, purchased });
+            },
+          },
+        });
+      }
+    );
+    return off;
+  }, [onMessage, send, status, appId, appBlockId, blockInstanceId]);
+
+  // ── Sign-in bridge: REQUEST_SIGN_IN (anonymous conversion) ─────────────────
+  //
+  // This was the THIRD W10 page gap. The page route renders for LOGGED-OUT
+  // viewers (the BLOCK_INIT context is viewer-scoped with viewer:null when anon),
+  // but PageBlockHost had no REQUEST_SIGN_IN handler — so a logged-out viewer who
+  // clicks an action needing auth/money (e.g. Generate) dead-ended: the block
+  // posted REQUEST_SIGN_IN into the void and the login modal never opened. We
+  // mirror IframeHost EXACTLY: the shared resolveRequestSignIn gate pins
+  // status === 'ready' (a pre-handshake block can't pop a login modal before any
+  // interaction) and sanitises a block-supplied returnUrl to a same-origin in-app
+  // path (absolute / protocol-relative values are dropped → LoginModal defaults
+  // returnUrl to the current page). Fire-and-forget — there is no host→block
+  // reply. The `'error' → 'no_token'` status shim is reused (PageBlockHost's local
+  // Status carries the extra terminal 'error' variant the shared HostStatus union
+  // doesn't model; the gate only ever opens when status === 'ready', so this is
+  // semantics-preserving — same shim as the consent + buzz handlers).
+  useEffect(() => {
+    const off = onMessage<{ returnUrl?: unknown } | undefined>('REQUEST_SIGN_IN', (raw) => {
+      const gateStatus = status === 'error' ? 'no_token' : status;
+      const resolved = resolveRequestSignIn(gateStatus, raw);
+      if (resolved == null) return; // not ready — drop (gate centralises the rules)
+      dialogStore.trigger({
+        component: LoginModal,
+        props: {
+          reason: 'image-gen',
+          ...(resolved.returnUrl ? { returnUrl: resolved.returnUrl } : {}),
+        },
+      });
+    });
+    return off;
+  }, [onMessage, status]);
+
+  // ── App Blocks KV datastore bridge (W4-v0) ─────────────────────────────────
+  //
+  // This was the FOURTH W10 page gap (the next message-into-the-void after
+  // consent + workflow). PageBlockHost advertises `apps:storage:*` in BLOCK_INIT
+  // and the page mint signs `apps:storage:read/write`, but the host had NO
+  // storage handlers — so a storage-using page block (e.g. the Notepad page)
+  // posting APP_STORAGE_GET/SET/DELETE/LIST/QUOTA fired into the void and hung to
+  // the SDK's 30s timeout. We mirror IframeHost EXACTLY: five host-mediated
+  // handlers (the iframe never sees the apps DB credentials), each replying with
+  // the SAME requestId on BOTH the success and the error path — errors are
+  // reported as `error: <string>` on the result payload (never thrown upward) so
+  // the block-side hook rejects instead of stranding the bridge.
+  //
+  // token is a PROP here (string | null) — PageBlockHost does NOT use
+  // useBlockToken (that's the page route). apps.storage.* require a non-null
+  // blockToken (z.string().min(1)); a null token means the block never rendered a
+  // usable surface, so each handler drops a `!token` request without replying
+  // (consistent with the #2618 workflow handlers — the mint path surfaces
+  // no_token/error terminal states above). A missing requestId is likewise
+  // dropped without replying (mirrors IframeHost).
+  const trpcUtils = trpc.useUtils();
+  const storageSetMutation = trpc.apps.storage.set.useMutation();
+  const storageDeleteMutation = trpc.apps.storage.delete.useMutation();
+
+  // APP_STORAGE_GET → apps.storage.get → APP_STORAGE_GET_RESULT.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'APP_STORAGE_GET',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.storage.get.fetch({
+            blockToken: token,
+            key: raw.key,
+          });
+          send('APP_STORAGE_GET_RESULT', { requestId, value: result.value });
+        } catch (err) {
+          send('APP_STORAGE_GET_RESULT', {
+            requestId,
+            value: null,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // APP_STORAGE_SET → apps.storage.set → APP_STORAGE_SET_RESULT.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
+      'APP_STORAGE_SET',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await storageSetMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+            value: raw.value,
+          });
+          send('APP_STORAGE_SET_RESULT', {
+            requestId,
+            ok: true,
+            sizeBytes: result.sizeBytes,
+          });
+        } catch (err) {
+          send('APP_STORAGE_SET_RESULT', {
+            requestId,
+            ok: false,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, storageSetMutation]);
+
+  // APP_STORAGE_DELETE → apps.storage.delete → APP_STORAGE_DELETE_RESULT.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'APP_STORAGE_DELETE',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await storageDeleteMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+          });
+          send('APP_STORAGE_DELETE_RESULT', {
+            requestId,
+            ok: true,
+            deleted: result.deleted,
+          });
+        } catch (err) {
+          send('APP_STORAGE_DELETE_RESULT', {
+            requestId,
+            ok: false,
+            deleted: false,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, storageDeleteMutation]);
+
+  // APP_STORAGE_LIST → apps.storage.list → APP_STORAGE_LIST_RESULT.
+  useEffect(() => {
+    const off = onMessage<
+      | {
+          requestId?: unknown;
+          prefix?: unknown;
+          limit?: unknown;
+          cursor?: unknown;
+        }
+      | undefined
+    >('APP_STORAGE_LIST', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      const requestId = raw.requestId;
+      try {
+        const prefix = typeof raw.prefix === 'string' ? raw.prefix : undefined;
+        const limit =
+          typeof raw.limit === 'number' && Number.isFinite(raw.limit)
+            ? Math.min(Math.max(Math.floor(raw.limit), 1), 200)
+            : 50;
+        const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
+        const result = await trpcUtils.apps.storage.list.fetch({
+          blockToken: token,
+          prefix,
+          limit,
+          cursor,
+        });
+        send('APP_STORAGE_LIST_RESULT', {
+          requestId,
+          keys: result.keys.map((k) => ({
+            key: k.key,
+            updatedAt: k.updatedAt instanceof Date ? k.updatedAt.toISOString() : String(k.updatedAt),
+          })),
+          nextCursor: result.nextCursor,
+        });
+      } catch (err) {
+        send('APP_STORAGE_LIST_RESULT', {
+          requestId,
+          keys: [],
+          error: storageErrorMessage(err),
+        });
+      }
+    });
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // APP_STORAGE_QUOTA → apps.storage.getQuota → APP_STORAGE_QUOTA_RESULT.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'APP_STORAGE_QUOTA',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || !token) return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token });
+          send('APP_STORAGE_QUOTA_RESULT', {
+            requestId,
+            usedBytes: result.usedBytes,
+            rowCount: result.rowCount,
+            limitBytes: result.limitBytes,
+            limitRows: result.limitRows,
+          });
+        } catch (err) {
+          send('APP_STORAGE_QUOTA_RESULT', {
+            requestId,
+            usedBytes: 0,
+            rowCount: 0,
+            limitBytes: 0,
+            limitRows: 0,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';
 
@@ -347,7 +878,7 @@ export function PageBlockHost({
         <iframe
           ref={iframeRef}
           src={iframeSrc}
-          sandbox={intersectSandbox(sandbox, trustTier)}
+          sandbox={effectiveSandbox}
           referrerPolicy="no-referrer"
           title={appName || blockId}
           data-testid="app-page-iframe"

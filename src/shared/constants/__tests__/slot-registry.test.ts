@@ -64,10 +64,16 @@ describe('slot-registry (Phase 0 foundation)', () => {
     );
   });
 
-  it('PAGE_FORBIDDEN_SCOPES covers every money/spend scope', () => {
-    expect([...PAGE_FORBIDDEN_SCOPES].sort()).toEqual(
-      ['ai:write:budgeted', 'buzz:read:self', 'social:tip:self'].sort()
-    );
+  // W10 generation spend: `ai:write:budgeted` is NO LONGER page-forbidden —
+  // pages can spend Buzz on generation, bounded by the manifest per-gen budget
+  // (page.buzzBudgetPerGen) + the per-user daily cap. Tipping + balance-read
+  // stay forbidden (see the doc comment on PAGE_FORBIDDEN_SCOPES for why).
+  it('PAGE_FORBIDDEN_SCOPES forbids only tipping + balance-read (NOT budgeted gen)', () => {
+    expect([...PAGE_FORBIDDEN_SCOPES].sort()).toEqual(['buzz:read:self', 'social:tip:self'].sort());
+  });
+
+  it('ai:write:budgeted is NOT forbidden for pages (generation spend allowed)', () => {
+    expect((PAGE_FORBIDDEN_SCOPES as readonly string[]).includes('ai:write:budgeted')).toBe(false);
   });
 
   // Only `none` and `model` entities are wired in this build. user/image are

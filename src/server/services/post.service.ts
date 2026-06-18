@@ -39,7 +39,6 @@ import {
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getGenerationStatus } from '~/server/services/generation/generation.service';
 import {
   createImage,
   createImageResources,
@@ -86,7 +85,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getMetadata } from '~/utils/metadata';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { CacheTTL } from '../common/constants';
+import { CacheTTL, MAX_RESOURCES_PER_IMAGE } from '../common/constants';
 import type {
   AddPostTagInput,
   AddResourceToPostImageInput,
@@ -884,7 +883,9 @@ export const updatePost = async ({
         ...restData,
         title: !!restData.title ? (restData.title.length > 0 ? restData.title : null) : undefined,
         detail: !!restData.detail
-          ? (restData.detail.length > 0 ? restData.detail : null)
+          ? restData.detail.length > 0
+            ? restData.detail
+            : null
           : undefined,
       },
     });
@@ -1399,39 +1400,11 @@ export const addResourceToPostImage = async ({
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
-  const simpleResourceLimit = 8;
-  const baseAxiom = {
-    type: 'warning',
-    name: 'fetch-generation-status',
-    path: 'post.addResourceToImage',
-  };
-
-  let resourceLimit = simpleResourceLimit;
-  try {
-    const genStatus = await getGenerationStatus();
-    if (genStatus) {
-      const tier = user?.tier ?? 'free';
-      if (isDefined(genStatus.limits?.[tier]?.resources)) {
-        resourceLimit = genStatus.limits[tier].resources ?? simpleResourceLimit;
-      } else {
-        logToAxiom({
-          ...baseAxiom,
-          message: 'no resource limit found',
-        }).catch();
-      }
-    } else {
-      logToAxiom({
-        ...baseAxiom,
-        message: 'no gen status',
-      }).catch();
-    }
-  } catch (e: unknown) {
-    const error = e as Error;
-    logToAxiom({
-      ...baseAxiom,
-      message: error?.message,
-    }).catch();
-  }
+  // Manually crediting resources on an uploaded/external image is an attribution
+  // action with no GPU cost, so it uses a fixed cap rather than the per-tier
+  // generation limits (those are throttled during GPU crunches — see the
+  // MAX_RESOURCES_PER_IMAGE comment in server/common/constants).
+  const resourceLimit = MAX_RESOURCES_PER_IMAGE;
 
   images.forEach((img) => {
     const numExistingResources = img.resourceHelper.length;

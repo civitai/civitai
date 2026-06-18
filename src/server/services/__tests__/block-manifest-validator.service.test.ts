@@ -385,5 +385,49 @@ describe('BlockManifestValidator', () => {
         expect(result.errors.some((e) => e.includes('must also declare an iframe'))).toBe(true);
       }
     });
+
+    // W10 generation spend — optional page.buzzBudgetPerGen.
+    it('accepts a page declaring a positive integer buzzBudgetPerGen', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        page: { path: '/', title: 'X', buzzBudgetPerGen: 200 },
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a page that omits buzzBudgetPerGen (optional → platform default)', () => {
+      const manifest = { ...VALID_MANIFEST, page: { path: '/', title: 'X' } };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it.each([
+      [0, 'zero'],
+      [-5, 'negative'],
+      [12.5, 'non-integer'],
+      ['200' as unknown as number, 'string'],
+      [Infinity, 'Infinity'],
+      [Number.NaN, 'NaN'],
+    ])('rejects a %s buzzBudgetPerGen (%s)', (value) => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        page: { path: '/', title: 'X', buzzBudgetPerGen: value },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('buzzBudgetPerGen'))).toBe(true);
+      }
+    });
+
+    // A value above the per-gen cap is NOT rejected at validation time — the
+    // mint handler clamps it to BUZZ_BUDGET_CAP. The validator only enforces
+    // shape (positive integer).
+    it('accepts an above-cap buzzBudgetPerGen (clamped at mint, not rejected here)', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        page: { path: '/', title: 'X', buzzBudgetPerGen: 5000 },
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
   });
 });

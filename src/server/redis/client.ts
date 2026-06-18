@@ -8,6 +8,7 @@ import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { withCommandDeadline } from '~/server/redis/command-deadline';
 // NOTE: do NOT statically import the redis prom metrics from '~/server/prom/client'.
 // This module is client-bundle-reachable (`_app.tsx` → `system-cache.ts` → here),
 // and prom-client eagerly requires `fs`/`cluster` at module load (defaultMetrics +
@@ -706,6 +707,16 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     log(`Redis instrumentation: ${methodName} not found on ${clientLabel} client`);
     return;
   }
+  // Bounded per-command timeout — CLUSTER (cache) client ONLY. A ~0.5% minority of
+  // cluster `_execute` promises NEVER settle even after socketTimeout (inferred:
+  // cluster retry/topology-rediscovery orphans the outer promise across reconnects),
+  // which both LEAKS the inflight gauge (done() below never fires) and PARKS the request
+  // handler ~125s → flat-125s SSR 499s. Racing `_execute` against a rejecting deadline
+  // guarantees the wrapped promise settles, so done() runs (gauge dec'd) and the handler
+  // unparks with an error the existing fail-open cache readers degrade through. We must
+  // NOT apply this to the SYSTEM client (sendCommand) — a blanket sys-client timeout
+  // caused the #2556/#2586 wedge; sysRedis is bounded by withSysReadDeadline instead.
+  const wrapWithDeadline = isClusterClient && clientLabel === 'cluster';
   self[methodName] = function (this: any, ...args: any[]) {
     // Read the metric handles published by '~/server/prom/client' on globalThis
     // (no static import — see the note on the prom import above). Capture ONCE per
@@ -726,7 +737,14 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
       done();
       throw err;
     }
-    return Promise.resolve(result).finally(done);
+    // Bound the cluster command so a never-settling `_execute` still reaches done()
+    // (gauge dec'd, handler unparked). No-op when the deadline env is 0/disabled or for
+    // the sys client (wrapWithDeadline=false). withCommandDeadline reaps the late
+    // rejection of the orphaned command so it can't surface as an unhandledRejection.
+    const settled = wrapWithDeadline
+      ? withCommandDeadline(Promise.resolve(result))
+      : Promise.resolve(result);
+    return settled.finally(done);
   };
 }
 

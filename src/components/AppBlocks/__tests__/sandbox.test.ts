@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { intersectSandbox } from '../sandbox';
+import { effectiveSandboxIsOpaque, intersectSandbox } from '../sandbox';
 
 /**
  * L-SANDBOX coverage. intersectSandbox derives the iframe `sandbox`
@@ -57,5 +57,39 @@ describe('intersectSandbox', () => {
       'allow-same-origin',
     ]);
     for (const t of out) expect(allowed.has(t)).toBe(true);
+  });
+});
+
+/**
+ * L-OPAQUE caller derivation. The host's postMessage transport must run in
+ * opaque mode iff the EFFECTIVE iframe sandbox lacks `allow-same-origin` (i.e.
+ * the frame runs at an opaque 'null' origin). Both callers (PageBlockHost +
+ * IframeHost) derive `opaqueOrigin = effectiveSandboxIsOpaque(effectiveSandbox)`
+ * from the SAME `intersectSandbox(...)` value they hand to the iframe
+ * `sandbox` attribute, so transport mode can never drift from the actual frame
+ * origin.
+ */
+describe('effectiveSandboxIsOpaque (transport-mode derivation)', () => {
+  it('unverified tier → no allow-same-origin → opaque (true)', () => {
+    const eff = intersectSandbox('allow-forms', 'unverified');
+    expect(eff.split(/\s+/)).not.toContain('allow-same-origin');
+    expect(effectiveSandboxIsOpaque(eff)).toBe(true);
+  });
+
+  it('internal tier → has allow-same-origin → NOT opaque (false, pinned path preserved)', () => {
+    const eff = intersectSandbox('allow-forms', 'internal');
+    expect(eff.split(/\s+/)).toContain('allow-same-origin');
+    expect(effectiveSandboxIsOpaque(eff)).toBe(false);
+  });
+
+  it('verified tier → has allow-same-origin → NOT opaque (false)', () => {
+    expect(effectiveSandboxIsOpaque(intersectSandbox(undefined, 'verified'))).toBe(false);
+  });
+
+  it('direct token checks', () => {
+    expect(effectiveSandboxIsOpaque('allow-scripts')).toBe(true);
+    expect(effectiveSandboxIsOpaque('allow-scripts allow-same-origin')).toBe(false);
+    // word-boundary safe: a token that merely contains the substring is not a match
+    expect(effectiveSandboxIsOpaque('allow-same-origin-ish')).toBe(true);
   });
 });

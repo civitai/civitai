@@ -2722,7 +2722,14 @@ export async function getImagesFromFeedSearch(
       new CacheService(
         redis as unknown as IRedisClient,
         pgDbWrite as IDbClient,
-        clickhouse as IClickhouseClient
+        clickhouse as IClickhouseClient,
+        undefined,
+        // Back the feed's image→tagIds lookup with civitai's own warm, actively-invalidated
+        // tagIdsForImagesCache (msgpack string) instead of the retired event-engine-common
+        // `image:tagIds` Redis hash. Same {imageId, tags[]} shape + same WD14/Rekognition +
+        // styleTags/subjectTags filter, so it's a drop-in. Relieves next-redis-cluster memory.
+        (ids: number[]) =>
+          tagIdsForImagesCache.fetch(ids) as Promise<Record<number, { imageId: number; tags: number[] }>>
       )
     );
 
@@ -4461,9 +4468,47 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   }
 }
 
-const getImageMetricsObject = async (data: { id: number }[]) => {
+// Lazily-built MetricService over the watcher-fed `metrics:*` cache, reused
+// across calls (this is the hot feed path) rather than reconstructed per call.
+let _imageMetricService: MetricService | null = null;
+const getImageMetricService = () =>
+  (_imageMetricService ??= new MetricService(
+    clickhouse as IClickhouseClient,
+    redis as unknown as IRedisClient
+  ));
+
+type ImageMetricsObject = Awaited<ReturnType<typeof imageMetricsCache.fetch>>;
+
+const getImageMetricsObject = async (data: { id: number }[]): Promise<ImageMetricsObject> => {
   try {
-    return await imageMetricsCache.fetch(data.map((d) => d.id));
+    const ids = data.map((d) => d.id);
+
+    // Cutover kill switch. When ON, read image metrics from the watcher-fed
+    // `metrics:*` cache (MetricService). Default OFF keeps the legacy in-app
+    // `entitymetric:*` path, so merging this is a no-op; flip the flag to roll
+    // over, and flip back (then bust `metrics:*`) to revert instantly. The
+    // legacy write path is intentionally left intact so flip-back stays warm.
+    const fromWatcher = await getFliptBoolean(FLIPT_FEATURE_FLAGS.IMAGE_METRICS_FROM_WATCHER);
+    if (fromWatcher) {
+      const metrics = await getImageMetricService().fetch('Image', ids);
+      const result: ImageMetricsObject = {};
+      for (const id of ids) {
+        const m = metrics[id];
+        result[id] = {
+          imageId: id,
+          reactionLike: m?.Like || null,
+          reactionHeart: m?.Heart || null,
+          reactionLaugh: m?.Laugh || null,
+          reactionCry: m?.Cry || null,
+          comment: m?.commentCount || null,
+          collection: m?.Collection || null,
+          buzz: m?.tippedAmount || null,
+        };
+      }
+      return result;
+    }
+
+    return await imageMetricsCache.fetch(ids);
   } catch (e) {
     const error = e as Error;
     logToAxiom(
