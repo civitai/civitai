@@ -13,6 +13,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // cache (MetricService) instead of the legacy in-app `entitymetric:*` cache.
   // Default OFF — reversible kill switch for the metrics-source cutover.
   IMAGE_METRICS_FROM_WATCHER = 'image-metrics-from-watcher',
+  // When ON, the entity-metric read path pulls per-day totals from the
+  // already-FINAL read VIEW `entityMetricDailyAgg_v2` (no argMax dedup) instead
+  // of the ReplacingMergeTree `entityMetricDailyAgg_new` (which needs argMax).
+  // Default OFF — reversible kill switch; merging/deploying is a no-op until the
+  // flag flips, and flipping back instantly restores the legacy source.
+  METRICS_AGG_V2_READ = 'metrics-agg-v2-read',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
@@ -385,6 +391,53 @@ export function isFliptSync(
 
 export async function ensureFliptInitialized(): Promise<void> {
   await FliptSingleton.getInstance();
+}
+
+// Entity-metric read source, gated by METRICS_AGG_V2_READ. OFF (default) reads
+// the ReplacingMergeTree `entityMetricDailyAgg_new` which needs per-day argMax
+// dedup; ON reads the already-FINAL view `entityMetricDailyAgg_v2` directly.
+// Single source of truth shared by every read site (MetricService provider +
+// the search-index / populate / metric-helper queries) so the cutover is one
+// flag flip everywhere.
+export type EntityMetricAggSource = { table: string; needsArgMaxDedup: boolean };
+
+const ENTITY_METRIC_AGG_LEGACY: EntityMetricAggSource = {
+  table: 'entityMetricDailyAgg_new',
+  needsArgMaxDedup: true,
+};
+const ENTITY_METRIC_AGG_V2: EntityMetricAggSource = {
+  table: 'entityMetricDailyAgg_v2',
+  needsArgMaxDedup: false,
+};
+
+export async function getEntityMetricAggSource(): Promise<EntityMetricAggSource> {
+  const useV2 = await getFliptBoolean(FLIPT_FEATURE_FLAGS.METRICS_AGG_V2_READ);
+  return useV2 ? ENTITY_METRIC_AGG_V2 : ENTITY_METRIC_AGG_LEGACY;
+}
+
+// Build the inner `(entityId, metricType, day, total)` subquery the direct CH
+// read sites (search-index / comic populate / metric-helpers) sum over. `where`
+// is the caller's full WHERE clause (e.g. "WHERE entityType = 'Image' AND ...").
+// Legacy source argMax-dedups per (entity, metric, day); the v2 view is already
+// FINAL so we select total directly. Selecting metricType is harmless even for
+// callers that only group by day (it's just carried through the subquery).
+export function buildEntityMetricPerDaySource(
+  source: EntityMetricAggSource,
+  where: string
+): string {
+  if (source.needsArgMaxDedup) {
+    return `(
+      SELECT entityId, metricType, day, argMax(total, refreshedAt) AS total
+      FROM ${source.table}
+      ${where}
+      GROUP BY entityId, metricType, day
+    )`;
+  }
+  return `(
+      SELECT entityId, metricType, day, total
+      FROM ${source.table}
+      ${where}
+    )`;
 }
 
 export default FliptSingleton;
