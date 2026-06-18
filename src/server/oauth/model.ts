@@ -7,14 +7,17 @@ import type {
   User,
 } from '@node-oauth/oauth2-server';
 import { createHash, timingSafeEqual } from 'crypto';
+import { pack } from 'msgpackr';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { hSetWithTTL } from '~/server/redis/atomic';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL } from './constants';
 import { createOAuthTokenPair } from './token-helpers';
 import { OriginNotAllowedError } from './errors';
+import { redirectUriMatches } from '~/server/schema/oauth-client.schema';
 
 /** Hash auth code for Redis storage (separate from API key hashing) */
 function hashCode(code: string): string {
@@ -112,6 +115,18 @@ export const oauthModel = {
     } as Client;
   },
 
+  // The library validates redirect_uri against client.redirectUris with an exact
+  // `includes` by default; override so loopback redirects get RFC 8252 §7.3 port
+  // flexibility (matching the custom pre-check in /api/auth/oauth/authorize).
+  async validateRedirectUri(redirectUri: string, client: Client): Promise<boolean> {
+    const registeredUris = Array.isArray(client.redirectUris)
+      ? client.redirectUris
+      : client.redirectUris
+      ? [client.redirectUris]
+      : [];
+    return redirectUriMatches(registeredUris, redirectUri);
+  },
+
   // ─── Authorization Code ─────────────────────────────────────
 
   async saveAuthorizationCode(
@@ -132,8 +147,19 @@ export const oauthModel = {
       expiresAt: code.expiresAt.toISOString(),
     };
 
-    await redis.packed.hSet(REDIS_KEYS.OAUTH.AUTHORIZATION_CODES, hashedCode, data);
-    await redis.hExpire(REDIS_KEYS.OAUTH.AUTHORIZATION_CODES, hashedCode, AUTH_CODE_TTL);
+    // Atomic packed-write: pack the value here and pipe it through the
+    // single-EVAL helper. Replaces the previous sequential hSet + hExpire,
+    // which could leave a no-TTL authorization code in Redis if the
+    // hExpire await never landed (process kill between awaits) — a security
+    // finding for OAuth codes that are intended to be single-use and
+    // short-lived (AUTH_CODE_TTL = 10 minutes).
+    await hSetWithTTL(
+      redis,
+      REDIS_KEYS.OAUTH.AUTHORIZATION_CODES,
+      hashedCode,
+      pack(data),
+      AUTH_CODE_TTL * 1000
+    );
 
     return { ...code, client, user };
   },

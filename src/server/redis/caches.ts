@@ -37,9 +37,18 @@ export const tagIdsForImagesCache = createCachedObject<{
 }>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
   idKey: 'imageId',
-  // 8h TTL — 296B/key but ~16M keys/shard (~4.4 GiB).
-  // With stale-while-revalidate, effective Redis EX = 16h.
+  // 8h logical TTL. Measured live (2026-06-17) at ~1.7KB/key and ~16.85 GiB/shard
+  // (~50 GiB cluster-wide) — the single largest next-redis-cluster consumer, NOT
+  // the ~4.4 GiB the prior comment assumed. The default SWR tail keeps the key
+  // resident for a full extra `ttl` past staleness (physical EX 16h); on an
+  // at-cap LRU cluster that tail is mostly evicted early anyway. Trim it to 1h
+  // (physical EX 9h) to cut resident memory. Trade-off: a key re-read only after
+  // the 8h–9h band (vs 8h–16h before) is now a blocking cold-miss (the fetch
+  // lock-winner re-queries Prisma inline) instead of a stale-serve — a small,
+  // non-zero miss uptick for sparsely-accessed images. Steadily-read keys are
+  // unaffected (they revalidate at the 8h logical boundary either way).
   ttl: CacheTTL.hour * 8,
+  staleWhileRevalidateTtl: CacheTTL.hour,
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
@@ -1179,10 +1188,21 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  // 4h TTL to bound Redis memory — image-meta is ~2.8KB/key (~2.3 GiB / ~1% of
-  // the cluster per the 2026-06-09 keyspace audit; the tag caches are the heavy
-  // consumers, not this one). With stale-while-revalidate, effective Redis EX = 8h.
+  // 4h logical TTL. image-meta is ~2.8KB/key; on next-redis-cluster the cache
+  // sits behind tag-ids-for-images (~16.85 GiB/shard) and post-stats (~8.2 GiB)
+  // as a top-3 consumer of an at-cap LRU cluster (3×32 GiB maxmemory, evicting
+  // ~250 keys/s/shard, ~100% used for hours — verified live 2026-06-17). The
+  // default SWR tail keeps every key resident for a full extra `ttl` past
+  // staleness (physical EX 8h). Trim it to 1h (physical EX 5h) to cut the
+  // resident set the cache wants to hold, matching tagIdsForImagesCache /
+  // postStatCache. Trade-off: a key re-read only in the 4h–5h-old band (vs
+  // 4h–8h before) is now a blocking cold-miss (the lock-winner re-queries
+  // Prisma inline on dbRead) instead of a stale-serve — but at cap those tail
+  // keys are exactly what LRU evicts first anyway, so steadily-read images are
+  // unaffected. Do NOT shorten the logical 4h ttl: that would convert the hot
+  // working set into misses and stampede dbRead.
   ttl: CacheTTL.hour * 4,
+  staleWhileRevalidateTtl: CacheTTL.hour,
 });
 
 type ImageWithMetadata = {
@@ -1204,8 +1224,11 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  // 4h TTL — same rationale as imageMetaCache.
+  // 4h logical TTL + 1h SWR tail (physical EX 5h) — same rationale as
+  // imageMetaCache: bound the resident set on the at-cap next-redis-cluster
+  // without shortening the freshness window.
   ttl: CacheTTL.hour * 4,
+  staleWhileRevalidateTtl: CacheTTL.hour,
 });
 
 export const thumbnailCache = createCachedObject<{
@@ -1310,7 +1333,15 @@ type PostStatLookup = {
 export const postStatCache = createCachedObject<PostStatLookup>({
   key: REDIS_KEYS.CACHES.POST_STATS,
   idKey: 'postId',
+  // 24h logical TTL. Measured live (2026-06-17) at ~8.2 GiB on next-redis-cluster
+  // (~8.6%, 3rd-largest consumer). The default SWR tail keeps the key resident a
+  // full extra `ttl` past staleness (physical EX 48h). Trim it to 1h (physical
+  // EX 25h) to cut resident memory. Same trade-off as tagIdsForImagesCache: a
+  // post re-read only after the 24h–25h band (vs 24h–48h before) becomes a
+  // blocking cold-miss (inline PostMetric query) instead of a stale-serve;
+  // steadily-read posts are unaffected.
   ttl: CacheTTL.day,
+  staleWhileRevalidateTtl: CacheTTL.hour,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
     const postIds = Array.isArray(ids) ? ids : [ids];

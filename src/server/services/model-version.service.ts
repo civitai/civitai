@@ -4,7 +4,12 @@ import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { CacheTTL, constants, nsfwRestrictedBaseModels } from '~/server/common/constants';
+import {
+  CacheTTL,
+  constants,
+  isNonCommercialBaseModel,
+  nsfwRestrictedBaseModels,
+} from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
 import {
   EntityAccessPermission,
@@ -285,6 +290,21 @@ export const upsertModelVersion = async ({
         ', '
       )}`
     );
+  }
+
+  // Non-commercial base models (e.g. Ideogram) can't be monetized — reject any
+  // monetization on this version. Scoped to the version, so a model's other
+  // versions on commercial base models can still monetize.
+  if (isNonCommercialBaseModel(data.baseModel)) {
+    const attemptsMonetization =
+      (data.licensingFee != null && data.licensingFee > 0) ||
+      !!monetization?.type ||
+      !!updatedEarlyAccessConfig;
+    if (attemptsMonetization) {
+      throw throwBadRequestError(
+        `The base model "${data.baseModel}" is licensed for non-commercial use and cannot be monetized.`
+      );
+    }
   }
 
   // Check if trying to publish a model version when model is marked as cannotPublish

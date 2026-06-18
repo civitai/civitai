@@ -203,6 +203,22 @@ export default function AppDetailPage() {
                   </Group>
                 </Stack>
                 <Group gap="xs" wrap="nowrap">
+                  {/* W10 — "Open app" affordance: shown only when the app
+                      declares a full-page surface AND the viewer has the
+                      appBlocksPages flag (dark today). Links to the in-host
+                      full-page route (`/apps/run/<slug>`), where the block runs
+                      with a minted viewer-scoped page token under the trust
+                      chrome — distinct from "Open live" (the raw standalone
+                      origin, no token). */}
+                  {detail.manifest.hasPage && features.appBlocksPages && (
+                    <Button
+                      component={Link}
+                      href={`/apps/run/${encodeURIComponent(detail.blockId)}`}
+                      leftSection={<IconExternalLink size={16} />}
+                    >
+                      Open app
+                    </Button>
+                  )}
                   <Button
                     component="a"
                     href={detail.liveUrl}

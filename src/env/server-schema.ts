@@ -38,6 +38,18 @@ export const serverSchema = z.object({
   REDIS_CLUSTER_NODES: z.string().optional(), // Comma-separated list of cluster node URLs for redundant discovery
   REDIS_CLUSTER_REFRESH_INTERVAL: z.coerce.number().default(30000), // Topology refresh interval in ms (default 30s)
   REDIS_SYS_URL: z.url(),
+  // Optional Sentinel-mode env vars for the `system` Redis client. When
+  // REDIS_SYS_SENTINELS is unset (default), the existing REDIS_SYS_URL path is
+  // used and behavior is unchanged. When set, src/server/redis/client.ts
+  // switches the system client to `createSentinel(...)` against this Sentinel
+  // pool. See claudedocs/sysredis-ha-migration-runbook.md (datapacket-talos)
+  // for the rollout sequence.
+  REDIS_SYS_SENTINELS: z.string().optional(), // comma-separated host:port list, e.g. "civitai-app-sysredis-sentinel.civitai-app-sysredis.svc.cluster.local:26379"
+  // Master group name. No default — the cluster uses "sysmaster", and the
+  // historical Sentinel default ("mymaster") would silently fail every lookup.
+  // The superRefine below makes this required whenever REDIS_SYS_SENTINELS is set.
+  REDIS_SYS_SENTINEL_NAME: z.string().optional(),
+  REDIS_SYS_SENTINEL_PASSWORD: z.string().optional(), // only set if sentinel-auth is enabled (not initially)
   REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
   // Socket-level inactivity timeout (ms). Passed to node-redis `socket.socketTimeout`,
   // which maps to net.Socket.setTimeout — an IDLE timer that fires when NO read OR
@@ -59,6 +71,34 @@ export const serverSchema = z.object({
   // socket under the timeout. client.ts derives + clamps the ping interval to enforce
   // this even if the two envs are mis-set; see getBaseClient().
   REDIS_SOCKET_TIMEOUT_MS: z.coerce.number().default(10000),
+  // socketTimeout for the SYSTEM (sysRedis) client specifically. The structural
+  // 504-cascade fix above is needed on the CLUSTER (cache) client, where a silent
+  // half-open parks ALL request handlers. The system client is single-node and mostly
+  // idle, and the flaky single-replica sysRedis backend does not cleanly complete the
+  // TCP close on teardown — so the aggressive 10s socketTimeout there does NOT heal a
+  // blip, it ACCUMULATES half-closed sockets ([RxClosing TxClosing]) into a reconnect
+  // storm that wedges /api/health (the readiness probe) for hours. Default 0 = disabled
+  // → the sys client reverts to its pre-#2556 self-healing behavior (a sys half-open
+  // just blips the 5s health-check deadline and clears, no teardown storm). Tunable up
+  // if a real sys half-open guard is ever wanted, but it must be paired with a backend
+  // that closes cleanly. See getBaseClient().
+  REDIS_SYS_SOCKET_TIMEOUT_MS: z.coerce.number().default(0),
+  // Wall-clock deadline (ms) for EVERY per-request sysRedis read (the refreshToken
+  // MULTI and the single-command config/session reads). The sys client has no
+  // socketTimeout (above), and node-redis's per-command timeout can't bound a command
+  // once written nor any MULTI sub-command — so on a silent half-open a sys read parks
+  // (~OS-keepalive minutes) per request without this. Bounds the request handler and
+  // fails open. 0 disables it. See redis/sys-read-deadline.ts withSysReadDeadline().
+  REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(2000),
+  // Bound on the sys client's node-redis command queue. The sys client has no
+  // socketTimeout, so on a SILENT half-open it is only cleared by OS TCP keepalive
+  // (minutes), during which every authenticated request enqueues a MULTI that never
+  // drains → an UNBOUNDED queue → heap growth / OOM. Capping the queue makes new
+  // commands fast-fail (`The queue is full`) once wedged, which the fail-open callers
+  // catch — bounding the heap instead of OOMing the pod. 0 = unbounded (node-redis
+  // default). Only applied to the system client; the cache client self-bounds via its
+  // socketTimeout. See getBaseClient().
+  REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: z.coerce.number().default(10000),
   // Keepalive PING interval (ms). node-redis issues a `PING` every interval ONLY when
   // the socket is otherwise idle (a parked/in-flight command blocks it from being
   // written). Each PING is a write+reply round-trip that resets the socketTimeout idle
@@ -69,15 +109,38 @@ export const serverSchema = z.object({
   // (≈ half the 10s default socketTimeout). PING load is trivial: one tiny command per
   // idle node per interval (cluster: per node; a few nodes × pods × 0.2/s).
   REDIS_PING_INTERVAL_MS: z.coerce.number().default(5000),
-  // Per-command timeout (ms) applied ONLY to verified fail-open hot-path reads
-  // (refreshToken pipeline, needsUpdate/getClientConfigCached). node-redis arms an
-  // AbortSignal.timeout per command that rejects a parked/slow command with a
-  // TimeoutError — at these call sites a TimeoutError is caught and degrades (keep
-  // session / skip update banner), so it converts a 30s park into a fast fail-open,
-  // never a 500. Default is far above normal latency (<5ms) so it only fires on a
-  // genuine stall. Set to 0 to disable the per-command layer (socketTimeout still
-  // applies). Tunable for canary rollout.
-  REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().default(2000),
+  // Bounded per-command wall-clock timeout (ms) for the CLUSTER (cache) client ONLY —
+  // a defensive backstop BENEATH REDIS_SOCKET_TIMEOUT_MS that guarantees no cluster
+  // command can hang forever.
+  //
+  // Observed on civitai-dp-prod SSR pool: a small (~0.5%) minority of cluster commands
+  // NEVER settle (the `_execute` promise neither resolves nor rejects), even though the
+  // socketTimeout above should reject a stuck command in ~10s. Inferred cause (not proven
+  // from node-redis source): node-redis CLUSTER retry / topology-rediscovery re-routes a
+  // command across reconnects, so the outer `_execute` promise the instrumentation wraps
+  // is orphaned. Each such command (1) leaks the redis_commands_inflight gauge (inc'd in
+  // instrumentCommands, the matching dec only fires when `_execute` settles) and (2) PARKS
+  // the request handler up to ~125s until the client/CF disconnects → flat-125s 499s on
+  // normal SSR routes. (SSR inflight climbed 104→32,331 over ~14h; ~2,828 flat-125s 499s
+  // at peak; healthy pods show 0.)
+  //
+  // This races `_execute` against a rejecting timer so a command that doesn't settle in
+  // time REJECTS — which makes the wrapped promise settle → `.finally(done)` fires → the
+  // inflight gauge dec's AND the handler unparks with an error instead of a 125s hang.
+  // The reject flows the SAME way an existing cluster read error already does (socketTimeout
+  // has rejected stuck commands down these paths since #2556): fetchThroughCache catches and
+  // fail-opens (degraded miss → slow 200); createCachedObject/Array.fetch does NOT catch, so
+  // it propagates (→ error/500) — same as any cluster error today, and strictly better than a
+  // 125s hang. Correct regardless of the exact node-redis internal cause.
+  //
+  // Default 15000 (15s): ~650× over the ~23ms healthy-completion p99 (zero risk of
+  // clipping a legitimate slow command) and well below the ~125s client ceiling. Sits
+  // ABOVE REDIS_SOCKET_TIMEOUT_MS (10s) so it is a true BACKSTOP — socketTimeout still
+  // does the primary teardown when it works; this only catches the commands it doesn't.
+  // 0 disables it. Cluster-scoped: the SYSTEM client is untouched (it uses
+  // REDIS_SYS_READ_TIMEOUT_MS — see the #2556/#2586 sys-client regression). See
+  // redis/command-deadline.ts withCommandDeadline() + instrumentCommands().
+  REDIS_CLUSTER_COMMAND_TIMEOUT_MS: z.coerce.number().default(15000),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
@@ -481,4 +544,18 @@ export const serverSchema = z.object({
   BUNDLE_S3_BUCKET: z.string().optional(),
   BUNDLE_S3_ACCESS_KEY_ID: z.string().optional(),
   BUNDLE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+}).superRefine((env, ctx) => {
+  // Sentinel-mode for the system Redis client requires an explicit master group
+  // name. The live HA cluster uses `sysmaster`; the node-redis default
+  // (`mymaster`) silently produces a Sentinel that never resolves a master, so
+  // we refuse to start with REDIS_SYS_SENTINELS set but REDIS_SYS_SENTINEL_NAME
+  // missing. The non-sentinel path (REDIS_SYS_URL only) is unaffected.
+  if (env.REDIS_SYS_SENTINELS && !env.REDIS_SYS_SENTINEL_NAME) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['REDIS_SYS_SENTINEL_NAME'],
+      message:
+        'REDIS_SYS_SENTINEL_NAME is required when REDIS_SYS_SENTINELS is set (cluster uses "sysmaster")',
+    });
+  }
 });

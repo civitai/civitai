@@ -3,6 +3,7 @@ import {
   publicProcedure,
   guardedProcedure,
   protectedProcedure,
+  moderatorProcedure,
   isFlagProtected,
   middleware,
 } from '~/server/trpc';
@@ -13,6 +14,10 @@ import {
   articleRateLimits,
   unpublishArticleSchema,
   restoreArticleSchema,
+  createArticleRatingReviewSchema,
+  getMyArticleRatingReviewSchema,
+  getArticleRatingReviewsSchema,
+  resolveArticleRatingReviewSchema,
 } from '~/server/schema/article.schema';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -24,6 +29,10 @@ import {
   getCivitaiNews,
   getDraftArticlesByUserId,
   rescanArticle,
+  createArticleRatingReview,
+  getArticleRatingReviewForOwner,
+  getArticleRatingReviews,
+  resolveArticleRatingReview,
 } from '~/server/services/article.service';
 import {
   unpublishArticleHandler,
@@ -100,9 +109,15 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesDelete })
     .input(getByIdSchema)
     .use(isFlagProtected('articleCreate'))
-    .mutation(({ input, ctx }) =>
-      deleteArticleById({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
+    .mutation(async ({ input, ctx }) => {
+      const result = await deleteArticleById({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+      await ctx.track.article({ type: 'Delete', articleId: input.id, nsfw: false });
+      return result;
+    }),
   unpublish: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(unpublishArticleSchema)
@@ -126,4 +141,56 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
     .query(({ input }) => getArticleScanStatus(input)),
+  createRatingReview: protectedProcedure
+    .use(isFlagProtected('articleRatingDispute'))
+    .input(createArticleRatingReviewSchema)
+    .mutation(async ({ input, ctx }) => {
+      const review = await createArticleRatingReview({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+      // Fire-and-forget: Tracker.send is already non-blocking, but `await`
+      // still waits on session resolution. Skip the await so a slow CH
+      // session lookup can't add latency to the user-facing mutation.
+      ctx.track
+        .articleRatingReview({
+          articleId: review.articleId,
+          fromLevel: review.currentLevel,
+          toLevel: review.suggestedLevel,
+          hasComment: !!review.userComment,
+        })
+        .catch(() => undefined);
+      return review;
+    }),
+  getMyArticleRatingReview: protectedProcedure
+    .use(isFlagProtected('articleRatingDispute'))
+    .input(getMyArticleRatingReviewSchema)
+    .query(({ input, ctx }) =>
+      getArticleRatingReviewForOwner({ articleId: input.articleId, userId: ctx.user.id })
+    ),
+  getRatingReviews: moderatorProcedure
+    .use(isFlagProtected('articleRatingDispute'))
+    .input(getArticleRatingReviewsSchema)
+    .query(({ input }) => getArticleRatingReviews(input)),
+  resolveRatingReview: moderatorProcedure
+    .use(isFlagProtected('articleRatingDispute'))
+    .input(resolveArticleRatingReviewSchema)
+    .mutation(async ({ input, ctx }) => {
+      const result = await resolveArticleRatingReview({
+        ...input,
+        moderatorId: ctx.user.id,
+      });
+      // Fire-and-forget — see note on createRatingReview above.
+      ctx.track
+        .articleRatingReviewResolved({
+          reviewId: result.reviewId,
+          articleId: result.articleId,
+          status: result.status,
+          appliedLevel: result.appliedLevel,
+          moderatorId: ctx.user.id,
+        })
+        .catch(() => undefined);
+      return result;
+    }),
 });

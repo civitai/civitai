@@ -44,3 +44,26 @@ export function intersectSandbox(raw: string | undefined, trustTier: string): st
   if (TRUSTED_TIERS.has(trustTier)) tokens.add('allow-same-origin');
   return Array.from(tokens).join(' ');
 }
+
+/**
+ * L-OPAQUE: does the EFFECTIVE iframe sandbox (the same string handed to the
+ * `<iframe sandbox=…>` attribute) lack `allow-same-origin`?
+ *
+ * A sandboxed iframe WITHOUT `allow-same-origin` runs at an opaque origin —
+ * `event.origin` is the literal string `'null'` on every message it sends,
+ * and a `postMessage` to it only reaches the frame when `targetOrigin` is
+ * `'*'` (a real origin throws "target origin … does not match recipient
+ * origin 'null'"). The host's postMessage transport must run in opaque mode
+ * for such a frame, otherwise BLOCK_READY (inbound) is dropped and BLOCK_INIT
+ * (outbound) never arrives — exactly the boot failure for unverified/external
+ * blocks.
+ *
+ * Pass the SAME value used for the iframe attribute (i.e. the
+ * `intersectSandbox(sandbox, trustTier)` result) so the transport mode can
+ * never drift from the actual frame origin. Internal/verified tiers keep
+ * `allow-same-origin` → real origin → returns false → pinned behavior is
+ * preserved byte-for-byte.
+ */
+export function effectiveSandboxIsOpaque(effectiveSandbox: string): boolean {
+  return !effectiveSandbox.split(/\s+/).includes('allow-same-origin');
+}

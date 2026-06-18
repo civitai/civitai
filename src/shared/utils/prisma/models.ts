@@ -532,6 +532,8 @@ export interface User {
   articleReactions?: ArticleReaction[];
   articles?: Article[];
   articleEngagements?: ArticleEngagement[];
+  articleRatingReviewsSubmitted?: ArticleRatingReview[];
+  articleRatingReviewsResolved?: ArticleRatingReview[];
   leaderboardResults?: LeaderboardResult[];
   receivedReports?: UserReport[];
   engagedImages?: ImageEngagement[];
@@ -616,6 +618,7 @@ export interface User {
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
+  appDevForgejoIdentity?: AppDevForgejoIdentity | null;
 }
 
 export interface CustomerSubscription {
@@ -1486,6 +1489,24 @@ export interface ImageRatingRequest {
   weight: number;
 }
 
+export interface ArticleRatingReview {
+  id: number;
+  articleId: number;
+  article?: Article;
+  userId: number;
+  user?: User;
+  createdAt: Date;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+  resolver?: User | null;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: ReportStatus;
+}
+
 export interface CollectionMetric {
   collection?: Collection;
   collectionId: number;
@@ -1787,6 +1808,9 @@ export interface AppBlockPublishRequest {
   rejectionReason: string | null;
   approvalNotes: string | null;
   forgejoCommitSha: string | null;
+  deployState: string | null;
+  deployDetail: string | null;
+  deployUpdatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -1903,6 +1927,14 @@ export interface AppUserScopeGrant {
   grantedScopes: string[];
   grantedAt: Date;
   revokedAt: Date | null;
+}
+
+export interface AppDevForgejoIdentity {
+  userId: number;
+  user?: User;
+  forgejoUsername: string;
+  forgejoTokenEncrypted: string;
+  createdAt: Date;
 }
 
 export interface OauthConsent {
@@ -2340,6 +2372,7 @@ export interface Article {
   nsfwLevel: number;
   userNsfwLevel: number;
   moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
   status: ArticleStatus;
   thread?: Thread | null;
@@ -2353,6 +2386,7 @@ export interface Article {
   associations?: ModelAssociations[];
   collectionItems?: CollectionItem[];
   rewardsBonusEvents?: RewardsBonusEvent[];
+  ratingReviews?: ArticleRatingReview[];
 }
 
 export interface PressMention {

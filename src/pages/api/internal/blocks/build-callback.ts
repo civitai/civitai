@@ -8,6 +8,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
+import { markRequestDeployState } from '~/server/services/blocks/publish-request.service';
 
 /**
  * POST /api/internal/blocks/build-callback
@@ -290,6 +291,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       context: 'civitai/build',
       description: `Build ${body.status ?? 'failed'}`,
     });
+    await markRequestDeployState(
+      body.slug,
+      body.sha,
+      'failed',
+      `Build ${String(body.status ?? 'failed').slice(0, 60)}`
+    );
     res.status(200).json({ ok: true, applied: false, reason: 'build failed' });
     return;
   }
@@ -318,6 +325,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     context: 'civitai/deploy',
     description: 'Applying to civitai-apps',
   });
+  await markRequestDeployState(body.slug, body.sha, 'deploying');
 
   let applyJob: { name: string };
   try {
@@ -339,6 +347,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       context: 'civitai/deploy',
       description: `Apply trigger failed: ${String(e).slice(0, 80)}`,
     });
+    await markRequestDeployState(body.slug, body.sha, 'failed', 'Deploy could not start');
     res.status(500).json({ error: 'Apply trigger failed', detail: String(e).slice(0, 240) });
     return;
   }
@@ -386,6 +395,7 @@ async function watchApplyJobAndRecord(args: {
         where: { id: args.appBlockId },
         data: { currentVersionDeployedAt: new Date() },
       });
+      await markRequestDeployState(args.slug, args.sha, 'live');
       await safe(setCommitStatus, {
         slug: args.slug,
         sha: args.sha,
@@ -403,14 +413,16 @@ async function watchApplyJobAndRecord(args: {
       if (outcome === 'failed') {
         await clearApplyMark(args.appBlockId, args.sha);
       }
+      const deployDetail = outcome === 'timeout' ? 'Deploy timed out' : 'Deploy failed';
       // Flip commit status so the dev sees red.
       await safe(setCommitStatus, {
         slug: args.slug,
         sha: args.sha,
         state: 'failure',
         context: 'civitai/deploy',
-        description: outcome === 'timeout' ? 'Deploy timed out' : 'Deploy failed',
+        description: deployDetail,
       });
+      await markRequestDeployState(args.slug, args.sha, 'failed', deployDetail);
       // eslint-disable-next-line no-console
       console.warn(
         `[build-callback] apply Job ${args.jobName} ended ${outcome}; current_version_deployed_at not updated`

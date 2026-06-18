@@ -51,8 +51,18 @@ export interface ShowcaseImage {
   clipSkip: number | null;
 }
 
+/**
+ * The entity a slot's context binds to. Drives the entity-aware token mint +
+ * binding. Only `model` (the three model slots) and `none` (the W10 page) are
+ * used today; `user`/`image` are reserved (Phase 1/2) and intentionally not
+ * given a context type yet.
+ */
+export type SlotEntityType = 'model' | 'none';
+
 export interface ModelSlotContext extends SlotContext {
   slotId: 'model.sidebar_top' | 'model.below_images' | 'model.actions_extra';
+  /** Discriminator — present for the entity-aware mint/binding. */
+  entityType?: 'model';
   modelId: number;
   modelVersionId: number;
   modelName: string;
@@ -82,6 +92,50 @@ export interface ModelSlotContext extends SlotContext {
    * has no preview images yet.
    */
   showcaseImages?: ShowcaseImage[];
+}
+
+/**
+ * W10 full-page app context (entity=none). A page is PURE viewer-scoped: no
+ * model/user/image entity, no money scopes. It carries only the viewer +
+ * routing info the block needs to render a full page and deep-link. The host
+ * mints the token from a synthetic `page_<appBlockId>` resolved directly from
+ * the approved AppBlock — there is no install row (stateless, Decision 2).
+ */
+export interface PageContext extends SlotContext {
+  slotId: 'app.page';
+  entityType: 'none';
+  /** The block_id slug the page route resolved (`<slug>.civit.ai`). */
+  slug: string;
+  /** Sub-path under the page route (`/apps/run/<slug>/<...path>`), no leading
+   *  slash. Empty string for the page root. Forwarded so the block can deep-link. */
+  subPath: string;
+  viewerUserId: number | null;
+  viewerUsername?: string | null;
+  /** Host-page color scheme — lets the iframe match without a flicker. */
+  theme?: 'light' | 'dark';
+}
+
+/**
+ * The union of slot contexts the host can produce. Discriminated by
+ * `entityType` (with the model case allowed to omit it for back-compat — model
+ * producers predate the discriminator). `none` is the page.
+ */
+export type BlockSlotContext = ModelSlotContext | PageContext;
+
+/**
+ * Entity-agnostic remount key for a BlockSlot mount. Replaces the model-only
+ * `${slotId}:${context.modelId}` key. PRESERVES the exact model remount-on-nav
+ * behavior (H-4): for a model context the entity id is the modelId, so the key
+ * is `${slotId}:model:${modelId}` and still force-unmounts on model navigation.
+ * For a page it keys on the slug (`${slotId}:none:<slug>`).
+ */
+export function slotRemountKey(args: {
+  slotId: string;
+  entityType: SlotEntityType;
+  entityId?: string | number | null;
+}): string {
+  const { slotId, entityType, entityId } = args;
+  return `${slotId}:${entityType}:${entityId ?? 'none'}`;
 }
 
 /**

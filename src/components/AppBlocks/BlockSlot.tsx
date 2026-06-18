@@ -1,6 +1,7 @@
 import dynamic from 'next/dynamic';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelSlotContext } from './types';
+import { slotRemountKey } from './types';
 
 interface BlockSlotProps {
   slotId: ModelSlotContext['slotId'];
@@ -37,14 +38,17 @@ export function BlockSlot({ slotId, context }: BlockSlotProps) {
   // installs to show; otherwise BlockSlot returns null entirely (no empty
   // gap row in the sidebar Stack).
   //
-  // H-4: key on (slotId, modelId) so navigation between model pages
-  // force-unmounts the client. Previously the same mount would persist
+  // H-4: key on (slotId, entityType, entityId) so navigation between model
+  // pages force-unmounts the client. Previously the same mount would persist
   // across model changes; the iframe could receive a single frame of
   // BLOCK_INIT with the new slotContext for the old install before the
-  // tRPC query refreshed and BlockHost-keyed remount caught up.
+  // tRPC query refreshed and BlockHost-keyed remount caught up. The
+  // entity-agnostic helper PRESERVES the model behavior exactly: for a model
+  // context the entity id is the modelId, so this remains
+  // `${slotId}:model:${modelId}` and force-unmounts on model navigation.
   return (
     <BlockSlotClient
-      key={`${slotId}:${context.modelId}`}
+      key={slotRemountKey({ slotId, entityType: 'model', entityId: context.modelId })}
       slotId={slotId}
       context={context}
     />

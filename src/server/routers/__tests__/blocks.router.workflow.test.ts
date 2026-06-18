@@ -30,6 +30,7 @@ const {
   mockGetUserBuzzAccounts,
   mockLogToAxiom,
   mockSysRedis,
+  mockResolveCanGenerateForVersions,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -73,6 +74,12 @@ const {
   })),
   mockGetUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
   mockLogToAxiom: vi.fn(async () => undefined),
+  // W10 page branch: the canonical generation-entitlement gate. The router
+  // dynamic-imports it from generation.service; we mock the module so the
+  // heavy generation import graph (image.service → event-engine-common) stays
+  // out of the test and we can drive canGenerate per-test. Default = a Map
+  // saying the version IS generatable; FORBIDDEN tests override to false / miss.
+  mockResolveCanGenerateForVersions: vi.fn(),
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -138,6 +145,10 @@ vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: (...args: unknown[]) => mockGetUserBuzzAccounts(...args),
+}));
+vi.mock('~/server/services/generation/generation.service', () => ({
+  resolveCanGenerateForVersions: (...args: unknown[]) =>
+    mockResolveCanGenerateForVersions(...args),
 }));
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...args: unknown[]) => mockLogToAxiom(...args),
@@ -274,6 +285,7 @@ beforeEach(() => {
     mockSysRedis.decrBy,
     mockSysRedis.expire,
     mockSysRedis.ttl,
+    mockResolveCanGenerateForVersions,
   ]) {
     fn.mockReset();
   }
@@ -321,6 +333,13 @@ beforeEach(() => {
   });
   mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 10000, blue: 0, green: 0 });
   mockLogToAxiom.mockResolvedValue(undefined);
+  // Default: the picked version IS generatable (page branch happy path). Tests
+  // that exercise the entitlement gate override to canGenerate:false or an
+  // empty Map (version missing → fail-closed).
+  mockResolveCanGenerateForVersions.mockImplementation(
+    async (versions: Array<{ id: number }>) =>
+      new Map(versions.map((v) => [v.id, { canGenerate: true }]))
+  );
 });
 
 describe('blocks.pollWorkflow', () => {
@@ -1304,5 +1323,342 @@ describe('Phase 2 — block-token runtime procedures reject non-mod viewers', ()
     await expect(
       caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
+
+/**
+ * W10 — full-page apps spend Buzz on generation. A PAGE token's ctx is
+ * `{ slotId, entityType: 'none' }` with NO modelId: a page lets the viewer pick
+ * ANY model they're entitled to generate against. The runtime branch therefore
+ * (a) SKIPS the model-binding `ctxModelId === body.modelId` check, and
+ * (b) REPLACES it with the canonical generation-entitlement gate
+ *     (resolveCanGenerateForVersions) against the REAL viewer.
+ * Everything else (budget ceiling, daily cap reservation) is shared with the
+ * model path and unchanged.
+ */
+describe('blocks workflow — W10 page token (entityType:none)', () => {
+  // Page claim: ctx carries entityType:'none' + slotId, NO modelId. The
+  // blockInstanceId is the synthetic page id (page_<appBlockId>).
+  function pageClaims(over: Record<string, unknown> = {}) {
+    return validClaims({
+      blockInstanceId: 'page_apb_page',
+      ctx: { slotId: 'app.page', entityType: 'none' },
+      ...over,
+    });
+  }
+
+  describe('estimateWorkflow', () => {
+    it('a page token skips model-binding and passes the canGenerate gate → reaches whatif', async () => {
+      // ctx has NO modelId, body.modelId=7 — a MODEL token would 403 here; a
+      // page token must NOT.
+      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.cost).toEqual({ total: 12 });
+      // The entitlement gate ran against the picked version (99) with the REAL
+      // viewer (id 42, mod true) — NOT an elevated/hardcoded context.
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [versions, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(versions[0]).toMatchObject({ id: 99 });
+      expect(gateCtx.user).toEqual({ id: 42, isModerator: true });
+      expect(mockSubmitWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({ query: { whatif: true } })
+      );
+    });
+
+    it('derives sfwOnly:true from a green-domain ctx and forwards it into the canGenerate gate', async () => {
+      // The page branch mirrors model-version.controller: the gate context's
+      // sfwOnly is `ctx.domain === 'green'`. fakeCtx() omits domain (→ false),
+      // so a green ctx is the only way to exercise the SFW-gating branch — it
+      // must flow into resolveCanGenerateForVersions' context arg as true.
+      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller({ ...fakeCtx(), domain: 'green' } as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(gateCtx.sfwOnly).toBe(true);
+      // wildcards is independent and untouched here → still false.
+      expect(gateCtx.wildcardsEnabled).toBe(false);
+    });
+
+    it('derives wildcardsEnabled:true from ctx.features.wildcards and forwards it into the canGenerate gate', async () => {
+      // The page branch mirrors model-version.controller: the gate context's
+      // wildcardsEnabled is `!!ctx.features.wildcards`. fakeCtx() omits the flag
+      // (→ false), so an enabled-wildcards ctx is the only way to exercise this
+      // branch — it must flow into the gate context arg as true.
+      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      const ctx = fakeCtx();
+      const caller = blocksRouter.createCaller({
+        ...ctx,
+        features: { ...(ctx.features as object), wildcards: true },
+      } as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(gateCtx.wildcardsEnabled).toBe(true);
+      // green-domain is independent and untouched here → sfwOnly still false.
+      expect(gateCtx.sfwOnly).toBe(false);
+    });
+
+    it('a page token whose picked model is NOT generatable → FORBIDDEN, no orchestrator call', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      happyVersionLookup();
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map([[99, { canGenerate: false }]])
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('fail-closed: page token where the picked version is MISSING from the result Map → FORBIDDEN', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      happyVersionLookup();
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(new Map()); // empty → miss
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('submitWorkflow', () => {
+    it('a page token submits when generatable + within budget (no spend bound bypassed)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25); // reservation under the cap
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      // Entitlement gate ran (security replacement for model-binding).
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      // The daily-cap reservation path runs for pages exactly as for models.
+      expect(mockSysRedis.incrBy).toHaveBeenCalledTimes(1);
+      expect(mockSysRedis.incrBy.mock.calls[0][1]).toBe(25);
+      // Prompt was audited before any orchestrator interaction.
+      expect(mockAuditPromptServer).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: 'a cat', userId: 42 })
+      );
+    });
+
+    it('a page token whose picked model is NOT generatable → FORBIDDEN, no spend, no reservation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map([[99, { canGenerate: false }]])
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      // No orchestrator interaction, no prompt audit, and CRUCIALLY no Buzz
+      // reservation (the gate is BEFORE reserveBlockBuzzSpend).
+      expect(mockAuditPromptServer).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('a page submit over budget → failed-shape snapshot (no throw), reservation refunded', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 5 }));
+      happyVersionLookup();
+      happyUser();
+      // whatif cost 25 > budget 5. The over-budget check is BEFORE the
+      // reservation, so no reserve/refund here — matches the model path.
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.cost).toEqual({ total: 25 });
+      expect(result.snapshot.error).toMatch(/insufficient buzz/i);
+      // Only the whatif ran; the real submit did not.
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      // No reservation was taken (over-budget rejected before reserve).
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('a page submit respects the per-USER daily cap (reservation over cap → failed + refund)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      // whatif clears the per-call budget, but the reservation tops the daily
+      // cap → reject + refund, exactly as for a model token.
+      mockSysRedis.incrBy.mockResolvedValue(50015);
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/daily Buzz cap/i);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatif only
+      expect(mockSysRedis.decrBy).toHaveBeenCalledTimes(1); // reservation refunded
+      // Per-USER key (no appBlockId) — page spend shares the same daily ceiling.
+      const incrKey = String(mockSysRedis.incrBy.mock.calls[0][0]);
+      expect(incrKey).toMatch(/^system:blocks:buzz-cap:42:\d{4}-\d{2}-\d{2}$/);
+    });
+
+    // ──────────────────── GA-gap: orchestrator resource belt ─────────────────
+    //
+    // The pre-spend gate (`resolveCanGenerateForVersions`) deliberately does NOT
+    // check early-access `hasAccess` or the `availability:Private` subscription
+    // requirement (see the SCOPE comment on assertViewerCanGeneratePageModel).
+    // Those are enforced DOWNSTREAM by the orchestrator resource belt
+    // (`getGenerationResourceData` → `getResourceData`, which folds
+    // `canGenerate = hasAccess && canGenerate` and throws on a Private resource
+    // without an active subscription). That belt runs INSIDE
+    // `createTextToImageStep`, and the whatIf step is built BEFORE any Buzz
+    // reservation.
+    //
+    // WHAT THIS PROVES: a page viewer who is NOT entitled to an early-access /
+    // Private model — but whose model PASSES the pre-spend gate (canGenerate is
+    // the DEFAULT true here, modelling the gate's deliberate blind spot) — is
+    // rejected by the belt at the whatIf step, BEFORE any reservation. The
+    // reservation path (`reserveBlockBuzzSpend`/incrBy) is never reached, so the
+    // viewer spends nothing.
+    //
+    // WHAT THIS DOES NOT PROVE: that getResourceData's REAL hasAccess/Private
+    // logic actually rejects those models — that logic is mocked away here (it
+    // lives in orchestrator/common.ts and is exercised by its own suite). This
+    // test pins the ORDERING + fail-shape contract (belt before spend, throw →
+    // no reservation), not the belt's internal entitlement maths. A DEPLOYED
+    // browser run against a real early-access / Private model is still required
+    // to prove end-to-end entitlement enforcement on the live page surface.
+    it('GA-gap: a page model that passes the pre-spend gate but is rejected by the orchestrator belt (early-access/Private) → no spend, no reservation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      // Pre-spend gate PASSES (default canGenerate:true) — modelling that the
+      // gate does NOT see early-access / Private entitlement.
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map([[99, { canGenerate: true }]])
+      );
+      // The orchestrator resource belt (inside createTextToImageStep) rejects an
+      // un-entitled early-access / Private resource. The whatIf step is the FIRST
+      // belt call in submit, and it is BEFORE the reservation.
+      mockCreateTextToImageStep.mockRejectedValueOnce(
+        new TRPCError({ code: 'FORBIDDEN', message: 'early access pass required' })
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      // The belt threw at the whatIf step — BEFORE any orchestrator submit and
+      // BEFORE any Buzz reservation. Nothing was spent.
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled(); // no reservation
+      expect(mockSysRedis.decrBy).not.toHaveBeenCalled(); // nothing to refund
+    });
+
+    // Companion: the same belt rejection on the ESTIMATE (whatIf) path — the
+    // pre-flight cost estimate also runs through createTextToImageStep, so an
+    // un-entitled model is rejected before a cost is ever returned to the page.
+    it('GA-gap: estimate of a belt-rejected (early-access/Private) page model → throws, no orchestrator submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      happyVersionLookup();
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map([[99, { canGenerate: true }]])
+      );
+      mockCreateTextToImageStep.mockRejectedValueOnce(
+        new TRPCError({ code: 'FORBIDDEN', message: 'this model requires a subscription' })
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('REGRESSION — model token still enforces model binding', () => {
+    it('estimate: a MODEL token (no entityType) with a mismatched body.modelId → FORBIDDEN', async () => {
+      // ctx.modelId 999 ≠ body.modelId 7, and NO entityType → model path → the
+      // model-binding check must still fire. The entitlement gate must NOT run
+      // (model tokens never reach the page branch).
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ ctx: { modelId: 999 } }));
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+    });
+
+    it('submit: a MODEL token with a mismatched body.modelId → FORBIDDEN (binding unchanged)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, ctx: { modelId: 999 } }));
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('submit: a matching MODEL token does NOT run the page entitlement gate', async () => {
+      // The standard happy model path (ctx.modelId 7 === body 7) must keep its
+      // exact behaviour — no canGenerate call (model binding IS the gate).
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+    });
   });
 });

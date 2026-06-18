@@ -88,6 +88,9 @@ export const dialogs = dialogFactory({
   'card-decoration': {
     component: dynamic(() => import('~/components/Modals/CardDecorationModal')),
   },
+  'article-rating-review': {
+    component: dynamic(() => import('~/components/Article/ArticleRatingReviewModal')),
+  },
 });
 
 export type DialogRegistry = typeof dialogs;

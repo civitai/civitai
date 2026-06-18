@@ -12,6 +12,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
+import { getStaticContent } from '~/server/services/content.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { getUserFollows } from '~/server/redis/caches';
@@ -117,6 +118,7 @@ import {
   throwNotFoundError,
   withRetries,
 } from '~/server/utils/errorHandling';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { Flags } from '~/shared/utils/flags';
@@ -143,15 +145,22 @@ export const getAllUsersHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const blockedUsersLists = await Promise.all([
+    const [blockedUsers, blockedByUsers] = await Promise.all([
       BlockedUsers.getCached({ userId: ctx.user?.id }),
       BlockedByUsers.getCached({ userId: ctx.user?.id }),
     ]);
 
-    const blockedUsers = [...new Set([...blockedUsersLists.flatMap((x) => x)].map((u) => u.id))];
-
-    if (blockedUsers.length)
-      input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedUsers];
+    // Dedupe + cap the merged exclusion list before it feeds getUsers' raw `NOT IN`
+    // (Prisma) / getUsersWithSearch — a heavily-blocked viewer otherwise overflows the
+    // Postgres bind-param limit → P2029 → 500 (same class as comment.getAll). Ordering is a
+    // load-bearing safety priority: pre-existing excluded ids (hidden-user prefs) first,
+    // then the INVOLUNTARY blocked-by list, then the viewer's own block list (sacrificed
+    // first on overflow). See boundExcludedUserIds.
+    input.excludedUserIds = boundExcludedUserIds(
+      input.excludedUserIds ?? [],
+      blockedByUsers.map((u) => u.id),
+      blockedUsers.map((u) => u.id)
+    );
 
     const searchMethod =
       ctx.user?.isModerator && input.contestBanned ? getUsers : getUsersWithSearch;
@@ -327,17 +336,24 @@ export const completeOnboardingHandler = async ({
     const changed = onboarding !== ctx.user.onboarding;
 
     switch (input.step) {
-      case OnboardingSteps.TOS:
+      case OnboardingSteps.TOS: {
         const now = new Date();
+        // Store the accepted content hash alongside the date so a freshly-onboarded
+        // user is hash-backed immediately and immune to stray `lastmod` bumps.
+        const tos = await getStaticContent({ slug: ['tos'], ctx: { domain } as Context });
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         await setUserSetting(
           id,
-          domain === 'green' ? { tosGreenLastSeenDate: now } : { tosLastSeenDate: now }
+          domain === 'green'
+            ? { tosGreenLastSeenDate: now, tosGreenAcceptedHash: tos.hash }
+            : { tosLastSeenDate: now, tosAcceptedHash: tos.hash }
         );
         break;
+      }
       case OnboardingSteps.RedTOS: {
+        const tos = await getStaticContent({ slug: ['tos'], ctx: { domain } as Context });
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
-        await setUserSetting(id, { tosRedLastSeenDate: new Date() });
+        await setUserSetting(id, { tosRedLastSeenDate: new Date(), tosRedAcceptedHash: tos.hash });
         break;
       }
       case OnboardingSteps.Profile: {

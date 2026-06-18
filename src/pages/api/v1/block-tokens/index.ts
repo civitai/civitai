@@ -24,6 +24,7 @@ import {
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
+import { isPageSlot, PAGE_FORBIDDEN_SCOPES } from '~/shared/constants/slot-registry';
 import {
   getGrantedScopes,
   partitionByConsent,
@@ -54,23 +55,45 @@ import {
  */
 
 // slotContext is sent by the iframe host (useBlockToken.ts) and carries the
-// browsing context. We require modelId + slotId here because resolveBlockInstance
-// uses them as the auth pin for synthetic blockInstanceIds (`pdb_*`, `bus_*`)
-// — those rows don't carry modelId themselves and the resolver re-validates
-// the claim against the source predicates before mint. The resolver returns
-// the *validated* modelId/slotId from the source row (not the client's), and
-// only those validated values reach the JWT ctx.
-const slotContextSchema = z
+// browsing context. It is now ENTITY-AWARE (W10): an optional `entityType`
+// discriminator selects the binding shape. The default (omitted entityType) is
+// the historical MODEL contract — modelId required — so existing model
+// producers (ModelVersionDetails) are byte-identical. A `none` (page) request
+// carries no modelId.
+//
+// MODEL: requires modelId + slotId. resolveBlockInstance uses them as the auth
+// pin for synthetic blockInstanceIds (`pdb_*`, `bus_*`) — those rows don't
+// carry modelId themselves and the resolver re-validates the claim against the
+// source predicates before mint. The resolver returns the *validated*
+// modelId/slotId from the source row (not the client's), and only those
+// validated values reach the JWT ctx.
+//
+// NONE (page): viewer-scoped, no entity. slotId is the page slot; no modelId.
+const modelSlotContextSchema = z
   .object({
+    entityType: z.literal('model').optional(),
     modelId: z.coerce.number().int().positive(),
     slotId: z.string().min(1).max(64),
   })
   .passthrough();
 
+const pageSlotContextSchema = z
+  .object({
+    entityType: z.literal('none'),
+    slotId: z.string().min(1).max(64),
+  })
+  .passthrough();
+
+const slotContextSchema = z.union([pageSlotContextSchema, modelSlotContextSchema]);
+
 const requestSchema = z.object({
   blockInstanceId: z.string().min(1).max(64),
   slotContext: slotContextSchema,
 });
+
+// W10 — synthetic block-instance id prefix for a stateless full-page app. The
+// id is `page_<appBlockId>`; there is no install row (Decision 2).
+const PAGE_INSTANCE_PREFIX = 'page_';
 
 const BUZZ_BUDGET_DEFAULT = 10;
 const BUZZ_BUDGET_CAP = 1000;
@@ -244,7 +267,14 @@ function resolveBuzzBudget(
 ): number | null {
   if (!scopes.includes('ai:write:budgeted')) return null;
   const raw = publisherSettings?.buzz_budget_per_gen;
-  const candidate = typeof raw === 'number' && Number.isFinite(raw) ? raw : BUZZ_BUDGET_DEFAULT;
+  // Defense-in-depth (audit should-fix): require an INTEGER, not merely a
+  // finite number. A fractional / Infinity / NaN / non-number value falls back
+  // to the platform default rather than flowing through to a fractional Buzz
+  // budget. This treats model slots and pages identically — both arrive here as
+  // `buzz_budget_per_gen` (the model path from install settings, the page path
+  // mapped from manifest `page.buzzBudgetPerGen`) and both clamp+gate the same
+  // way. A valid positive integer (the model-slot common case) is unchanged.
+  const candidate = typeof raw === 'number' && Number.isInteger(raw) ? raw : BUZZ_BUDGET_DEFAULT;
   if (candidate <= 0) return 0; // sentinel — caller rejects with 422
   return Math.min(candidate, BUZZ_BUDGET_CAP);
 }
@@ -336,25 +366,114 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  // Use dbWrite (primary) so a freshly-suspended block can't be installed
-  // through a replication-lag window. resolveBlockInstance handles all four
-  // blockInstanceId namespaces (real install `bki_*`, platform default `pdb_*`,
-  // publisher subscription `bus_pub_*`, viewer subscription `bus_view_*`) and
-  // re-validates the caller's (modelId, slotId) claim against the source row
-  // — for synthetic ids that's the only cross-check, since the row itself
-  // isn't per-model.
-  const install = await BlockRegistry.resolveBlockInstance({
-    blockInstanceId,
-    modelId: slotContext.modelId,
-    slotId: slotContext.slotId,
-    viewerUserId: userId,
-    db: 'write',
-  });
+  // Entity dispatch (W10). `entityType` is the discriminator: a `none` request
+  // is a STATELESS full-page app (entity=none), everything else is the
+  // historical MODEL path. The two paths resolve the approved AppBlock
+  // differently but converge on the same scope-intersection + sign logic below.
+  const entityType: 'model' | 'none' = slotContext.entityType === 'none' ? 'none' : 'model';
 
-  if (!install) {
-    res.status(404).json({ error: 'Block install not found' });
-    return;
+  // The resolved install shape both paths feed into the scope/sign logic.
+  // For a page there is no install row, so modelId is null and installedBy is
+  // null (no per-content owner); settings are empty.
+  type ResolvedForMint = {
+    appBlock: NonNullable<Awaited<ReturnType<typeof BlockRegistry.resolveBlockInstance>>>['appBlock'];
+    modelId: number | null;
+    slotId: string;
+    installedByUserId: number | null;
+    settings: Record<string, unknown>;
+  };
+  let resolved: ResolvedForMint | null = null;
+
+  // Discriminate on slotContext.entityType (the zod union discriminator) so TS
+  // narrows `slotContext` to the model variant (with `modelId`) in the else.
+  if (slotContext.entityType === 'none') {
+    // PAGE PATH (W10) — stateless, viewer-scoped, NO money scopes.
+    //
+    // Gate 1: the dedicated `appBlocksPages` flag must be available to this
+    // caller (in addition to the master `appBlocks` gate above). So the page
+    // surface enables independently and stays dark until its own flag is lit.
+    const pagesAvailable = getFeatureFlags({ user: session?.user, req }).appBlocksPages;
+    if (!pagesAvailable) {
+      res.status(403).json({ error: 'App Blocks pages are not available to this account' });
+      return;
+    }
+    // Gate 2: the slot must be a registered PAGE slot (defense in depth — a
+    // page request carrying a model slotId is rejected, not silently coerced).
+    if (!isPageSlot(slotContext.slotId)) {
+      res.status(400).json({ error: 'entityType=none requires a page slot' });
+      return;
+    }
+    // Gate 3: the instance id MUST be the synthetic `page_<appBlockId>` form.
+    // The page surface has no other id namespace; reject anything else so a
+    // model/synthetic id can't be smuggled into the page path.
+    if (!blockInstanceId.startsWith(PAGE_INSTANCE_PREFIX)) {
+      res.status(400).json({ error: 'page tokens require a page_<appBlockId> instance id' });
+      return;
+    }
+    const appBlockId = blockInstanceId.slice(PAGE_INSTANCE_PREFIX.length);
+    const page = await BlockRegistry.resolvePageBlock(appBlockId, { db: 'write' });
+    if (!page) {
+      // Missing / not-approved / not-a-page app → 404 (never leaks which).
+      res.status(404).json({ error: 'Page app not found' });
+      return;
+    }
+    // W10 generation spend: a page is stateless (no install settings row), so
+    // its per-gen Buzz budget is sourced from the APPROVED manifest's
+    // `page.buzzBudgetPerGen` field rather than from install settings. We map it
+    // onto the same `buzz_budget_per_gen` settings key the model path uses, so
+    // the existing resolveBuzzBudget(install.settings) calls below treat pages
+    // and model slots IDENTICALLY — the same arbiter, the same clamp, the same
+    // 422 on a non-positive value:
+    //   - manifest declares a finite number   → pass it through verbatim;
+    //     resolveBuzzBudget clamps >CAP to CAP and turns <=0 into the 0 sentinel
+    //     → 422 INVALID_BUZZ_BUDGET (fail-closed, never a silent 0-budget token).
+    //   - manifest omits it / non-number      → settings stay EMPTY so
+    //     resolveBuzzBudget falls back to BUZZ_BUDGET_DEFAULT.
+    // Passing a number through unconditionally (not pre-filtering to >0) keeps
+    // a non-positive manifest budget a HARD ERROR rather than a silent default,
+    // matching the model-slot contract.
+    const pageManifest = (page.appBlock.manifest ?? {}) as { page?: { buzzBudgetPerGen?: unknown } };
+    const manifestBudget = pageManifest.page?.buzzBudgetPerGen;
+    const pageSettings: Record<string, unknown> =
+      typeof manifestBudget === 'number' && Number.isFinite(manifestBudget)
+        ? { buzz_budget_per_gen: manifestBudget }
+        : {};
+    resolved = {
+      appBlock: page.appBlock,
+      modelId: null,
+      slotId: slotContext.slotId,
+      installedByUserId: null,
+      settings: pageSettings,
+    };
+  } else {
+    // MODEL PATH (unchanged). Use dbWrite (primary) so a freshly-suspended
+    // block can't be installed through a replication-lag window.
+    // resolveBlockInstance handles all four blockInstanceId namespaces (real
+    // install `bki_*`, platform default `pdb_*`, publisher subscription
+    // `bus_pub_*`, viewer subscription `bus_view_*`) and re-validates the
+    // caller's (modelId, slotId) claim against the source row — for synthetic
+    // ids that's the only cross-check, since the row itself isn't per-model.
+    const install = await BlockRegistry.resolveBlockInstance({
+      blockInstanceId,
+      modelId: slotContext.modelId,
+      slotId: slotContext.slotId,
+      viewerUserId: userId,
+      db: 'write',
+    });
+    if (!install) {
+      res.status(404).json({ error: 'Block install not found' });
+      return;
+    }
+    resolved = {
+      appBlock: install.appBlock,
+      modelId: install.modelId,
+      slotId: install.slotId,
+      installedByUserId: install.installedByUserId,
+      settings: install.settings,
+    };
   }
+
+  const install = resolved;
   const block = install.appBlock;
   if (!block || block.status !== 'approved') {
     res.status(403).json({ error: 'Block is not approved' });
@@ -410,6 +529,25 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
   const requestedScopes = rawManifestScopes.filter(isKnownBlockScope);
+
+  // W10 PAGE HARD RULE (belt over the manifest + approved-scope intersection):
+  // a page (kind==='page', entity=none) is viewer-scoped with no model entity
+  // and no per-content install — money/spend scopes have nothing to bind or
+  // attribute against, so they are UNCONDITIONALLY rejected here. Even if an
+  // app's approved manifest declared `ai:write:budgeted` / `buzz:read:self` /
+  // `social:tip:self`, a page mint refuses to issue. This is the deterministic
+  // server-side gate, independent of the SDK/manifest declaration.
+  if (entityType === 'none' && isPageSlot(install.slotId)) {
+    const forbidden = new Set<string>(PAGE_FORBIDDEN_SCOPES);
+    const offending = requestedScopes.filter((s) => forbidden.has(s));
+    if (offending.length > 0) {
+      res.status(403).json({
+        error: 'page apps cannot carry money/spend scopes',
+        rejected: offending,
+      });
+      return;
+    }
+  }
 
   // A6 (audit HIGH / design-gaps C2): intersect the scopes about to be signed
   // with the viewer's per-user grant for this (user, app_block). Any scope the
@@ -501,13 +639,31 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     : undefined;
 
   // M3 + M4: ctx is fully server-stamped except for the projected scalars
-  // from slotContext. modelId and slotId come from the install row. The
-  // client's slotId, if any, is dropped.
-  const ctx: Record<string, unknown> = {
-    ...projectClientCtx(slotContext),
-    modelId: install.modelId,
-    slotId: install.slotId,
-  };
+  // from slotContext. The client's slotId, if any, is dropped.
+  //
+  // ENTITY-AWARE ctx (W10):
+  //  - MODEL path: ctx is `{ modelId, slotId }` — BYTE-IDENTICAL to pre-W10.
+  //    No `entityType` field is added, so `enforceContextBinding` (reads
+  //    ctx.modelId), `getEffectiveCheckpoint`, and `updateUserSettings` see
+  //    exactly the claims they saw before. The model entity is implicit in the
+  //    presence of `modelId`. (Regression-locked: the model token's claims for
+  //    `generate-from-model` must be byte-identical.)
+  //  - PAGE path (entity=none): ctx is `{ slotId, entityType: 'none' }` — NO
+  //    modelId. A page token therefore can NEVER satisfy a model-bound check
+  //    (`models:read:self` needs ctx.modelId, which is absent → 403) and the
+  //    page-forbidden money scopes were already rejected at mint.
+  const ctx: Record<string, unknown> =
+    entityType === 'none'
+      ? {
+          ...projectClientCtx(slotContext),
+          slotId: install.slotId,
+          entityType: 'none',
+        }
+      : {
+          ...projectClientCtx(slotContext),
+          modelId: install.modelId,
+          slotId: install.slotId,
+        };
 
   const result = await BlockTokenService.sign({
     userId,

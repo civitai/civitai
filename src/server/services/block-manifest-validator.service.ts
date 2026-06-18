@@ -1,4 +1,5 @@
 import { validateBlockScopesAgainstOauthClient } from '~/shared/constants/block-scope.constants';
+import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
 
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
 
@@ -26,6 +27,22 @@ interface RawManifest {
    * exposed.
    */
   publicSettingsKeys?: unknown;
+  /**
+   * Slot targets the app installs into (model-page slots). Each entry's
+   * `slotId` MUST be a known registered slot id — previously UN-validated
+   * (pre-existing gap, closed in W10).
+   */
+  targets?: unknown;
+  /**
+   * W10 — optional full-page surface descriptor. When present, the app can be
+   * opened as a standalone full page at `/apps/run/<slug>`. `path` is the
+   * sub-path the page mounts at (must start with `/`). `buzzBudgetPerGen` is the
+   * optional per-generation Buzz budget the page's `ai:write:budgeted` tokens are
+   * minted with (a page is stateless, so unlike a model slot the budget cannot
+   * come from an install settings row — it comes from this manifest field,
+   * server-clamped to the per-gen cap; omitted ⇒ the platform default).
+   */
+  page?: unknown;
   [key: string]: unknown;
 }
 
@@ -403,6 +420,90 @@ export class BlockManifestValidator {
         errors.push('iframe.sandbox must be a non-empty string');
       } else {
         validateSandbox(iframe.sandbox, tierForSandbox, errors);
+      }
+    }
+
+    // W10 (+ pre-existing gap closure): validate `targets[].slotId`. Each target
+    // must be an object whose `slotId` is a KNOWN registered slot id. This was
+    // previously UN-validated — a manifest could declare an arbitrary slot
+    // string that listForModel / the registry would never match (silent
+    // mis-install). Optional (a page-only app may have no model targets).
+    if (m.targets !== undefined) {
+      if (!Array.isArray(m.targets)) {
+        errors.push('targets must be an array');
+      } else {
+        if (m.targets.length > 16) {
+          errors.push('targets must contain at most 16 entries');
+        }
+        for (const t of m.targets) {
+          if (!t || typeof t !== 'object') {
+            errors.push('each target must be an object');
+            continue;
+          }
+          const slotId = (t as { slotId?: unknown }).slotId;
+          if (typeof slotId !== 'string' || slotId.length === 0) {
+            errors.push('each target must carry a non-empty slotId string');
+            continue;
+          }
+          if (!isKnownSlotId(slotId)) {
+            errors.push(`target slotId "${slotId}" is not a known slot`);
+            continue;
+          }
+          // A model-page target must be a model (region) slot, not the page
+          // slot — the page surface is declared via the `page` field, not a
+          // `targets` entry.
+          if (isPageSlot(slotId)) {
+            errors.push(`target slotId "${slotId}" is the page slot — declare a full page via the "page" field, not targets`);
+          }
+        }
+      }
+    }
+
+    // W10 — validate the optional `page` descriptor. When present it must be an
+    // object with a string `path` that starts with '/'; `title` is required
+    // (shown in the host chrome) and `icon` is an optional string. A page app
+    // also needs an iframe.src (validated above) — that is the bundle the page
+    // route iframes.
+    if (m.page !== undefined) {
+      if (!m.page || typeof m.page !== 'object' || Array.isArray(m.page)) {
+        errors.push('page must be an object');
+      } else {
+        const page = m.page as {
+          path?: unknown;
+          title?: unknown;
+          icon?: unknown;
+          buzzBudgetPerGen?: unknown;
+        };
+        if (typeof page.path !== 'string' || page.path.length === 0) {
+          errors.push('page.path must be a non-empty string');
+        } else if (!page.path.startsWith('/')) {
+          errors.push('page.path must start with "/"');
+        } else if (page.path.length > 256) {
+          errors.push('page.path must be ≤256 chars');
+        }
+        if (typeof page.title !== 'string' || page.title.length === 0) {
+          errors.push('page.title must be a non-empty string');
+        } else if (page.title.length > 128) {
+          errors.push('page.title must be ≤128 chars');
+        }
+        if (page.icon !== undefined && (typeof page.icon !== 'string' || page.icon.length > 128)) {
+          errors.push('page.icon must be a string ≤128 chars');
+        }
+        // W10 generation spend — optional per-gen Buzz budget for the page's
+        // `ai:write:budgeted` tokens. Must be a positive, finite integer when
+        // present (the mint handler clamps it to BUZZ_BUDGET_CAP, so an over-cap
+        // value isn't rejected here — it's silently capped at issuance — but a
+        // non-positive / non-integer / non-finite value is a manifest bug).
+        if (page.buzzBudgetPerGen !== undefined) {
+          const b = page.buzzBudgetPerGen;
+          if (typeof b !== 'number' || !Number.isFinite(b) || !Number.isInteger(b) || b <= 0) {
+            errors.push('page.buzzBudgetPerGen must be a positive integer');
+          }
+        }
+        // A page app must ship an iframe block (the bundle the full page mounts).
+        if (!m.iframe || typeof m.iframe !== 'object') {
+          errors.push('a manifest declaring "page" must also declare an iframe block');
+        }
       }
     }
 

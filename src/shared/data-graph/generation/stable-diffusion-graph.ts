@@ -126,8 +126,7 @@ export const stableDiffusionGraph = new DataGraph<
         ctx.ecosystem === 'SD1' ? sd1ControlNetPreprocessors : sdxlControlNetPreprocessors;
       return {
         ...controlNetsNode({ preprocessors, limit: CONTROLNET_LIMIT }),
-        // Disabled for now (was: ctx.workflow === 'txt2img').
-        when: false,
+        when: ctx.workflow === 'txt2img',
       };
     },
     ['ecosystem', 'workflow']

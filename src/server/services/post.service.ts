@@ -39,7 +39,6 @@ import {
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getGenerationStatus } from '~/server/services/generation/generation.service';
 import {
   createImage,
   createImageResources,
@@ -83,9 +82,11 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getMetadata } from '~/utils/metadata';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { CacheTTL } from '../common/constants';
+import { CacheTTL, MAX_RESOURCES_PER_IMAGE } from '../common/constants';
 import type {
   AddPostTagInput,
   AddResourceToPostImageInput,
@@ -900,7 +901,9 @@ export const updatePost = async ({
         ...restData,
         title: !!restData.title ? (restData.title.length > 0 ? restData.title : null) : undefined,
         detail: !!restData.detail
-          ? (restData.detail.length > 0 ? restData.detail : null)
+          ? restData.detail.length > 0
+            ? restData.detail
+            : null
           : undefined,
       },
     });
@@ -1149,6 +1152,20 @@ export const addPostImage = async ({
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
     meta = { ...meta, external: externalData };
+  }
+
+  // If no meta was supplied (headless/MCP upload), try to extract it from the
+  // image EXIF. The image is already on the CDN at this point so we can fetch
+  // it by URL. We only do this when meta is absent to avoid overwriting
+  // caller-supplied values.
+  if (!meta && props.url && props.type !== MediaType.video) {
+    try {
+      const edgeUrl = getEdgeUrl(props.url, { original: true });
+      const extracted = await getMetadata(edgeUrl);
+      if (extracted && Object.keys(extracted).length > 0) meta = extracted;
+    } catch {
+      // Non-fatal — proceed without metadata rather than failing the upload
+    }
   }
 
   let toolId: number | undefined;
@@ -1421,39 +1438,11 @@ export const addResourceToPostImage = async ({
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
-  const simpleResourceLimit = 8;
-  const baseAxiom = {
-    type: 'warning',
-    name: 'fetch-generation-status',
-    path: 'post.addResourceToImage',
-  };
-
-  let resourceLimit = simpleResourceLimit;
-  try {
-    const genStatus = await getGenerationStatus();
-    if (genStatus) {
-      const tier = user?.tier ?? 'free';
-      if (isDefined(genStatus.limits?.[tier]?.resources)) {
-        resourceLimit = genStatus.limits[tier].resources ?? simpleResourceLimit;
-      } else {
-        logToAxiom({
-          ...baseAxiom,
-          message: 'no resource limit found',
-        }).catch();
-      }
-    } else {
-      logToAxiom({
-        ...baseAxiom,
-        message: 'no gen status',
-      }).catch();
-    }
-  } catch (e: unknown) {
-    const error = e as Error;
-    logToAxiom({
-      ...baseAxiom,
-      message: error?.message,
-    }).catch();
-  }
+  // Manually crediting resources on an uploaded/external image is an attribution
+  // action with no GPU cost, so it uses a fixed cap rather than the per-tier
+  // generation limits (those are throttled during GPU crunches — see the
+  // MAX_RESOURCES_PER_IMAGE comment in server/common/constants).
+  const resourceLimit = MAX_RESOURCES_PER_IMAGE;
 
   images.forEach((img) => {
     const numExistingResources = img.resourceHelper.length;

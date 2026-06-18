@@ -304,4 +304,130 @@ describe('BlockManifestValidator', () => {
     };
     expect(BlockManifestValidator.validate(manifest, TokenScope.ModelsRead).valid).toBe(false);
   });
+
+  // W10 — targets[].slotId validation (closes the pre-existing gap) + page field.
+  describe('W10 targets[].slotId + page', () => {
+    it('accepts a manifest with valid model-slot targets', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        targets: [{ slotId: 'model.sidebar_top' }, { slotId: 'model.below_images' }],
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('rejects a target with an unknown slotId', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        targets: [{ slotId: 'model.does_not_exist' }],
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('not a known slot'))).toBe(true);
+      }
+    });
+
+    it('rejects the page slot used as a target (page is declared via the page field)', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        targets: [{ slotId: 'app.page' }],
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('page slot'))).toBe(true);
+      }
+    });
+
+    it('rejects a target missing slotId', () => {
+      const manifest = { ...VALID_MANIFEST, targets: [{}] };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX).valid).toBe(false);
+    });
+
+    it('accepts a valid page descriptor', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        page: { path: '/', title: 'My App', icon: 'apps' },
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('rejects page.path that does not start with /', () => {
+      const manifest = { ...VALID_MANIFEST, page: { path: 'home', title: 'X' } };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('page.path must start with'))).toBe(true);
+      }
+    });
+
+    it('rejects a page with no path', () => {
+      const manifest = { ...VALID_MANIFEST, page: { title: 'X' } };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX).valid).toBe(false);
+    });
+
+    it('rejects a page with no title', () => {
+      const manifest = { ...VALID_MANIFEST, page: { path: '/' } };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX).valid).toBe(false);
+    });
+
+    it('rejects a page declaration with no iframe block', () => {
+      const { iframe: _iframe, ...noIframe } = VALID_MANIFEST;
+      const manifest = {
+        ...noIframe,
+        renderMode: 'inline',
+        trustTier: 'verified',
+        page: { path: '/', title: 'X' },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('must also declare an iframe'))).toBe(true);
+      }
+    });
+
+    // W10 generation spend — optional page.buzzBudgetPerGen.
+    it('accepts a page declaring a positive integer buzzBudgetPerGen', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        page: { path: '/', title: 'X', buzzBudgetPerGen: 200 },
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a page that omits buzzBudgetPerGen (optional → platform default)', () => {
+      const manifest = { ...VALID_MANIFEST, page: { path: '/', title: 'X' } };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it.each([
+      [0, 'zero'],
+      [-5, 'negative'],
+      [12.5, 'non-integer'],
+      ['200' as unknown as number, 'string'],
+      [Infinity, 'Infinity'],
+      [Number.NaN, 'NaN'],
+    ])('rejects a %s buzzBudgetPerGen (%s)', (value) => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        page: { path: '/', title: 'X', buzzBudgetPerGen: value },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('buzzBudgetPerGen'))).toBe(true);
+      }
+    });
+
+    // A value above the per-gen cap is NOT rejected at validation time — the
+    // mint handler clamps it to BUZZ_BUDGET_CAP. The validator only enforces
+    // shape (positive integer).
+    it('accepts an above-cap buzzBudgetPerGen (clamped at mint, not rejected here)', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        page: { path: '/', title: 'X', buzzBudgetPerGen: 5000 },
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+  });
 });
