@@ -340,6 +340,18 @@ export const blockBuzzAttributionWriteCounter = registerCounterWithLabels({
   labelNames: ['provider', 'scope', 'status'] as const,
 });
 
+// App Blocks buzz SPEND attribution (W3 flow A)
+// One row written per block-initiated generation that spends the viewer's
+// own Buzz balance and accrues an author bounty. `status` ∈
+// 'pending'|'voided' at write time (voided = self-spend/internal-owner
+// zero-share row); 'duplicate' marks an idempotent no-op (same workflow
+// re-submitted). No provider/scope labels — spend has neither.
+export const blockSpendAttributionWriteCounter = registerCounterWithLabels({
+  name: 'block_spend_attribution_total',
+  help: 'Block buzz spend attribution rows written',
+  labelNames: ['status'] as const,
+});
+
 // App Blocks KV datastore (W4-v0)
 // `op` ∈ get|set|delete|list|getQuota; `outcome` ∈ ok|unauthorized|
 // not_found|payload_too_large|quota_exceeded|error. Read-only counters

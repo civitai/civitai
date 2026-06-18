@@ -1821,6 +1821,65 @@ export const blocksRouter = router({
         /* swallowed inside helper */
       });
 
+      // W3 flow A — buzz SPEND attribution (author bounty). The block
+      // burned the viewer's own Buzz on this generation; accrue the app
+      // author's platform-funded bounty share. EVERYTHING is server-derived
+      // from the VERIFIED token claims (appId/appBlockId/blockInstanceId
+      // from the JWT, spender from `sub`, author looked up from the app's
+      // OauthClient) — there is NO client-supplied attribution, so spend is
+      // inherently forge-safe. Idempotent on (workflowId, appBlockId), so a
+      // re-poll / retry can't double-attribute. Fire-and-forget with its
+      // own try/catch (mirrors recordScopeInvocation): a failed attribution
+      // write must NEVER break the generation — the Buzz was already spent
+      // and the snapshot is already the user-facing source of truth.
+      //
+      // Only fire on a REAL workflow id. A returned 'failed' sentinel
+      // snapshot (the over-budget / insufficient-budget path above returns
+      // early before we get here, but the orchestrator can also resolve to
+      // a 'failed' status without queueing) has no generation to attribute.
+      const spendWorkflowId = snapshot.workflowId;
+      if (spendWorkflowId && spendWorkflowId !== 'failed' && snapshot.status !== 'failed') {
+        void (async () => {
+          const { recordSpendAttribution } = await import(
+            '~/server/services/blocks/buzz-attribution.service'
+          );
+          // Accrue the author bounty off the REALIZED debit, not the
+          // whatif preflight ESTIMATE (`cost`). `snapshotFromWorkflow`
+          // surfaces the REAL submit's `workflow.cost.total` onto
+          // `snapshot.cost.total` (see workflow.service.ts:~49,61), read
+          // from the SAME resolved `submitted` snapshot this handler
+          // already holds (no re-fetch). The realized value is what the
+          // platform actually took, so the bounty matches the spend
+          // (the `share_le_gross` intent). This closes: (a) estimate >
+          // realized over-accrual; (b) a cache-hit / 0-realized that
+          // would otherwise still accrue off a non-zero estimate (author
+          // paid for a gen that cost nothing); (c) queue/surge/tier drift
+          // landing on platform bounty liability. Fall back to the
+          // estimate ONLY when the realized value is absent on the
+          // snapshot (e.g. a snapshot that carries no cost).
+          //
+          // SYBIL CAP NOTE (audit 🟡-2): there is NO per-APP aggregate
+          // accrual cap here — only the per-(USER, UTC-day) Buzz SPEND
+          // reservation above. A Sybil ring of many viewers could mint
+          // unbounded platform-funded bounty toward ONE app. This is
+          // accrual-only + mod-gated today, so it is not a merge blocker,
+          // but a per-app earnings cap / velocity check is a HARD
+          // prerequisite before the spend flow opens to non-mods (track
+          // alongside the Slice-4 payout gate + the rate sign-off).
+          await recordSpendAttribution({
+            userId,
+            buzzAmount: Math.ceil(snapshot.cost?.total ?? cost),
+            workflowId: spendWorkflowId,
+            appId: claims.appId,
+            appBlockId: claims.appBlockId,
+            blockInstanceId: claims.blockInstanceId,
+            modelId: resolved.modelId,
+          });
+        })().catch(() => {
+          /* best-effort: a failed attribution write never breaks submit */
+        });
+      }
+
       return { snapshot: autoClaim ? { ...snapshot, autoClaim } : snapshot };
     }),
 

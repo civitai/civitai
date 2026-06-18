@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   ACTIVE_RATE_CARD,
   computeRateCardSplit,
+  computeSpendShare,
   RATE_CARD_V1,
   RATE_CARD_V2,
   RATE_CARD_V3,
+  RATE_CARD_V4,
   type RateCard,
 } from '../rate-card';
 
@@ -27,6 +29,7 @@ describe('computeRateCardSplit', () => {
       platform_default: 0,
       viewer_global: 0,
     },
+    spendSharePct: 10,
     internalAppOwnerUserIds: [42],
     effectiveFrom: '2026-01-01',
   };
@@ -180,7 +183,7 @@ describe('computeRateCardSplit', () => {
     }
   });
 
-  it('defaults to ACTIVE_RATE_CARD (now V3) when no rateCard is passed', () => {
+  it('defaults to ACTIVE_RATE_CARD (now V4) when no rateCard is passed', () => {
     const split = computeRateCardSplit({
       grossCents: 1000,
       providerFeeCents: 0,
@@ -189,8 +192,11 @@ describe('computeRateCardSplit', () => {
       appOwnerUserId: 1,
     });
     expect(split.rateCardVersion).toBe(ACTIVE_RATE_CARD.version);
-    expect(split.rateCardVersion).toBe(RATE_CARD_V3.version);
-    expect(ACTIVE_RATE_CARD).toBe(RATE_CARD_V3);
+    expect(split.rateCardVersion).toBe(RATE_CARD_V4.version);
+    expect(ACTIVE_RATE_CARD).toBe(RATE_CARD_V4);
+    // V4 carries V3's purchase percentages unchanged (the spend dimension
+    // is the only addition), so per_model_install is still 15%.
+    expect(split.appOwnerShareCents).toBe(150);
   });
 
   // --- W3 flow B: viewer_global (page purchase) at 0% ---------------------
@@ -213,7 +219,7 @@ describe('computeRateCardSplit', () => {
     ).toBe(1000);
   });
 
-  it('viewer_global on the ACTIVE card (V3) also pays 0% with conservation', () => {
+  it('viewer_global on the ACTIVE card (V4) also pays 0% with conservation', () => {
     const split = computeRateCardSplit({
       grossCents: 4999,
       providerFeeCents: 217,
@@ -221,7 +227,7 @@ describe('computeRateCardSplit', () => {
       isSelfPurchase: false,
       appOwnerUserId: 7,
     });
-    expect(split.rateCardVersion).toBe('v3');
+    expect(split.rateCardVersion).toBe('v4');
     expect(split.appOwnerShareCents).toBe(0);
     expect(
       split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents
@@ -288,5 +294,114 @@ describe('computeRateCardSplit', () => {
     expect(split.rateCardVersion).toBe('v2');
     expect(split.appOwnerShareCents).toBe(250);
     expect(split.platformShareCents).toBe(750);
+  });
+});
+
+/**
+ * W3 flow A — buzz SPEND author-bounty math. The bounty is a
+ * platform-funded percentage of the spend's USD value, NOT a split of a
+ * pool. The invariants asserted here mirror the migration's CHECKs:
+ *   - share >= 0, share <= gross
+ *   - share = floor(gross * pct / 100)
+ *   - self-spend / internal-owner -> 0
+ */
+describe('computeSpendShare', () => {
+  // Fixed 10% card so the test is stable when the live placeholder moves.
+  const fixedCard: RateCard = {
+    version: 'spend-test',
+    publisherSharePctByScope: {
+      per_model_install: 0,
+      publisher_all_my_models: 0,
+      viewer_personal: 0,
+      platform_default: 0,
+      viewer_global: 0,
+    },
+    spendSharePct: 10,
+    internalAppOwnerUserIds: [42],
+    effectiveFrom: '2026-01-01',
+  };
+
+  it('pays the placeholder spend rate of the gross USD value, floored', () => {
+    // 1234 cents gross @ 10% = 123.4 -> 123 (platform absorbs the .4).
+    const res = computeSpendShare({
+      rateCard: fixedCard,
+      grossValueCents: 1234,
+      isSelfSpend: false,
+      appOwnerUserId: 1,
+    });
+    expect(res.rateCardVersion).toBe('spend-test');
+    expect(res.spendSharePct).toBe(10);
+    expect(res.appOwnerShareCents).toBe(123);
+    // Invariant: 0 <= share <= gross.
+    expect(res.appOwnerShareCents).toBeGreaterThanOrEqual(0);
+    expect(res.appOwnerShareCents).toBeLessThanOrEqual(1234);
+    // Invariant: share == floor(gross * pct / 100).
+    expect(res.appOwnerShareCents).toBe(Math.floor((1234 * 10) / 100));
+  });
+
+  it('zeroes the bounty on self-spend (author generating in own app)', () => {
+    const res = computeSpendShare({
+      rateCard: fixedCard,
+      grossValueCents: 1000,
+      isSelfSpend: true,
+      appOwnerUserId: 7,
+    });
+    expect(res.appOwnerShareCents).toBe(0);
+    expect(res.spendSharePct).toBe(0);
+  });
+
+  it('zeroes the bounty for an internal civitai-owned app', () => {
+    const res = computeSpendShare({
+      rateCard: fixedCard,
+      grossValueCents: 1000,
+      isSelfSpend: false,
+      appOwnerUserId: 42, // ∈ internalAppOwnerUserIds
+    });
+    expect(res.appOwnerShareCents).toBe(0);
+    expect(res.spendSharePct).toBe(0);
+  });
+
+  it('clamps a never-exceed-gross ceiling even with a runaway rate', () => {
+    const runaway: RateCard = { ...fixedCard, spendSharePct: 250 };
+    const res = computeSpendShare({
+      rateCard: runaway,
+      grossValueCents: 100,
+      isSelfSpend: false,
+      appOwnerUserId: 1,
+    });
+    // 100 * 250% = 250, clamped to gross (100) — a bounty can never exceed
+    // the revenue it rewards (matches the migration's share_le_gross CHECK).
+    expect(res.appOwnerShareCents).toBe(100);
+    expect(res.appOwnerShareCents).toBeLessThanOrEqual(100);
+  });
+
+  it('floors a negative/garbage gross to 0', () => {
+    const res = computeSpendShare({
+      rateCard: fixedCard,
+      grossValueCents: -500,
+      isSelfSpend: false,
+      appOwnerUserId: 1,
+    });
+    expect(res.appOwnerShareCents).toBe(0);
+  });
+
+  it('V4 is the active card and carries the placeholder spend rate', () => {
+    expect(ACTIVE_RATE_CARD.version).toBe('v4');
+    expect(ACTIVE_RATE_CARD).toBe(RATE_CARD_V4);
+    // The placeholder is non-zero (the spend flow pays something) but
+    // conservative. If this number changes, it's a deliberate sign-off
+    // decision — update the test alongside the new card.
+    expect(RATE_CARD_V4.spendSharePct).toBe(5);
+    expect(RATE_CARD_V4.spendSharePct).toBeGreaterThan(0);
+    // Purchase percentages carried from V3 unchanged.
+    expect(RATE_CARD_V4.publisherSharePctByScope).toEqual(
+      RATE_CARD_V3.publisherSharePctByScope
+    );
+  });
+
+  it('older cards (V1-V3) carry a 0% spend rate (spend is net-new in V4)', () => {
+    expect(RATE_CARD_V1.spendSharePct).toBe(0);
+    expect(RATE_CARD_V2.spendSharePct).toBe(0);
+    expect(RATE_CARD_V3.spendSharePct).toBe(0);
   });
 });

@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { blockBuzzAttributionWriteCounter } from '~/server/prom/client';
+import {
+  blockBuzzAttributionWriteCounter,
+  blockSpendAttributionWriteCounter,
+} from '~/server/prom/client';
 import {
   type BlockAttribution,
   type BlockAttributionScope,
@@ -9,8 +12,9 @@ import {
 import {
   newBlockAttributionPayoutId,
   newBlockBuzzAttributionId,
+  newBlockSpendAttributionId,
 } from '~/server/utils/app-block-ids';
-import { computeRateCardSplit, ACTIVE_RATE_CARD } from './rate-card';
+import { computeRateCardSplit, computeSpendShare, ACTIVE_RATE_CARD } from './rate-card';
 
 export type AttributionPaymentProvider = 'stripe' | 'paddle' | 'nowpayments';
 
@@ -232,6 +236,232 @@ export class AttributionAppMissingError extends Error {
     super(`OauthClient '${appId}' not found for attribution`);
     this.name = 'AttributionAppMissingError';
     this.appId = appId;
+  }
+}
+
+// ---------------------------------------------------------------
+// W3 flow A — buzz SPEND attribution (author bounty)
+// ---------------------------------------------------------------
+
+const SPEND_ATTRIBUTION_LOG_NAME = 'block-spend-attribution';
+
+/**
+ * buzzDollarRatio (1000 Buzz = $1 USD) -> Buzz to USD cents. Local
+ * constant (rather than importing the whole constants module into the
+ * service) and documented inline. $1 = 100 cents, so 1000 Buzz = 100
+ * cents => 1 cent per 10 Buzz.
+ */
+const BUZZ_PER_USD = 1000;
+export function buzzSpendToUsdCents(buzzAmount: number): number {
+  // Floor so we never over-state the spend's USD value (which would
+  // over-pay the bounty). e.g. 4999 Buzz -> 499 cents (not 500).
+  return Math.floor((Math.max(0, buzzAmount) / BUZZ_PER_USD) * 100);
+}
+
+export type RecordSpendAttributionInput = {
+  /** The viewer (spender). Server-derived from the verified token's `sub`. */
+  userId: number;
+  /** Buzz the generation burned (the orchestrator-computed cost). */
+  buzzAmount: number;
+  /** Yellow / blue / etc — mirrors BuzzTransaction.fromAccountType. */
+  buzzType?: string;
+  /** Orchestrator workflow id — the idempotency anchor. */
+  workflowId: string;
+  /** OauthClient.id — server-derived from the verified token's `appId`. */
+  appId: string;
+  /** AppBlock.id — server-derived from the verified token's `appBlockId`. */
+  appBlockId: string;
+  /** Block instance id — server-derived from the verified token. */
+  blockInstanceId: string;
+  /** Optional: model the generation ran against (analytics only). */
+  modelId?: number | null;
+};
+
+export type RecordSpendAttributionResult = {
+  /** False when the (workflow, app) UNIQUE blocked a duplicate write. */
+  written: boolean;
+  row: {
+    id: string;
+    status: string;
+    appOwnerShareCents: number;
+    spendSharePct: number;
+    grossValueCents: number;
+    rateCardVersion: string;
+    voidedReason: string | null;
+  };
+};
+
+/**
+ * Record an author bounty for a block-initiated generation that SPENT the
+ * viewer's own Buzz. Idempotent on `(workflow_id, app_block_id)` — a
+ * re-poll / retry / re-submit of the same workflow is a no-op.
+ *
+ * EVERYTHING is server-derived from the verified block-token claims by
+ * the caller (submitWorkflow): appId/appBlockId/blockInstanceId come from
+ * the JWT, the spender from `sub`, and the author is looked up here from
+ * the AppBlock's owning OauthClient. There is NO client-supplied
+ * attribution field — spend is server-initiated via the token, so it is
+ * inherently forge-safe (unlike the purchase/Paddle path, which must
+ * re-derive client metadata via validateBuzzPurchaseAttribution).
+ *
+ * ACCOUNTING: the bounty is platform-funded (paid ON TOP of the spend),
+ * not a cut of the viewer's Buzz. See rate-card.ts RATE_CARD_V4 and the
+ * migration. This function moves NO money and touches NO BuzzTransaction
+ * — it writes a derived audit/payout row. A failed write never affects
+ * the generation (the caller fires it best-effort / fire-and-forget).
+ *
+ * Self-spend (spender == app owner) and internal-owner apps write a
+ * voided, zero-share row so the audit trail exists but nothing enters the
+ * payout pipeline (mirrors recordAttribution's self-purchase wash).
+ */
+export async function recordSpendAttribution(
+  input: RecordSpendAttributionInput
+): Promise<RecordSpendAttributionResult> {
+  const {
+    userId,
+    buzzAmount,
+    buzzType = 'yellow',
+    workflowId,
+    appId,
+    appBlockId,
+    blockInstanceId,
+    modelId = null,
+  } = input;
+
+  // Resolve + snapshot the app owner (mirrors recordAttribution). The
+  // OauthClient is the source of truth for "who owns this app"; we
+  // snapshot userId onto the row so a future reassignment doesn't
+  // re-route past payouts. No owner -> nothing to pay -> abort.
+  const app = await dbRead.oauthClient.findUnique({
+    where: { id: appId },
+    select: { id: true, userId: true },
+  });
+  if (!app) {
+    logToAxiom(
+      {
+        name: SPEND_ATTRIBUTION_LOG_NAME,
+        type: 'warning',
+        message: `spend attribution app not found (skipping write): ${appId}`,
+        appId,
+        workflowId,
+      },
+      'webhooks'
+    ).catch(() => null);
+    throw new AttributionAppMissingError(appId);
+  }
+
+  const grossValueCents = buzzSpendToUsdCents(buzzAmount);
+  const isSelfSpend = userId === app.userId;
+  const share = computeSpendShare({
+    grossValueCents,
+    isSelfSpend,
+    appOwnerUserId: app.userId,
+  });
+
+  // Void zero-share rows that are zero because of WHO spent/owns (not
+  // because the rate is 0%) so they never enter the payout pipeline. A
+  // legitimately rate-0% row stays 'pending' — it carries no money but is
+  // a real attribution we want to confirm/aggregate (so a later non-zero
+  // card change applies going forward).
+  const isInternal = ACTIVE_RATE_CARD.internalAppOwnerUserIds.includes(app.userId);
+  const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
+  const status = voidedReason ? 'voided' : 'pending';
+  const voidedAt = voidedReason ? new Date() : null;
+
+  const id = newBlockSpendAttributionId();
+
+  try {
+    const created = await dbWrite.blockSpendAttribution.create({
+      data: {
+        id,
+        userId,
+        buzzAmount: Math.max(0, Math.floor(buzzAmount)),
+        buzzType,
+        grossValueCents,
+        workflowId,
+        appId,
+        appBlockId,
+        blockInstanceId,
+        modelId,
+        rateCardVersion: share.rateCardVersion,
+        spendSharePct: share.spendSharePct,
+        appOwnerShareCents: share.appOwnerShareCents,
+        appOwnerUserId: app.userId,
+        status,
+        voidedReason,
+        voidedAt,
+      },
+      select: {
+        id: true,
+        status: true,
+        appOwnerShareCents: true,
+        spendSharePct: true,
+        grossValueCents: true,
+        rateCardVersion: true,
+        voidedReason: true,
+      },
+    });
+
+    logToAxiom(
+      {
+        name: SPEND_ATTRIBUTION_LOG_NAME,
+        type: 'info',
+        message: `spend attribution written ${created.id}`,
+        attributionId: created.id,
+        appId,
+        appBlockId,
+        workflowId,
+        buzzAmount,
+        grossValueCents,
+        spendSharePct: share.spendSharePct,
+        appOwnerShareCents: share.appOwnerShareCents,
+        rateCardVersion: share.rateCardVersion,
+        status,
+        voidedReason,
+        isSelfSpend,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    try {
+      blockSpendAttributionWriteCounter.inc({ status });
+    } catch {
+      // swallow — metric write must never back-pressure the caller
+    }
+
+    return { written: true, row: created };
+  } catch (err) {
+    // Idempotency: a re-poll / retry / re-submit that races the original
+    // write lands on the (workflow_id, app_block_id) UNIQUE -> P2002.
+    // Return the pre-existing row so callers treat first-write and retry
+    // uniformly. Duck-type the Prisma error code (the class isn't always
+    // constructible when the generated client is stale in tests).
+    const code = (err as { code?: unknown })?.code;
+    if (code === 'P2002') {
+      const existing = await dbRead.blockSpendAttribution.findUnique({
+        where: {
+          workflowId_appBlockId: { workflowId, appBlockId },
+        },
+        select: {
+          id: true,
+          status: true,
+          appOwnerShareCents: true,
+          spendSharePct: true,
+          grossValueCents: true,
+          rateCardVersion: true,
+          voidedReason: true,
+        },
+      });
+      if (existing) {
+        try {
+          blockSpendAttributionWriteCounter.inc({ status: 'duplicate' });
+        } catch {
+          // swallow
+        }
+        return { written: false, row: existing };
+      }
+    }
+    throw err;
   }
 }
 

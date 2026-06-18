@@ -21,6 +21,17 @@ export type RateCard = {
    */
   publisherSharePctByScope: Record<BlockAttributionScope, number>;
   /**
+   * W3 flow A — buzz SPEND attribution (author bounty).
+   *
+   * The percentage of a block-initiated generation's USD value paid to
+   * the app author as a PLATFORM-FUNDED BOUNTY (NOT a cut of the viewer's
+   * spend — see the accounting note below and the migration). One flat
+   * rate for spend (no per-scope dimension): a spend has no install
+   * scope the way a purchase does — it's just "this app caused a
+   * generation". PLACEHOLDER pending monetization sign-off.
+   */
+  spendSharePct: number;
+  /**
    * Apps owned by these userIds always pay 0% to publisher — internal
    * civitai apps where the "share" is meaningless because the same
    * legal entity owns both sides of the transaction.
@@ -74,6 +85,10 @@ export const RATE_CARD_V1: RateCard = {
     // behavior-preserving for this card's stamped rows.
     viewer_global: 0,
   },
+  // Net-new spend dimension (W3 flow A). 0% on V1 is behavior-preserving:
+  // no spend row was ever stamped under V1 (the spend flow is net-new),
+  // and V1 is not the active card.
+  spendSharePct: 0,
   internalAppOwnerUserIds: [],
   effectiveFrom: '2026-05-25',
 };
@@ -115,6 +130,9 @@ export const RATE_CARD_V2: RateCard = {
     // behavior-preserving for this card's stamped rows.
     viewer_global: 0,
   },
+  // Net-new spend dimension (W3 flow A). 0% — behavior-preserving (no V2
+  // spend row ever existed; V2 is not the active card).
+  spendSharePct: 0,
   internalAppOwnerUserIds: [
     // Populate with civitai team userIds before going live. Empty for
     // now — none of the load-bearing paths read this list yet, but the
@@ -141,6 +159,9 @@ export const RATE_CARD_V2: RateCard = {
  * PLACEHOLDER — a real publisher share for pages needs monetization
  * leadership sign-off. When that lands, add a V4 with the agreed % and
  * leave V3 in place for the rows stamped under it (cards are immutable).
+ *
+ * `spendSharePct` is carried at 0% on V3 — V3 predates the spend flow and
+ * stamped only purchase rows. The spend flow (W3 flow A) ships under V4.
  */
 export const RATE_CARD_V3: RateCard = {
   version: 'v3',
@@ -155,13 +176,70 @@ export const RATE_CARD_V3: RateCard = {
     // monetization sign-off.
     viewer_global: 0,
   },
+  spendSharePct: 0,
   internalAppOwnerUserIds: [
     // Same as V2 — populate with civitai team userIds before going live.
   ],
   effectiveFrom: '2026-06-18',
 };
 
-export const ACTIVE_RATE_CARD: RateCard = RATE_CARD_V3;
+/**
+ * V4 — adds the W3 flow A buzz-SPEND author bounty (`spendSharePct`).
+ *
+ * Carries V3's purchase percentages UNCHANGED (15/15/25/0/0) and sets
+ * `spendSharePct` to the FIRST non-zero spend rate. This is the first
+ * card emitted for the spend flow: a block-initiated generation that
+ * burns the viewer's own Buzz now accrues an author bounty.
+ *
+ * ⚠️ PLACEHOLDER RATE — `spendSharePct: 5` is a CONSERVATIVE DEFAULT
+ *    chosen pending monetization sign-off (Zach's call: ship a documented
+ *    conservative number, not a guessed-final one). Raising is politically
+ *    easier than lowering after a public announcement, so this starts low.
+ *
+ * ACCOUNTING MODEL — PLATFORM-FUNDED BOUNTY, not a cut of the spend:
+ *    The viewer burns 100% of their Buzz on the generation (that is
+ *    platform revenue — the viewer paid civitai for compute). The author
+ *    bounty is a SEPARATE platform expense paid ON TOP, sized as
+ *    `spendSharePct` % of the spend's USD value. It is a marketing /
+ *    ecosystem cost, NOT a slice carved out of the viewer's money. There
+ *    is therefore NO three-way conservation invariant for spend rows (the
+ *    block_spend_attribution table omits the purchase table's
+ *    fee+platform+author=gross CHECK). The conservation/ledger invariant
+ *    that DOES hold: author_share = floor(grossValueCents * spendSharePct
+ *    / 100), 0 ≤ author_share ≤ grossValueCents, and author_share = 0 on
+ *    self-spend / internal-owner.
+ *
+ *    LEDGER IMPLICATION FOR SIGN-OFF: every paid spend bounty is net-new
+ *    platform spend (it does not reduce platform revenue on the
+ *    generation). At spendSharePct=N% and a daily block-spend volume of
+ *    $X USD-equivalent, the platform's bounty liability is ~$X·N%/day.
+ *    This is the number monetization must sign off on, NOT a revenue
+ *    split. Cap exposure with the existing BLOCK_BUZZ_CAP_PER_DAY (bounds
+ *    per-user daily spend) and the per-app earnings cap (unimplemented
+ *    placeholder) before widening beyond mods.
+ *
+ * When the signed-off rate lands, add a V5 with the agreed % and leave V4
+ * in place for the rows stamped under it (cards are immutable).
+ */
+export const RATE_CARD_V4: RateCard = {
+  version: 'v4',
+  publisherSharePctByScope: {
+    // Carried from V3 verbatim — a percentage change is a new card.
+    per_model_install: 15,
+    publisher_all_my_models: 15,
+    viewer_personal: 25,
+    platform_default: 0,
+    viewer_global: 0,
+  },
+  // PLACEHOLDER 5% platform-funded bounty — see the doc block above.
+  spendSharePct: 5,
+  internalAppOwnerUserIds: [
+    // Same as V3 — populate with civitai team userIds before going live.
+  ],
+  effectiveFrom: '2026-06-18',
+};
+
+export const ACTIVE_RATE_CARD: RateCard = RATE_CARD_V4;
 
 /**
  * Result of running a (gross, fee, scope) tuple through the active rate
@@ -234,5 +312,66 @@ export function computeRateCardSplit({
     appOwnerShareCents,
     platformShareCents,
     providerFeeCents: safeFee,
+  };
+}
+
+/**
+ * Result of running a (grossValueCents, owner) tuple through the active
+ * card's SPEND dimension (W3 flow A). Unlike RateCardSplit there is no
+ * platform-share / provider-fee field: the author bounty is platform-
+ * funded and paid ON TOP of the spend, not carved out of it, so there is
+ * nothing to "split". See RATE_CARD_V4's accounting note.
+ */
+export type SpendShareResult = {
+  rateCardVersion: string;
+  spendSharePct: number;
+  appOwnerShareCents: number;
+};
+
+/**
+ * Compute the author bounty for a single block-initiated Buzz SPEND.
+ *
+ * `grossValueCents` is the USD value of the Buzz the generation burned
+ * (buzzDollarRatio 1000 Buzz = $1 = 100 cents — the caller converts). The
+ * bounty is `spendSharePct` % of that value, floored so the platform
+ * never over-pays a fractional cent.
+ *
+ * Special cases (mirror computeRateCardSplit):
+ *   - `isSelfSpend` (spender == app owner) → 0 bounty. The author
+ *     generating in their own app earns nothing; the caller sets
+ *     status='voided', voided_reason='self_spend' so the row never enters
+ *     the payout pipeline.
+ *   - `appOwnerUserId` ∈ `internalAppOwnerUserIds` → 0 bounty (internal
+ *     civitai app — same legal entity on both sides).
+ *
+ * Invariants (also enforced by the migration's CHECKs):
+ *   - appOwnerShareCents >= 0
+ *   - appOwnerShareCents <= grossValueCents (a bounty can never exceed
+ *     the revenue it rewards — a runaway rate is a bug)
+ */
+export function computeSpendShare({
+  rateCard = ACTIVE_RATE_CARD,
+  grossValueCents,
+  isSelfSpend,
+  appOwnerUserId,
+}: {
+  rateCard?: RateCard;
+  grossValueCents: number;
+  isSelfSpend: boolean;
+  appOwnerUserId: number;
+}): SpendShareResult {
+  const safeGross = Math.max(0, Math.floor(grossValueCents));
+
+  const isInternal = rateCard.internalAppOwnerUserIds.includes(appOwnerUserId);
+  const sharePct = isSelfSpend || isInternal ? 0 : rateCard.spendSharePct ?? 0;
+  // Floor so the platform never over-pays a sub-cent remainder, then clamp
+  // to the gross as a defensive ceiling (the bounty can never exceed the
+  // spend's USD value — matches the migration's _share_le_gross_check).
+  const appOwnerShareCents = Math.min(safeGross, Math.floor((safeGross * sharePct) / 100));
+
+  return {
+    rateCardVersion: rateCard.version,
+    spendSharePct: sharePct,
+    appOwnerShareCents,
   };
 }

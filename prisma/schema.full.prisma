@@ -550,6 +550,8 @@ model User {
   blockBuzzAttributionsAsPurchaser BlockBuzzAttribution[]    @relation("BlockBuzzAttributionPurchaser")
   blockBuzzAttributionsAsAppOwner  BlockBuzzAttribution[]    @relation("BlockBuzzAttributionAppOwner")
   blockAttributionPayouts          BlockAttributionPayout[]  @relation("BlockAttributionPayoutOwner")
+  blockSpendAttributionsAsSpender  BlockSpendAttribution[]   @relation("BlockSpendAttributionSpender")
+  blockSpendAttributionsAsAppOwner BlockSpendAttribution[]   @relation("BlockSpendAttributionAppOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
@@ -2216,6 +2218,7 @@ model OauthClient {
   consents       OauthConsent[]
   appBlocks      AppBlock[]
   buzzAttributions BlockBuzzAttribution[]
+  spendAttributions BlockSpendAttribution[] @relation("BlockSpendAttributionApp")
 
   @@index([userId])
 }
@@ -2282,6 +2285,7 @@ model AppBlock {
   platformDefault    PlatformDefaultBlock?
   userSubscriptions  BlockUserSubscription[]
   buzzAttributions   BlockBuzzAttribution[]
+  spendAttributions  BlockSpendAttribution[] @relation("BlockSpendAttributionAppBlock")
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
   userScopeGrants    AppUserScopeGrant[]
@@ -2553,6 +2557,67 @@ model BlockAttributionPayout {
   @@unique([appOwnerUserId, periodKey], map: "block_attribution_payout_owner_period_uniq")
   @@index([appOwnerUserId, createdAt(sort: Desc)], map: "bap_owner_created_idx")
   @@map("block_attribution_payout")
+}
+
+/// W3 flow A — App Blocks buzz SPEND attribution (author bounty).
+///
+/// One row per block-initiated generation that spends the VIEWER's own
+/// Buzz balance. Distinct from BlockBuzzAttribution (which covers card
+/// PURCHASES from inside a block): a spend has no payment provider, no
+/// provider fee, no refund/clawback lifecycle.
+///
+/// ACCOUNTING: the author share is a PLATFORM-FUNDED BOUNTY paid on top
+/// of the spend, NOT a slice carved out of the viewer's Buzz. The viewer
+/// burned 100% of their Buzz on the generation (platform revenue); the
+/// author bounty is a separate platform expense sized as a percentage of
+/// the spend's USD value. There is therefore NO three-way conservation
+/// invariant (unlike the purchase table) — see the migration for detail.
+///
+/// Idempotent on (workflow_id, app_block_id): a re-poll / retry /
+/// re-submit of the same workflow is a no-op.
+///
+/// Application-generated id (`bsa_<ulid>`).
+model BlockSpendAttribution {
+  id                 String   @id
+  userId             Int      @map("user_id")
+  user               User     @relation("BlockSpendAttributionSpender", fields: [userId], references: [id], onDelete: Restrict)
+  buzzAmount         Int      @map("buzz_amount")
+  buzzType           String   @default("yellow") @map("buzz_type")
+  /// USD value of the Buzz burned (buzzDollarRatio 1000:1 -> cents).
+  /// Recorded for reporting — it is platform revenue, NOT a split pool.
+  grossValueCents    Int      @map("gross_value_cents")
+
+  /// Orchestrator workflow id — the idempotency anchor.
+  workflowId         String   @map("workflow_id")
+
+  appId              String   @map("app_id")
+  app                OauthClient @relation("BlockSpendAttributionApp", fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId         String   @map("app_block_id")
+  appBlock           AppBlock @relation("BlockSpendAttributionAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+  blockInstanceId    String   @map("block_instance_id")
+  modelId            Int?     @map("model_id")
+
+  rateCardVersion    String   @map("rate_card_version")
+  /// The spend rev-share percentage stamped at write time.
+  spendSharePct      Int      @map("spend_share_pct")
+  appOwnerShareCents Int      @map("app_owner_share_cents")
+  appOwnerUserId     Int      @map("app_owner_user_id")
+  appOwner           User     @relation("BlockSpendAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+
+  status             String   @default("pending")
+  /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
+  /// refund path, so this is never 'refund'/'chargeback'.
+  voidedReason       String?  @map("voided_reason")
+  attributedAt       DateTime @default(now()) @map("attributed_at") @db.Timestamptz(6)
+  confirmedAt        DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  voidedAt           DateTime? @map("voided_at") @db.Timestamptz(6)
+  paidOutAt          DateTime? @map("paid_out_at") @db.Timestamptz(6)
+  payoutId           String?  @map("payout_id")
+
+  @@unique([workflowId, appBlockId], map: "block_spend_attribution_workflow_app_uniq")
+  @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bsa_publisher_dashboard_idx")
+  @@index([appBlockId, attributedAt(sort: Desc)], map: "bsa_app_block_dashboard_idx")
+  @@map("block_spend_attribution")
 }
 
 /// W5 v0.5 audit log — one row per successful scope-gated API call from

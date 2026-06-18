@@ -31,6 +31,7 @@ const {
   mockLogToAxiom,
   mockSysRedis,
   mockResolveCanGenerateForVersions,
+  mockRecordSpendAttribution,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -80,6 +81,11 @@ const {
   // out of the test and we can drive canGenerate per-test. Default = a Map
   // saying the version IS generatable; FORBIDDEN tests override to false / miss.
   mockResolveCanGenerateForVersions: vi.fn(),
+  // W3 flow A — the spend-attribution write the submit path fires
+  // best-effort after a resolved submit. Mocked at the module boundary so
+  // the test asserts exact (server-derived) args + that a throw here never
+  // breaks submit.
+  mockRecordSpendAttribution: vi.fn(),
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -153,6 +159,12 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...args: unknown[]) => mockLogToAxiom(...args),
 }));
+// W3 flow A — the submit path dynamic-imports recordSpendAttribution from
+// here. Mock the whole module so we drive the spend-write behavior; the
+// real service is unit-tested separately in spend-attribution.service.test.
+vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
+  recordSpendAttribution: (...args: unknown[]) => mockRecordSpendAttribution(...args),
+}));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
     listForModel: vi.fn(),
@@ -183,6 +195,21 @@ vi.mock('~/server/services/block-registry.service', () => ({
     })),
   },
 }));
+
+// blocks.router imports `rateLimit` from middleware.trpc, which transitively
+// pulls in user-preferences.service → caches.ts → tag.selector (a top-level
+// `Prisma.validator(...)` call). In a fresh worktree the generated Prisma client
+// can't be produced (NixOS engine fetch), so evaluating that chain throws at
+// import time. Mock middleware.trpc with a pass-through `rateLimit` middleware
+// (built from the real, lightweight `middleware` factory) to cut the chain —
+// rate-limiting isn't under test here. (Same shim the sibling
+// blocks.router.subscriptions.test.ts / getInstallConfig.test.ts / flag-gate.test.ts use.)
+vi.mock('~/server/middleware.trpc', async () => {
+  const { middleware } = await import('~/server/trpc');
+  return {
+    rateLimit: () => middleware(({ next }) => next()),
+  };
+});
 
 import { blocksRouter } from '../blocks.router';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -286,9 +313,24 @@ beforeEach(() => {
     mockSysRedis.expire,
     mockSysRedis.ttl,
     mockResolveCanGenerateForVersions,
+    mockRecordSpendAttribution,
   ]) {
     fn.mockReset();
   }
+  // W3 flow A default: the spend-attribution write resolves successfully.
+  // Tests that exercise best-effort override it to reject.
+  mockRecordSpendAttribution.mockResolvedValue({
+    written: true,
+    row: {
+      id: 'bsa_x',
+      status: 'pending',
+      appOwnerShareCents: 0,
+      spendSharePct: 0,
+      grossValueCents: 0,
+      rateCardVersion: 'v4',
+      voidedReason: null,
+    },
+  });
   // Buzz-cap (audit A7): default to an empty window so the cap is non-binding
   // unless a test seeds prior spend. The cap is now an atomic reserve (INCRBY
   // returns the new running total) + refund (DECRBY); default incrBy → cost so
@@ -822,6 +864,212 @@ describe('blocks.submitWorkflow', () => {
         body: { kind: 'unknown', modelId: 7 } as never,
       })
     ).rejects.toThrow();
+  });
+
+  // ---- W3 flow A — buzz SPEND attribution wire-in ------------------------
+  // The submit path fires a best-effort, fire-and-forget spend-attribution
+  // write after a RESOLVED submit with a real workflow id. Everything it
+  // passes is SERVER-DERIVED from the verified token claims (forge-safe);
+  // a throw inside it must NEVER break the generation. The fire is a
+  // detached promise, so we let microtasks flush before asserting.
+  const flushMicrotasks = () => new Promise((r) => setImmediate(r));
+
+  function happySubmitWithWorkflow(cost = 25, workflowId = 'wf_real') {
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: cost }, steps: [] })
+      .mockResolvedValueOnce({
+        id: workflowId,
+        status: 'unassigned',
+        cost: { total: cost },
+        steps: [],
+      });
+  }
+
+  it('A-flow: fires a spend attribution with SERVER-DERIVED args on a resolved submit', async () => {
+    // Token carries the attribution-bearing claims; the BODY carries
+    // attacker-controllable fields. The write must read from CLAIMS only.
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({
+        buzzBudget: 1000,
+        appId: 'app_from_token',
+        appBlockId: 'apb_from_token',
+        blockInstanceId: 'bki_from_token',
+        sub: 'user:42',
+      })
+    );
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    // Server-derived from the VERIFIED token, not the client body.
+    expect(arg.appId).toBe('app_from_token');
+    expect(arg.appBlockId).toBe('apb_from_token');
+    expect(arg.blockInstanceId).toBe('bki_from_token');
+    expect(arg.userId).toBe(42); // from claims.sub, via parseSubjectUserId
+    expect(arg.workflowId).toBe('wf_real'); // the orchestrator's id
+    // Amount is the orchestrator-computed cost (ceil), not a client value.
+    expect(arg.buzzAmount).toBe(25);
+  });
+
+  // 🟡-1: the bounty must accrue off the REALIZED debit on the submit
+  // snapshot, not the whatif preflight ESTIMATE. Drive the whatif and the
+  // real submit to DIFFERENT costs so a regression to `Math.ceil(cost)`
+  // (the estimate) is caught.
+  function submitWithEstimateAndRealized(
+    estimate: number,
+    realized: number | undefined,
+    workflowId = 'wf_real'
+  ) {
+    // First call (whatif) → ESTIMATE; second call (real submit) → REALIZED.
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: estimate }, steps: [] })
+      .mockResolvedValueOnce({
+        id: workflowId,
+        status: 'unassigned',
+        // When `realized` is undefined, emit a snapshot with NO cost so the
+        // router exercises its estimate-fallback branch.
+        ...(realized === undefined ? {} : { cost: { total: realized } }),
+        steps: [],
+      });
+  }
+
+  it('🟡-1: accrues the bounty off the REALIZED debit (estimate 100, realized 40 → 40)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    submitWithEstimateAndRealized(100, 40);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    // Realized (40), NOT the whatif estimate (100). A revert to
+    // `Math.ceil(cost)` makes this 100 and fails the assertion.
+    expect(arg.buzzAmount).toBe(40);
+  });
+
+  it('🟡-1: a cache-hit / 0-realized accrues NOTHING even with a non-zero estimate', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // Estimate said 100 but the gen cost 0 (cache hit). The author must not
+    // be credited for a generation the platform never charged for.
+    submitWithEstimateAndRealized(100, 0);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzAmount).toBe(0);
+  });
+
+  it('🟡-1: falls back to the ESTIMATE when the realized value is absent', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // Submit snapshot carries no cost → realized absent → fall back to the
+    // estimate (100) so attribution isn't silently zeroed when the
+    // orchestrator omits the cost on the snapshot.
+    submitWithEstimateAndRealized(100, undefined);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzAmount).toBe(100);
+  });
+
+  it('A-flow: forge-safe — a forged appId/appBlockId in the BODY is ignored', async () => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({ buzzBudget: 1000, appId: 'app_real', appBlockId: 'apb_real' })
+    );
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    // Inject forged attribution fields onto the body — the schema strips
+    // unknowns, but even if it didn't, the write reads only from claims.
+    await caller.submitWorkflow({
+      blockToken: 'tok',
+      body: {
+        ...validBody(),
+        appId: 'app_ATTACKER',
+        appBlockId: 'apb_ATTACKER',
+        appOwnerUserId: 9999,
+      } as never,
+    });
+    await flushMicrotasks();
+
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.appId).toBe('app_real');
+    expect(arg.appBlockId).toBe('apb_real');
+    // No client-supplied owner/share is forwarded — the service derives it.
+    expect(arg).not.toHaveProperty('appOwnerUserId');
+  });
+
+  it('A-flow: best-effort — a thrown attribution write does NOT break submit', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+    mockRecordSpendAttribution.mockRejectedValue(new Error('attribution DB down'));
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    // The generation must still succeed despite the attribution failure.
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+    expect(result.snapshot.workflowId).toBe('wf_real');
+    expect(result.snapshot.status).toBe('pending');
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+  });
+
+  it('A-flow: does NOT attribute a RESOLVED failed snapshot (no generation to credit)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // whatif resolves; real submit RESOLVES with a failed status + a
+    // (non-sentinel) id. The reservation is kept, but no generation ran, so
+    // no author bounty accrues.
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+      .mockResolvedValueOnce({ id: 'wf_real', status: 'failed', cost: { total: 25 }, steps: [] });
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+    expect(result.snapshot.status).toBe('failed');
+    expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
+  });
+
+  it('A-flow: does NOT attribute the over-budget rejection (no submit happened)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 5 }));
+    happyVersionLookup();
+    happyUser();
+    // Only the whatif fires; cost (25) > budget (5) → early failed return.
+    mockSubmitWorkflow.mockResolvedValueOnce({
+      id: '',
+      status: 'succeeded',
+      cost: { total: 25 },
+      steps: [],
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+    expect(result.snapshot.status).toBe('failed');
+    expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
   });
 });
 
