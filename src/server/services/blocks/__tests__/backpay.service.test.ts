@@ -63,6 +63,12 @@ const DEFAULT_TEST_CARD = {
 };
 const TEST_CARD = { ...DEFAULT_TEST_CARD };
 const cardHolder = vi.hoisted(() => ({ current: null as unknown }));
+// Lets ONE test override computeSpendShare to simulate a compute bug (a
+// wrong-but-≤gross bounty) so the spend independent-invariant belt can be
+// exercised. null = use the REAL implementation (the default for every test).
+const computeHolder = vi.hoisted(() => ({
+  spend: null as null | ((arg: unknown) => unknown),
+}));
 
 vi.mock('../rate-card', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../rate-card')>();
@@ -71,6 +77,8 @@ vi.mock('../rate-card', async (importOriginal) => {
     get ACTIVE_RATE_CARD() {
       return cardHolder.current;
     },
+    computeSpendShare: (arg: unknown) =>
+      (computeHolder.spend ?? actual.computeSpendShare)(arg),
   };
 });
 
@@ -123,6 +131,7 @@ function signOff(version: string | null = TEST_CARD.version) {
 beforeEach(() => {
   vi.restoreAllMocks();
   cardHolder.current = TEST_CARD; // reset to the default 20%/10% card
+  computeHolder.spend = null; // default: REAL computeSpendShare
   mockLog.mockReset();
   mockFlag.mockReset();
   mockDbRead.blockSubscriptionAttribution.findMany.mockReset().mockResolvedValue([]);
@@ -423,5 +432,73 @@ describe('0%-rate signed-off card (edge)', () => {
     const spendCall = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
     expect(spendCall.data.status).toBe('confirmed');
     expect(spendCall.data.appOwnerShareCents).toBe(0);
+  });
+});
+
+describe('independent invariant belts — no false positives on legit edges, fires on a real mismatch', () => {
+  beforeEach(() => {
+    mockFlag.mockResolvedValue(true);
+    signOff();
+  });
+
+  it('subscription fee==0 → still confirms (net=gross, author=floor(gross*pct))', async () => {
+    // gross 1000, fee 0 → net 1000, author = floor(1000*20%) = 200, platform 800.
+    mockDbRead.blockSubscriptionAttribution.findMany.mockResolvedValue([
+      subRow({ id: 'bsu_fee0', grossValueCents: 1000, providerFeeCents: 0, appOwnerUserId: 7 }),
+    ]);
+    const out = await backpayTrackedAttributions();
+    expect(out.confirmedCount).toBe(1);
+    expect(out.heldCount).toBe(0);
+    const call = mockDbWrite.blockSubscriptionAttribution.updateMany.mock.calls[0][0];
+    expect(call.data.status).toBe('confirmed');
+    expect(call.data.appOwnerShareCents).toBe(200);
+    expect(call.data.platformShareCents).toBe(800);
+  });
+
+  it('subscription net==0 (gross==fee) → still confirms, author 0, platform 0', async () => {
+    mockDbRead.blockSubscriptionAttribution.findMany.mockResolvedValue([
+      subRow({ id: 'bsu_net0', grossValueCents: 500, providerFeeCents: 500, appOwnerUserId: 7 }),
+    ]);
+    const out = await backpayTrackedAttributions();
+    expect(out.confirmedCount).toBe(1);
+    const call = mockDbWrite.blockSubscriptionAttribution.updateMany.mock.calls[0][0];
+    expect(call.data.status).toBe('confirmed');
+    expect(call.data.appOwnerShareCents).toBe(0);
+    expect(call.data.platformShareCents).toBe(0);
+  });
+
+  it('spend gross==0 → still confirms with share 0 (no false skip at the zero edge)', async () => {
+    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
+      spendRow({ id: 'bsa_0', grossValueCents: 0, appOwnerUserId: 7 }),
+    ]);
+    const out = await backpayTrackedAttributions();
+    expect(out.confirmedCount).toBe(1);
+    const call = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
+    expect(call.data.status).toBe('confirmed');
+    expect(call.data.appOwnerShareCents).toBe(0);
+  });
+
+  it('spend bounty that disagrees with the independent re-derivation → skipped (belt fires)', async () => {
+    // Simulate a computeSpendShare bug: returns 999 for gross 1000 @ 10%
+    // (expected 100). 999 <= gross, so the bare `> gross` ceiling would MISS it;
+    // the independent re-derivation catches it and skips the row.
+    computeHolder.spend = () => ({
+      rateCardVersion: TEST_CARD.version,
+      spendSharePct: 10,
+      appOwnerShareCents: 999,
+    });
+    mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
+      spendRow({ id: 'bsa_bad', grossValueCents: 1000, appOwnerUserId: 7 }),
+    ]);
+    const out = await backpayTrackedAttributions();
+    expect(out.confirmedCount).toBe(0);
+    expect(mockDbWrite.blockSpendAttribution.updateMany).not.toHaveBeenCalled();
+    expect(mockLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('spend share failed an independent invariant'),
+        expectedShareCents: 100,
+      }),
+      'webhooks'
+    );
   });
 });

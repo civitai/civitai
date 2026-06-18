@@ -345,17 +345,31 @@ export async function backpayTrackedAttributions(
       appOwnerUserId: row.appOwnerUserId,
     });
 
-    // Invariant: the platform-funded bounty can never exceed the gross it
-    // rewards. computeSpendShare already clamps to gross; assert before write.
-    if (share.appOwnerShareCents > row.grossValueCents) {
+    // INDEPENDENT re-derivation (parallels the subscription belt): the
+    // platform-funded bounty must equal min(gross, floor(gross × pct / 100))
+    // AND never exceed gross. Re-derive from the card's own `spendSharePct`
+    // and skip+log on any mismatch — this catches a computeSpendShare
+    // floor/clamp bug that the bare `> gross` ceiling alone would miss (a
+    // wrong-but-≤gross bounty). Bit-identical to compute for a legit row
+    // (gross is a clean non-negative int from the track-time write), so it
+    // carries no false-positive risk on valid data.
+    const expectedShareCents = Math.min(
+      row.grossValueCents,
+      Math.floor((row.grossValueCents * share.spendSharePct) / 100)
+    );
+    if (
+      share.appOwnerShareCents !== expectedShareCents ||
+      share.appOwnerShareCents > row.grossValueCents
+    ) {
       logToAxiom(
         {
           name: BACKPAY_LOG_NAME,
           type: 'error',
-          message: `spend share exceeds gross; skipping ${row.id}`,
+          message: `spend share failed an independent invariant; skipping ${row.id}`,
           attributionId: row.id,
           grossValueCents: row.grossValueCents,
           appOwnerShareCents: share.appOwnerShareCents,
+          expectedShareCents,
         },
         'webhooks'
       ).catch(() => null);
