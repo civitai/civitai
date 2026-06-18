@@ -29,6 +29,7 @@ import {
   IconThumbUp,
   IconWand,
 } from '@tabler/icons-react';
+import { useMediaQuery } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -131,6 +132,19 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const currentUser = useCurrentUser();
   const colorScheme = useComputedColorScheme('dark');
   const theme = useMantineTheme();
+  // Single-column flat layout on mobile (Viewer → Files → Details →
+  // Description → Creator → Comments → License) vs. the canonical
+  // two-column layout on md+ (left: Viewer/Description/Comments,
+  // right: Files/Details/Creator/License). Both layouts render the
+  // same JSX expressions for each block, so the Viewer / Comments
+  // tree only mounts once per pass — switching breakpoints (resize)
+  // unmounts the old layout and mounts the new one, which is acceptable
+  // for a rare event. `getInitialValueInEffect: false` means SSR +
+  // first paint default to `false` (desktop) so we don't ship the
+  // mobile single-column layout to large screens before hydration.
+  const isMobile = useMediaQuery('(max-width: 991px)', false, {
+    getInitialValueInEffect: false,
+  });
 
   const { data: model3d, isLoading, isRefetching } = trpc.model3d.getById.useQuery({ id });
   const { data: filesData } = trpc.model3d.getFiles.useQuery({ id }, { enabled: !!model3d });
@@ -430,101 +444,77 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               license) on the right. Mirrors the regular model page two-column
               structure so a user moving between the two doesn't feel
               disoriented. */}
-          <ContainerGrid2 gutter="xl">
-            {/* Main column — viewer (top, matches the body width) + about
-                this model body + comments. */}
-            <ContainerGrid2.Col span={{ base: 12, md: 8 }} order={{ base: 2, md: 1 }}>
-              <Stack gap="md">
-                <Card withBorder radius="md" p={0} className="overflow-hidden">
-                  {viewableVariants.length > 0 ? (
-                    <Model3DVariantViewer
-                      // Use the resolved/presigned downloadUrl so the browser
-                      // can actually fetch the GLB — the raw `url` may point
-                      // at a bucket the public delivery worker doesn't
-                      // authorize. The wrapper exposes a top-left Select to
-                      // switch between Base / Rigged / Animated / Walking /
-                      // Running variants; walking/running auto-play their
-                      // embedded animations via the viewer's AnimationMixer.
-                      variants={viewableVariants}
-                      initialKey={initialViewerKey}
-                    />
-                  ) : (
-                    <Box className="flex min-h-[420px] items-center justify-center bg-dark-7 p-6">
-                      <Stack align="center" gap="xs" maw={420} ta="center">
-                        <IconCube size={48} stroke={1.5} />
-                        <Text fw={600}>No files yet</Text>
-                        <Text size="sm" c="dimmed">
-                          The 3D files for this model are still being processed.
-                        </Text>
-                      </Stack>
-                    </Box>
-                  )}
-                </Card>
-
-                {/* About this model — inline body, no card wrapper, no
-                    "About this model" heading. Matches the model page. */}
-                {model3d.description && (
-                  <ContentClamp maxHeight={460}>
-                    <RenderHtml html={model3d.description ?? ''} />
-                  </ContentClamp>
-                )}
-
-                {/* Comments — limited to 5 initial entries with the
-                    Load-More CTA already rendered by RootThreadProvider when
-                    the page count exceeds `limit`. Negative top margin pulls
-                    the divider+comments up so the divider+section start sit
-                    closer to the description than the default Stack-gap-md. */}
-                <Box id="comments" style={{ marginTop: -8 }}>
-                  <Divider mb="sm" />
-                  <Model3DComments model3dId={id} userId={model3d.user.id} />
-                </Box>
-              </Stack>
-            </ContainerGrid2.Col>
-
-            {/* Sidebar — Files / Generation Data / Creator / Reviews-preview
-                / License. Lifted to the top of the page (visually) so it sits
-                beside the viewer on desktop. On mobile (single column) it
-                renders directly under the title block. */}
-            <ContainerGrid2.Col span={{ base: 12, md: 4 }} order={{ base: 1, md: 2 }}>
-              <Stack gap="md">
-                {/* Files card — no title, just a format Select + a primary
-                    Download button with the file size baked into the button.
-                    Mirrors the model-detail download card. */}
-                <Card withBorder radius="md" p="md">
-                  {files.length === 0 ? (
-                    <Text c="dimmed" size="sm">
-                      No downloadable files available.
-                    </Text>
-                  ) : (
-                    <Stack gap="xs">
-                      <Select
-                        data={formatOptions}
-                        value={selectedFileKey}
-                        onChange={setSelectedFileKey}
-                        aria-label="File variant + format"
-                      />
-                      <Button
-                        leftSection={<IconDownload size={16} />}
-                        onClick={handleDownload}
-                        disabled={!selectedFile}
-                        fullWidth
-                      >
-                        Download{' '}
-                        {selectedFile && (
-                          <Text span ml={4}>
-                            ({(selectedFile.sizeKB / 1024).toFixed(2)} MB)
-                          </Text>
-                        )}
-                      </Button>
+          {/* Page body. Each block below is rendered ONCE into a const and
+              dispatched into either the mobile flat Stack (single column)
+              or the desktop two-column grid (Viewer + Description +
+              Comments on the left, Files + Details + Creator + License on
+              the right). Switching layout doesn't double-mount the Viewer
+              or the Comments thread because only one of the two branches
+              evaluates per render. On resize the layout swaps (one
+              unmount + one mount), which is acceptable for an edge-case
+              user action. */}
+          {(() => {
+            const viewerBlock = (
+              <Card withBorder radius="md" p={0} className="overflow-hidden">
+                {viewableVariants.length > 0 ? (
+                  <Model3DVariantViewer
+                    // Use the resolved/presigned downloadUrl so the browser
+                    // can actually fetch the GLB — the raw `url` may point
+                    // at a bucket the public delivery worker doesn't
+                    // authorize. The wrapper exposes a top-left Select to
+                    // switch between Base / Rigged / Animated / Walking /
+                    // Running variants; walking/running auto-play their
+                    // embedded animations via the viewer's AnimationMixer.
+                    variants={viewableVariants}
+                    initialKey={initialViewerKey}
+                  />
+                ) : (
+                  <Box className="flex min-h-[420px] items-center justify-center bg-dark-7 p-6">
+                    <Stack align="center" gap="xs" maw={420} ta="center">
+                      <IconCube size={48} stroke={1.5} />
+                      <Text fw={600}>No files yet</Text>
+                      <Text size="sm" c="dimmed">
+                        The 3D files for this model are still being processed.
+                      </Text>
                     </Stack>
-                  )}
-                </Card>
+                  </Box>
+                )}
+              </Card>
+            );
 
-                {/* Details — single Accordion mirroring model-detail
-                    sidebar. Edge-to-edge rows: Reviews, Source image (if
-                    any), then generation params. Reviews fold in here so we
-                    don't need a standalone Reviews card. */}
-                {(hasGenerationData || reviewSummary) && (
+            const filesBlock = (
+              <Card withBorder radius="md" p="md">
+                {files.length === 0 ? (
+                  <Text c="dimmed" size="sm">
+                    No downloadable files available.
+                  </Text>
+                ) : (
+                  <Stack gap="xs">
+                    <Select
+                      data={formatOptions}
+                      value={selectedFileKey}
+                      onChange={setSelectedFileKey}
+                      aria-label="File variant + format"
+                    />
+                    <Button
+                      leftSection={<IconDownload size={16} />}
+                      onClick={handleDownload}
+                      disabled={!selectedFile}
+                      fullWidth
+                    >
+                      Download{' '}
+                      {selectedFile && (
+                        <Text span ml={4}>
+                          ({(selectedFile.sizeKB / 1024).toFixed(2)} MB)
+                        </Text>
+                      )}
+                    </Button>
+                  </Stack>
+                )}
+              </Card>
+            );
+
+            const detailsBlock = (hasGenerationData || reviewSummary) ? (
                   <Accordion
                     variant="separated"
                     multiple
@@ -684,41 +674,93 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                       </Accordion.Panel>
                     </Accordion.Item>
                   </Accordion>
-                )}
+            ) : null;
 
-                {/* Creator card */}
-                <SmartCreatorCard
-                  user={model3d.user}
-                  tipBuzzEntityId={id}
-                  tipBuzzEntityType="Model3D"
-                />
+            const descriptionBlock = model3d.description ? (
+              <ContentClamp maxHeight={460}>
+                <RenderHtml html={model3d.description ?? ''} />
+              </ContentClamp>
+            ) : null;
 
-                {/* Compact license footer — mirrors the model page footer:
-                    inline license name + tooltipped permission icons via
-                    Model3DPermissionIndicator (which shares its visual with
-                    Models' PermissionIndicator). No card wrapper. */}
-                {license && (
-                  <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
-                    <Group gap={4} wrap="wrap" align="center" style={{ flex: 1, minWidth: 0 }}>
-                      <IconLicense size={16} />
-                      <Text size="xs" c="dimmed" style={{ lineHeight: 1.1 }}>
-                        License:
-                      </Text>
-                      <Text size="xs" c="dimmed" style={{ lineHeight: 1.1 }}>
-                        {license.name}
-                      </Text>
-                    </Group>
-                    <Model3DPermissionIndicator license={license} size={24} />
+            const creatorBlock = (
+              <SmartCreatorCard
+                user={model3d.user}
+                tipBuzzEntityId={id}
+                tipBuzzEntityType="Model3D"
+              />
+            );
+
+            const commentsBlock = (
+              <Box id="comments">
+                <Divider mb="sm" />
+                <Model3DComments model3dId={id} userId={model3d.user.id} />
+              </Box>
+            );
+
+            const licenseBlock = license ? (
+              <Stack gap={4}>
+                <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
+                  <Group gap={4} wrap="wrap" align="center" style={{ flex: 1, minWidth: 0 }}>
+                    <IconLicense size={16} />
+                    <Text size="xs" c="dimmed" style={{ lineHeight: 1.1 }}>
+                      License:
+                    </Text>
+                    <Text size="xs" c="dimmed" style={{ lineHeight: 1.1 }}>
+                      {license.name}
+                    </Text>
                   </Group>
-                )}
-                {license && model3d.licenseDetails && (
+                  <Model3DPermissionIndicator license={license} size={24} />
+                </Group>
+                {model3d.licenseDetails && (
                   <Text size="xs" c="dimmed">
                     {model3d.licenseDetails}
                   </Text>
                 )}
               </Stack>
-            </ContainerGrid2.Col>
-          </ContainerGrid2>
+            ) : null;
+
+            // Mobile: single flat Stack in the order the user actually
+            // wants — Viewer, Files, Details, Description, Creator,
+            // Comments, License. No two-column grid means each item flows
+            // tightly under the previous one without any row-alignment
+            // gaps.
+            if (isMobile) {
+              return (
+                <Stack gap="md">
+                  {viewerBlock}
+                  {filesBlock}
+                  {detailsBlock}
+                  {descriptionBlock}
+                  {creatorBlock}
+                  {commentsBlock}
+                  {licenseBlock}
+                </Stack>
+              );
+            }
+
+            // Desktop: original two-column layout. Two independent Stacks
+            // mean each column flows tightly with its own internal
+            // spacing — no row-aligned gaps between left/right items.
+            return (
+              <ContainerGrid2 gutter="xl">
+                <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
+                  <Stack gap="md">
+                    {viewerBlock}
+                    {descriptionBlock}
+                    {commentsBlock}
+                  </Stack>
+                </ContainerGrid2.Col>
+                <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
+                  <Stack gap="md">
+                    {filesBlock}
+                    {detailsBlock}
+                    {creatorBlock}
+                    {licenseBlock}
+                  </Stack>
+                </ContainerGrid2.Col>
+              </ContainerGrid2>
+            );
+          })()}
 
         </Stack>
       </Container>
