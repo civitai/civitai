@@ -2,7 +2,21 @@ import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import path from 'path';
 
-const alias = { '~': path.resolve(__dirname, './src') };
+// Mirror the workspace `@civitai/*` package mappings from tsconfig.json `paths` so Vitest
+// (which doesn't read tsconfig paths, and these packages aren't symlinked into the root
+// node_modules) resolves them the same way the app build does. `@civitai/auth` is omitted —
+// it IS symlinked in node_modules and resolves via its own exports map. Subpath regex must come
+// before the bare entry so `@civitai/redis/client` doesn't get caught by the bare `@civitai/redis`.
+const civitaiWorkspacePkgs = ['db-schema', 'db', 'redis', 'clickhouse', 'axiom', 'telemetry', 'brand'];
+const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
+  const src = path.resolve(__dirname, `packages/civitai-${p}/src`).replace(/\\/g, '/');
+  return [
+    { find: new RegExp(`^@civitai/${p}/(.*)$`), replacement: `${src}/$1` },
+    { find: `@civitai/${p}`, replacement: `${src}/index` },
+  ];
+});
+
+const alias = [{ find: '~', replacement: path.resolve(__dirname, './src') }, ...civitaiAlias];
 
 // Two Vitest projects sharing one config/runner:
 //  - `unit`      = the existing node-env suite, unchanged.
