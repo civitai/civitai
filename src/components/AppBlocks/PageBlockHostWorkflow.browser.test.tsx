@@ -47,6 +47,23 @@ vi.mock('~/utils/trpc', () => ({
       pollWorkflow: { useMutation: () => ({ mutateAsync: mocks.poll }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: mocks.cancel }) },
     },
+    // PageBlockHost also wires the storage bridge (inert here — exercised in
+    // PageBlockHostStorage.browser.test.tsx); stub so the component mounts.
+    apps: {
+      storage: {
+        set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        delete: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      },
+    },
+    useUtils: () => ({
+      apps: {
+        storage: {
+          get: { fetch: vi.fn() },
+          list: { fetch: vi.fn() },
+          getQuota: { fetch: vi.fn() },
+        },
+      },
+    }),
   },
 }));
 
