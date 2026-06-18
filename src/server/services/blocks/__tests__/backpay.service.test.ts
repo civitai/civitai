@@ -206,14 +206,37 @@ describe('happy path (gate forced open)', () => {
     expect(call.data.status).toBe('confirmed');
     expect(call.data.rateCardVersion).toBe(TEST_CARD.version);
     expect(call.data.appOwnerShareCents).toBe(180);
-    expect(call.data.providerFeeCents).toBe(100);
     expect(call.data.platformShareCents).toBe(720);
     expect(call.data.subscriptionSharePct).toBe(20);
     expect(call.data.confirmedAt).toBeInstanceOf(Date);
-    // conservation, asserted exactly
-    expect(
-      call.data.providerFeeCents + call.data.platformShareCents + call.data.appOwnerShareCents
-    ).toBe(1000);
+    // providerFeeCents is NOT re-stamped — the recorded Stripe fee is preserved.
+    expect(call.data.providerFeeCents).toBeUndefined();
+    // conservation against the row's STORED fee (100): fee + platform + author = gross.
+    expect(100 + call.data.platformShareCents + call.data.appOwnerShareCents).toBe(1000);
+  });
+
+  it('subscription row whose stored fee disagrees with compute (fee > gross) → skipped, NOT confirmed', async () => {
+    // Anomalous row: stored fee 1200 > gross 1000. computeSubscriptionShare
+    // clamps safeFee = min(gross, fee) = 1000, so share.providerFeeCents (1000)
+    // != the row's stored fee (1200) → the independent feeAgrees belt fires and
+    // the row is SKIPPED. Backpay never rewrites the recorded fee to force the
+    // math; the anomaly is left tracked for review.
+    mockDbRead.blockSubscriptionAttribution.findMany.mockResolvedValue([
+      subRow({ id: 'bsu_bad', grossValueCents: 1000, providerFeeCents: 1200, appOwnerUserId: 7 }),
+    ]);
+
+    const out = await backpayTrackedAttributions();
+
+    expect(out.confirmedCount).toBe(0);
+    expect(out.heldCount).toBe(0);
+    expect(mockDbWrite.blockSubscriptionAttribution.updateMany).not.toHaveBeenCalled();
+    expect(mockLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('failed an independent invariant'),
+        feeAgrees: false,
+      }),
+      'webhooks'
+    );
   });
 
   it('spend tracked → confirmed with share<=gross; version + pct stamped', async () => {
@@ -392,12 +415,10 @@ describe('0%-rate signed-off card (edge)', () => {
     const subCall = mockDbWrite.blockSubscriptionAttribution.updateMany.mock.calls[0][0];
     expect(subCall.data.status).toBe('confirmed');
     expect(subCall.data.appOwnerShareCents).toBe(0);
-    // conservation: fee 100 + platform 900 + author 0 = gross 1000
-    expect(
-      subCall.data.providerFeeCents +
-        subCall.data.platformShareCents +
-        subCall.data.appOwnerShareCents
-    ).toBe(1000);
+    // providerFeeCents is preserved (not re-stamped); conservation against the
+    // row's STORED fee (100): fee 100 + platform 900 + author 0 = gross 1000.
+    expect(subCall.data.providerFeeCents).toBeUndefined();
+    expect(100 + subCall.data.platformShareCents + subCall.data.appOwnerShareCents).toBe(1000);
 
     const spendCall = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
     expect(spendCall.data.status).toBe('confirmed');

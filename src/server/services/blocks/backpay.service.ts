@@ -238,25 +238,42 @@ export async function backpayTrackedAttributions(
       appOwnerUserId: row.appOwnerUserId,
     });
 
-    // Conservation invariant: fee + platform + author = gross. By construction
-    // safeFee + (net - author) + author = safeGross; assert before persisting.
-    const platformShareCents =
-      row.grossValueCents - share.providerFeeCents - share.appOwnerShareCents;
-    const conserved =
-      share.providerFeeCents + platformShareCents + share.appOwnerShareCents ===
-      row.grossValueCents;
-    if (!conserved) {
-      // A conservation break is a compute bug; never persist it. Log + skip.
+    // INDEPENDENT invariant guards (not a residual-based tautology). The old
+    // check defined platform = gross − fee − author and then asserted
+    // fee + platform + author === gross, which is true for ANY inputs and so
+    // could never catch a compute bug. Instead, re-derive each quantity
+    // independently from the row's STORED fee and skip+log on any mismatch:
+    //   (a) feeAgrees   — compute must agree with the row's recorded Stripe fee.
+    //       A divergence means an anomalous row (e.g. stored fee > gross, which
+    //       computeSubscriptionShare clamps): NEVER rewrite a recorded financial
+    //       fact to force the math — skip it for review.
+    //   (b) authorAgrees — the author share must equal an independently-derived
+    //       floor(net × pct / 100); catches a computeSubscriptionShare bug.
+    //   (c) platformNonNeg — platform (= gross − stored fee − author) ≥ 0.
+    // The stored fee is PRESERVED on the write (we do not re-stamp it).
+    const storedFeeCents = row.providerFeeCents;
+    const netCents = row.grossValueCents - storedFeeCents;
+    const expectedAuthorCents = Math.floor((netCents * share.subscriptionSharePct) / 100);
+    const platformShareCents = row.grossValueCents - storedFeeCents - share.appOwnerShareCents;
+    const feeAgrees = share.providerFeeCents === storedFeeCents;
+    const authorAgrees = share.appOwnerShareCents === expectedAuthorCents;
+    const platformNonNeg = platformShareCents >= 0;
+    if (!feeAgrees || !authorAgrees || !platformNonNeg) {
       logToAxiom(
         {
           name: BACKPAY_LOG_NAME,
           type: 'error',
-          message: `subscription conservation invariant broken; skipping ${row.id}`,
+          message: `subscription share failed an independent invariant; skipping ${row.id}`,
           attributionId: row.id,
           grossValueCents: row.grossValueCents,
-          providerFeeCents: share.providerFeeCents,
-          platformShareCents,
+          storedFeeCents,
+          computeFeeCents: share.providerFeeCents,
           appOwnerShareCents: share.appOwnerShareCents,
+          expectedAuthorCents,
+          platformShareCents,
+          feeAgrees,
+          authorAgrees,
+          platformNonNeg,
         },
         'webhooks'
       ).catch(() => null);
@@ -295,7 +312,9 @@ export async function backpayTrackedAttributions(
           subscriptionSharePct: share.subscriptionSharePct,
           appOwnerShareCents: share.appOwnerShareCents,
           platformShareCents,
-          providerFeeCents: share.providerFeeCents,
+          // providerFeeCents intentionally NOT updated — the recorded Stripe fee
+          // from track-time is preserved (and asserted to equal compute's fee
+          // via feeAgrees above). Backpay never rewrites a recorded financial fact.
         },
       });
     }
@@ -432,11 +451,15 @@ export async function backpayTrackedAttributions(
 
 /**
  * Fold a row's computed share into the per-app accrual and decide whether it
- * is confirmable or must be held. Routes a row to 'held' the moment confirming
- * it would push the app's CUMULATIVE confirmed share over the per-run cap (so
- * the FIRST breaching row and all subsequent rows for that app are held).
- * Returns 'confirm' or 'held'; mutates `accrualByApp` only for confirmed rows
- * and records held rows in `cappedByApp`.
+ * is confirmable or must be held. Routes a row to 'held' when confirming it
+ * would push the app's accrued confirmed share over the per-run cap.
+ *
+ * GREEDY, not sticky: a held row does NOT advance `accrualByApp`, so a LATER
+ * SMALLER row for the same app whose share still fits under the cap WILL still
+ * be confirmed. The invariant this enforces is "confirmed share per app per run
+ * ≤ cap" (a greedy fill in `attributedAt asc` order) — NOT "every row after the
+ * first breach is held." Returns 'confirm' or 'held'; mutates `accrualByApp`
+ * only for confirmed rows and records held rows in `cappedByApp`.
  */
 function applyCap(
   accrualByApp: Map<string, number>,
