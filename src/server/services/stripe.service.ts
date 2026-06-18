@@ -1004,7 +1004,20 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
         // brand-new subscription can land before checkout.session.completed
         // copied the metadata onto the Subscription. Fall back to the parent
         // Checkout Session's metadata so the FIRST invoice isn't lost.
-        if (!resolvedAttribution && invoice.subscription) {
+        //
+        // SCOPED to subscription_create: the race only exists for a
+        // subscription's FIRST invoice. By the time a renewal
+        // (subscription_cycle) fires, the metadata was stamped onto the
+        // Subscription at creation and is reliably present in
+        // subscription_details.metadata — so a renewal that resolves no
+        // attribution genuinely has none (a non-block membership), and the
+        // Checkout-Session lookup would be a guaranteed-empty Stripe API call
+        // on every renewal. Gating it here avoids that per-renewal round-trip.
+        if (
+          !resolvedAttribution &&
+          invoice.subscription &&
+          invoice.billing_reason === 'subscription_create'
+        ) {
           const subId =
             typeof invoice.subscription === 'string'
               ? invoice.subscription
