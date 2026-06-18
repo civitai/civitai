@@ -94,6 +94,27 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   }
   const user = session.user as SessionUser;
 
+  // 1b. Personal-API-key gate — reject OAuth-client-issued tokens.
+  // `getSessionFromBearerToken` (src/server/auth/bearer-token.ts:42-58) sets
+  // `subject = { type: 'oauth', id: clientId }` IFF the resolved `ApiKey` row has
+  // a non-null `clientId` (i.e. it was minted for an OAuth client a user
+  // authorized), and `{ type: 'apiKey', id }` for a user-type personal-access
+  // key. `oauthClient.create` is an open `protectedProcedure` — any logged-in
+  // user can register a client — so without this gate a third-party app a mod
+  // authorizes for ANY scope would receive a key that can publish App Blocks
+  // attributed to that mod (an escalation of the consent the mod granted). App
+  // Blocks has no dedicated write-scope flag yet, so a personal-key requirement
+  // (`subject.type !== 'oauth'`, equivalently `clientId == null`) is the minimal
+  // correct gate. This mirrors the OAuth/scoped-token treatment in
+  // src/pages/api/v1/me.ts:24-40 (`subject !== null`). Ordered after auth (401)
+  // and before the mod gate so an OAuth key gets 403, never a leak.
+  if (session.subject?.type === 'oauth') {
+    res.status(403).json({
+      message: 'App Blocks submit requires a personal API key, not an OAuth client token',
+    });
+    return;
+  }
+
   // 2. Moderator gate — App Blocks is mod-only pre-GA (parity with the session
   // route's ModEndpoint). Resolve before touching the heavy body so a non-mod
   // key never costs a decode.
@@ -123,6 +144,12 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // between INCR and EXPIRE can't strand a TTL-less counter.
   // Per API key is the primary identity (always present for a resolved bearer
   // token); the client-IP form is a defensive fallback only.
+  //
+  // FOLLOW-UP (F2, not yet implemented): this bucket is per-API-KEY, but a user
+  // can mint many personal keys (or rotate them) to widen their effective window.
+  // The retool endpoint buckets on `actor.id` (per-user), which is the stronger
+  // identity. Switching here to `user:${user.id}` would be the more robust limit;
+  // left as a deliberate follow-up to keep this PR's auth change focused.
   const rateSubject = session.apiKeyId ? `key:${session.apiKeyId}` : `ip:${clientIp(req)}`;
   const rateKey = `${REDIS_SYS_KEYS.BLOCKS.SUBMIT_RATE_LIMIT}:${rateSubject}` as const;
   const multiResult = await sysRedis
@@ -130,7 +157,20 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     .set(rateKey, '0', { NX: true, EX: RATE_LIMIT.windowSeconds })
     .incr(rateKey)
     .exec();
-  const count = Number(multiResult[1]);
+  // F3 — fail CLOSED, not open, on a malformed limiter result. If `exec()`
+  // returns null/short (Redis hiccup, MULTI aborted), `Number(undefined)` is
+  // `NaN` and `NaN > max` is `false`, which would let the request slip through
+  // un-limited. Treat a non-finite counter as "limiter unavailable" and reject
+  // (503) rather than silently bypass — this is a heavy, mod-gated bundle upload,
+  // so erring toward refusal is correct.
+  const count = Number(multiResult?.[1]);
+  if (!Number.isFinite(count)) {
+    req.log?.warn('blocks/submit-version: rate-limit counter malformed; failing closed', {
+      rateSubject,
+    });
+    res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
+    return;
+  }
   if (count > RATE_LIMIT.max) {
     const retryAfter = await sysRedis.ttl(rateKey);
     res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));

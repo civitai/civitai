@@ -49,11 +49,17 @@ const {
   mockRedis,
   mockMultiIncr,
 } = vi.hoisted(() => {
-  const mockMultiIncr = { value: 1 };
+  // `exec()` normally returns ['OK', <count>]. `malformedExec` simulates a Redis
+  // hiccup / aborted MULTI where the result is null or short (F3 fail-closed).
+  const mockMultiIncr = { value: 1, malformedExec: null as unknown[] | null | false };
   const multiFactory = () => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
-    exec: vi.fn().mockImplementation(async () => ['OK', mockMultiIncr.value]),
+    exec: vi.fn().mockImplementation(async () =>
+      mockMultiIncr.malformedExec !== false
+        ? mockMultiIncr.malformedExec
+        : ['OK', mockMultiIncr.value]
+    ),
   });
   return {
     mockGetSession: vi.fn(),
@@ -88,13 +94,31 @@ vi.mock('~/server/services/blocks/publish-request.service', () => ({
 
 import handler from '../submit-version';
 
-const MOD_SESSION = { user: { id: 7, isModerator: true }, apiKeyId: 42 };
-const NONMOD_SESSION = { user: { id: 8, isModerator: false }, apiKeyId: 43 };
+// Personal-access (user-type) key: `getSessionFromBearerToken` sets
+// subject = { type: 'apiKey' } when the ApiKey row has clientId == null.
+const MOD_SESSION = {
+  user: { id: 7, isModerator: true },
+  apiKeyId: 42,
+  subject: { type: 'apiKey', id: 42 },
+};
+const NONMOD_SESSION = {
+  user: { id: 8, isModerator: false },
+  apiKeyId: 43,
+  subject: { type: 'apiKey', id: 43 },
+};
+// OAuth-client-issued key: subject = { type: 'oauth', id: clientId }. The user
+// is a moderator, so ONLY the personal-key gate should reject this.
+const OAUTH_MOD_SESSION = {
+  user: { id: 7, isModerator: true },
+  apiKeyId: 99,
+  subject: { type: 'oauth', id: 'client_abc' },
+};
 const goodBody = { bundleBase64: Buffer.from('zipbytes').toString('base64') };
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockMultiIncr.value = 1;
+  mockMultiIncr.malformedExec = false;
   mockRedis.ttl.mockResolvedValue(60);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   mockSubmitVersion.mockResolvedValue({
@@ -157,6 +181,33 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 
+  it('403 when the key is OAuth-client-issued (subject.type === "oauth") even if the user is a mod', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer oauth-client-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(403);
+    expect((res._getJSONData() as { message: string }).message).toContain('personal API key');
+    // Must reject BEFORE the heavy publish path runs.
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+    // Must reject BEFORE the flag check / rate-limit round-trip (no leak).
+    expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+    expect(mockRedis.multi).not.toHaveBeenCalled();
+  });
+
+  it('passes the personal-key gate when subject.type is "apiKey" (user-type key) + mod', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer personal-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
+  });
+
   it('503 when the App Blocks flag is OFF for the user', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockIsAppBlocksEnabled.mockResolvedValueOnce(false);
@@ -179,6 +230,32 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeaders()['Retry-After']).toBeDefined();
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('F3: 503 (fail closed, NOT bypass) when exec() returns null (malformed limiter)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockMultiIncr.malformedExec = null;
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(503);
+    // The whole point: a malformed counter must NOT silently pass through to the
+    // heavy publish path (the NaN > max fail-open bug).
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
+  });
+
+  it('F3: 503 (fail closed) when exec() returns a short array (missing INCR slot)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockMultiIncr.malformedExec = ['OK']; // INCR reply absent → Number(undefined) = NaN
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(503);
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 
