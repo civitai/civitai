@@ -159,3 +159,28 @@ describe('articleDetailSelect — orphaned TagsOnArticle.tag', () => {
     });
   });
 });
+
+// --- sibling selectors with the SAME deleted-Tag orphan source --------------
+// TagsOnPost.tag and TagsOnBounty.tag are the same required-relation class:
+// whatever hard-deleted the Tags that orphaned TagsOnArticle also orphaned these,
+// so they need the identical existence filter or they 500 the same way.
+
+describe('postSelect — orphaned TagsOnPost.tag', () => {
+  it('filters the tags relation on tag existence', async () => {
+    const { postSelect } = await import('~/server/selectors/post.selector');
+    expect(postSelect.tags).toMatchObject({
+      where: { tag: { is: {} } },
+      select: { tag: { select: expect.anything() } },
+    });
+  });
+});
+
+describe('getBountyDetailsSelect — orphaned TagsOnBounty.tag', () => {
+  it('filters the tags relation on tag existence', async () => {
+    const { getBountyDetailsSelect } = await import('~/server/selectors/bounty.selector');
+    expect(getBountyDetailsSelect.tags).toMatchObject({
+      where: { tag: { is: {} } },
+      select: { tag: { select: expect.anything() } },
+    });
+  });
+});
