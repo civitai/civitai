@@ -190,9 +190,11 @@ export const ECO = {
   AceAudio: 68,
 
   // Root ecosystems - 3D Model providers
-  // Originally 71 on the hackaton branch; bumped to 72 to keep MAI's
-  // main-line id after the merge (mirrors the same renumber in BM).
-  PolyGen: 72,
+  // PolyGen has been displaced twice on main merges:
+  //   originally 71 on the hackaton branch; bumped to 72 to dodge MAI
+  //   (main-line); bumped again to 73 to dodge Ideogram (main-line, also
+  //   landed on 72). Same renumber-cascade as BM.PolyGen (see BM block).
+  PolyGen: 73,
 
   // Utility ecosystems
   Upscaler: 66,
