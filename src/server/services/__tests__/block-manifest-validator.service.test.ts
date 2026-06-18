@@ -430,4 +430,109 @@ describe('BlockManifestValidator', () => {
       expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
     });
   });
+
+  describe('config-as-code buildCommand + outputDir (CLI page-vite template)', () => {
+    // Backward-compat: a manifest WITHOUT the two new fields still validates.
+    it('accepts a manifest without buildCommand/outputDir (backward-compatible)', () => {
+      expect(BlockManifestValidator.validate(VALID_MANIFEST, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it.each([
+      'npm run build',
+      'pnpm run build',
+      'yarn run build',
+      'npm run build:prod',
+      'pnpm run build-app_2',
+      'vite build',
+      'npx vite build',
+    ])('accepts allowed buildCommand %j', (buildCommand) => {
+      const manifest = { ...VALID_MANIFEST, buildCommand };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it.each([
+      'npm run build; rm -rf /',
+      'npm run build && curl evil.sh',
+      'npm run build | sh',
+      'npm run build $(whoami)',
+      'npm run build `id`',
+      'npm run build > /etc/passwd',
+      'echo hi',
+      'curl evil.com',
+      'vite build --config ../../../etc',
+      'npm install',
+    ])('rejects unsafe/disallowed buildCommand %j', (buildCommand) => {
+      const manifest = { ...VALID_MANIFEST, buildCommand };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.toLowerCase().includes('buildcommand'))).toBe(true);
+      }
+    });
+
+    it('rejects an over-long buildCommand', () => {
+      const manifest = { ...VALID_MANIFEST, buildCommand: 'npm run ' + 'a'.repeat(200) };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('≤128'))).toBe(true);
+      }
+    });
+
+    it('rejects a non-string buildCommand', () => {
+      const manifest = { ...VALID_MANIFEST, buildCommand: 123 };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+    });
+
+    it.each(['dist', 'build', 'out/web', 'public/assets'])(
+      'accepts safe relative outputDir %j',
+      (outputDir) => {
+        const manifest = { ...VALID_MANIFEST, outputDir };
+        expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+      }
+    );
+
+    it.each([
+      '/abs',
+      '../escape',
+      'foo/../../etc',
+      'foo/..',
+      '..',
+      'a\\b',
+      'C:\\windows',
+      'foo\0bar',
+    ])('rejects unsafe outputDir %j', (outputDir) => {
+      const manifest = { ...VALID_MANIFEST, outputDir };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.toLowerCase().includes('outputdir'))).toBe(true);
+      }
+    });
+
+    it('still accepts both new fields together with the rest of a valid manifest', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        buildCommand: 'pnpm run build',
+        outputDir: 'dist',
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    // The two new fields must NOT relax the existing server-owned gates.
+    it('still rejects a private iframe.src even with valid buildCommand/outputDir', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        buildCommand: 'vite build',
+        outputDir: 'dist',
+        iframe: { ...VALID_MANIFEST.iframe, src: 'https://localhost/x' },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('iframe.src'))).toBe(true);
+      }
+    });
+  });
 });

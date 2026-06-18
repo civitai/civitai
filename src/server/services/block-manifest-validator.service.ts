@@ -43,14 +43,54 @@ interface RawManifest {
    * server-clamped to the per-gen cap; omitted ⇒ the platform default).
    */
   page?: unknown;
+  /**
+   * Config-as-code (CLI `page-vite` template). OPTIONAL + backward-compatible —
+   * manifests without these still validate. The datapacket-talos build recipe
+   * that HONORS these is a separate follow-up; the validator only has to ACCEPT
+   * them so the CLI's generated manifest isn't rejected at submit time.
+   *
+   * `buildCommand` — the command the build sandbox runs to produce the bundle.
+   *   SECURITY: dev-supplied + executes in the build sandbox (gotcha #61: the
+   *   sandbox is already unprivileged, network-isolated, credential-less). The
+   *   shape-allowlist below is DEFENSE-IN-DEPTH against pipeline/YAML/shell
+   *   injection — it bounds the string to a small set of known-safe build
+   *   invocations and rejects shell metacharacters, so even if the sandbox were
+   *   weakened the command can't fan out into arbitrary shell.
+   * `outputDir` — the relative dir the build emits into (served as the bundle).
+   *   Must be a safe RELATIVE path (no leading '/', no '..' traversal). Default
+   *   `dist` when omitted.
+   */
+  buildCommand?: unknown;
+  outputDir?: unknown;
   [key: string]: unknown;
 }
 
-const ALLOWED_CONTENT_RATINGS = new Set(['g', 'pg', 'pg13', 'r', 'x']);
-const ALLOWED_RENDER_MODES = new Set(['iframe', 'inline', 'hybrid']);
-const ALLOWED_TRUST_TIERS = new Set(['unverified', 'verified', 'internal']);
+export const ALLOWED_CONTENT_RATINGS = new Set(['g', 'pg', 'pg13', 'r', 'x']);
+export const ALLOWED_RENDER_MODES = new Set(['iframe', 'inline', 'hybrid']);
+export const ALLOWED_TRUST_TIERS = new Set(['unverified', 'verified', 'internal']);
 
 const SCOPE_RE = /^[a-z0-9_]+(?::[a-z0-9_]+){1,3}$/;
+
+// Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
+// field comment in RawManifest). The build sandbox is already isolated; this
+// keeps the command AUDITABLE + bounds it to a small, documented set of safe
+// build invocations so a dev-supplied string can't smuggle a shell pipeline or
+// YAML/command injection into the build recipe.
+//
+// Accepted shapes (anchored, no surrounding whitespace permitted):
+//   - `npm run <script>` / `pnpm run <script>` / `yarn run <script>`
+//     where <script> is a package.json script name: [a-zA-Z0-9:_-]+
+//   - `vite build` or `npx vite build`
+// Anything else — extra args, flags, shell metacharacters, multiple commands —
+// is rejected. The separate SHELL_METACHAR_RE below is a redundant second gate
+// so the rejection reason is explicit when a metachar is what tripped it.
+const BUILD_COMMAND_MAX_LENGTH = 128;
+const BUILD_COMMAND_RE =
+  /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
+// Shell metacharacters that must never appear in a buildCommand. Checked first
+// so the error is specific ("contains shell metacharacters") rather than the
+// generic allowlist-miss message.
+const SHELL_METACHAR_RE = /[;|&$`<>(){}\\!*?\[\]'"\n\r]/;
 
 // Min/max for the iframe height envelope. The host clamps incoming
 // RESIZE_IFRAME to these bounds, but rejecting absurd values at
@@ -504,6 +544,53 @@ export class BlockManifestValidator {
         if (!m.iframe || typeof m.iframe !== 'object') {
           errors.push('a manifest declaring "page" must also declare an iframe block');
         }
+      }
+    }
+
+    // Config-as-code: buildCommand (optional). dev-supplied + runs in the build
+    // sandbox — shape-constrain it (defense-in-depth) to a documented allowlist
+    // and reject shell metacharacters. Optional + backward-compatible: a manifest
+    // without buildCommand still validates.
+    if (m.buildCommand !== undefined) {
+      if (typeof m.buildCommand !== 'string') {
+        errors.push('buildCommand must be a string');
+      } else if (m.buildCommand.length === 0) {
+        errors.push('buildCommand must be a non-empty string');
+      } else if (m.buildCommand.length > BUILD_COMMAND_MAX_LENGTH) {
+        errors.push(`buildCommand must be ≤${BUILD_COMMAND_MAX_LENGTH} chars`);
+      } else if (SHELL_METACHAR_RE.test(m.buildCommand)) {
+        errors.push('buildCommand must not contain shell metacharacters');
+      } else if (!BUILD_COMMAND_RE.test(m.buildCommand)) {
+        errors.push(
+          'buildCommand must match an allowed build invocation ' +
+            '(e.g. "npm run build", "pnpm run <script>", "vite build", "npx vite build")'
+        );
+      }
+    }
+
+    // Config-as-code: outputDir (optional). A safe RELATIVE path the build emits
+    // into. No leading '/', no '..' traversal, no backslashes / NUL. Default is
+    // `dist` (applied downstream when omitted — the validator only enforces the
+    // shape of an explicit value). Optional + backward-compatible.
+    if (m.outputDir !== undefined) {
+      if (typeof m.outputDir !== 'string') {
+        errors.push('outputDir must be a string');
+      } else if (m.outputDir.length === 0) {
+        errors.push('outputDir must be a non-empty string');
+      } else if (m.outputDir.length > 256) {
+        errors.push('outputDir must be ≤256 chars');
+      } else if (m.outputDir.startsWith('/')) {
+        errors.push('outputDir must be a relative path (no leading "/")');
+      } else if (
+        // Reject any path traversal segment ('..'), backslash separators, NUL,
+        // and Windows drive prefixes (C:\). Split on both separators so a
+        // `foo/../bar` or `foo\..\bar` traversal is caught regardless of OS form.
+        m.outputDir.includes('\0') ||
+        m.outputDir.includes('\\') ||
+        /(^|\/)\.\.(\/|$)/.test(m.outputDir) ||
+        /^[a-zA-Z]:/.test(m.outputDir)
+      ) {
+        errors.push('outputDir must not contain path traversal ("..") or absolute/Windows paths');
       }
     }
 
