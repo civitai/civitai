@@ -42,6 +42,21 @@ vi.mock('~/server/redis/fail-open-log', () => ({
   logSysRedisFailOpen: vi.fn(),
 }));
 
+// Mock prom/client to assert the fail-open counters (degraded fire-rate + deduped origin
+// fetches) and satisfy the other cache counters cache-helpers imports. vi.hoisted so the
+// inc spies exist before the (hoisted) vi.mock factory references them.
+const { degradedInc, originFetchInc } = vi.hoisted(() => ({
+  degradedInc: vi.fn(),
+  originFetchInc: vi.fn(),
+}));
+vi.mock('~/server/prom/client', () => ({
+  cacheHitCounter: { inc: vi.fn() },
+  cacheMissCounter: { inc: vi.fn() },
+  cacheRevalidateCounter: { inc: vi.fn() },
+  cacheFailOpenDegradedCounter: { inc: degradedInc },
+  cacheFailOpenOriginFetchCounter: { inc: originFetchInc },
+}));
+
 import { createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
 
 type Row = { id: number; name: string };
@@ -59,6 +74,8 @@ beforeEach(() => {
   setMock.mockClear().mockResolvedValue(undefined);
   setNxMock.mockClear().mockResolvedValue(true);
   delMock.mockClear().mockResolvedValue(undefined);
+  degradedInc.mockClear();
+  originFetchInc.mockClear();
 });
 
 afterEach(() => {
@@ -83,6 +100,10 @@ describe('createCachedArray.fetch — CLUSTER read fail-open', () => {
     expect(result.find((r) => r.id === 2)?.name).toBe('db-2');
     // Degraded path must not attempt cache writes (redis is down).
     expect(setMock).not.toHaveBeenCalled();
+    // Observability: one degraded call, and 3 ids sent to origin (the deduped DB load).
+    expect(degradedInc).toHaveBeenCalledTimes(1);
+    expect(degradedInc).toHaveBeenCalledWith({ cache_name: 'test:read' });
+    expect(originFetchInc).toHaveBeenCalledWith({ cache_name: 'test:read' }, 3);
   });
 
   it('omits ids the origin has no row for (notFound semantics preserved, no throw)', async () => {
@@ -153,6 +174,12 @@ describe('createCachedArray.fetch — per-id single-flight (DB stampede bound)',
     // Both callers still get their full, correct id-set back.
     expect(r1.map((r) => r.id).sort((a, b) => a - b)).toEqual([1, 2]);
     expect(r2.map((r) => r.id).sort((a, b) => a - b)).toEqual([2, 3]);
+    // The origin-fetch counter measures the DEDUPED DB load: 2 calls (degraded) but only
+    // 3 ids sent to origin total (2 for [1,2] + 1 for [3]) — NOT 4 — proving the metric
+    // reflects the per-id coalescing, not the raw id-set count.
+    expect(degradedInc).toHaveBeenCalledTimes(2);
+    const totalOriginIds = originFetchInc.mock.calls.reduce((s, c) => s + (c[1] as number), 0);
+    expect(totalOriginIds).toBe(3);
   });
 
   it('does NOT leak in-flight entries: a fetch after settle re-issues the origin lookup', async () => {

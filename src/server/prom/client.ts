@@ -207,6 +207,27 @@ export const cacheRevalidateCounter = registerCounterWithLabels({
   labelNames: ['cache_name', 'cache_type'] as const,
 });
 
+// createCachedArray cluster-read FAIL-OPEN metrics (PR #2619). The fail-open degrades a
+// rejected cluster Redis read to a direct origin (DB) fetch instead of a 500 — trading 500s
+// for DB load. These make that trade observable:
+//   - degraded_total      = times we entered the degraded path (the fail-open FIRE RATE; a
+//                           proxy for a wedged cluster client, per cache).
+//   - origin_fetch_total  = ids actually sent to lookupFn (the DEDUPED DB load, after per-id
+//                           single-flight). Its rate is the real DB-row load a wedge induces;
+//                           origin_fetch / (ids requested) shows the coalescing effectiveness.
+// Healthy traffic never touches these (the path is reached only on a cluster-read reject).
+export const cacheFailOpenDegradedCounter = registerCounterWithLabels({
+  name: 'cache_failopen_degraded_total',
+  help: 'createCachedArray cluster-read fail-open: degraded-fetch calls by cache name',
+  labelNames: ['cache_name'] as const,
+});
+
+export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
+  name: 'cache_failopen_origin_fetch_total',
+  help: 'createCachedArray fail-open: ids sent to origin (lookupFn) by cache name — deduped DB load',
+  labelNames: ['cache_name'] as const,
+});
+
 // tRPC per-procedure latency — wall-clock duration of the full middleware chain +
 // resolver, labeled by procedure path. Used to rank heavy-pool isolation
 // candidates by P99 x rate (the criterion behind the image-feed cutover). Bucket

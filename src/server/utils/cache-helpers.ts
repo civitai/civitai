@@ -2,7 +2,13 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
-import { cacheHitCounter, cacheMissCounter, cacheRevalidateCounter } from '~/server/prom/client';
+import {
+  cacheFailOpenDegradedCounter,
+  cacheFailOpenOriginFetchCounter,
+  cacheHitCounter,
+  cacheMissCounter,
+  cacheRevalidateCounter,
+} from '~/server/prom/client';
 import type { RedisKeyTemplateCache, RedisKeyTemplates } from '~/server/redis/client';
 import { redis, REDIS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -186,6 +192,8 @@ export function createCachedArray<T extends object>({
   // genuine lookupFn error still propagates (the fetch itself is never wrapped — mirrors
   // fetchThroughCache, which never wraps fetchFn).
   async function fetchFromOriginDegraded(distinctIds: number[]): Promise<T[]> {
+    // Fire rate of the fail-open path (a proxy for a wedged cluster client on this pod).
+    cacheFailOpenDegradedCounter.inc({ cache_name: key });
     // Partition into ids already in flight on this pod (reuse, capturing the promise
     // reference NOW so a concurrent settle+delete can't make us miss it) vs. ids we must
     // originate. byId holds the promise to await for EVERY requested id.
@@ -198,6 +206,10 @@ export function createCachedArray<T extends object>({
     }
 
     if (toFetch.length > 0) {
+      // The DEDUPED DB load: only the ids not already in flight reach lookupFn. The reused
+      // ids share a concurrent call's promise (counted by that call), so this never
+      // double-counts — rate(origin_fetch)/rate(degraded) is the per-call dedup factor.
+      cacheFailOpenOriginFetchCounter.inc({ cache_name: key }, toFetch.length);
       // ONE shared batched lookupFn for all newly-needed ids (same 10000-id cap as the
       // cache-miss path); each id's promise extracts its own record from the shared result.
       const batched = (async () => {
