@@ -38,9 +38,14 @@ export type RateCard = {
    * provider fee) paid to the app author, applied per PAID INVOICE. Unlike
    * a one-shot Buzz purchase, a subscription bills recurringly: by the
    * renewals-pay policy each paid invoice (subscription_create AND
-   * subscription_cycle) accrues this share. One flat rate for subscription
-   * (no install-scope dimension): a membership purchase resolves to the
-   * single `subscription` scope. PLACEHOLDER pending monetization sign-off.
+   * subscription_cycle) is tracked.
+   *
+   * ⚠️ NOT applied at attribution-write time. As of the TRACK-ONLY rework
+   * (#2629), this percentage is computed at PAYOUT time as a backpay over
+   * `status='tracked'` rows, NOT stamped onto the row when it's written.
+   * One flat rate for subscription (no install-scope dimension): a
+   * membership purchase resolves to the single `subscription` scope.
+   * PLACEHOLDER pending monetization sign-off.
    */
   subscriptionSharePct: number;
   /**
@@ -269,39 +274,55 @@ export const RATE_CARD_V4: RateCard = {
  * (`subscriptionSharePct`).
  *
  * Carries V4's purchase percentages (15/15/25/0/0) AND its spend bounty
- * (5%) UNCHANGED, and sets `subscriptionSharePct` to the FIRST non-zero
- * subscription rate. This is the first card emitted for the subscription
- * flow: a block-initiated membership purchase now accrues an author share
- * on each paid invoice.
+ * (5%) UNCHANGED, and DEFINES `subscriptionSharePct: 15` as the PLACEHOLDER
+ * subscription rate.
+ *
+ * ⚠️ NOT APPLIED AT ATTRIBUTION-WRITE TIME. As of the TRACK-ONLY rework
+ *    (PR #2629), `recordSubscriptionAttribution` does NOT call
+ *    `computeSubscriptionShare` and does NOT stamp this percentage onto the
+ *    row. Membership attribution rows are written `status='tracked'` with
+ *    `app_owner_share_cents = 0`, `subscription_share_pct = 0`, and
+ *    `rate_card_version = 'unrated'` — they record the EVENT + the money
+ *    BASIS (gross + provider_fee) only. The author share is deferred to
+ *    PAYOUT TIME: the future payout rail (Slice 4) reads `status='tracked'`
+ *    rows and computes `author_share = net × <signed-off subscriptionSharePct>`
+ *    as a clean retroactive BACKPAY, then transitions them to a
+ *    computed/confirmed state. Because the rows carry gross+fee, the
+ *    backpay computation is exact.
+ *
+ *    WHY: committing a share at this placeholder 15% before monetization
+ *    sign-off would lock those rows to the placeholder rate (the
+ *    immutability doctrine pays each row out under its STAMPED snapshot
+ *    forever). Recording the gross/fee now and applying the signed-off rate
+ *    later removes that placeholder-rate liability from the ledger while
+ *    preserving the full purchase trail.
  *
  * ⚠️ PLACEHOLDER RATE — `subscriptionSharePct: 15` mirrors the
  *    publisher-purchase floor (15%) as a CONSERVATIVE STARTING DEFAULT
  *    pending monetization sign-off. Recurring revenue is structurally
  *    different (LTV-weighted, renewals compound), so leadership may choose
- *    a DIFFERENT number than one-shot purchase — this is flagged for sign-
- *    off, not a final figure. Raising is politically easier than lowering
- *    after a public announcement, so this starts at (not above) the
- *    purchase floor.
+ *    a DIFFERENT number than one-shot purchase. It is the rate the eventual
+ *    payout/backpay WILL apply, pending sign-off — not a final figure.
  *
- * ACCOUNTING MODEL — same THREE-WAY split as a Buzz purchase (NOT the
- *    platform-funded bounty model of spend): a membership payment is a real
- *    card transaction. provider_fee comes off the top, the author share is
- *    `subscriptionSharePct` % of the NET (gross - fee), the platform keeps
- *    the remainder. The three-way conservation invariant
- *    (fee + platform + author = gross) holds and is enforced by the
- *    migration's CHECK (entry_type='charge').
+ * ACCOUNTING MODEL (at payout, NOT at write) — same THREE-WAY split as a
+ *    Buzz purchase (NOT the platform-funded bounty model of spend): a
+ *    membership payment is a real card transaction. provider_fee comes off
+ *    the top, the author share is `subscriptionSharePct` % of the NET
+ *    (gross - fee), the platform keeps the remainder. At write time the
+ *    tracked row sets `platform_share = net` and `author_share = 0`, so the
+ *    conservation invariant (fee + platform + author = gross) still holds;
+ *    the backpay re-splits net into platform/author at payout.
  *
  * RENEWALS-PAY POLICY (⚠️ FLAGGED for sign-off, scope §C/E#3): one
  *    attribution row per PAID invoice means renewals (subscription_cycle)
- *    accrue a share just like the initial purchase (subscription_create).
- *    This is the default. A "first-invoice-only" policy is a service-level
- *    gate (write only on subscription_create) — no card change. Recurring
- *    share has real LTV / clawback implications (a refund or downgrade
- *    proration of a previously paid-out period claws back via a negative
- *    entry_type='clawback' row).
+ *    are tracked just like the initial purchase (subscription_create), so
+ *    the backpay will pay each renewal. This is the default. A
+ *    "first-invoice-only" policy is a service-level gate (write only on
+ *    subscription_create) — no card change.
  *
  * When the signed-off rate lands, add a V6 with the agreed % and leave V5
- * in place for the rows stamped under it (cards are immutable).
+ * in place (cards are immutable). `computeSubscriptionShare` below remains
+ * for the payout-time backpay to call against the signed-off card.
  */
 export const RATE_CARD_V5: RateCard = {
   version: 'v5',
@@ -479,6 +500,12 @@ export type SubscriptionShareResult = {
 /**
  * Compute the publisher / platform / provider-fee split for a single
  * block-initiated MEMBERSHIP payment (one paid invoice).
+ *
+ * ⚠️ PAYOUT-TIME ONLY. This is NOT called by `recordSubscriptionAttribution`
+ * anymore (the TRACK-ONLY rework, #2629). Membership rows are written
+ * `status='tracked'` with a 0 share and no stamped rate. This function is
+ * retained for the future payout rail (Slice 4) to call against the
+ * signed-off card, computing each tracked row's author share as a backpay.
  *
  * Same order of operations as computeRateCardSplit: provider fee off the
  * top, the author share is `subscriptionSharePct` % of the NET

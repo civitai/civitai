@@ -19,7 +19,10 @@ import {
 import {
   computeRateCardSplit,
   computeSpendShare,
-  computeSubscriptionShare,
+  // NOTE: computeSubscriptionShare is intentionally NOT imported here.
+  // Membership attribution is TRACK-ONLY (#2629) — no rate is applied at
+  // write time. The share is computed at payout time (Slice 4) as a backpay
+  // against the signed-off rate over status='tracked' rows.
   ACTIVE_RATE_CARD,
 } from './rate-card';
 
@@ -487,6 +490,16 @@ const SUBSCRIPTION_ATTRIBUTION_LOG_NAME = 'block-subscription-attribution';
  */
 export const SUBSCRIPTION_ATTRIBUTION_SCOPE = 'subscription' as const;
 
+/**
+ * Sentinel `rate_card_version` for TRACK-ONLY membership rows (#2629). No
+ * rate card is applied at attribution-write time, so no real version is
+ * stamped — the row records the money basis (gross + fee) and the share is
+ * computed at payout time (Slice 4) as a backpay. A row carrying this
+ * sentinel + status='tracked' is "share-pending": the payout rail re-stamps
+ * the signed-off version when it computes the share.
+ */
+export const UNRATED_RATE_CARD_VERSION = 'unrated' as const;
+
 export type RecordSubscriptionAttributionInput = {
   /** The subscriber (purchaser). Trusted: derived from the invoice's customer→User. */
   userId: number;
@@ -542,12 +555,26 @@ export type RecordSubscriptionAttributionResult = {
  * RENEWALS-PAY policy (flagged for sign-off; the caller can gate to
  * billing_reason='subscription_create' for a first-only policy).
  *
- * ACCOUNTING: a membership payment IS a real card transaction, so the
- * three-way split applies (provider fee off the top, author share % of the
- * net, platform keeps the rest) — same as recordAttribution, NOT the
- * platform-funded bounty model of spend. The conservation invariant
- * (fee + platform + author = gross) holds and is enforced by the migration
- * CHECK on entry_type='charge'.
+ * ⚠️ TRACK-ONLY (#2629). This write records the ATTRIBUTION EVENT + the
+ * MONEY BASIS (gross + provider_fee) only. It does NOT apply the rate card
+ * and does NOT bake an author share. The row is written:
+ *   - status               = 'tracked'  (share-pending, not yet computed)
+ *   - app_owner_share_cents = 0
+ *   - subscription_share_pct= 0         (no rate applied)
+ *   - rate_card_version     = 'unrated' (no version stamped)
+ *   - platform_share_cents  = net (gross - fee), so the conservation CHECK
+ *                             (fee + platform + author = gross) still holds
+ *                             with author = 0.
+ * The author share is DEFERRED to PAYOUT time: the future payout rail
+ * (Slice 4) reads status='tracked' rows and computes
+ * author_share = net × <signed-off subscriptionSharePct> as a clean
+ * retroactive BACKPAY, then transitions them to a computed/confirmed state.
+ * Because the tracked row carries gross + fee, that computation is exact.
+ *
+ * WHY: committing a share at the placeholder rate before monetization
+ * sign-off would lock these immutable rows to the placeholder (each row
+ * pays out under its STAMPED snapshot forever). Recording the basis now and
+ * applying the signed-off rate later removes the placeholder-rate liability.
  *
  * This function moves NO money and touches NO BuzzTransaction — the buzz
  * grant + reward happen in manageInvoicePaid before this is called. A
@@ -555,8 +582,8 @@ export type RecordSubscriptionAttributionResult = {
  * fires it best-effort / fire-and-forget).
  *
  * Self-purchase (subscriber == app owner) and internal-owner apps write a
- * voided, zero-share row so the audit trail exists but nothing enters the
- * payout pipeline (mirrors recordAttribution's self-purchase wash).
+ * voided, zero-share row so the audit trail exists but nothing is ever
+ * backpaid (mirrors recordAttribution's self-purchase wash).
  */
 export async function recordSubscriptionAttribution(
   input: RecordSubscriptionAttributionInput
@@ -599,24 +626,32 @@ export async function recordSubscriptionAttribution(
   }
 
   const isSelfPurchase = userId === app.userId;
-  const split = computeSubscriptionShare({
-    grossCents: usdAmountCents,
-    providerFeeCents,
-    isSelfPurchase,
-    appOwnerUserId: app.userId,
-  });
-
-  // Void zero-share rows that are zero because of WHO bought/owns (not
-  // because the rate is 0%) so they never enter the payout pipeline. A
-  // legitimately rate-0% row stays 'pending' — a real attribution we want
-  // to confirm/aggregate so a later non-zero card applies going forward.
   const isInternal = ACTIVE_RATE_CARD.internalAppOwnerUserIds.includes(app.userId);
+
+  // TRACK-ONLY money basis: record gross + provider_fee, defer the share.
+  // NO rate card is applied here (no computeSubscriptionShare call). The
+  // backpay (Slice 4) re-splits `net` into platform/author at the signed-off
+  // rate. Today: author = 0, platform = net, so the conservation CHECK
+  // (fee + platform + author = gross) holds.
+  const safeGross = Math.max(0, Math.floor(usdAmountCents));
+  const safeFee = Math.max(0, Math.min(safeGross, Math.floor(providerFeeCents)));
+  const net = safeGross - safeFee;
+  const appOwnerShareCents = 0;
+  const platformShareCents = net;
+  const providerFeeCentsFinal = safeFee;
+  // No rate applied → no version stamped (sentinel) and 0%.
+  const rateCardVersion = UNRATED_RATE_CARD_VERSION;
+  const subscriptionSharePct = 0;
+
+  // Void rows that are zero because of WHO bought/owns so they are never
+  // backpaid. Otherwise the row is 'tracked' — share-pending, awaiting the
+  // payout-time backpay at the signed-off rate.
   const voidedReason = isSelfPurchase
     ? 'self_purchase'
     : isInternal
     ? 'internal_owner'
     : null;
-  const status = voidedReason ? 'voided' : 'pending';
+  const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
 
   const id = newBlockSubscriptionAttributionId();
@@ -628,7 +663,7 @@ export async function recordSubscriptionAttribution(
         userId,
         buzzAmount: Math.max(0, Math.floor(buzzAmount)),
         buzzType,
-        grossValueCents: Math.max(0, Math.floor(usdAmountCents)),
+        grossValueCents: safeGross,
         paymentProvider,
         invoiceId,
         subscriptionId,
@@ -641,11 +676,11 @@ export async function recordSubscriptionAttribution(
         scope: SUBSCRIPTION_ATTRIBUTION_SCOPE,
         modelId: attribution.modelId ?? null,
         tier,
-        rateCardVersion: split.rateCardVersion,
-        subscriptionSharePct: split.subscriptionSharePct,
-        appOwnerShareCents: split.appOwnerShareCents,
-        platformShareCents: split.platformShareCents,
-        providerFeeCents: split.providerFeeCents,
+        rateCardVersion,
+        subscriptionSharePct,
+        appOwnerShareCents,
+        platformShareCents,
+        providerFeeCents: providerFeeCentsFinal,
         appOwnerUserId: app.userId,
         status,
         entryType: 'charge',
@@ -678,11 +713,11 @@ export async function recordSubscriptionAttribution(
         subscriptionId,
         billingReason,
         usdAmountCents,
-        appOwnerShareCents: split.appOwnerShareCents,
-        platformShareCents: split.platformShareCents,
-        providerFeeCents: split.providerFeeCents,
-        subscriptionSharePct: split.subscriptionSharePct,
-        rateCardVersion: split.rateCardVersion,
+        appOwnerShareCents,
+        platformShareCents,
+        providerFeeCents: providerFeeCentsFinal,
+        subscriptionSharePct,
+        rateCardVersion,
         status,
         voidedReason,
         isSelfPurchase,
@@ -740,36 +775,24 @@ export async function recordSubscriptionAttribution(
   }
 }
 
-/** Synthetic invoice_id suffix for subscription clawback rows so they don't
- * collide with the original charge row's (invoice_id, app_block_id) UNIQUE.
- * A second refund webhook for the same invoice hits P2002 on this synthetic
- * key → we skip the duplicate clawback. */
-const SUBSCRIPTION_CLAWBACK_INVOICE_SUFFIX = ':clawback';
-
 /**
  * Void the subscription-attribution rows for one paid invoice in response
- * to a refund / chargeback / proration, mirroring
- * voidAttributionsForPayment. Idempotent — voiding an already-voided row is
- * a no-op.
+ * to a refund / chargeback / proration. Idempotent — voiding an
+ * already-voided row is a no-op.
  *
- * Refund handling depends on whether the money already left:
- *   - pending / confirmed rows (never paid): just void. No clawback — the
- *     publisher was never paid, so there's no debt to recover.
- *   - paid_out rows: void the original AND write a NEGATIVE carry-forward
- *     entry_type='clawback' row (status='confirmed', negative shares). The
- *     payout aggregator nets this debt out of the publisher's next mint.
+ * ⚠️ TRACK-ONLY (#2629). Membership rows are written status='tracked' with
+ * app_owner_share_cents = 0 and are NEVER paid out (no rate is applied until
+ * the payout-time backpay). A refunded purchase must simply be VOIDED before
+ * any backpay runs so the future payout rail never computes a share for it.
  *
- * Cancellation policy: a cancellation mid-period that keeps the
- * already-paid period (no refund) is NOT a clawback — the author keeps the
- * period already earned. Only a refund/proration that actually returns
- * money to the subscriber claws back. The caller (the refund webhook)
- * decides which: this fn is invoked only when money is being returned.
+ * There is NO negative carry-forward clawback to write: with author = 0 on
+ * every tracked row, a void leaves nothing owed. (Once the payout rail
+ * exists and transitions tracked → paid_out with a real share, a refund of
+ * an already-paid period WILL need a clawback — that belongs to the payout
+ * slice, written against the rate it actually paid. This function only has
+ * to neutralize unpaid tracked rows, which the void below does.)
  *
- * Clawback idempotency: each clawback row reuses the original's
- * (app_block_id) with a synthetic invoice_id '<orig>:clawback', so the
- * (invoice_id, app_block_id) UNIQUE makes a second refund webhook a no-op.
- *
- * Returns the count of original rows voided (clawbacks counted in the log).
+ * Returns the count of rows voided.
  */
 export async function voidSubscriptionAttributionsForInvoice({
   paymentProvider,
@@ -780,82 +803,16 @@ export async function voidSubscriptionAttributionsForInvoice({
   invoiceId: string;
   reason: 'refund' | 'chargeback' | 'proration' | 'manual_review';
 }): Promise<number> {
-  // Snapshot the already-paid_out rows BEFORE voiding so we can mint their
-  // clawbacks. Only paid_out rows generate debt. Writing clawbacks BEFORE
-  // the void is the crash-safety ordering (same rationale as
-  // voidAttributionsForPayment).
-  const paidOutRows = await dbWrite.blockSubscriptionAttribution.findMany({
-    where: { paymentProvider, invoiceId, status: 'paid_out', entryType: 'charge' },
-    select: {
-      appOwnerShareCents: true,
-      appOwnerUserId: true,
-      userId: true,
-      buzzType: true,
-      appId: true,
-      appBlockId: true,
-      blockInstanceId: true,
-      scope: true,
-      modelId: true,
-      tier: true,
-      subscriptionId: true,
-      billingReason: true,
-      rateCardVersion: true,
-      subscriptionSharePct: true,
-    },
-  });
-
-  let clawbackCount = 0;
-  for (const orig of paidOutRows) {
-    const clawbackId = newBlockSubscriptionAttributionId();
-    try {
-      await dbWrite.blockSubscriptionAttribution.create({
-        data: {
-          id: clawbackId,
-          userId: orig.userId,
-          buzzAmount: 0,
-          buzzType: orig.buzzType,
-          // Negative gross + negative author share. platform/fee 0 on the
-          // clawback (the conservation CHECK is scoped to entry_type=
-          // 'charge', so a clawback's gross need not three-way sum).
-          grossValueCents: -orig.appOwnerShareCents,
-          paymentProvider,
-          // Synthetic invoice id so the (invoice, app_block) UNIQUE both
-          // avoids colliding with the original AND dedupes repeat refunds.
-          invoiceId: `${invoiceId}${SUBSCRIPTION_CLAWBACK_INVOICE_SUFFIX}`,
-          subscriptionId: orig.subscriptionId,
-          billingReason: orig.billingReason,
-          appId: orig.appId,
-          appBlockId: orig.appBlockId,
-          blockInstanceId: orig.blockInstanceId,
-          scope: orig.scope,
-          modelId: orig.modelId,
-          tier: orig.tier,
-          rateCardVersion: orig.rateCardVersion,
-          subscriptionSharePct: orig.subscriptionSharePct,
-          appOwnerShareCents: -orig.appOwnerShareCents,
-          platformShareCents: 0,
-          providerFeeCents: 0,
-          appOwnerUserId: orig.appOwnerUserId,
-          status: 'confirmed',
-          entryType: 'clawback',
-          voidedReason: null,
-          confirmedAt: new Date(),
-        },
-      });
-      clawbackCount += 1;
-    } catch (err) {
-      const code = (err as { code?: unknown })?.code;
-      if (code === 'P2002') continue;
-      throw err;
-    }
-  }
-
+  // Void the forward 'charge' rows for this invoice that haven't already
+  // been voided. 'tracked' is the live track-only state; pending/confirmed/
+  // paid_out are included defensively so a future payout-promoted row is
+  // also neutralized here (the paid-out clawback is the payout slice's job).
   const result = await dbWrite.blockSubscriptionAttribution.updateMany({
     where: {
       paymentProvider,
       invoiceId,
       entryType: 'charge',
-      status: { in: ['pending', 'confirmed', 'paid_out'] },
+      status: { in: ['tracked', 'pending', 'confirmed', 'paid_out'] },
     },
     data: {
       status: 'voided',
@@ -864,33 +821,19 @@ export async function voidSubscriptionAttributionsForInvoice({
     },
   });
 
-  if (result.count > 0 || clawbackCount > 0) {
+  if (result.count > 0) {
     logToAxiom(
       {
         name: SUBSCRIPTION_ATTRIBUTION_LOG_NAME,
         type: 'info',
-        message:
-          `voided ${result.count} subscription attribution row(s) for ${invoiceId}` +
-          (clawbackCount > 0 ? ` + ${clawbackCount} clawback row(s)` : ''),
+        message: `voided ${result.count} subscription attribution row(s) for ${invoiceId}`,
         paymentProvider,
         invoiceId,
         reason,
         count: result.count,
-        clawbackCount,
       },
       'webhooks'
     ).catch(() => null);
-
-    try {
-      if (clawbackCount > 0) {
-        blockSubscriptionAttributionWriteCounter.inc(
-          { provider: paymentProvider, status: 'clawback', billing_reason: 'unknown' },
-          clawbackCount
-        );
-      }
-    } catch {
-      // swallow
-    }
   }
 
   return result.count;

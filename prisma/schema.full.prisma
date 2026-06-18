@@ -2679,16 +2679,19 @@ model BlockSubscriptionAttribution {
   modelId              Int?     @map("model_id")
   tier                 String?
 
-  rateCardVersion      String   @map("rate_card_version")
-  /// The subscription rev-share percentage stamped at write time.
-  subscriptionSharePct Int      @map("subscription_share_pct")
-  appOwnerShareCents   Int      @map("app_owner_share_cents")
+  /// TRACK-ONLY (#2629): no rate applied at write time. 'unrated' sentinel
+  /// until the payout-time backpay stamps the signed-off version.
+  rateCardVersion      String   @default("unrated") @map("rate_card_version")
+  /// 0 at write time; the payout-time backpay computes the real share.
+  subscriptionSharePct Int      @default(0) @map("subscription_share_pct")
+  appOwnerShareCents   Int      @default(0) @map("app_owner_share_cents")
   platformShareCents   Int      @map("platform_share_cents")
   providerFeeCents     Int      @map("provider_fee_cents")
   appOwnerUserId       Int      @map("app_owner_user_id")
   appOwner             User     @relation("BlockSubscriptionAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
 
-  status               String   @default("pending")
+  /// 'tracked' (track-only event) | pending | confirmed | voided | paid_out | held.
+  status               String   @default("tracked")
   /// 'charge' (forward) | 'clawback' (negative carry-forward on refund/proration).
   entryType            String   @default("charge") @map("entry_type")
   /// 'refund' / 'chargeback' / 'proration' / 'self_purchase' / 'internal_owner' / 'manual_review'.

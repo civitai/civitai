@@ -1,17 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * W3 flow C — MEMBERSHIP / subscription attribution service coverage. The
+ * W3 flow C — MEMBERSHIP / subscription attribution service coverage.
+ *
+ * ⚠️ TRACK-ONLY (#2629). The write records the EVENT + money basis (gross +
+ * provider_fee) and DEFERS the share to a payout-time backpay. So the
  * interesting surface is:
- *   - server-derived three-way split (fee + platform + author = gross) per
- *     the active subscription rate card
+ *   - track-only row shape: status='tracked', author_share=0,
+ *     subscription_share_pct=0, rate_card_version='unrated', gross+fee
+ *     recorded, platform_share=net so conservation still holds (author=0)
+ *   - NO rate is applied at write — computeSubscriptionShare is never called
+ *     and the author share is 0 regardless of the rate card
  *   - self-purchase wash (subscriber == owner → voided + 0 share)
  *   - internal-owner wash (owner ∈ internalAppOwnerUserIds)
  *   - idempotency via the (invoice_id, app_block_id) UNIQUE (P2002)
- *   - RENEWALS-PAY: a second invoice on the same subscription → a 2nd row
+ *   - RENEWALS-PAY: a second invoice on the same subscription → a 2nd tracked
+ *     row (the backpay later pays each)
  *   - missing-app guard
- *   - clawback on refund of a paid_out period (negative carry-forward) +
- *     no-clawback for pending/confirmed refunds + clawback dedup
+ *   - refund → the tracked row is VOIDED, no clawback (author=0, no debt)
  *
  * Prisma + logger are mocked at the module boundary so the test stays
  * in-process and deterministic.
@@ -54,13 +60,29 @@ vi.mock('~/server/logging/client', () => ({
   },
 }));
 
+// Spy on computeSubscriptionShare so the track-only contract is testable:
+// the write must NEVER call it (the share is deferred to payout). Everything
+// else from rate-card stays real.
+const computeSubscriptionShareSpy = vi.hoisted(() => vi.fn());
+vi.mock('../rate-card', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../rate-card')>();
+  return {
+    ...actual,
+    computeSubscriptionShare: (...args: Parameters<typeof actual.computeSubscriptionShare>) => {
+      computeSubscriptionShareSpy(...args);
+      return actual.computeSubscriptionShare(...args);
+    },
+  };
+});
+
 import {
   AttributionAppMissingError,
   recordSubscriptionAttribution,
   voidSubscriptionAttributionsForInvoice,
+  UNRATED_RATE_CARD_VERSION,
   type RecordSubscriptionAttributionInput,
 } from '../buzz-attribution.service';
-import { ACTIVE_RATE_CARD, computeSubscriptionShare } from '../rate-card';
+import { ACTIVE_RATE_CARD } from '../rate-card';
 
 const APP_ID = 'app_test';
 const APP_BLOCK_ID = 'apb_test';
@@ -115,6 +137,7 @@ beforeEach(() => {
   mockDbWrite.blockSubscriptionAttribution.findMany.mockReset();
   mockDbWrite.blockSubscriptionAttribution.updateMany.mockReset();
   mockLog.mockReset();
+  computeSubscriptionShareSpy.mockReset();
   // Default: app exists, owned by a different user than the purchaser.
   mockDbRead.oauthClient.findUnique.mockResolvedValue({
     id: APP_ID,
@@ -124,7 +147,7 @@ beforeEach(() => {
 });
 
 describe('recordSubscriptionAttribution', () => {
-  it('writes exactly one pending row: author=appBlock owner, three-way split per the active card', async () => {
+  it('TRACK-ONLY: writes exactly one tracked row — event + gross/fee, author=0, NO rate stamped', async () => {
     const res = await recordSubscriptionAttribution(fakeInput());
 
     expect(mockDbWrite.blockSubscriptionAttribution.create).toHaveBeenCalledTimes(1);
@@ -134,52 +157,82 @@ describe('recordSubscriptionAttribution', () => {
 
     // Author is the appBlock's owning OauthClient user (server-derived).
     expect(data.appOwnerUserId).toBe(APP_OWNER_USER_ID);
-    expect(data.grossValueCents).toBe(1000);
 
-    // Shares match the active card's three-way split (gross 1000, fee 50).
-    const expected = computeSubscriptionShare({
-      grossCents: 1000,
-      providerFeeCents: 50,
-      isSelfPurchase: false,
-      appOwnerUserId: APP_OWNER_USER_ID,
-    });
-    expect(data.appOwnerShareCents).toBe(expected.appOwnerShareCents);
-    expect(data.platformShareCents).toBe(expected.platformShareCents);
-    expect(data.providerFeeCents).toBe(expected.providerFeeCents);
-    expect(data.subscriptionSharePct).toBe(ACTIVE_RATE_CARD.subscriptionSharePct);
+    // Money BASIS recorded: gross + provider_fee. (gross 1000, fee 50.)
+    expect(data.grossValueCents).toBe(1000);
+    expect(data.providerFeeCents).toBe(50);
+
+    // NO rate applied at write: author share 0, pct 0, version 'unrated'.
+    expect(data.appOwnerShareCents).toBe(0);
+    expect(data.subscriptionSharePct).toBe(0);
+    expect(data.rateCardVersion).toBe(UNRATED_RATE_CARD_VERSION);
+    expect(data.rateCardVersion).not.toBe(ACTIVE_RATE_CARD.version);
+
+    // platform = net (gross - fee) so conservation still holds with author=0.
+    expect(data.platformShareCents).toBe(1000 - 50);
 
     // Conservation invariant (the SQL CHECK on entry_type='charge'):
+    // fee + platform + author = gross, with author = 0.
     expect(
       data.providerFeeCents + data.platformShareCents + data.appOwnerShareCents
     ).toBe(data.grossValueCents);
 
-    // Forward charge, not voided.
-    expect(data.status).toBe('pending');
+    // Share-pending track-only state, forward charge, not voided.
+    expect(data.status).toBe('tracked');
     expect(data.entryType).toBe('charge');
     expect(data.voidedReason).toBeNull();
 
-    // Server context preserved.
+    // The rate card is NEVER consulted at write time (deferred to payout).
+    expect(computeSubscriptionShareSpy).not.toHaveBeenCalled();
+
+    // Server context preserved (the backpay needs it).
     expect(data.appId).toBe(APP_ID);
     expect(data.appBlockId).toBe(APP_BLOCK_ID);
     expect(data.invoiceId).toBe(INVOICE_ID);
     expect(data.subscriptionId).toBe(SUBSCRIPTION_ID);
     expect(data.scope).toBe('subscription');
     expect(data.billingReason).toBe('subscription_create');
-    expect(data.rateCardVersion).toBe(ACTIVE_RATE_CARD.version);
   });
 
-  it('author share floor: share = floor((gross-fee) * pct/100), within [0, net]', async () => {
+  it('records gross/fee basis with author=0 + platform=net for the backpay (conservation holds)', async () => {
     await recordSubscriptionAttribution(fakeInput({ usdAmountCents: 1999, providerFeeCents: 87 }));
     const { data } = mockDbWrite.blockSubscriptionAttribution.create.mock.calls[0][0];
     const net = 1999 - 87;
-    expect(data.appOwnerShareCents).toBe(
-      Math.floor((net * ACTIVE_RATE_CARD.subscriptionSharePct) / 100)
-    );
-    expect(data.appOwnerShareCents).toBeGreaterThanOrEqual(0);
-    expect(data.appOwnerShareCents).toBeLessThanOrEqual(net);
+    // No share computed at write — author 0, platform absorbs all of net.
+    expect(data.appOwnerShareCents).toBe(0);
+    expect(data.platformShareCents).toBe(net);
+    expect(data.providerFeeCents).toBe(87);
+    expect(data.grossValueCents).toBe(1999);
     expect(
       data.providerFeeCents + data.platformShareCents + data.appOwnerShareCents
     ).toBe(1999);
+    expect(computeSubscriptionShareSpy).not.toHaveBeenCalled();
+  });
+
+  it('fee clamped to gross when fee > gross (defensive): author=0, platform=0, still conserves', async () => {
+    await recordSubscriptionAttribution(fakeInput({ usdAmountCents: 100, providerFeeCents: 250 }));
+    const { data } = mockDbWrite.blockSubscriptionAttribution.create.mock.calls[0][0];
+    // fee clamped to gross → net 0 → platform 0, author 0.
+    expect(data.grossValueCents).toBe(100);
+    expect(data.providerFeeCents).toBe(100);
+    expect(data.platformShareCents).toBe(0);
+    expect(data.appOwnerShareCents).toBe(0);
+    expect(
+      data.providerFeeCents + data.platformShareCents + data.appOwnerShareCents
+    ).toBe(100);
+  });
+
+  it('MUTATION-CHECK: author share is 0 regardless of the active rate card (no rate applied at write)', async () => {
+    // Active card defines subscriptionSharePct=15. A track-only write must
+    // NOT apply it — author stays 0 even though the rate is non-zero. If the
+    // write regressed to applying the 15%, this assertion (and the
+    // not-called spy) would fail.
+    expect(ACTIVE_RATE_CARD.subscriptionSharePct).toBeGreaterThan(0);
+    await recordSubscriptionAttribution(fakeInput({ usdAmountCents: 10000, providerFeeCents: 0 }));
+    const { data } = mockDbWrite.blockSubscriptionAttribution.create.mock.calls[0][0];
+    expect(data.appOwnerShareCents).toBe(0);
+    expect(data.subscriptionSharePct).toBe(0);
+    expect(computeSubscriptionShareSpy).not.toHaveBeenCalled();
   });
 
   it('self-purchase (subscriber == app owner) → voided, zero author share', async () => {
@@ -229,7 +282,7 @@ describe('recordSubscriptionAttribution', () => {
     );
   });
 
-  it('RENEWALS-PAY: a 2nd invoice (subscription_cycle) on the same subscription writes a 2nd row', async () => {
+  it('RENEWALS-PAY: a 2nd invoice (subscription_cycle) on the same subscription writes a 2nd tracked row', async () => {
     // First invoice (initial purchase).
     const first = await recordSubscriptionAttribution(
       fakeInput({ invoiceId: 'in_period1', billingReason: 'subscription_create' })
@@ -251,9 +304,14 @@ describe('recordSubscriptionAttribution', () => {
     expect(secondData.invoiceId).toBe('in_period2');
     expect(firstData.subscriptionId).toBe(SUBSCRIPTION_ID);
     expect(secondData.subscriptionId).toBe(SUBSCRIPTION_ID);
-    // Both accrue the author share — the renewals-pay policy.
-    expect(firstData.appOwnerShareCents).toBeGreaterThan(0);
-    expect(secondData.appOwnerShareCents).toBeGreaterThan(0);
+    // Both are TRACKED (the backpay later pays each period); gross recorded.
+    expect(firstData.status).toBe('tracked');
+    expect(secondData.status).toBe('tracked');
+    expect(firstData.grossValueCents).toBeGreaterThan(0);
+    expect(secondData.grossValueCents).toBeGreaterThan(0);
+    // No share applied at write on either.
+    expect(firstData.appOwnerShareCents).toBe(0);
+    expect(secondData.appOwnerShareCents).toBe(0);
     expect(secondData.billingReason).toBe('subscription_cycle');
   });
 
@@ -277,9 +335,7 @@ describe('recordSubscriptionAttribution', () => {
 });
 
 describe('voidSubscriptionAttributionsForInvoice', () => {
-  it('refund of a PENDING/CONFIRMED period: voids, NO clawback (money never left)', async () => {
-    // No paid_out rows to claw back.
-    mockDbWrite.blockSubscriptionAttribution.findMany.mockResolvedValueOnce([]);
+  it('refund of a TRACKED period: voids the row, NO clawback (author=0 → no debt)', async () => {
     mockDbWrite.blockSubscriptionAttribution.updateMany.mockResolvedValueOnce({ count: 1 });
 
     const count = await voidSubscriptionAttributionsForInvoice({
@@ -289,100 +345,35 @@ describe('voidSubscriptionAttributionsForInvoice', () => {
     });
 
     expect(count).toBe(1);
-    // No clawback row written.
+    // No clawback row is ever written in the track-only model.
     expect(mockDbWrite.blockSubscriptionAttribution.create).not.toHaveBeenCalled();
-    // The void targets charge rows in pending/confirmed/paid_out.
+    // No paid_out snapshot is read — there is nothing to claw back.
+    expect(mockDbWrite.blockSubscriptionAttribution.findMany).not.toHaveBeenCalled();
+    // The void targets forward 'charge' rows including the live 'tracked'
+    // state (pending/confirmed/paid_out included defensively).
     expect(mockDbWrite.blockSubscriptionAttribution.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           paymentProvider: 'stripe',
           invoiceId: INVOICE_ID,
           entryType: 'charge',
-          status: { in: ['pending', 'confirmed', 'paid_out'] },
+          status: { in: ['tracked', 'pending', 'confirmed', 'paid_out'] },
         }),
         data: expect.objectContaining({ status: 'voided', voidedReason: 'refund' }),
       })
     );
   });
 
-  it('refund of a PAID_OUT period: voids the original AND writes a negative clawback that nets out', async () => {
-    mockDbWrite.blockSubscriptionAttribution.findMany.mockResolvedValueOnce([
-      {
-        appOwnerShareCents: 142,
-        appOwnerUserId: APP_OWNER_USER_ID,
-        userId: PURCHASER_ID,
-        buzzType: 'yellow',
-        appId: APP_ID,
-        appBlockId: APP_BLOCK_ID,
-        blockInstanceId: 'bki_test123',
-        scope: 'subscription',
-        modelId: 555,
-        tier: 'gold',
-        subscriptionId: SUBSCRIPTION_ID,
-        billingReason: 'subscription_cycle',
-        rateCardVersion: 'v5',
-        subscriptionSharePct: 15,
-      },
-    ]);
-    mockDbWrite.blockSubscriptionAttribution.updateMany.mockResolvedValueOnce({ count: 1 });
-
-    const count = await voidSubscriptionAttributionsForInvoice({
-      paymentProvider: 'stripe',
-      invoiceId: INVOICE_ID,
-      reason: 'refund',
-    });
-
-    expect(count).toBe(1);
-    expect(mockDbWrite.blockSubscriptionAttribution.create).toHaveBeenCalledTimes(1);
-    const { data } = mockDbWrite.blockSubscriptionAttribution.create.mock.calls[0][0];
-    // Negative carry-forward, confirmed so the aggregator nets it next mint.
-    expect(data.entryType).toBe('clawback');
-    expect(data.status).toBe('confirmed');
-    expect(data.appOwnerShareCents).toBe(-142);
-    expect(data.grossValueCents).toBe(-142);
-    expect(data.platformShareCents).toBe(0);
-    expect(data.providerFeeCents).toBe(0);
-    // Synthetic invoice id so a repeat refund webhook dedups on the UNIQUE.
-    expect(data.invoiceId).toBe(`${INVOICE_ID}:clawback`);
-    // Owner snapshot preserved → debt routes to the right publisher.
-    expect(data.appOwnerUserId).toBe(APP_OWNER_USER_ID);
-
-    // Conservation: original (142) + clawback (-142) = 0 net for the owner.
-    expect(142 + data.appOwnerShareCents).toBe(0);
-  });
-
-  it('clawback dedup: a second refund webhook hits the synthetic-key UNIQUE and is skipped', async () => {
-    mockDbWrite.blockSubscriptionAttribution.findMany.mockResolvedValueOnce([
-      {
-        appOwnerShareCents: 142,
-        appOwnerUserId: APP_OWNER_USER_ID,
-        userId: PURCHASER_ID,
-        buzzType: 'yellow',
-        appId: APP_ID,
-        appBlockId: APP_BLOCK_ID,
-        blockInstanceId: 'bki_test123',
-        scope: 'subscription',
-        modelId: null,
-        tier: null,
-        subscriptionId: SUBSCRIPTION_ID,
-        billingReason: 'subscription_cycle',
-        rateCardVersion: 'v5',
-        subscriptionSharePct: 15,
-      },
-    ]);
-    // The clawback create hits P2002 (already written by a prior webhook).
-    mockDbWrite.blockSubscriptionAttribution.create.mockRejectedValueOnce(
-      new FakePrismaKnownError('dup clawback', 'P2002')
-    );
+  it('refund webhook is idempotent: already-voided row → updateMany count 0, still no clawback', async () => {
     mockDbWrite.blockSubscriptionAttribution.updateMany.mockResolvedValueOnce({ count: 0 });
 
-    // Must NOT throw — the duplicate clawback is swallowed.
     const count = await voidSubscriptionAttributionsForInvoice({
       paymentProvider: 'stripe',
       invoiceId: INVOICE_ID,
       reason: 'chargeback',
     });
+
     expect(count).toBe(0);
-    expect(mockDbWrite.blockSubscriptionAttribution.create).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.blockSubscriptionAttribution.create).not.toHaveBeenCalled();
   });
 });

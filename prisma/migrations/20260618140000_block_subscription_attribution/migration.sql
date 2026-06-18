@@ -25,16 +25,37 @@
 -- A dedicated table keeps each flow's lifecycle and invariants clean
 -- while reusing the same status machine + clawback pattern.
 --
--- ACCOUNTING MODEL — same three-way split as block_buzz_attribution:
+-- ⚠️ TRACK-ONLY WRITE MODEL (#2629). The webhook write records the
+-- ATTRIBUTION EVENT + the MONEY BASIS (gross_value_cents + provider_fee_cents)
+-- only. It does NOT apply the rate card at write time. Tracked rows are
+-- written:
+--   status               = 'tracked'   (share-pending, not yet computed)
+--   app_owner_share_cents = 0
+--   subscription_share_pct= 0
+--   rate_card_version     = 'unrated'  (no version stamped)
+--   platform_share_cents  = gross - fee (net)
+-- The author share is computed LATER, at PAYOUT time (Slice 4): the payout
+-- rail reads status='tracked' rows and applies the SIGNED-OFF
+-- subscriptionSharePct as a clean retroactive BACKPAY
+-- (author_share = net × rate), then transitions them to a computed state.
+-- This avoids baking a placeholder rate into immutable rows before
+-- monetization sign-off.
+--
+-- ACCOUNTING MODEL — same three-way split as block_buzz_attribution (the
+-- backpay applies it; the tracked row pre-stages it):
 -- A membership payment IS a real card transaction (gross USD, real
 -- provider fee). The author share is carved out of the NET (gross - fee)
--- per the active rate card's subscription percentage, the platform keeps
--- the remainder. So the three-way conservation invariant DOES hold here
--- (unlike the spend bounty):
+-- per the rate card's subscription percentage, the platform keeps the
+-- remainder. The three-way conservation invariant DOES hold even in the
+-- TRACK-ONLY state because author=0 and platform=net:
 --   provider_fee_cents + platform_share_cents + app_owner_share_cents
---     = gross_value_cents
+--     = fee + net + 0 = gross_value_cents
+-- The backpay later re-splits net into platform/author at the signed-off
+-- rate (still conserving the sum).
 -- Clawback rows (entry_type='clawback') carry NEGATIVE shares and net out
 -- in the payout aggregate, so the CHECK is scoped to entry_type='charge'.
+-- (Track-only writes never produce a clawback — a refunded tracked row is
+-- simply voided before any backpay runs, since author=0 means no debt.)
 --
 -- RENEWALS-PAY POLICY (⚠️ FLAGGED — monetization sign-off, scope §C/E#3):
 -- This table writes ONE row per PAID invoice — so by default a renewal
@@ -99,19 +120,24 @@ CREATE TABLE "block_subscription_attribution" (
   -- Revenue share (computed at attribution time against the active rate
   -- card's SUBSCRIPTION dimension). Denormalized rate_card_version so the
   -- row pays out under its stamped snapshot forever.
-  "rate_card_version"       TEXT NOT NULL,
-  "subscription_share_pct"  INTEGER NOT NULL,
-  "app_owner_share_cents"   INTEGER NOT NULL,
+  -- TRACK-ONLY (#2629): no rate is applied at write time. rate_card_version
+  -- is the 'unrated' sentinel and subscription_share_pct / app_owner_share_cents
+  -- default to 0 until the payout-time backpay computes the real share.
+  "rate_card_version"       TEXT NOT NULL DEFAULT 'unrated',
+  "subscription_share_pct"  INTEGER NOT NULL DEFAULT 0,
+  "app_owner_share_cents"   INTEGER NOT NULL DEFAULT 0,
   "platform_share_cents"    INTEGER NOT NULL,
   "provider_fee_cents"      INTEGER NOT NULL,
   -- Denormalized publisher user — snapshot at attribution time.
   "app_owner_user_id"       INTEGER NOT NULL REFERENCES "User"("id") ON DELETE RESTRICT,
 
-  -- Lifecycle. Mirrors block_buzz_attribution's status machine so the
-  -- payout aggregator can treat the flows uniformly. entry_type 'charge'
-  -- (normal forward attribution) | 'clawback' (negative carry-forward on
-  -- refund/proration of a previously paid-out period).
-  "status"                  TEXT NOT NULL DEFAULT 'pending',
+  -- Lifecycle. 'tracked' is the TRACK-ONLY state (#2629): the event + money
+  -- basis are recorded but no share is computed yet — the payout-time backpay
+  -- promotes tracked → a computed state. The other states mirror
+  -- block_buzz_attribution's machine so the eventual payout aggregator can
+  -- treat the flows uniformly. entry_type 'charge' (forward attribution) |
+  -- 'clawback' (negative carry-forward, reserved for the payout slice).
+  "status"                  TEXT NOT NULL DEFAULT 'tracked',
   "entry_type"              TEXT NOT NULL DEFAULT 'charge',
   "voided_reason"           TEXT,
   "attributed_at"           TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -131,7 +157,7 @@ CREATE TABLE "block_subscription_attribution" (
   CONSTRAINT "block_subscription_attribution_scope_check"
     CHECK ("scope" IN ('subscription')),
   CONSTRAINT "block_subscription_attribution_status_check"
-    CHECK ("status" IN ('pending', 'confirmed', 'voided', 'paid_out', 'held')),
+    CHECK ("status" IN ('tracked', 'pending', 'confirmed', 'voided', 'paid_out', 'held')),
   CONSTRAINT "block_subscription_attribution_entry_type_check"
     CHECK ("entry_type" IN ('charge', 'clawback')),
   CONSTRAINT "block_subscription_attribution_voided_reason_check"
