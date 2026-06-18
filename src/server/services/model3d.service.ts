@@ -627,6 +627,22 @@ export const upsertModel3D = async ({
     resolvedTagIds = Array.from(new Set([...(tagIds ?? []), ...nameIds]));
   }
 
+  // Existing tags (e.g. `pokemon`, originally created with target `['Image']`)
+  // get reused by name above — but their `target` array stays unchanged, so
+  // downstream queries that filter by `Tag.target && '{Model3D}'` (the
+  // picker autocomplete, category-tag lookups, search-index target filters)
+  // won't surface them on future Model3Ds. Append `Model3D` to the target
+  // array for every tag we're about to attach. The WHERE clause skips rows
+  // that already carry it so we don't grow the array forever on resaves.
+  if (resolvedTagIds?.length) {
+    await dbWrite.$executeRaw`
+      UPDATE "Tag"
+      SET "target" = "target" || ARRAY['Model3D']::"TagTarget"[]
+      WHERE "id" = ANY(${resolvedTagIds}::int[])
+        AND NOT ('Model3D' = ANY("target"));
+    `;
+  }
+
   // Visibility changes (`status`) must go through the dedicated `publish` /
   // `unpublish` / moderation endpoints — those gate on thumbnail presence,
   // refresh the user-content cache, and emit the right notifications. We
