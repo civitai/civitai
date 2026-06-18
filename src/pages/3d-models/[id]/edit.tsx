@@ -29,10 +29,10 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Model3DPermissionIndicator } from '~/components/PermissionIndicator/Model3DPermissionIndicator';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
-import { TagsInput } from '~/components/Tags/TagsInput';
+import { Model3DTagPicker } from '~/components/Model3D/Tags/Model3DTagPicker';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { Model3DStatus, TagTarget } from '~/shared/utils/prisma/enums';
+import { Model3DStatus } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -429,12 +429,11 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
                 )}
               </Stack>
 
-              <TagsInput
+              <Model3DTagPicker
                 label="Tags"
-                description="Type to add. Pick any existing tag or type a new one — new tags are created automatically."
+                description="Start typing to search existing tags, or hit Enter to create a new one. Curated category tags are marked with a star."
                 value={tags}
                 onChange={setTags}
-                target={[TagTarget.Model3D]}
               />
 
               {/* Single Save button — publish/unpublish lives in the top-right

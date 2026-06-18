@@ -10,6 +10,10 @@ export function useCategoryTags({ entityType }: { entityType: TagTarget }) {
   else if (entityType === TagTarget.Image) sort = TagSort.MostImages;
   else if (entityType === TagTarget.Post) sort = TagSort.MostPosts;
   else if (entityType === TagTarget.Article) sort = TagSort.MostArticles;
+  // Model3D has no dedicated TagMetric column (no `model3dCount` on
+  // TagMetric / TagRank), so leave `sort` undefined and let
+  // `tag.getAll` fall through to its default `name ASC` ordering. The
+  // category list is mod-curated and small (<50), so alphabetical is fine.
 
   const { data, isLoading } = trpc.tag.getAll.useQuery({
     entityType: [entityType],

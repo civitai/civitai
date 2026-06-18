@@ -1,14 +1,7 @@
-import {
-  Button,
-  Center,
-  Loader,
-  LoadingOverlay,
-  Stack,
-  useComputedColorScheme,
-} from '@mantine/core';
+import { Center, Loader, LoadingOverlay, Stack } from '@mantine/core';
 import { keepPreviousData } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
-import { useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
@@ -19,12 +12,12 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import { Meta } from '~/components/Meta/Meta';
+import { Model3DCategories } from '~/components/Model3D/Feed/Model3DCategories';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 import { Model3DSort } from '~/server/schema/model3d.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { removeEmpty } from '~/utils/object-helpers';
+import { parseNumericStringArray } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -36,12 +29,13 @@ import { trpc } from '~/utils/trpc';
  * Discovery affordances:
  *   - SortFilter (Newest / Most Downloaded / Highest Rated / Most Liked)
  *   - PeriodFilter (Day / Week / Month / Year / AllTime)
- *   - Tag chip row, pulled from `model3d.getTags` (tags actually used on
- *     Model3Ds, ranked by usage count)
+ *   - Category-tag scroller via `Model3DCategories` — mod-curated tags
+ *     linked from the `'model3d category'` system tag (mirrors what
+ *     `/images`, `/posts`, `/articles` do)
  *   - Rigged / Animated toggles — filter on the PolyGen `enableRigging` /
  *     `enableAnimation` flags stored on `Model3D.generationParams`
  *
- * State lives on the URL (sort / period / tagId / rigged / animated) so deep
+ * State lives on the URL (sort / period / tags / rigged / animated) so deep
  * links + back/forward retain filter context. Switching any filter resets the
  * infinite-query cursor automatically — TanStack Query re-keys on input.
  */
@@ -59,7 +53,6 @@ const PERIOD_VALUES = new Set<string>(Object.values(MetricTimeframe));
 function Model3DsPage() {
   const router = useRouter();
   const { query } = router;
-  const colorScheme = useComputedColorScheme('dark');
 
   // ---- URL-backed filter state ------------------------------------------------
   const sort: Model3DSort = useMemo(() => {
@@ -72,28 +65,13 @@ function Model3DsPage() {
     return raw && PERIOD_VALUES.has(raw) ? (raw as MetricTimeframe) : MetricTimeframe.AllTime;
   }, [query.period]);
 
-  const activeTagId: number | undefined = useMemo(() => {
-    const raw = typeof query.tagId === 'string' ? Number(query.tagId) : undefined;
-    return raw && Number.isFinite(raw) && raw > 0 ? raw : undefined;
-  }, [query.tagId]);
+  // Category-tag selection now rides on the canonical `?tags=` array (the
+  // `Model3DCategories` scroller emits + reads it, mirroring how the other
+  // feed pages do it). The bespoke single `?tagId=` query param is gone.
+  const tagIds = useMemo(() => parseNumericStringArray(router.query.tags) ?? [], [router.query.tags]);
 
   const rigged = query.rigged === 'true';
   const animated = query.animated === 'true';
-
-  const setQuery = useCallback(
-    (patch: Record<string, string | undefined>) => {
-      router.replace(
-        { pathname: router.pathname, query: removeEmpty({ ...query, ...patch }) },
-        undefined,
-        { shallow: true }
-      );
-    },
-    [router, query]
-  );
-
-  // ---- Tag chip row (above grid) ---------------------------------------------
-  const { data: tagsData } = trpc.model3d.getTags.useQuery({ limit: 50 });
-  const tags = tagsData?.items ?? [];
 
   // ---- Feed -------------------------------------------------------------------
   // The server-side `getModel3DsInfinite` SQL filter clamps Model3D.nsfwLevel
@@ -108,7 +86,7 @@ function Model3DsPage() {
         limit: 50,
         sort,
         period,
-        tagIds: activeTagId ? [activeTagId] : undefined,
+        tagIds: tagIds.length ? tagIds : undefined,
         rigged: rigged || undefined,
         animated: animated || undefined,
         browsingLevel,
@@ -137,37 +115,11 @@ function Model3DsPage() {
 
       <MasonryContainer>
         <Stack gap="md">
-          {/* Tag row — popular Model3D tags, click to filter, click again to
-              clear. Sort / Period / Rigged / Animated live in the sub-nav
-              filter row (Model3DFeedFilters) so this page just owns tags. */}
-          {tags.length > 0 && (
-            <TwScrollX className="flex gap-1">
-              <Button
-                className="overflow-visible uppercase"
-                variant={!activeTagId ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
-                color={!activeTagId ? 'blue' : 'gray'}
-                onClick={() => setQuery({ tagId: undefined })}
-                size="compact-sm"
-              >
-                All
-              </Button>
-              {tags.map((tag) => {
-                const active = activeTagId === tag.id;
-                return (
-                  <Button
-                    key={tag.id}
-                    className="overflow-visible uppercase"
-                    variant={active ? 'filled' : colorScheme === 'dark' ? 'filled' : 'light'}
-                    color={active ? 'blue' : 'gray'}
-                    onClick={() => setQuery({ tagId: active ? undefined : String(tag.id) })}
-                    size="compact-sm"
-                  >
-                    {tag.name}
-                  </Button>
-                );
-              })}
-            </TwScrollX>
-          )}
+          {/* Category-tag scroller — mod-curated set linked from the
+              `'model3d category'` system tag, fetched by
+              `Model3DCategories` via `useCategoryTags`. Matches what
+              `/images`, `/posts`, and `/articles` show in the same slot. */}
+          <Model3DCategories />
 
           {isLoading || loadingPreferences ? (
             <Center p="xl">
