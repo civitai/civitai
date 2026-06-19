@@ -919,6 +919,11 @@ export function PageBlockHost({
               // GenerationResource.id is the modelVersionId at the wire.
               versionId: resource.id,
               modelId: resource.model.id,
+              // Public display names of the user-chosen resource — the user
+              // picked it, so surfacing its name is safe (mirrors the
+              // CHECKPOINT_PICKER_RESULT projection in IframeHost.tsx).
+              modelName: resource.model.name,
+              versionName: resource.name,
               baseModel: resource.baseModel,
               modelType: resource.model.type,
             },

@@ -21,9 +21,10 @@ import { renderWithProviders } from '../../../test/component-setup';
  * bridge, asserting:
  *   1. the host opens the native modal (UNMODIFIED) with the RIGHT filters
  *      (requested type, canGenerate:true, family hint resolved);
- *   2. on select it posts back ONLY { requestId, versionId, modelId, baseModel,
- *      modelType } — NO catalog, NO list, NO private/early-access/availability
- *      internals;
+ *   2. on select it posts back ONLY { requestId, versionId, modelId, modelName,
+ *      versionName, baseModel, modelType } — the public display names of the
+ *      user-picked resource, plus the body-building IDs; NO catalog, NO list,
+ *      NO private/early-access/availability internals;
  *   3. on cancel (close without pick) it posts a cancelled result (no `selected`);
  *   4. an UNSUPPORTED requested type (not Checkpoint/LoRA) is rejected — the
  *      modal never opens and no reply is posted;
@@ -215,12 +216,15 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
     await vi.waitFor(() => {
       const r = replies.last('RESOURCE_PICKER_RESULT');
       if (!r) throw new Error('no reply yet');
-      // EXACTLY the four-field allowlist — nothing else.
+      // EXACTLY the six-field allowlist — IDs + the public display names of the
+      // user-picked resource — nothing else.
       expect(r.payload).toEqual({
         requestId: 'rq_pick',
         selected: {
           versionId: 9001,
           modelId: 700,
+          modelName: 'My Checkpoint',
+          versionName: 'v1.0',
           baseModel: 'Flux.1 D',
           modelType: 'Checkpoint',
         },
@@ -228,15 +232,21 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
     });
 
     // Adversarial leak check: the reply payload must NOT carry any of the
-    // sensitive fields present on the source GenerationResource.
+    // sensitive fields present on the source GenerationResource. The two public
+    // display names (modelName/versionName) ARE allowed now — everything else
+    // (availability/access/early-access/nsfw/poi/minor/cover-image/userId/the
+    // full model object) must STILL be dropped; the leak-prevention property
+    // holds, only the two name fields were added.
     const payload = replies.last('RESOURCE_PICKER_RESULT')!.payload as {
       selected: Record<string, unknown>;
     };
     const sel = payload.selected;
-    const leaked = ['availability', 'hasAccess', 'canGenerate', 'image', 'name', 'modelName',
-      'versionName', 'nsfw', 'poi', 'minor', 'sfwOnly', 'userId', 'trainedWords', 'model'];
-    for (const k of leaked) expect(sel).not.toHaveProperty(k);
-    expect(Object.keys(sel).sort()).toEqual(['baseModel', 'modelId', 'modelType', 'versionId']);
+    const sensitiveAbsent = ['availability', 'hasAccess', 'canGenerate', 'image', 'name',
+      'nsfw', 'nsfwLevel', 'poi', 'minor', 'sfwOnly', 'userId', 'trainedWords', 'model'];
+    for (const k of sensitiveAbsent) expect(sel).not.toHaveProperty(k);
+    expect(Object.keys(sel).sort()).toEqual(
+      ['baseModel', 'modelId', 'modelName', 'modelType', 'versionId', 'versionName']
+    );
     replies.stop();
   });
 
