@@ -229,10 +229,17 @@ export function QueueItem({
   const completedCount = request.completedCount;
   const processingCount = request.processingCount;
 
+  // PolyGen (txt2model3d / img2model3d) workflows don't reliably carry
+  // `params.workflow` or `params.engine` — the orchestrator-side polyGen
+  // step is the source of truth (see `isPolyGen` above). Without the
+  // last clause the Remix button silently disappears on every PolyGen
+  // queue item even though the saved `workflowMetadata.params` carries
+  // everything the generator form needs to replay.
   const canRemix =
     (params.workflow &&
       !['img2img-upscale', 'img2img-background-removal'].includes(params.workflow as string)) ||
-    (!!params.engine && allImages.length > 0);
+    (!!params.engine && allImages.length > 0) ||
+    isPolyGen;
 
   const workflowDefinition = workflowConfigs[params.workflow as keyof typeof workflowConfigs];
 

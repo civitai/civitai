@@ -408,11 +408,40 @@ function InnerProvider({
 
         // Resolve workflow — if missing or unrecognized, derive from ecosystem's base model type
         const remixEcosystemKey = paramsWithoutOutputSettings.ecosystem as string | undefined;
-        let resolvedWorkflow = paramsWithoutOutputSettings.workflow as string | undefined;
-        if (!resolvedWorkflow || !workflowConfigByKey.has(resolvedWorkflow)) {
+        const incomingWorkflow = paramsWithoutOutputSettings.workflow as string | undefined;
+
+        // PolyGen short-circuit: detect a 3D-model remix from either the
+        // ecosystem key or the workflow key, before any "unknown-workflow
+        // fallback" can rewrite it to `txt2img`. If we're here it's
+        // unambiguous which PolyGen workflow to land on (txt vs img), so
+        // skip the fallback / compat-modal entirely and apply directly.
+        // Mirrors how the workflow-config lookups treat PolyGen as a
+        // first-class workflow, but bullet-proof against any downstream
+        // resolution quirk that has previously surfaced the ecosystem
+        // picker on remix.
+        const isPolyGenRemix =
+          remixEcosystemKey === 'PolyGen' ||
+          incomingWorkflow === 'txt2model3d' ||
+          incomingWorkflow === 'img2model3d';
+
+        let resolvedWorkflow: string;
+        if (isPolyGenRemix) {
+          // PolyGen path: keep an incoming `txt2model3d` / `img2model3d`
+          // verbatim, otherwise derive from `process` (which the polyGen
+          // graph stores alongside `workflow`). Falls back to `txt2model3d`
+          // so the user lands on the form even if both fields were lost.
+          resolvedWorkflow =
+            incomingWorkflow === 'txt2model3d' || incomingWorkflow === 'img2model3d'
+              ? incomingWorkflow
+              : paramsWithoutOutputSettings.process === 'imageTo3D'
+              ? 'img2model3d'
+              : 'txt2model3d';
+        } else if (incomingWorkflow && workflowConfigByKey.has(incomingWorkflow)) {
+          resolvedWorkflow = incomingWorkflow;
+        } else {
           // Workflow unknown — infer output type from the workflow key prefix or ecosystem
           const isVideoWorkflow =
-            resolvedWorkflow?.includes('2vid') || resolvedWorkflow?.startsWith('vid2');
+            incomingWorkflow?.includes('2vid') || incomingWorkflow?.startsWith('vid2');
           const remixEcoEntry = remixEcosystemKey
             ? ecosystemByKey.get(remixEcosystemKey)
             : undefined;
@@ -426,13 +455,24 @@ function InnerProvider({
 
         // Check if the remix ecosystem supports the resolved workflow
         const remixEco = remixEcosystemKey ? ecosystemByKey.get(remixEcosystemKey) : undefined;
-        const ecosystemSupportsWorkflow = remixEco
+        // PolyGen short-circuit: always treat the workflow as supported so
+        // the modal can't fire while a 3D-model remix is in progress. The
+        // user explicitly asked for the PolyGen graph and the saved
+        // workflowMetadata already proves the combination is reachable.
+        const ecosystemSupportsWorkflow = isPolyGenRemix
+          ? true
+          : remixEco
           ? isWorkflowAvailable(resolvedWorkflow, remixEco.id)
           : !remixEcosystemKey; // Unknown ecosystem key — treat as incompatible
 
-        // Build the values to apply (shared between both paths)
+        // Build the values to apply (shared between both paths). For a PolyGen
+        // remix we explicitly pin the ecosystem in case the saved metadata
+        // dropped it — the two-stage `graph.set` above relies on this being
+        // present in the final values blob so a downstream re-evaluation
+        // doesn't snap back to whatever the discriminator defaulted to.
         const remixValues = {
           ...paramsWithoutOutputSettings,
+          ...(isPolyGenRemix ? { ecosystem: 'PolyGen' } : {}),
           workflow: resolvedWorkflow,
           model: split.model,
           upscaler: split.upscaler,
@@ -456,8 +496,30 @@ function InnerProvider({
             },
           });
         } else {
-          // Compatible — apply immediately
+          // Compatible — apply immediately.
           graph.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
+          // PolyGen lives in a discriminated subgraph (activates only when
+          // `ecosystem: 'PolyGen'`), and its child nodes — `polygenMode`,
+          // `targetPolycount`, `sourceImage`, `enableRigging`, etc. — only
+          // exist while that subgraph is active. A single `graph.set` with
+          // the full blob can drop those child keys because they're
+          // evaluated before the discriminator has switched, so the remix
+          // lands the user on the default ecosystem with an empty form
+          // (the user-reported "still asked for ecosystem" symptom).
+          //
+          // Two-stage set: switch the discriminator first (ecosystem +
+          // workflow, which also drives the `process` transform), then
+          // push the rest so every PolyGen-specific value lands in the
+          // active subgraph.
+          if (
+            isPolyGenRemix &&
+            (resolvedWorkflow === 'txt2model3d' || resolvedWorkflow === 'img2model3d')
+          ) {
+            graph.set({
+              ecosystem: 'PolyGen',
+              workflow: resolvedWorkflow,
+            });
+          }
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose superset of discriminated union
           graph.set(remixValues as any);
         }
