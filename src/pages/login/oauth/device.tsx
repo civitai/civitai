@@ -14,7 +14,7 @@ import { IconCheck, IconDeviceMobile, IconShieldCheck, IconX } from '@tabler/ico
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { DeviceCodeEntry } from '~/pages/login/oauth/DeviceCodeEntry';
+import { DeviceCodeEntry } from '~/components/Login/DeviceCodeEntry';
 import { formatUserCode } from '~/server/oauth/user-code';
 
 interface DeviceAppInfo {
