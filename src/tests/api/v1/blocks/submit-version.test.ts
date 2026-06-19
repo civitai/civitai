@@ -93,25 +93,48 @@ vi.mock('~/server/services/blocks/publish-request.service', () => ({
 // zod — safe to load.
 
 import handler from '~/pages/api/v1/blocks/submit-version';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Personal-access (user-type) key: `getSessionFromBearerToken` sets
 // subject = { type: 'apiKey' } when the ApiKey row has clientId == null.
+// tokenScope = Full is what real personal keys persist; the value is irrelevant
+// to the type gate for personal keys (they pass regardless of scope).
 const MOD_SESSION = {
   user: { id: 7, isModerator: true },
   apiKeyId: 42,
   subject: { type: 'apiKey', id: 42 },
+  tokenScope: TokenScope.Full,
 };
 const NONMOD_SESSION = {
   user: { id: 8, isModerator: false },
   apiKeyId: 43,
   subject: { type: 'apiKey', id: 43 },
+  tokenScope: TokenScope.Full,
 };
-// OAuth-client-issued key: subject = { type: 'oauth', id: clientId }. The user
-// is a moderator, so ONLY the personal-key gate should reject this.
-const OAUTH_MOD_SESSION = {
+// OAuth-client-issued key WITHOUT the AppBlocksSubmit scope: subject =
+// { type: 'oauth', id: clientId }. Even though the user is a moderator, the
+// missing scope must reject this at the token-type gate.
+const OAUTH_MOD_NO_SCOPE_SESSION = {
   user: { id: 7, isModerator: true },
   apiKeyId: 99,
   subject: { type: 'oauth', id: 'client_abc' },
+  tokenScope: TokenScope.UserRead | TokenScope.ModelsRead, // no AppBlocksSubmit
+};
+// OAuth-client-issued key WITH the AppBlocksSubmit scope + a moderator user:
+// this is the new accepted path (the civitai-cli case).
+const OAUTH_MOD_SCOPED_SESSION = {
+  user: { id: 7, isModerator: true },
+  apiKeyId: 99,
+  subject: { type: 'oauth', id: 'civitai-cli' },
+  tokenScope: TokenScope.UserRead | TokenScope.AppBlocksSubmit,
+};
+// OAuth-client-issued key WITH the scope but a NON-moderator user: the mod gate
+// must still reject (scope alone does not bypass the mod requirement).
+const OAUTH_NONMOD_SCOPED_SESSION = {
+  user: { id: 8, isModerator: false },
+  apiKeyId: 100,
+  subject: { type: 'oauth', id: 'civitai-cli' },
+  tokenScope: TokenScope.UserRead | TokenScope.AppBlocksSubmit,
 };
 const goodBody = { bundleBase64: Buffer.from('zipbytes').toString('base64') };
 
@@ -181,20 +204,46 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 
-  it('403 when the key is OAuth-client-issued (subject.type === "oauth") even if the user is a mod', async () => {
-    mockGetSession.mockResolvedValueOnce(OAUTH_MOD_SESSION);
+  it('403 when the key is OAuth-client-issued WITHOUT the AppBlocksSubmit scope, even if the user is a mod', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_MOD_NO_SCOPE_SESSION);
     const { req, res } = createMocks({
       headers: { authorization: 'Bearer oauth-client-key' },
       body: goodBody,
     });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
-    expect((res._getJSONData() as { message: string }).message).toContain('personal API key');
+    expect((res._getJSONData() as { message: string }).message).toContain('App Blocks submit scope');
     // Must reject BEFORE the heavy publish path runs.
     expect(mockSubmitVersion).not.toHaveBeenCalled();
     // Must reject BEFORE the flag check / rate-limit round-trip (no leak).
     expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
     expect(mockRedis.multi).not.toHaveBeenCalled();
+  });
+
+  it('accepts an OAuth-client-issued key WITH the AppBlocksSubmit scope + mod (the civitai-cli path)', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_MOD_SCOPED_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer oauth-cli-token' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
+    // Attribution is the resolved user, not the client.
+    expect(mockSubmitVersion.mock.calls[0][0].submittedByUserId).toBe(7);
+  });
+
+  it('403 for an OAuth key WITH the AppBlocksSubmit scope but a NON-moderator user (mod gate still holds)', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_NONMOD_SCOPED_SESSION);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer oauth-cli-token' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(403);
+    // Rejected by the mod gate (not the scope gate) — scope alone is insufficient.
+    expect((res._getJSONData() as { message: string }).message).toContain('civitai team');
+    expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 
   it('passes the personal-key gate when subject.type is "apiKey" (user-type key) + mod', async () => {

@@ -13,7 +13,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { Flags } from '~/shared/utils/flags';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { TokenScope, ALL_SCOPES } from '~/shared/constants/token-scope.constants';
 import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL } from './constants';
 import { createOAuthTokenPair } from './token-helpers';
 import { OriginNotAllowedError } from './errors';
@@ -33,7 +33,10 @@ function stringToScope(scope: string | string[] | undefined): number {
   if (!scope) return 0;
   const str = Array.isArray(scope) ? scope[0] : scope;
   const parsed = parseInt(str, 10);
-  if (isNaN(parsed) || parsed < 0 || parsed > TokenScope.Full) return 0;
+  // Bound against ALL_SCOPES (incl. opt-in bits like AppBlocksSubmit), NOT
+  // `Full` — clamping to `Full` would silently drop an opt-in bit a client
+  // legitimately requested. Out-of-range → 0 (deny), preserving prior posture.
+  if (isNaN(parsed) || parsed < 0 || parsed > ALL_SCOPES) return 0;
   return parsed;
 }
 
