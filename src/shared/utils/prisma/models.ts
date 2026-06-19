@@ -606,6 +606,10 @@ export interface User {
   blockBuzzAttributionsAsPurchaser?: BlockBuzzAttribution[];
   blockBuzzAttributionsAsAppOwner?: BlockBuzzAttribution[];
   blockAttributionPayouts?: BlockAttributionPayout[];
+  blockSpendAttributionsAsSpender?: BlockSpendAttribution[];
+  blockSpendAttributionsAsAppOwner?: BlockSpendAttribution[];
+  blockSubscriptionAttributionsAsPurchaser?: BlockSubscriptionAttribution[];
+  blockSubscriptionAttributionsAsAppOwner?: BlockSubscriptionAttribution[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
@@ -1733,6 +1737,8 @@ export interface OauthClient {
   consents?: OauthConsent[];
   appBlocks?: AppBlock[];
   buzzAttributions?: BlockBuzzAttribution[];
+  spendAttributions?: BlockSpendAttribution[];
+  subscriptionAttributions?: BlockSubscriptionAttribution[];
 }
 
 export interface AppBlock {
@@ -1764,6 +1770,8 @@ export interface AppBlock {
   platformDefault?: PlatformDefaultBlock | null;
   userSubscriptions?: BlockUserSubscription[];
   buzzAttributions?: BlockBuzzAttribution[];
+  spendAttributions?: BlockSpendAttribution[];
+  subscriptionAttributions?: BlockSubscriptionAttribution[];
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
   userScopeGrants?: AppUserScopeGrant[];
@@ -1885,6 +1893,72 @@ export interface BlockAttributionPayout {
   totalCents: number;
   rowCount: number;
   createdAt: Date;
+}
+
+export interface BlockSpendAttribution {
+  id: string;
+  userId: number;
+  user?: User;
+  buzzAmount: number;
+  buzzType: string;
+  grossValueCents: number;
+  workflowId: string;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  blockInstanceId: string;
+  modelId: number | null;
+  rateCardVersion: string;
+  spendSharePct: number;
+  appOwnerShareCents: number;
+  appOwnerUserId: number;
+  appOwner?: User;
+  status: string;
+  voidedReason: string | null;
+  attributedAt: Date;
+  confirmedAt: Date | null;
+  voidedAt: Date | null;
+  paidOutAt: Date | null;
+  payoutId: string | null;
+}
+
+export interface BlockSubscriptionAttribution {
+  id: string;
+  userId: number;
+  user?: User;
+  buzzAmount: number;
+  buzzType: string;
+  grossValueCents: number;
+  paymentProvider: string;
+  invoiceId: string;
+  subscriptionId: string | null;
+  billingReason: string | null;
+  periodStart: Date | null;
+  periodEnd: Date | null;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  blockInstanceId: string;
+  scope: string;
+  modelId: number | null;
+  tier: string | null;
+  rateCardVersion: string;
+  subscriptionSharePct: number;
+  appOwnerShareCents: number;
+  platformShareCents: number;
+  providerFeeCents: number;
+  appOwnerUserId: number;
+  appOwner?: User;
+  status: string;
+  entryType: string;
+  voidedReason: string | null;
+  attributedAt: Date;
+  confirmedAt: Date | null;
+  voidedAt: Date | null;
+  paidOutAt: Date | null;
+  payoutId: string | null;
 }
 
 export interface BlockScopeInvocation {
