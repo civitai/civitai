@@ -46,7 +46,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 const { getUploadS3Client, getUploadBucket, getMultipartPutUrl } = vi.hoisted(() => ({
   getUploadS3Client: vi.fn((backend: string) => ({ __client: backend })),
   getUploadBucket: vi.fn((backend: string) => `bucket-${backend}`),
-  getMultipartPutUrl: vi.fn(async (key: string, _size: number, s3: unknown, bucket: unknown) => ({
+  getMultipartPutUrl: vi.fn(async (key: string, _size: number, _s3: unknown, bucket: unknown) => ({
     urls: [],
     bucket: bucket ?? 'default-bucket',
     key,
