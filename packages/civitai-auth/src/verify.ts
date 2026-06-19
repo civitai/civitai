@@ -69,7 +69,7 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
   const cfg = {
     jwksUri: config.jwksUri ?? env.AUTH_JWKS_URI,
     issuer,
-    audience: config.audience ?? env.AUTH_JWT_AUDIENCE,
+    audience: config.audience,
     // Cookie name is a hardcoded cross-app contract (see cookies.ts), NOT configurable. The
     // `__Secure-` prefix tracks the deployment protocol exactly like the main app's
     // libs/auth.ts (useSecureCookies = base URL is https) — here the hub issuer stands in for

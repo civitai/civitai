@@ -93,7 +93,7 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
     publicKeyPem: config.publicKeyPem ?? env.AUTH_JWT_PUBLIC_KEY,
     kid: config.kid ?? env.AUTH_JWT_KID,
     issuer: config.issuer ?? env.AUTH_JWT_ISSUER,
-    audience: config.audience ?? env.AUTH_JWT_AUDIENCE,
+    audience: config.audience,
     maxAge: config.maxAge ?? env.AUTH_SESSION_MAX_AGE,
   };
   if (!cfg.privateKeyPem || !cfg.kid) {
