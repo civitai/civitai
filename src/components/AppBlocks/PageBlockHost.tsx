@@ -7,7 +7,11 @@ import { failureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
-import { grantedPageScopes, pageFallbackReason } from './pageBlockHostLogic';
+import {
+  grantedPageScopes,
+  pageFallbackReason,
+  resolveResourcePickerRequest,
+} from './pageBlockHostLogic';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -15,6 +19,8 @@ import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
+import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
+import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -843,6 +849,93 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, trpcUtils]);
+
+  // ── OPEN_RESOURCE_PICKER → RESOURCE_PICKER_RESULT (Design 1 host-chrome) ────
+  //
+  // Generalizes the model-slot OPEN_CHECKPOINT_PICKER (IframeHost) to the page
+  // surface and widens it from Checkpoint-only to a typed allowlist (v1:
+  // Checkpoint + LoRA only). The block asks the HOST to open its OWN native
+  // ResourceSelectModal as host chrome; the viewer searches in host chrome (NOT
+  // the iframe); the host posts back ONLY the single chosen resource. The
+  // untrusted iframe NEVER receives a list, the search API, or the catalog — it
+  // only ever learns about the one resource the user physically picked.
+  //
+  // This feeds the merged page-LoRA `additionalResources` plumbing: the block
+  // puts a Checkpoint pick into body.modelVersionId and each LoRA pick into
+  // body.additionalResources. The picker is DISCOVERY ONLY — every chosen ID is
+  // re-validated server-side at estimate/submit by the page gate
+  // (assertViewerCanGeneratePageResources) + the orchestrator belt. Nothing the
+  // iframe says about a resource is trusted at spend time.
+  //
+  // The picker reuses the host's native ResourceSelectModal UNMODIFIED. The
+  // block never sees the catalog or the search API — it only ever receives the
+  // ONE resource the user physically picked (host chrome can't be enumerated by
+  // the iframe). The real authorization boundary is the SERVER gate
+  // (assertViewerCanGeneratePageResources) at estimate/submit, NOT the picker UI.
+  //  - `canGenerate: true` (UX floor) + the spend-time re-gate (authoritative).
+  //  - resourceType allowlist enforced in resolveResourcePickerRequest (pure,
+  //    unit-tested): an unsupported type is DROPPED and the modal never opens.
+  // NSFW-by-domain is inherited from the native modal's existing parent-context
+  // browsing-level handling (the Meili search client is domain/SFW-scoped at the
+  // app level), exactly as the model checkpoint picker already relies on.
+  //
+  // requestId threads each pick so concurrent requests (e.g. a checkpoint pick
+  // and a LoRA pick open back-to-back) never cross — the SDK hook resolves only
+  // the RESOURCE_PICKER_RESULT whose requestId matches its own request.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_RESOURCE_PICKER', (raw) => {
+      const req = resolveResourcePickerRequest(raw);
+      if (!req) return; // invalid / unsupported type → drop, never open the modal
+      const { requestId, resourceType, baseModelGroup } = req;
+
+      // Normalize an optional family hint through getBaseModelGroup (accepts an
+      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). An
+      // unresolved/empty baseModelGroup applies NO baseModel narrowing — the
+      // modal emits the bare `type = <T>` clause, so it returns ALL resources of
+      // that type (still gated by `canGenerate`), NOT a subset.
+      // That's intentional and safe: the server is the authority on family
+      // compatibility at spend (it family-checks the resources at submit), so an
+      // incompatible pick is rejected there rather than being silently filtered
+      // out of the picker here.
+      const groupKey = baseModelGroup ? getBaseModelGroup(baseModelGroup) : null;
+      const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
+
+      let answered = false;
+      openResourceSelectModal({
+        title: resourceType === 'Checkpoint' ? 'Choose a checkpoint' : 'Choose a resource',
+        options: {
+          canGenerate: true,
+          resources: [{ type: resourceType, baseModels }],
+        },
+        onSelect: (resource) => {
+          answered = true;
+          // Post back ONLY the narrow single-pick allowlist. Never spread the
+          // full GenerationResource — no availability/hasAccess/early-access/
+          // usageControl/minor/poi/sfwOnly/cover-image internals reach the
+          // iframe, only what the block needs to build a body + display it.
+          send('RESOURCE_PICKER_RESULT', {
+            requestId,
+            selected: {
+              // GenerationResource.id is the modelVersionId at the wire.
+              versionId: resource.id,
+              modelId: resource.model.id,
+              baseModel: resource.baseModel,
+              modelType: resource.model.type,
+            },
+          });
+        },
+        onClose: () => {
+          // Dialog dismiss fires after onSelect when the user picks (the modal
+          // closes itself); only emit the "cancelled" result if onSelect never
+          // ran. answered=true short-circuits so a pick isn't followed by a
+          // spurious cancel.
+          if (answered) return;
+          send('RESOURCE_PICKER_RESULT', { requestId });
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send]);
 
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';
