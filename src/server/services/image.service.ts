@@ -1925,7 +1925,7 @@ export const getAllImages = async (
       include?.includes('profilePictures') ? getProfilePicturesForUsers(userIds) : undefined,
       includeCosmetics ? getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }) : undefined,
       getThumbnailsForImages(videoIds),
-      getImageMetricsObject(rawImages),
+      getImageMetricsObject(rawImages, userId),
       include?.includes('metaSelect') ? getMetaForImages(imageIds) : undefined,
       includeBaseModel ? imageResourcesCache.fetch(imageIds) : undefined,
     ])
@@ -2237,7 +2237,7 @@ export const getAllImagesIndex = async (
       include?.includes('metaSelect') ? getMetaForImages(imageIds) : undefined,
       getMetadataForImages(videoIds), // Only need this for videos
       getThumbnailsForImages(videoIds), // Only need this for videos
-      getImageMetricsObject(searchResults),
+      getImageMetricsObject(searchResults, currentUserId),
       // Fetch tagIds from cache so client-side hidden-tag filtering works.
       // Search results from BitDex don't include tagIds (too expensive to store),
       // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
@@ -3299,7 +3299,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       const droppedCount = results.length - filtered.length;
       droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
 
-      const imageMetrics = await getImageMetricsObject(filtered);
+      const imageMetrics = await getImageMetricsObject(filtered, currentUserId);
       const fullData = filtered.map((h) => {
         const match = imageMetrics[h.id];
         return {
@@ -3419,7 +3419,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // Apply the (flagged) existence check
     const filtered = await checkImageExistence(filteredHitIds);
 
-    const imageMetrics = await getImageMetricsObject(filtered);
+    const imageMetrics = await getImageMetricsObject(filtered, currentUserId);
 
     const fullData = filtered.map((h) => {
       const match = imageMetrics[h.id];
@@ -4348,7 +4348,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       const droppedCount = limitedHits.length - filtered.length;
       droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
 
-      const imageMetrics = await getImageMetricsObject(filtered);
+      const imageMetrics = await getImageMetricsObject(filtered, currentUserId);
       const fullData = filtered.map((h) => {
         const match = imageMetrics[h.id];
         return {
@@ -4472,7 +4472,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       nextCursor = undefined;
     }
 
-    const imageMetrics = await getImageMetricsObject(filtered);
+    const imageMetrics = await getImageMetricsObject(filtered, currentUserId);
 
     const fullData = filtered.map((h) => {
       const match = imageMetrics[h.id];
@@ -4525,7 +4525,12 @@ const getImageMetricService = () =>
 
 type ImageMetricsObject = Awaited<ReturnType<typeof imageMetricsCache.fetch>>;
 
-const getImageMetricsObject = async (data: { id: number }[]): Promise<ImageMetricsObject> => {
+const getImageMetricsObject = async (
+  data: { id: number }[],
+  // The current viewer's userId, used solely to bucket the watcher-cutover
+  // rollout (below). Undefined for anon/unauthenticated reads.
+  userId?: number
+): Promise<ImageMetricsObject> => {
   try {
     const ids = data.map((d) => d.id);
 
@@ -4534,7 +4539,19 @@ const getImageMetricsObject = async (data: { id: number }[]): Promise<ImageMetri
     // `entitymetric:*` path, so merging this is a no-op; flip the flag to roll
     // over, and flip back (then bust `metrics:*`) to revert instantly. The
     // legacy write path is intentionally left intact so flip-back stays warm.
-    const fromWatcher = await getFliptBoolean(FLIPT_FEATURE_FLAGS.IMAGE_METRICS_FROM_WATCHER);
+    //
+    // Bucketed per-user (entityId = userId) so Flipt's percentage rollout ramps
+    // gradually (1% -> 10% -> 100%): a given user gets a consistent source
+    // across their whole feed, and the metrics:* cache warms in proportion to
+    // the rolled-out fraction rather than all at once (the cold-stampede that
+    // sank the first cutover, now also capped per-pod in MetricService). Anon
+    // traffic shares the 'anon' bucket and crosses the threshold atomically as
+    // the percentage ramps. The agg-source table (v2 vs legacy) is a SEPARATE
+    // global flag so every metrics:* populate uses one consistent CH source.
+    const fromWatcher = await getFliptBoolean(
+      FLIPT_FEATURE_FLAGS.IMAGE_METRICS_FROM_WATCHER,
+      userId?.toString() || 'anon'
+    );
     if (fromWatcher) {
       const metrics = await getImageMetricService().fetch('Image', ids);
       const result: ImageMetricsObject = {};
@@ -4719,7 +4736,7 @@ export const getImage = async ({
   const userCosmetics = await getCosmeticsForUsers([creatorId]);
   const profilePictures = await getProfilePicturesForUsers([creatorId]);
 
-  const imageMetrics = await getImageMetricsObject([firstRawImage]);
+  const imageMetrics = await getImageMetricsObject([firstRawImage], userId);
   const match = imageMetrics[firstRawImage.id];
   const imageCosmetics = await getCosmeticsForEntity({
     ids: [firstRawImage.id],
