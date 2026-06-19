@@ -8,7 +8,8 @@ import {
 
 /**
  * Round-trip + back-compat coverage for the opt-in brotli compression of `redis.packed`
- * values (the tensor-metadata whale fix). The contract:
+ * values (the tensor-metadata whale fix). compressPacked/decompressPacked are ASYNC
+ * (libuv-threadpool brotli, so the codec never blocks the event loop). The contract:
  *
  *  - compress (new write): pack → brotli → sentinel-prefix; decompress strips the
  *    sentinel + inflates back to the EXACT original packed bytes → unpack === original.
@@ -36,20 +37,20 @@ describe('packed brotli compression', () => {
     cachedAt: 1_700_000_000_000,
   };
 
-  it('round-trips: pack → compress → decompress → unpack equals the original', () => {
+  it('round-trips: pack → compress → decompress → unpack equals the original', async () => {
     const packed = Buffer.from(pack(sampleAnalysis));
-    const compressed = compressPacked(packed);
+    const compressed = await compressPacked(packed);
 
     // Sentinel-tagged and actually smaller (highly repetitive payload).
     expect(compressed[0]).toBe(PACKED_BROTLI_SENTINEL);
     expect(compressed.length).toBeLessThan(packed.length);
 
-    const restored = decompressPacked(compressed);
+    const restored = await decompressPacked(compressed);
     expect(Buffer.compare(restored, packed)).toBe(0); // exact bytes
     expect(unpack(restored)).toEqual(sampleAnalysis); // exact value
   });
 
-  it('back-compat: a legacy raw-msgpack buffer (no sentinel) decodes unchanged', () => {
+  it('back-compat: a legacy raw-msgpack buffer (no sentinel) decodes unchanged', async () => {
     const legacy = Buffer.from(pack(sampleAnalysis)); // simulates an existing uncompressed key
 
     // Sanity: legacy wrapper objects start with a msgpack MAP marker, never the sentinel.
@@ -58,26 +59,37 @@ describe('packed brotli compression', () => {
     const isFixmap = marker >= 0x80 && marker <= 0x8f;
     expect(isFixmap || marker === 0xde || marker === 0xdf).toBe(true);
 
-    const passthrough = decompressPacked(legacy);
+    const passthrough = await decompressPacked(legacy);
     expect(Buffer.compare(passthrough, legacy)).toBe(0); // untouched
     expect(unpack(passthrough)).toEqual(sampleAnalysis);
   });
 
-  it('decompressPacked is a no-op on an empty buffer (defensive)', () => {
+  it('decompressPacked is a no-op on an empty buffer (defensive)', async () => {
     const empty = Buffer.alloc(0);
-    expect(decompressPacked(empty)).toBe(empty);
+    expect(await decompressPacked(empty)).toBe(empty);
   });
 
-  it('compresses a large repetitive blob substantially (the whale property)', () => {
+  it('compresses a large repetitive blob substantially (the whale property)', async () => {
     const big = Buffer.from(
       pack({
         data: { tensors: Array.from({ length: 2000 }, (_, i) => `transformer.h.${i}.mlp.c_fc.weight`) },
         cachedAt: 0,
       })
     );
-    const compressed = compressPacked(big);
+    const compressed = await compressPacked(big);
     // Not asserting the measured 64.9x (codec/version-dependent), just that it's a big win.
     expect(compressed.length).toBeLessThan(big.length / 4);
-    expect(unpack(decompressPacked(compressed))).toEqual(unpack(big));
+    expect(unpack(await decompressPacked(compressed))).toEqual(unpack(big));
+  });
+
+  // The brotli sentinel (0x01) collides with the msgpack encoding of the bare integer 1
+  // (`pack(1) === <01>`). This is harmless ONLY because decompression is confined to the
+  // compress-aware read path, which only ever sees the `{ data, cachedAt }` wrapper
+  // (first byte = MAP marker). Pin the collision so the confinement rationale stays true:
+  // a bare scalar MUST NOT be routed through compression on a shared path.
+  it('documents the sentinel↔bare-scalar collision that justifies confinement', () => {
+    expect(Buffer.from(pack(1))[0]).toBe(PACKED_BROTLI_SENTINEL); // pack(1) === <01>
+    // pack(0) is 0x00 — distinct from the sentinel, but still must never be decompressed.
+    expect(Buffer.from(pack(0))[0]).not.toBe(PACKED_BROTLI_SENTINEL);
   });
 });

@@ -660,7 +660,10 @@ export async function fetchThroughCache<T>(
   // failed request); it just turns the failure mode from 500/504 into a slow 200.
   let cachedData: FetchThroughCacheEntity<T> | null;
   try {
-    cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key);
+    // Thread `compress` to the READ so it's symmetric with the compressed write below:
+    // only a compressed caller's get attempts brotli-decompress, and only that path
+    // carries the sentinel invariant. Non-compress callers read via the general path.
+    cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key, { compress });
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'fetchThroughCache get (cache cluster)', err, { key });
     return fetchThroughCacheFailOpen(key, fetchFn);
