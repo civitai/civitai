@@ -802,6 +802,13 @@ export function IframeHost({
         title: 'Choose a checkpoint',
         options: {
           canGenerate: true,
+          // publicOnly: the iframe driving this picker is an untrusted block, so
+          // it must never be able to enumerate the viewer's OWN private models.
+          // This drops the native modal's `OR user.id = <me>` Meili clause (see
+          // useResourceSelectMeiliFilters). Behaviour change: a model-slot block's
+          // checkpoint picker no longer shows the viewer's private checkpoints —
+          // the intended hardening, matching the page resource picker.
+          publicOnly: true,
           resources: [{ type: 'Checkpoint', baseModels }],
         },
         onSelect: (resource) => {
