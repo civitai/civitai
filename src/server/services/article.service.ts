@@ -2702,16 +2702,20 @@ export async function getArticleRatingReviews({
   // Resolve cover images from `coverId` (mirrors the main article feed). The
   // legacy `Article.cover` string is null for every current article, so the
   // review cards rendered blank covers until this lookup was added.
-  const coverIds = rows.map((x) => x.article.coverId).filter(isDefined);
+  // Dedupe ids (resolved tabs can hold multiple reviews for the same article)
+  // and index the result by id so the per-row attach below stays linear.
+  const coverIds = [...new Set(rows.map((x) => x.article.coverId).filter(isDefined))];
   const coverImages = coverIds.length
     ? await dbRead.image.findMany({
         where: { id: { in: coverIds } },
         select: { id: true, url: true, type: true, nsfwLevel: true },
       })
     : [];
+  const coverImageById = new Map(coverImages.map((img) => [img.id, img]));
 
   const items = rows.map((row) => {
-    const coverImage = coverImages.find((x) => x.id === row.article.coverId) ?? null;
+    const coverImage =
+      row.article.coverId != null ? coverImageById.get(row.article.coverId) ?? null : null;
     return { ...row, article: { ...row.article, coverImage } };
   });
 
@@ -2724,8 +2728,10 @@ export async function getArticleRatingReviewCounts() {
     _count: { _all: true },
   });
 
-  // Seed every status the moderator dashboard filters on so the UI can render
-  // a stable set of badges even when a bucket is empty.
+  // Initialize every ReportStatus so the result is a complete
+  // Record<ReportStatus, number> (empty buckets read as 0). The dashboard only
+  // surfaces Pending/Actioned/Unactioned; Processing is here to satisfy the
+  // type, not because it's a filterable bucket.
   const counts: Record<ReportStatus, number> = {
     [ReportStatus.Pending]: 0,
     [ReportStatus.Processing]: 0,
