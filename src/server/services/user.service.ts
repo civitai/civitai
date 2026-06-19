@@ -2,7 +2,8 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
-import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { banReasonDetails, CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { moderationActionEmail } from '~/server/email/templates';
 import {
   BanReasonCode,
   BlockedReason,
@@ -1578,7 +1579,10 @@ export const toggleBan = async ({
   force,
 }: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
   // Get user with username for search index deletion
-  const user = await getUserById({ id, select: { bannedAt: true, meta: true, username: true } });
+  const user = await getUserById({
+    id,
+    select: { bannedAt: true, meta: true, username: true, email: true },
+  });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
@@ -1650,6 +1654,47 @@ export const toggleBan = async ({
         ),
       ]),
     ]);
+  }
+
+  // Notify the user by email of the ban/unban decision. Skip the admin
+  // force-clear/re-ban path (`force`) since that isn't a user-facing decision.
+  // Never let an email failure break the ban: isolate in try/catch -> Axiom.
+  if (!force && user.email) {
+    try {
+      if (!bannedAt) {
+        // Being banned: the email shows only the sanitized public ban-reason
+        // label (never the private label, and never the moderator's free-text
+        // `detailsExternal`). Free text is kept in `meta.banDetails` for the
+        // appeal/Retool flow but is never emailed — this avoids exposing
+        // explicit/targeted prose to the user. The TOS link in the email
+        // template provides the policy reference.
+        const publicLabel = reasonCode
+          ? banReasonDetails[reasonCode]?.publicBanReasonLabel
+          : undefined;
+        const reason = publicLabel && publicLabel.trim().length > 0 ? publicLabel : undefined;
+
+        await moderationActionEmail.send({
+          to: user.email,
+          username: user.username ?? 'User',
+          kind: 'account-banned',
+          reason,
+        });
+      } else {
+        // Being unbanned: ban details are wiped on unban, so send no reason.
+        await moderationActionEmail.send({
+          to: user.email,
+          username: user.username ?? 'User',
+          kind: 'account-unbanned',
+        });
+      }
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'ban-email-failed',
+        message: (error as Error).message,
+        error,
+      });
+    }
   }
 
   return updatedUser;

@@ -31,6 +31,7 @@ const {
   mockLogToAxiom,
   mockSysRedis,
   mockResolveCanGenerateForVersions,
+  mockRecordSpendAttribution,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -80,6 +81,11 @@ const {
   // out of the test and we can drive canGenerate per-test. Default = a Map
   // saying the version IS generatable; FORBIDDEN tests override to false / miss.
   mockResolveCanGenerateForVersions: vi.fn(),
+  // W3 flow A — the spend-attribution write the submit path fires
+  // best-effort after a resolved submit. Mocked at the module boundary so
+  // the test asserts exact (server-derived) args + that a throw here never
+  // breaks submit.
+  mockRecordSpendAttribution: vi.fn(),
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -153,6 +159,12 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...args: unknown[]) => mockLogToAxiom(...args),
 }));
+// W3 flow A — the submit path dynamic-imports recordSpendAttribution from
+// here. Mock the whole module so we drive the spend-write behavior; the
+// real service is unit-tested separately in spend-attribution.service.test.
+vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
+  recordSpendAttribution: (...args: unknown[]) => mockRecordSpendAttribution(...args),
+}));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
     listForModel: vi.fn(),
@@ -183,6 +195,21 @@ vi.mock('~/server/services/block-registry.service', () => ({
     })),
   },
 }));
+
+// blocks.router imports `rateLimit` from middleware.trpc, which transitively
+// pulls in user-preferences.service → caches.ts → tag.selector (a top-level
+// `Prisma.validator(...)` call). In a fresh worktree the generated Prisma client
+// can't be produced (NixOS engine fetch), so evaluating that chain throws at
+// import time. Mock middleware.trpc with a pass-through `rateLimit` middleware
+// (built from the real, lightweight `middleware` factory) to cut the chain —
+// rate-limiting isn't under test here. (Same shim the sibling
+// blocks.router.subscriptions.test.ts / getInstallConfig.test.ts / flag-gate.test.ts use.)
+vi.mock('~/server/middleware.trpc', async () => {
+  const { middleware } = await import('~/server/trpc');
+  return {
+    rateLimit: () => middleware(({ next }) => next()),
+  };
+});
 
 import { blocksRouter } from '../blocks.router';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -286,9 +313,25 @@ beforeEach(() => {
     mockSysRedis.expire,
     mockSysRedis.ttl,
     mockResolveCanGenerateForVersions,
+    mockRecordSpendAttribution,
   ]) {
     fn.mockReset();
   }
+  // W3 flow A default: the spend-attribution write resolves successfully.
+  // Tests that exercise best-effort override it to reject.
+  mockRecordSpendAttribution.mockResolvedValue({
+    written: true,
+    row: {
+      id: 'bsa_x',
+      // TRACK-ONLY: the write records the event + gross only — no rate applied.
+      status: 'tracked',
+      appOwnerShareCents: 0,
+      spendSharePct: 0,
+      grossValueCents: 0,
+      rateCardVersion: 'unrated',
+      voidedReason: null,
+    },
+  });
   // Buzz-cap (audit A7): default to an empty window so the cap is non-binding
   // unless a test seeds prior spend. The cap is now an atomic reserve (INCRBY
   // returns the new running total) + refund (DECRBY); default incrBy → cost so
@@ -822,6 +865,212 @@ describe('blocks.submitWorkflow', () => {
         body: { kind: 'unknown', modelId: 7 } as never,
       })
     ).rejects.toThrow();
+  });
+
+  // ---- W3 flow A — buzz SPEND attribution wire-in ------------------------
+  // The submit path fires a best-effort, fire-and-forget spend-attribution
+  // write after a RESOLVED submit with a real workflow id. Everything it
+  // passes is SERVER-DERIVED from the verified token claims (forge-safe);
+  // a throw inside it must NEVER break the generation. The fire is a
+  // detached promise, so we let microtasks flush before asserting.
+  const flushMicrotasks = () => new Promise((r) => setImmediate(r));
+
+  function happySubmitWithWorkflow(cost = 25, workflowId = 'wf_real') {
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: cost }, steps: [] })
+      .mockResolvedValueOnce({
+        id: workflowId,
+        status: 'unassigned',
+        cost: { total: cost },
+        steps: [],
+      });
+  }
+
+  it('A-flow: fires a spend attribution with SERVER-DERIVED args on a resolved submit', async () => {
+    // Token carries the attribution-bearing claims; the BODY carries
+    // attacker-controllable fields. The write must read from CLAIMS only.
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({
+        buzzBudget: 1000,
+        appId: 'app_from_token',
+        appBlockId: 'apb_from_token',
+        blockInstanceId: 'bki_from_token',
+        sub: 'user:42',
+      })
+    );
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    // Server-derived from the VERIFIED token, not the client body.
+    expect(arg.appId).toBe('app_from_token');
+    expect(arg.appBlockId).toBe('apb_from_token');
+    expect(arg.blockInstanceId).toBe('bki_from_token');
+    expect(arg.userId).toBe(42); // from claims.sub, via parseSubjectUserId
+    expect(arg.workflowId).toBe('wf_real'); // the orchestrator's id
+    // Amount is the orchestrator-computed cost (ceil), not a client value.
+    expect(arg.buzzAmount).toBe(25);
+  });
+
+  // 🟡-1: the bounty must accrue off the REALIZED debit on the submit
+  // snapshot, not the whatif preflight ESTIMATE. Drive the whatif and the
+  // real submit to DIFFERENT costs so a regression to `Math.ceil(cost)`
+  // (the estimate) is caught.
+  function submitWithEstimateAndRealized(
+    estimate: number,
+    realized: number | undefined,
+    workflowId = 'wf_real'
+  ) {
+    // First call (whatif) → ESTIMATE; second call (real submit) → REALIZED.
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: estimate }, steps: [] })
+      .mockResolvedValueOnce({
+        id: workflowId,
+        status: 'unassigned',
+        // When `realized` is undefined, emit a snapshot with NO cost so the
+        // router exercises its estimate-fallback branch.
+        ...(realized === undefined ? {} : { cost: { total: realized } }),
+        steps: [],
+      });
+  }
+
+  it('🟡-1: accrues the bounty off the REALIZED debit (estimate 100, realized 40 → 40)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    submitWithEstimateAndRealized(100, 40);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    // Realized (40), NOT the whatif estimate (100). A revert to
+    // `Math.ceil(cost)` makes this 100 and fails the assertion.
+    expect(arg.buzzAmount).toBe(40);
+  });
+
+  it('🟡-1: a cache-hit / 0-realized accrues NOTHING even with a non-zero estimate', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // Estimate said 100 but the gen cost 0 (cache hit). The author must not
+    // be credited for a generation the platform never charged for.
+    submitWithEstimateAndRealized(100, 0);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzAmount).toBe(0);
+  });
+
+  it('🟡-1: falls back to the ESTIMATE when the realized value is absent', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // Submit snapshot carries no cost → realized absent → fall back to the
+    // estimate (100) so attribution isn't silently zeroed when the
+    // orchestrator omits the cost on the snapshot.
+    submitWithEstimateAndRealized(100, undefined);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzAmount).toBe(100);
+  });
+
+  it('A-flow: forge-safe — a forged appId/appBlockId in the BODY is ignored', async () => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({ buzzBudget: 1000, appId: 'app_real', appBlockId: 'apb_real' })
+    );
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    // Inject forged attribution fields onto the body — the schema strips
+    // unknowns, but even if it didn't, the write reads only from claims.
+    await caller.submitWorkflow({
+      blockToken: 'tok',
+      body: {
+        ...validBody(),
+        appId: 'app_ATTACKER',
+        appBlockId: 'apb_ATTACKER',
+        appOwnerUserId: 9999,
+      } as never,
+    });
+    await flushMicrotasks();
+
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.appId).toBe('app_real');
+    expect(arg.appBlockId).toBe('apb_real');
+    // No client-supplied owner/share is forwarded — the service derives it.
+    expect(arg).not.toHaveProperty('appOwnerUserId');
+  });
+
+  it('A-flow: best-effort — a thrown attribution write does NOT break submit', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+    mockRecordSpendAttribution.mockRejectedValue(new Error('attribution DB down'));
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    // The generation must still succeed despite the attribution failure.
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+    expect(result.snapshot.workflowId).toBe('wf_real');
+    expect(result.snapshot.status).toBe('pending');
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+  });
+
+  it('A-flow: does NOT attribute a RESOLVED failed snapshot (no generation to credit)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // whatif resolves; real submit RESOLVES with a failed status + a
+    // (non-sentinel) id. The reservation is kept, but no generation ran, so
+    // no author bounty accrues.
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+      .mockResolvedValueOnce({ id: 'wf_real', status: 'failed', cost: { total: 25 }, steps: [] });
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+    expect(result.snapshot.status).toBe('failed');
+    expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
+  });
+
+  it('A-flow: does NOT attribute the over-budget rejection (no submit happened)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 5 }));
+    happyVersionLookup();
+    happyUser();
+    // Only the whatif fires; cost (25) > budget (5) → early failed return.
+    mockSubmitWorkflow.mockResolvedValueOnce({
+      id: '',
+      status: 'succeeded',
+      cost: { total: 25 },
+      steps: [],
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+    expect(result.snapshot.status).toBe('failed');
+    expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
   });
 });
 
@@ -1548,7 +1797,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     //
     // The pre-spend gate (`resolveCanGenerateForVersions`) deliberately does NOT
     // check early-access `hasAccess` or the `availability:Private` subscription
-    // requirement (see the SCOPE comment on assertViewerCanGeneratePageModel).
+    // requirement (see the SCOPE comment on assertViewerCanGeneratePageResources).
     // Those are enforced DOWNSTREAM by the orchestrator resource belt
     // (`getGenerationResourceData` → `getResourceData`, which folds
     // `canGenerate = hasAccess && canGenerate` and throws on a Private resource
@@ -1612,6 +1861,457 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       await expect(
         caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
+  // ───────────────────── Page-LoRA (Increment 1) ───────────────────────────
+  //
+  // A page token can carry `body.additionalResources: [{ modelVersionId,
+  // strength }]` (LoRA stack). The server resolves each statelessly, enforces
+  // LoRA-only + base-model family-match, then gates the checkpoint AND every
+  // LoRA through resolveCanGenerateForVersions in ONE call — fail-closed if any
+  // resource is non-LoRA / family-mismatched / not entitled. This runs BEFORE
+  // resolveBlockCheckpoint / any cost / any reservation.
+  describe('Page-LoRA — additionalResources', () => {
+    // Multi-version lookup keyed by where.id. Checkpoint 99 = SDXL Checkpoint;
+    // additional rows are LoRAs (override per-test for family/type cases).
+    function versionRows(rows: Record<number, Record<string, unknown>>) {
+      const defaults: Record<number, Record<string, unknown>> = {
+        99: {
+          id: 99,
+          baseModel: 'SDXL 1.0',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'Checkpoint', userId: 1 },
+        },
+        ...rows,
+      };
+      mockDbRead.modelVersion.findUnique.mockImplementation(async (args: any) => {
+        return defaults[args?.where?.id] ?? null;
+      });
+    }
+
+    const sdxlLora = (id: number, over: Record<string, unknown> = {}) => ({
+      id,
+      baseModel: 'SDXL 1.0',
+      modelId: 100 + id,
+      status: 'Published',
+      availability: 'Public',
+      usageControl: 'Download',
+      meta: null,
+      generationCoverage: { covered: true },
+      model: { id: 100 + id, type: 'LORA', userId: 2 },
+      ...over,
+    });
+
+    const bodyWithLoras = (resources: Array<{ modelVersionId: number; strength?: number }>) =>
+      validBody({ additionalResources: resources });
+
+    function pageClaimsLocal(over: Record<string, unknown> = {}) {
+      return validClaims({
+        blockInstanceId: 'page_apb_page',
+        ctx: { slotId: 'app.page', entityType: 'none' },
+        ...over,
+      });
+    }
+
+    // FIX1 tests use a NON-Checkpoint page body, so resolveBlockCheckpoint falls
+    // through rungs 2-4 (viewer override / publisher default / popular). The
+    // LoRA-install-precedence suite above leaves a `default_checkpoint_version_id`
+    // on the (un-reset) resolveBlockInstance mock — clear both override sources
+    // so these tests deterministically reach the platform-popular fallback.
+    function clearCheckpointOverrides() {
+      (BlockRegistry.resolveBlockInstance as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        source: 'install',
+        modelId: 7,
+        slotId: 'app.page',
+        enabled: true,
+        settings: {},
+        installedByUserId: 42,
+        appBlock: {
+          id: 'ab_x',
+          blockId: 'gen-from-model',
+          appId: 'app',
+          status: 'approved',
+          manifest: { targets: [{ slotId: 'app.page' }] },
+          approvedScopes: ['ai:write:budgeted'],
+          app: { allowedScopes: 33554431 },
+        },
+      });
+      mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
+    }
+
+    it('a page submit gates the checkpoint AND every LoRA in ONE call', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201), 202: sdxlLora(202) });
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201, strength: 0.8 }, { modelVersionId: 202 }]),
+      });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      // The gate ran ONCE with checkpoint + both LoRAs in a single array.
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [versions] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(versions.map((v: { id: number }) => v.id).sort((a: number, b: number) => a - b)).toEqual([
+        99, 201, 202,
+      ]);
+    });
+
+    it('SECURITY: an un-entitled LoRA (canGenerate:false) → FORBIDDEN, no spend, no reservation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      // Checkpoint is generatable, the LoRA is NOT.
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([
+          [99, { canGenerate: true }],
+          [201, { canGenerate: false }],
+        ])
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled(); // no reservation
+      expect(mockAuditPromptServer).not.toHaveBeenCalled();
+    });
+
+    it('SECURITY fail-closed: a LoRA MISSING from the result Map → FORBIDDEN', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      // The LoRA (201) is simply absent from the Map → must be treated as deny.
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([[99, { canGenerate: true }]])
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('rejects a NON-LoRA additional resource (BAD_REQUEST), before the entitlement gate', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // 201 is a Checkpoint, not a LoRA.
+      versionRows({ 201: sdxlLora(201, { model: { id: 301, type: 'Checkpoint', userId: 2 } }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // Type rejection happens before the entitlement gate / any spend.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('rejects a base-model FAMILY-MISMATCHED LoRA (BAD_REQUEST), before the entitlement gate', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint is SDXL; the LoRA is SD 1.5 → different generation family.
+      versionRows({ 201: sdxlLora(201, { baseModel: 'SD 1.5' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unpublished LoRA (NOT_FOUND), no info leak', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201, { status: 'Draft' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('estimate: an un-entitled LoRA → FORBIDDEN, no orchestrator whatif', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal());
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([
+          [99, { canGenerate: true }],
+          [201, { canGenerate: false }],
+        ])
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.estimateWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('BELT: a LoRA that passes the pre-spend gate but is rejected by the orchestrator belt (early-access/Private) → no spend', async () => {
+      // The pre-spend gate deliberately does NOT see early-access / Private
+      // entitlement (default canGenerate:true here). The orchestrator belt (run
+      // inside createTextToImageStep for the FULL resource array at whatIf,
+      // BEFORE any reservation) is the second fail-closed layer.
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([
+          [99, { canGenerate: true }],
+          [201, { canGenerate: true }],
+        ])
+      );
+      mockCreateTextToImageStep.mockRejectedValueOnce(
+        new TRPCError({ code: 'BAD_REQUEST', message: 'Using Private resources require an active subscription.' })
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled(); // belt threw before reserve
+      expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+    });
+
+    // ── Money (Piece 4): the multi-resource cost is bounded by BOTH ceilings ──
+    it('MONEY: a 2-LoRA gen whose cost exceeds the per-gen budget returns the failed snapshot', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 30 }));
+      versionRows({ 201: sdxlLora(201), 202: sdxlLora(202) });
+      happyUser();
+      // whatif cost (with the LoRAs) is 75 > the 30 per-gen budget.
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 75 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201 }, { modelVersionId: 202 }]),
+      });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.cost).toEqual({ total: 75 });
+      expect(result.snapshot.error).toMatch(/insufficient buzz/i);
+      // Only the whatif ran; no real submit, no reservation taken.
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('MONEY: a multi-LoRA gen accumulates against the per-user daily cap (reservation over cap → failed + refund)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201), 202: sdxlLora(202) });
+      happyUser();
+      // whatif clears the per-call budget, but the reservation (with the LoRA
+      // cost folded in) tops the 50,000 daily cap → reject + refund.
+      mockSysRedis.incrBy.mockResolvedValue(50040);
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 60 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201 }, { modelVersionId: 202 }]),
+      });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/daily Buzz cap/i);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatif only
+      expect(mockSysRedis.decrBy).toHaveBeenCalledTimes(1); // reservation refunded
+      // The reservation amount is the multi-resource cost (ceil 60).
+      expect(mockSysRedis.incrBy.mock.calls[0][1]).toBe(60);
+    });
+
+    // ── FIX 1: family-match anchors on the RESOLVED checkpoint, not the body ──
+    //
+    // For a normal page the body model IS the Checkpoint, so resolved.baseModel
+    // and the resolved-checkpoint baseModel coincide. But nothing forces the
+    // page body to be a Checkpoint: if a page sends a NON-Checkpoint body,
+    // resolveBlockCheckpoint resolves a DIFFERENT default checkpoint as the
+    // anchor (viewer/publisher/popular-in-ecosystem). The LoRA family-match must
+    // validate against THAT checkpoint's baseModel — not the body model's.
+    it('FIX1: non-Checkpoint page body — LoRA family-matches the RESOLVED default checkpoint, not the body model', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Body model 99 is a LoRA (NOT a Checkpoint), baseModel SD 1.5. The
+      // additional LoRA 201 is SDXL — it MISMATCHES the body model's family but
+      // MATCHES the resolved default checkpoint's family (SDXL, below).
+      versionRows({
+        99: {
+          id: 99,
+          baseModel: 'SD 1.5',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'LORA', userId: 1 },
+        },
+        201: sdxlLora(201),
+      });
+      happyUser();
+      clearCheckpointOverrides();
+      // resolveBlockCheckpoint (non-Checkpoint body) falls through to the
+      // platform-popular fallback → modelMetric.findFirst returns an SDXL
+      // checkpoint (version 500). redis.get default = null (cache miss).
+      mockDbRead.modelMetric.findFirst.mockResolvedValue({
+        modelId: 300,
+        model: {
+          id: 300,
+          name: 'Popular SDXL',
+          modelVersions: [{ id: 500, name: 'v1', baseModel: 'SDXL 1.0' }],
+        },
+      });
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      // The SDXL LoRA is compatible with the SDXL *resolved checkpoint* (it would
+      // have been rejected if the match used the SD 1.5 body model).
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201 }]),
+      });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      // The gate ran with the body version + the LoRA (both passed the
+      // checkpoint-anchored family match).
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [versions] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(versions.map((v: { id: number }) => v.id).sort((a: number, b: number) => a - b)).toEqual([
+        99, 201,
+      ]);
+      // The anchor at the head of the resources array is the RESOLVED checkpoint
+      // (500), not the body version (99).
+      const stepArg = mockCreateTextToImageStep.mock.calls[0][0];
+      expect(stepArg.resources[0].id).toBe(500);
+    });
+
+    it('FIX1: non-Checkpoint page body — a LoRA matching the BODY family but NOT the resolved checkpoint is REJECTED', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Body model 99 is an SD 1.5 LoRA; additional LoRA 201 is ALSO SD 1.5
+      // (matches the body) — but the resolved default checkpoint is SDXL, so the
+      // checkpoint-anchored match must REJECT it. (Old body-anchored logic would
+      // have wrongly accepted it.)
+      versionRows({
+        99: {
+          id: 99,
+          baseModel: 'SD 1.5',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'LORA', userId: 1 },
+        },
+        201: sdxlLora(201, { baseModel: 'SD 1.5', model: { id: 301, type: 'LORA', userId: 2 } }),
+      });
+      happyUser();
+      clearCheckpointOverrides();
+      mockDbRead.modelMetric.findFirst.mockResolvedValue({
+        modelId: 300,
+        model: {
+          id: 300,
+          name: 'Popular SDXL',
+          modelVersions: [{ id: 500, name: 'v1', baseModel: 'SDXL 1.0' }],
+        },
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // Rejected at the family boundary — before the entitlement gate / any spend.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    // ── FIX 2: 'Other' (unknown base-model family) is treated as NON-matching ──
+    //
+    // getBaseModelSetType returns 'Other' for any unrecognized baseModel, so a
+    // checkpoint + LoRA with two DIFFERENT unknown baseModels both collapse to
+    // 'Other' and previously matched vacuously. Either side resolving to 'Other'
+    // must now DENY the LoRA.
+    it('FIX2: a checkpoint + LoRA with unknown/Other baseModels → BAD_REQUEST (was vacuously passing)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint body baseModel is an unrecognized string → 'Other'. The LoRA
+      // has a DIFFERENT unrecognized string → also 'Other'. Both collapse to
+      // 'Other'; the deny guard must reject rather than match vacuously.
+      versionRows({
+        99: {
+          id: 99,
+          baseModel: 'TotallyUnknownBase-Z',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'Checkpoint', userId: 1 },
+        },
+        201: sdxlLora(201, { baseModel: 'AnotherUnknownBase-Q' }),
+      });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // Denied before the entitlement gate / any spend.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('FIX2: a known-family checkpoint + an Other-family LoRA → BAD_REQUEST', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint is a recognized SDXL family; the LoRA baseModel is unknown →
+      // 'Other'. An 'Other' LoRA must be denied even against a known checkpoint.
+      versionRows({ 201: sdxlLora(201, { baseModel: 'UnknownBaseModel-XYZ' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    // ── Model-path guard: additionalResources is page-only ─────────────────
+    it('MODEL token with additionalResources → FORBIDDEN (page-only feature, no un-gated fan-out)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      // Rejected before the entitlement gate / any orchestrator interaction.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('MODEL token estimate with additionalResources → FORBIDDEN', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.estimateWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });

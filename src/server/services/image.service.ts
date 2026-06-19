@@ -197,7 +197,13 @@ import { getImageS3Client } from '~/utils/s3-client';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
+import {
+  FLIPT_FEATURE_FLAGS,
+  getEntityMetricAggSource,
+  getFliptBoolean,
+  getFliptVariant,
+  isFlipt,
+} from '../flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import { queryBitdex } from '~/server/bitdex/client';
 import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
@@ -2733,7 +2739,11 @@ export async function getImagesFromFeedSearch(
       },
       clickhouse as IClickhouseClient,
       pgDbWrite as IDbClient,
-      new MetricService(clickhouse as IClickhouseClient, redis as unknown as IRedisClient),
+      new MetricService(
+        clickhouse as IClickhouseClient,
+        redis as unknown as IRedisClient,
+        getEntityMetricAggSource
+      ),
       new CacheService(
         redis as unknown as IRedisClient,
         pgDbWrite as IDbClient,
@@ -2744,7 +2754,9 @@ export async function getImagesFromFeedSearch(
         // `image:tagIds` Redis hash. Same {imageId, tags[]} shape + same WD14/Rekognition +
         // styleTags/subjectTags filter, so it's a drop-in. Relieves next-redis-cluster memory.
         (ids: number[]) =>
-          tagIdsForImagesCache.fetch(ids) as Promise<Record<number, { imageId: number; tags: number[] }>>
+          tagIdsForImagesCache.fetch(ids) as Promise<
+            Record<number, { imageId: number; tags: number[] }>
+          >
       )
     );
 
@@ -4507,7 +4519,8 @@ let _imageMetricService: MetricService | null = null;
 const getImageMetricService = () =>
   (_imageMetricService ??= new MetricService(
     clickhouse as IClickhouseClient,
-    redis as unknown as IRedisClient
+    redis as unknown as IRedisClient,
+    getEntityMetricAggSource
   ));
 
 type ImageMetricsObject = Awaited<ReturnType<typeof imageMetricsCache.fetch>>;

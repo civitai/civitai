@@ -28,6 +28,11 @@ import {
 } from './buzz.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
 import { validateBuzzPurchaseAttribution } from '~/server/services/blocks/attribution-validator.service';
+import {
+  encodeAttributionMetadata,
+  extractAttribution,
+  type BlockAttribution,
+} from '~/server/schema/blocks/attribution.schema';
 import { sleep } from '~/server/utils/concurrency-helpers';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
@@ -58,9 +63,59 @@ export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) 
   }
 };
 
+/**
+ * W3 flow C FIN-1 — re-derive App Blocks membership attribution
+ * SERVER-SIDE before stamping it onto a Stripe subscription's metadata.
+ *
+ * The browser passes a `blockAttribution` bag (appId / appBlockId /
+ * blockInstanceId / scope / modelId / slotId) from the block's "Buy
+ * membership" CTA. We NEVER trust it: we run it through the SAME chokepoint
+ * the Buzz-purchase path uses (`validateBuzzPurchaseAttribution`, which
+ * resolves the cited instance AS THE BUYER, strips/corrects forged
+ * appId/scope, and drops attribution that doesn't resolve), then re-encode
+ * the SERVER-DERIVED fields for the subscription metadata.
+ *
+ * Returns a flat string-keyed metadata bag (the `block*` keys) ready to
+ * spread onto `subscription_data.metadata` / `subscriptions.update`
+ * metadata, or `null` when there's nothing valid to stamp (no attribution,
+ * or it was forged/stripped) — so the caller stamps it conditionally and a
+ * normal (non-block) membership purchase carries no block keys.
+ *
+ * This reuses the buzz validator verbatim (same resolver, same strip-on-
+ * forge, same page_* path) so model-slot AND page-surface membership CTAs
+ * are both covered with zero duplicated FIN-1 logic.
+ */
+export async function deriveSubscriptionAttributionMetadata({
+  blockAttribution,
+  sessionUserId,
+}: {
+  blockAttribution?: BlockAttribution;
+  sessionUserId: number;
+}): Promise<Record<string, string> | null> {
+  if (!blockAttribution) return null;
+  // Encode → validate (FIN-1) → decode the server-derived bag.
+  const encoded = encodeAttributionMetadata(blockAttribution);
+  if (!encoded) return null;
+  // validateBuzzPurchaseAttribution pins/asserts a `userId` too; we don't
+  // carry a client userId on the subscription bag, so the spender pin is a
+  // no-op here (the buyer is ctx.user.id, captured by the caller).
+  const validated = await validateBuzzPurchaseAttribution({
+    metadata: { ...encoded } as Record<string, unknown> & { userId?: unknown },
+    sessionUserId,
+  });
+  // Pull the SERVER-DERIVED block fields back out. If the validator stripped
+  // them (forged / non-resolving instance), extractAttribution returns null
+  // and we stamp nothing — the membership purchase proceeds un-attributed.
+  const derived = extractAttribution(
+    validated as Record<string, string | number | null | undefined>
+  );
+  return encodeAttributionMetadata(derived);
+}
+
 export const createSubscribeSession = async ({
   priceId,
   refCode,
+  blockAttribution,
   customerId,
   user,
 }: Schema.CreateSubscribeSessionInput & {
@@ -69,6 +124,14 @@ export const createSubscribeSession = async ({
 }) => {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe is not available');
+
+  // FIN-1: re-derive the membership attribution server-side ONCE, up front,
+  // against the authenticated buyer. Stamped onto whichever Stripe path the
+  // purchase takes below (upgrade subscriptions.update OR new-sub Checkout).
+  const blockAttributionMetadata = await deriveSubscriptionAttributionMetadata({
+    blockAttribution,
+    sessionUserId: user.id,
+  });
 
   if (!customerId) {
     customerId = await createCustomer(user);
@@ -195,6 +258,17 @@ export const createSubscribeSession = async ({
       const cleanRefCode = refCode?.trim().toUpperCase();
       const sanitizedRefCode = cleanRefCode && cleanRefCode.length > 0 ? cleanRefCode : undefined;
 
+      // Upgrades skip Checkout, so the new-sub metadata stamp below doesn't
+      // apply — patch BOTH ref_code AND the FIN-1 block attribution onto the
+      // subscription metadata here, in the same update call (mirrors the
+      // ref_code pattern). The next invoice.paid (billing_reason:
+      // subscription_update / _cycle) reads it back via
+      // subscription_details.metadata → recordSubscriptionAttribution.
+      const upgradeMetadata: Record<string, string> = {
+        ...(sanitizedRefCode ? { ref_code: sanitizedRefCode } : {}),
+        ...(blockAttributionMetadata ?? {}),
+      };
+
       await stripe.subscriptions.update(subscriptionId, {
         items,
         billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
@@ -203,7 +277,7 @@ export const createSubscribeSession = async ({
         payment_behavior: isUpgrade ? 'default_incomplete' : undefined,
         // @ts-ignore This is valid as per stripe's documentation
         discounts,
-        ...(sanitizedRefCode ? { metadata: { ref_code: sanitizedRefCode } } : {}),
+        ...(Object.keys(upgradeMetadata).length > 0 ? { metadata: upgradeMetadata } : {}),
       });
 
       if (sanitizedRefCode) {
@@ -233,6 +307,18 @@ export const createSubscribeSession = async ({
     },
   ];
 
+  // Build the metadata bag stamped onto BOTH the subscription
+  // (subscription_data.metadata → read back on every invoice.paid via
+  // subscription_details.metadata) AND the session metadata (the
+  // webhook-ordering-race fallback, mirroring ref_code). FIN-1 block
+  // attribution rides alongside ref_code. Stripe caps metadata at 50 keys /
+  // 500 chars-per-value; ref_code + the 6 block keys are well within.
+  const checkoutMetadata: Record<string, string> = {
+    ...(refCode ? { ref_code: refCode } : {}),
+    ...(blockAttributionMetadata ?? {}),
+  };
+  const hasCheckoutMetadata = Object.keys(checkoutMetadata).length > 0;
+
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
     mode: 'subscription',
@@ -252,8 +338,8 @@ export const createSubscribeSession = async ({
         optional: true,
       },
     ],
-    ...(refCode
-      ? { subscription_data: { metadata: { ref_code: refCode } }, metadata: { ref_code: refCode } }
+    ...(hasCheckoutMetadata
+      ? { subscription_data: { metadata: checkoutMetadata }, metadata: checkoutMetadata }
       : {}),
   });
 
@@ -864,6 +950,175 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
         stripeChargeId,
       },
     }).catch(handleLogError);
+
+    // -----------------------------------------------------------------
+    // W3 flow C — App Blocks MEMBERSHIP attribution. If this membership
+    // purchase was initiated from inside a block, the FIN-1-derived block
+    // attribution was stamped onto the subscription metadata at checkout
+    // (createSubscribeSession). Read it back and write ONE attribution row
+    // per PAID invoice (RENEWALS-PAY: subscription_create AND
+    // subscription_cycle both accrue a share).
+    //
+    // Proration policy: gate the attribution write to billing_reason IN
+    // (subscription_create, subscription_cycle) — EXCLUDE subscription_update.
+    // A mid-cycle upgrade emits a `subscription_update` PRORATION invoice
+    // (the upgrade delta for the rest of the period) AND, at the period
+    // boundary, a `subscription_cycle` invoice for the full new price. The
+    // UNIQUE(invoice_id, app_block_id) only dedups the SAME invoice; the
+    // proration and the cycle invoice are DISTINCT invoice_ids covering
+    // OVERLAPPING value, so attributing both would over-accrue (proration
+    // delta + full cycle) for that period. We therefore do NOT separately
+    // attribute proration deltas — the period's subscription_cycle invoice
+    // captures its value. (The buzz grant / recordMembershipPaymentReward /
+    // ref_code logic above is intentionally LEFT firing for subscription_update
+    // so an upgrade still grants Buzz / records the membership reward; only
+    // this attribution write is gated.) Revisit if per-period proration
+    // sharing is ever wanted — the alternative is a per-(subscription_id,
+    // period_start) dedup that attributes the delta and reconciles against the
+    // cycle invoice instead of skipping subscription_update.
+    //
+    // Best-effort: a failed attribution write MUST NOT break membership
+    // provisioning (the buzz grant + reward above already happened). The
+    // (invoice_id, app_block_id) UNIQUE makes a webhook retry idempotent.
+    // -----------------------------------------------------------------
+    const ATTRIBUTABLE_BILLING_REASONS = ['subscription_create', 'subscription_cycle'] as const;
+    const isAttributableBillingReason =
+      !!invoice.billing_reason &&
+      (ATTRIBUTABLE_BILLING_REASONS as readonly string[]).includes(invoice.billing_reason);
+    // $0 invoices (proration fully covered by credit balance, etc.) carry no
+    // NEW money to share — skip the write to avoid creating benign-but-noisy
+    // pending zero-everything rows that the confirm-pending cron promotes
+    // forever. amount_paid is the correct basis (you only share new money).
+    const grossUsdCents = invoice.amount_paid ?? invoice.total ?? 0;
+    if (isAttributableBillingReason && grossUsdCents > 0) {
+      try {
+        const blockAttribution = extractAttribution(
+          subscriptionMetadata as Record<string, string | number | null | undefined>
+        );
+        let resolvedAttribution = blockAttribution;
+        let attributionSource: 'metadata' | 'fallback-session' | 'none' = blockAttribution
+          ? 'metadata'
+          : 'none';
+
+        // Webhook-ordering race (same as ref_code): invoice.paid for a
+        // brand-new subscription can land before checkout.session.completed
+        // copied the metadata onto the Subscription. Fall back to the parent
+        // Checkout Session's metadata so the FIRST invoice isn't lost.
+        //
+        // SCOPED to subscription_create: the race only exists for a
+        // subscription's FIRST invoice. By the time a renewal
+        // (subscription_cycle) fires, the metadata was stamped onto the
+        // Subscription at creation and is reliably present in
+        // subscription_details.metadata — so a renewal that resolves no
+        // attribution genuinely has none (a non-block membership), and the
+        // Checkout-Session lookup would be a guaranteed-empty Stripe API call
+        // on every renewal. Gating it here avoids that per-renewal round-trip.
+        if (
+          !resolvedAttribution &&
+          invoice.subscription &&
+          invoice.billing_reason === 'subscription_create'
+        ) {
+          const subId =
+            typeof invoice.subscription === 'string'
+              ? invoice.subscription
+              : invoice.subscription.id;
+          try {
+            const stripeClient = await getServerStripe();
+            if (stripeClient) {
+              const sessions = await stripeClient.checkout.sessions.list({
+                subscription: subId,
+                limit: 1,
+              });
+              const sessionMeta = sessions.data[0]?.metadata ?? undefined;
+              const fromSession = extractAttribution(
+                sessionMeta as Record<string, string | number | null | undefined> | undefined
+              );
+              if (fromSession) {
+                resolvedAttribution = fromSession;
+                attributionSource = 'fallback-session';
+              }
+            }
+          } catch (err) {
+            handleLogError(err as Error);
+          }
+        }
+
+        if (resolvedAttribution) {
+          // Pull the actual Stripe fee off the charge's balance transaction
+          // (same as the buzz-purchase path). Best-effort: a 0 fee just means
+          // the publisher gets a slightly higher (net===gross) share.
+          let providerFeeCents = 0;
+          if (stripeChargeId) {
+            try {
+              const stripeClient = await getServerStripe();
+              if (stripeClient) {
+                const charge = await stripeClient.charges.retrieve(stripeChargeId, {
+                  expand: ['balance_transaction'],
+                });
+                const balanceTx = charge.balance_transaction;
+                if (balanceTx && typeof balanceTx !== 'string') {
+                  providerFeeCents = balanceTx.fee ?? 0;
+                }
+              }
+            } catch {
+              // best-effort; leave fee at 0
+            }
+          }
+
+          const line = invoice.lines.data.find((l) => l.price?.product === billedProduct?.id);
+          const periodStart = line?.period?.start ? new Date(line.period.start * 1000) : null;
+          const periodEnd = line?.period?.end ? new Date(line.period.end * 1000) : null;
+
+          const { recordSubscriptionAttribution } = await import(
+            '~/server/services/blocks/buzz-attribution.service'
+          );
+          await recordSubscriptionAttribution({
+            userId: user.id,
+            buzzAmount: billedProductMeta.monthlyBuzz ?? 0,
+            buzzType: (billedProductMeta.buzzType as string) ?? 'yellow',
+            usdAmountCents: grossUsdCents,
+            providerFeeCents,
+            paymentProvider: 'stripe',
+            invoiceId: invoice.id,
+            subscriptionId:
+              typeof invoice.subscription === 'string'
+                ? invoice.subscription
+                : invoice.subscription?.id ?? null,
+            billingReason: invoice.billing_reason ?? null,
+            periodStart,
+            periodEnd,
+            tier: billedProductMeta.tier ?? null,
+            attribution: resolvedAttribution,
+          });
+
+          logToAxiom(
+            {
+              name: 'invoice-paid-block-attribution',
+              refereeId: user.id,
+              invoiceId: invoice.id,
+              appId: resolvedAttribution.appId,
+              appBlockId: resolvedAttribution.appBlockId,
+              billingReason: invoice.billing_reason,
+              source: attributionSource,
+            },
+            'webhooks'
+          ).catch(() => null);
+        }
+      } catch (attrErr) {
+        // Never fail membership provisioning on an attribution write.
+        logToAxiom(
+          {
+            name: 'invoice-paid-block-attribution',
+            type: 'error',
+            refereeId: user.id,
+            invoiceId: invoice.id,
+            message: 'block subscription attribution write failed',
+            error: (attrErr as Error)?.message,
+          },
+          'webhooks'
+        ).catch(() => null);
+      }
+    }
 
     // Renewals (subscription_cycle) often arrive without a paired
     // subscription.updated event, so the session/multiplier caches won't be

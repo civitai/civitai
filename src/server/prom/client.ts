@@ -207,6 +207,27 @@ export const cacheRevalidateCounter = registerCounterWithLabels({
   labelNames: ['cache_name', 'cache_type'] as const,
 });
 
+// createCachedArray cluster-read FAIL-OPEN metrics (PR #2619). The fail-open degrades a
+// rejected cluster Redis read to a direct origin (DB) fetch instead of a 500 — trading 500s
+// for DB load. These make that trade observable:
+//   - degraded_total      = times we entered the degraded path (the fail-open FIRE RATE; a
+//                           proxy for a wedged cluster client, per cache).
+//   - origin_fetch_total  = ids actually sent to lookupFn (the DEDUPED DB load, after per-id
+//                           single-flight). Its rate is the real DB-row load a wedge induces;
+//                           origin_fetch / (ids requested) shows the coalescing effectiveness.
+// Healthy traffic never touches these (the path is reached only on a cluster-read reject).
+export const cacheFailOpenDegradedCounter = registerCounterWithLabels({
+  name: 'cache_failopen_degraded_total',
+  help: 'createCachedArray cluster-read fail-open: degraded-fetch calls by cache name',
+  labelNames: ['cache_name'] as const,
+});
+
+export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
+  name: 'cache_failopen_origin_fetch_total',
+  help: 'createCachedArray fail-open: ids sent to origin (lookupFn) by cache name — deduped DB load',
+  labelNames: ['cache_name'] as const,
+});
+
 // tRPC per-procedure latency — wall-clock duration of the full middleware chain +
 // resolver, labeled by procedure path. Used to rank heavy-pool isolation
 // candidates by P99 x rate (the criterion behind the image-feed cutover). Bucket
@@ -317,6 +338,32 @@ export const blockBuzzAttributionWriteCounter = registerCounterWithLabels({
   name: 'block_buzz_attribution_total',
   help: 'Block buzz attribution rows written',
   labelNames: ['provider', 'scope', 'status'] as const,
+});
+
+// App Blocks buzz SPEND attribution (W3 flow A)
+// One row written per block-initiated generation that spends the viewer's
+// own Buzz balance and accrues an author bounty. `status` ∈
+// 'pending'|'voided' at write time (voided = self-spend/internal-owner
+// zero-share row); 'duplicate' marks an idempotent no-op (same workflow
+// re-submitted). No provider/scope labels — spend has neither.
+export const blockSpendAttributionWriteCounter = registerCounterWithLabels({
+  name: 'block_spend_attribution_total',
+  help: 'Block buzz spend attribution rows written',
+  labelNames: ['status'] as const,
+});
+
+// App Blocks MEMBERSHIP / subscription attribution (W3 flow C)
+// One row written per PAID invoice of a block-initiated membership
+// purchase. `status` ∈ 'pending'|'voided' at write time (voided =
+// self-purchase/internal-owner zero-share row); 'duplicate' marks an
+// idempotent no-op (same invoice webhook retried); 'clawback' marks a
+// negative carry-forward row written on refund/proration of a paid-out
+// period. `billing_reason' tells subscription_create (initial) from
+// subscription_cycle (renewal) so renewals-pay is observable.
+export const blockSubscriptionAttributionWriteCounter = registerCounterWithLabels({
+  name: 'block_subscription_attribution_total',
+  help: 'Block membership/subscription attribution rows written',
+  labelNames: ['provider', 'status', 'billing_reason'] as const,
 });
 
 // App Blocks KV datastore (W4-v0)

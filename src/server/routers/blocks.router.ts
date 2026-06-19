@@ -1,6 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS } from '~/shared/constants/slot-registry';
+import {
+  KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
+  isLaunchSlot,
+  PAGE_SLOT_ID,
+} from '~/shared/constants/slot-registry';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
@@ -46,16 +50,19 @@ import {
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
-// dynamic import() inside assertViewerCanGeneratePageModel so the heavy
+// dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
 // stays OUT of this router's static import graph — mirroring the existing
 // lazy import of recordScopeInvocation below.
 import type { ResolveCanGenerateVersion } from '~/server/services/generation/generation.service';
 import {
   buildTextToImageInput,
+  isPageLoraResource,
   resolveBlockVersionContext,
+  resolvePageResourceContext,
   snapshotFromWorkflow,
 } from '~/server/services/blocks/workflow.service';
+import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
@@ -159,27 +166,35 @@ function isPageToken(claims: { ctx?: unknown }): boolean {
 // always a mod (assertViewerIsModerator), so they see mod-level access, which
 // is correct platform behaviour; when GA opens to non-mods the same gate bounds
 // them properly. Fail-closed: a version missing from the result Map → FORBIDDEN.
-async function assertViewerCanGeneratePageModel(opts: {
-  gate: ReturnType<typeof buildGateVersion>;
+//
+// Page-LoRA (Increment 1): generalized from 1→N versions. The checkpoint AND
+// every picked LoRA are gated in ONE `resolveCanGenerateForVersions` call (it
+// already takes an array and returns a Map keyed by version id). FAIL CLOSED if
+// ANY gate's canGenerate is false OR the version is missing from the result Map
+// — a missed entry must deny, never default-allow.
+async function assertViewerCanGeneratePageResources(opts: {
+  gates: ReturnType<typeof buildGateVersion>[];
   viewer: { id: number; isModerator: boolean };
   sfwOnly: boolean;
   wildcardsEnabled: boolean;
 }): Promise<void> {
-  const { gate, viewer, sfwOnly, wildcardsEnabled } = opts;
+  const { gates, viewer, sfwOnly, wildcardsEnabled } = opts;
   const { resolveCanGenerateForVersions } = await import(
     '~/server/services/generation/generation.service'
   );
-  const states = await resolveCanGenerateForVersions([gate], {
+  const states = await resolveCanGenerateForVersions(gates, {
     user: { id: viewer.id, isModerator: viewer.isModerator },
     sfwOnly,
     wildcardsEnabled,
   });
-  const canGenerate = states.get(gate.id)?.canGenerate ?? false;
-  if (!canGenerate) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'model is not available for generation',
-    });
+  for (const gate of gates) {
+    const canGenerate = states.get(gate.id)?.canGenerate ?? false;
+    if (!canGenerate) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'a selected resource is not available for generation',
+      });
+    }
   }
 }
 
@@ -198,6 +213,76 @@ function buildGateVersion(gate: {
   modelVersionAlias: unknown;
 }): ResolveCanGenerateVersion {
   return gate as unknown as ResolveCanGenerateVersion;
+}
+
+// Page-LoRA (Increment 1): resolve + validate the page's additional-resource
+// (LoRA) stack from `body.additionalResources`. For each entry it:
+//   1. resolves the version statelessly (NO modelId binding — pages have none),
+//   2. enforces LoRA-only v1 (rejects any non-LoRA additional resource), and
+//   3. enforces an EXPLICIT base-model FAMILY match against the checkpoint.
+// The family check is the correctness boundary: the orchestrator belt filters
+// by resource TYPE (common.ts keeps a LoRA-typed resource), NOT by base-model
+// family — so a family-mismatched LoRA of type LORA is PASSED downstream and
+// billed for, producing a gen the viewer paid for that quietly ignored (or
+// degraded) their LoRA. This explicit check is what prevents such a LoRA from
+// being sent (and charged) at all. We collapse each side with
+// getBaseModelSetType (e.g. all SDXL variants → 'SDXL') so a compatible variant
+// isn't falsely rejected.
+//
+// `checkpointBaseModel` MUST be the baseModel of the ACTUAL checkpoint
+// resolveBlockCheckpoint resolves (the anchor buildTextToImageInput uses), NOT
+// the page body model — for a non-Checkpoint page body those differ.
+//
+// Returns the per-LoRA gate bags so the caller can pass checkpoint + every LoRA
+// through the entitlement gate in ONE call. Throws BAD_REQUEST (non-LoRA /
+// unknown-family / family-mismatch), NOT_FOUND (missing/unpublished version) —
+// all BEFORE any cost/spend.
+async function resolvePageLoraGates(opts: {
+  additionalResources: { modelVersionId: number; strength: number }[] | undefined;
+  checkpointBaseModel: string;
+}): Promise<ReturnType<typeof buildGateVersion>[]> {
+  const { additionalResources, checkpointBaseModel } = opts;
+  if (!additionalResources?.length) return [];
+  const checkpointFamily = getBaseModelSetType(checkpointBaseModel);
+  // An unrecognized baseModel collapses to the 'Other' sentinel (getBaseModelGroup).
+  // If the checkpoint family itself is 'Other' we can't establish compatibility
+  // for ANY LoRA, so reject up front — mirrors the `g !== 'Other'` guard
+  // getBaseModelFromResources uses (generation.constants.ts). Without this, two
+  // DIFFERENT unknown baseModels both collapse to 'Other' and the family-match
+  // below would pass vacuously.
+  if (checkpointFamily === 'Other') {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'the resolved checkpoint base model is not recognized for LoRA compatibility',
+    });
+  }
+  const gates: ReturnType<typeof buildGateVersion>[] = [];
+  for (const r of additionalResources) {
+    const lora = await resolvePageResourceContext(r.modelVersionId);
+    // LoRA-only v1. A non-LoRA additional resource (Checkpoint, VAE, embedding,
+    // etc.) is rejected at the boundary rather than silently passed downstream.
+    if (!isPageLoraResource(lora.modelType)) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'additional resources must be LoRA models',
+      });
+    }
+    // Explicit base-model family match (correctness boundary; the belt filters
+    // by type, not family, so it would PASS a family-mismatched LoRA and bill
+    // for it). An 'Other' (unrecognized) LoRA family is treated as NON-matching
+    // and denied — two different unknown baseModels both map to 'Other' and
+    // would otherwise match vacuously (checkpointFamily is already guaranteed
+    // non-'Other' above).
+    const loraFamily = getBaseModelSetType(lora.baseModel);
+    if (loraFamily === 'Other' || loraFamily !== checkpointFamily) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'a selected LoRA is not compatible with the checkpoint base model',
+      });
+    }
+    gates.push(buildGateVersion(lora.gate));
+  }
+  return gates;
 }
 
 // ---- Cumulative Buzz-spend cap (audit A7 / design-gaps H1) -----------------
@@ -342,6 +427,54 @@ async function assertCanManageBlocks(
   if (row.userId !== ctx.user.id) throw throwAuthorizationError('Not the model owner');
 }
 
+/**
+ * PAGE-ONLY LAUNCH GATE (install path). Rejects a non-launch slot for the
+ * public (non-moderator) audience; moderators are grandfathered (the live
+ * mod-only model-slot apps keep installing). Mod status is the server-stamped
+ * session flag (`ctx.user?.isModerator`), the same source every other belt in
+ * this router uses. `isLaunchSlot` is the single source of truth for "in the
+ * launch surface" — no hardcoded slot id here.
+ */
+function assertLaunchSlotForCaller(
+  ctx: { user?: { id: number; isModerator?: boolean } },
+  slotId: string
+) {
+  if (ctx.user?.isModerator) return; // grandfather mods
+  if (isLaunchSlot(slotId)) return; // launch (page) slots are public-OK
+  throw new TRPCError({
+    code: 'FORBIDDEN',
+    message: 'This app type isn’t available yet.',
+  });
+}
+
+/**
+ * Manifest-level variant of {@link assertLaunchSlotForCaller} for the
+ * subscription path, where the slot isn't an input — it's implied by the app's
+ * manifest targets. A model-slot app (the only kind that takes a subscription;
+ * page apps are stateless and never subscribed) is non-launch, so a non-mod is
+ * rejected. A moderator is grandfathered. An app is launch-eligible iff it
+ * declares a page AND `app.page` is a launch slot (mirrors the service's
+ * isAppLaunchEligible / the public-read filter, keeping the allowlist the single
+ * source of truth).
+ */
+function assertLaunchAppForCaller(
+  ctx: { user?: { id: number; isModerator?: boolean } },
+  manifest: unknown
+) {
+  if (ctx.user?.isModerator) return; // grandfather mods
+  const declaresPage =
+    !!manifest &&
+    typeof (manifest as { page?: unknown }).page === 'object' &&
+    (manifest as { page?: unknown }).page !== null &&
+    typeof (manifest as { page?: { path?: unknown } }).page?.path === 'string' &&
+    ((manifest as { page: { path: string } }).page.path?.length ?? 0) > 0;
+  if (isLaunchSlot(PAGE_SLOT_ID) && declaresPage) return; // a launch page app
+  throw new TRPCError({
+    code: 'FORBIDDEN',
+    message: 'This app type isn’t available yet.',
+  });
+}
+
 async function resolveModelIdFromBlockInstance(blockInstanceId: string): Promise<number> {
   // B2 (same posture as above): dbWrite for the ownership-relevant lookup.
   // updateSettings is publisher-only and only ever operates on pinned
@@ -410,6 +543,13 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       await assertCanManageBlocks(ctx, input.modelId);
+      // PAGE-ONLY LAUNCH GATE: installOnModel only ever targets a MODEL slot
+      // (KNOWN_SLOT_IDS is the 3 model slots; the page slot never flows here),
+      // so every model-slot install is a non-launch slot. Reject it for the
+      // public (non-mod) audience; moderators are grandfathered so the live
+      // mod-only generate-from-model install path is untouched. `isLaunchSlot`
+      // is the single source of truth (not a hardcoded check on the slot id).
+      assertLaunchSlotForCaller(ctx, input.slotId);
       return BlockRegistry.installOnModel({
         ...input,
         installedByUserId: ctx.user!.id,
@@ -1059,7 +1199,12 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [], nextCursor: undefined };
       }
-      return BlockRegistry.listAvailable(input);
+      // PAGE-ONLY LAUNCH GATE: the public (non-mod) audience sees launch (page)
+      // apps only; moderators are grandfathered (see everything, incl. the
+      // mod-only model-slot apps like generate-from-model). Mod status comes
+      // from the server-stamped session `ctx.user?.isModerator` (cannot be
+      // spoofed client-side — same source as every other belt in this router).
+      return BlockRegistry.listAvailable(input, !ctx.user?.isModerator);
     }),
 
   /**
@@ -1111,7 +1256,15 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         throw throwNotFoundError('App block not found');
       }
-      const detail = await BlockRegistry.getAppDetail(input.appBlockId);
+      // PAGE-ONLY LAUNCH GATE: a non-mod hitting a non-launch (model-slot) app
+      // gets the SAME NOT_FOUND posture as a missing/unapproved app — the
+      // service returns null for it under launchOnly, so no model-app detail
+      // leaks to the public. Mods (grandfathered) see every app. Mod status is
+      // the server-stamped session flag.
+      const detail = await BlockRegistry.getAppDetail(
+        input.appBlockId,
+        !ctx.user?.isModerator
+      );
       if (!detail) throw throwNotFoundError('App block not found');
       return detail;
     }),
@@ -1150,7 +1303,12 @@ export const blocksRouter = router({
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return { items: [] };
       }
-      const items = await BlockRegistry.getFeaturedBlocks(input.limit);
+      // PAGE-ONLY LAUNCH GATE: same public-vs-mod split as listAvailable — the
+      // non-mod featured rail carries launch (page) apps only; mods see all.
+      const items = await BlockRegistry.getFeaturedBlocks(
+        input.limit,
+        !ctx.user?.isModerator
+      );
       return { items };
     }),
 
@@ -1302,6 +1460,12 @@ export const blocksRouter = router({
       if (block.status !== 'approved') {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
       }
+      // PAGE-ONLY LAUNCH GATE: a subscription only ever attaches a MODEL-slot
+      // app (page apps are stateless — Decision 2 — and never subscribed), so
+      // for the public (non-mod) audience this is always a non-launch app and is
+      // rejected. Moderators are grandfathered. Resolves launch-eligibility from
+      // the app's manifest (declares a page) since the slot isn't an input here.
+      assertLaunchAppForCaller(ctx, block.manifest);
       // Manifest-driven settings validation. The 4KB cap from the router-
       // level settingsSchema has already fired; this pass enforces the
       // per-field shape declared in the manifest. Manifests without a
@@ -1441,12 +1605,14 @@ export const blocksRouter = router({
       }
       // Context binding. A MODEL token pins `ctx.modelId`; the body must match
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
-      // lets the viewer pick any model they're entitled to generate against, so
-      // the modelId match is SKIPPED and replaced (below, after the version
-      // read) by the pre-spend availability/coverage gate
-      // (assertViewerCanGeneratePageModel). Early-access + Private-subscription
-      // entitlement is enforced separately by the orchestrator resource belt.
-      // See isPageToken / assertViewerCanGeneratePageModel.
+      // lets the viewer pick a model, so the modelId match is SKIPPED and
+      // replaced (below, after the version read) by the pre-spend availability
+      // gate (assertViewerCanGeneratePageResources). That gate is a fail-fast UX
+      // layer over the body version + LoRAs only — it does NOT cover the
+      // resolved/billed checkpoint anchor; early-access + Private-subscription
+      // entitlement (and the resolved anchor) are enforced by the orchestrator
+      // resource belt over the full array. See isPageToken /
+      // assertViewerCanGeneratePageResources.
       const isPage = isPageToken(claims);
       if (!isPage) {
         const ctxModelId = Number(
@@ -1454,6 +1620,17 @@ export const blocksRouter = router({
         );
         if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+        }
+        // Page-LoRA (Increment 1): additionalResources is a PAGE-ONLY feature.
+        // A MODEL token's checkpoint comes from resolveBlockCheckpoint (install
+        // rows), and the model branch never runs the per-resource entitlement
+        // gate — so accepting additionalResources here would fan un-gated LoRAs
+        // into the resources array. Reject them fail-closed on the model path.
+        if (input.body.additionalResources?.length) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'additionalResources are not supported for model-bound blocks',
+          });
         }
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -1473,18 +1650,15 @@ export const blocksRouter = router({
         input.body.modelId
       );
       const user = await getBlockSessionUser(userId);
-      // PAGE branch: pre-spend availability/coverage gate on the model the REAL
-      // viewer picked (the security replacement for the skipped model-binding
-      // check) — fail-closed before any spend. Early-access + Private-sub
-      // entitlement is enforced downstream by the orchestrator resource belt.
-      if (isPage) {
-        await assertViewerCanGeneratePageModel({
-          gate: buildGateVersion(resolved.gate),
-          viewer: { id: userId, isModerator: !!user.isModerator },
-          sfwOnly: ctx.domain === 'green',
-          wildcardsEnabled: !!ctx.features.wildcards,
-        });
-      }
+      // Resolve the effective checkpoint BEFORE the page gate. This is the
+      // ACTUAL anchor buildTextToImageInput puts at the head of the resources
+      // array — for a non-Checkpoint page body it is NOT resolved.baseModel
+      // (resolveBlockCheckpoint falls through to a viewer/publisher/popular
+      // checkpoint that may belong to a different base-model family). The page
+      // LoRA family-match must anchor on THIS checkpoint, not the body model.
+      // resolveBlockCheckpoint is a pure read (install/override rows + a
+      // fail-open cache populate) with no side effect that must follow the
+      // gate, so it is safe to run before it.
       const checkpoint = await resolveBlockCheckpoint({
         blockInstanceId: claims.blockInstanceId,
         modelId: resolved.modelId,
@@ -1494,6 +1668,32 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
+      // PAGE branch: pre-spend availability gate over the resources THIS gate
+      // can see — the viewer-picked BODY version (`resolved.gate`) AND each
+      // additional LoRA — as a fail-fast UX layer in place of the skipped
+      // model-binding check. NOTE it does NOT cover the resolved/billed
+      // checkpoint ANCHOR: for a non-Checkpoint page body, resolveBlockCheckpoint
+      // picks a DIFFERENT default checkpoint (validated there only for
+      // Published + base-model family — not early-access/Private/availability).
+      // That anchor's entitlement — and early-access + Private-sub entitlement
+      // for the whole array — is enforced downstream by the orchestrator
+      // resource belt over the FULL resources array; this gate is not the sole
+      // boundary. Keep both belts.
+      if (isPage) {
+        // Resolve + validate the LoRA stack first (LoRA-only + family-match)
+        // so a bad resource fails BEFORE the entitlement gate / any cost.
+        // Family-match anchors on the RESOLVED checkpoint's baseModel.
+        const loraGates = await resolvePageLoraGates({
+          additionalResources: input.body.additionalResources,
+          checkpointBaseModel: checkpoint.baseModel,
+        });
+        await assertViewerCanGeneratePageResources({
+          gates: [buildGateVersion(resolved.gate), ...loraGates],
+          viewer: { id: userId, isModerator: !!user.isModerator },
+          sfwOnly: ctx.domain === 'green',
+          wildcardsEnabled: !!ctx.features.wildcards,
+        });
+      }
       const token = await getOrchestratorToken(userId, ctx);
       const generateInput = buildTextToImageInput(input.body, {
         ...resolved,
@@ -1533,11 +1733,12 @@ export const blocksRouter = router({
       }
       // Context binding. MODEL token → body.modelId must match ctx.modelId.
       // PAGE token (ctx.entityType==='none') → no model binding; skip the match
-      // and enforce the pre-spend availability/coverage gate after the version
-      // read instead (see estimateWorkflow for the same branch; early-access +
-      // Private-sub entitlement is left to the orchestrator resource belt). The
-      // buzzBudget claim + per-user daily cap still bound spend identically for
-      // pages.
+      // and enforce the pre-spend availability gate after the version read
+      // instead (see estimateWorkflow for the same branch; that gate covers the
+      // body version + LoRAs as fail-fast UX — the resolved checkpoint anchor
+      // plus early-access + Private-sub entitlement are left to the orchestrator
+      // resource belt over the full array). The buzzBudget claim + per-user
+      // daily cap still bound spend identically for pages.
       const isPage = isPageToken(claims);
       if (!isPage) {
         const ctxModelId = Number(
@@ -1545,6 +1746,16 @@ export const blocksRouter = router({
         );
         if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+        }
+        // Page-LoRA (Increment 1): additionalResources is PAGE-ONLY. The model
+        // branch never runs the per-resource entitlement gate, so reject the
+        // field fail-closed rather than fan un-gated LoRAs into the resources
+        // array. (See estimateWorkflow for the same guard.)
+        if (input.body.additionalResources?.length) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'additionalResources are not supported for model-bound blocks',
+          });
         }
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -1568,18 +1779,12 @@ export const blocksRouter = router({
         input.body.modelId
       );
       const user = await getBlockSessionUser(userId);
-      // PAGE branch: pre-spend availability/coverage gate on the model the REAL
-      // viewer picked (replaces the skipped model-binding check) — fail closed
-      // BEFORE any reservation. Early-access + Private-sub entitlement is
-      // enforced downstream by the orchestrator resource belt (whatIf + real).
-      if (isPage) {
-        await assertViewerCanGeneratePageModel({
-          gate: buildGateVersion(resolved.gate),
-          viewer: { id: userId, isModerator: !!user.isModerator },
-          sfwOnly: ctx.domain === 'green',
-          wildcardsEnabled: !!ctx.features.wildcards,
-        });
-      }
+      // Resolve the effective checkpoint BEFORE the page gate so the page LoRA
+      // family-match anchors on the ACTUAL checkpoint buildTextToImageInput
+      // uses (see estimateWorkflow for the full rationale — for a
+      // non-Checkpoint page body this differs from resolved.baseModel).
+      // resolveBlockCheckpoint is a pure read with no gate-ordering side
+      // effect, so resolving it ahead of the gate is safe.
       const checkpoint = await resolveBlockCheckpoint({
         blockInstanceId: claims.blockInstanceId,
         modelId: resolved.modelId,
@@ -1589,6 +1794,28 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
+      // PAGE branch: pre-spend availability gate over the resources THIS gate
+      // can see — the viewer-picked BODY version (`resolved.gate`) AND each
+      // additional LoRA — a fail-fast UX layer in place of the skipped
+      // model-binding check. It does NOT cover the resolved/billed checkpoint
+      // ANCHOR: a non-Checkpoint page body resolves a DIFFERENT default
+      // checkpoint (validated there only for Published + base-model family).
+      // That anchor's entitlement, plus early-access + Private-sub entitlement
+      // for the whole array, is enforced downstream by the orchestrator
+      // resource belt over the FULL array (whatIf + real) — this gate is not
+      // the sole boundary. Keep both belts.
+      if (isPage) {
+        const loraGates = await resolvePageLoraGates({
+          additionalResources: input.body.additionalResources,
+          checkpointBaseModel: checkpoint.baseModel,
+        });
+        await assertViewerCanGeneratePageResources({
+          gates: [buildGateVersion(resolved.gate), ...loraGates],
+          viewer: { id: userId, isModerator: !!user.isModerator },
+          sfwOnly: ctx.domain === 'green',
+          wildcardsEnabled: !!ctx.features.wildcards,
+        });
+      }
       const token = await getOrchestratorToken(userId, ctx);
 
       // Prompt audit before any orchestrator interaction (mirrors what
@@ -1737,6 +1964,65 @@ export const blocksRouter = router({
       })().catch(() => {
         /* swallowed inside helper */
       });
+
+      // W3 flow A — buzz SPEND attribution (author bounty). The block
+      // burned the viewer's own Buzz on this generation; accrue the app
+      // author's platform-funded bounty share. EVERYTHING is server-derived
+      // from the VERIFIED token claims (appId/appBlockId/blockInstanceId
+      // from the JWT, spender from `sub`, author looked up from the app's
+      // OauthClient) — there is NO client-supplied attribution, so spend is
+      // inherently forge-safe. Idempotent on (workflowId, appBlockId), so a
+      // re-poll / retry can't double-attribute. Fire-and-forget with its
+      // own try/catch (mirrors recordScopeInvocation): a failed attribution
+      // write must NEVER break the generation — the Buzz was already spent
+      // and the snapshot is already the user-facing source of truth.
+      //
+      // Only fire on a REAL workflow id. A returned 'failed' sentinel
+      // snapshot (the over-budget / insufficient-budget path above returns
+      // early before we get here, but the orchestrator can also resolve to
+      // a 'failed' status without queueing) has no generation to attribute.
+      const spendWorkflowId = snapshot.workflowId;
+      if (spendWorkflowId && spendWorkflowId !== 'failed' && snapshot.status !== 'failed') {
+        void (async () => {
+          const { recordSpendAttribution } = await import(
+            '~/server/services/blocks/buzz-attribution.service'
+          );
+          // Accrue the author bounty off the REALIZED debit, not the
+          // whatif preflight ESTIMATE (`cost`). `snapshotFromWorkflow`
+          // surfaces the REAL submit's `workflow.cost.total` onto
+          // `snapshot.cost.total` (see workflow.service.ts:~49,61), read
+          // from the SAME resolved `submitted` snapshot this handler
+          // already holds (no re-fetch). The realized value is what the
+          // platform actually took, so the bounty matches the spend
+          // (the `share_le_gross` intent). This closes: (a) estimate >
+          // realized over-accrual; (b) a cache-hit / 0-realized that
+          // would otherwise still accrue off a non-zero estimate (author
+          // paid for a gen that cost nothing); (c) queue/surge/tier drift
+          // landing on platform bounty liability. Fall back to the
+          // estimate ONLY when the realized value is absent on the
+          // snapshot (e.g. a snapshot that carries no cost).
+          //
+          // SYBIL CAP NOTE (audit 🟡-2): there is NO per-APP aggregate
+          // accrual cap here — only the per-(USER, UTC-day) Buzz SPEND
+          // reservation above. A Sybil ring of many viewers could mint
+          // unbounded platform-funded bounty toward ONE app. This is
+          // accrual-only + mod-gated today, so it is not a merge blocker,
+          // but a per-app earnings cap / velocity check is a HARD
+          // prerequisite before the spend flow opens to non-mods (track
+          // alongside the Slice-4 payout gate + the rate sign-off).
+          await recordSpendAttribution({
+            userId,
+            buzzAmount: Math.ceil(snapshot.cost?.total ?? cost),
+            workflowId: spendWorkflowId,
+            appId: claims.appId,
+            appBlockId: claims.appBlockId,
+            blockInstanceId: claims.blockInstanceId,
+            modelId: resolved.modelId,
+          });
+        })().catch(() => {
+          /* best-effort: a failed attribution write never breaks submit */
+        });
+      }
 
       return { snapshot: autoClaim ? { ...snapshot, autoClaim } : snapshot };
     }),

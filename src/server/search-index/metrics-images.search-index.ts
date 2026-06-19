@@ -11,6 +11,7 @@ import type { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { imageOnSiteSql } from '~/server/utils/image-onsite';
+import { buildEntityMetricPerDaySource, getEntityMetricAggSource } from '~/server/flipt/client';
 
 const READ_BATCH_SIZE = 100000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -390,18 +391,18 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
 
       if (step === 1) {
         logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
+        const aggSource = await getEntityMetricAggSource();
+        const perDaySource = buildEntityMetricPerDaySource(
+          aggSource,
+          `WHERE entityType = 'Image'
+                AND entityId IN (${batch.join(',')})`
+        );
         const metrics = await clickhouse?.$query<Metrics>(`
             SELECT entityId as "id",
                    sumIf(total, metricType in ('Like', 'Heart', 'Laugh', 'Cry')) as "reactionCount",
                    sumIf(total, metricType = 'commentCount') as "commentCount",
                    sumIf(total, metricType = 'Collection') as "collectedCount"
-            FROM (
-              SELECT entityId, metricType, day, argMax(total, refreshedAt) as total
-              FROM entityMetricDailyAgg_new
-              WHERE entityType = 'Image'
-                AND entityId IN (${batch.join(',')})
-              GROUP BY entityId, metricType, day
-            )
+            FROM ${perDaySource}
             GROUP BY id
           `);
 

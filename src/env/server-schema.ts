@@ -128,18 +128,27 @@ export const serverSchema = z.object({
   // time REJECTS — which makes the wrapped promise settle → `.finally(done)` fires → the
   // inflight gauge dec's AND the handler unparks with an error instead of a 125s hang.
   // The reject flows the SAME way an existing cluster read error already does (socketTimeout
-  // has rejected stuck commands down these paths since #2556): fetchThroughCache catches and
-  // fail-opens (degraded miss → slow 200); createCachedObject/Array.fetch does NOT catch, so
-  // it propagates (→ error/500) — same as any cluster error today, and strictly better than a
-  // 125s hang. Correct regardless of the exact node-redis internal cause.
+  // has rejected stuck commands down these paths since #2556): BOTH fetchThroughCache AND
+  // createCachedObject/Array.fetch now catch it and fail-open (degraded origin fetch → slow
+  // 200, bounded against a DB stampede by per-id single-flight — see cache-helpers.ts
+  // degradedIdInFlight). createCachedArray.fetch was made fail-open so this reject degrades
+  // rather than 500ing: before it, a deadline-reject down a cachedObject read propagated as a
+  // 500 (a 68-min two-pod 500 spike on 2026-06-17). Correct regardless of the exact node-redis
+  // internal cause.
   //
-  // Default 15000 (15s): ~650× over the ~23ms healthy-completion p99 (zero risk of
-  // clipping a legitimate slow command) and well below the ~125s client ceiling. Sits
-  // ABOVE REDIS_SOCKET_TIMEOUT_MS (10s) so it is a true BACKSTOP — socketTimeout still
-  // does the primary teardown when it works; this only catches the commands it doesn't.
-  // 0 disables it. Cluster-scoped: the SYSTEM client is untouched (it uses
-  // REDIS_SYS_READ_TIMEOUT_MS — see the #2556/#2586 sys-client regression). See
-  // redis/command-deadline.ts withCommandDeadline() + instrumentCommands().
+  // Default 15000 (15s): ~650× over the ~23ms healthy-completion p99 (zero risk of clipping a
+  // legitimate slow command) and well below the ~125s client ceiling. Sits ABOVE
+  // REDIS_SOCKET_TIMEOUT_MS (10s) so it is a true BACKSTOP — socketTimeout still does the
+  // primary teardown when it works; this only catches the commands it doesn't. NOTE: this is a
+  // GLOBAL cap on EVERY cluster command, but only the cache-read paths (fetchThroughCache +
+  // createCachedArray) fail open — a non-fail-open command that rejects on the deadline still
+  // surfaces as an error. Lowering this (toward ~3s, which is safe for the now-fail-open cache
+  // reads) is DEFERRED to a separate change so the createCachedArray fail-open above can be
+  // soaked + attributed first without bundling a global timeout change. 0 disables it.
+  // Cluster-scoped: the SYSTEM client is untouched (it uses REDIS_SYS_READ_TIMEOUT_MS — see the
+  // #2556/#2586 sys-client regression). See redis/command-deadline.ts withCommandDeadline() +
+  // instrumentCommands() and utils/cache-helpers.ts (fetchThroughCache + createCachedArray
+  // fail-open).
   REDIS_CLUSTER_COMMAND_TIMEOUT_MS: z.coerce.number().default(15000),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),

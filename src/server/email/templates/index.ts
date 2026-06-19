@@ -7,5 +7,6 @@ export { bountyAutomaticallyAwardedEmail } from './bounties/bountyAutomaticallyA
 export { bountyRefundedEmail } from './bounties/bountyRefunded.email';
 export { paddleCancellationEmail } from './paddleCancellation.email';
 export { strikeIssuedEmail } from './strikeIssued.email';
+export { moderationActionEmail } from './moderation/moderationAction.email';
 export { tipaltiTaxFormRequiredEmail } from './tipaltiTaxFormRequired.email';
 export type { Email } from './base.email';

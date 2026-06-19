@@ -182,3 +182,35 @@ export const PAGE_FORBIDDEN_SCOPES = ['buzz:read:self', 'social:tip:self'] as co
 export function isPageSlot(id: string): boolean {
   return isKnownSlotId(id) && SLOT_REGISTRY[id].kind === 'page';
 }
+
+/**
+ * LAUNCH ALLOWLIST — the slot ids exposed to the PUBLIC (non-moderator) audience
+ * at the initial App Blocks public launch.
+ *
+ * WHY: the initial launch ships the full-page app surface (`app.page`) ONLY. The
+ * three model-page slots (`model.sidebar_top` / `model.below_images` /
+ * `model.actions_extra`) are NOT part of the public launch — they remain
+ * MOD-ONLY for testing/dog-fooding (e.g. the live `generate-from-model` block)
+ * until a later product decision widens them. So this is a PUBLIC-audience
+ * restriction layered on top of the existing `features.appBlocks` flag gate:
+ * moderators are unaffected (they see/install/mint every slot, grandfathering
+ * the existing mod-only model-slot usage); non-mods are scoped to launch slots.
+ *
+ * This is the SINGLE SOURCE OF TRUTH for "what's in the public launch". Widening
+ * the launch surface later (e.g. graduating a model slot to public) is ONE edit
+ * here — every enforcement point (public marketplace reads, the model-slot
+ * install path, the token mint belt) calls `isLaunchSlot` rather than hardcoding
+ * `'app.page'`.
+ */
+export const LAUNCH_SLOT_IDS = ['app.page'] as const;
+
+export type LaunchSlotId = (typeof LAUNCH_SLOT_IDS)[number];
+
+/**
+ * Is `id` a slot exposed to the public (non-mod) audience at launch? See
+ * {@link LAUNCH_SLOT_IDS}. A non-mod caller may only browse / install / mint
+ * apps whose slot satisfies this; a moderator is exempt (grandfathered).
+ */
+export function isLaunchSlot(id: string): boolean {
+  return (LAUNCH_SLOT_IDS as readonly string[]).includes(id);
+}

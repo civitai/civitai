@@ -53,6 +53,7 @@ Params are validated by the action's Zod schema. Validation errors return `400` 
 | `src/pages/api/mod/retool/image.ts` | `image` | `tagVote`, `setNsfwLevel` |
 | `src/pages/api/mod/retool/model.ts` | `model` | `bump` |
 | `src/pages/api/mod/retool/homeblock.ts` | `homeblock` | `create`, `update`, `delete`, `reorder` |
+| `src/pages/api/mod/retool/strike.ts` | `strike` | `create`, `void`, `getUserStrikes` |
 
 Read the source file for the authoritative schema of each action — every file leads with a doc comment that lists actions + params.
 
@@ -70,6 +71,18 @@ curl -X POST https://civitai.com/api/mod/retool/comment \
   -H "Authorization: Bearer $CIVITAI_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "action": "bulkDelete", "commentIds": [1,2,3], "commentV2Ids": [10,11] }'
+
+# Issue a manual strike on a user
+curl -X POST https://civitai.com/api/mod/retool/strike \
+  -H "Authorization: Bearer $CIVITAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "create",
+    "userId": 999,
+    "reason": "ManualModAction",
+    "points": 1,
+    "description": "Repeated ToS violations after warning"
+  }'
 
 # Privileged: rename a user (caller must hold the `retoolUpdateIdentity` granted permission)
 curl -X POST https://civitai.com/api/mod/retool/user \

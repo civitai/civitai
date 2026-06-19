@@ -3,6 +3,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
 import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { createLogger } from '~/utils/logging';
+import { buildEntityMetricPerDaySource, getEntityMetricAggSource } from '~/server/flipt/client';
 import type {
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
@@ -309,22 +310,18 @@ export async function populateComicMetrics(
       // counters) buckets are merged into a single per-id totals row so
       // the Redis layer only knows about a unified 'Comic' key.
       const entityTypeList = COMIC_ENTITY_TYPES.map((t) => `'${t}'`).join(',');
+      const aggSource = await getEntityMetricAggSource();
+      const perDaySource = buildEntityMetricPerDaySource(
+        aggSource,
+        `WHERE entityType IN (${entityTypeList})
+            AND entityId IN (${batchIds.join(',')})`
+      );
       const metrics = await clickhouse.$query<MetricData>(`
         SELECT
           entityId,
           metricType,
           sum(total) AS total
-        FROM (
-          SELECT
-            entityId,
-            metricType,
-            day,
-            argMax(total, refreshedAt) AS total
-          FROM entityMetricDailyAgg_new
-          WHERE entityType IN (${entityTypeList})
-            AND entityId IN (${batchIds.join(',')})
-          GROUP BY entityId, metricType, day
-        )
+        FROM ${perDaySource}
         GROUP BY entityId, metricType
         HAVING total > 0
       `);

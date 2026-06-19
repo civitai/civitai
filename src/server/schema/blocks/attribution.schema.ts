@@ -15,6 +15,14 @@ export const blockAttributionScopeSchema = z.enum([
   'publisher_all_my_models', // bus_pub_* (blanket) + mbi_*/bki_* (per-model-pinned) — block_user_subscriptions
   'viewer_personal',         // bus_view_* — block_user_subscriptions (viewer scope)
   'platform_default',        // pdb_* — platform_default_blocks
+  // W10 full-page apps (`app.page` slot, entity=none). A page is a stateless,
+  // viewer-chosen full-page surface with NO model entity and NO install row —
+  // its synthetic instanceId is `page_<appBlockId>` (see block-tokens page
+  // mint). A Buzz PURCHASE made inside a page resolves to this scope.
+  // Placeholder publisher share is 0% (page revenue is largely
+  // platform-counterfactual); raise via a future rate card after monetization
+  // sign-off. See deriveScopeFromInstanceId + SOURCE_TO_SCOPE['page'].
+  'viewer_global',           // page_* — pages (resolvePageBlock, entity=none)
 ]);
 export type BlockAttributionScope = z.infer<typeof blockAttributionScopeSchema>;
 
@@ -89,6 +97,11 @@ export function deriveScopeFromInstanceId(
   if (blockInstanceId.startsWith('bus_pub_')) return 'publisher_all_my_models';
   if (blockInstanceId.startsWith('bus_view_')) return 'viewer_personal';
   if (blockInstanceId.startsWith('pdb_')) return 'platform_default';
+  // W10 page surface — `page_<appBlockId>` (the synthetic page mint id). A page
+  // has no model entity; the purchase attributes to the page app's author at
+  // the `viewer_global` scope. Kept in lockstep with the server's
+  // SOURCE_TO_SCOPE['page'] re-derivation (the server is authoritative).
+  if (blockInstanceId.startsWith('page_')) return 'viewer_global';
   return null;
 }
 

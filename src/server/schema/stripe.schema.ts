@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
+import { blockAttributionSchema } from '~/server/schema/blocks/attribution.schema';
 
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 export const createCustomerSchema = z.object({ id: z.number(), email: z.string().email() });
@@ -10,6 +11,15 @@ export type CreateSubscribeSessionInput = z.infer<typeof createSubscribeSessionS
 export const createSubscribeSessionSchema = z.object({
   priceId: z.string(),
   refCode: z.string().optional(),
+  // W3 flow C — App Blocks MEMBERSHIP attribution. Populated only when the
+  // membership purchase was initiated from inside a block (the block's
+  // "Buy membership" CTA). UNTRUSTED client input: the server re-derives
+  // every field server-side (FIN-1) in createSubscribeSession before
+  // stamping it onto the Stripe subscription metadata. A forged appId/scope
+  // is corrected or stripped; an instance that doesn't resolve for the
+  // buyer is dropped (purchase proceeds un-attributed). Never trusted to
+  // mint earnings.
+  blockAttribution: blockAttributionSchema.optional(),
 });
 
 export type CreateDonateSessionInput = z.infer<typeof createDonateSessionSchema>;

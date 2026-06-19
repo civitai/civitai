@@ -1244,6 +1244,16 @@ export const REDIS_SYS_KEYS = {
      * on first write so the per-window key self-expires.
      */
     BUZZ_CAP: 'system:blocks:buzz-cap',
+    /**
+     * Per-API-key (fallback per-IP) rate-limit counter for the token-authed
+     * bundle-submit endpoint (`/api/v1/blocks/submit-version`). `SET NX EX` +
+     * `INCR` in one MULTI (same atomic pattern as the retool endpoint) so the
+     * counter is always created with its TTL. Bundle submit is heavy (decode +
+     * ZIP extract + manifest validate up to ~72 MiB), so the limit is tight.
+     * Lives on `sysRedis` (like the retool limiter + `BUZZ_CAP`), so the key is
+     * declared here rather than in `REDIS_KEYS.BLOCKS`.
+     */
+    SUBMIT_RATE_LIMIT: 'system:blocks:submit-rate-limit',
   },
 } as const;
 

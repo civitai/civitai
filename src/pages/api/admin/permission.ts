@@ -32,13 +32,18 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     select: { id: true },
   });
 
-  // Add/remove each valid permission for the matched users
+  // Add/remove each valid permission for the matched users.
+  // MUST run sequentially with await: addSystemPermission/removeSystemPermission
+  // each read-modify-write the *entire* system:permissions blob, so firing them
+  // concurrently (or not awaiting at all) makes them clobber each other —
+  // last-write-wins drops every mutation but one, and in a serverless route the
+  // response can return before unawaited writes settle.
   const userIds = users.map((x) => x.id);
   for (const k of keys) {
     if (revoke) {
-      removeSystemPermission(k, userIds);
+      await removeSystemPermission(k, userIds);
     } else {
-      addSystemPermission(k, userIds);
+      await addSystemPermission(k, userIds);
     }
   }
 

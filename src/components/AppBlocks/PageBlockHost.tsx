@@ -9,6 +9,7 @@ import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { grantedPageScopes, pageFallbackReason } from './pageBlockHostLogic';
 import { resolveRequestConsent } from './requestConsentGate';
+import { resolveRequestSignIn } from './requestSignInGate';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
@@ -25,6 +26,27 @@ const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: fa
 // Buy-Buzz modal for the page money path's OPEN_BUZZ_PURCHASE handler (the
 // insufficient-Buzz top-up CTA). Mirrors IframeHost's dynamic import.
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
+
+// Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
+// for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
+// so a block can ask the host to start the civitai login flow when the user
+// clicks an action that needs auth/money. SSR-disabled to match IframeHost's
+// dynamic import (the modal pulls in client-only providers).
+const LoginModal = dynamic(() => import('~/components/Login/LoginModal'), { ssr: false });
+
+// Normalise a thrown storage error into a string the block can surface. Mirrors
+// IframeHost.storageErrorMessage EXACTLY — the apps.storage.* procs throw
+// TRPCErrors with explicit code+message strings (UNAUTHORIZED, PAYLOAD_TOO_LARGE,
+// quota_exceeded, …); we forward the message and never throw upward, so the
+// block's host-mediated storage request rejects cleanly instead of hanging to
+// the SDK's 30s timeout.
+function storageErrorMessage(err: unknown): string {
+  if (err && typeof err === 'object' && 'message' in err) {
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === 'string' && message.length > 0) return message;
+  }
+  return 'storage request failed';
+}
 
 /**
  * W10 — full-page App Block host. Renders a block as a FULL-VIEWPORT surface
@@ -601,6 +623,226 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, status, appId, appBlockId, blockInstanceId]);
+
+  // ── Sign-in bridge: REQUEST_SIGN_IN (anonymous conversion) ─────────────────
+  //
+  // This was the THIRD W10 page gap. The page route renders for LOGGED-OUT
+  // viewers (the BLOCK_INIT context is viewer-scoped with viewer:null when anon),
+  // but PageBlockHost had no REQUEST_SIGN_IN handler — so a logged-out viewer who
+  // clicks an action needing auth/money (e.g. Generate) dead-ended: the block
+  // posted REQUEST_SIGN_IN into the void and the login modal never opened. We
+  // mirror IframeHost EXACTLY: the shared resolveRequestSignIn gate pins
+  // status === 'ready' (a pre-handshake block can't pop a login modal before any
+  // interaction) and sanitises a block-supplied returnUrl to a same-origin in-app
+  // path (absolute / protocol-relative values are dropped → LoginModal defaults
+  // returnUrl to the current page). Fire-and-forget — there is no host→block
+  // reply. The `'error' → 'no_token'` status shim is reused (PageBlockHost's local
+  // Status carries the extra terminal 'error' variant the shared HostStatus union
+  // doesn't model; the gate only ever opens when status === 'ready', so this is
+  // semantics-preserving — same shim as the consent + buzz handlers).
+  useEffect(() => {
+    const off = onMessage<{ returnUrl?: unknown } | undefined>('REQUEST_SIGN_IN', (raw) => {
+      const gateStatus = status === 'error' ? 'no_token' : status;
+      const resolved = resolveRequestSignIn(gateStatus, raw);
+      if (resolved == null) return; // not ready — drop (gate centralises the rules)
+      dialogStore.trigger({
+        component: LoginModal,
+        props: {
+          reason: 'image-gen',
+          ...(resolved.returnUrl ? { returnUrl: resolved.returnUrl } : {}),
+        },
+      });
+    });
+    return off;
+  }, [onMessage, status]);
+
+  // ── App Blocks KV datastore bridge (W4-v0) ─────────────────────────────────
+  //
+  // This was the FOURTH W10 page gap (the next message-into-the-void after
+  // consent + workflow). PageBlockHost advertises `apps:storage:*` in BLOCK_INIT
+  // and the page mint signs `apps:storage:read/write`, but the host had NO
+  // storage handlers — so a storage-using page block (e.g. the Notepad page)
+  // posting APP_STORAGE_GET/SET/DELETE/LIST/QUOTA fired into the void and hung to
+  // the SDK's 30s timeout. We mirror IframeHost EXACTLY: five host-mediated
+  // handlers (the iframe never sees the apps DB credentials), each replying with
+  // the SAME requestId on BOTH the success and the error path — errors are
+  // reported as `error: <string>` on the result payload (never thrown upward) so
+  // the block-side hook rejects instead of stranding the bridge.
+  //
+  // token is a PROP here (string | null) — PageBlockHost does NOT use
+  // useBlockToken (that's the page route). apps.storage.* require a non-null
+  // blockToken (z.string().min(1)); a null token means the block never rendered a
+  // usable surface, so each handler drops a `!token` request without replying
+  // (consistent with the #2618 workflow handlers — the mint path surfaces
+  // no_token/error terminal states above). A missing requestId is likewise
+  // dropped without replying (mirrors IframeHost).
+  const trpcUtils = trpc.useUtils();
+  const storageSetMutation = trpc.apps.storage.set.useMutation();
+  const storageDeleteMutation = trpc.apps.storage.delete.useMutation();
+
+  // APP_STORAGE_GET → apps.storage.get → APP_STORAGE_GET_RESULT.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'APP_STORAGE_GET',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.storage.get.fetch({
+            blockToken: token,
+            key: raw.key,
+          });
+          send('APP_STORAGE_GET_RESULT', { requestId, value: result.value });
+        } catch (err) {
+          send('APP_STORAGE_GET_RESULT', {
+            requestId,
+            value: null,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // APP_STORAGE_SET → apps.storage.set → APP_STORAGE_SET_RESULT.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
+      'APP_STORAGE_SET',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await storageSetMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+            value: raw.value,
+          });
+          send('APP_STORAGE_SET_RESULT', {
+            requestId,
+            ok: true,
+            sizeBytes: result.sizeBytes,
+          });
+        } catch (err) {
+          send('APP_STORAGE_SET_RESULT', {
+            requestId,
+            ok: false,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, storageSetMutation]);
+
+  // APP_STORAGE_DELETE → apps.storage.delete → APP_STORAGE_DELETE_RESULT.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'APP_STORAGE_DELETE',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await storageDeleteMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+          });
+          send('APP_STORAGE_DELETE_RESULT', {
+            requestId,
+            ok: true,
+            deleted: result.deleted,
+          });
+        } catch (err) {
+          send('APP_STORAGE_DELETE_RESULT', {
+            requestId,
+            ok: false,
+            deleted: false,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, storageDeleteMutation]);
+
+  // APP_STORAGE_LIST → apps.storage.list → APP_STORAGE_LIST_RESULT.
+  useEffect(() => {
+    const off = onMessage<
+      | {
+          requestId?: unknown;
+          prefix?: unknown;
+          limit?: unknown;
+          cursor?: unknown;
+        }
+      | undefined
+    >('APP_STORAGE_LIST', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      const requestId = raw.requestId;
+      try {
+        const prefix = typeof raw.prefix === 'string' ? raw.prefix : undefined;
+        const limit =
+          typeof raw.limit === 'number' && Number.isFinite(raw.limit)
+            ? Math.min(Math.max(Math.floor(raw.limit), 1), 200)
+            : 50;
+        const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
+        const result = await trpcUtils.apps.storage.list.fetch({
+          blockToken: token,
+          prefix,
+          limit,
+          cursor,
+        });
+        send('APP_STORAGE_LIST_RESULT', {
+          requestId,
+          keys: result.keys.map((k) => ({
+            key: k.key,
+            updatedAt: k.updatedAt instanceof Date ? k.updatedAt.toISOString() : String(k.updatedAt),
+          })),
+          nextCursor: result.nextCursor,
+        });
+      } catch (err) {
+        send('APP_STORAGE_LIST_RESULT', {
+          requestId,
+          keys: [],
+          error: storageErrorMessage(err),
+        });
+      }
+    });
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // APP_STORAGE_QUOTA → apps.storage.getQuota → APP_STORAGE_QUOTA_RESULT.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'APP_STORAGE_QUOTA',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || !token) return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token });
+          send('APP_STORAGE_QUOTA_RESULT', {
+            requestId,
+            usedBytes: result.usedBytes,
+            rowCount: result.rowCount,
+            limitBytes: result.limitBytes,
+            limitRows: result.limitRows,
+          });
+        } catch (err) {
+          send('APP_STORAGE_QUOTA_RESULT', {
+            requestId,
+            usedBytes: 0,
+            rowCount: 0,
+            limitBytes: 0,
+            limitRows: 0,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
 
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';
