@@ -62,9 +62,10 @@ import {
   resolvePageResourceContext,
   snapshotFromWorkflow,
 } from '~/server/services/blocks/workflow.service';
-import { getBaseModelSetType } from '~/shared/constants/generation.constants';
+import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { createTextToImageStep } from '~/server/services/orchestrator/textToImage/textToImage';
@@ -215,19 +216,50 @@ function buildGateVersion(gate: {
   return gate as unknown as ResolveCanGenerateVersion;
 }
 
-// Page-LoRA (Increment 1): resolve + validate the page's additional-resource
-// (LoRA) stack from `body.additionalResources`. For each entry it:
+// Page-LoRA (Increment 1; GA): resolve + validate the page's additional-
+// resource (LoRA) stack from `body.additionalResources`. For each entry it:
 //   1. resolves the version statelessly (NO modelId binding — pages have none),
 //   2. enforces LoRA-only v1 (rejects any non-LoRA additional resource), and
-//   3. enforces an EXPLICIT base-model FAMILY match against the checkpoint.
-// The family check is the correctness boundary: the orchestrator belt filters
-// by resource TYPE (common.ts keeps a LoRA-typed resource), NOT by base-model
-// family — so a family-mismatched LoRA of type LORA is PASSED downstream and
-// billed for, producing a gen the viewer paid for that quietly ignored (or
-// degraded) their LoRA. This explicit check is what prevents such a LoRA from
-// being sent (and charged) at all. We collapse each side with
-// getBaseModelSetType (e.g. all SDXL variants → 'SDXL') so a compatible variant
-// isn't falsely rejected.
+//   3. enforces the platform's REAL generation-compatibility check against the
+//      checkpoint.
+// The compatibility check is the correctness boundary: the orchestrator belt
+// filters by resource TYPE (common.ts keeps a LoRA-typed resource), NOT by
+// generation compatibility — so an incompatible LoRA of type LORA is PASSED
+// downstream and billed for, producing a gen the viewer paid for that quietly
+// ignored (or degraded) their LoRA. This explicit check is what prevents such a
+// LoRA from being sent (and charged) at all.
+//
+// GA change: this previously collapsed both sides to a coarse base-model FAMILY
+// (getBaseModelSetType, e.g. all SDXL variants → 'SDXL') and required exact
+// equality — which rejected platform-VALID cross-ecosystem LoRAs (e.g. a Pony
+// LoRA on an SDXL checkpoint). It now defers to the platform's own
+// generation-compatibility model via `getResourceGenerationSupport`, the SAME
+// function the generation form / orchestrator pipeline uses
+// (getResourceEcosystemCompatibility, areResourcesCompatible). A non-null
+// SupportLevel ('full' | 'partial') = the platform considers this LoRA
+// generatable against this checkpoint (same-ecosystem OR an explicit
+// cross-ecosystem rule); `null` = NOT compatible → reject. This widens what's
+// accepted to exactly the platform's definition while staying FAIL-CLOSED.
+//
+// FAIL-CLOSED on unknown: `getResourceGenerationSupport` does
+// `baseModelByName.get(...)` for BOTH the checkpoint and the LoRA baseModel and
+// returns `null` when either is unrecognized (an UNKNOWN baseModel STRING) — so
+// an unknown checkpoint baseModel OR an unknown LoRA baseModel → null → reject.
+//
+// BUT the null check ALONE does NOT cover one case the old family collapse did:
+// the platform's RECOGNIZED baseModel record literally named 'Other'
+// (basemodel.constants.ts BM.Other → ecosystemId ECO.Other). For that record
+// `baseModelByName.get('Other')` SUCCEEDS, so a ('Other' checkpoint, 'Other'
+// LoRA) pair resolves both sides to the SAME ECO.Other ecosystem and
+// getGenerationSupport returns 'full' at its same-ecosystem short-circuit
+// (BEFORE the disabled/coverage checks) → non-null → ACCEPT. That is a
+// fail-OPEN on a billing boundary against the platform's "unclassified" bucket.
+// The old `getBaseModelSetType(...) === 'Other'` guard caught it because that
+// helper maps BOTH unknown strings AND the literal-'Other' record to the
+// 'Other' ecosystem key. We therefore RE-ADD an explicit 'Other'-group reject
+// (below, before/independent of the support call) so BOTH the literal-'Other'
+// and unrecognized-string cases stay FAIL-CLOSED — fail-closed is mandatory on
+// this gate.
 //
 // `checkpointBaseModel` MUST be the baseModel of the ACTUAL checkpoint
 // resolveBlockCheckpoint resolves (the anchor buildTextToImageInput uses), NOT
@@ -235,25 +267,26 @@ function buildGateVersion(gate: {
 //
 // Returns the per-LoRA gate bags so the caller can pass checkpoint + every LoRA
 // through the entitlement gate in ONE call. Throws BAD_REQUEST (non-LoRA /
-// unknown-family / family-mismatch), NOT_FOUND (missing/unpublished version) —
-// all BEFORE any cost/spend.
+// not platform-compatible incl. unknown baseModel), NOT_FOUND
+// (missing/unpublished version) — all BEFORE any cost/spend.
 async function resolvePageLoraGates(opts: {
   additionalResources: { modelVersionId: number; strength: number }[] | undefined;
   checkpointBaseModel: string;
 }): Promise<ReturnType<typeof buildGateVersion>[]> {
   const { additionalResources, checkpointBaseModel } = opts;
   if (!additionalResources?.length) return [];
-  const checkpointFamily = getBaseModelSetType(checkpointBaseModel);
-  // An unrecognized baseModel collapses to the 'Other' sentinel (getBaseModelGroup).
-  // If the checkpoint family itself is 'Other' we can't establish compatibility
-  // for ANY LoRA, so reject up front — mirrors the `g !== 'Other'` guard
-  // getBaseModelFromResources uses (generation.constants.ts). Without this, two
-  // DIFFERENT unknown baseModels both collapse to 'Other' and the family-match
-  // below would pass vacuously.
-  if (checkpointFamily === 'Other') {
+  // FAIL-CLOSED on the 'Other' ecosystem group. getResourceGenerationSupport's
+  // null check does NOT catch the platform's recognized 'Other' baseModel
+  // record (it resolves to a real ECO.Other ecosystem and short-circuits to
+  // 'full' same-ecosystem), so a ('Other', 'Other') pair would fail OPEN. If
+  // the resolved CHECKPOINT baseModel is in the 'Other' group we can't
+  // establish compatibility for ANY LoRA — reject up front, before/independent
+  // of the support call. getBaseModelSetType maps BOTH unknown strings and the
+  // literal-'Other' record to 'Other', closing both holes.
+  if (getBaseModelSetType(checkpointBaseModel) === 'Other') {
     throw new TRPCError({
       code: 'BAD_REQUEST',
-      message: 'the resolved checkpoint base model is not recognized for LoRA compatibility',
+      message: 'a selected LoRA is not compatible with the checkpoint base model',
     });
   }
   const gates: ReturnType<typeof buildGateVersion>[] = [];
@@ -267,14 +300,29 @@ async function resolvePageLoraGates(opts: {
         message: 'additional resources must be LoRA models',
       });
     }
-    // Explicit base-model family match (correctness boundary; the belt filters
-    // by type, not family, so it would PASS a family-mismatched LoRA and bill
-    // for it). An 'Other' (unrecognized) LoRA family is treated as NON-matching
-    // and denied — two different unknown baseModels both map to 'Other' and
-    // would otherwise match vacuously (checkpointFamily is already guaranteed
-    // non-'Other' above).
-    const loraFamily = getBaseModelSetType(lora.baseModel);
-    if (loraFamily === 'Other' || loraFamily !== checkpointFamily) {
+    // Platform generation-compatibility check (correctness boundary; the belt
+    // filters by type, not compatibility, so it would PASS an incompatible LoRA
+    // and bill for it). `null` = NOT generatable against this checkpoint per the
+    // platform's own model — including when EITHER baseModel is unrecognized
+    // (fail-closed on unknown). A non-null SupportLevel ('full'|'partial') means
+    // the platform permits it, which now allows same-ecosystem AND platform-
+    // defined cross-ecosystem LoRAs (e.g. a Pony LoRA on an SDXL checkpoint).
+    // FAIL-CLOSED on the 'Other' ecosystem group for the LoRA side too — same
+    // reasoning as the checkpoint guard above: the support call would return
+    // 'full' for a literal-'Other' LoRA against an 'Other' checkpoint, so reject
+    // an 'Other'-group LoRA before/independent of the support call.
+    if (getBaseModelSetType(lora.baseModel) === 'Other') {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'a selected LoRA is not compatible with the checkpoint base model',
+      });
+    }
+    const support = getResourceGenerationSupport(
+      checkpointBaseModel,
+      lora.baseModel,
+      lora.modelType as ModelType
+    );
+    if (support === null) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
         message: 'a selected LoRA is not compatible with the checkpoint base model',
