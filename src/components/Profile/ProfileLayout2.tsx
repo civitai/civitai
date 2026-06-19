@@ -62,7 +62,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
       !hasContent && (user.stats?.followerCountAllTime ?? 0) < 10 && !user.rank?.leaderboardRank;
     if (isThin) return true;
 
-    const subpage = pathname?.match(/^\/user\/[^/]+\/(\w+)/)?.[1];
+    const subpage = pathname?.match(/^\/user\/[^/]+\/([\w-]+)/)?.[1];
     if (subpage) {
       const subpageCounts: Record<string, number | undefined> = {
         models: overview?.modelCount,
@@ -72,6 +72,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
         articles: overview?.articleCount,
         comics: overview?.comicCount,
         collections: overview?.collectionCount,
+        '3d-models': overview?.model3dCount,
       };
       if (subpageCounts[subpage] === 0) return true;
     }

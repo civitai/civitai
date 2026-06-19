@@ -8,6 +8,7 @@ import {
   IconBookmarkEdit,
   IconBrush,
   IconCloudLock,
+  IconCube,
   // IconClubs,
   IconCrown,
   IconCurrencyDollar,
@@ -328,6 +329,16 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       icon: IconUpload,
       color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
       label: ' Upload a Model',
+    },
+    {
+      // Opens the generation panel with the 3D Model tab selected. The
+      // Model3D generator surface is gated separately by `model3dGenerator`.
+      href: '/generate?type=model3d',
+      visible: !isMuted && features.model3dGenerator,
+      rel: 'nofollow',
+      icon: IconCube,
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+      label: 'Generate 3D Model',
     },
     {
       href: '/models/train',

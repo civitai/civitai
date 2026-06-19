@@ -71,6 +71,7 @@ import { maiGraph } from './mai-graph';
 import { seedanceGraph } from './seedance-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
+import { polyGenGraph } from './polygen-graph';
 
 // =============================================================================
 // Helper Functions
@@ -169,7 +170,11 @@ function getEcosystemStates(
 }
 
 export const ecosystemGraph = new DataGraph<
-  { workflow: string; output: 'image' | 'video' | 'audio'; input: 'text' | 'image' | 'video' },
+  {
+    workflow: string;
+    output: 'image' | 'video' | 'audio' | 'model3d';
+    input: 'text' | 'image' | 'video';
+  },
   GenerationCtx
 >()
   // ecosystem depends on workflow to filter compatible ecosystems
@@ -197,7 +202,13 @@ export const ecosystemGraph = new DataGraph<
       // so a fresh form doesn't land on an unusable selection. Fall through to
       // the first usable, then any compatible, then SDXL.
       const outputDefault =
-        ctx.output === 'audio' ? 'Ace' : ctx.output === 'video' ? 'Kling' : 'ZImageTurbo';
+        ctx.output === 'audio'
+          ? 'Ace'
+          : ctx.output === 'video'
+          ? 'Kling'
+          : ctx.output === 'model3d'
+          ? 'PolyGen'
+          : 'ZImageTurbo';
       const usableEcosystems = disabledSet.size
         ? compatibleEcosystems.filter((key) => !disabledSet.has(key))
         : compatibleEcosystems;
@@ -382,6 +393,10 @@ export const ecosystemGraph = new DataGraph<
     { values: ['HappyHorse'] as const, graph: happyHorseGraph },
     // Audio ecosystems
     { values: ['Ace'] as const, graph: aceAudioGraph },
+    // 3D Model ecosystems — PolyGen (Meshy via Fal). Field rendering for the
+    // PolyGen graph lives in `GenerationForm.tsx`, auto-hidden via Controller
+    // when the active ecosystem isn't PolyGen (same pattern as ACE audio).
+    { values: ['PolyGen'] as const, graph: polyGenGraph },
   ])
   // Enhanced compatibility mode - txt2img only, supported ecosystems, hidden for Flux Ultra
   .node(

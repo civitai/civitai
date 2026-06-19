@@ -170,7 +170,8 @@ export function parseArgs(argv) {
       const key = arg.slice(2);
       // Boolean flags (no value)
       if (key === 'json' || key === 'dry-run' || key === 'confirm' || key === 'subtasks' ||
-          key === 'flagged-for-review' || key === 'has-active-strikes' || key === 'force') {
+          key === 'flagged-for-review' || key === 'has-active-strikes' || key === 'force' ||
+          key === 'lock') {
         flags[key] = true;
       } else {
         flags[key] = raw[++i];

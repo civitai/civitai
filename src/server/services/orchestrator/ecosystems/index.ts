@@ -53,6 +53,9 @@ import { createPonyV7Input } from './pony-v7.handler';
 // Audio ecosystem handlers
 import { createAceAudioInput } from './ace-audio.handler';
 
+// 3D model ecosystem handlers
+import { createPolyGenInput } from './polygen-graph.handler';
+
 // Video ecosystem handlers
 import { createWanSteps } from './wan.handler';
 import { createViduInput } from './vidu.handler';
@@ -228,6 +231,9 @@ export { createMAIInput } from './mai.handler';
 // Audio ecosystems
 export { createAceAudioInput } from './ace-audio.handler';
 
+// 3D model ecosystems
+export { createPolyGenInput } from './polygen-graph.handler';
+
 // Video ecosystems
 export { createWanSteps } from './wan.handler';
 export { createViduInput } from './vidu.handler';
@@ -263,10 +269,14 @@ export async function createEcosystemStepInput(
   data: EcosystemGraphOutput,
   handlerCtx: GenerationHandlerCtx
 ): Promise<StepInput[]> {
-  // Normalize seed - generate random if not provided
+  // Normalize seed - generate random if not provided.
+  // Some ecosystems (e.g. PolyGen / 3D models) don't expose a `seed` node and
+  // route their submission outside this dispatcher entirely, so the field is
+  // absent from their graph branch — read defensively.
+  const dataSeed = 'seed' in data ? (data as { seed?: number }).seed : undefined;
   const normalizedData = {
     ...data,
-    seed: data.seed ?? Math.floor(Math.random() * maxRandomSeed),
+    seed: dataSeed ?? Math.floor(Math.random() * maxRandomSeed),
   };
 
   const steps = await createEcosystemStep(normalizedData, handlerCtx);
@@ -461,6 +471,13 @@ async function createEcosystemStep(
 
     case 'Ace':
       return createAceAudioInput(normalizedData, handlerCtx);
+
+    // =========================================================================
+    // 3D Model Ecosystems — polyGen step (Meshy via Fal)
+    // =========================================================================
+
+    case 'PolyGen':
+      return createPolyGenInput(normalizedData, handlerCtx);
 
     default:
       throw new Error(`Unknown ecosystem: ${ecosystem}`);

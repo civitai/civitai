@@ -10,6 +10,7 @@ export type HiddenPreferencesState = {
   hiddenUsers: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
   hiddenModels: Map<number, boolean>;
+  hiddenModel3Ds: Map<number, boolean>;
   hiddenImages: Map<number, boolean>;
   hiddenLoading: boolean;
   moderatedTags: HiddenTag[];
@@ -51,6 +52,7 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
     return {
       hiddenUsers: new Map(dedupedHiddenUsers.map((id) => [id, true])),
       hiddenModels: new Map(data.hiddenModels.map((x) => [x.id, true])),
+      hiddenModel3Ds: new Map(data.hiddenModel3Ds.map((x) => [x.id, true])),
       hiddenTags: tags,
       hiddenImages: images,
       hiddenLoading: isLoading,

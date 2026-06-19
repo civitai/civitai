@@ -214,6 +214,10 @@ const featureFlags = createFeatureFlags({
   articleImageScanning: ['public'],
   generationPresets: { availability: ['public'], fliptKey: 'generation-presets' },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
+  // 3D Models — split flags: feed (view/comment/review) vs generator (create).
+  // Both mod-only at launch; Flipt key allows broadening without a code change.
+  model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
+  model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay

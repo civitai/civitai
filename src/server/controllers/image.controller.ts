@@ -387,8 +387,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const { user, features } = ctx;
 
     // Check BitDex mode â€” if active, always route through getAllImagesIndex.
-    // Skip BitDex for unsupported query types (collections, prioritized users).
-    const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length;
+    // Skip BitDex for unsupported query types (collections, prioritized
+    // users). BitDex doesn't index `model3dId` yet, so model3d galleries
+    // still skip it — but Meilisearch DOES index `model3dId` (added with the
+    // `images-model3d:` gallery enablement), so we always allow the Meili
+    // index path below.
+    const skipBitdex =
+      !!input.collectionId || !!input.prioritizedUserIds?.length || !!input.model3dId;
     const bitdexMode = skipBitdex
       ? null
       : await getFliptVariant(
@@ -521,24 +526,30 @@ export const getImagesAsPostsInfiniteHandler = async ({
       }
     }
 
-    // Get reviews from the users who created the posts
+    // Get reviews from the users who created the posts.
+    // Resource reviews are model-scoped; skip the fetch entirely when this is
+    // a non-model gallery (e.g. Model3D) so we don't run an unfiltered review
+    // query for unrelated models.
     const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id).filter(isDefined))];
-    const reviews = await dbRead.resourceReview.findMany({
-      where: {
-        userId: { in: userIds },
-        modelId: input.modelId,
-        modelVersionId: input.modelVersionId,
-      },
-      select: {
-        userId: true,
-        rating: true,
-        details: true,
-        id: true,
-        modelVersionId: true,
-        recommended: true,
-      },
-      orderBy: { rating: 'desc' },
-    });
+    const reviews =
+      input.modelId || input.modelVersionId
+        ? await dbRead.resourceReview.findMany({
+            where: {
+              userId: { in: userIds },
+              modelId: input.modelId,
+              modelVersionId: input.modelVersionId,
+            },
+            select: {
+              userId: true,
+              rating: true,
+              details: true,
+              id: true,
+              modelVersionId: true,
+              recommended: true,
+            },
+            orderBy: { rating: 'desc' },
+          })
+        : [];
 
     // Prepare the results
     const results = mergedPosts.map((images) => {

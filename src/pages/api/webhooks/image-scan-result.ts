@@ -642,7 +642,7 @@ async function getTagsFromIncomingTags({
         target:
           source === TagSource.WD14
             ? [TagTarget.Image]
-            : [TagTarget.Image, TagTarget.Post, TagTarget.Model],
+            : [TagTarget.Image, TagTarget.Post, TagTarget.Model, TagTarget.Model3D],
       })),
     });
     const newFoundTags = await dbWrite.tag.findMany({

@@ -44,6 +44,7 @@ import {
 } from '~/server/services/orchestrator/workflows';
 import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
 import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
+import { getRequiredFeatureFlagForWorkflow } from '~/shared/data-graph/generation/config/workflows';
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import {
   guardedProcedure,
@@ -403,6 +404,24 @@ export const orchestratorRouter = router({
         isModerator: ctx.user.isModerator,
       });
 
+      // Workflow-level feature-flag gate. `filterWorkflowsByFeatureFlags` only
+      // hides the option in the picker UI — a crafted submission payload would
+      // otherwise reach the dispatcher unchecked. Mirrors the client filter
+      // server-side so e.g. `txt2model3d` / `img2model3d` (gated on
+      // `model3dGenerator`) is rejected for users who don't have the flag.
+      const generateRequiredFlag = getRequiredFeatureFlagForWorkflow(
+        formInput?.workflow as string | undefined
+      );
+      if (
+        generateRequiredFlag &&
+        (ctx.features as Record<string, boolean | undefined>)[generateRequiredFlag] !== true
+      ) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'This workflow is not available for your account.',
+        });
+      }
+
       // Check generation status early
       if (status.mode === 'disabled' && !ctx.user.isModerator) {
         throw new TRPCError({
@@ -458,6 +477,22 @@ export const orchestratorRouter = router({
         id: ctx.user.id,
         isModerator: ctx.user.isModerator,
       });
+
+      // Mirror of the gate in `generateFromGraph`. Reject what-if costing for
+      // flag-gated workflows the user can't reach so we don't leak pricing
+      // for hidden generation modes.
+      const whatIfRequiredFlag = getRequiredFeatureFlagForWorkflow(
+        (input as { workflow?: string } | undefined)?.workflow
+      );
+      if (
+        whatIfRequiredFlag &&
+        (ctx.features as Record<string, boolean | undefined>)[whatIfRequiredFlag] !== true
+      ) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'This workflow is not available for your account.',
+        });
+      }
 
       if (status.mode === 'disabled' && !ctx.user.isModerator) {
         throw new TRPCError({

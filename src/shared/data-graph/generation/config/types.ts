@@ -18,13 +18,13 @@
 // =============================================================================
 
 /** Output types */
-export type OutputType = 'image' | 'video' | 'audio';
+export type OutputType = 'image' | 'video' | 'audio' | 'model3d';
 
 /** Full media type names */
-export type MediaType = 'text' | 'image' | 'video' | 'audio';
+export type MediaType = 'text' | 'image' | 'video' | 'audio' | 'model3d';
 
 /** UI category for grouping workflows */
-export type WorkflowCategory = 'image' | 'video' | 'audio';
+export type WorkflowCategory = 'image' | 'video' | 'audio' | 'model3d';
 
 // =============================================================================
 // Workflow Config

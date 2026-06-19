@@ -141,7 +141,10 @@ import {
 import type { ImageModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
-import { queueComicsForPanelImages } from '~/server/services/nsfwLevels.service';
+import {
+  queueComicsForPanelImages,
+  queueModel3DForThumbnailImage,
+} from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { getVotableTags2 } from '~/server/services/tag.service';
@@ -1200,6 +1203,7 @@ export const getAllImages = async (
     collectionId, // TODO - call this from separate method?
     modelId,
     modelVersionId,
+    model3dId,
     imageId, // used in public API
     username,
     period,
@@ -1423,6 +1427,17 @@ export const getAllImages = async (
     }
   }
 
+  // Model3D gallery: posts link to a Model3D via Post.model3dId (no
+  // ModelVersion / ImageResourceNew chain involved), so this is just a
+  // direct filter on the always-present Post join below. Mirrors the
+  // collection / model gallery cache shape — Model3D image uploads are
+  // captured by the same post.service bust hooks.
+  if (model3dId) {
+    AND.push(Prisma.sql`p."model3dId" = ${model3dId}`);
+    cacheTime = CacheTTL.md;
+    cacheTags.push(`images-model3d:${model3dId}`);
+  }
+
   // [x] TODO remove
   if (targetUserId) {
     // WITH.push(
@@ -1570,7 +1585,7 @@ export const getAllImages = async (
     AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
-  const isGallery = modelId || modelVersionId || reviewId || userId;
+  const isGallery = modelId || modelVersionId || model3dId || reviewId || userId;
   if (postId && !modelId) {
     // a post image query won't include modelId
     orderBy = `i."index"`;
@@ -2858,6 +2873,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const {
     sort,
     modelVersionId,
+    model3dId,
     types,
     withMeta,
     fromPlatform,
@@ -3035,6 +3051,14 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
+  }
+
+  // Model3D gallery filter — `model3dId` is the index analog of `postedToId`
+  // (set at index time from `Post.model3dId`). Lets the 3D-model detail page
+  // serve its gallery from Meilisearch instead of the DB feed path, which
+  // was tripping the 20s ceiling on `getAllImages` for model3d queries.
+  if (model3dId) {
+    filters.push(makeMeiliImageSearchFilter('model3dId', `= ${model3dId}`));
   }
 
   if (remixOfId) {
@@ -3724,6 +3748,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   const {
     sort,
     modelVersionId,
+    model3dId,
     types,
     withMeta,
     fromPlatform,
@@ -3888,6 +3913,14 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
+  }
+
+  // Model3D gallery filter — `model3dId` is the index analog of `postedToId`
+  // (set at index time from `Post.model3dId`). Lets the 3D-model detail page
+  // serve its gallery from Meilisearch instead of the DB feed path, which
+  // was tripping the 20s ceiling on `getAllImages` for model3d queries.
+  if (model3dId) {
+    filters.push(makeMeiliImageSearchFilter('model3dId', `= ${model3dId}`));
   }
 
   if (remixOfId) {
@@ -6507,6 +6540,13 @@ export async function updateImageNsfwLevel({
         data: { status },
       });
     }
+    // If this image is the thumbnail of a Model3D, enqueue the parent
+    // Model3D for nsfwLevel recompute. Without this, a moderator clamping
+    // the thumbnail's nsfwLevel via the image mod surface would leave
+    // `Model3D.nsfwLevel` (and the denormalized `Model3DMetric.nsfwLevel`)
+    // stale — the parent row's level is derived from the thumbnail alone
+    // (`updateModel3DNsfwLevels` in `nsfwLevels.service.ts`).
+    await queueModel3DForThumbnailImage(id);
     await trackModActivity(userId, {
       entityType: 'image',
       entityId: id,

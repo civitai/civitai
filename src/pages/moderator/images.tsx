@@ -57,6 +57,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { Model3DModAction } from '~/components/Model3D/Moderation/Model3DModAction';
 import { RuleDefinitionPopover } from '~/components/Moderation/RuleDefinitionPopover';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -683,6 +684,11 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </Stack>
         </Card.Section>
       )}
+      {/* Thumbnail-driven Model3D mod affordance — renders null unless this
+          image is the @unique thumbnail of a Model3D (workstream H, §2.10). */}
+      <Card.Section>
+        <Model3DModAction imageId={image.id} />
+      </Card.Section>
     </Card>
   );
 }

@@ -440,8 +440,7 @@ function ReportDetails({ report }: { report: ReportDetail }) {
 }
 
 const getReportLink = (report: ReportDetail) => {
-  if (report.model)
-    return getModelUrl({ modelId: report.model.id, modelName: report.model.name });
+  if (report.model) return getModelUrl({ modelId: report.model.id, modelName: report.model.name });
   else if (report.resourceReview) return `/reviews/${report.resourceReview.id}`;
   else if (report.comment)
     return `/models/${report.comment.modelId}/?dialog=commentThread&commentId=${
@@ -457,6 +456,8 @@ const getReportLink = (report: ReportDetail) => {
     return `/bounties/${report.bountyEntry.bountyId}/entries/${report.bountyEntry.id}`;
   else if (report.commentV2?.commentV2) return `/comments/v2/${report.commentV2.commentV2.id}`;
   else if (report.comicProject) return `/comics/${report.comicProject.id}`;
+  else if (report.model3d) return `/3d-models/${report.model3d.id}`;
+  else if (report.model3dReview) return `/3d-models/${report.model3dReview.model3dId}/reviews`;
   else if (report.chat)
     return !!env.NEXT_PUBLIC_CHAT_LOOKUP_URL
       ? `${env.NEXT_PUBLIC_CHAT_LOOKUP_URL}${report.chat.id}`

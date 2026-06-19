@@ -174,7 +174,9 @@ const colorPriority = [
   'grey',
 ];
 
-export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'article') {
+export async function getCategoryTags(
+  type: 'image' | 'model' | 'post' | 'article' | 'model3d'
+) {
   let categories: TypeCategory[] | undefined;
   const categoriesCache = await redis.get(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`);
   if (categoriesCache) categories = JSON.parse(categoriesCache);

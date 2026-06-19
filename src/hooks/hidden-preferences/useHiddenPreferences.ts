@@ -9,6 +9,7 @@ export const useQueryHiddenPreferences = () => {
     () =>
       data ?? {
         hiddenModels: [],
+        hiddenModel3Ds: [],
         hiddenImages: [],
         hiddenTags: [],
         hiddenUsers: [],

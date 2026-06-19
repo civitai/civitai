@@ -35,6 +35,10 @@ const filterableAttributes = [
   'modelVersionIds', // auto-detected going forward, auto + postedTo historically
   'modelVersionIdsManual',
   'postedToId',
+  // Filterable on the Model3D gallery page — set from `Post.model3dId` at
+  // index time so /3d-models/[id] can read images via Meilisearch instead of
+  // the slow DB feed path (which has been hitting the 20s ceiling).
+  'model3dId',
   'baseModel',
   'type',
   'hasMeta',
@@ -142,6 +146,7 @@ export type SearchBaseImage = {
   hasMeta: boolean;
   onSite: boolean;
   postedToId?: number;
+  model3dId?: number;
   needsReview: string | null;
   minor?: boolean;
   promptNsfw?: boolean;
@@ -355,6 +360,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         ) AS "hasPositivePrompt",
         ${imageOnSiteSql()} as "onSite",
         p."modelVersionId" as "postedToId",
+        p."model3dId" as "model3dId",
         i."meta"->'extra'->'remixOfId' as "remixOfId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"

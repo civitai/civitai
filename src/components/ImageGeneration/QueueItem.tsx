@@ -6,14 +6,19 @@ import {
   Button,
   Card,
   Loader,
+  Menu,
   RingProgress,
   Text,
   Tooltip,
   Anchor,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
+import dynamic from 'next/dynamic';
 import {
   IconAlertTriangleFilled,
+  IconCube,
+  IconDownload,
+  IconX,
   IconArrowsShuffle,
   IconBan,
   IconPlus,
@@ -24,8 +29,10 @@ import {
   IconLink,
 } from '@tabler/icons-react';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
+import { useRouter } from 'next/router';
 import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
+import { showErrorNotification } from '~/utils/notifications';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
@@ -71,9 +78,15 @@ import {
   GENERATION_HANDOFF_PARAM,
 } from '~/components/generation_v2/utils/generation-url-handoff';
 import { getGenerationSnapshotCache } from '~/components/generation_v2/utils/generation-snapshot-cache';
-import type { BlobData } from '~/shared/orchestrator/workflow-data';
+import type {
+  AudioBlob,
+  BlobData,
+  ImageBlob,
+  VideoBlob,
+} from '~/shared/orchestrator/workflow-data';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getModelUrl } from '~/utils/string-helpers';
+import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
 import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
@@ -108,6 +121,13 @@ export function QueueItem({
   const resources = request.resources;
 
   const allImages = request.steps.flatMap((s) => s.output);
+
+  // PolyGen (3D) workflows are rendered as their own queue card variant —
+  // we deliberately do NOT spin up a WebGL viewer per queue card (5 queued
+  // generations would mean 5 WebGL contexts on the page). Show the
+  // thumbnail + a stub "Post from Generation" CTA; the full viewer lives
+  // on the detail page (workstream D + G).
+  const isPolyGen = request.steps.some((s) => s.$type === 'polyGen');
 
   const stepErrors = request.steps.flatMap((s) => s.errors ?? []);
   const failureReason = stepErrors.length
@@ -162,14 +182,34 @@ export function QueueItem({
     // metadata for source-lineage cases.
     const replayParams = request.params;
     const isTxt2Img = replayParams?.workflow === 'txt2img';
+    // PolyGen (3D Models) has no model selector — pin the ecosystem so the
+    // form's discriminator activates the polyGen subgraph (auto-hiding the
+    // checkpoint picker via Controller's null return) and lands the user
+    // directly on the 3D Models segment with all params pre-filled.
+    const isPolyGenReplay = request.steps.some((s) => s.$type === 'polyGen');
+    const polyGenOverrides = isPolyGenReplay
+      ? {
+          ecosystem: 'PolyGen',
+          workflow:
+            (replayParams?.workflow as string | undefined) ??
+            (request.steps.some(
+              (s) => s.$type === 'polyGen' && (s.params as any)?.process === 'imageTo3D'
+            )
+              ? 'img2model3d'
+              : 'txt2model3d'),
+        }
+      : {};
     generationGraphStore.setData({
       params: {
         ...replayParams,
         seed: null,
         // Clear images for txt2img to avoid stale data
         ...(isTxt2Img ? { images: null } : {}),
+        ...polyGenOverrides,
       },
-      resources: request.resources,
+      // PolyGen has no checkpoint/LoRA resources — drop any inherited ones so
+      // the form provider doesn't push a `model` value onto the polyGen branch.
+      resources: isPolyGenReplay ? [] : request.resources,
       runType: 'replay',
       remixOfId: request.remixOfId,
     });
@@ -195,6 +235,23 @@ export function QueueItem({
     (!!params.engine && allImages.length > 0);
 
   const workflowDefinition = workflowConfigs[params.workflow as keyof typeof workflowConfigs];
+
+  // PolyGen workflows don't always carry `params.workflow` consistently
+  // (the orchestrator-side step is the source of truth), so derive the
+  // process label directly from the polyGen step input. Shown as its own
+  // chip in the card header so the user always sees "Image to 3D" /
+  // "Text to 3D" even when the workflowConfig lookup misses.
+  const polyGenStep = request.steps.find((s) => s.$type === 'polyGen');
+  const polyGenProcess = (polyGenStep?.params as { process?: string } | undefined)
+    ?.process;
+  const polyGenChipLabel =
+    polyGenProcess === 'imageTo3D'
+      ? 'Image to 3D'
+      : polyGenProcess === 'textTo3D'
+      ? 'Text to 3D'
+      : polyGenStep
+      ? '3D Model'
+      : null;
 
   const engine = params.engine as string | undefined;
   const version = params.version as string | undefined;
@@ -246,6 +303,16 @@ export function QueueItem({
                   {workflowDefinition.label}
                 </Badge>
               )}
+              {polyGenChipLabel && !workflowDefinition && (
+                <Badge
+                  radius="sm"
+                  color="violet"
+                  size="sm"
+                  classNames={{ label: 'overflow-hidden' }}
+                >
+                  {polyGenChipLabel}
+                </Badge>
+              )}
               {engine && (
                 <Badge
                   radius="sm"
@@ -292,7 +359,19 @@ export function QueueItem({
         </Card.Section>
       )}
 
-      {inView && (
+      {inView && isPolyGen && (
+        <div className="flex flex-col gap-3 py-3 @container">
+          {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
+          {failureReason && <Alert color="red">{failureReason}</Alert>}
+          <Model3DQueueCardOutputs
+            request={request}
+            pending={pending}
+            processing={processing}
+          />
+        </div>
+      )}
+
+      {inView && !isPolyGen && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
             {showDelayedMessage &&
@@ -454,7 +533,14 @@ function StepOutputs({
 }) {
   const images = step ? step.output : request.steps.flatMap((s) => s.output);
   const allDisplayImages = step ? step.displayOutput : request.displayOutput;
-  const displayImages = allDisplayImages.filter((img) => matchesMarkerTags(img, markerTags));
+  // PolyGen workflows render through `Model3DQueueCardOutputs` (the `isPolyGen`
+  // branch above), so model3d blobs never reach this grid — narrow them out
+  // here so `GeneratedOutput` keeps its image/video/audio-only contract.
+  const displayImages = allDisplayImages
+    .filter(
+      (img): img is ImageBlob | VideoBlob | AudioBlob => img.type !== 'model3d'
+    )
+    .filter((img) => matchesMarkerTags(img, markerTags));
   const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
 
   const stepFailure = step
@@ -858,5 +944,365 @@ function CanUpgradeBlock({
         </Text>
       )}
     </>
+  );
+}
+
+// Lazy-mounted so the GLB loader bundle only ships for users who actually
+// toggle the inline preview on. The variant-aware wrapper handles
+// switching between Base / Rigged / Animated / Walking / Running on its
+// own; it falls through to Model3DViewer for the actual three.js mount.
+const Model3DVariantViewerDynamic = dynamic(
+  () =>
+    import('~/components/Model3D/Viewer/Model3DVariantViewer').then(
+      (m) => m.Model3DVariantViewer
+    ),
+  { ssr: false }
+);
+
+/**
+ * Queue card body for 3D Model (polyGen) workflows.
+ *
+ * Renders the generator-provided thumbnail (an `ImageBlob` carried on the
+ * polyGen step's output) and, on opt-in, an inline three.js viewer mounted
+ * on the GLB URL. The viewer only mounts when the user toggles it on, so
+ * the feed doesn't spin up N WebGL contexts unprompted.
+ *
+ * "Save 3D Model" lazily materializes a `Model3D` Draft from the workflow:
+ * the server copies the orchestrator's expiring GLB / FBX blobs into our
+ * S3 under `3d/`, ingests the thumbnail through the standard image
+ * pipeline (NSFW / CSAM scan, real `Image` row), and writes the Draft +
+ * `Model3DFile` rows — the same final write the moderator seed page uses.
+ * After that we land the owner in `/3d-models/{id}/edit` to set name +
+ * description (WYSIWYG) before publishing. No Image Post is created here;
+ * that's a separate optional flow off the published 3D model page.
+ */
+function Model3DQueueCardOutputs({
+  request,
+  pending,
+  processing,
+}: {
+  request: WorkflowData;
+  pending: boolean;
+  processing: boolean;
+}) {
+  const router = useRouter();
+  const [viewerOpen, setViewerOpen] = useState(false);
+  console.log('Model3DQueueCardOutputs', { request, pending, processing });
+
+  // PolyGen outputs flow through `formatStepOutputs` as `Model3DBlob`s —
+  // one per generated mesh, with the 2D preview carried on `thumbnailUrl`
+  // and the GLB at `url`. Take the first such blob across the workflow.
+  const model3dBlob = request.steps
+    .flatMap((s) => s.output)
+    .find((blob) => blob?.type === 'model3d');
+  const thumbnailUrl =
+    model3dBlob?.type === 'model3d' ? model3dBlob.thumbnailUrl ?? null : null;
+  const modelUrl = model3dBlob?.type === 'model3d' ? model3dBlob.url ?? null : null;
+  const modelFormat =
+    model3dBlob?.type === 'model3d' ? model3dBlob.format ?? 'glb' : 'glb';
+
+  // Viewable variants — GLB-only siblings the inline three.js viewer can
+  // mount (FBX isn't supported by GLTFLoader, armature-only files render
+  // as empty space). Walking / running play their embedded animations
+  // the moment they're selected via the viewer's AnimationMixer.
+  const viewableVariants: Model3DViewableVariant[] = (() => {
+    if (model3dBlob?.type !== 'model3d') return [];
+    const isViewable = (fmt: string) => fmt.toLowerCase() === 'glb';
+    const list: Model3DViewableVariant[] = [];
+    if (modelUrl && isViewable(modelFormat))
+      list.push({ key: 'base', label: 'Base', url: modelUrl, format: modelFormat });
+    const pushAsset = (
+      key: string,
+      label: string,
+      asset: { url: string; format: string } | undefined
+    ) => {
+      if (asset?.url && isViewable(asset.format))
+        list.push({ key, label, url: asset.url, format: asset.format });
+    };
+    pushAsset('rigged', 'Rigged', model3dBlob.rigged);
+    pushAsset('animated', 'Animated', model3dBlob.animated);
+    pushAsset('walking', 'Walking', model3dBlob.basicAnimations?.walking);
+    pushAsset('running', 'Running', model3dBlob.basicAnimations?.running);
+    return list;
+  })();
+
+  const showSpinner = pending || processing;
+  // Terminal failure states — workflow won't produce a thumbnail. The
+  // orchestrator auto-refunds spent buzz on these, so surface that to the
+  // user instead of the ambiguous "No preview available yet".
+  const isFailed =
+    request.status === 'failed' ||
+    request.status === 'expired' ||
+    request.status === 'canceled';
+  const failureLabel =
+    request.status === 'expired'
+      ? 'Generation expired'
+      : request.status === 'canceled'
+      ? 'Generation canceled'
+      : 'Generation failed';
+  const isComplete = !pending && !processing && !isFailed;
+
+  // Materialize the Model3D draft on demand. The mutation is idempotent on
+  // workflowId: it copies the orchestrator blobs to our S3, ingests the
+  // thumbnail through the standard image pipeline, and writes the Draft +
+  // Model3DFile rows. After that we land the owner in the regular Model3D
+  // edit page where they set name + description (WYSIWYG) and publish.
+  // No Post is created here — Posts are a separate, optional thing the
+  // owner can do later from the Model3D detail page.
+  const ensureModel3D = trpc.model3d.ensureFromWorkflow.useMutation({
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Could not save your 3D model',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const handleSaveToLibrary = async () => {
+    try {
+      const draft = await ensureModel3D.mutateAsync({ workflowId: request.id });
+      await router.push(`/3d-models/${draft.id}/edit`);
+    } catch {
+      // notification already fired via mutation onError
+    }
+  };
+
+  // Enable once the workflow has succeeded and produced a Model3DBlob —
+  // the GLB URL is sufficient for the server-side ensure handler to do the
+  // rest. No more "waiting for a draft that never materializes" stuck state.
+  const ctaBusy = ensureModel3D.isPending;
+  const ctaDisabled = !isComplete || !model3dBlob || ctaBusy;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <TwCard
+        className="relative flex aspect-square items-center justify-center overflow-hidden border"
+        style={{ minHeight: 240 }}
+      >
+        {viewerOpen && viewableVariants.length ? (
+          <>
+            {/* Variant-aware viewer — switches between Base / Rigged /
+                Animated / Walking / Running via the wrapper's top-left
+                Select. Walking and Running auto-play their embedded
+                animations (AnimationMixer wired into Model3DViewer). The
+                `compact` switch makes the viewer fill its parent TwCard
+                instead of imposing min-h-[480px]. */}
+            <Model3DVariantViewerDynamic
+              variants={viewableVariants}
+              compact
+              className="size-full"
+            />
+            <Tooltip label="Close 3D preview" withinPortal position="left">
+              <LegacyActionIcon
+                variant="filled"
+                color="dark"
+                radius="xl"
+                size="sm"
+                aria-label="Close 3D preview"
+                onClick={() => setViewerOpen(false)}
+                style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
+              >
+                <IconX size={14} stroke={2} />
+              </LegacyActionIcon>
+            </Tooltip>
+          </>
+        ) : thumbnailUrl ? (
+          <>
+            {/* size-full so the thumbnail fills the aspect-square card.
+                The orchestrator-emitted thumbnail is square (1024×1024)
+                so object-cover matches object-contain visually but
+                guarantees full coverage on any future non-square sources. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumbnailUrl}
+              alt="3D model thumbnail"
+              className="size-full object-cover"
+            />
+            {modelUrl && (
+              <Tooltip label="View in 3D" withinPortal position="left">
+                <LegacyActionIcon
+                  variant="filled"
+                  color="dark"
+                  radius="xl"
+                  size="sm"
+                  aria-label="Open inline 3D viewer"
+                  onClick={() => setViewerOpen(true)}
+                  style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
+                >
+                  <IconCube size={14} stroke={2} />
+                </LegacyActionIcon>
+              </Tooltip>
+            )}
+          </>
+        ) : showSpinner ? (
+          <div className="flex flex-col items-center gap-2">
+            <Loader size={24} />
+            <Text c="dimmed" size="xs" align="center">
+              Generating 3D model…
+            </Text>
+          </div>
+        ) : isFailed ? (
+          <div className="flex flex-col items-center gap-2 px-4 text-center">
+            <IconAlertTriangleFilled size={24} className="text-red-5" />
+            <Text size="sm" fw={600} c="red.4">
+              {failureLabel}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Your Buzz has been refunded.
+            </Text>
+          </div>
+        ) : (
+          <Text c="dimmed" size="xs" align="center">
+            No preview available yet
+          </Text>
+        )}
+      </TwCard>
+
+      <div className="flex gap-2">
+        <Button
+          onClick={handleSaveToLibrary}
+          variant="light"
+          size="compact-sm"
+          fullWidth
+          loading={ctaBusy}
+          disabled={ctaDisabled}
+        >
+          Post
+        </Button>
+        {/* Download the orchestrator's presigned URLs directly. URLs are
+            short-lived, so this is "download now or never" — same constraint
+            as Save 3D Model (after which we copy them to our own S3). The
+            polyGen output can carry up to ~12 files (base + rigged +
+            animated + walking + running, each with their own glb / fbx /
+            armature siblings); flatten them all into the menu. */}
+        {(() => {
+          // Each downloadable file is one (variant label, format, url) row.
+          // Labels mirror the variant taxonomy used by Model3DFile.variant
+          // server-side so a user's downloaded files match what shows up
+          // later on the saved Model3D detail page.
+          type DownloadEntry = { label: string; format: string; url: string };
+          const entries: DownloadEntry[] = [];
+
+          if (isComplete && model3dBlob?.type === 'model3d') {
+            const pushAsset = (
+              label: string,
+              asset:
+                | {
+                    format: string;
+                    url: string;
+                    fbx?: { format: string; url: string };
+                    armature?: { format: string; url: string };
+                  }
+                | undefined
+            ) => {
+              if (!asset?.url) return;
+              entries.push({ label, format: asset.format, url: asset.url });
+              if (asset.fbx?.url)
+                entries.push({
+                  label,
+                  format: asset.fbx.format,
+                  url: asset.fbx.url,
+                });
+              if (asset.armature?.url)
+                entries.push({
+                  label: `${label} (armature)`,
+                  format: asset.armature.format,
+                  url: asset.armature.url,
+                });
+            };
+
+            // Base mesh: the primary GLB + its alternate-format sibling
+            // (lives on the legacy `variants[]` array, where polygen still
+            // emits the base FBX).
+            if (modelUrl) entries.push({ label: 'Base', format: modelFormat, url: modelUrl });
+            for (const v of model3dBlob.variants ?? []) {
+              if (v?.url) entries.push({ label: 'Base', format: v.format, url: v.url });
+            }
+
+            // New sibling meshes from @civitai/client 0.2.0-beta.72.
+            pushAsset('Rigged', model3dBlob.rigged);
+            pushAsset('Animated', model3dBlob.animated);
+            pushAsset('Walking', model3dBlob.basicAnimations?.walking);
+            pushAsset('Running', model3dBlob.basicAnimations?.running);
+          }
+
+          if (!entries.length) {
+            return (
+              <Button
+                variant="light"
+                size="compact-sm"
+                fullWidth
+                disabled
+                leftSection={<IconDownload size={14} stroke={2} />}
+              >
+                Download
+              </Button>
+            );
+          }
+
+          // Single file — anchor button, no menu.
+          if (entries.length === 1) {
+            const f = entries[0];
+            return (
+              <Button
+                component="a"
+                href={f.url}
+                download={`civitai-3d-${request.id}.${f.format}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                variant="light"
+                size="compact-sm"
+                fullWidth
+                leftSection={<IconDownload size={14} stroke={2} />}
+              >
+                Download {f.format.toUpperCase()}
+              </Button>
+            );
+          }
+
+          // Build deterministic filenames + collision-safe React keys.
+          // Variant labels go into the filename so the user's filesystem
+          // can tell rigged.glb apart from base.glb after a "save all" sweep.
+          const slug = (s: string) =>
+            s.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+          const filename = (e: DownloadEntry) =>
+            e.label === 'Base'
+              ? `civitai-3d-${request.id}.${e.format}`
+              : `civitai-3d-${request.id}.${slug(e.label)}.${e.format}`;
+
+          return (
+            <Menu position="bottom-end" withinPortal>
+              <Menu.Target>
+                <Button
+                  variant="light"
+                  size="compact-sm"
+                  fullWidth
+                  leftSection={<IconDownload size={14} stroke={2} />}
+                >
+                  Download
+                </Button>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {entries.map((e, i) => (
+                  <Menu.Item
+                    key={`${e.label}-${e.format}-${i}`}
+                    component="a"
+                    href={e.url}
+                    download={filename(e)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    leftSection={<IconDownload size={14} stroke={2} />}
+                  >
+                    {e.label === 'Base'
+                      ? e.format.toUpperCase()
+                      : `${e.label} · ${e.format.toUpperCase()}`}
+                  </Menu.Item>
+                ))}
+              </Menu.Dropdown>
+            </Menu>
+          );
+        })()}
+      </div>
+    </div>
   );
 }
