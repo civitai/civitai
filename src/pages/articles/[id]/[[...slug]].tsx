@@ -111,7 +111,13 @@ export const getServerSideProps = createServerSideProps({
       if (article) {
         const correctSlug = slugit(article.title);
         const currentSlug = result.data.slug?.join('/');
-        if (currentSlug !== correctSlug) {
+        // Skip the redirect when the canonical slug is empty — slugit() strips
+        // all non-Latin-alphanumeric chars (strict mode), so CJK/Cyrillic/emoji/
+        // dots-only titles slugify to ''. Redirecting to /articles/<id>/ (empty
+        // slug) gets trailing-slash-normalized back to /articles/<id>, which
+        // never matches '' and loops forever (ERR_TOO_MANY_REDIRECTS). The bare
+        // /articles/<id> form just becomes canonical instead.
+        if (correctSlug && currentSlug !== correctSlug) {
           const queryString = buildPassthroughQuery(ctx.query);
           // 308 only for bare-id → slug canonical mapping with no query string,
           // because some browsers cache 308 keyed on path only and drop the
