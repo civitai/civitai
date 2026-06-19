@@ -211,6 +211,9 @@ export const ECO = {
   // Ideogram
   Ideogram: 72,
 
+  // Boogu
+  Boogu: 74,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -627,6 +630,15 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Ideogram 4.0',
     familyId: 22,
     sortOrder: 170,
+  },
+
+  // Boogu Family (familyId: 23)
+  {
+    id: ECO.Boogu,
+    key: 'Boogu',
+    displayName: 'Boogu',
+    familyId: 23,
+    sortOrder: 180,
   },
 
   // HiDream Family (familyId: 19)
@@ -1904,6 +1916,7 @@ export const BM = {
   Krea2: 89,
   MAI: 90,
   Ideogram: 91,
+  Boogu: 93,
   // PolyGen was originally 90 on the hackaton branch; bumped to 91 to dodge
   // MAI (main-line), then bumped again to 92 on the main merge to dodge
   // Ideogram (also main-line).
@@ -2286,6 +2299,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     name: 'Ideogram',
     description: "Ideogram, Inc.'s text-to-image generation models with strong typography",
   },
+  {
+    id: 23,
+    name: 'Boogu',
+    description: "Boogu's unified multimodal image generation and editing models",
+  },
 ];
 
 export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f]));
@@ -2486,6 +2504,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Ideogram,
     licenseId: 37,
+  },
+
+  // Boogu
+  {
+    id: BM.Boogu,
+    name: 'Boogu',
+    description: "Boogu's unified multimodal image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.Boogu,
+    licenseId: 13,
   },
 
   // Illustrious
