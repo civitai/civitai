@@ -264,7 +264,6 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
               select: {
                 id: true,
                 model3dId: true,
-                rating: true,
                 nsfw: true,
                 tosViolation: true,
                 user: { select: simpleUserSelect },
