@@ -1605,12 +1605,14 @@ export const blocksRouter = router({
       }
       // Context binding. A MODEL token pins `ctx.modelId`; the body must match
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
-      // lets the viewer pick any model they're entitled to generate against, so
-      // the modelId match is SKIPPED and replaced (below, after the version
-      // read) by the pre-spend availability/coverage gate
-      // (assertViewerCanGeneratePageResources). Early-access + Private-
-      // subscription entitlement is enforced separately by the orchestrator
-      // resource belt. See isPageToken / assertViewerCanGeneratePageResources.
+      // lets the viewer pick a model, so the modelId match is SKIPPED and
+      // replaced (below, after the version read) by the pre-spend availability
+      // gate (assertViewerCanGeneratePageResources). That gate is a fail-fast UX
+      // layer over the body version + LoRAs only — it does NOT cover the
+      // resolved/billed checkpoint anchor; early-access + Private-subscription
+      // entitlement (and the resolved anchor) are enforced by the orchestrator
+      // resource belt over the full array. See isPageToken /
+      // assertViewerCanGeneratePageResources.
       const isPage = isPageToken(claims);
       if (!isPage) {
         const ctxModelId = Number(
@@ -1666,11 +1668,17 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
-      // PAGE branch: pre-spend availability/coverage gate on every resource the
-      // REAL viewer picked — the checkpoint AND each additional LoRA (the
-      // security replacement for the skipped model-binding check) — fail-closed
-      // before any spend. Early-access + Private-sub entitlement is enforced
-      // downstream by the orchestrator resource belt for the FULL array.
+      // PAGE branch: pre-spend availability gate over the resources THIS gate
+      // can see — the viewer-picked BODY version (`resolved.gate`) AND each
+      // additional LoRA — as a fail-fast UX layer in place of the skipped
+      // model-binding check. NOTE it does NOT cover the resolved/billed
+      // checkpoint ANCHOR: for a non-Checkpoint page body, resolveBlockCheckpoint
+      // picks a DIFFERENT default checkpoint (validated there only for
+      // Published + base-model family — not early-access/Private/availability).
+      // That anchor's entitlement — and early-access + Private-sub entitlement
+      // for the whole array — is enforced downstream by the orchestrator
+      // resource belt over the FULL resources array; this gate is not the sole
+      // boundary. Keep both belts.
       if (isPage) {
         // Resolve + validate the LoRA stack first (LoRA-only + family-match)
         // so a bad resource fails BEFORE the entitlement gate / any cost.
@@ -1725,11 +1733,12 @@ export const blocksRouter = router({
       }
       // Context binding. MODEL token → body.modelId must match ctx.modelId.
       // PAGE token (ctx.entityType==='none') → no model binding; skip the match
-      // and enforce the pre-spend availability/coverage gate after the version
-      // read instead (see estimateWorkflow for the same branch; early-access +
-      // Private-sub entitlement is left to the orchestrator resource belt). The
-      // buzzBudget claim + per-user daily cap still bound spend identically for
-      // pages.
+      // and enforce the pre-spend availability gate after the version read
+      // instead (see estimateWorkflow for the same branch; that gate covers the
+      // body version + LoRAs as fail-fast UX — the resolved checkpoint anchor
+      // plus early-access + Private-sub entitlement are left to the orchestrator
+      // resource belt over the full array). The buzzBudget claim + per-user
+      // daily cap still bound spend identically for pages.
       const isPage = isPageToken(claims);
       if (!isPage) {
         const ctxModelId = Number(
@@ -1785,11 +1794,16 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
-      // PAGE branch: pre-spend availability/coverage gate on every resource the
-      // REAL viewer picked — the checkpoint AND each additional LoRA (replaces
-      // the skipped model-binding check) — fail closed BEFORE any reservation.
-      // Early-access + Private-sub entitlement is enforced downstream by the
-      // orchestrator resource belt for the FULL array (whatIf + real).
+      // PAGE branch: pre-spend availability gate over the resources THIS gate
+      // can see — the viewer-picked BODY version (`resolved.gate`) AND each
+      // additional LoRA — a fail-fast UX layer in place of the skipped
+      // model-binding check. It does NOT cover the resolved/billed checkpoint
+      // ANCHOR: a non-Checkpoint page body resolves a DIFFERENT default
+      // checkpoint (validated there only for Published + base-model family).
+      // That anchor's entitlement, plus early-access + Private-sub entitlement
+      // for the whole array, is enforced downstream by the orchestrator
+      // resource belt over the FULL array (whatIf + real) — this gate is not
+      // the sole boundary. Keep both belts.
       if (isPage) {
         const loraGates = await resolvePageLoraGates({
           additionalResources: input.body.additionalResources,
