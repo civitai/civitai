@@ -1794,11 +1794,23 @@ const collectionEntityProps: Partial<Record<CollectionType, string>> = {
   [CollectionType.Image]: 'imageId',
   [CollectionType.Post]: 'postId',
 };
-const collectionEntityMetrics: Partial<Record<CollectionType, typeof articleMetrics>> = {
-  [CollectionType.Article]: articleMetrics,
-  [CollectionType.Model]: modelMetrics,
-  [CollectionType.Image]: imageMetrics,
-  [CollectionType.Post]: postMetrics,
+// Resolved lazily (and cached) rather than as a module-load constant to avoid a
+// circular dependency: user.service -> model.metrics -> modelsSearchIndex ->
+// model.service -> user.service. Building this map at import time statically
+// referenced modelMetrics before its module finished initializing, throwing
+// `ReferenceError: Cannot access 'modelMetrics' before initialization` under ESM
+// (Next.js standalone), which crashed the metrics job at load time.
+let collectionEntityMetrics: Partial<Record<CollectionType, typeof articleMetrics>> | null = null;
+const getCollectionEntityMetrics = (type: CollectionType) => {
+  if (!collectionEntityMetrics) {
+    collectionEntityMetrics = {
+      [CollectionType.Article]: articleMetrics,
+      [CollectionType.Model]: modelMetrics,
+      [CollectionType.Image]: imageMetrics,
+      [CollectionType.Post]: postMetrics,
+    };
+  }
+  return collectionEntityMetrics[type];
 };
 export const toggleBookmarked = async ({
   entityId,
@@ -1827,7 +1839,7 @@ export const toggleBookmarked = async ({
   }
 
   const entityProp = collectionEntityProps[type];
-  const metricsEngine = collectionEntityMetrics[type];
+  const metricsEngine = getCollectionEntityMetrics(type);
   if (!entityProp || !metricsEngine) {
     // TODO(model3d-workstream-E): Model3D bookmarks land here until model3dMetrics ships.
     throw new Error(`toggleBookmarked: no bookmark route for CollectionType.${type}`);
