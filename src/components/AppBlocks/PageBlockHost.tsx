@@ -867,12 +867,11 @@ export function PageBlockHost({
   // (assertViewerCanGeneratePageResources) + the orchestrator belt. Nothing the
   // iframe says about a resource is trusted at spend time.
   //
-  // Security divergences from the model IframeHost picker (deliberate, because a
-  // PAGE block is untrusted host chrome with no install row):
-  //  - `publicOnly: true` drops the native modal's `OR user.id = me` visibility
-  //    clause, so a block can NEVER enumerate the viewer's PRIVATE library
-  //    (the in-app generator keeps own-private visibility; the page picker does
-  //    not — see useResourceSelectFilters.ts).
+  // The picker reuses the host's native ResourceSelectModal UNMODIFIED. The
+  // block never sees the catalog or the search API — it only ever receives the
+  // ONE resource the user physically picked (host chrome can't be enumerated by
+  // the iframe). The real authorization boundary is the SERVER gate
+  // (assertViewerCanGeneratePageResources) at estimate/submit, NOT the picker UI.
   //  - `canGenerate: true` (UX floor) + the spend-time re-gate (authoritative).
   //  - resourceType allowlist enforced in resolveResourcePickerRequest (pure,
   //    unit-tested): an unsupported type is DROPPED and the modal never opens.
@@ -893,7 +892,7 @@ export function PageBlockHost({
       // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). An
       // unresolved/empty baseModelGroup applies NO baseModel narrowing — the
       // modal emits the bare `type = <T>` clause, so it returns ALL resources of
-      // that type (still gated by `publicOnly` + `canGenerate`), NOT a subset.
+      // that type (still gated by `canGenerate`), NOT a subset.
       // That's intentional and safe: the server is the authority on family
       // compatibility at spend (it family-checks the resources at submit), so an
       // incompatible pick is rejected there rather than being silently filtered
@@ -906,9 +905,6 @@ export function PageBlockHost({
         title: resourceType === 'Checkpoint' ? 'Choose a checkpoint' : 'Choose a resource',
         options: {
           canGenerate: true,
-          // Public-only: an untrusted page block must never enumerate the
-          // viewer's private models through the host modal.
-          publicOnly: true,
           resources: [{ type: resourceType, baseModels }],
         },
         onSelect: (resource) => {

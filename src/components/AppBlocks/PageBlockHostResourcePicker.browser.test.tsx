@@ -19,9 +19,8 @@ import { renderWithProviders } from '../../../test/component-setup';
  *
  * These tests mount the REAL PageBlockHost and drive the actual postMessage
  * bridge, asserting:
- *   1. the host opens the native modal with the RIGHT filters (requested type,
- *      canGenerate:true, publicOnly:true so a viewer's private library can't be
- *      enumerated, family hint resolved);
+ *   1. the host opens the native modal (UNMODIFIED) with the RIGHT filters
+ *      (requested type, canGenerate:true, family hint resolved);
  *   2. on select it posts back ONLY { requestId, versionId, modelId, baseModel,
  *      modelType } — NO catalog, NO list, NO private/early-access/availability
  *      internals;
@@ -193,11 +192,10 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
       expect(useDialogStore.getState().dialogs).toHaveLength(1);
     });
     const props = lastResourceModalProps();
-    // Right type + canGenerate floor + PUBLIC-ONLY (no private-library leak).
+    // Right type + canGenerate floor (native modal reused UNMODIFIED).
     expect(props.options?.resources).toHaveLength(1);
     expect(props.options?.resources?.[0].type).toBe('Checkpoint');
     expect(props.options?.canGenerate).toBe(true);
-    expect(props.options?.publicOnly).toBe(true);
     // A family hint resolved to a non-empty baseModels list (Flux1 → Flux.1 D…).
     expect((props.options?.resources?.[0].baseModels ?? []).length).toBeGreaterThan(0);
   });

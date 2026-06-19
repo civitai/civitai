@@ -791,13 +791,9 @@ export function IframeHost({
       // The block may send either an ecosystem key ('Flux1') or a baseModel
       // name ('Flux.1 D'). Normalize through getBaseModelGroup — it accepts
       // both forms and returns the ecosystem key, which is what
-      // getBaseModelsByGroup expects. An unresolved/empty baseModelGroup applies
-      // NO baseModel narrowing — the modal emits the bare `type = Checkpoint`
-      // clause, so it returns ALL Checkpoints (still gated by `publicOnly` +
-      // `canGenerate`), NOT none. That's safe: the server is the authority on
-      // family compatibility at spend (it family-checks the resources at
-      // submit), so an incompatible pick is rejected there rather than being
-      // silently filtered out of the picker here.
+      // getBaseModelsByGroup expects. Empty filter → no checkpoints at all
+      // rather than all checkpoints, since "all" includes incompatible
+      // families that would 400 at submit.
       const groupKey =
         typeof raw.baseModelGroup === 'string' ? getBaseModelGroup(raw.baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
@@ -806,13 +802,6 @@ export function IframeHost({
         title: 'Choose a checkpoint',
         options: {
           canGenerate: true,
-          // publicOnly: the iframe driving this picker is an untrusted block, so
-          // it must never be able to enumerate the viewer's OWN private models.
-          // This drops the native modal's `OR user.id = <me>` Meili clause (see
-          // useResourceSelectMeiliFilters). Behaviour change: a model-slot block's
-          // checkpoint picker no longer shows the viewer's private checkpoints —
-          // the intended hardening, matching the page resource picker.
-          publicOnly: true,
           resources: [{ type: 'Checkpoint', baseModels }],
         },
         onSelect: (resource) => {

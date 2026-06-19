@@ -14,15 +14,6 @@ export type ResourceSelectOptions = {
     partialSupport?: string[];
   }[];
   excludeIds?: number[];
-  /**
-   * Force the Meili visibility filter to PUBLIC resources only, dropping the
-   * `OR user.id = <me>` clause that normally lets a signed-in user see their
-   * OWN private models. Used by the App Blocks PAGE resource picker
-   * (`OPEN_RESOURCE_PICKER`): an untrusted iframe drives the host's native
-   * modal, so a viewer's private library must never be enumerable through it.
-   * Defaults to `false` (the in-app generator keeps its own-private visibility).
-   */
-  publicOnly?: boolean;
 };
 
 const selectSources = ['generation', 'training', 'addResource', 'modelVersion', 'auction'] as const;
