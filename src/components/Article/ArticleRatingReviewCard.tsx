@@ -100,6 +100,9 @@ export function ArticleRatingReviewCard({
           })),
         };
       });
+      // Refresh the queue badges. Single cheap groupBy — safe to invalidate
+      // even while the paginated list uses optimistic removal above.
+      utils.article.getRatingReviewCounts.invalidate();
     },
     onError: (error) => {
       showErrorNotification({ error: new Error(error.message), title: 'Failed to resolve review' });
@@ -128,6 +131,9 @@ export function ArticleRatingReviewCard({
 
   const articleHref = `/articles/${article.id}`;
   const userHref = user.username ? `/user/${user.username}` : undefined;
+  // Live cover is resolved from `coverId` server-side; `article.cover` is the
+  // legacy URL column kept only as a fallback for very old articles.
+  const coverSrc = article.coverImage?.url ?? article.cover;
 
   return (
     <div
@@ -138,9 +144,9 @@ export function ArticleRatingReviewCard({
       {/* Cover */}
       <div className="shrink-0">
         <Link href={articleHref} target="_blank">
-          {article.cover ? (
+          {coverSrc ? (
             <EdgeMedia2
-              src={article.cover}
+              src={coverSrc}
               type="image"
               width={240}
               style={{
@@ -283,17 +289,55 @@ export function ArticleRatingReviewCard({
             </Group>
           </Stack>
         ) : (
-          <Stack gap={4}>
-            <Text size="xs" c="dimmed" fw={500}>
-              Moderator note
-            </Text>
-            <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-              {review.modComment?.trim() || (
-                <Text component="span" size="sm" c="dimmed" fs="italic">
-                  No note
+          <Stack gap="xs">
+            {/* Audit trail: who actioned this review and when. `resolver` is
+                null for auto-approved rows (a rescan agreed with the owner). */}
+            <Group gap={6} wrap="nowrap">
+              <Text size="xs" c="dimmed" fw={500}>
+                {review.resolver ? 'Resolved by' : 'Resolved'}
+              </Text>
+              {review.resolver ? (
+                <Group gap={4} wrap="nowrap">
+                  <Avatar src={review.resolver.image ?? undefined} size={18} radius="xl" />
+                  {review.resolver.username ? (
+                    <Text
+                      component={Link}
+                      href={`/user/${review.resolver.username}`}
+                      target="_blank"
+                      size="xs"
+                      c="dimmed"
+                    >
+                      {review.resolver.username}
+                    </Text>
+                  ) : (
+                    <Text size="xs" c="dimmed">
+                      User #{review.resolver.id}
+                    </Text>
+                  )}
+                </Group>
+              ) : (
+                <Text size="xs" c="dimmed" fs="italic">
+                  auto-approved
                 </Text>
               )}
-            </Text>
+              {review.resolvedAt ? (
+                <Text size="xs" c="dimmed">
+                  · {new Date(review.resolvedAt).toLocaleString()}
+                </Text>
+              ) : null}
+            </Group>
+            <Stack gap={4}>
+              <Text size="xs" c="dimmed" fw={500}>
+                Moderator note
+              </Text>
+              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                {review.modComment?.trim() || (
+                  <Text component="span" size="sm" c="dimmed" fs="italic">
+                    No note
+                  </Text>
+                )}
+              </Text>
+            </Stack>
           </Stack>
         )}
       </Stack>

@@ -1,4 +1,4 @@
-import { Button, Center, Group, Loader, Select, Stack, Title } from '@mantine/core';
+import { Badge, Button, Center, Group, Loader, Select, Stack, Title } from '@mantine/core';
 import { useEffect, useMemo, useState } from 'react';
 
 import { ArticleRatingReviewCard } from '~/components/Article/ArticleRatingReviewCard';
@@ -38,12 +38,30 @@ export default function ArticleRatingReview() {
       getNextPageParam: (last) => last?.nextCursor,
     });
 
+  // Queue depth across all buckets so mods can see how much work is waiting.
+  const { data: counts } = trpc.article.getRatingReviewCounts.useQuery();
+
   const flatData = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
 
   return (
     <div className="flex flex-col gap-4 p-4">
       <div className="flex items-center justify-between gap-4">
-        <Title>Article Rating Review</Title>
+        <Stack gap={6}>
+          <Title>Article Rating Review</Title>
+          {counts ? (
+            <Group gap={6}>
+              <Badge color="yellow" variant="light" size="lg">
+                {counts.Pending} pending
+              </Badge>
+              <Badge color="teal" variant="light">
+                {counts.Actioned} approved
+              </Badge>
+              <Badge color="red" variant="light">
+                {counts.Unactioned} rejected
+              </Badge>
+            </Group>
+          ) : null}
+        </Stack>
         <Group gap={8}>
           <Select
             placeholder="Status"

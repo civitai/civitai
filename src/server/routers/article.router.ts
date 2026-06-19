@@ -32,6 +32,7 @@ import {
   createArticleRatingReview,
   getArticleRatingReviewForOwner,
   getArticleRatingReviews,
+  getArticleRatingReviewCounts,
   resolveArticleRatingReview,
 } from '~/server/services/article.service';
 import {
@@ -173,6 +174,9 @@ export const articleRouter = router({
     .use(isFlagProtected('articleRatingDispute'))
     .input(getArticleRatingReviewsSchema)
     .query(({ input }) => getArticleRatingReviews(input)),
+  getRatingReviewCounts: moderatorProcedure
+    .use(isFlagProtected('articleRatingDispute'))
+    .query(() => getArticleRatingReviewCounts()),
   resolveRatingReview: moderatorProcedure
     .use(isFlagProtected('articleRatingDispute'))
     .input(resolveArticleRatingReviewSchema)
