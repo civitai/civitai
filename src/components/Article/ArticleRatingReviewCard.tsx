@@ -100,6 +100,9 @@ export function ArticleRatingReviewCard({
           })),
         };
       });
+      // Refresh the queue badges. Single cheap groupBy — safe to invalidate
+      // even while the paginated list uses optimistic removal above.
+      utils.article.getRatingReviewCounts.invalidate();
     },
     onError: (error) => {
       showErrorNotification({ error: new Error(error.message), title: 'Failed to resolve review' });
@@ -128,6 +131,9 @@ export function ArticleRatingReviewCard({
 
   const articleHref = `/articles/${article.id}`;
   const userHref = user.username ? `/user/${user.username}` : undefined;
+  // Live cover is resolved from `coverId` server-side; `article.cover` is the
+  // legacy URL column kept only as a fallback for very old articles.
+  const coverSrc = article.coverImage?.url ?? article.cover;
 
   return (
     <div
@@ -138,9 +144,9 @@ export function ArticleRatingReviewCard({
       {/* Cover */}
       <div className="shrink-0">
         <Link href={articleHref} target="_blank">
-          {article.cover ? (
+          {coverSrc ? (
             <EdgeMedia2
-              src={article.cover}
+              src={coverSrc}
               type="image"
               width={240}
               style={{

@@ -34,10 +34,16 @@ export default function ArticleRatingReviewModal({
         // by falling back to the highest set bit; direct map access on
         // `browsingLevelLabels` returns undefined for those and produces an
         // empty Select label.
-        label: getBrowsingLevelLabel(level),
+        label:
+          level === currentLevel
+            ? `${getBrowsingLevelLabel(level)} (current)`
+            : getBrowsingLevelLabel(level),
         value: String(level),
+        // A review that suggests the rating the article already has is a no-op,
+        // so the current level is unpickable. Server enforces the same rule.
+        disabled: level === currentLevel,
       })),
-    []
+    [currentLevel]
   );
 
   // Default to one severity step below the current rating (the most-likely-correct
@@ -45,14 +51,21 @@ export default function ArticleRatingReviewModal({
   // When the caller knows the article was rescanned to a lower derived level
   // (stale-override banner path), honor that as the default instead.
   const defaultLevel = useMemo(() => {
-    if (initialSuggestedLevel && browsingLevels.includes(initialSuggestedLevel as never)) {
+    if (
+      initialSuggestedLevel &&
+      browsingLevels.includes(initialSuggestedLevel as never) &&
+      initialSuggestedLevel !== currentLevel
+    ) {
       return String(initialSuggestedLevel);
     }
     const currentIndex = browsingLevels.findIndex((l) => l === currentLevel);
     if (currentIndex > 0) return String(browsingLevels[currentIndex - 1]);
-    // currentLevel may be a composite (multi-bit) or unknown — fall back to
-    // PG (lowest selectable) so the owner picks an explicit target.
-    return String(browsingLevels[0]);
+    // Current is the lowest selectable level (or a composite/unknown value) —
+    // there's nothing lower to suggest, so default to the first level that
+    // isn't the current one. Never default to the current level: it's disabled
+    // in the Select and rejected server-side.
+    const firstDifferent = browsingLevels.find((l) => l !== currentLevel);
+    return String(firstDifferent ?? browsingLevels[0]);
   }, [currentLevel, initialSuggestedLevel]);
 
   const [suggestedLevel, setSuggestedLevel] = useState<string | null>(defaultLevel);
@@ -79,8 +92,10 @@ export default function ArticleRatingReviewModal({
     },
   });
 
+  const sameAsCurrent = suggestedLevel != null && Number(suggestedLevel) === currentLevel;
+
   const handleSubmit = () => {
-    if (!suggestedLevel) return;
+    if (!suggestedLevel || sameAsCurrent) return;
     mutation.mutate({
       articleId,
       suggestedLevel: Number(suggestedLevel),
@@ -138,7 +153,11 @@ export default function ArticleRatingReviewModal({
           <Button variant="default" onClick={dialog.onClose} disabled={mutation.isPending}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} loading={mutation.isPending} disabled={!suggestedLevel}>
+          <Button
+            onClick={handleSubmit}
+            loading={mutation.isPending}
+            disabled={!suggestedLevel || sameAsCurrent}
+          >
             Submit review
           </Button>
         </Group>
