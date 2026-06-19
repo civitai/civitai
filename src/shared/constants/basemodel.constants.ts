@@ -3258,6 +3258,23 @@ export function getRootEcosystem(ecosystemIdOrBaseModel: number | string): Ecosy
   return ecosystem;
 }
 
+
+/**
+ * Clip skip is a CLIP text-encoder concept that only applies to the Stable
+ * Diffusion 1.x and SDXL families (SDXL children like Pony, Illustrious and
+ * NoobAI resolve to the SDXL root). Returns false for everything else
+ * (Flux, SD3, video ecosystems, etc.) and for unknown base models.
+ */
+export function baseModelSupportsClipSkip(baseModel?: string | null): boolean {
+  if (!baseModel) return false;
+  try {
+    const root = getRootEcosystem(baseModel);
+    return root.id === ECO.SD1 || root.id === ECO.SDXL;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Get ecosystem support, with inheritance from parent
  */
