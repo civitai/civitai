@@ -6,6 +6,11 @@ import { dbRead } from '~/server/db/client';
 import { addCorsHeaders } from '~/server/utils/endpoint-helpers';
 import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-limit';
 import { DEVICE_CODE_TTL, DEVICE_POLL_INTERVAL } from '~/server/oauth/constants';
+import {
+  USER_CODE_CHARSET,
+  USER_CODE_GROUP_SIZE,
+  USER_CODE_LENGTH,
+} from '~/server/oauth/user-code';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope, ALL_SCOPES } from '~/shared/constants/token-scope.constants';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
@@ -20,12 +25,12 @@ function generateUserCode(): string {
   // randomInt does rejection sampling internally. Today the alphabet is 32
   // chars (a power of 2, so a plain modulo would also be unbiased), but the
   // rejection-sampling path is robust if the alphabet ever changes.
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No I/O/0/1 to avoid confusion
+  const chars = USER_CODE_CHARSET;
   let code = '';
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < USER_CODE_LENGTH; i++) {
     code += chars[randomInt(chars.length)];
   }
-  return `${code.slice(0, 4)}-${code.slice(4)}`;
+  return `${code.slice(0, USER_CODE_GROUP_SIZE)}-${code.slice(USER_CODE_GROUP_SIZE)}`;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
