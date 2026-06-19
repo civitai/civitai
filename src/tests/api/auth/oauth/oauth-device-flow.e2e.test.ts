@@ -22,12 +22,15 @@ import { TokenScope, ALL_SCOPES } from '~/shared/constants/token-scope.constants
  *
  * ## Two contract drifts this MUST catch (bugs a per-endpoint unit test missed)
  *
- * 1. **Scope-shape drift.** `device-token` returns `scope` as a **string**
- *    (`scope.toString()` → `"33554433"`); the `token` refresh route returns
- *    `scope` as the library's **array** (`["33554433"]`). A CLI parsing one
- *    shape breaks on the other. This test asserts BOTH shapes at the hop where
- *    each is produced — so a regression that "normalizes" refresh to a string
- *    (or device-token to an array) fails here.
+ * 1. **Scope-shape drift (KNOWN TECH-DEBT — pinned, NOT blessed).** `device-token`
+ *    returns `scope` as a **string** (`scope.toString()` → `"33554433"`); the
+ *    `token` refresh route returns `scope` as the library's **array**
+ *    (`["33554433"]`). This divergence is a wart the two endpoints SHOULD
+ *    converge on — it is NOT a desirable contract. The test pins both shapes at
+ *    the hop where each is produced so a regression can't *silently* flip one
+ *    and break a consumer (the CLI handles both today). A DELIBERATE convergence
+ *    PR (make both return the same shape) is expected to UPDATE these
+ *    assertions — they document current behavior, they do not endorse it.
  *
  * 2. **`ALL_SCOPES` / bit-25 bound.** `AppBlocksSubmit` (bit 25 = 33554432) is
  *    opt-in and **excluded from `TokenScope.Full`** (33554431). The device-init
@@ -150,7 +153,13 @@ const h = vi.hoisted(() => {
   // ── In-memory User table (only the fields bearer-token / mod gate read).
   const users = new Map<number, { id: number; isModerator: boolean; bannedAt: Date | null }>();
 
-  return { hashes, getHash, apiKeys, oauthClients, users, nextApiKeyIdRef: { v: nextApiKeyId } };
+  // ── submit-version rate-limit counters (sysRedis MULTI path). Lives in the
+  // hoisted state so seed() can reset it per test — otherwise a gate-passing
+  // submit in one test would accumulate toward RATE_LIMIT.max across tests and
+  // could spuriously 429 once more such tests are added.
+  const counters = new Map<string, number>();
+
+  return { hashes, getHash, apiKeys, oauthClients, users, counters, nextApiKeyIdRef: { v: nextApiKeyId } };
 });
 
 // Helper used inside the redis mock to satisfy the `expiresAt >= now` filter.
@@ -270,22 +279,22 @@ vi.mock('~/server/redis/client', () => {
   };
 
   // sysRedis: only the MULTI rate-limit path + ttl is exercised by submit-version.
-  const counters = new Map<string, number>();
+  // Counters live in the hoisted `h` so seed() resets them per test.
   const sysRedis = {
     multi: () => {
       let pendingKey = '';
       return {
         set(key: string, _v: string, _opts: unknown) {
           pendingKey = key;
-          if (!counters.has(key)) counters.set(key, 0);
+          if (!h.counters.has(key)) h.counters.set(key, 0);
           return this;
         },
         incr(_key?: string) {
           return this;
         },
         async exec() {
-          const next = (counters.get(pendingKey) ?? 0) + 1;
-          counters.set(pendingKey, next);
+          const next = (h.counters.get(pendingKey) ?? 0) + 1;
+          h.counters.set(pendingKey, next);
           return ['OK', next];
         },
       };
@@ -408,6 +417,7 @@ function seed() {
   h.nextApiKeyIdRef.v = 1;
   h.oauthClients.clear();
   h.users.clear();
+  h.counters.clear();
 
   // civitai-cli: public client allowed UserRead|AppBlocksSubmit, device grant.
   h.oauthClients.set(CLI_CLIENT_ID, {
@@ -574,8 +584,9 @@ describe('OAuth device-authorization grant — e2e server contract chain', () =>
       scope: unknown;
     };
     expect(refreshed.access_token).toBeTruthy();
-    // CONTRACT DRIFT: the refresh route returns scope as an ARRAY, whereas
-    // device-token returned a STRING. A consumer must handle both shapes.
+    // CONTRACT DRIFT (tech-debt to converge — see file header): the refresh route
+    // returns scope as an ARRAY, whereas device-token returned a STRING. Pinned to
+    // catch SILENT drift; a deliberate convergence PR should update this assertion.
     expect(Array.isArray(refreshed.scope)).toBe(true);
     expect(refreshed.scope).toEqual([CLI_SCOPE.toString()]);
 
