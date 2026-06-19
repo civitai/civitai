@@ -791,9 +791,13 @@ export function IframeHost({
       // The block may send either an ecosystem key ('Flux1') or a baseModel
       // name ('Flux.1 D'). Normalize through getBaseModelGroup — it accepts
       // both forms and returns the ecosystem key, which is what
-      // getBaseModelsByGroup expects. Empty filter → no checkpoints at all
-      // rather than all checkpoints, since "all" includes incompatible
-      // families that would 400 at submit.
+      // getBaseModelsByGroup expects. An unresolved/empty baseModelGroup applies
+      // NO baseModel narrowing — the modal emits the bare `type = Checkpoint`
+      // clause, so it returns ALL Checkpoints (still gated by `publicOnly` +
+      // `canGenerate`), NOT none. That's safe: the server is the authority on
+      // family compatibility at spend (it family-checks the resources at
+      // submit), so an incompatible pick is rejected there rather than being
+      // silently filtered out of the picker here.
       const groupKey =
         typeof raw.baseModelGroup === 'string' ? getBaseModelGroup(raw.baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];

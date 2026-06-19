@@ -890,11 +890,14 @@ export function PageBlockHost({
       const { requestId, resourceType, baseModelGroup } = req;
 
       // Normalize an optional family hint through getBaseModelGroup (accepts an
-      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'); an
-      // empty filter → that family yields no resources rather than ALL
-      // resources, since "all" includes incompatible families that 400 at
-      // submit. No hint → unconstrained family (any generatable resource of the
-      // requested type).
+      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). An
+      // unresolved/empty baseModelGroup applies NO baseModel narrowing — the
+      // modal emits the bare `type = <T>` clause, so it returns ALL resources of
+      // that type (still gated by `publicOnly` + `canGenerate`), NOT a subset.
+      // That's intentional and safe: the server is the authority on family
+      // compatibility at spend (it family-checks the resources at submit), so an
+      // incompatible pick is rejected there rather than being silently filtered
+      // out of the picker here.
       const groupKey = baseModelGroup ? getBaseModelGroup(baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
 
