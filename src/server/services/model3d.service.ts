@@ -10,7 +10,14 @@ import {
   getUploadS3Client,
   isB2Url,
 } from '~/utils/s3-utils';
-import { MetricTimeframe, Model3DStatus, TagTarget } from '~/shared/utils/prisma/enums';
+import {
+  EntityType,
+  JobQueueType,
+  MetricTimeframe,
+  Model3DStatus,
+  TagTarget,
+} from '~/shared/utils/prisma/enums';
+import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
   allBrowsingLevelsFlag,
   parseBitwiseBrowsingLevel,
@@ -1245,7 +1252,7 @@ export const upsertModel3DFromWorkflow = async ({
     variant?: string;
   }>;
 }): Promise<{ id: number; created: boolean }> => {
-  return dbWrite.$transaction(async (tx) => {
+  const result = await dbWrite.$transaction(async (tx) => {
     const existing = await tx.model3D.findUnique({
       where: { workflowId },
       select: { id: true },
@@ -1287,6 +1294,26 @@ export const upsertModel3DFromWorkflow = async ({
 
     return { id: created.id, created: true };
   });
+
+  // Explicitly enqueue the freshly-created Model3D for nsfwLevel rollup.
+  // Belt-and-suspenders with the scan-webhook path: the webhook also
+  // enqueues when the thumbnail Image finishes scanning, but that path
+  // depends on the Image's scan completing AFTER this row is committed
+  // (otherwise the webhook's `findMany` race-misses). Enqueueing here
+  // guarantees the row enters the cron pipeline at least once regardless
+  // of which side completes first. `ON CONFLICT DO NOTHING` in
+  // `enqueueJobs` makes the eventual double-enqueue a no-op.
+  if (result.created) {
+    await enqueueJobs([
+      {
+        entityId: result.id,
+        entityType: EntityType.Model3D,
+        type: JobQueueType.UpdateNsfwLevel,
+      },
+    ]);
+  }
+
+  return result;
 };
 
 // ---------------------------------------------------------------------------
