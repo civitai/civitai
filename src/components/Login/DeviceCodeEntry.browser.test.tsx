@@ -1,8 +1,8 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-import { DeviceCodeEntry } from '~/pages/login/oauth/DeviceCodeEntry';
+import { DeviceCodeEntry } from '~/components/Login/DeviceCodeEntry';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../../test/component-setup';
+import { renderWithProviders } from '../../../test/component-setup';
 
 // DeviceCodeEntry is the code-entry step of the OAuth device flow. It owns the
 // "when to submit" UX (Enter-to-submit + auto-submit on a complete code) and the
@@ -110,27 +110,27 @@ describe('DeviceCodeEntry', () => {
 
   test('a complete initialCode (verification_uri_complete) auto-submits once on mount, not per render', async () => {
     const onSubmit = vi.fn();
-    const { rerender } = renderWithProviders(
+    const { rerender } = await renderWithProviders(
       <DeviceCodeEntry initialCode={FULL_CODE} onSubmit={onSubmit} />
     );
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
 
     // A re-render with the same complete value must NOT re-fire (the ref guard).
-    rerender(<DeviceCodeEntry initialCode={FULL_CODE} onSubmit={onSubmit} username="alice" />);
+    await rerender(<DeviceCodeEntry initialCode={FULL_CODE} onSubmit={onSubmit} username="alice" />);
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
   test('does not re-fire while a submit is in flight (loading)', async () => {
     const onSubmit = vi.fn();
-    const { rerender } = renderWithProviders(<DeviceCodeEntry onSubmit={onSubmit} />);
+    const { rerender } = await renderWithProviders(<DeviceCodeEntry onSubmit={onSubmit} />);
 
     await userEvent.fill(input(), FULL_CODE);
     expect(onSubmit).toHaveBeenCalledTimes(1);
 
     // Parent flips to loading after the first submit. The button shows a spinner
     // and is non-interactive; pressing Enter must not stack a second lookup.
-    rerender(<DeviceCodeEntry loading onSubmit={onSubmit} />);
+    await rerender(<DeviceCodeEntry loading onSubmit={onSubmit} />);
     await userEvent.click(input());
     await userEvent.keyboard('{Enter}');
     expect(onSubmit).toHaveBeenCalledTimes(1);
@@ -166,5 +166,15 @@ describe('DeviceCodeEntry', () => {
     await userEvent.clear(input());
     await userEvent.fill(input(), FULL_CODE);
     expect(onSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  test('focuses the code input on mount so the user can paste/type immediately', async () => {
+    const onSubmit = vi.fn();
+    renderWithProviders(<DeviceCodeEntry onSubmit={onSubmit} />);
+
+    // The mount-time focus effect should put the caret in the field with no
+    // click, and it must not have triggered a submit on an empty value.
+    await expect.element(input()).toHaveFocus();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });
