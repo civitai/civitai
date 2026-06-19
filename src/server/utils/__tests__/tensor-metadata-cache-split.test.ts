@@ -64,7 +64,7 @@ vi.mock('~/server/prom/client', () => ({
 }));
 
 import { CacheTTL } from '~/server/common/constants';
-import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 
 const FULL_KEY = 'packed:caches:tensor-metadata:42';
 const SUMMARY_KEY = 'packed:caches:tensor-metadata-summary:42';
@@ -163,5 +163,39 @@ describe('tensor-metadata summary/full cache split', () => {
     const again = await fetchFull();
     expect(parse).toHaveBeenCalledTimes(1);
     expect(again.tensors).toHaveLength(2);
+  });
+});
+
+// Audit hardening: bustFetchThroughCache must thread `compress` to BOTH the get and
+// the set, so busting a compressed key reads/writes it with the matching codec instead
+// of decode-failing → evicting → silently no-op'ing the bust.
+describe('bustFetchThroughCache compress threading', () => {
+  const compressArgOf = (key: string) =>
+    (packedGet.mock.calls.find((c) => c[0] === key)?.[1] as { compress?: boolean } | undefined)
+      ?.compress;
+
+  it('threads compress=true to the get AND the set when busting a compressed key', async () => {
+    store.set(FULL_KEY, { data: { x: 1 }, cachedAt: 999 });
+    setCompressFlags.clear();
+    packedGet.mockClear();
+
+    await bustFetchThroughCache(FULL_KEY as never, { compress: true });
+
+    expect(compressArgOf(FULL_KEY)).toBe(true); // read with the compressed codec
+    expect(setCompressFlags.get(FULL_KEY)).toBe(true); // rewritten compressed
+    // staleness reset actually happened (the bust did not no-op)
+    expect((store.get(FULL_KEY) as { cachedAt: number }).cachedAt).toBe(0);
+  });
+
+  it('defaults to compress=false (general path) for uncompressed callers', async () => {
+    store.set(SUMMARY_KEY, { data: { y: 2 }, cachedAt: 999 });
+    setCompressFlags.clear();
+    packedGet.mockClear();
+
+    await bustFetchThroughCache(SUMMARY_KEY as never);
+
+    expect(compressArgOf(SUMMARY_KEY)).toBeFalsy();
+    expect(setCompressFlags.get(SUMMARY_KEY)).toBeFalsy();
+    expect((store.get(SUMMARY_KEY) as { cachedAt: number }).cachedAt).toBe(0);
   });
 });

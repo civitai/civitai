@@ -728,12 +728,23 @@ export async function fetchThroughCache<T>(
   }
 }
 
-export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
-  const cachedData = await redis.packed.get<FetchThroughCacheEntity<any>>(key);
+export async function bustFetchThroughCache(
+  key: RedisKeyTemplateCache,
+  // `compress` MUST match the setting the corresponding fetchThroughCache() uses for
+  // this key. If a key is stored compressed (sentinel-tagged brotli) but busted with
+  // compress=false, the read decodes via the general msgpack path → throws → the entry
+  // is EVICTED and `!cachedData` silently no-ops the bust (the staleness reset never
+  // happens). Threaded as an explicit opt-in (symmetric with fetchThroughCache) so
+  // busting a compressed cache is correct rather than a latent landmine. No current
+  // caller compresses a busted key; this guards future ones.
+  options: { compress?: boolean } = {}
+) {
+  const compress = options.compress ?? false;
+  const cachedData = await redis.packed.get<FetchThroughCacheEntity<any>>(key, { compress });
   if (!cachedData) return;
 
   const toCache: FetchThroughCacheEntity<any> = { data: cachedData.data, cachedAt: 0 };
-  await redis.packed.set(key, toCache, { KEEPTTL: true });
+  await redis.packed.set(key, toCache, { KEEPTTL: true }, { compress });
 }
 
 /**
