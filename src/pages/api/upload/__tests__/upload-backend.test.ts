@@ -145,4 +145,36 @@ describe('upload handler — model backend selection (b2-upload-default retired)
     expect(getUploadBucket).not.toHaveBeenCalled();
     expect(getMultipartPutUrl).toHaveBeenCalledWith(expect.any(String), 1024, null, null);
   });
+
+  // The Model branch was deliberately made identical to the training branch when
+  // the flag was retired. Pin that invariant: training uploads must select B2 on
+  // the same endpoint gate, with no Flipt call — otherwise the two branches could
+  // silently drift.
+  it.each([UploadType.TrainingImages, UploadType.TrainingImagesTemp])(
+    'Training upload (%s) with S3_UPLOAD_B2_ENDPOINT set → backend: b2',
+    async (type) => {
+      mockEnv.S3_UPLOAD_B2_ENDPOINT = 'https://b2.example.com';
+
+      const res = makeRes();
+      await handler(makeReq(type), res);
+
+      expect(res.statusCode).toBe(200);
+      expect((res.body as { backend?: string })?.backend).toBe('b2');
+      expect(getUploadS3Client).toHaveBeenCalledWith('b2');
+      expect(getUploadBucket).toHaveBeenCalledWith('b2');
+    }
+  );
+
+  it('Non-model/non-training upload (Default) never routes to B2 even with endpoint set', async () => {
+    mockEnv.S3_UPLOAD_B2_ENDPOINT = 'https://b2.example.com';
+
+    const res = makeRes();
+    await handler(makeReq(UploadType.Default), res);
+
+    expect(res.statusCode).toBe(200);
+    expect((res.body as { backend?: string })?.backend).toBe('default');
+    expect(getUploadS3Client).not.toHaveBeenCalled();
+    expect(getUploadBucket).not.toHaveBeenCalled();
+    expect(getMultipartPutUrl).toHaveBeenCalledWith(expect.any(String), 1024, null, null);
+  });
 });

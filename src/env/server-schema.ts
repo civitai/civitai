@@ -544,8 +544,11 @@ export const serverSchema = z.object({
   FLIPT_FETCHER_SECRET: z.string(),
   FLIPT_DEPLOYMENT_ID: z.string().optional(),
 
-  // B2 Upload — model files route to B2 whenever this endpoint is configured
-  // (no Flipt flag; routing is gated solely on the presence of this var).
+  // B2 Upload — model + training files route to B2 whenever this endpoint is
+  // configured (no Flipt flag; routing is gated solely on the presence of this
+  // var). Rollback note: unsetting this is now the ONLY lever to force model
+  // uploads off B2 — it also disables the training-upload B2 path (shared gate)
+  // and requires a redeploy. There is no per-user/runtime kill switch anymore.
   S3_UPLOAD_B2_ENDPOINT: z.string().optional(),
   S3_UPLOAD_B2_ACCESS_KEY: z.string().optional(),
   S3_UPLOAD_B2_SECRET_KEY: z.string().optional(),
