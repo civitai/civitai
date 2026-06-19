@@ -193,3 +193,87 @@ describe('createLimiter — fail-open on sysRedis error', () => {
     expect(failOpenSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('createLimiter — malformed MULTI reply fails OPEN WITH A LOG (M2: not a silent NaN-serve)', () => {
+  // A MULTI exec() that returns an unexpected shape (future node-redis change, or
+  // a typeMapping attached to the sys client) used to parse via Number(bad ?? 0) →
+  // NaN/0 → `count > limit` always false → serve unlimited forever with NO
+  // `rate-limit-write-degraded` log (limiter silently+permanently disabled). The
+  // arity assertion must THROW so it routes into the logged fail-open instead.
+
+  it.each<[string, unknown[] | null | undefined | Record<string, unknown>]>([
+    ['short array (arity 1)', ['5']],
+    ['long array (arity 3)', ['5', 3600, 'extra']],
+    ['null exec', null],
+    ['non-array object', { 0: '5', 1: 3600 }],
+  ])(
+    'hasExceededLimit: getCount MULTI returns %s → logged fail-open (serve), not silent NaN',
+    async (_label, badShape) => {
+      sysRedis.multi.mockReturnValueOnce(makeMulti(badShape as any));
+
+      const { limiter } = buildLimiter();
+      // Serves (false = not exceeded)…
+      await expect(limiter.hasExceededLimit('42', 'authed')).resolves.toBe(false);
+      // …but ONLY because the fail-open fired — NOT a silent NaN-serve.
+      expect(failOpenSpy).toHaveBeenCalledTimes(1);
+      expect(failOpenSpy).toHaveBeenCalledWith(
+        'rate-limit-write-degraded',
+        'createLimiter.hasExceededLimit',
+        expect.any(Error),
+        expect.objectContaining({ userKey: '42' })
+      );
+      // The limit HMGET must NOT have run — we never reached the NaN-compare.
+      expect(sysRedis.hmGet).not.toHaveBeenCalled();
+    }
+  );
+
+  it('increment: pipeline MULTI returns a malformed shape → logged fail-open (returns the increment)', async () => {
+    sysRedis.exists.mockResolvedValueOnce(1);
+    // arity-1 reply where 2 entries (INCRBY + HMGET) are expected
+    sysRedis.multi.mockReturnValueOnce(makeMulti([11] as any));
+
+    const { limiter } = buildLimiter();
+    await expect(limiter.increment('42', 1)).resolves.toBe(1);
+    expect(failOpenSpy).toHaveBeenCalledWith(
+      'rate-limit-write-degraded',
+      'createLimiter.increment',
+      expect.any(Error),
+      expect.objectContaining({ userKey: '42' })
+    );
+    // setLimitHitTime must NOT have run off a NaN newCount.
+    expect(sysRedis.set).not.toHaveBeenCalledWith(
+      'download:limits:42',
+      expect.any(Number),
+      expect.anything()
+    );
+  });
+});
+
+describe('createLimiter — public getCount fail-open (M1)', () => {
+  it('getCount returns undefined + logs when the MULTI read rejects (does not throw)', async () => {
+    sysRedis.multi.mockReturnValueOnce(makeMulti(new Error('sysRedis read timed out')));
+
+    const { limiter } = buildLimiter();
+    await expect(limiter.getCount('42')).resolves.toBeUndefined();
+    expect(failOpenSpy).toHaveBeenCalledWith(
+      'rate-limit-write-degraded',
+      'createLimiter.getCount',
+      expect.any(Error),
+      expect.objectContaining({ userKey: '42' })
+    );
+  });
+
+  it('getCount returns undefined + logs on a malformed MULTI reply (not a silent NaN)', async () => {
+    sysRedis.multi.mockReturnValueOnce(makeMulti(['5'] as any)); // arity 1, expected 2
+
+    const { limiter } = buildLimiter();
+    await expect(limiter.getCount('42')).resolves.toBeUndefined();
+    expect(failOpenSpy).toHaveBeenCalledTimes(1);
+    expect(failOpenSpy).toHaveBeenCalledWith(
+      'rate-limit-write-degraded',
+      'createLimiter.getCount',
+      expect.any(Error),
+      expect.objectContaining({ userKey: '42' })
+    );
+  });
+});
