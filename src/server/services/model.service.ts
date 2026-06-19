@@ -2506,6 +2506,13 @@ export const getRecentlyManuallyAdded = async ({
     where: {
       detected: false,
       image: { userId },
+      // ImageResourceNew.modelVersion is a required relation, but orphaned rows
+      // exist in prod (modelVersionId pointing at a hard-deleted ModelVersion).
+      // Selecting the required relation on such a row makes Prisma throw
+      // "Inconsistent query result: Field modelVersion is required ... got null"
+      // → HTTP 500. Filtering on relation existence excludes the orphans so the
+      // query degrades gracefully (returns the resolvable rows) instead.
+      modelVersion: { is: {} },
     },
     orderBy: { image: { createdAt: 'desc' } },
     take,
