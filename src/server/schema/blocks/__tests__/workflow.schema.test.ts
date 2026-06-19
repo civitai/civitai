@@ -105,4 +105,31 @@ describe('blockWorkflowBodySchema — additionalResources (Page-LoRA)', () => {
       )
     ).toThrow();
   });
+
+  // LOW-1: strength is strict (non-coerced) parity with modelVersionId. Block
+  // bodies are JSON so a real number always arrives; z.coerce previously let
+  // ""/[]/true/null slip to 0/1 instead of being rejected.
+  it('REJECTS a non-number strength ("", [], true, null) instead of coercing', () => {
+    for (const bad of ['', [], true, null]) {
+      expect(() =>
+        blockWorkflowBodySchema.parse(
+          baseBody({ additionalResources: [{ modelVersionId: 1, strength: bad }] })
+        )
+      ).toThrow();
+    }
+  });
+
+  it('still accepts a real in-range number for strength', () => {
+    const parsed = blockWorkflowBodySchema.parse(
+      baseBody({ additionalResources: [{ modelVersionId: 1, strength: 0.65 }] })
+    );
+    expect((parsed as any).additionalResources[0].strength).toBe(0.65);
+  });
+
+  it('still applies the default (1) when strength is omitted', () => {
+    const parsed = blockWorkflowBodySchema.parse(
+      baseBody({ additionalResources: [{ modelVersionId: 1 }] })
+    );
+    expect((parsed as any).additionalResources[0].strength).toBe(1);
+  });
 });

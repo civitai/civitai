@@ -1921,6 +1921,32 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       });
     }
 
+    // FIX1 tests use a NON-Checkpoint page body, so resolveBlockCheckpoint falls
+    // through rungs 2-4 (viewer override / publisher default / popular). The
+    // LoRA-install-precedence suite above leaves a `default_checkpoint_version_id`
+    // on the (un-reset) resolveBlockInstance mock — clear both override sources
+    // so these tests deterministically reach the platform-popular fallback.
+    function clearCheckpointOverrides() {
+      (BlockRegistry.resolveBlockInstance as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        source: 'install',
+        modelId: 7,
+        slotId: 'app.page',
+        enabled: true,
+        settings: {},
+        installedByUserId: 42,
+        appBlock: {
+          id: 'ab_x',
+          blockId: 'gen-from-model',
+          appId: 'app',
+          status: 'approved',
+          manifest: { targets: [{ slotId: 'app.page' }] },
+          approvedScopes: ['ai:write:budgeted'],
+          app: { allowedScopes: 33554431 },
+        },
+      });
+      mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
+    }
+
     it('a page submit gates the checkpoint AND every LoRA in ONE call', async () => {
       mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
       versionRows({ 201: sdxlLora(201), 202: sdxlLora(202) });
@@ -2110,6 +2136,159 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       expect(mockSysRedis.decrBy).toHaveBeenCalledTimes(1); // reservation refunded
       // The reservation amount is the multi-resource cost (ceil 60).
       expect(mockSysRedis.incrBy.mock.calls[0][1]).toBe(60);
+    });
+
+    // ── FIX 1: family-match anchors on the RESOLVED checkpoint, not the body ──
+    //
+    // For a normal page the body model IS the Checkpoint, so resolved.baseModel
+    // and the resolved-checkpoint baseModel coincide. But nothing forces the
+    // page body to be a Checkpoint: if a page sends a NON-Checkpoint body,
+    // resolveBlockCheckpoint resolves a DIFFERENT default checkpoint as the
+    // anchor (viewer/publisher/popular-in-ecosystem). The LoRA family-match must
+    // validate against THAT checkpoint's baseModel — not the body model's.
+    it('FIX1: non-Checkpoint page body — LoRA family-matches the RESOLVED default checkpoint, not the body model', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Body model 99 is a LoRA (NOT a Checkpoint), baseModel SD 1.5. The
+      // additional LoRA 201 is SDXL — it MISMATCHES the body model's family but
+      // MATCHES the resolved default checkpoint's family (SDXL, below).
+      versionRows({
+        99: {
+          id: 99,
+          baseModel: 'SD 1.5',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'LORA', userId: 1 },
+        },
+        201: sdxlLora(201),
+      });
+      happyUser();
+      clearCheckpointOverrides();
+      // resolveBlockCheckpoint (non-Checkpoint body) falls through to the
+      // platform-popular fallback → modelMetric.findFirst returns an SDXL
+      // checkpoint (version 500). redis.get default = null (cache miss).
+      mockDbRead.modelMetric.findFirst.mockResolvedValue({
+        modelId: 300,
+        model: {
+          id: 300,
+          name: 'Popular SDXL',
+          modelVersions: [{ id: 500, name: 'v1', baseModel: 'SDXL 1.0' }],
+        },
+      });
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      // The SDXL LoRA is compatible with the SDXL *resolved checkpoint* (it would
+      // have been rejected if the match used the SD 1.5 body model).
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201 }]),
+      });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      // The gate ran with the body version + the LoRA (both passed the
+      // checkpoint-anchored family match).
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [versions] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(versions.map((v: { id: number }) => v.id).sort((a: number, b: number) => a - b)).toEqual([
+        99, 201,
+      ]);
+      // The anchor at the head of the resources array is the RESOLVED checkpoint
+      // (500), not the body version (99).
+      const stepArg = mockCreateTextToImageStep.mock.calls[0][0];
+      expect(stepArg.resources[0].id).toBe(500);
+    });
+
+    it('FIX1: non-Checkpoint page body — a LoRA matching the BODY family but NOT the resolved checkpoint is REJECTED', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Body model 99 is an SD 1.5 LoRA; additional LoRA 201 is ALSO SD 1.5
+      // (matches the body) — but the resolved default checkpoint is SDXL, so the
+      // checkpoint-anchored match must REJECT it. (Old body-anchored logic would
+      // have wrongly accepted it.)
+      versionRows({
+        99: {
+          id: 99,
+          baseModel: 'SD 1.5',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'LORA', userId: 1 },
+        },
+        201: sdxlLora(201, { baseModel: 'SD 1.5', model: { id: 301, type: 'LORA', userId: 2 } }),
+      });
+      happyUser();
+      clearCheckpointOverrides();
+      mockDbRead.modelMetric.findFirst.mockResolvedValue({
+        modelId: 300,
+        model: {
+          id: 300,
+          name: 'Popular SDXL',
+          modelVersions: [{ id: 500, name: 'v1', baseModel: 'SDXL 1.0' }],
+        },
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // Rejected at the family boundary — before the entitlement gate / any spend.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    // ── FIX 2: 'Other' (unknown base-model family) is treated as NON-matching ──
+    //
+    // getBaseModelSetType returns 'Other' for any unrecognized baseModel, so a
+    // checkpoint + LoRA with two DIFFERENT unknown baseModels both collapse to
+    // 'Other' and previously matched vacuously. Either side resolving to 'Other'
+    // must now DENY the LoRA.
+    it('FIX2: a checkpoint + LoRA with unknown/Other baseModels → BAD_REQUEST (was vacuously passing)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint body baseModel is an unrecognized string → 'Other'. The LoRA
+      // has a DIFFERENT unrecognized string → also 'Other'. Both collapse to
+      // 'Other'; the deny guard must reject rather than match vacuously.
+      versionRows({
+        99: {
+          id: 99,
+          baseModel: 'TotallyUnknownBase-Z',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'Checkpoint', userId: 1 },
+        },
+        201: sdxlLora(201, { baseModel: 'AnotherUnknownBase-Q' }),
+      });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // Denied before the entitlement gate / any spend.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('FIX2: a known-family checkpoint + an Other-family LoRA → BAD_REQUEST', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint is a recognized SDXL family; the LoRA baseModel is unknown →
+      // 'Other'. An 'Other' LoRA must be denied even against a known checkpoint.
+      versionRows({ 201: sdxlLora(201, { baseModel: 'UnknownBaseModel-XYZ' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
     });
 
     // ── Model-path guard: additionalResources is page-only ─────────────────

@@ -220,16 +220,23 @@ function buildGateVersion(gate: {
 //   1. resolves the version statelessly (NO modelId binding — pages have none),
 //   2. enforces LoRA-only v1 (rejects any non-LoRA additional resource), and
 //   3. enforces an EXPLICIT base-model FAMILY match against the checkpoint.
-// The family check is the UX layer: without it the orchestrator belt silently
-// DROPS a family-mismatched LoRA (common.ts filters by supported resource
-// types) and the viewer pays for a gen that ignored their LoRA. We collapse
-// both families with getBaseModelSetType (e.g. all SDXL variants → 'SDXL') so a
-// compatible variant isn't falsely rejected.
+// The family check is the correctness boundary: the orchestrator belt filters
+// by resource TYPE (common.ts keeps a LoRA-typed resource), NOT by base-model
+// family — so a family-mismatched LoRA of type LORA is PASSED downstream and
+// billed for, producing a gen the viewer paid for that quietly ignored (or
+// degraded) their LoRA. This explicit check is what prevents such a LoRA from
+// being sent (and charged) at all. We collapse each side with
+// getBaseModelSetType (e.g. all SDXL variants → 'SDXL') so a compatible variant
+// isn't falsely rejected.
+//
+// `checkpointBaseModel` MUST be the baseModel of the ACTUAL checkpoint
+// resolveBlockCheckpoint resolves (the anchor buildTextToImageInput uses), NOT
+// the page body model — for a non-Checkpoint page body those differ.
 //
 // Returns the per-LoRA gate bags so the caller can pass checkpoint + every LoRA
 // through the entitlement gate in ONE call. Throws BAD_REQUEST (non-LoRA /
-// family-mismatch), NOT_FOUND (missing/unpublished version) — all BEFORE any
-// cost/spend.
+// unknown-family / family-mismatch), NOT_FOUND (missing/unpublished version) —
+// all BEFORE any cost/spend.
 async function resolvePageLoraGates(opts: {
   additionalResources: { modelVersionId: number; strength: number }[] | undefined;
   checkpointBaseModel: string;
@@ -237,6 +244,18 @@ async function resolvePageLoraGates(opts: {
   const { additionalResources, checkpointBaseModel } = opts;
   if (!additionalResources?.length) return [];
   const checkpointFamily = getBaseModelSetType(checkpointBaseModel);
+  // An unrecognized baseModel collapses to the 'Other' sentinel (getBaseModelGroup).
+  // If the checkpoint family itself is 'Other' we can't establish compatibility
+  // for ANY LoRA, so reject up front — mirrors the `g !== 'Other'` guard
+  // getBaseModelFromResources uses (generation.constants.ts). Without this, two
+  // DIFFERENT unknown baseModels both collapse to 'Other' and the family-match
+  // below would pass vacuously.
+  if (checkpointFamily === 'Other') {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'the resolved checkpoint base model is not recognized for LoRA compatibility',
+    });
+  }
   const gates: ReturnType<typeof buildGateVersion>[] = [];
   for (const r of additionalResources) {
     const lora = await resolvePageResourceContext(r.modelVersionId);
@@ -248,9 +267,14 @@ async function resolvePageLoraGates(opts: {
         message: 'additional resources must be LoRA models',
       });
     }
-    // Explicit base-model family match (UX layer; the belt would otherwise
-    // silently drop a mismatch).
-    if (getBaseModelSetType(lora.baseModel) !== checkpointFamily) {
+    // Explicit base-model family match (correctness boundary; the belt filters
+    // by type, not family, so it would PASS a family-mismatched LoRA and bill
+    // for it). An 'Other' (unrecognized) LoRA family is treated as NON-matching
+    // and denied — two different unknown baseModels both map to 'Other' and
+    // would otherwise match vacuously (checkpointFamily is already guaranteed
+    // non-'Other' above).
+    const loraFamily = getBaseModelSetType(lora.baseModel);
+    if (loraFamily === 'Other' || loraFamily !== checkpointFamily) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
         message: 'a selected LoRA is not compatible with the checkpoint base model',
@@ -1581,12 +1605,14 @@ export const blocksRouter = router({
       }
       // Context binding. A MODEL token pins `ctx.modelId`; the body must match
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
-      // lets the viewer pick any model they're entitled to generate against, so
-      // the modelId match is SKIPPED and replaced (below, after the version
-      // read) by the pre-spend availability/coverage gate
-      // (assertViewerCanGeneratePageResources). Early-access + Private-
-      // subscription entitlement is enforced separately by the orchestrator
-      // resource belt. See isPageToken / assertViewerCanGeneratePageResources.
+      // lets the viewer pick a model, so the modelId match is SKIPPED and
+      // replaced (below, after the version read) by the pre-spend availability
+      // gate (assertViewerCanGeneratePageResources). That gate is a fail-fast UX
+      // layer over the body version + LoRAs only — it does NOT cover the
+      // resolved/billed checkpoint anchor; early-access + Private-subscription
+      // entitlement (and the resolved anchor) are enforced by the orchestrator
+      // resource belt over the full array. See isPageToken /
+      // assertViewerCanGeneratePageResources.
       const isPage = isPageToken(claims);
       if (!isPage) {
         const ctxModelId = Number(
@@ -1624,25 +1650,15 @@ export const blocksRouter = router({
         input.body.modelId
       );
       const user = await getBlockSessionUser(userId);
-      // PAGE branch: pre-spend availability/coverage gate on every resource the
-      // REAL viewer picked — the checkpoint AND each additional LoRA (the
-      // security replacement for the skipped model-binding check) — fail-closed
-      // before any spend. Early-access + Private-sub entitlement is enforced
-      // downstream by the orchestrator resource belt for the FULL array.
-      if (isPage) {
-        // Resolve + validate the LoRA stack first (LoRA-only + family-match)
-        // so a bad resource fails BEFORE the entitlement gate / any cost.
-        const loraGates = await resolvePageLoraGates({
-          additionalResources: input.body.additionalResources,
-          checkpointBaseModel: resolved.baseModel,
-        });
-        await assertViewerCanGeneratePageResources({
-          gates: [buildGateVersion(resolved.gate), ...loraGates],
-          viewer: { id: userId, isModerator: !!user.isModerator },
-          sfwOnly: ctx.domain === 'green',
-          wildcardsEnabled: !!ctx.features.wildcards,
-        });
-      }
+      // Resolve the effective checkpoint BEFORE the page gate. This is the
+      // ACTUAL anchor buildTextToImageInput puts at the head of the resources
+      // array — for a non-Checkpoint page body it is NOT resolved.baseModel
+      // (resolveBlockCheckpoint falls through to a viewer/publisher/popular
+      // checkpoint that may belong to a different base-model family). The page
+      // LoRA family-match must anchor on THIS checkpoint, not the body model.
+      // resolveBlockCheckpoint is a pure read (install/override rows + a
+      // fail-open cache populate) with no side effect that must follow the
+      // gate, so it is safe to run before it.
       const checkpoint = await resolveBlockCheckpoint({
         blockInstanceId: claims.blockInstanceId,
         modelId: resolved.modelId,
@@ -1652,6 +1668,32 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
+      // PAGE branch: pre-spend availability gate over the resources THIS gate
+      // can see — the viewer-picked BODY version (`resolved.gate`) AND each
+      // additional LoRA — as a fail-fast UX layer in place of the skipped
+      // model-binding check. NOTE it does NOT cover the resolved/billed
+      // checkpoint ANCHOR: for a non-Checkpoint page body, resolveBlockCheckpoint
+      // picks a DIFFERENT default checkpoint (validated there only for
+      // Published + base-model family — not early-access/Private/availability).
+      // That anchor's entitlement — and early-access + Private-sub entitlement
+      // for the whole array — is enforced downstream by the orchestrator
+      // resource belt over the FULL resources array; this gate is not the sole
+      // boundary. Keep both belts.
+      if (isPage) {
+        // Resolve + validate the LoRA stack first (LoRA-only + family-match)
+        // so a bad resource fails BEFORE the entitlement gate / any cost.
+        // Family-match anchors on the RESOLVED checkpoint's baseModel.
+        const loraGates = await resolvePageLoraGates({
+          additionalResources: input.body.additionalResources,
+          checkpointBaseModel: checkpoint.baseModel,
+        });
+        await assertViewerCanGeneratePageResources({
+          gates: [buildGateVersion(resolved.gate), ...loraGates],
+          viewer: { id: userId, isModerator: !!user.isModerator },
+          sfwOnly: ctx.domain === 'green',
+          wildcardsEnabled: !!ctx.features.wildcards,
+        });
+      }
       const token = await getOrchestratorToken(userId, ctx);
       const generateInput = buildTextToImageInput(input.body, {
         ...resolved,
@@ -1691,11 +1733,12 @@ export const blocksRouter = router({
       }
       // Context binding. MODEL token → body.modelId must match ctx.modelId.
       // PAGE token (ctx.entityType==='none') → no model binding; skip the match
-      // and enforce the pre-spend availability/coverage gate after the version
-      // read instead (see estimateWorkflow for the same branch; early-access +
-      // Private-sub entitlement is left to the orchestrator resource belt). The
-      // buzzBudget claim + per-user daily cap still bound spend identically for
-      // pages.
+      // and enforce the pre-spend availability gate after the version read
+      // instead (see estimateWorkflow for the same branch; that gate covers the
+      // body version + LoRAs as fail-fast UX — the resolved checkpoint anchor
+      // plus early-access + Private-sub entitlement are left to the orchestrator
+      // resource belt over the full array). The buzzBudget claim + per-user
+      // daily cap still bound spend identically for pages.
       const isPage = isPageToken(claims);
       if (!isPage) {
         const ctxModelId = Number(
@@ -1736,23 +1779,12 @@ export const blocksRouter = router({
         input.body.modelId
       );
       const user = await getBlockSessionUser(userId);
-      // PAGE branch: pre-spend availability/coverage gate on every resource the
-      // REAL viewer picked — the checkpoint AND each additional LoRA (replaces
-      // the skipped model-binding check) — fail closed BEFORE any reservation.
-      // Early-access + Private-sub entitlement is enforced downstream by the
-      // orchestrator resource belt for the FULL array (whatIf + real).
-      if (isPage) {
-        const loraGates = await resolvePageLoraGates({
-          additionalResources: input.body.additionalResources,
-          checkpointBaseModel: resolved.baseModel,
-        });
-        await assertViewerCanGeneratePageResources({
-          gates: [buildGateVersion(resolved.gate), ...loraGates],
-          viewer: { id: userId, isModerator: !!user.isModerator },
-          sfwOnly: ctx.domain === 'green',
-          wildcardsEnabled: !!ctx.features.wildcards,
-        });
-      }
+      // Resolve the effective checkpoint BEFORE the page gate so the page LoRA
+      // family-match anchors on the ACTUAL checkpoint buildTextToImageInput
+      // uses (see estimateWorkflow for the full rationale — for a
+      // non-Checkpoint page body this differs from resolved.baseModel).
+      // resolveBlockCheckpoint is a pure read with no gate-ordering side
+      // effect, so resolving it ahead of the gate is safe.
       const checkpoint = await resolveBlockCheckpoint({
         blockInstanceId: claims.blockInstanceId,
         modelId: resolved.modelId,
@@ -1762,6 +1794,28 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
+      // PAGE branch: pre-spend availability gate over the resources THIS gate
+      // can see — the viewer-picked BODY version (`resolved.gate`) AND each
+      // additional LoRA — a fail-fast UX layer in place of the skipped
+      // model-binding check. It does NOT cover the resolved/billed checkpoint
+      // ANCHOR: a non-Checkpoint page body resolves a DIFFERENT default
+      // checkpoint (validated there only for Published + base-model family).
+      // That anchor's entitlement, plus early-access + Private-sub entitlement
+      // for the whole array, is enforced downstream by the orchestrator
+      // resource belt over the FULL array (whatIf + real) — this gate is not
+      // the sole boundary. Keep both belts.
+      if (isPage) {
+        const loraGates = await resolvePageLoraGates({
+          additionalResources: input.body.additionalResources,
+          checkpointBaseModel: checkpoint.baseModel,
+        });
+        await assertViewerCanGeneratePageResources({
+          gates: [buildGateVersion(resolved.gate), ...loraGates],
+          viewer: { id: userId, isModerator: !!user.isModerator },
+          sfwOnly: ctx.domain === 'green',
+          wildcardsEnabled: !!ctx.features.wildcards,
+        });
+      }
       const token = await getOrchestratorToken(userId, ctx);
 
       // Prompt audit before any orchestrator interaction (mirrors what
