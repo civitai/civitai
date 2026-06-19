@@ -162,6 +162,12 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
 
   if (isLoading) return <PageLoader />;
   if (!model3d) return <NotFound />;
+  // Hold the form until the seed effect has mirrored the loaded model
+  // into local state. RichTextEditor reads its `content` only at mount
+  // and won't re-sync on a delayed `value` change — if we render before
+  // `setDescription(model3d.description)` runs, the editor mounts empty,
+  // the user sees no body, and Save writes `description: null`.
+  if (!seeded) return <PageLoader />;
 
   const isOwner = !!currentUser && currentUser.id === model3d.userId;
   const isModerator = !!currentUser?.isModerator;
