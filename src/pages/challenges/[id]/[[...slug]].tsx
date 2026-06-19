@@ -179,7 +179,12 @@ export const getServerSideProps = createServerSideProps({
       if (challenge) {
         const correctSlug = slugit(challenge.title);
         const currentSlug = result.data.slug?.join('/');
-        if (currentSlug !== correctSlug) {
+        // Skip the redirect when the canonical slug is empty — slugit() strips
+        // all non-Latin-alphanumeric chars (strict mode), so CJK/Cyrillic/emoji/
+        // dots-only titles slugify to ''. Redirecting to /challenges/<id>/ (empty
+        // slug) gets trailing-slash-normalized back to /challenges/<id>, which
+        // never matches '' and loops forever (ERR_TOO_MANY_REDIRECTS).
+        if (correctSlug && currentSlug !== correctSlug) {
           const queryString = buildPassthroughQuery(ctx.query);
           return {
             redirect: {
