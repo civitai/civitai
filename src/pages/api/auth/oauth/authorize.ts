@@ -9,7 +9,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { addCorsHeaders } from '~/server/utils/endpoint-helpers';
 import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-limit';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { TokenScope, ALL_SCOPES } from '~/shared/constants/token-scope.constants';
 import { buzzLimitSchema } from '~/server/schema/api-key.schema';
 import { redirectUriMatches } from '~/server/schema/oauth-client.schema';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
@@ -110,7 +110,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Validate and clamp scope
     const rawScope = parseInt(params.scope as string, 10);
-    if (isNaN(rawScope) || rawScope < 0 || rawScope > TokenScope.Full) {
+    // Bound against ALL_SCOPES (incl. opt-in AppBlocksSubmit), NOT `Full`, so a
+    // client may request an opt-in bit outside `Full`. The per-client
+    // allowedScopes intersection (downstream) is the real authorization gate.
+    if (isNaN(rawScope) || rawScope < 0 || rawScope > ALL_SCOPES) {
       return res
         .status(400)
         .json({ error: 'invalid_scope', error_description: 'Invalid scope value' });

@@ -7,7 +7,7 @@ import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { createOAuthTokenPair } from '~/server/oauth/token-helpers';
 import { ACCESS_TOKEN_TTL } from '~/server/oauth/constants';
 import { Flags } from '~/shared/utils/flags';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { TokenScope, ALL_SCOPES } from '~/shared/constants/token-scope.constants';
 import { dbRead } from '~/server/db/client';
 import requestIp from 'request-ip';
 
@@ -78,7 +78,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const rawScope = parseInt(data.scope, 10);
-  if (isNaN(rawScope) || rawScope < 0 || rawScope > TokenScope.Full) {
+  // Bound against ALL_SCOPES (incl. opt-in AppBlocksSubmit), NOT `Full` — the
+  // approved device code may legitimately carry AppBlocksSubmit (bit 25), which
+  // is outside `Full`. The per-client allowedScopes intersection below is the
+  // real authorization gate.
+  if (isNaN(rawScope) || rawScope < 0 || rawScope > ALL_SCOPES) {
     return res.status(400).json({ error: 'invalid_scope' });
   }
   const scope = rawScope;

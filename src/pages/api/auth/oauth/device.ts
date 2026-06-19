@@ -7,7 +7,7 @@ import { addCorsHeaders } from '~/server/utils/endpoint-helpers';
 import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-limit';
 import { DEVICE_CODE_TTL, DEVICE_POLL_INTERVAL } from '~/server/oauth/constants';
 import { Flags } from '~/shared/utils/flags';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { TokenScope, ALL_SCOPES } from '~/shared/constants/token-scope.constants';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 import { env } from '~/env/server';
 
@@ -79,7 +79,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Validate scope early (also validated at token exchange, but fail fast for UX)
   const rawScope = parseInt(scope as string, 10) || 0;
-  if (rawScope < 0 || rawScope > TokenScope.Full) {
+  // Bound against ALL_SCOPES (every defined bit, incl. opt-in AppBlocksSubmit),
+  // NOT `Full` — `Full` excludes opt-in bits, so a client legitimately
+  // requesting AppBlocksSubmit (e.g. civitai-cli) would be rejected here.
+  if (rawScope < 0 || rawScope > ALL_SCOPES) {
     return res.status(400).json({ error: 'invalid_scope' });
   }
   // UserRead is a mandatory baseline on every grant — force it on and treat it
