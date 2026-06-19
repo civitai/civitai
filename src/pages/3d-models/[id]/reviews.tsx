@@ -8,12 +8,26 @@ import {
   Divider,
   Group,
   Loader,
+  Menu,
   Stack,
   Text,
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconPencil, IconStar, IconThumbDown, IconThumbUp } from '@tabler/icons-react';
+import { openConfirmModal } from '@mantine/modals';
+import {
+  IconDotsVertical,
+  IconFlag,
+  IconPencil,
+  IconStar,
+  IconThumbDown,
+  IconThumbUp,
+  IconTrash,
+} from '@tabler/icons-react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { openReportModal } from '~/components/Dialog/triggers/report';
+import { ReportEntity } from '~/shared/utils/report-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { keepPreviousData } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
 import type { InferGetServerSidePropsType } from 'next';
@@ -100,6 +114,34 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
     if (!currentUser) return undefined;
     return reviews.find((r) => r.userId === currentUser.id);
   }, [reviews, currentUser]);
+
+  // Per-review delete — surfaces in the inline review-card menu for the
+  // review author and any moderator (the server-side `deleteModel3DReview`
+  // service enforces the same ownership/mod gate). On success we invalidate
+  // the list query so the deleted card disappears.
+  const queryUtils = trpc.useUtils();
+  const deleteReviewMutation = trpc.model3d.reviews.delete.useMutation({
+    onSuccess: async () => {
+      showSuccessNotification({ message: 'Review removed' });
+      await queryUtils.model3d.reviews.getInfinite.invalidate({ model3dId: id });
+      await queryUtils.model3d.reviews.getSummary.invalidate({ model3dId: id });
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to remove review',
+        error: new Error(error.message),
+      });
+    },
+  });
+  const confirmDeleteReview = (reviewId: number) =>
+    openConfirmModal({
+      title: 'Remove review',
+      children: 'This review will be permanently removed. Continue?',
+      centered: true,
+      labels: { confirm: 'Remove', cancel: 'Cancel' },
+      confirmProps: { color: 'red', loading: deleteReviewMutation.isPending },
+      onConfirm: () => deleteReviewMutation.mutate({ id: reviewId }),
+    });
 
   const openReviewModal = () => {
     if (!model3d) return;
@@ -236,6 +278,61 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
                             Doesn&apos;t recommend
                           </Badge>
                         )}
+                        {/* Per-review actions menu — mirrors the Model3D
+                            detail-page menu split: Report for non-author
+                            logged-in viewers, Delete for the review author
+                            or any moderator. Server-side
+                            `deleteModel3DReview` re-checks the same gate. */}
+                        {(() => {
+                          const isAuthor =
+                            !!currentUser && currentUser.id === review.userId;
+                          const isModerator = !!currentUser?.isModerator;
+                          const canReport =
+                            !!currentUser && !isAuthor && !isModerator;
+                          const canDelete = isAuthor || isModerator;
+                          if (!canReport && !canDelete) return null;
+                          return (
+                            <Menu position="bottom-end" withinPortal>
+                              <Menu.Target>
+                                <LegacyActionIcon
+                                  variant="subtle"
+                                  size="sm"
+                                  aria-label="Review actions"
+                                >
+                                  <IconDotsVertical size={16} />
+                                </LegacyActionIcon>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                {canDelete && (
+                                  <Menu.Item
+                                    leftSection={<IconTrash size={14} stroke={1.5} />}
+                                    color="red.6"
+                                    onClick={() => confirmDeleteReview(review.id)}
+                                    disabled={deleteReviewMutation.isPending}
+                                  >
+                                    {isAuthor && !isModerator
+                                      ? 'Delete'
+                                      : 'Remove'}
+                                  </Menu.Item>
+                                )}
+                                {canReport && (
+                                  <Menu.Item
+                                    leftSection={<IconFlag size={14} stroke={1.5} />}
+                                    color="red.6"
+                                    onClick={() =>
+                                      openReportModal({
+                                        entityType: ReportEntity.Model3DReview,
+                                        entityId: review.id,
+                                      })
+                                    }
+                                  >
+                                    Report
+                                  </Menu.Item>
+                                )}
+                              </Menu.Dropdown>
+                            </Menu>
+                          );
+                        })()}
                       </Group>
                     </Group>
 
