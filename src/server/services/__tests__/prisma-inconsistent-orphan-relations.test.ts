@@ -95,7 +95,9 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: {},
 }));
 
-describe('getRecentlyManuallyAdded — orphaned ImageResourceNew.modelVersion', () => {
+// timeout: the first `await import('../model.service')` cold-transforms a large
+// module graph (~10s) which exceeds the 10s default on the loaded CI node.
+describe('getRecentlyManuallyAdded — orphaned ImageResourceNew.modelVersion', { timeout: 30000 }, () => {
   beforeEach(() => {
     findManyMock.mockReset();
   });
