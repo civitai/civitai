@@ -85,6 +85,7 @@ via JWKS. See the architecture spec and actual-flows first if you're new to it.
 | Doc | Purpose |
 |---|---|
 | [session-refresh-debug-instrumentation.md](./session-refresh-debug-instrumentation.md) | Tracks temporary diagnostic logs added during session-refresh investigations, for clean revert. |
+| [post-deploy-domain-env-consolidation.md](./post-deploy-domain-env-consolidation.md) | Planned follow-up: collapse the overlapping domain/origin env vars (retire `NEXT_PUBLIC_BASE_URL`) onto the color-map source of truth. |
 
 ---
 
