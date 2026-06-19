@@ -544,7 +544,8 @@ export const serverSchema = z.object({
   FLIPT_FETCHER_SECRET: z.string(),
   FLIPT_DEPLOYMENT_ID: z.string().optional(),
 
-  // B2 Upload — model files (gated by Flipt flag B2_UPLOAD_DEFAULT)
+  // B2 Upload — model files route to B2 whenever this endpoint is configured
+  // (no Flipt flag; routing is gated solely on the presence of this var).
   S3_UPLOAD_B2_ENDPOINT: z.string().optional(),
   S3_UPLOAD_B2_ACCESS_KEY: z.string().optional(),
   S3_UPLOAD_B2_SECRET_KEY: z.string().optional(),
