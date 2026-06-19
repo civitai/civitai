@@ -1797,7 +1797,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     //
     // The pre-spend gate (`resolveCanGenerateForVersions`) deliberately does NOT
     // check early-access `hasAccess` or the `availability:Private` subscription
-    // requirement (see the SCOPE comment on assertViewerCanGeneratePageModel).
+    // requirement (see the SCOPE comment on assertViewerCanGeneratePageResources).
     // Those are enforced DOWNSTREAM by the orchestrator resource belt
     // (`getGenerationResourceData` → `getResourceData`, which folds
     // `canGenerate = hasAccess && canGenerate` and throws on a Private resource
@@ -1861,6 +1861,278 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       await expect(
         caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
+  // ───────────────────── Page-LoRA (Increment 1) ───────────────────────────
+  //
+  // A page token can carry `body.additionalResources: [{ modelVersionId,
+  // strength }]` (LoRA stack). The server resolves each statelessly, enforces
+  // LoRA-only + base-model family-match, then gates the checkpoint AND every
+  // LoRA through resolveCanGenerateForVersions in ONE call — fail-closed if any
+  // resource is non-LoRA / family-mismatched / not entitled. This runs BEFORE
+  // resolveBlockCheckpoint / any cost / any reservation.
+  describe('Page-LoRA — additionalResources', () => {
+    // Multi-version lookup keyed by where.id. Checkpoint 99 = SDXL Checkpoint;
+    // additional rows are LoRAs (override per-test for family/type cases).
+    function versionRows(rows: Record<number, Record<string, unknown>>) {
+      const defaults: Record<number, Record<string, unknown>> = {
+        99: {
+          id: 99,
+          baseModel: 'SDXL 1.0',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'Checkpoint', userId: 1 },
+        },
+        ...rows,
+      };
+      mockDbRead.modelVersion.findUnique.mockImplementation(async (args: any) => {
+        return defaults[args?.where?.id] ?? null;
+      });
+    }
+
+    const sdxlLora = (id: number, over: Record<string, unknown> = {}) => ({
+      id,
+      baseModel: 'SDXL 1.0',
+      modelId: 100 + id,
+      status: 'Published',
+      availability: 'Public',
+      usageControl: 'Download',
+      meta: null,
+      generationCoverage: { covered: true },
+      model: { id: 100 + id, type: 'LORA', userId: 2 },
+      ...over,
+    });
+
+    const bodyWithLoras = (resources: Array<{ modelVersionId: number; strength?: number }>) =>
+      validBody({ additionalResources: resources });
+
+    function pageClaimsLocal(over: Record<string, unknown> = {}) {
+      return validClaims({
+        blockInstanceId: 'page_apb_page',
+        ctx: { slotId: 'app.page', entityType: 'none' },
+        ...over,
+      });
+    }
+
+    it('a page submit gates the checkpoint AND every LoRA in ONE call', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201), 202: sdxlLora(202) });
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201, strength: 0.8 }, { modelVersionId: 202 }]),
+      });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      // The gate ran ONCE with checkpoint + both LoRAs in a single array.
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [versions] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(versions.map((v: { id: number }) => v.id).sort((a: number, b: number) => a - b)).toEqual([
+        99, 201, 202,
+      ]);
+    });
+
+    it('SECURITY: an un-entitled LoRA (canGenerate:false) → FORBIDDEN, no spend, no reservation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      // Checkpoint is generatable, the LoRA is NOT.
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([
+          [99, { canGenerate: true }],
+          [201, { canGenerate: false }],
+        ])
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled(); // no reservation
+      expect(mockAuditPromptServer).not.toHaveBeenCalled();
+    });
+
+    it('SECURITY fail-closed: a LoRA MISSING from the result Map → FORBIDDEN', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      // The LoRA (201) is simply absent from the Map → must be treated as deny.
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([[99, { canGenerate: true }]])
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('rejects a NON-LoRA additional resource (BAD_REQUEST), before the entitlement gate', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // 201 is a Checkpoint, not a LoRA.
+      versionRows({ 201: sdxlLora(201, { model: { id: 301, type: 'Checkpoint', userId: 2 } }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // Type rejection happens before the entitlement gate / any spend.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('rejects a base-model FAMILY-MISMATCHED LoRA (BAD_REQUEST), before the entitlement gate', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint is SDXL; the LoRA is SD 1.5 → different generation family.
+      versionRows({ 201: sdxlLora(201, { baseModel: 'SD 1.5' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unpublished LoRA (NOT_FOUND), no info leak', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201, { status: 'Draft' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('estimate: an un-entitled LoRA → FORBIDDEN, no orchestrator whatif', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal());
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([
+          [99, { canGenerate: true }],
+          [201, { canGenerate: false }],
+        ])
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.estimateWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('BELT: a LoRA that passes the pre-spend gate but is rejected by the orchestrator belt (early-access/Private) → no spend', async () => {
+      // The pre-spend gate deliberately does NOT see early-access / Private
+      // entitlement (default canGenerate:true here). The orchestrator belt (run
+      // inside createTextToImageStep for the FULL resource array at whatIf,
+      // BEFORE any reservation) is the second fail-closed layer.
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([
+          [99, { canGenerate: true }],
+          [201, { canGenerate: true }],
+        ])
+      );
+      mockCreateTextToImageStep.mockRejectedValueOnce(
+        new TRPCError({ code: 'BAD_REQUEST', message: 'Using Private resources require an active subscription.' })
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled(); // belt threw before reserve
+      expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+    });
+
+    // ── Money (Piece 4): the multi-resource cost is bounded by BOTH ceilings ──
+    it('MONEY: a 2-LoRA gen whose cost exceeds the per-gen budget returns the failed snapshot', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 30 }));
+      versionRows({ 201: sdxlLora(201), 202: sdxlLora(202) });
+      happyUser();
+      // whatif cost (with the LoRAs) is 75 > the 30 per-gen budget.
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 75 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201 }, { modelVersionId: 202 }]),
+      });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.cost).toEqual({ total: 75 });
+      expect(result.snapshot.error).toMatch(/insufficient buzz/i);
+      // Only the whatif ran; no real submit, no reservation taken.
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('MONEY: a multi-LoRA gen accumulates against the per-user daily cap (reservation over cap → failed + refund)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201), 202: sdxlLora(202) });
+      happyUser();
+      // whatif clears the per-call budget, but the reservation (with the LoRA
+      // cost folded in) tops the 50,000 daily cap → reject + refund.
+      mockSysRedis.incrBy.mockResolvedValue(50040);
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 60 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201 }, { modelVersionId: 202 }]),
+      });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/daily Buzz cap/i);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatif only
+      expect(mockSysRedis.decrBy).toHaveBeenCalledTimes(1); // reservation refunded
+      // The reservation amount is the multi-resource cost (ceil 60).
+      expect(mockSysRedis.incrBy.mock.calls[0][1]).toBe(60);
+    });
+
+    // ── Model-path guard: additionalResources is page-only ─────────────────
+    it('MODEL token with additionalResources → FORBIDDEN (page-only feature, no un-gated fan-out)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      // Rejected before the entitlement gate / any orchestrator interaction.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('MODEL token estimate with additionalResources → FORBIDDEN', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.estimateWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });

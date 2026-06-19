@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { Workflow, WorkflowStatus } from '@civitai/client';
 import { dbRead } from '~/server/db/client';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import type {
   BlockWorkflowBody,
   BlockWorkflowSnapshot,
@@ -127,6 +128,77 @@ export async function resolveBlockVersionContext(modelVersionId: number, expecte
   };
 }
 
+// Page-LoRA (Increment 1): the model types accepted as a page additional
+// resource. v1 is LoRA-only — the generator's LoRA family is LORA + LoCon +
+// DoRA (the same set the generation resource picker groups as "LoRA"; see
+// base-model.constants supportMap). VAE / embeddings / etc. also flow through
+// the same `resources` array + belt but are deferred to a later increment.
+export const PAGE_LORA_MODEL_TYPES: ReadonlySet<string> = new Set([
+  ModelType.LORA,
+  ModelType.LoCon,
+  ModelType.DoRA,
+]);
+
+export function isPageLoraResource(modelType: string): boolean {
+  return PAGE_LORA_MODEL_TYPES.has(modelType);
+}
+
+/**
+ * Page-LoRA (Increment 1, Option A): resolve a bare modelVersionId for a
+ * STATELESS page — identical select to `resolveBlockVersionContext` but WITHOUT
+ * the `version.modelId !== expectedModelId` FORBIDDEN binding check, because a
+ * page token has no JWT model binding (the viewer picks any resource they're
+ * entitled to; the security boundary is the per-resource entitlement gate in
+ * blocks.router, not a binding check).
+ *
+ * Do NOT route page LoRAs through `resolveBlockCheckpoint` — that helper is
+ * checkpoint-shaped (it asserts `modelType === 'Checkpoint'` and reads install
+ * rows a stateless page has none of). This returns the same `gate` bag +
+ * baseModel + modelType the checkpoint path already returns, so the router can
+ * (a) reject non-LoRA additional resources, (b) family-match against the
+ * checkpoint, and (c) entitlement-gate every resource in one call.
+ *
+ * Like the checkpoint resolver it throws NOT_FOUND for a missing/unpublished
+ * version and never reveals which model a hidden version belongs to.
+ */
+export async function resolvePageResourceContext(modelVersionId: number) {
+  const version = await dbRead.modelVersion.findUnique({
+    where: { id: modelVersionId },
+    select: {
+      id: true,
+      baseModel: true,
+      modelId: true,
+      status: true,
+      availability: true,
+      usageControl: true,
+      meta: true,
+      generationCoverage: { select: { covered: true } },
+      model: { select: { id: true, type: true, userId: true } },
+    },
+  });
+  if (!version || version.status !== 'Published') {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'model version not found' });
+  }
+  return {
+    modelId: version.modelId,
+    modelVersionId: version.id,
+    baseModel: version.baseModel,
+    modelType: version.model.type,
+    gate: {
+      id: version.id,
+      status: version.status,
+      availability: version.availability,
+      usageControl: version.usageControl,
+      baseModel: version.baseModel,
+      covered: version.generationCoverage?.covered ?? false,
+      modelUserId: version.model.userId,
+      modelType: version.model.type,
+      modelVersionAlias:
+        (version.meta as { generationAlias?: unknown } | null)?.generationAlias ?? null,
+    },
+  };
+}
+
 /**
  * Default canvas dimensions per base-model family. Aligned with what the
  * generation form picks when a user hits "Generate" with no overrides —
@@ -172,6 +244,23 @@ export function buildTextToImageInput(
   // count strength.
   if (resolved.modelType !== 'Checkpoint') {
     resources.push({ id: body.modelVersionId, strength: 1 });
+  }
+
+  // Page-LoRA (Increment 1): fan each caller-supplied additional resource into
+  // the generic `resources` array as { id, strength }. The orchestrator step
+  // (createTextToImageStep) consumes `resources` generically and builds
+  // additionalNetworks from the non-Checkpoint entries — no further step change
+  // is needed. DEDUPE against every id already present (the checkpoint anchor
+  // AND the bound-model anchor pushed above) so a LoRA that coincides with the
+  // anchor isn't double-billed / double-counted in strength. A LoRA that
+  // duplicates another LoRA keeps its first occurrence (first-wins).
+  if (body.additionalResources?.length) {
+    const seen = new Set(resources.map((r) => r.id));
+    for (const r of body.additionalResources) {
+      if (seen.has(r.modelVersionId)) continue;
+      seen.add(r.modelVersionId);
+      resources.push({ id: r.modelVersionId, strength: r.strength });
+    }
   }
 
   return {
