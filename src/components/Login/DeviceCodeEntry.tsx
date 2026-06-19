@@ -40,6 +40,16 @@ export function DeviceCodeEntry({
 }: DeviceCodeEntryProps) {
   const [code, setCode] = useState(initialCode);
 
+  // Focus the input on mount so the user can paste/type the code immediately
+  // without clicking. A ref + one-shot effect (rather than the `autoFocus`
+  // prop) keeps focus deterministic and assertable, and runs once — it does not
+  // re-run on the auto-submit / loading re-renders, so it can't fight the
+  // auto-submit-on-completeness or Enter logic.
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
   // The exact value we last fired `onSubmit` for. We only auto-submit / accept
   // Enter once per distinct complete value; editing to a different value
   // (including correcting a bad code) clears this and re-arms submission. A
@@ -95,6 +105,7 @@ export function DeviceCodeEntry({
         Enter the code shown on your device to authorize it with your Civitai account.
       </Text>
       <TextInput
+        ref={inputRef}
         aria-label="Device code"
         value={code}
         onChange={(e) => handleChange(e.currentTarget.value)}
