@@ -593,6 +593,14 @@ type FetchThroughCacheOptions = {
   ttl?: number;
   lockTTL?: number;
   retryCount?: number;
+  // Opt-in brotli compression of the packed value at rest. Only enable for LARGE,
+  // highly-compressible blobs (e.g. tensor-metadata's ~335 KB tensor-name strings) —
+  // most cached values are tiny and would only pay the codec overhead. Reads decode
+  // both compressed and legacy-uncompressed entries transparently (sentinel-tagged),
+  // so flipping this on/off is back-compat safe with existing keys. Safe here because
+  // fetchThroughCache always stores the `{ data, cachedAt }` wrapper object (never a
+  // bare scalar) — see the SENTINEL SAFETY note in redis/client.ts.
+  compress?: boolean;
 };
 type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
 
@@ -640,6 +648,7 @@ export async function fetchThroughCache<T>(
   const ttl = options.ttl ?? CacheTTL.sm;
   const lockTTL = options.lockTTL ?? 10;
   const retryCount = options.retryCount ?? 3;
+  const compress = options.compress ?? false;
   const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${key}` as const;
 
   // --- Redis READ (cache lookup) -------------------------------------------------
@@ -684,6 +693,7 @@ export async function fetchThroughCache<T>(
         ttl,
         lockTTL,
         retryCount: retryCount - 1,
+        compress,
       });
     }
   } else if (cachedData) return cachedData.data;
@@ -697,7 +707,7 @@ export async function fetchThroughCache<T>(
     const data = await fetchFn();
     const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
     try {
-      await redis.packed.set(key, toCache, { EX: ttl * 2 });
+      await redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress });
     } catch (err) {
       logSysRedisFailOpen('write-degraded', 'fetchThroughCache set (cache cluster)', err, { key });
     }

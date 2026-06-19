@@ -69,26 +69,46 @@ export default MixedAuthEndpoint(async function handler(
       modelType: file.modelVersion.model.type,
       fileType: file.type,
     });
+
     // Tensor metadata is derived purely from immutable file content, so cache the parsed
     // analysis by file id. Auth is still re-checked per request above via getFileForModelVersion.
-    const analysis = await fetchThroughCache(
-      `${REDIS_KEYS.CACHES.TENSOR_METADATA}:${id}`,
-      () =>
-        parseModelTensorMetadata({
-          url: fileResult.url,
-          format,
-          fileSizeBytes: file.sizeKB * 1024,
-          estimateVram,
-        }),
-      { ttl: CacheTTL.month }
-    );
+    //
+    // Two separate caches, by access pattern:
+    //  - FULL: the whole `analysis` incl. the ~335 KB `tensors[]` array. Highly
+    //    compressible repetitive tensor-name strings, so stored brotli-compressed at rest
+    //    (~65x). Only touched on accordion expand (!summaryOnly), or on a summary MISS.
+    //  - SUMMARY: the tiny summary fields (~256 B) with `tensors` dropped. Fired on EVERY
+    //    model-version view (the badge). A summary cache HIT must never read/decompress the
+    //    big blob — it only falls through to the full fetch on a summary MISS.
+    const fetchFull = () =>
+      fetchThroughCache(
+        `${REDIS_KEYS.CACHES.TENSOR_METADATA}:${id}`,
+        () =>
+          parseModelTensorMetadata({
+            url: fileResult.url,
+            format,
+            fileSizeBytes: file.sizeKB * 1024,
+            estimateVram,
+          }),
+        { ttl: CacheTTL.month, compress: true }
+      );
+
     res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
 
     if (summaryOnly) {
-      const { tensors, ...summary } = analysis;
+      const summary = await fetchThroughCache(
+        `${REDIS_KEYS.CACHES.TENSOR_METADATA_SUMMARY}:${id}`,
+        async () => {
+          const analysis = await fetchFull();
+          const { tensors, ...rest } = analysis;
+          return rest;
+        },
+        { ttl: CacheTTL.month }
+      );
       return res.status(200).json(summary);
     }
 
+    const analysis = await fetchFull();
     res.status(200).json(analysis);
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));

@@ -9,6 +9,7 @@ import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { withCommandDeadline } from '~/server/redis/command-deadline';
+import { compressPacked, decompressPacked } from '~/server/redis/packed-compression';
 // NOTE: do NOT statically import the redis prom metrics from '~/server/prom/client'.
 // This module is client-bundle-reachable (`_app.tsx` → `system-cache.ts` → here),
 // and prom-client eagerly requires `fs`/`cluster` at module load (defaultMetrics +
@@ -90,7 +91,16 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
     get<T>(key: K): Promise<T | null>;
     // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
     mGet<T>(keys: K[]): Promise<(T | null)[]>;
-    set<T>(key: K, value: T, setOptions?: SetOptions): Promise<void>;
+    // `packedOptions.compress` opts the value into brotli compression at rest (sentinel-
+    // tagged; reads decode both compressed and legacy-uncompressed values transparently).
+    // Only safe for callers that store wrapper objects, never bare scalars — see the
+    // SENTINEL SAFETY note in the packed implementation.
+    set<T>(
+      key: K,
+      value: T,
+      setOptions?: SetOptions,
+      packedOptions?: { compress?: boolean }
+    ): Promise<void>;
     // mSet still disabled - sets are more complex with different argument formats
     // mSet(records: Record<K, unknown>, setOptions?: SetOptions): Promise<void>;
     setNX<T>(key: K, value: T): Promise<void>;
@@ -770,9 +780,11 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
 
   // Decode a packed Buffer, evicting the bad entry if msgpack fails so the next
   // read falls through to source. Returns null on decode failure, treated as cache miss.
+  // Transparently brotli-decompresses sentinel-tagged values (opt-in `compress` on set),
+  // staying back-compat with legacy uncompressed entries — see ~/server/redis/packed-compression.
   const safeUnpack = <T>(value: Buffer, evict: () => Promise<unknown>): T | null => {
     try {
-      return unpack(value) as T;
+      return unpack(decompressPacked(value)) as T;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Packed unpack failed, evicting bad cache entry: ${msg}`);
@@ -798,8 +810,16 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       );
     },
 
-    async set<T>(key: K, value: T, options?: SetOptions): Promise<void> {
-      await client.set(key, pack(value), options);
+    async set<T>(
+      key: K,
+      value: T,
+      options?: SetOptions,
+      packedOptions?: { compress?: boolean }
+    ): Promise<void> {
+      const packed = pack(value);
+      // Opt-in brotli (sentinel-tagged). Reads decode it transparently via safeUnpack.
+      const payload = packedOptions?.compress ? compressPacked(packed) : packed;
+      await client.set(key, payload, options);
     },
 
     async setNX<T>(key: K, value: T): Promise<void> {
@@ -1331,6 +1351,7 @@ export const REDIS_KEYS = {
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     TENSOR_METADATA: 'packed:caches:tensor-metadata',
+    TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
     MOD_RULES: {
