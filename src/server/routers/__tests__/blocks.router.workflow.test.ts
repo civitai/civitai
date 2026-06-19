@@ -2301,6 +2301,66 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
     });
 
+    // ── LOW-1: the literal 'Other' base-model group FAILS CLOSED ──────────────
+    //
+    // Regression guard for the GA swap. The null check alone does NOT catch the
+    // platform's RECOGNIZED baseModel record literally named 'Other' (BM.Other →
+    // ECO.Other): baseModelByName.get('Other') SUCCEEDS, so an ('Other','Other')
+    // pair resolves both sides to the SAME ECO.Other ecosystem and
+    // getGenerationSupport short-circuits to 'full' BEFORE any disabled/coverage
+    // check → non-null → ACCEPT — a fail-OPEN on a billing boundary. The re-added
+    // getBaseModelSetType(...) === 'Other' guard must reject it (the entitlement
+    // gate must NOT be reached and NO spend reserved).
+    it("LOW-1: a checkpoint + LoRA both with the literal 'Other' baseModel → BAD_REQUEST (fail-closed on 'Other' group)", async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint body 99 is the recognized 'Other' baseModel record; the LoRA
+      // is also 'Other'. Without the explicit guard getResourceGenerationSupport
+      // would return 'full' (same ECO.Other ecosystem) and the pair would be
+      // accepted — the fail-open this test pins shut.
+      versionRows({
+        99: {
+          id: 99,
+          baseModel: 'Other',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'Checkpoint', userId: 1 },
+        },
+        201: sdxlLora(201, { baseModel: 'Other' }),
+      });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // The entitlement gate must NOT be reached and NO Buzz reserved.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    // LOW-1 (LoRA side): a recognized non-'Other' checkpoint + a literal-'Other'
+    // LoRA must also fail closed — the LoRA-side guard rejects before the
+    // support call even though the checkpoint is fine.
+    it("LOW-1: a recognized checkpoint + a literal-'Other' LoRA → BAD_REQUEST", async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint 99 is SDXL (versionRows default); the LoRA is the literal
+      // 'Other' baseModel record. getResourceGenerationSupport('SDXL 1.0',
+      // 'Other', LORA) is null here (different ecosystems, no rule) so this also
+      // passes via the null check — but the explicit guard rejects it FIRST,
+      // independent of the support call.
+      versionRows({ 201: sdxlLora(201, { baseModel: 'Other' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
     // ── GA: platform-VALID cross-ecosystem LoRA is now ACCEPTED ────────────────
     //
     // This is the core proof of the GA swap. Before GA, the exact-family
