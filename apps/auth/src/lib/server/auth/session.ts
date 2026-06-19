@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto';
 import type { Cookies } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
 import {
   isSecureCookie,
   maybeCreateSessionSigner,
@@ -10,6 +9,7 @@ import {
 } from '@civitai/auth';
 import { sessions } from './registry';
 import { getOrCreateDeviceId, touchAccount } from './device';
+import { cookieDomain } from './cookie';
 
 // THE thin-session cookie — a shared contract: every app must use this exact name for SSO to work, so
 // it's a hardcoded constant (via the package's single-source-of-truth helper), NOT configurable.
@@ -99,7 +99,7 @@ export async function mintUserSession(
 export function setSessionCookie(cookies: Cookies, token: string): void {
   cookies.set(SESSION_COOKIE, token, {
     path: '/',
-    domain: env.AUTH_COOKIE_DOMAIN || undefined, // e.g. .civitai.com
+    domain: cookieDomain(),
     httpOnly: true,
     secure: isSecureCookie(),
     sameSite: 'lax',
@@ -116,5 +116,5 @@ export async function establishSession(cookies: Cookies, user: SessionUser): Pro
 }
 
 export function clearSession(cookies: Cookies): void {
-  cookies.delete(SESSION_COOKIE, { path: '/', domain: env.AUTH_COOKIE_DOMAIN || undefined });
+  cookies.delete(SESSION_COOKIE, { path: '/', domain: cookieDomain() });
 }

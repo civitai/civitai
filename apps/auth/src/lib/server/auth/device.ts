@@ -1,9 +1,9 @@
 import { randomUUID } from 'crypto';
 import type { Cookies } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
 import { deviceCookieName, isSecureCookie } from '@civitai/auth';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { getSysRedis } from '../redis';
+import { cookieDomain } from './cookie';
 
 // DEVICE-LEVEL account linking (docs/main-app-auth-cutover.md, section E). A browser is identified by an
 // httpOnly `device` cookie; the hub keeps a per-device set of accounts that have authenticated on it, each
@@ -20,7 +20,7 @@ const key = (deviceId: string) => `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${deviceId}
 
 const cookieOpts = {
   path: '/' as const,
-  domain: env.AUTH_COOKIE_DOMAIN || undefined,
+  domain: cookieDomain(),
   httpOnly: true,
   secure: isSecureCookie(),
   sameSite: 'lax' as const,
