@@ -92,7 +92,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     where: { id: client_id },
     select: { allowedScopes: true },
   });
-  if (client && !Flags.hasFlag(client.allowedScopes, scope)) {
+  // Fail closed: if the client row is absent (e.g. deleted between device-code
+  // creation and token exchange) the scope intersection cannot be evaluated, so
+  // reject rather than skip the gate.
+  if (!client) {
+    return res.status(400).json({ error: 'invalid_client' });
+  }
+  if (!Flags.hasFlag(client.allowedScopes, scope)) {
     return res
       .status(400)
       .json({

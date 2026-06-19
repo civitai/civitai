@@ -130,4 +130,32 @@ describe('device-token endpoint — AppBlocksSubmit scope survives into the mint
     expect((res._getJSONData() as { error: string }).error).toBe('invalid_scope');
     expect(mockCreatePair).not.toHaveBeenCalled();
   });
+
+  it('fails closed with invalid_client when the client row is absent (audit LOW-1)', async () => {
+    // Client was deleted between device-code creation and token exchange. The
+    // allowedScopes intersection cannot be evaluated, so the endpoint must
+    // reject rather than skip the gate and mint a token.
+    mockHGet.mockResolvedValueOnce({
+      clientId: 'civitai-cli',
+      userCode: 'ABCD-EFGH',
+      scope: CLI_SCOPE.toString(),
+      status: 'approved',
+      userId: 7,
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    });
+    mockClientFindUnique.mockResolvedValueOnce(null);
+
+    const { req, res } = createMocks({
+      body: {
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'civitai-cli',
+      },
+    });
+    await handler(req as never, res as never);
+
+    expect(res._getStatusCode()).toBe(400);
+    expect((res._getJSONData() as { error: string }).error).toBe('invalid_client');
+    expect(mockCreatePair).not.toHaveBeenCalled();
+  });
 });
