@@ -593,6 +593,14 @@ type FetchThroughCacheOptions = {
   ttl?: number;
   lockTTL?: number;
   retryCount?: number;
+  // Opt-in brotli compression of the packed value at rest. Only enable for LARGE,
+  // highly-compressible blobs (e.g. tensor-metadata's ~335 KB tensor-name strings) —
+  // most cached values are tiny and would only pay the codec overhead. Reads decode
+  // both compressed and legacy-uncompressed entries transparently (sentinel-tagged),
+  // so flipping this on/off is back-compat safe with existing keys. Safe here because
+  // fetchThroughCache always stores the `{ data, cachedAt }` wrapper object (never a
+  // bare scalar) — see the SENTINEL SAFETY note in redis/client.ts.
+  compress?: boolean;
 };
 type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
 
@@ -640,6 +648,7 @@ export async function fetchThroughCache<T>(
   const ttl = options.ttl ?? CacheTTL.sm;
   const lockTTL = options.lockTTL ?? 10;
   const retryCount = options.retryCount ?? 3;
+  const compress = options.compress ?? false;
   const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${key}` as const;
 
   // --- Redis READ (cache lookup) -------------------------------------------------
@@ -651,7 +660,10 @@ export async function fetchThroughCache<T>(
   // failed request); it just turns the failure mode from 500/504 into a slow 200.
   let cachedData: FetchThroughCacheEntity<T> | null;
   try {
-    cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key);
+    // Thread `compress` to the READ so it's symmetric with the compressed write below:
+    // only a compressed caller's get attempts brotli-decompress, and only that path
+    // carries the sentinel invariant. Non-compress callers read via the general path.
+    cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key, { compress });
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'fetchThroughCache get (cache cluster)', err, { key });
     return fetchThroughCacheFailOpen(key, fetchFn);
@@ -684,6 +696,7 @@ export async function fetchThroughCache<T>(
         ttl,
         lockTTL,
         retryCount: retryCount - 1,
+        compress,
       });
     }
   } else if (cachedData) return cachedData.data;
@@ -697,7 +710,7 @@ export async function fetchThroughCache<T>(
     const data = await fetchFn();
     const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
     try {
-      await redis.packed.set(key, toCache, { EX: ttl * 2 });
+      await redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress });
     } catch (err) {
       logSysRedisFailOpen('write-degraded', 'fetchThroughCache set (cache cluster)', err, { key });
     }
@@ -715,12 +728,23 @@ export async function fetchThroughCache<T>(
   }
 }
 
-export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
-  const cachedData = await redis.packed.get<FetchThroughCacheEntity<any>>(key);
+export async function bustFetchThroughCache(
+  key: RedisKeyTemplateCache,
+  // `compress` MUST match the setting the corresponding fetchThroughCache() uses for
+  // this key. If a key is stored compressed (sentinel-tagged brotli) but busted with
+  // compress=false, the read decodes via the general msgpack path → throws → the entry
+  // is EVICTED and `!cachedData` silently no-ops the bust (the staleness reset never
+  // happens). Threaded as an explicit opt-in (symmetric with fetchThroughCache) so
+  // busting a compressed cache is correct rather than a latent landmine. No current
+  // caller compresses a busted key; this guards future ones.
+  options: { compress?: boolean } = {}
+) {
+  const compress = options.compress ?? false;
+  const cachedData = await redis.packed.get<FetchThroughCacheEntity<any>>(key, { compress });
   if (!cachedData) return;
 
   const toCache: FetchThroughCacheEntity<any> = { data: cachedData.data, cachedAt: 0 };
-  await redis.packed.set(key, toCache, { KEEPTTL: true });
+  await redis.packed.set(key, toCache, { KEEPTTL: true }, { compress });
 }
 
 /**

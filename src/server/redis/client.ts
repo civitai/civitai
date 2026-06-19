@@ -9,6 +9,7 @@ import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { withCommandDeadline } from '~/server/redis/command-deadline';
+import { compressPacked, decompressPacked } from '~/server/redis/packed-compression';
 // NOTE: do NOT statically import the redis prom metrics from '~/server/prom/client'.
 // This module is client-bundle-reachable (`_app.tsx` → `system-cache.ts` → here),
 // and prom-client eagerly requires `fs`/`cluster` at module load (defaultMetrics +
@@ -87,10 +88,22 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
     cursor?: string;
   }): AsyncGenerator<string[], void, unknown>;
   packed: {
-    get<T>(key: K): Promise<T | null>;
+    // `packedOptions.compress` opts the READ into the compress-aware decode path
+    // (sentinel-detect + brotli-decompress), SYMMETRIC with set's compress. Only enable
+    // for keys written with compress — see the SENTINEL SCOPE note in packed-compression.
+    get<T>(key: K, packedOptions?: { compress?: boolean }): Promise<T | null>;
     // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
     mGet<T>(keys: K[]): Promise<(T | null)[]>;
-    set<T>(key: K, value: T, setOptions?: SetOptions): Promise<void>;
+    // `packedOptions.compress` opts the value into brotli compression at rest (sentinel-
+    // tagged; reads decode both compressed and legacy-uncompressed values transparently).
+    // Only safe for callers that store wrapper objects, never bare scalars — see the
+    // SENTINEL SAFETY note in the packed implementation.
+    set<T>(
+      key: K,
+      value: T,
+      setOptions?: SetOptions,
+      packedOptions?: { compress?: boolean }
+    ): Promise<void>;
     // mSet still disabled - sets are more complex with different argument formats
     // mSet(records: Record<K, unknown>, setOptions?: SetOptions): Promise<void>;
     setNX<T>(key: K, value: T): Promise<void>;
@@ -770,6 +783,15 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
 
   // Decode a packed Buffer, evicting the bad entry if msgpack fails so the next
   // read falls through to source. Returns null on decode failure, treated as cache miss.
+  //
+  // This is the GENERAL decode path for EVERY packed read (get/mGet/sMembers/sPop/
+  // hGet/hGetAll/hmGet) across ~30 cache writers. It does plain `unpack(value)` only —
+  // it deliberately does NOT brotli-decompress, so the 0x01 brotli sentinel is NOT a
+  // global invariant on all packed values (a bare msgpack `1` packs to <01> and must
+  // decode as the integer 1, not be mistaken for a compressed payload). Brotli
+  // decompression is confined to the opt-in compress-aware read path below
+  // (`get(key, { compress: true })`) — see ~/server/redis/packed-compression for why the
+  // sentinel is provably collision-free THERE (wrapper objects only).
   const safeUnpack = <T>(value: Buffer, evict: () => Promise<unknown>): T | null => {
     try {
       return unpack(value) as T;
@@ -783,10 +805,42 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     }
   };
 
+  // Compress-aware decode — the SYMMETRIC counterpart of `set(..., { compress: true })`,
+  // used ONLY by the opt-in `get(key, { compress: true })` read path (currently just
+  // fetchThroughCache's compressed callers, e.g. tensor-metadata full). It awaits the
+  // async brotli codec and discriminates on the sentinel byte so a legacy uncompressed
+  // value (written before compression was enabled) still decodes: first byte === sentinel
+  // → strip + brotli-decompress + unpack; else → unpack as legacy raw. Provably safe HERE
+  // (and only here) because every value on this path is the `{ data, cachedAt }` wrapper
+  // object whose msgpack first byte is always a MAP marker (0x80–0x8f / 0xde / 0xdf),
+  // never 0x01. Preserves safeUnpack's evict-on-failure / fail-open semantics: a
+  // decompress/unpack throw is treated as a cache miss (null) and evicts the bad entry.
+  const safeUnpackCompressed = async <T>(
+    value: Buffer,
+    evict: () => Promise<unknown>
+  ): Promise<T | null> => {
+    try {
+      return unpack(await decompressPacked(value)) as T;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Packed (compressed) unpack failed, evicting bad cache entry: ${msg}`);
+      evict().catch((e) =>
+        log(`Eviction after unpack failure failed: ${e instanceof Error ? e.message : e}`)
+      );
+      return null;
+    }
+  };
+
   client.packed = {
-    async get<T>(key: K): Promise<T | null> {
+    async get<T>(key: K, packedOptions?: { compress?: boolean }): Promise<T | null> {
       const result = await bufferClient.get<Buffer>(key);
       if (!result) return null;
+      // Only the opt-in compress-aware read attempts sentinel-detect + brotli-decompress
+      // (symmetric with `set(..., { compress: true })`). Non-compress callers use the
+      // general decode path verbatim, so no decompression ever runs for them.
+      if (packedOptions?.compress) {
+        return safeUnpackCompressed<T>(result, () => client.unlink(key));
+      }
       return safeUnpack<T>(result, () => client.unlink(key));
     },
 
@@ -798,8 +852,17 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       );
     },
 
-    async set<T>(key: K, value: T, options?: SetOptions): Promise<void> {
-      await client.set(key, pack(value), options);
+    async set<T>(
+      key: K,
+      value: T,
+      options?: SetOptions,
+      packedOptions?: { compress?: boolean }
+    ): Promise<void> {
+      const packed = pack(value);
+      // Opt-in brotli (sentinel-tagged), async so the codec runs on the libuv threadpool
+      // and never blocks the event loop. The symmetric read is get(key, { compress: true }).
+      const payload = packedOptions?.compress ? await compressPacked(packed) : packed;
+      await client.set(key, payload, options);
     },
 
     async setNX<T>(key: K, value: T): Promise<void> {
@@ -1331,6 +1394,7 @@ export const REDIS_KEYS = {
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     TENSOR_METADATA: 'packed:caches:tensor-metadata',
+    TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
     MOD_RULES: {
