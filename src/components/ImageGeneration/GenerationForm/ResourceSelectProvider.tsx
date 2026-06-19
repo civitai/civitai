@@ -18,6 +18,7 @@ export type ResourceSelectModalProps = {
 
 type ResourceSelectState = Omit<ResourceSelectModalProps, 'options'> & {
   canGenerate?: boolean;
+  publicOnly?: boolean;
   excludedIds: number[];
   resources: DeepRequired<ResourceSelectOptions>['resources'];
   filters: ResourceFilter;
@@ -81,6 +82,7 @@ export function ResourceSelectProvider({
         ...props,
         selectSource: props.selectSource ?? 'generation',
         canGenerate: props.options?.canGenerate,
+        publicOnly: props.options?.publicOnly,
         excludedIds: props.options?.excludeIds ?? [],
         resources,
         filters: {

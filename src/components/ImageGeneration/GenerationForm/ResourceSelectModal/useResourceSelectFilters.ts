@@ -95,7 +95,7 @@ export function useResourceSelectMeiliFilters({
   likedModels: number[] | undefined;
 }) {
   const currentUser = useCurrentUser();
-  const { canGenerate, resources, selectSource, filters } = useResourceSelectContext();
+  const { canGenerate, resources, selectSource, filters, publicOnly } = useResourceSelectContext();
 
   return useMemo((): string | null => {
     // Don't compute filters until featured models are loaded on the featured tab
@@ -103,7 +103,10 @@ export function useResourceSelectMeiliFilters({
 
     const meiliFilters: string[] = [
       // Default filter for visibility:
-      selectSource === 'auction' || !currentUser?.id
+      // `publicOnly` (App Blocks page picker) forces PUBLIC-only — an untrusted
+      // iframe must never be able to enumerate the viewer's OWN private models,
+      // so we drop the `OR user.id = <me>` clause the in-app generator allows.
+      publicOnly || selectSource === 'auction' || !currentUser?.id
         ? `availability != ${Availability.Private}`
         : `(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`,
     ];
@@ -226,6 +229,7 @@ export function useResourceSelectMeiliFilters({
     return [...meiliFilters, ...exclude].join(' AND ');
   }, [
     canGenerate,
+    publicOnly,
     resources,
     selectSource,
     filters,
