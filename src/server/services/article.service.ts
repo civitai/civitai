@@ -2659,6 +2659,16 @@ export async function getArticleRatingReviews({
       appliedLevel: true,
       userComment: true,
       modComment: true,
+      resolvedBy: true,
+      // The moderator who actioned the review (null for auto-approved /
+      // system-resolved rows) — surfaced on the card for audit.
+      resolver: {
+        select: {
+          id: true,
+          username: true,
+          image: true,
+        },
+      },
       user: {
         select: {
           id: true,
