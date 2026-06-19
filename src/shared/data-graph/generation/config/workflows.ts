@@ -64,6 +64,7 @@ const EDIT_IMG_IDS = [
   ECO.WanImage27,
   ECO.HiDreamO1,
   ECO.MAI,
+  ECO.Boogu,
 ];
 
 /** Image ecosystems that support image:create */
@@ -103,6 +104,7 @@ const TXT2IMG_IDS = [
   ECO.Lens,
   ECO.Krea2,
   ECO.MAI,
+  ECO.Boogu,
 ];
 
 /** Video ecosystems that support video:create */
@@ -798,7 +800,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       ecoId === ECO.HiDreamO1 ||
       ecoId === ECO.Lens ||
       ecoId === ECO.Krea2 ||
-      ecoId === ECO.MAI,
+      ecoId === ECO.MAI ||
+      ecoId === ECO.Boogu,
   ],
   [
     'img2img:edit',
@@ -807,7 +810,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       ecoId === ECO.Grok ||
       ecoId === ECO.Qwen2 ||
       ecoId === ECO.WanImage27 ||
-      ecoId === ECO.HiDreamO1,
+      ecoId === ECO.HiDreamO1 ||
+      ecoId === ECO.Boogu,
   ],
 
   // Grok/LTXV23 vid2vid:edit - no legacy equivalent
