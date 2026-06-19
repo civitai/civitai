@@ -8,8 +8,13 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 // Degraded result returned when the signals service is transiently
 // unavailable. `accessToken` is absent → useSignalsWorker reads
-// `data?.accessToken` as undefined, never opens the SignalR connection, and
-// retries (the `connection:state === 'closed'` path re-invalidates the query).
+// `data?.accessToken` as undefined and never opens the SignalR connection, so
+// the request succeeds with no 500. NOTE: this does NOT self-heal — because no
+// connection is opened, the worker never emits a `connection:state === 'closed'`
+// event, so the query (staleTime: Infinity) is never re-invalidated. A tab that
+// loads during the outage gets no live updates until it remounts/reloads. That's
+// the accepted M2 tradeoff (graceful degrade > 500); closing it would need a
+// `refetchInterval` while the token is absent.
 const SIGNALS_UNAVAILABLE: GetSignalsAccessTokenResponse = {};
 
 /**
