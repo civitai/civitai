@@ -33,11 +33,10 @@ export const LORA_STRENGTH_MAX = 2;
 
 const blockAdditionalResourceSchema = z.object({
   modelVersionId: z.number().int().positive(),
-  strength: z.coerce
-    .number()
-    .min(LORA_STRENGTH_MIN)
-    .max(LORA_STRENGTH_MAX)
-    .default(1),
+  // Strict (non-coerced) parity with modelVersionId. Block bodies are JSON, so
+  // strength arrives as a real number; z.coerce would let `""`/`[]`/`true`/null
+  // slip through to 0/1 instead of being rejected.
+  strength: z.number().min(LORA_STRENGTH_MIN).max(LORA_STRENGTH_MAX).default(1),
 });
 
 const blockTextToImageBodySchema = z.object({
