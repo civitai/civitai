@@ -137,6 +137,7 @@ function getStatusCode(
     case 'archived':
       return 410;
     case 'not-found':
+    case 'resolve-failed':
       return 404;
     default:
       return 500;
@@ -156,6 +157,7 @@ function getErrorMessage(
     case 'archived':
       return 'Model archived, not available';
     case 'not-found':
+    case 'resolve-failed':
       return 'File not found';
     default:
       return 'Error getting file';

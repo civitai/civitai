@@ -170,23 +170,29 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   });
 
   // --- Fix #3: genuinely-unresolvable delivery URL -----------------------
-  it('returns not-found (→404), NOT error (→500), when the delivery URL cannot be resolved', async () => {
+  it('returns resolve-failed (→404 no-store), NOT error (→500), when the delivery URL cannot be resolved', async () => {
     modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
     // Both storage-resolver and delivery-worker rejected → resolveDownloadUrl throws.
     resolveDownloadUrlMock.mockRejectedValue(new Error('Delivery worker error: Not Found'));
 
     const { getFileForModelVersion } = await import('../file.service');
     // Authenticated owner-or-mod so the request passes the auth gate and reaches
-    // URL resolution (where the unresolvable-URL → not-found routing lives).
+    // URL resolution (where the unresolvable-URL → resolve-failed routing lives).
     const result = await getFileForModelVersion({
       modelVersionId: 1,
       noAuth: true,
       user: { id: 1, isModerator: true },
     });
 
-    // A broken/missing delivery URL is a not-found, not a server fault.
-    expect(result.status).toBe('not-found');
+    // A broken/missing delivery URL is not a server fault (still 404 at the
+    // endpoint), but it gets a DISTINCT status from the deterministic by-id
+    // not-found so the endpoint can mark it `Cache-Control: no-store` — a
+    // resolve failure can be TRANSIENT (storage outage) and must not be
+    // edge-cached for 5 min.
+    expect(result.status).toBe('resolve-failed');
     expect(result.status).not.toBe('error');
+    // Distinct from the deterministic not-found (which stays CDN-cacheable).
+    expect(result.status).not.toBe('not-found');
   });
 
   it('returns success with the resolved url on the happy path', async () => {

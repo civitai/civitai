@@ -349,6 +349,15 @@ export const getFileForModelVersion = async ({
     // 404, not 500. `resolveDownloadUrl` no longer throws `URI malformed` on a
     // malformed/already-encoded URL (delivery-worker now decodes best-effort),
     // so reaching this catch means the file genuinely can't be resolved.
+    //
+    // Use a DISTINCT `resolve-failed` status (not the deterministic `not-found`)
+    // so the endpoint can mark this 404 `Cache-Control: no-store`. This catch
+    // fires on TRANSIENT delivery-worker/storage-resolver non-2xx too (a storage
+    // outage, not just a permanently-broken URL); under `PublicEndpoint`'s default
+    // `s-maxage=300` a transient failure would otherwise let the CDN edge-cache
+    // "File not found" for ~5 min for a file that actually exists, even after the
+    // backend recovers. The deterministic by-id `not-found` stays cacheable.
+    //
     // Still log so the leak is visible in production. safeError includes
     // `name: 'Error'` which must be spread BEFORE our literal `name` or the
     // event name gets overwritten.
@@ -363,7 +372,7 @@ export const getFileForModelVersion = async ({
       fileType: file.type,
       userId: user?.id,
     }).catch(() => undefined);
-    return { status: 'not-found' };
+    return { status: 'resolve-failed' };
   }
 };
 
@@ -417,7 +426,13 @@ export function getDownloadFilename({
 
 type ModelVersionFileResult =
   | {
-      status: 'not-found' | 'unauthorized' | 'archived' | 'downloads-disabled' | 'error';
+      status:
+        | 'not-found'
+        | 'resolve-failed'
+        | 'unauthorized'
+        | 'archived'
+        | 'downloads-disabled'
+        | 'error';
     }
   | {
       status: 'early-access';

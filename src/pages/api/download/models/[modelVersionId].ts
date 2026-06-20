@@ -101,6 +101,18 @@ export default PublicEndpoint(
       });
 
       if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
+      if (fileResult.status === 'resolve-failed') {
+        // Same 404 as `not-found`, but this 404 came from a delivery-worker /
+        // storage-resolver resolve FAILURE, which can be TRANSIENT (a storage
+        // outage, not a permanently-missing file). PublicEndpoint set a default
+        // `Cache-Control: public, s-maxage=300, …` before this handler ran;
+        // override it with `no-store` so a transient resolve failure is NOT
+        // edge-cached as "File not found" for ~5 min for a file that exists.
+        // setHeader (last-write-wins, headers not yet flushed) overrides the
+        // PublicEndpoint default. Deterministic by-id `not-found` stays cacheable.
+        res.setHeader('Cache-Control', 'private, no-store');
+        return errorResponse(404, 'File not found');
+      }
       if (fileResult.status === 'archived')
         return errorResponse(410, 'Model archived, not available for download');
       if (fileResult.status === 'early-access') {
