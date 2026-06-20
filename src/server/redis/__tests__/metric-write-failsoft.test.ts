@@ -19,6 +19,8 @@ import { withMetricWriteFailSoft } from '../metric-write-failsoft';
 
 const never = () => new Promise<never>(() => {}); // never settles (the wedged-client case)
 const resolveAfter = <T>(ms: number, v: T) => new Promise<T>((r) => setTimeout(() => r(v), ms));
+const rejectAfter = (ms: number, e: Error) =>
+  new Promise<never>((_, rej) => setTimeout(() => rej(e), ms));
 
 describe('withMetricWriteFailSoft', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -101,5 +103,27 @@ describe('withMetricWriteFailSoft', () => {
     await withMetricWriteFailSoft(() => Promise.resolve(1), 0, { op: 'x', timeoutMs: 1000 });
     expect(clearSpy).toHaveBeenCalled();
     clearSpy.mockRestore();
+  });
+
+  it('does NOT emit an unhandledRejection when the command rejects AFTER the deadline fired (FIX #4)', async () => {
+    // The real wedge case: our short fail-soft deadline (10ms) wins; the underlying cluster
+    // command (itself bounded by the 15s withCommandDeadline) rejects ~13.5s later. That LATE
+    // rejection must be reaped, not surface as an unhandledRejection. Mirrors
+    // command-deadline.test.ts / sys-read-deadline.test.ts.
+    const onUnhandled = vi.fn();
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const result = await withMetricWriteFailSoft(
+        () => rejectAfter(40, new Error('late socket death')),
+        'fallback',
+        { op: 'populate-lock:setNX', timeoutMs: 10 }
+      );
+      // Fail-soft: the deadline path returned the fallback (never rejected).
+      expect(result).toBe('fallback');
+      await new Promise((r) => setTimeout(r, 60)); // let the loser settle
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });

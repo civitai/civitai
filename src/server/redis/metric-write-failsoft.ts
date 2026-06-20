@@ -58,13 +58,23 @@ export async function withMetricWriteFailSoft<T>(
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     if (ms && ms > 0) {
+      // Start the command ONCE and hold the reference so we can reap its LATE rejection on
+      // the timeout path (FIX #4). run() is the cluster command, itself wrapped by the 15s
+      // withCommandDeadline — so when our 1.5s `deadline` wins the race, run() is still in
+      // flight and rejects ~13.5s later. Without an attached handler that surfaces as an
+      // `unhandledRejection`. Reap it explicitly (mirrors command-deadline.ts /
+      // sys-read-deadline.ts, which assert no unhandledRejection in their tests).
+      const running = run();
+      running.catch(() => {
+        /* reaped: the fail-soft fallback was already returned on the deadline path */
+      });
       const deadline = new Promise<never>((_, reject) => {
         timer = setTimeout(
           () => reject(new Error(`metric write '${options.op}' timed out after ${ms}ms`)),
           ms
         );
       });
-      return await Promise.race([run(), deadline]);
+      return await Promise.race([running, deadline]);
     }
     return await run();
   } catch (err) {

@@ -10,6 +10,12 @@ import { slugit } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { withCommandDeadline } from '~/server/redis/command-deadline';
 import { ClusterSelfHealWatchdog } from '~/server/redis/cluster-selfheal';
+import {
+  decClusterInflight,
+  getClusterInflight,
+  incClusterInflight,
+  resetClusterInflight,
+} from '~/server/redis/cluster-inflight';
 import { compressPacked, decompressPacked } from '~/server/redis/packed-compression';
 // NOTE: do NOT statically import the redis prom metrics from '~/server/prom/client'.
 // This module is client-bundle-reachable (`_app.tsx` → `system-cache.ts` → here),
@@ -211,13 +217,13 @@ const log = createLogger('redis', 'green');
 // Track topology refresh intervals for cleanup
 const clusterRefreshIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
-// In-process count of in-flight CLUSTER commands. instrumentCommands inc/decs this in
-// lockstep with the redis_commands_inflight{client="cluster"} gauge — it is the same
-// signal the gauge exposes, read locally (the prom-client Gauge doesn't cheaply surface its
-// value) so the self-heal watchdog (FIX #1) can sample it without a prom dependency. Module-
-// scoped because there is one cluster client per process. (The sys client uses 'sys' and is
-// NOT tracked here — the watchdog only ever acts on the cluster client.)
-let clusterInflight = 0;
+// In-process count of in-flight CLUSTER commands lives in `./cluster-inflight` so EVERY
+// mutation goes through a single floored helper (the counter can never go negative — see
+// FIX #2 there). instrumentCommands inc/decs it in lockstep with the
+// redis_commands_inflight{client="cluster"} gauge — the same signal the gauge exposes, read
+// locally (the prom-client Gauge doesn't cheaply surface its value) so the self-heal watchdog
+// (FIX #1) can sample it without a prom dependency. (The sys client uses 'sys' and is NOT
+// tracked — the watchdog only ever acts on the cluster client.)
 
 /**
  * Trigger topology rediscovery on a cluster client.
@@ -284,37 +290,109 @@ export function resolvePeriodicRefresh(refreshIntervalMs: number): {
 }
 
 /**
- * Force a FULL reconnect of a node-redis cluster client (FIX #1). Disconnect tears down the
- * existing node connections + rejects in-flight commands, and connect() rebuilds them and
- * re-runs slot discovery — which is the ONLY way (short of a process restart) to clear the
- * orphaned `_execute` promises that the inflight-leak wedge accumulates.
+ * Force a FULL reconnect of a node-redis cluster client (FIX #1). The teardown must REJECT
+ * the in-flight commands IMMEDIATELY (not drain them) and connect() rebuilds the node
+ * connections + re-runs slot discovery — which is the ONLY way (short of a process restart)
+ * to clear the orphaned `_execute` promises that the inflight-leak wedge accumulates.
  *
- * node-redis exposes graceful `close()` (v5) / `disconnect()` (legacy) and `destroy()` for a
- * hard teardown; we prefer a graceful close so the existing `close` wrapper still clears the
- * topology-refresh interval, then re-connect. Any teardown error is non-fatal: connect() is
- * still attempted, and the watchdog re-arms after the cooldown regardless.
+ * WHY `destroy()`, NOT `close()` (FIX #1 — verified against @redis/client@5.8.3):
+ *   - cluster `close()` → `#destroy(c => c.close())` → `Promise.allSettled(perNodeClose)`, and
+ *     per-node `RedisClient.close()` "waits for pending commands": it only resolves once the
+ *     node's reply `#queue.isEmpty()`. The whole reason we're reconnecting is that commands
+ *     are ORPHANED and never get a reply → the queue never empties → `close()` can HANG.
+ *     Because the watchdog single-flights on `reconnecting=true` until reconnect settles, a
+ *     hung `close()` pins `reconnecting=true` forever — the watchdog would be permanently dead
+ *     after its first trigger, failing in exactly the scenario it exists for.
+ *   - cluster `destroy()` → per-node `RedisClient.destroy()` =
+ *     `#queue.flushAll(new DisconnectsClientError())` + `socket.destroy()`: it REJECTS every
+ *     in-flight command immediately and tears the sockets down synchronously. That's what we
+ *     want. (`disconnect()` is the legacy alias and also rejects immediately, but `destroy()`
+ *     is the documented v5 method.)
+ *
+ * Each rejected in-flight command then runs its done() closure → decClusterInflight() (floored
+ * at 0, FIX #2), so the counter drains back to ~0 and the watchdog can re-arm. We also reset
+ * it up front so the watchdog's sampled value snaps clean at the trigger instant.
+ *
+ * Because `destroy()` is SYNCHRONOUS and does NOT go through the wrapped `close()` that clears
+ * the topology-refresh interval, this function explicitly clears that interval before tearing
+ * down (FIX #3) so it isn't leaked, then re-establishes failover after reconnect so the new
+ * connection gets exactly one fresh periodic-rediscover interval.
+ *
+ * Any teardown error is non-fatal: connect() is still attempted, and the watchdog re-arms
+ * after the cooldown regardless.
+ *
+ * @param reSetupFailover re-runs setupEnhancedFailover() after connect() resolves, so the
+ *   periodic `_slots.rediscover()` interval (and node-error/disconnect rediscovery) is
+ *   re-established post-heal exactly once (FIX #3). Injected by getBaseClient (the closure
+ *   lives there); optional so unit tests can drive the function without it.
  */
-async function forceClusterReconnect(clusterClient: any): Promise<void> {
+async function forceClusterReconnect(
+  clusterClient: any,
+  reSetupFailover?: () => Promise<void>
+): Promise<void> {
+  // FIX #3: clear the existing topology-refresh interval BEFORE the destroy(). destroy()
+  // bypasses the wrapped close() that would otherwise clear it, so without this the old
+  // interval leaks and reSetupFailover() below would schedule a SECOND one (net: two
+  // intervals firing rediscover on one client). Clearing here + re-creating in
+  // reSetupFailover keeps it at exactly one.
+  clearClusterRefreshInterval('cache');
+
   try {
-    if (typeof clusterClient.close === 'function') {
-      await clusterClient.close();
-    } else if (typeof clusterClient.disconnect === 'function') {
-      await clusterClient.disconnect();
-    } else if (typeof clusterClient.destroy === 'function') {
-      // destroy is synchronous; wrap so the caller can still await uniformly.
+    if (typeof clusterClient.destroy === 'function') {
+      // destroy() rejects in-flight commands immediately (flushAll(DisconnectsClientError))
+      // and tears sockets down synchronously — does NOT wait for the wedged queue to drain.
       clusterClient.destroy();
+    } else if (typeof clusterClient.disconnect === 'function') {
+      // Legacy alias for destroy() — also rejects in-flight immediately.
+      await clusterClient.disconnect();
+    } else if (typeof clusterClient.close === 'function') {
+      // Last resort only: close() can HANG on the wedged queue (see WHY above). Bound it so
+      // a hang can't pin reconnecting=true forever; fall through to connect() regardless.
+      await Promise.race([
+        clusterClient.close(),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+      ]);
     }
   } catch (err) {
-    log(`Cluster self-heal: disconnect threw (continuing to reconnect): ${
-      err instanceof Error ? err.message : String(err)
-    }`);
+    log(
+      `Cluster self-heal: teardown threw (continuing to reconnect): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
   }
-  // Reset the local inflight counter — the disconnect rejected every in-flight command, so
-  // their done() callbacks fire as the rejections settle; resetting here avoids a transient
-  // mismatch if any settle late. (Each rejected command's done() guards against a
-  // double-decrement, so this stays >= 0.)
-  if (clusterInflight > 0) clusterInflight = 0;
+  // Reset the local inflight counter up front — destroy() rejected every in-flight command,
+  // so their done() closures fire as the rejections settle and EACH floored-decrements toward
+  // 0 (FIX #2 — the floor is what stops a post-heal burst of rejects driving it negative). The
+  // reset just snaps the watchdog's sampled value clean at the trigger instant rather than
+  // letting it decay over the next few ticks.
+  resetClusterInflight();
+
   await clusterClient.connect();
+
+  // FIX #3: re-establish enhanced failover (incl. the periodic-rediscover interval) on the
+  // freshly-connected client. setupEnhancedFailover clears any prior interval for this client
+  // kind first, so combined with the clear above this yields exactly ONE interval (honoring
+  // the REDIS_CLUSTER_REFRESH_INTERVAL disable sentinel). Non-fatal if it throws.
+  if (reSetupFailover) {
+    try {
+      await reSetupFailover();
+    } catch (err) {
+      log(
+        `Cluster self-heal: re-setup failover after reconnect failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+}
+
+/** Clear (and forget) the topology-refresh interval for a client kind, if scheduled. */
+function clearClusterRefreshInterval(type: 'cache' | 'system'): void {
+  const interval = clusterRefreshIntervals.get(type);
+  if (interval) {
+    clearInterval(interval);
+    clusterRefreshIntervals.delete(type);
+  }
 }
 
 /**
@@ -325,7 +403,10 @@ async function forceClusterReconnect(clusterClient: any): Promise<void> {
  * Cluster client ONLY. Exposed (returns the watchdog) so a unit test can construct one with
  * injected deps without booting the module-level interval here.
  */
-function startClusterSelfHeal(clusterClient: any): ClusterSelfHealWatchdog {
+function startClusterSelfHeal(
+  clusterClient: any,
+  reSetupFailover?: () => Promise<void>
+): ClusterSelfHealWatchdog {
   const watchdog = new ClusterSelfHealWatchdog(
     {
       enabled: env.REDIS_CLUSTER_SELFHEAL_ENABLED,
@@ -334,8 +415,8 @@ function startClusterSelfHeal(clusterClient: any): ClusterSelfHealWatchdog {
       cooldownMs: env.REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS,
     },
     {
-      getInflight: () => clusterInflight,
-      reconnect: () => forceClusterReconnect(clusterClient),
+      getInflight: () => getClusterInflight(),
+      reconnect: () => forceClusterReconnect(clusterClient, reSetupFailover),
       log,
       onReconnect: (inflightAtTrigger: number) => {
         getRedisMetrics()?.redisSelfHealReconnectCounter?.inc();
@@ -724,14 +805,13 @@ function getBaseClient(type: 'cache' | 'system') {
         const { enabled: refreshEnabled, intervalMs: refreshInterval } = resolvePeriodicRefresh(
           env.REDIS_CLUSTER_REFRESH_INTERVAL
         );
-        // Guard against re-entry: setupEnhancedFailover runs on EVERY connect(), including a
-        // self-heal forced reconnect. Without this, each reconnect would stack another
-        // interval + re-wrap close. Clear any prior interval for this client kind first.
-        const priorInterval = clusterRefreshIntervals.get(type);
-        if (priorInterval) {
-          clearInterval(priorInterval);
-          clusterRefreshIntervals.delete(type);
-        }
+        // Guard against re-entry. setupEnhancedFailover runs on the INITIAL connect() AND is
+        // re-invoked by forceClusterReconnect (FIX #3) after a self-heal forced reconnect (it's
+        // passed in as reSetupFailover). Without clearing first, a re-setup would stack a second
+        // interval + re-wrap close. forceClusterReconnect already clears the interval before its
+        // destroy(); clearing again here is idempotent and also covers any future re-entry path.
+        // Net: after any connect()/reconnect there is exactly ONE refresh interval.
+        clearClusterRefreshInterval(type);
         if (refreshEnabled) {
           const intervalId = setInterval(() => {
             triggerTopologyRediscovery(baseClient, 'periodic refresh');
@@ -783,10 +863,13 @@ function getBaseClient(type: 'cache' | 'system') {
         log(`${type} cluster client connected`);
         await setupEnhancedFailover();
         // FIX #1: start the inflight-leak self-heal watchdog ONCE per process for the cache
-        // cluster client. Guarded so a self-heal forced reconnect (which re-runs this connect
-        // callback) doesn't stack a second interval.
+        // cluster client. Guarded so a self-heal forced reconnect doesn't stack a second
+        // watchdog interval. Pass setupEnhancedFailover so forceClusterReconnect re-establishes
+        // the periodic-rediscover interval after a heal (FIX #3). The forced reconnect does NOT
+        // re-run this connect() .then callback (it calls baseClient.connect() directly), so the
+        // re-setup must be threaded through the watchdog, not relied on here.
         if (type === 'cache' && !clusterSelfHealInterval) {
-          startClusterSelfHeal(baseClient);
+          startClusterSelfHeal(baseClient, setupEnhancedFailover);
         }
       })
       .catch((err) => {
@@ -897,12 +980,16 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     const metrics = getRedisMetrics();
     metrics?.redisCommandsInflight.inc(labels);
     // Mirror the gauge into the local counter for the self-heal watchdog (cluster only).
-    if (clientLabel === 'cluster') clusterInflight++;
+    if (clientLabel === 'cluster') incClusterInflight();
     const start = Date.now();
-    let dec = false; // guard so a double-settle (shouldn't happen) can't drive the counter negative
+    let dec = false; // per-closure guard so a double-settle (shouldn't happen) can't double-dec
     const done = () => {
       if (clientLabel === 'cluster' && !dec) {
-        clusterInflight--;
+        // FLOORED decrement (decClusterInflight clamps at 0). The per-closure `dec` guard above
+        // only stops THIS closure decrementing twice — it does NOT stop N distinct rejected
+        // closures (e.g. the burst destroy() rejects after a heal) decrementing past 0. The
+        // floor is what keeps the counter accurate post-heal so the watchdog can re-arm (FIX #2).
+        decClusterInflight();
         dec = true;
       }
       metrics?.redisCommandsInflight.dec(labels);

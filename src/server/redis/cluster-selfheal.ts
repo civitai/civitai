@@ -52,8 +52,10 @@ export interface ClusterSelfHealDeps {
   /** Reads the current in-process cluster inflight count (same source as the gauge). */
   getInflight: () => number;
   /**
-   * Forces a full client reconnect (disconnect → connect, rebuilding `_slots`). Rejecting
-   * is fine — the watchdog logs it and re-arms after the cooldown. Must resolve/settle.
+   * Forces a full client reconnect (destroy → connect, rebuilding `_slots`). The teardown must
+   * REJECT in-flight commands immediately (client.ts uses the v5 cluster `destroy()`, NOT the
+   * draining `close()`) so it can't hang and pin `reconnecting` true forever. Rejecting is fine
+   * — the watchdog logs it and re-arms after the cooldown. Must resolve/settle.
    */
   reconnect: () => Promise<void>;
   /** Monotonic-ish clock in ms (injected so tests are deterministic). Defaults to Date.now. */
