@@ -26,13 +26,23 @@ import type {
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
+  isUpstreamNetworkError,
+  isUpstreamServerOrNetworkError,
   throwAuthorizationError,
   throwBadRequestError,
   throwInsufficientFundsError,
   throwInternalServerError,
   throwNotFoundError,
   throwRateLimitError,
+  throwServiceUnavailableError,
 } from '~/server/utils/errorHandling';
+
+// Stable, user-facing copy for a transient orchestrator outage (HTTP 503). Shared
+// by every read path that funnels through this module (getWorkflow → statusUpdate;
+// queryWorkflows → queryGeneratedImages) so a brief upstream blip becomes one
+// retry-able message instead of a wave of raw 500s with an empty body.
+const ORCHESTRATOR_UNAVAILABLE_MESSAGE =
+  'Generation services are temporarily unavailable. Please try again.';
 
 export async function queryWorkflows({
   token,
@@ -50,8 +60,14 @@ export async function queryWorkflows({
       fromDate: fromDate?.toISOString(),
       toDate: toDate?.toISOString(),
     },
-  }).catch((error) => {
-    throw error;
+  }).catch((thrown) => {
+    // A rejected client call has no HTTP status. A recognized NETWORK failure
+    // (fetch failed / ECONNREFUSED / timeout) is a transient upstream outage →
+    // retry-able 503, not an app 500. An unrecognized throw (a real bug in our
+    // code) is left to bubble as a 500.
+    if (isUpstreamNetworkError(thrown))
+      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, thrown);
+    throw thrown;
   });
   if (!data) {
     switch (error.status) {
@@ -72,9 +88,16 @@ export async function queryWorkflows({
           throw throwInternalServerError('Generation services down');
         // An unhandled 4xx is a client/validation fault (e.g. a 404 on a deleted or
         // not-owned workflow) — surface as 4xx, not a re-thrown raw error that tRPC
-        // maps to 500. Genuine 5xx / status-less failures stay a server error.
+        // maps to 500.
         if (typeof error.status === 'number' && error.status >= 400 && error.status < 500)
           throw throwBadRequestError(error.detail);
+        // A genuine upstream 5xx (or status-less network fault) is a transient
+        // dependency outage — surface as a retry-able 503 so the polling client
+        // backs off, instead of a raw 500 with an empty message that counts
+        // against our 500 SLO. Unexpected/unclassified errors still fall through
+        // to a raw re-throw (→ 500) so real bugs stay visible.
+        if (isUpstreamServerOrNetworkError({ clientError: error, thrown: error }))
+          throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
         throw error;
     }
   }
@@ -89,7 +112,16 @@ export async function getWorkflow({
   query,
 }: Options<GetWorkflowData> & { token: string }) {
   const client = createOrchestratorClient(token);
-  const { data, error } = await clientGetWorkflow({ client, path, query });
+  const { data, error } = await clientGetWorkflow({ client, path, query }).catch((thrown) => {
+    // The generated client REJECTS (no `{ data, error }` result) when the fetch
+    // itself fails — e.g. orchestrator unreachable. The statusUpdate poll fires
+    // continuously, so a brief blip here otherwise becomes a wave of raw 500s
+    // (TypeError: fetch failed). A recognized network failure → retry-able 503;
+    // an unrecognized throw (a real bug) bubbles as a 500.
+    if (isUpstreamNetworkError(thrown))
+      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, thrown);
+    throw thrown;
+  });
   if (!data) {
     switch (error.status) {
       case 400:
@@ -109,9 +141,18 @@ export async function getWorkflow({
           throw throwInternalServerError('Generation services down');
         // An unhandled 4xx is a client/validation fault (e.g. a 404 on a deleted or
         // not-owned workflow) — surface as 4xx, not a re-thrown raw error that tRPC
-        // maps to 500. Genuine 5xx / status-less failures stay a server error.
+        // maps to 500.
         if (typeof error.status === 'number' && error.status >= 400 && error.status < 500)
           throw throwBadRequestError(error.detail);
+        // A genuine upstream 5xx (or status-less network fault) is a transient
+        // dependency outage — surface as a retry-able 503 (SERVICE_UNAVAILABLE)
+        // with a stable message + the original error preserved as `cause`,
+        // instead of re-throwing the raw client error (empty message → tRPC
+        // INTERNAL_SERVER_ERROR 500 against our 500 SLO). This is the wave-of-500s
+        // root cause for orchestrator.statusUpdate. Unclassified errors still
+        // re-throw raw (→ 500) so genuine code bugs stay visible.
+        if (isUpstreamServerOrNetworkError({ clientError: error, thrown: error }))
+          throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
         throw error;
     }
   }

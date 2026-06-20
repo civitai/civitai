@@ -208,6 +208,101 @@ export function throwConflictError(message: string | null = null, error?: unknow
   });
 }
 
+/**
+ * Surface a transient dependency outage as TRPCError SERVICE_UNAVAILABLE (HTTP 503,
+ * retry-able) instead of a raw INTERNAL_SERVER_ERROR (500). 503 tells a polling
+ * client "temporarily unavailable, back off and retry" and keeps a dependency's
+ * own 5xx / network blip from counting against this app's 500 SLO.
+ *
+ * Always pass the original error as `cause` so it stays diagnosable in logs.
+ */
+export function throwServiceUnavailableError(message: string | null = null, error?: unknown) {
+  message ??= 'This service is temporarily unavailable. Please try again.';
+  throw new TRPCError({
+    code: 'SERVICE_UNAVAILABLE',
+    message,
+    cause: error,
+  });
+}
+
+/**
+ * True when an error is a status-less NETWORK failure reaching an upstream HTTP
+ * dependency — the TCP/DNS/TLS layer failed before any HTTP response came back, so
+ * there is no HTTP status to key off. The Node/undici fetch surfaces these as a
+ * bare `TypeError: fetch failed` whose `.cause` carries the real syscall
+ * (`ECONNREFUSED`/`ETIMEDOUT`/`ENOTFOUND`/`ECONNRESET`/`EAI_AGAIN`), or as an
+ * `AbortError`/timeout.
+ *
+ * This is intentionally NARROW: it matches ONLY recognized network signatures, so a
+ * genuine `TypeError` thrown by OUR OWN code (a real bug — e.g. reading a property
+ * of undefined) does NOT match and is left to surface as a 500. We never blanket-
+ * convert "any thrown error" to a network failure.
+ */
+export function isUpstreamNetworkError(e: unknown): boolean {
+  const NETWORK_CODES = new Set([
+    'ECONNREFUSED',
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'ENOTFOUND',
+    'EAI_AGAIN',
+    'EHOSTUNREACH',
+    'ENETUNREACH',
+    'EPIPE',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_SOCKET',
+    'UND_ERR_HEADERS_TIMEOUT',
+    'UND_ERR_BODY_TIMEOUT',
+  ]);
+  // Walk the `.cause` chain (undici nests the syscall error under TypeError.cause).
+  let cur = e as { name?: string; message?: string; code?: string; cause?: unknown } | undefined;
+  for (let depth = 0; depth < 4 && cur && typeof cur === 'object'; depth++) {
+    if (typeof cur.code === 'string' && NETWORK_CODES.has(cur.code)) return true;
+    const msg = typeof cur.message === 'string' ? cur.message : '';
+    // The canonical undici/fetch network-failure signature.
+    if (msg === 'fetch failed' || msg.includes('fetch failed')) return true;
+    if (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT') || msg.includes('ENOTFOUND'))
+      return true;
+    // A request-timeout / abort with no HTTP status is also a transient reach
+    // failure (e.g. an orchestrator request that timed out before a response).
+    if (
+      cur.name === 'AbortError' ||
+      cur.name === 'TimeoutError' ||
+      msg === 'The operation was aborted' ||
+      msg === 'This operation was aborted'
+    )
+      return true;
+    cur = cur.cause as typeof cur;
+  }
+  return false;
+}
+
+/**
+ * Decides whether an orchestrator-client failure represents a genuine UPSTREAM
+ * server fault or network failure (→ should be surfaced as a retry-able 503) vs.
+ * something we should leave alone.
+ *
+ * Returns true ONLY for:
+ *  - a client error object carrying an HTTP `status >= 500` (upstream 5xx), or
+ *  - a status-less network failure (see {@link isUpstreamNetworkError}).
+ *
+ * Returns false for 4xx (client/validation faults — keep their mapped codes) and
+ * for unrecognized errors (a real bug in our code → keep surfacing as 500).
+ *
+ * `clientError` is the `{ status?, detail? }`-shaped object from the generated
+ * client's `{ data, error }` result; `thrown` is an error caught from a rejected
+ * client call (network failures arrive this way, with no `status`).
+ */
+export function isUpstreamServerOrNetworkError(args: {
+  clientError?: { status?: unknown } | null;
+  thrown?: unknown;
+}): boolean {
+  const { clientError, thrown } = args;
+  const status = clientError?.status;
+  if (typeof status === 'number' && status >= 500) return true;
+  if (thrown !== undefined && isUpstreamNetworkError(thrown)) return true;
+  return false;
+}
+
 export function handleLogError(e: Error, name?: string, details?: MixedObject) {
   const error = new Error(e.message ?? 'Unexpected error occurred', { cause: e });
   if (isProd)
