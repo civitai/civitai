@@ -160,7 +160,13 @@ export function getLastUsedCheckpointIdForEcosystem(ecosystemKey: string): numbe
  *
  * Add new ecosystems here when introducing a turbo/distilled variant.
  */
-const TURBO_VARIANT_ECOSYSTEMS = new Set<string>(['Lens', 'Ernie', 'ZImageTurbo', 'ZImageBase']);
+const TURBO_VARIANT_ECOSYSTEMS = new Set<string>([
+  'Lens',
+  'Ernie',
+  'ZImageTurbo',
+  'ZImageBase',
+  'Boogu',
+]);
 
 const storageAdapter = createLocalStorageAdapter({
   prefix: STORAGE_KEY,

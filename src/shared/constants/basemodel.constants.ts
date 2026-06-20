@@ -1031,6 +1031,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: loraOnly },
   { ecosystemId: ECO.ZImageBase, supportType: 'auction', modelTypes: checkpointAndLora },
 
+  // Boogu - checkpoint and LORA (training upcoming per orchestrator)
+  { ecosystemId: ECO.Boogu, supportType: 'generation', modelTypes: checkpointAndLora },
+
   // LTXV - checkpoint only (parent ecosystem)
   { ecosystemId: ECO.LTXV, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1374,6 +1377,12 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.ZImageBase,
     defaults: {
       model: { id: 2635223 },
+    },
+  },
+  {
+    ecosystemId: ECO.Boogu,
+    defaults: {
+      model: { id: 3049541 },
     },
   },
   {
