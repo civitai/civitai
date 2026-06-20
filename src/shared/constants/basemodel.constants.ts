@@ -2526,6 +2526,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Boogu,
     licenseId: 13,
+    experimental: true, // show "Experimental Build" alert in the generator while Boogu rolls out
   },
 
   // Illustrious
