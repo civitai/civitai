@@ -9,6 +9,7 @@ import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { withCommandDeadline } from '~/server/redis/command-deadline';
+import { ClusterSelfHealWatchdog } from '~/server/redis/cluster-selfheal';
 import { compressPacked, decompressPacked } from '~/server/redis/packed-compression';
 // NOTE: do NOT statically import the redis prom metrics from '~/server/prom/client'.
 // This module is client-bundle-reachable (`_app.tsx` → `system-cache.ts` → here),
@@ -210,6 +211,14 @@ const log = createLogger('redis', 'green');
 // Track topology refresh intervals for cleanup
 const clusterRefreshIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
+// In-process count of in-flight CLUSTER commands. instrumentCommands inc/decs this in
+// lockstep with the redis_commands_inflight{client="cluster"} gauge — it is the same
+// signal the gauge exposes, read locally (the prom-client Gauge doesn't cheaply surface its
+// value) so the self-heal watchdog (FIX #1) can sample it without a prom dependency. Module-
+// scoped because there is one cluster client per process. (The sys client uses 'sys' and is
+// NOT tracked here — the watchdog only ever acts on the cluster client.)
+let clusterInflight = 0;
+
 /**
  * Trigger topology rediscovery on a cluster client.
  * Uses internal _slots.rediscover() method - this is undocumented but stable.
@@ -245,6 +254,117 @@ function triggerTopologyRediscovery(clusterClient: any, reason: string) {
     // Silently ignore if rediscover is not available
     log(`Topology rediscovery error: ${err instanceof Error ? err.message : err}`);
   }
+}
+
+// Hold the watchdog interval so it can be cleared on client close (mirrors
+// clusterRefreshIntervals). Module-scoped: one cluster client per process.
+let clusterSelfHealInterval: ReturnType<typeof setInterval> | undefined;
+
+/**
+ * FIX #2: decide whether the periodic `_slots.rediscover()` should be scheduled, from the
+ * REDIS_CLUSTER_REFRESH_INTERVAL value. Pure (no side effects) so it can be unit-tested
+ * without booting the cluster client.
+ *
+ * Contract:
+ *   - value  > 0 → { enabled: true,  intervalMs: value }  (a LARGER value lengthens it)
+ *   - value <= 0 → { enabled: false, intervalMs: 0 }      (0 is the DISABLE SENTINEL)
+ *   - NaN / non-finite (mis-set env) → treated as the default 30000 so a typo can't silently
+ *     disable the refresh (the schema coerces, but be defensive).
+ *
+ * Default behavior is unchanged when the env is unset: server-schema defaults
+ * REDIS_CLUSTER_REFRESH_INTERVAL to 30000, so this returns { enabled: true, intervalMs: 30000 }.
+ */
+export function resolvePeriodicRefresh(refreshIntervalMs: number): {
+  enabled: boolean;
+  intervalMs: number;
+} {
+  if (!Number.isFinite(refreshIntervalMs)) return { enabled: true, intervalMs: 30000 };
+  if (refreshIntervalMs > 0) return { enabled: true, intervalMs: refreshIntervalMs };
+  return { enabled: false, intervalMs: 0 }; // 0 (or negative) = disable sentinel
+}
+
+/**
+ * Force a FULL reconnect of a node-redis cluster client (FIX #1). Disconnect tears down the
+ * existing node connections + rejects in-flight commands, and connect() rebuilds them and
+ * re-runs slot discovery — which is the ONLY way (short of a process restart) to clear the
+ * orphaned `_execute` promises that the inflight-leak wedge accumulates.
+ *
+ * node-redis exposes graceful `close()` (v5) / `disconnect()` (legacy) and `destroy()` for a
+ * hard teardown; we prefer a graceful close so the existing `close` wrapper still clears the
+ * topology-refresh interval, then re-connect. Any teardown error is non-fatal: connect() is
+ * still attempted, and the watchdog re-arms after the cooldown regardless.
+ */
+async function forceClusterReconnect(clusterClient: any): Promise<void> {
+  try {
+    if (typeof clusterClient.close === 'function') {
+      await clusterClient.close();
+    } else if (typeof clusterClient.disconnect === 'function') {
+      await clusterClient.disconnect();
+    } else if (typeof clusterClient.destroy === 'function') {
+      // destroy is synchronous; wrap so the caller can still await uniformly.
+      clusterClient.destroy();
+    }
+  } catch (err) {
+    log(`Cluster self-heal: disconnect threw (continuing to reconnect): ${
+      err instanceof Error ? err.message : String(err)
+    }`);
+  }
+  // Reset the local inflight counter — the disconnect rejected every in-flight command, so
+  // their done() callbacks fire as the rejections settle; resetting here avoids a transient
+  // mismatch if any settle late. (Each rejected command's done() guards against a
+  // double-decrement, so this stays >= 0.)
+  if (clusterInflight > 0) clusterInflight = 0;
+  await clusterClient.connect();
+}
+
+/**
+ * Start the cluster-client self-heal watchdog (FIX #1). Samples the local cluster inflight
+ * counter on REDIS_CLUSTER_SELFHEAL_CHECK_INTERVAL_MS and forces a full reconnect when it
+ * stays pinned above the threshold for the sustained window (subject to the cooldown). All
+ * thresholds are env-tunable; REDIS_CLUSTER_SELFHEAL_ENABLED=false disables it entirely.
+ * Cluster client ONLY. Exposed (returns the watchdog) so a unit test can construct one with
+ * injected deps without booting the module-level interval here.
+ */
+function startClusterSelfHeal(clusterClient: any): ClusterSelfHealWatchdog {
+  const watchdog = new ClusterSelfHealWatchdog(
+    {
+      enabled: env.REDIS_CLUSTER_SELFHEAL_ENABLED,
+      inflightThreshold: env.REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD,
+      sustainedMs: env.REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS,
+      cooldownMs: env.REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS,
+    },
+    {
+      getInflight: () => clusterInflight,
+      reconnect: () => forceClusterReconnect(clusterClient),
+      log,
+      onReconnect: (inflightAtTrigger: number) => {
+        getRedisMetrics()?.redisSelfHealReconnectCounter?.inc();
+        log(
+          `Cluster self-heal RECONNECT fired [inflight=${inflightAtTrigger}, threshold=${env.REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD}, sustainedMs=${env.REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS}]`
+        );
+      },
+    }
+  );
+
+  if (!env.REDIS_CLUSTER_SELFHEAL_ENABLED) {
+    log('Cluster self-heal watchdog DISABLED (REDIS_CLUSTER_SELFHEAL_ENABLED=false)');
+    return watchdog;
+  }
+
+  const interval = Math.max(250, env.REDIS_CLUSTER_SELFHEAL_CHECK_INTERVAL_MS);
+  clusterSelfHealInterval = setInterval(() => {
+    try {
+      watchdog.tick();
+    } catch (err) {
+      log(`Cluster self-heal tick error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, interval);
+  // Don't keep the event loop alive for the watchdog on a graceful process exit.
+  clusterSelfHealInterval.unref?.();
+  log(
+    `Cluster self-heal watchdog ENABLED [threshold=${env.REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD}, sustainedMs=${env.REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS}, cooldownMs=${env.REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS}, checkMs=${interval}]`
+  );
+  return watchdog;
 }
 
 /**
@@ -593,8 +713,26 @@ function getBaseClient(type: 'cache' | 'system') {
 
         log('Enhanced cluster failover handling is ENABLED');
 
-        const refreshInterval = env.REDIS_CLUSTER_REFRESH_INTERVAL;
-        if (refreshInterval > 0) {
+        // FIX #2: the periodic `_slots.rediscover()` is env-tunable AND disable-able via
+        // REDIS_CLUSTER_REFRESH_INTERVAL (the standing 30s default is unchanged when unset):
+        //   * a LARGER value lengthens the interval;
+        //   * 0 (or any value <= 0) is the DISABLE SENTINEL — no periodic rediscover is
+        //     scheduled at all (event-driven rediscovery on node-error/node-disconnect still
+        //     runs). This lets the infra side run the "lengthen / disable the periodic
+        //     rediscover" experiment (it is the most plausible SEED of the inflight-leak wedge:
+        //     a periodic rediscover racing an in-flight write) as a pure env change, no deploy.
+        const { enabled: refreshEnabled, intervalMs: refreshInterval } = resolvePeriodicRefresh(
+          env.REDIS_CLUSTER_REFRESH_INTERVAL
+        );
+        // Guard against re-entry: setupEnhancedFailover runs on EVERY connect(), including a
+        // self-heal forced reconnect. Without this, each reconnect would stack another
+        // interval + re-wrap close. Clear any prior interval for this client kind first.
+        const priorInterval = clusterRefreshIntervals.get(type);
+        if (priorInterval) {
+          clearInterval(priorInterval);
+          clusterRefreshIntervals.delete(type);
+        }
+        if (refreshEnabled) {
           const intervalId = setInterval(() => {
             triggerTopologyRediscovery(baseClient, 'periodic refresh');
           }, refreshInterval);
@@ -602,21 +740,30 @@ function getBaseClient(type: 'cache' | 'system') {
           // Store interval for cleanup
           clusterRefreshIntervals.set(type, intervalId);
 
-          // Wrap close to clean up interval
-          const originalClose = baseClient.close?.bind(baseClient);
-          if (originalClose) {
-            (baseClient as any).close = async () => {
-              const interval = clusterRefreshIntervals.get(type);
-              if (interval) {
-                clearInterval(interval);
-                clusterRefreshIntervals.delete(type);
-                log(`Cleared topology refresh interval for ${type}`);
-              }
-              return originalClose();
-            };
+          // Wrap close to clean up interval (only wrap once — re-wrapping on each reconnect
+          // would nest the wrappers).
+          if (!(baseClient as any).__refreshCloseWrapped) {
+            const originalClose = baseClient.close?.bind(baseClient);
+            if (originalClose) {
+              (baseClient as any).__refreshCloseWrapped = true;
+              (baseClient as any).close = async () => {
+                const interval = clusterRefreshIntervals.get(type);
+                if (interval) {
+                  clearInterval(interval);
+                  clusterRefreshIntervals.delete(type);
+                  log(`Cleared topology refresh interval for ${type}`);
+                }
+                return originalClose();
+              };
+            }
           }
 
           log(`Topology refresh scheduled every ${refreshInterval}ms`);
+        } else {
+          // Disable sentinel hit.
+          log(
+            `Periodic topology refresh DISABLED (REDIS_CLUSTER_REFRESH_INTERVAL=${refreshInterval} <= 0); event-driven rediscovery still active`
+          );
         }
       } catch (err) {
         log(`Enhanced failover setup failed: ${err instanceof Error ? err.message : err}`);
@@ -635,6 +782,12 @@ function getBaseClient(type: 'cache' | 'system') {
       .then(async () => {
         log(`${type} cluster client connected`);
         await setupEnhancedFailover();
+        // FIX #1: start the inflight-leak self-heal watchdog ONCE per process for the cache
+        // cluster client. Guarded so a self-heal forced reconnect (which re-runs this connect
+        // callback) doesn't stack a second interval.
+        if (type === 'cache' && !clusterSelfHealInterval) {
+          startClusterSelfHeal(baseClient);
+        }
       })
       .catch((err) => {
         log(`Redis connection failed (${type})`, err);
@@ -694,6 +847,12 @@ type RedisMetricsBridge = {
   // reachable module. attachSysSentinelListeners reads them at attach time.
   sysredisSentinelTopologyChangesCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
   sysredisSentinelClientErrorsCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
+  // FIX #1 self-heal reconnect counter (no labels) + FIX #3 metric-write fail-soft counter.
+  // Read via the globalThis bridge so this client-bundle-reachable module avoids a static
+  // prom-client import (which drags in fs/cluster). Both may be undefined until prom/client
+  // loads server-side; callers null-check.
+  redisSelfHealReconnectCounter?: { inc: () => void };
+  redisMetricWriteFailSoftCounter?: { labels: (labels: { op: string }) => { inc: () => void } };
 };
 
 // Server-runtime lookup of the prom metric handles WITHOUT a static import edge
@@ -737,8 +896,15 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     // dec without its matching inc would drive the gauge negative).
     const metrics = getRedisMetrics();
     metrics?.redisCommandsInflight.inc(labels);
+    // Mirror the gauge into the local counter for the self-heal watchdog (cluster only).
+    if (clientLabel === 'cluster') clusterInflight++;
     const start = Date.now();
+    let dec = false; // guard so a double-settle (shouldn't happen) can't drive the counter negative
     const done = () => {
+      if (clientLabel === 'cluster' && !dec) {
+        clusterInflight--;
+        dec = true;
+      }
       metrics?.redisCommandsInflight.dec(labels);
       metrics?.redisCommandDuration.observe(labels, (Date.now() - start) / 1000);
     };

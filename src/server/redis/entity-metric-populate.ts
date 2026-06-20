@@ -9,8 +9,24 @@ import type {
   EntityMetric_MetricType_Type,
 } from '~/shared/utils/prisma/enums';
 import type { CachedObject } from '~/server/utils/cache-helpers';
+import { withMetricWriteFailSoft } from '~/server/redis/metric-write-failsoft';
 
 const log = createLogger('entity-metric-populate', 'magenta');
+
+// FIX #3: fail-soft hook for the metric LOCK/WRITE commands below. These locks/writes are
+// pure thundering-herd guards over an analytics populate — never money/entitlement — so when
+// the cluster client is wedged we'd rather skip the lock (let the populate run / be skipped)
+// than 500 or park 15s. Logs (Loki) + increments the Prometheus fail-soft counter.
+function metricWriteFailHook(op: string, err: unknown) {
+  log(`metric write fail-soft [op=${op}]:`, err instanceof Error ? err.message : err);
+  (
+    globalThis as unknown as {
+      __civitaiRedisMetrics?: {
+        redisMetricWriteFailSoftCounter?: { labels: (l: { op: string }) => { inc: () => void } };
+      };
+    }
+  ).__civitaiRedisMetrics?.redisMetricWriteFailSoftCounter?.labels({ op }).inc();
+}
 
 interface MetricData {
   entityId: number;
@@ -32,10 +48,21 @@ export async function populateEntityMetrics(
 
   let idsToProcess = entityIds;
 
-  // Only check existence if not force refreshing
+  // Only check existence if not force refreshing.
+  // FIX #3: each exists/setNX/expire is a NON-CRITICAL cluster command — fail it FAST
+  // (REDIS_METRIC_WRITE_TIMEOUT_MS, not the 15s deadline) and FAIL-SOFT on a wedge so this
+  // analytics populate never parks/500s a user mutation: exists fail-soft → false (treat as
+  // "not populated"); setNX fail-soft → false ("lock not acquired" → skip this id, another
+  // process / a later call handles it); expire fail-soft → no-op (the lock just TTLs via the
+  // 10s the consumer expects, or sticks slightly longer — harmless).
   if (!forceRefresh) {
     const existsChecks = await Promise.all(
-      entityIds.map((id) => entityMetricRedis.exists(entityType, id))
+      entityIds.map((id) =>
+        withMetricWriteFailSoft(() => entityMetricRedis.exists(entityType, id), false, {
+          op: 'populate-exists',
+          onFail: metricWriteFailHook,
+        })
+      )
     );
 
     idsToProcess = entityIds.filter((_, index) => !existsChecks[index]);
@@ -48,7 +75,13 @@ export async function populateEntityMetrics(
   // Try to acquire per-ID locks for entities to process
   const lockPrefix = `${REDIS_KEYS.ENTITY_METRICS.BASE}:lock:${entityType}`;
   const lockResults = await Promise.all(
-    idsToProcess.map((id) => redis.setNX(`${lockPrefix}:${id}` as RedisKeyTemplateCache, '1'))
+    idsToProcess.map((id) =>
+      withMetricWriteFailSoft(
+        () => redis.setNX(`${lockPrefix}:${id}` as RedisKeyTemplateCache, '1'),
+        false,
+        { op: 'populate-lock:setNX', onFail: metricWriteFailHook }
+      )
+    )
   );
 
   // Only load entities where we got the lock
@@ -60,7 +93,12 @@ export async function populateEntityMetrics(
   // Set TTL on acquired locks
   if (lockedKeys.length > 0) {
     await Promise.all(
-      lockedKeys.map((key) => redis.expire(key, 10)) // 10 seconds per ID
+      lockedKeys.map((key) =>
+        withMetricWriteFailSoft(() => redis.expire(key, 10), false, {
+          op: 'populate-lock:expire',
+          onFail: metricWriteFailHook,
+        })
+      ) // 10 seconds per ID
     );
   }
 
@@ -118,9 +156,13 @@ export async function populateEntityMetrics(
     log('Error during bulk population:', error);
     // Don't throw - other processes might succeed
   } finally {
-    // Always release the locks we acquired
+    // Always release the locks we acquired (fail-soft: a wedged del must not throw out of the
+    // finally — the lock TTLs in 10s regardless).
     if (lockedKeys.length > 0) {
-      await redis.del(lockedKeys);
+      await withMetricWriteFailSoft(() => redis.del(lockedKeys), 0, {
+        op: 'populate-lock:del',
+        onFail: metricWriteFailHook,
+      });
     }
   }
 }
@@ -267,9 +309,15 @@ export async function populateComicMetrics(
 
   let idsToProcess = comicIds;
 
+  // FIX #3: same non-critical fail-fast + fail-soft treatment as the Image path above.
   if (!forceRefresh) {
     const existsChecks = await Promise.all(
-      comicIds.map((id) => entityMetricRedis.exists(COMIC_REDIS_TYPE, id))
+      comicIds.map((id) =>
+        withMetricWriteFailSoft(() => entityMetricRedis.exists(COMIC_REDIS_TYPE, id), false, {
+          op: 'populate-exists',
+          onFail: metricWriteFailHook,
+        })
+      )
     );
     idsToProcess = comicIds.filter((_, index) => !existsChecks[index]);
     if (idsToProcess.length === 0) return;
@@ -277,14 +325,27 @@ export async function populateComicMetrics(
 
   const lockPrefix = `${REDIS_KEYS.ENTITY_METRICS.BASE}:lock:${COMIC_REDIS_TYPE}`;
   const lockResults = await Promise.all(
-    idsToProcess.map((id) => redis.setNX(`${lockPrefix}:${id}` as RedisKeyTemplateCache, '1'))
+    idsToProcess.map((id) =>
+      withMetricWriteFailSoft(
+        () => redis.setNX(`${lockPrefix}:${id}` as RedisKeyTemplateCache, '1'),
+        false,
+        { op: 'populate-lock:setNX', onFail: metricWriteFailHook }
+      )
+    )
   );
   const idsToLoad = idsToProcess.filter((_, index) => lockResults[index]);
   const lockedKeys: RedisKeyTemplateCache[] = idsToLoad.map(
     (id) => `${lockPrefix}:${id}` as RedisKeyTemplateCache
   );
   if (lockedKeys.length > 0) {
-    await Promise.all(lockedKeys.map((key) => redis.expire(key, 10)));
+    await Promise.all(
+      lockedKeys.map((key) =>
+        withMetricWriteFailSoft(() => redis.expire(key, 10), false, {
+          op: 'populate-lock:expire',
+          onFail: metricWriteFailHook,
+        })
+      )
+    );
   }
   if (idsToLoad.length === 0) {
     log(`All ${idsToProcess.length} comics are being loaded by other processes`);
@@ -346,7 +407,10 @@ export async function populateComicMetrics(
     log('Error during comic bulk population:', error);
   } finally {
     if (lockedKeys.length > 0) {
-      await redis.del(lockedKeys);
+      await withMetricWriteFailSoft(() => redis.del(lockedKeys), 0, {
+        op: 'populate-lock:del',
+        onFail: metricWriteFailHook,
+      });
     }
   }
 }

@@ -150,6 +150,63 @@ export const serverSchema = z.object({
   // instrumentCommands() and utils/cache-helpers.ts (fetchThroughCache + createCachedArray
   // fail-open).
   REDIS_CLUSTER_COMMAND_TIMEOUT_MS: z.coerce.number().default(15000),
+
+  // ── CLUSTER CLIENT SELF-HEAL WATCHDOG (FIX #1, the inflight-leak wedge) ──────────
+  //
+  // The per-command deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS) reaps each individual
+  // orphaned `_execute` promise (turns a 125s hang into an error so the gauge dec's and
+  // the handler unparks), but it NEVER resets the wedged client/socket: once a pod's
+  // cluster client starts orphaning commands across a retry / `_slots.rediscover()`
+  // topology refresh, the NEXT command orphans identically → the pod produces 500s/slow-
+  // degrades indefinitely. Only a full client reconnect (or a process restart) rebuilds
+  // the connections/`_slots` and clears the orphaned promises.
+  //
+  // Signature of a wedged pod: `redis_commands_inflight{client="cluster"}` jumps PAST the
+  // threshold and stays PINNED (hundreds–thousands of leaked inflight) — a healthy pod
+  // sits near 0 and a busy pod only spikes transiently. The watchdog samples the same
+  // in-process inflight counter that feeds the gauge; when it stays ABOVE the threshold
+  // CONTINUOUSLY for the sustained window it forces ONE reconnect, then waits out a
+  // cooldown before it can fire again (so it can never become a reconnect storm).
+  //
+  // ON by default (this is the only thing that clears the wedge short of a pod restart),
+  // but fully kill-switchable via REDIS_CLUSTER_SELFHEAL_ENABLED=false. Cluster client
+  // ONLY — the single-node sysRedis client is never reconnected by this watchdog.
+  REDIS_CLUSTER_SELFHEAL_ENABLED: z.preprocess(
+    // default true; only the literal string 'false' disables it
+    (x) => x !== 'false',
+    z.boolean().default(true)
+  ),
+  // Inflight count above which a pod is considered POTENTIALLY wedged. Must be > the
+  // command-deadline guard's effective concurrency floor so a merely-busy pod doesn't
+  // trip it. 50 matches the binary-wedge observation (healthy ~0, wedged jumps past 50).
+  REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD: z.coerce.number().default(50),
+  // The inflight count must stay ABOVE the threshold continuously for THIS long before a
+  // reconnect fires. A transient spike (a slow batch, a brief failover) drops back under
+  // the threshold within the window and resets the timer → no reconnect. A genuine wedge
+  // stays pinned. 20s is long enough to exclude every transient we've seen and short
+  // enough to clear a wedge well inside a human's reaction time.
+  REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS: z.coerce.number().default(20000),
+  // Minimum time between two self-heal reconnects. At most one reconnect per cooldown,
+  // so even a flapping wedge can't drive a reconnect storm (each reconnect rejects the
+  // pod's in-flight cluster commands, which the fail-open/fail-soft paths absorb). 60s.
+  REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS: z.coerce.number().default(60000),
+  // How often the watchdog samples inflight. Cheap (one gauge read), so a tight 1s
+  // sample keeps the sustained-window measurement accurate without overhead.
+  REDIS_CLUSTER_SELFHEAL_CHECK_INTERVAL_MS: z.coerce.number().default(1000),
+
+  // ── METRIC WRITE/LOCK FAIL-SOFT DEADLINE (FIX #3) ───────────────────────────────
+  //
+  // The metric WRITE/LOCK commands (`metrics:lock:Image` setNX/expire in
+  // entity-metric-populate.ts, the increment hIncrBy in entity-metric.redis.ts) are
+  // pure analytics/engagement counters — never money or entitlement (see the fail-soft
+  // note in those files). They currently inherit the 15s cluster command deadline and,
+  // when the cluster client is wedged, PARK up to 15s and then throw — which can 500 a
+  // user mutation. This shorter per-command timeout fails those non-critical writes FAST
+  // and the call sites then fail-SOFT (log + count, skip the metric/lock, let the user
+  // action succeed). Unset/<=0 falls back to REDIS_CLUSTER_COMMAND_TIMEOUT_MS (no change
+  // in behavior beyond the existing 15s deadline). Default 1500ms (1.5s) — ~65× the
+  // ~23ms healthy p99, so it never clips a healthy write, but bounds a wedged one.
+  REDIS_METRIC_WRITE_TIMEOUT_MS: z.coerce.number().default(1500),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
