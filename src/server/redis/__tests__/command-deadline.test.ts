@@ -57,6 +57,36 @@ describe('withCommandDeadline', () => {
     await expect(withCommandDeadline(resolveAfter(30, 'late'), 0)).resolves.toBe('late');
   });
 
+  it('invokes onTimeout exactly once when the deadline fires (the self-heal trigger signal)', async () => {
+    const onTimeout = vi.fn();
+    await expect(withCommandDeadline(never(), 20, onTimeout)).rejects.toThrow(/timed out/);
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT invoke onTimeout when the command settles before the deadline (healthy)', async () => {
+    const onTimeout = vi.fn();
+    await expect(withCommandDeadline(resolveAfter(5, 'ok'), 100, onTimeout)).resolves.toBe('ok');
+    await new Promise((r) => setTimeout(r, 120)); // outlive the deadline window
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
+  it('does NOT invoke onTimeout when a real rejection arrives before the deadline', async () => {
+    const onTimeout = vi.fn();
+    await expect(
+      withCommandDeadline(rejectAfter(5, new Error('ClientClosedError')), 100, onTimeout)
+    ).rejects.toThrow('ClientClosedError');
+    await new Promise((r) => setTimeout(r, 120));
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
+  it('a throwing onTimeout hook does not break the deadline guard (still rejects with timeout)', async () => {
+    const onTimeout = vi.fn(() => {
+      throw new Error('recorder boom');
+    });
+    await expect(withCommandDeadline(never(), 20, onTimeout)).rejects.toThrow(/timed out/);
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+  });
+
   it('does not emit an unhandledRejection when the orphaned command rejects after the deadline fired', async () => {
     const onUnhandled = vi.fn();
     process.on('unhandledRejection', onUnhandled);

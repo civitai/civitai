@@ -235,9 +235,14 @@ export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
 // human rolling-restart). Pair with redis_commands_inflight on a dashboard to see the
 // pin → reconnect → drain. No labels (per-pod attribution comes from the Prometheus `pod`
 // label); cardinality is 1 series.
-export const redisSelfHealReconnectCounter = registerCounter({
+// `trigger` distinguishes the two watchdog paths: 'deadline' = the sawtooth-immune
+// deadline-hit-rate trigger (the one that actually fires during a real fleet half-open wave —
+// see cluster-selfheal.ts), 'inflight' = the legacy sustained-inflight breach. At the next prod
+// wave, a rising deadline-labeled series is the confirmation that the fix worked. 2 series.
+export const redisSelfHealReconnectCounter = registerCounterWithLabels({
   name: 'redis_selfheal_reconnect_total',
   help: 'Forced cluster-client reconnects by the inflight-leak self-heal watchdog',
+  labelNames: ['trigger'] as const,
 });
 
 // Non-critical metric WRITE/LOCK fail-soft counter (FIX #3). Incremented when a
