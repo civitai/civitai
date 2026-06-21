@@ -215,6 +215,24 @@ export const serverSchema = z.object({
   // trigger (falls back to the inflight-continuity path only).
   REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD: z.coerce.number().default(10),
   REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS: z.coerce.number().default(20000),
+  // ── PER-POD RECONNECT JITTER (fleet-stampede brake) ──────────────────────────────
+  //
+  // The deadline-hit trigger fires within seconds of a half-open park. That's the point
+  // for a pod-LOCAL wedge, but it has a correlated-failure edge: if next-redis-cluster
+  // ITSELF has a genuine >=15s event (master failover, network blip), EVERY pod's cluster
+  // commands deadline-reject at once → the whole fleet (~80-100 pods) trips the deadline-hit
+  // trigger inside the same ~1s watchdog tick and fires forceClusterReconnect (destroy() +
+  // connect()) simultaneously → a connection thundering-herd against an already-unhealthy
+  // cluster, right when it can least absorb it.
+  //
+  // This spreads each pod's reconnect over a random [0, jitter) delay AFTER the trigger
+  // decision (the cooldown/single-flight guards are taken up front, so the jitter cannot
+  // queue a second reconnect or restart the cooldown). A synchronized fleet event then
+  // smears its reconnects across the jitter window instead of all landing on one tick.
+  // 0 disables jitter (reconnect fires immediately — the prior behavior). 1000ms (1s) is
+  // ~the watchdog tick, enough to de-correlate the fleet without materially delaying a
+  // single-pod self-heal (1s on top of the multi-second deadline-hit accumulation).
+  REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(1000),
 
   // ── METRIC WRITE/LOCK FAIL-SOFT DEADLINE (FIX #3) ───────────────────────────────
   //

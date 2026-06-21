@@ -80,6 +80,17 @@ export interface ClusterSelfHealConfig {
    * command (a single deadline hit) does not.
    */
   deadlineHitWindowMs: number;
+  /**
+   * PER-POD RECONNECT JITTER (fleet-stampede brake). Once a tick DECIDES to reconnect, wait a
+   * random [0, reconnectJitterMs) before actually calling `reconnect()`. This de-correlates a
+   * SYNCHRONIZED fleet event: if next-redis-cluster itself has a genuine >=15s blip, every pod's
+   * deadline-hit trigger trips on the same tick — without jitter all ~80-100 pods would
+   * destroy()+connect() at once, a connection thundering-herd against an already-unhealthy
+   * cluster. The cooldown + single-flight guards are taken at DECISION time (before the delay),
+   * so the jitter never queues a second reconnect or shifts the cooldown clock. <= 0 disables
+   * jitter (reconnect fires immediately — the original behavior).
+   */
+  reconnectJitterMs: number;
 }
 
 export interface ClusterSelfHealDeps {
@@ -107,6 +118,16 @@ export interface ClusterSelfHealDeps {
   reconnect: () => Promise<void>;
   /** Monotonic-ish clock in ms (injected so tests are deterministic). Defaults to Date.now. */
   now?: () => number;
+  /**
+   * Resolves after `ms` (injected so the jitter delay is deterministic in tests). Defaults to a
+   * setTimeout-based sleep. Only ever called with the per-pod jitter delay; never blocks tick().
+   */
+  delay?: (ms: number) => Promise<void>;
+  /**
+   * Returns a float in [0, 1) for the per-pod jitter (injected so tests are deterministic).
+   * Defaults to Math.random — app runtime, NOT a workflow script, so Math.random is fine here.
+   */
+  random?: () => number;
   /** Structured logger. */
   log: (msg: string, ...rest: unknown[]) => void;
   /**
@@ -125,7 +146,8 @@ export type ClusterSelfHealTrigger = 'deadline' | 'inflight';
 
 export class ClusterSelfHealWatchdog {
   private readonly cfg: ClusterSelfHealConfig;
-  private readonly deps: Required<Pick<ClusterSelfHealDeps, 'now'>> & ClusterSelfHealDeps;
+  private readonly deps: Required<Pick<ClusterSelfHealDeps, 'now' | 'delay' | 'random'>> &
+    ClusterSelfHealDeps;
 
   /**
    * Timestamp (ms) at which inflight FIRST crossed above the threshold in the current
@@ -140,7 +162,12 @@ export class ClusterSelfHealWatchdog {
 
   constructor(cfg: ClusterSelfHealConfig, deps: ClusterSelfHealDeps) {
     this.cfg = cfg;
-    this.deps = { ...deps, now: deps.now ?? Date.now };
+    this.deps = {
+      ...deps,
+      now: deps.now ?? Date.now,
+      delay: deps.delay ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms))),
+      random: deps.random ?? Math.random,
+    };
   }
 
   /** Expose internal state for assertions/observability (read-only snapshot). */
@@ -229,10 +256,38 @@ export class ClusterSelfHealWatchdog {
       );
     }
 
-    // Fire-and-forget the actual reconnect; the watchdog stays responsive (single-flight
-    // guard prevents overlap). Any rejection is logged, not thrown.
-    void this.deps
-      .reconnect()
+    // PER-POD JITTER: wait a random [0, reconnectJitterMs) BEFORE the actual reconnect so a
+    // synchronized fleet event (next-redis-cluster itself blips >=15s → every pod's deadline-hit
+    // trigger trips on the same tick) smears its destroy()+connect() across the jitter window
+    // instead of stampeding the cluster on a single tick. The guards above (lastReconnectAt,
+    // breachStartedAt cleared, reconnecting=true) are ALREADY taken at decision time, so during
+    // the delay: concurrent ticks single-flight out (reconnecting=true) and the cooldown clock
+    // is measured from the decision — the delay can't queue a second reconnect or let the window
+    // re-accumulate into a double-fire. reconnecting stays true until the reconnect itself
+    // settles, covering the delay + the reconnect. <= 0 jitter skips the delay entirely and
+    // invokes reconnect() synchronously (the original behavior).
+    const jitterMs =
+      this.cfg.reconnectJitterMs > 0
+        ? Math.floor(this.deps.random() * this.cfg.reconnectJitterMs)
+        : 0;
+
+    // The pre-reconnect step: when jitter > 0, park behind the jitter delay; when jitter is
+    // disabled (0), invoke reconnect() SYNCHRONOUSLY (no delay, no extra microtask) — identical
+    // to the original behavior. reconnecting stays true across the delay AND the reconnect, so a
+    // mid-jitter tick single-flights out and the wedge can't double-fire.
+    const reconnectChain: Promise<void> =
+      jitterMs > 0
+        ? this.deps
+            .delay(jitterMs)
+            .then(() => {
+              this.deps.log(`Cluster self-heal: reconnecting after ${jitterMs}ms jitter`);
+              return this.deps.reconnect();
+            })
+        : this.deps.reconnect();
+
+    // Fire-and-forget; the watchdog stays responsive (single-flight guard prevents overlap).
+    // Any rejection is logged, not thrown.
+    void reconnectChain
       .then(() => {
         this.deps.log('Cluster self-heal: reconnect completed');
       })

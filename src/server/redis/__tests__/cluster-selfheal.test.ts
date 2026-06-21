@@ -21,12 +21,25 @@ const DEFAULTS: ClusterSelfHealConfig = {
   // below are unaffected; the deadline-trigger tests opt in explicitly.
   deadlineHitThreshold: 0,
   deadlineHitWindowMs: 20000,
+  // Default jitter OFF so every existing test fires the reconnect immediately (back-compat);
+  // the jitter tests opt in explicitly and inject a deterministic clock + delay.
+  reconnectJitterMs: 0,
 };
 
 /** Test harness: a controllable clock + inflight value + spy reconnect/onReconnect. */
 function makeHarness(
   cfg: Partial<ClusterSelfHealConfig> = {},
-  opts: { reconnect?: () => Promise<void> } = {}
+  opts: {
+    reconnect?: () => Promise<void>;
+    /** Fixed value [0,1) the watchdog's `random()` returns (for deterministic jitter). */
+    random?: number;
+    /**
+     * When true, the injected `delay` does NOT auto-resolve — each call is parked and only
+     * settles when the test calls `releaseDelays()`. Lets us prove the reconnect is held during
+     * the jitter window and that a mid-delay tick single-flights out.
+     */
+    manualDelay?: boolean;
+  } = {}
 ) {
   let nowMs = 0;
   let inflight = 0;
@@ -37,6 +50,14 @@ function makeHarness(
     deadlineHits = 0;
   });
   const log = vi.fn();
+  // Records every requested jitter delay; in manualDelay mode each is held until released.
+  const delayCalls: number[] = [];
+  const pendingResolvers: Array<() => void> = [];
+  const delay = vi.fn((ms: number) => {
+    delayCalls.push(ms);
+    if (!opts.manualDelay) return Promise.resolve();
+    return new Promise<void>((r) => pendingResolvers.push(r));
+  });
   const deps: ClusterSelfHealDeps = {
     getInflight: () => inflight,
     getDeadlineHits: () => deadlineHits,
@@ -45,6 +66,8 @@ function makeHarness(
     now: () => nowMs,
     log,
     onReconnect,
+    delay,
+    random: () => opts.random ?? 0,
   };
   const watchdog = new ClusterSelfHealWatchdog({ ...DEFAULTS, ...cfg }, deps);
   return {
@@ -53,6 +76,13 @@ function makeHarness(
     onReconnect,
     resetDeadlineHits,
     log,
+    delay,
+    delayCalls,
+    /** Resolve all parked manual-delay promises (the jitter windows elapse). */
+    releaseDelays: () => {
+      const rs = pendingResolvers.splice(0);
+      rs.forEach((r) => r());
+    },
     setInflight: (v: number) => (inflight = v),
     setDeadlineHits: (v: number) => (deadlineHits = v),
     advance: (ms: number) => (nowMs += ms),
@@ -325,6 +355,81 @@ describe('ClusterSelfHealWatchdog', () => {
     // Reported as the legacy 'inflight' trigger (no deadline hits) → metric label distinguishes it.
     expect(h.onReconnect).toHaveBeenCalledWith(expect.any(Number), 'inflight');
     await flush();
+  });
+
+  // ── PER-POD RECONNECT JITTER (fleet-stampede brake) ────────────────────────────────
+
+  it('JITTER: delays the actual reconnect by a random [0, jitterMs) before calling reconnect()', async () => {
+    // random()=0.5, jitterMs=1000 → floor(0.5 * 1000) = 500ms delay. With manualDelay the
+    // reconnect stays UN-called until the jitter window is released, proving the delay precedes
+    // the destroy()+connect() (the fleet-stampede smear).
+    const h = makeHarness(
+      { deadlineHitThreshold: 10, deadlineHitWindowMs: 20000, reconnectJitterMs: 1000 },
+      { random: 0.5, manualDelay: true }
+    );
+    h.setDeadlineHits(25); // trip the deadline trigger
+
+    expect(h.watchdog.tick()).toBe(true);
+    // The trigger DECISION happened (guards taken, onReconnect emitted) but the reconnect is
+    // still parked behind the jitter delay.
+    expect(h.onReconnect).toHaveBeenCalledTimes(1);
+    expect(h.delay).toHaveBeenCalledTimes(1);
+    expect(h.delayCalls[0]).toBe(500); // floor(0.5 * 1000)
+    expect(h.delayCalls[0]).toBeLessThan(1000); // strictly within [0, jitterMs)
+    expect(h.reconnect).not.toHaveBeenCalled(); // NOT yet — held by the jitter window
+    // Single-flight + cooldown guards are already in place during the delay.
+    expect(h.watchdog.getState().reconnecting).toBe(true);
+    expect(h.watchdog.getState().lastReconnectAt).toBe(0); // cooldown clock starts at decision time
+
+    // Jitter window elapses → the reconnect finally fires, then reconnecting clears.
+    h.releaseDelays();
+    await flush();
+    expect(h.reconnect).toHaveBeenCalledTimes(1);
+    expect(h.watchdog.getState().reconnecting).toBe(false);
+  });
+
+  it('JITTER=0: fires the reconnect immediately (back-compat — no delay path at all)', async () => {
+    // jitterMs=0 → delay() is never called; reconnect() is invoked SYNCHRONOUSLY within tick(),
+    // exactly the prior behavior (the existing suite relies on this synchronous call).
+    const h = makeHarness({ deadlineHitThreshold: 10, deadlineHitWindowMs: 20000, reconnectJitterMs: 0 });
+    h.setDeadlineHits(25);
+
+    expect(h.watchdog.tick()).toBe(true);
+    expect(h.delay).not.toHaveBeenCalled(); // no jitter → no delay step
+    expect(h.reconnect).toHaveBeenCalledTimes(1); // called synchronously, not deferred
+    await flush();
+    expect(h.watchdog.getState().reconnecting).toBe(false);
+  });
+
+  it('JITTER single-flight: a second tick DURING the jitter delay does NOT schedule a second reconnect', async () => {
+    // The single-flight guard (reconnecting=true) is taken at DECISION time, before the jitter
+    // delay — so a watchdog tick that fires while the first reconnect is still parked behind its
+    // jitter window must be a no-op. This is the correlated-fleet correctness property: the delay
+    // must NOT open a window where the wedge re-counts and double-fires.
+    const h = makeHarness(
+      { deadlineHitThreshold: 10, deadlineHitWindowMs: 20000, reconnectJitterMs: 1000 },
+      { random: 0.9, manualDelay: true } // floor(0.9*1000)=900ms, held open
+    );
+    h.setDeadlineHits(100); // stays wedged across both ticks
+
+    expect(h.watchdog.tick()).toBe(true); // first trigger → parked behind jitter
+    expect(h.delay).toHaveBeenCalledTimes(1);
+    expect(h.reconnect).not.toHaveBeenCalled();
+
+    // Tick again mid-jitter (still wedged). Must single-flight out: no second delay, no second
+    // reconnect, no second onReconnect/resetDeadlineHits.
+    h.advance(500); // partway through the 900ms jitter window
+    expect(h.watchdog.tick()).toBe(false);
+    expect(h.delay).toHaveBeenCalledTimes(1);
+    expect(h.onReconnect).toHaveBeenCalledTimes(1);
+    expect(h.resetDeadlineHits).toHaveBeenCalledTimes(1);
+    expect(h.reconnect).not.toHaveBeenCalled();
+
+    // Release the (single) jitter window → exactly ONE reconnect total.
+    h.releaseDelays();
+    await flush();
+    expect(h.reconnect).toHaveBeenCalledTimes(1);
+    expect(h.watchdog.getState().reconnecting).toBe(false);
   });
 
   it('tick() never throws even if the onReconnect hook throws, and still reconnects', async () => {

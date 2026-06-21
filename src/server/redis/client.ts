@@ -421,6 +421,7 @@ function startClusterSelfHeal(
       cooldownMs: env.REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS,
       deadlineHitThreshold: env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD,
       deadlineHitWindowMs: env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS,
+      reconnectJitterMs: env.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS,
     },
     {
       getInflight: () => getClusterInflight(),
@@ -456,7 +457,7 @@ function startClusterSelfHeal(
   // Don't keep the event loop alive for the watchdog on a graceful process exit.
   clusterSelfHealInterval.unref?.();
   log(
-    `Cluster self-heal watchdog ENABLED [inflightThreshold=${env.REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD}, sustainedMs=${env.REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS}, deadlineHitThreshold=${env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD}, deadlineHitWindowMs=${env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS}, cooldownMs=${env.REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS}, checkMs=${interval}]`
+    `Cluster self-heal watchdog ENABLED [inflightThreshold=${env.REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD}, sustainedMs=${env.REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS}, deadlineHitThreshold=${env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD}, deadlineHitWindowMs=${env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS}, reconnectJitterMs=${env.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS}, cooldownMs=${env.REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS}, checkMs=${interval}]`
   );
   return watchdog;
 }
