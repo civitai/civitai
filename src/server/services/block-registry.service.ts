@@ -48,35 +48,60 @@ export const MAX_BLOCKS_PER_SLOT = 3;
 export const MARKETPLACE_SCOPES_SUMMARY_LIMIT = 3;
 
 /**
- * F-E E3 marketplace keyset cursor. Encodes the last row's `(sortKey, id)` as a
- * base64url string so the next page resumes strictly after it (the sort key is
- * embedded so a paged scan stays stable even when many rows share a sort value,
- * e.g. install_count=0). Opaque to the client. We use a unit-separator (\x1f) —
- * a char that can't appear in any of our sort keys (zero-padded digits, a
- * fixed-width timestamp, or a lowercased name) nor in an app_block id — so the
- * split is unambiguous.
+ * F-E E3 marketplace keyset cursor. Encodes the last row's `(sortKey, id)` plus
+ * the pinned Bayesian mean `m` as a base64url string so the next page resumes
+ * strictly after it (the sort key is embedded so a paged scan stays stable even
+ * when many rows share a sort value, e.g. install_count=0). Opaque to the
+ * client. We use a unit-separator (\x1f) — a char that can't appear in any of
+ * our sort keys (zero-padded digits, a fixed-width timestamp, or a lowercased
+ * name) nor in an app_block id nor a numeric mean — so the split is unambiguous.
+ *
+ * `m` PINNING (the `rating` sort): the sort key is computed from the global mean
+ * `m`, which is read from a 1h cache that can expire/bust MID-PAGINATION. If
+ * page 2 re-derived every row's key with a different `m` than page 1's cursor
+ * was encoded with, the keyset boundary shifts and one row is silently skipped
+ * or duplicated. So we PIN `m` into the cursor and reuse it for every page of a
+ * paging session. Empty for sorts that don't use `m` (popular/newest/name).
  */
 const CURSOR_SEPARATOR = String.fromCharCode(31); // unit separator (\x1f)
-function encodeMarketplaceCursor(sortKey: string, id: string): string {
-  return Buffer.from(`${sortKey}${CURSOR_SEPARATOR}${id}`, 'utf8').toString('base64url');
+function encodeMarketplaceCursor(sortKey: string, id: string, pinnedMean?: number): string {
+  // Only the `rating` sort pins a mean; other sorts emit the legacy 2-field
+  // `sortKey␟id` cursor (no trailing separator) so their format is unchanged.
+  const body =
+    pinnedMean == null
+      ? `${sortKey}${CURSOR_SEPARATOR}${id}`
+      : `${sortKey}${CURSOR_SEPARATOR}${id}${CURSOR_SEPARATOR}${pinnedMean}`;
+  return Buffer.from(body, 'utf8').toString('base64url');
 }
 function decodeMarketplaceCursor(cursor: string | undefined): {
   cursorSortKey: string | null;
   cursorId: string | null;
+  /** The mean `m` pinned by the FIRST page of this session (null if absent). */
+  cursorMean: number | null;
 } {
-  if (!cursor) return { cursorSortKey: null, cursorId: null };
+  const empty = { cursorSortKey: null, cursorId: null, cursorMean: null };
+  if (!cursor) return empty;
   let decoded: string;
   try {
     decoded = Buffer.from(cursor, 'base64url').toString('utf8');
   } catch {
     // Malformed cursor → treat as first page (fail-open to a safe default).
-    return { cursorSortKey: null, cursorId: null };
+    return empty;
   }
-  const sep = decoded.indexOf(CURSOR_SEPARATOR);
-  if (sep < 0) return { cursorSortKey: null, cursorId: null };
+  // Split on the FIRST two separators: [sortKey, id, mean]. sortKey + id can't
+  // contain \x1f (zero-padded digits / timestamp / lowercased name / app id),
+  // so the first two indexOf hits are the field boundaries.
+  const sep1 = decoded.indexOf(CURSOR_SEPARATOR);
+  if (sep1 < 0) return empty;
+  const sep2 = decoded.indexOf(CURSOR_SEPARATOR, sep1 + 1);
+  // Legacy 2-field cursor (no pinned mean) — fail-open to an unpinned page.
+  const cursorId = sep2 < 0 ? decoded.slice(sep1 + 1) : decoded.slice(sep1 + 1, sep2);
+  const meanField = sep2 < 0 ? '' : decoded.slice(sep2 + 1);
+  const meanNum = meanField === '' ? NaN : Number(meanField);
   return {
-    cursorSortKey: decoded.slice(0, sep),
-    cursorId: decoded.slice(sep + 1),
+    cursorSortKey: decoded.slice(0, sep1),
+    cursorId,
+    cursorMean: Number.isFinite(meanNum) ? meanNum : null,
   };
 }
 
@@ -87,8 +112,8 @@ function decodeMarketplaceCursor(cursor: string | undefined): {
 /**
  * Correlated subquery: AVG(rating) over an app's AGGREGATE-ELIGIBLE reviews —
  * NOT mod-excluded AND NOT the app owner's own (self-review). NULL for a
- * 0-review app. Identical eligibility to getAppRatingTotals so the card number,
- * the detail number, and the sort all agree.
+ * 0-review app. The card number, the detail number, and the global-mean `m`
+ * share this eligibility filter so they all agree (one source of truth).
  */
 const AVG_RATING_SUBQUERY = Prisma.sql`(
   SELECT AVG(abr.rating)::float
@@ -2600,8 +2625,9 @@ export class BlockRegistry {
     const categoryFilter = category ?? null;
 
     // Keyset cursor = `${sortKey} ${id}` of the last row of the prior page.
-    // Split it back into (sortKey, id) so the WHERE clause resumes after it.
-    const { cursorSortKey, cursorId } = decodeMarketplaceCursor(cursor);
+    // Split it back into (sortKey, id, mean) so the WHERE clause resumes after
+    // it and the `rating` sort reuses the SAME pinned mean across all pages.
+    const { cursorSortKey, cursorId, cursorMean } = decodeMarketplaceCursor(cursor);
 
     // The sort key is a TEXT expression chosen so a plain text comparison
     // orders rows correctly for the requested sort. The SAME expression is used
@@ -2618,7 +2644,16 @@ export class BlockRegistry {
     // a correct, total keyset.
     // `rating` (the default) needs the marketplace-wide Bayesian prior `m`
     // (cheap, 1h-cached scalar) injected as a param. The other sorts ignore it.
-    const globalMean = sort === 'rating' ? await getGlobalMeanRating() : 0;
+    // PIN `m` across a paging session: page 1 reads the 1h cache and encodes the
+    // value it used into nextCursor; pages 2..N decode that pinned `m` and reuse
+    // it (NOT a fresh cache read) so the sort key stays identical even if the
+    // cache expires/busts mid-pagination — otherwise the keyset boundary shifts
+    // and one row is silently skipped or duplicated. Cursorless first page only
+    // reads the cache. Other sorts don't use `m` (kept 0).
+    const globalMean =
+      sort === 'rating'
+        ? cursorMean ?? (await getGlobalMeanRating())
+        : 0;
     const sortKeyExpr =
       sort === 'rating'
         ? bayesianRatingSortKey(globalMean)
@@ -2679,8 +2714,13 @@ export class BlockRegistry {
     `)) as Row[];
     const trimmed = rows.slice(0, limit);
     const last = trimmed[trimmed.length - 1];
+    // Pin `m` into the cursor for the `rating` sort so every subsequent page
+    // reuses page 1's mean (see globalMean above). Omitted for other sorts.
+    const pinnedMean = sort === 'rating' ? globalMean : undefined;
     const nextCursor =
-      rows.length > limit && last ? encodeMarketplaceCursor(last.sort_key, last.id) : undefined;
+      rows.length > limit && last
+        ? encodeMarketplaceCursor(last.sort_key, last.id, pinnedMean)
+        : undefined;
     return {
       // F-E E1 anon-exposure allowlist: project the raw stored manifest down to
       // the vetted PUBLIC subset (name/description/targets[].slotId) via

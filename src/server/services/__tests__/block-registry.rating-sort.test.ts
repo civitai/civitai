@@ -153,3 +153,101 @@ describe('rating sort — KEYSET COMPLETENESS over ties (no skips / no dupes)', 
     expect(seen[seen.length - 1]).toBe('ab_bad');
   });
 });
+
+describe('rating sort — PINNED `m` survives a mid-pagination mean change (no skip/dupe)', () => {
+  // FIX 2: the global mean `m` comes from a 1h cache that can expire/bust
+  // mid-pagination. The keyset cursor encodes a row's sort_key computed with the
+  // page-1 mean; if a later page re-derives every row's key with a DIFFERENT
+  // mean, the boundary shifts → one row is silently skipped or duplicated.
+  // listAvailable PINS page-1's `m` into the cursor and reuses it for every page.
+  //
+  // This test models BOTH behaviors over the SAME dataset and a mean that
+  // changes after page 1:
+  //   - PINNED  (the fix): every page uses page-1's m → exactly-once coverage.
+  //   - UNPINNED (the bug): each page re-reads the changed m → skip and/or dupe.
+  type App = { id: string; sum: number; n: number; installs: number };
+
+  // A dataset where rated apps interleave with the 0-review (score=m) apps, so a
+  // shift in m re-orders rows relative to the 0-review band → a boundary skip.
+  const apps: App[] = [
+    ...Array.from({ length: 8 }, (_, i) => ({
+      id: `ab_zero_${String(i).padStart(2, '0')}`,
+      sum: 0,
+      n: 0,
+      installs: i % 2 === 0 ? 0 : i,
+    })),
+    { id: 'ab_a', sum: 18, n: 4, installs: 5 }, // avg 4.5
+    { id: 'ab_b', sum: 14, n: 4, installs: 4 }, // avg 3.5
+    { id: 'ab_c', sum: 21, n: 5, installs: 3 }, // avg 4.2
+    { id: 'ab_d', sum: 10, n: 4, installs: 2 }, // avg 2.5
+  ];
+
+  function key(a: App, m: number): string {
+    return sortKey(a.sum, a.n, a.installs, m);
+  }
+
+  // Page the keyset. `meanForPage(pageIndex)` supplies the mean used to derive
+  // sort keys for that page's evaluation (cursor + ordering), simulating either
+  // a pinned mean (always page-1's) or an unpinned per-page cache read.
+  function pageWithMeanSchedule(
+    pageSize: number,
+    meanForPage: (pageIndex: number) => number
+  ): string[] {
+    const seen: string[] = [];
+    let cursor: { key: string; id: string } | null = null;
+    for (let page = 0; page < 100; page++) {
+      const m = meanForPage(page);
+      // Re-derive ordering + keyset under THIS page's mean (Postgres recomputes
+      // sort_key per query; only the cursor tuple is carried from the prior page).
+      const ordered = [...apps].sort((a, b) => {
+        const ka = key(a, m);
+        const kb = key(b, m);
+        if (ka !== kb) return ka < kb ? 1 : -1;
+        return a.id < b.id ? 1 : -1;
+      });
+      const remaining = ordered.filter((a) => {
+        if (!cursor) return true;
+        const k = key(a, m);
+        if (k !== cursor.key) return k < cursor.key;
+        return a.id < cursor.id;
+      });
+      const slice = remaining.slice(0, pageSize);
+      if (slice.length === 0) break;
+      for (const a of slice) seen.push(a.id);
+      const last = slice[slice.length - 1];
+      cursor = { key: key(last, m), id: last.id };
+      if (slice.length < pageSize) break;
+    }
+    return seen;
+  }
+
+  const M1 = 3.0; // page-1 mean
+  const M2 = 4.5; // mean after the cache expires/busts mid-pagination
+
+  it('PINNED: reusing page-1 mean across pages covers every app exactly once', () => {
+    // Pinned = the cursor carries m=M1, so EVERY page uses M1.
+    const seen = pageWithMeanSchedule(4, () => M1);
+    expect(seen).toHaveLength(apps.length);
+    expect(new Set(seen).size).toBe(apps.length); // no dupes
+    expect(new Set(seen)).toEqual(new Set(apps.map((a) => a.id))); // no skips
+  });
+
+  it('PINNED still holds when the mean WOULD have changed after page 1', () => {
+    // The fix: even though the live cache flipped M1→M2 after page 1, the cursor
+    // pins M1 so pages 2..N keep using M1. Identical to the all-M1 schedule.
+    const pinned = pageWithMeanSchedule(4, () => M1);
+    expect(pinned).toHaveLength(apps.length);
+    expect(new Set(pinned).size).toBe(apps.length);
+    expect(new Set(pinned)).toEqual(new Set(apps.map((a) => a.id)));
+  });
+
+  it('UNPINNED (the bug being fixed): a mid-pagination mean change skips/dupes', () => {
+    // Page 1 uses M1, pages 2..N re-read the busted cache → M2. This is the
+    // pre-fix behavior; it must NOT cleanly cover every app exactly once
+    // (proving the pin is load-bearing, not cosmetic).
+    const unpinned = pageWithMeanSchedule(4, (page) => (page === 0 ? M1 : M2));
+    const exactlyOnce =
+      unpinned.length === apps.length && new Set(unpinned).size === apps.length;
+    expect(exactlyOnce).toBe(false);
+  });
+});

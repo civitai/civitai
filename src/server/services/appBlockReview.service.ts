@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+import { bustCacheTag } from '~/server/utils/cache-helpers';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 
 /**
@@ -21,56 +20,24 @@ import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/er
 export const BAYES_MIN_REVIEWS = 10;
 
 // ---------------------------------------------------------------------------
-// Cache: rating totals (avg + count) per app block.
+// Cache invalidation.
 // ---------------------------------------------------------------------------
 
-const ratingTag = (appBlockId: string) => `app-rating:${appBlockId}`;
-// Global-mean tag — busted alongside any single-app bust because adding/removing
-// a review shifts the marketplace-wide Bayesian prior `m` (kept in sync with
-// block-registry.service.ts's getGlobalMeanRating tag).
+// The ONLY rating cache feeding a visible surface is the marketplace-wide
+// Bayesian prior `m` (block-registry.service.ts's getGlobalMeanRating, tag
+// `app-rating:global-mean`, 1h). The per-app card/detail AVG+COUNT numbers are
+// NOT cached — listAvailable / getAppDetail recompute them via correlated
+// subqueries on every request — so there is no per-app tag to bust. Adding or
+// removing a review shifts `m`, so a review change busts the global-mean tag.
 const GLOBAL_MEAN_TAG = 'app-rating:global-mean';
 
 /**
- * Bust the getAppRatingTotals cache for one app AND the global-mean cache (a
- * review change shifts both the app's avg and the marketplace-wide prior `m`).
- * Fire-and-forget.
+ * Bust the marketplace-wide Bayesian-prior (`m`) cache after a review change.
+ * No per-app tag exists: the visible per-app aggregates are recomputed uncached
+ * in the registry, so only the global mean needs invalidating. Fire-and-forget.
  */
-export const bustAppRatingCache = async (appBlockId: string) => {
-  await bustCacheTag([ratingTag(appBlockId), GLOBAL_MEAN_TAG]);
-};
-
-export type AppRatingTotals = { avgRating: number | null; reviewCount: number };
-
-/**
- * AVG(rating) + COUNT(*) for an app block, EXCLUDING:
- *   - moderator-excluded rows (`exclude = true`), and
- *   - the app owner's own review (self-review) — joined via
- *     OauthClient.userId, mirroring resourceReview's `m."userId" != rr."userId"`.
- * Cached 1h, tag `app-rating:<id>` (busted on upsert / delete / setExcluded).
- */
-export const getAppRatingTotals = async (appBlockId: string): Promise<AppRatingTotals> => {
-  const query = Prisma.sql`
-    SELECT
-      AVG(abr.rating)::float AS avg_rating,
-      COUNT(abr.id)::int     AS review_count
-    FROM app_block_reviews abr
-    JOIN app_blocks ab ON ab.id = abr.app_block_id
-    JOIN "OauthClient" oc ON oc.id = ab.app_id
-    WHERE abr.app_block_id = ${appBlockId}
-      AND NOT abr.exclude
-      -- Exclude the app owner's own review from the aggregate (self-review).
-      AND oc."userId" IS DISTINCT FROM abr.user_id
-  `;
-  const cacheable = queryCache(dbRead, 'getAppRatingTotals', 'v1');
-  const rows = await cacheable<{ avg_rating: number | null; review_count: number }[]>(query, {
-    ttl: CacheTTL.hour,
-    tag: [ratingTag(appBlockId)],
-  });
-  const row = rows[0];
-  return {
-    avgRating: row?.avg_rating ?? null,
-    reviewCount: row?.review_count ?? 0,
-  };
+export const bustAppRatingCache = async () => {
+  await bustCacheTag([GLOBAL_MEAN_TAG]);
 };
 
 // ---------------------------------------------------------------------------
@@ -156,24 +123,50 @@ export const upsertAppBlockReview = async ({
     select: { id: true },
   });
 
+  const reviewSelect = {
+    id: true,
+    appBlockId: true,
+    rating: true,
+    recommended: true,
+  } as const;
+
   let review: { id: number; appBlockId: string; rating: number; recommended: boolean };
   let isFirstReview: boolean;
   if (!existing) {
-    review = await dbWrite.appBlockReview.create({
-      data: { appBlockId, userId, rating, recommended, details },
-      select: { id: true, appBlockId: true, rating: true, recommended: true },
-    });
-    isFirstReview = true;
+    // CONCURRENCY: two simultaneous FIRST reviews for the same (user, app) both
+    // read null above → both reach this create. The unique index lets exactly
+    // one win; the loser's create hits Prisma P2002 (unique violation). Catch
+    // it and fall through to the UPDATE branch with isFirstReview=false so the
+    // loser (a) doesn't 500 and (b) does NOT collect a second once-per reward —
+    // the winner's create already set isFirstReview=true and fired it once.
+    try {
+      review = await dbWrite.appBlockReview.create({
+        data: { appBlockId, userId, rating, recommended, details },
+        select: reviewSelect,
+      });
+      isFirstReview = true;
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        review = await dbWrite.appBlockReview.update({
+          where: { appBlockId_userId: { appBlockId, userId } },
+          data: { rating, recommended, details },
+          select: reviewSelect,
+        });
+        isFirstReview = false;
+      } else {
+        throw e;
+      }
+    }
   } else {
     review = await dbWrite.appBlockReview.update({
       where: { id: existing.id },
       data: { rating, recommended, details },
-      select: { id: true, appBlockId: true, rating: true, recommended: true },
+      select: reviewSelect,
     });
     isFirstReview = false;
   }
 
-  await bustAppRatingCache(appBlockId).catch(() => undefined);
+  await bustAppRatingCache().catch(() => undefined);
   return { review, isFirstReview };
 };
 
@@ -267,20 +260,6 @@ export const setAppReviewExcluded = async ({
     data: { exclude },
     select: { id: true, appBlockId: true, exclude: true },
   });
-  await bustAppRatingCache(updated.appBlockId).catch(() => undefined);
+  await bustAppRatingCache().catch(() => undefined);
   return updated;
-};
-
-/** Delete a review (owner self-delete OR mod). Busts the rating cache. */
-export const deleteAppBlockReview = async ({
-  id,
-}: {
-  id: number;
-}): Promise<{ id: number; appBlockId: string }> => {
-  const deleted = await dbWrite.appBlockReview.delete({
-    where: { id },
-    select: { id: true, appBlockId: true },
-  });
-  await bustAppRatingCache(deleted.appBlockId).catch(() => undefined);
-  return deleted;
 };

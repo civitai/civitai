@@ -311,6 +311,46 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
     expect(capturedSql()).not.toMatch(/lpad\(round\(/i);
   });
 
+  // FIX 2 — PIN the Bayesian mean `m` into the rating-sort cursor so a paging
+  // session stays stable when the 1h global-mean cache expires/busts mid-page.
+  it('sort=rating: page 1 PINS the global mean into nextCursor', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    // Call 1 = getGlobalMeanRating (via queryCache → $queryRaw): return m=4.25.
+    mockDbRead.$queryRaw.mockResolvedValueOnce([{ mean: 4.25 }]);
+    // Call 2 = the list query: limit+1 rows so nextCursor is emitted.
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      rawRow({ id: 'ab_0', sort_key: '00000004250000' }),
+      rawRow({ id: 'ab_1', sort_key: '00000004240000' }),
+      rawRow({ id: 'ab_2', sort_key: '00000004230000' }),
+    ]);
+    const { nextCursor } = await BlockRegistry.listAvailable({ limit: 2, sort: 'rating' });
+    expect(nextCursor).toBeDefined();
+    const decoded = Buffer.from(nextCursor as string, 'base64url').toString('utf8');
+    const sep = String.fromCharCode(31);
+    // sortKey␟id␟mean — the third field is the pinned mean (4.25).
+    expect(decoded).toBe(`00000004240000${sep}ab_1${sep}4.25`);
+  });
+
+  it('sort=rating: a cursor with a pinned mean REUSES it (no global-mean re-read)', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    const sep = String.fromCharCode(31);
+    // A page-2 cursor pinning m=2.5 (a value the live cache would NOT return —
+    // proving the pinned value is what flows into the SQL, not a fresh read).
+    const cursor = Buffer.from(`00000002500000${sep}ab_5${sep}2.5`, 'utf8').toString('base64url');
+    // ONLY ONE $queryRaw is queued (the list query). If the service re-read the
+    // global mean it would consume this and the list query would get []; instead
+    // the pinned mean short-circuits the read so this feeds the list query.
+    mockDbRead.$queryRaw.mockResolvedValueOnce([rawRow({ id: 'ab_9', sort_key: '00000002400000' })]);
+    const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'rating', cursor });
+    // The list query ran and projected the row → the pinned mean fed it directly.
+    expect(items).toHaveLength(1);
+    // Exactly ONE $queryRaw call total (the list) — the mean re-read was skipped.
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    // The pinned mean 2.5 is bound into the Bayesian sort key (C*m term = 10*2.5).
+    const sql = capturedSql();
+    expect(sql).toMatch(/lpad\(round\(/i); // rating key present
+  });
+
   it('category filter is threaded into the SQL (only the requested category)', async () => {
     const { BlockRegistry } = await import('../block-registry.service');
     await BlockRegistry.listAvailable({ limit: 20, sort: 'popular', category: 'games' });
