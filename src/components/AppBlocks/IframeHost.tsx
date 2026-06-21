@@ -810,6 +810,14 @@ export function IframeHost({
         typeof raw.baseModelGroup === 'string' ? getBaseModelGroup(raw.baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
       let answered = false;
+      // MEDIUM-2 (deferred — see PageBlockHost OPEN_RESOURCE_PICKER for the full
+      // rationale): the modal's NSFW filtering inherits the SITE-WIDE browsing
+      // level (blue = mature), so on a SFW (blue/green) block the picker UI can
+      // still surface mature checkpoints even though generation is SFW-clamped.
+      // Not an iframe leak (CHECKPOINT_PICKER_RESULT is name/id-only and every
+      // pick is re-gated SFW server-side at submit). `ResourceSelectOptions`
+      // exposes no browsing-level/sfwOnly constraint; wiring one would mean
+      // modifying the shared ResourceSelectModal internals — deferred follow-up.
       openResourceSelectModal({
         title: 'Choose a checkpoint',
         options: {

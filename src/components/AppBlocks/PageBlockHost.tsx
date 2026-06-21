@@ -897,8 +897,33 @@ export function PageBlockHost({
   //  - resourceType allowlist enforced in resolveResourcePickerRequest (pure,
   //    unit-tested): an unsupported type is DROPPED and the modal never opens.
   // NSFW-by-domain is inherited from the native modal's existing parent-context
-  // browsing-level handling (the Meili search client is domain/SFW-scoped at the
-  // app level), exactly as the model checkpoint picker already relies on.
+  // browsing-level handling, exactly as the model checkpoint picker already
+  // relies on.
+  //
+  // MEDIUM-2 (deferred — documented, NOT wired): that inherited handling is the
+  // SITE-WIDE browsing level, where `blue` is mature. So on a blue (or green)
+  // block — which generation clamps to SFW via `domainBrowsingCeiling` — the
+  // picker UI can still SURFACE mature resources, an inconsistent SFW
+  // experience. This is NOT an iframe leak: the RESOURCE_PICKER_RESULT below is
+  // name/id-only (no thumbnails/meta), and every picked id is re-gated SFW
+  // server-side at estimate/submit (assertViewerCanGeneratePageResources +
+  // domainBrowsingCeiling off the RAW request color) before any spend.
+  //
+  // Why not wired here: `openResourceSelectModal`'s `ResourceSelectOptions`
+  // (resource-select.types.ts) exposes NO browsing-level / sfwOnly / nsfw
+  // constraint — only `canGenerate`, `resources`, `excludeIds`. NSFW filtering
+  // is done purely client-side in the SHARED `ResourceHitList` via
+  // `useApplyHiddenPreferences`, which defaults to the site-wide
+  // `useBrowsingLevelDebounced()` context (the Meili query in
+  // useResourceSelectFilters doesn't filter by browsing level at all). Passing a
+  // block-SFW ceiling in would require adding a new option to
+  // `ResourceSelectOptions`, threading it through `ResourceSelectProvider` /
+  // `useResourceSelectContext`, and feeding it to that `useApplyHiddenPreferences`
+  // call — i.e. modifying the shared modal's filtering internals (higher blast
+  // radius, affects every generation-form picker), and even then the hook's
+  // `isModerator && nsfwLevel===0` carve-out leaves gaps for the currently
+  // mod-gated audience. Deferred as a follow-up in the same bucket as the
+  // Phase-3 REST clamp; tracked in the PR body.
   //
   // requestId threads each pick so concurrent requests (e.g. a checkpoint pick
   // and a LoRA pick open back-to-back) never cross — the SDK hook resolves only

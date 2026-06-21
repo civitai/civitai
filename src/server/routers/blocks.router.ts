@@ -54,6 +54,7 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
@@ -2189,16 +2190,30 @@ export const blocksRouter = router({
       // iframe for NSFW-opted-out or logged-out viewers. Anon (no ctx.user)
       // is forced to public (PG) inside the service.
       //
-      // `ctx.domain` carries the color-domain maturity CEILING: on a SFW domain
+      // The color domain carries the maturity CEILING: on a SFW domain
       // (green/blue) the service clamps the effective browsing level to SFW so a
       // logged-in viewer can't request `browsingLevel: 31` and pull mature
       // thumbnails + meta into the iframe. This is the display-surface analogue
       // of the authoritative generation clamp. This is a public read with no
       // block-token claim handy, so the request-time domain is the authority.
+      //
+      // LOW-1 hardening: derive the maturity domain from the RAW
+      // `getRequestDomainColor(req)` — which returns `undefined` for an
+      // UNRESOLVED host — NOT from `ctx.domain`, which is `?? 'blue'`-defaulted
+      // in createContext for the convenience of code that wants a concrete
+      // color. Routing the showcase clamp through that default would make an
+      // unresolved host fail-CLOSED today only because `domainBrowsingCeiling`
+      // happens to map 'blue' → SFW; the moment the platform flips blue→mature
+      // there, the `?? 'blue'` default would silently turn this fail-closed read
+      // into a fail-OPEN one for unresolved hosts. Passing the raw `undefined`
+      // through makes `domainBrowsingCeiling(undefined)` fail closed to SFW
+      // independent of blue's mapping — matching how the authoritative
+      // generation belt clamps off the raw color (never the 'blue' default).
+      const rawDomain = getRequestDomainColor(ctx.req);
       return getModelShowcaseImages(input.modelVersionId, {
         userId: ctx.user?.id ?? null,
         browsingLevel: input.browsingLevel,
-        domain: ctx.domain,
+        domain: rawDomain,
       });
     }),
 

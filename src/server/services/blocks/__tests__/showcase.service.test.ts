@@ -334,6 +334,64 @@ describe('getModelShowcaseImages', () => {
     });
   });
 
+  // LOW-1: the showcase clamp must fail closed for an UNRESOLVED host
+  // independent of how `domainBrowsingCeiling` happens to map 'blue' today.
+  // The router passes the RAW `getRequestDomainColor(req)` (→ `undefined` for an
+  // unresolved host) rather than `ctx.domain` (which is `?? 'blue'`-defaulted in
+  // createContext). If, instead, the showcase rode on the 'blue'-defaulted
+  // value, the moment the platform flips blue→mature in `domainBrowsingCeiling`
+  // an unresolved host would silently turn this fail-closed read into a
+  // fail-OPEN one. This suite stubs the ceiling so blue→mature and proves an
+  // `undefined` domain still clamps to SFW — i.e. the fix does NOT depend on
+  // blue's value.
+  describe('LOW-1: undefined domain fails closed independent of the blue ceiling', () => {
+    const wideRows = [
+      imageRow(1, 100, {}, { nsfwLevel: PG }),
+      imageRow(2, 90, {}, { nsfwLevel: PG13 }),
+      imageRow(3, 80, {}, { nsfwLevel: R }),
+      imageRow(4, 70, {}, { nsfwLevel: X }),
+      imageRow(5, 60, {}, { nsfwLevel: XXX }),
+    ];
+
+    it('undefined domain stays SFW even when blue would map to all-levels', async () => {
+      // Stub the SINGLE source of truth so blue (and only blue) maps to the
+      // all-levels ceiling — simulating a future site-wide blue→mature flip.
+      // `undefined` must still fail closed to SFW: had the router passed the
+      // 'blue'-defaulted ctx.domain, this viewer would now see R/X/XXX.
+      const constants = await import('~/shared/constants/browsingLevel.constants');
+      const spy = vi
+        .spyOn(constants, 'domainBrowsingCeiling')
+        .mockImplementation((color) => {
+          if (color === 'blue' || color === 'red') return constants.allBrowsingLevelsFlag;
+          if (color == null) return constants.sfwBrowsingLevelsFlag; // fail closed
+          return constants.sfwBrowsingLevelsFlag;
+        });
+      try {
+        mockDbRead.imageResourceNew.findMany.mockResolvedValue([...wideRows]);
+        // Unresolved host → raw color undefined → passed through as undefined.
+        const undefinedResult = await getModelShowcaseImages(99, {
+          userId: 42,
+          browsingLevel: PG | PG13 | R | X | XXX,
+          domain: undefined,
+        });
+        expect(undefinedResult.map((i) => i.id)).toEqual([1, 2]); // SFW only
+
+        // Control: explicit blue, under the SAME stub, WOULD widen to mature —
+        // proving the undefined-fails-closed result above is not an artifact of
+        // the stub being inert (i.e. the blue default would have been a leak).
+        mockDbRead.imageResourceNew.findMany.mockResolvedValue([...wideRows]);
+        const blueResult = await getModelShowcaseImages(99, {
+          userId: 42,
+          browsingLevel: PG | PG13 | R | X | XXX,
+          domain: 'blue',
+        });
+        expect(blueResult.map((i) => i.id)).toEqual([1, 2, 3, 4, 5]);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
   describe('meta extraction', () => {
     async function getFirstMeta(meta: unknown) {
       mockDbRead.imageResourceNew.findMany.mockResolvedValue([imageRow(1, 10, meta)]);
