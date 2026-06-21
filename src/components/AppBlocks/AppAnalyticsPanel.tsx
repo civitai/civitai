@@ -197,8 +197,7 @@ export function AppAnalyticsPanel() {
         {analytics && (
           <Text size="xs" c="dimmed">
             {dayjs(analytics.range.from).format('MMM D, YYYY')} –{' '}
-            {dayjs(analytics.range.to).format('MMM D, YYYY')} (
-            {analytics.range.granularity})
+            {dayjs(analytics.range.to).format('MMM D, YYYY')} ({analytics.range.granularity})
           </Text>
         )}
       </Group>
@@ -253,10 +252,10 @@ export function AppAnalyticsPanel() {
           >
             <Text size="sm">
               Active users, API calls, and error rate reflect only{' '}
-              <strong>authenticated, scope-gated API calls</strong> your app makes.
-              A static block (or one with no scoped API surface) will show installs
-              and revenue but flat engagement, and <strong>anonymous viewers are
-              not counted</strong>. Installs, runs, and Buzz figures are unaffected.
+              <strong>authenticated, scope-gated API calls</strong> your app makes. A static block
+              (or one with no scoped API surface) will show installs and revenue but flat
+              engagement, and <strong>anonymous viewers are not counted</strong>. Installs, runs,
+              and Buzz figures are unaffected.
             </Text>
           </Alert>
 

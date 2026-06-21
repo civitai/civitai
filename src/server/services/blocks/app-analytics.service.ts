@@ -83,10 +83,7 @@ export type AppAnalytics = {
   };
 };
 
-function emptyAnalytics(
-  range: AppAnalytics['range'],
-  notOwned: boolean
-): AppAnalytics {
+function emptyAnalytics(range: AppAnalytics['range'], notOwned: boolean): AppAnalytics {
   return {
     range,
     notOwned,
@@ -109,11 +106,7 @@ function emptyAnalytics(
  * granularity for ranges up to ~60d, week granularity beyond, so the
  * series stays bounded (≤ ~53 points).
  */
-export function resolveRange(input: {
-  from?: Date;
-  to?: Date;
-  now?: Date;
-}): AppAnalytics['range'] {
+export function resolveRange(input: { from?: Date; to?: Date; now?: Date }): AppAnalytics['range'] {
   const now = input.now ?? new Date();
   let to = input.to ?? now;
   if (to.getTime() > now.getTime()) to = now;
@@ -310,12 +303,14 @@ export async function getMyAppAnalytics({
       apiCalls,
       activeUsers,
       errorRate,
-      topScopes: (
-        topScopes as Array<{ scope: string; _count: number }>
-      ).map((r) => ({ scope: r.scope, count: r._count })),
-      topEndpoints: (
-        topEndpoints as Array<{ endpoint: string; _count: number }>
-      ).map((r) => ({ endpoint: r.endpoint, count: r._count })),
+      topScopes: (topScopes as Array<{ scope: string; _count: number }>).map((r) => ({
+        scope: r.scope,
+        count: r._count,
+      })),
+      topEndpoints: (topEndpoints as Array<{ endpoint: string; _count: number }>).map((r) => ({
+        endpoint: r.endpoint,
+        count: r._count,
+      })),
     },
   };
 }
