@@ -132,10 +132,8 @@ export default function AppPage(props: PageProps) {
   // flow to the block via TOKEN_REFRESH (wired to PageBlockHost.onConsentGranted,
   // mirroring how IframeHost re-mints on REQUEST_CONSENT). The rotated token's
   // TOKEN_REFRESH push delivers the granted scopes and the block retries.
-  const { token, expiresAt, needsConsent, missingScopes, error, refresh } = useBlockToken(
-    install,
-    context
-  );
+  const { token, expiresAt, needsConsent, missingScopes, domain, maxBrowsingLevel, error, refresh } =
+    useBlockToken(install, context);
 
   const viewer = currentUser
     ? { id: currentUser.id, username: currentUser.username ?? null }
@@ -160,6 +158,8 @@ export default function AppPage(props: PageProps) {
           declaredScopes={scopes}
           missingScopes={missingScopes}
           needsConsent={needsConsent}
+          domain={domain}
+          maxBrowsingLevel={maxBrowsingLevel}
           tokenError={error != null}
           viewer={viewer}
           theme={theme}

@@ -2485,3 +2485,182 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     });
   });
 });
+
+/**
+ * MATURITY ENFORCEMENT (GA gate) — the authoritative server-side belt.
+ *
+ * The maturity ceiling is derived from the TOKEN's `maxBrowsingLevel` claim
+ * (server-minted from the request host), NEVER from a client body field. A
+ * SFW-domain token (green/blue → claim = sfwBrowsingLevelsFlag) must force
+ * `allowMatureContent: false` into the orchestrator workflow body; a red token
+ * (claim = allBrowsingLevelsFlag) must leave it unset (no clamp). A token with
+ * NO claim (legacy / pre-feature) fails CLOSED to SFW.
+ *
+ * Browsing-level flag values (NsfwLevel bits): PG=1, PG13=2 → SFW=3;
+ * R|X|XXX add 4|8|16 → all = 31.
+ */
+const SFW_CEILING = 3; // sfwBrowsingLevelsFlag (PG | PG13)
+const ALL_CEILING = 31; // allBrowsingLevelsFlag (PG | PG13 | R | X | XXX)
+
+describe('blocks workflow — color-domain maturity enforcement', () => {
+  function lastSubmitBody() {
+    const calls = mockSubmitWorkflow.mock.calls;
+    return (calls[calls.length - 1][0] as { body: Record<string, unknown> }).body;
+  }
+  function firstSubmitBody() {
+    return (mockSubmitWorkflow.mock.calls[0][0] as { body: Record<string, unknown> }).body;
+  }
+
+  describe('estimateWorkflow', () => {
+    it('green-domain token (SFW ceiling) forces allowMatureContent=false into the whatif body', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ domain: 'green', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 5 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(firstSubmitBody().allowMatureContent).toBe(false);
+    });
+
+    it('blue-domain token (SFW ceiling, product decision) ALSO forces allowMatureContent=false', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ domain: 'blue', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 5 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(firstSubmitBody().allowMatureContent).toBe(false);
+    });
+
+    it('red-domain token (mature ceiling) does NOT clamp — allowMatureContent omitted', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ domain: 'red', maxBrowsingLevel: ALL_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 5 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(firstSubmitBody()).not.toHaveProperty('allowMatureContent');
+    });
+
+    it('legacy token (no maxBrowsingLevel claim) FAILS CLOSED to SFW', async () => {
+      // validClaims() carries NO maxBrowsingLevel — the pre-feature shape.
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 5 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(firstSubmitBody().allowMatureContent).toBe(false);
+    });
+  });
+
+  describe('submitWorkflow', () => {
+    function happySubmit(cost = 10) {
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: cost }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: cost }, steps: [] });
+    }
+
+    it('green-domain token forces allowMatureContent=false on BOTH whatif and real submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'green', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+      expect(firstSubmitBody().allowMatureContent).toBe(false); // whatif
+      expect(lastSubmitBody().allowMatureContent).toBe(false); // real submit
+    });
+
+    it('blue-domain token (SFW per product decision) forces allowMatureContent=false on the real submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'blue', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(lastSubmitBody().allowMatureContent).toBe(false);
+    });
+
+    it('red-domain token leaves allowMatureContent UNSET (mature allowed)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'red', maxBrowsingLevel: ALL_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(firstSubmitBody()).not.toHaveProperty('allowMatureContent');
+      expect(lastSubmitBody()).not.toHaveProperty('allowMatureContent');
+    });
+
+    it('legacy token (no claim) FAILS CLOSED to SFW on the real submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(lastSubmitBody().allowMatureContent).toBe(false);
+    });
+
+    it('clamp is TOKEN-derived: a malicious body cannot widen a SFW token to mature', async () => {
+      // The token is SFW (green). The attacker stuffs allowMatureContent:true
+      // (and an nsfwLevel) onto the BODY. The schema strips unknowns, and even
+      // if it didn't, the clamp reads the TOKEN claim — the submitted body MUST
+      // still carry allowMatureContent:false.
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'green', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: { ...validBody(), allowMatureContent: true, nsfwLevel: 'xxx' } as never,
+      });
+      expect(lastSubmitBody().allowMatureContent).toBe(false);
+    });
+
+    it('prompt audit isGreen is DOMAIN-derived: SFW token → isGreen=true', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'blue', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockAuditPromptServer).toHaveBeenCalledWith(
+        expect.objectContaining({ isGreen: true })
+      );
+    });
+
+    it('prompt audit isGreen is DOMAIN-derived: red token → isGreen=false', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'red', maxBrowsingLevel: ALL_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockAuditPromptServer).toHaveBeenCalledWith(
+        expect.objectContaining({ isGreen: false })
+      );
+    });
+  });
+});

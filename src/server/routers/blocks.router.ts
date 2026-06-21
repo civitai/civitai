@@ -36,6 +36,11 @@ import {
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
+import {
+  allowMatureContentForCeiling,
+  domainBrowsingCeiling,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -140,6 +145,45 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
 // block-tokens/index.ts); model tokens never carry `entityType`.
 function isPageToken(claims: { ctx?: unknown }): boolean {
   return (claims.ctx as { entityType?: unknown } | undefined)?.entityType === 'none';
+}
+
+// ---- Maturity enforcement (GA gate) ---------------------------------------
+//
+// AUTHORITATIVE server-side belt. The maturity ceiling comes from the TOKEN's
+// `maxBrowsingLevel` claim (server-minted from the request host at issuance —
+// see block-tokens/index.ts), NEVER from a client-supplied body field, so a
+// block on a SFW domain (green/blue) cannot generate mature output even if its
+// own code is wrong or malicious.
+//
+// FAIL CLOSED: a token minted before this feature (or any token missing the
+// numeric claim) is treated as the most restrictive SFW ceiling, never as
+// "unrestricted". `verifyBlockToken` already rejects a present-but-non-numeric
+// claim, so by here the value is either a finite number or undefined.
+//
+// Returns:
+//   - maxBrowsingLevel:   the effective ceiling (claim value, or SFW fallback)
+//   - allowMatureContent: the orchestrator flag derived from it
+//                         (`false` on SFW, `undefined`/no-clamp only on red)
+//   - isGreen:            the prompt-audit's "SFW prompt audit" toggle — true
+//                         whenever the ceiling is SFW (i.e. NOT mature-allowed)
+function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
+  maxBrowsingLevel: number;
+  allowMatureContent: boolean | undefined;
+  isGreen: boolean;
+} {
+  const maxBrowsingLevel =
+    typeof claims.maxBrowsingLevel === 'number' && Number.isFinite(claims.maxBrowsingLevel)
+      ? claims.maxBrowsingLevel
+      : sfwBrowsingLevelsFlag; // fail closed
+  const allowMatureContent = allowMatureContentForCeiling(maxBrowsingLevel);
+  return {
+    maxBrowsingLevel,
+    allowMatureContent,
+    // `auditPromptServer`'s `isGreen` flag selects the SFW prompt audit. Tie it
+    // to the maturity ceiling rather than the literal green domain: a blue
+    // (SFW, per the App-Blocks product decision) block gets the SFW audit too.
+    isGreen: allowMatureContent === false,
+  };
 }
 
 // SECURITY-CRITICAL (W10). A page token has no model binding, so the model-
@@ -1748,12 +1792,17 @@ export const blocksRouter = router({
         checkpointVersionId: checkpoint.versionId,
       });
       const step = await createTextToImageStep({ ...generateInput, user, whatIf: true });
+      // Maturity clamp (authoritative). Derive allowMatureContent from the
+      // TOKEN claim, not the body — a SFW-domain token forces it false so the
+      // orchestrator rejects mature output. Mirrors submitWorkflow below.
+      const { allowMatureContent } = resolveBlockMaturity(claims);
       const workflow = await submitWorkflow({
         token,
         body: {
           steps: [step],
           tags: buildWorkflowTags(claims, resolved.baseModel),
           currencies: BLOCK_CURRENCIES,
+          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         },
         query: { whatif: true },
       });
@@ -1866,14 +1915,23 @@ export const blocksRouter = router({
       }
       const token = await getOrchestratorToken(userId, ctx);
 
+      // Maturity clamp (authoritative, GA gate). Derived ONCE from the token's
+      // server-minted ceiling claim and applied to: (a) the prompt audit
+      // (`isGreen` → SFW prompt audit on SFW domains), (b) the whatIf cost
+      // step, and (c) the real submit. NEVER from a client body field, so a
+      // SFW-domain (green/blue) block cannot widen to mature output. Fail
+      // closed: a legacy/absent claim resolves to the SFW ceiling.
+      const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+
       // Prompt audit before any orchestrator interaction (mirrors what
       // generateFromGraph does). A block can't bypass moderation by submitting
-      // through this path.
+      // through this path. `isGreen` (SFW prompt audit) is domain/ceiling-
+      // derived so a SFW-domain block's prompts get the stricter audit.
       await auditPromptServer({
         prompt: input.body.params.prompt,
         negativePrompt: input.body.params.negativePrompt,
         userId,
-        isGreen: false,
+        isGreen,
         isModerator: !!user.isModerator,
       });
 
@@ -1894,7 +1952,12 @@ export const blocksRouter = router({
       const tags = buildWorkflowTags(claims, resolved.baseModel);
       const whatIfResult = await submitWorkflow({
         token,
-        body: { steps: [stepForCostCheck], tags, currencies: BLOCK_CURRENCIES },
+        body: {
+          steps: [stepForCostCheck],
+          tags,
+          currencies: BLOCK_CURRENCIES,
+          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        },
         query: { whatif: true },
       });
       const cost = whatIfResult.cost?.total ?? 0;
@@ -1972,7 +2035,14 @@ export const blocksRouter = router({
         const step = await createTextToImageStep({ ...generateInput, user });
         const submitted = await submitWorkflow({
           token,
-          body: { steps: [step], tags, currencies: BLOCK_CURRENCIES },
+          body: {
+            steps: [step],
+            tags,
+            currencies: BLOCK_CURRENCIES,
+            // Authoritative maturity clamp on the REAL submit — the orchestrator
+            // rejects mature output when this is false. Token-claim derived.
+            ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+          },
         });
         snapshot = snapshotFromWorkflow(submitted);
       } catch (e) {

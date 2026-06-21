@@ -12,6 +12,7 @@ import {
   pageFallbackReason,
   resolveResourcePickerRequest,
 } from './pageBlockHostLogic';
+import { projectBlockInitMaturity } from './projectBlockInit';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -120,6 +121,10 @@ export interface PageBlockHostProps {
   /** #3/#6: the token mint errored. Surface an error state instead of hanging at
    *  `no_token`. */
   tokenError?: boolean;
+  /** Advisory color-domain maturity signal (BLOCK_INIT). Server-authoritative
+   *  values from the token mint — forwarded, never derived client-side. */
+  domain?: 'green' | 'blue' | 'red' | null;
+  maxBrowsingLevel?: number;
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
   /** Re-mint the page token after a consent grant so it carries the newly
@@ -144,6 +149,8 @@ export function PageBlockHost({
   missingScopes,
   needsConsent,
   tokenError,
+  domain,
+  maxBrowsingLevel,
   viewer,
   theme,
   onConsentGranted,
@@ -228,8 +235,22 @@ export function PageBlockHost({
       viewer,
       theme,
       renderMode: 'iframe',
+      // Advisory maturity signal — server-authoritative values from the mint.
+      ...projectBlockInitMaturity({ domain, maxBrowsingLevel }),
     }),
-    [appId, blockId, blockInstanceId, buildContext, expiresAt, grantedScopes, token, viewer, theme]
+    [
+      appId,
+      blockId,
+      blockInstanceId,
+      buildContext,
+      expiresAt,
+      grantedScopes,
+      token,
+      viewer,
+      theme,
+      domain,
+      maxBrowsingLevel,
+    ]
   );
   buildInitPayloadRef.current = buildInitPayload;
 

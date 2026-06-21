@@ -104,6 +104,35 @@ export function projectBlockInitContext(
  *
  * Returns `null` for anonymous viewers (no numeric viewer id).
  */
+/**
+ * Project the color-domain maturity signal into the BLOCK_INIT contract fields.
+ *
+ * These are ADVISORY (block self-filtering / blur). The values are the
+ * server-authoritative ones the token mint computed from the request host
+ * (`getRequestDomainColor` → `domainBrowsingCeiling`) and returned alongside
+ * the token — the host never derives them client-side, it forwards them. The
+ * AUTHORITATIVE maturity enforcement is the server generation clamp keyed on
+ * the same value baked into the token claim.
+ *
+ * Defaults are FAIL-CLOSED: an absent ceiling projects `undefined` (the SDK
+ * `useDomainMaturity()` hook treats absent as the most restrictive), and an
+ * unrecognized domain projects `null` rather than leaking a raw value.
+ */
+export function projectBlockInitMaturity(input: {
+  domain?: string | null;
+  maxBrowsingLevel?: number | null;
+}): Pick<BlockInitPayload, 'domain' | 'maxBrowsingLevel'> {
+  const domain =
+    input.domain === 'green' || input.domain === 'blue' || input.domain === 'red'
+      ? input.domain
+      : null;
+  const maxBrowsingLevel =
+    typeof input.maxBrowsingLevel === 'number' && Number.isFinite(input.maxBrowsingLevel)
+      ? input.maxBrowsingLevel
+      : undefined;
+  return { domain, maxBrowsingLevel };
+}
+
 export function projectBlockInitViewer(
   context: SlotContext
 ): BlockInitPayload['viewer'] {

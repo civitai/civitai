@@ -143,6 +143,21 @@ export interface SignBlockTokenInput {
   scopes: string[];
   ctx: Record<string, unknown>;
   buzzBudget?: number;
+  /**
+   * The color domain the token was minted on (`green` | `blue` | `red`), or
+   * null when the request host didn't resolve to a known color. Advisory /
+   * audit field; the AUTHORITATIVE maturity boundary is `maxBrowsingLevel`.
+   */
+  domain?: string | null;
+  /**
+   * AUTHORITATIVE maturity ceiling for this token (a bitwise browsing-level
+   * flag from `domainBrowsingCeiling`). The block submit/estimate path derives
+   * `allowMatureContent` from THIS value, not from any client body field, so a
+   * SFW-domain (green/blue) token can never widen to mature output. A token
+   * minted before this feature carries NO claim — consumers MUST fail closed
+   * (treat absent as SFW), so omit the claim only for that legacy path.
+   */
+  maxBrowsingLevel?: number;
 }
 
 export interface SignBlockTokenResult {
@@ -191,6 +206,17 @@ export class BlockTokenService {
     };
     if (typeof input.buzzBudget === 'number') {
       claims.buzzBudget = input.buzzBudget;
+    }
+    // Maturity enforcement claims. `maxBrowsingLevel` is the authoritative
+    // server-minted ceiling the block submit/estimate path clamps generation
+    // against; `domain` is an advisory audit/UX signal. Both are stamped at
+    // mint from the request host so the block's own (untrusted) code can never
+    // influence them.
+    if (typeof input.maxBrowsingLevel === 'number') {
+      claims.maxBrowsingLevel = input.maxBrowsingLevel;
+    }
+    if (input.domain != null) {
+      claims.domain = input.domain;
     }
 
     const token = await new SignJWT(claims)

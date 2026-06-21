@@ -13,7 +13,11 @@ import { resolveRequestConsent } from './requestConsentGate';
 import { hideBlock } from './hiddenBlocks';
 import { sanitizeAppChromeName } from './appChromeName';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
-import { projectBlockInitContext, projectBlockInitViewer } from './projectBlockInit';
+import {
+  projectBlockInitContext,
+  projectBlockInitMaturity,
+  projectBlockInitViewer,
+} from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
@@ -50,6 +54,10 @@ interface IframeHostProps {
    *  we also trim them from the wrapped `token.scopes` we send the iframe so
    *  the block's "do I have this capability?" check is accurate. */
   missingScopes?: string[];
+  /** Advisory color-domain maturity signal (BLOCK_INIT). Server-authoritative
+   *  values mirrored from the token mint — the host forwards, never derives. */
+  domain?: 'green' | 'blue' | 'red' | null;
+  maxBrowsingLevel?: number;
   /** Re-mint the block token after a consent grant so it carries the newly
    *  granted scopes (pushed to the iframe via TOKEN_REFRESH). */
   onConsentGranted?: () => void;
@@ -217,6 +225,8 @@ export function IframeHost({
   token,
   expiresAt,
   missingScopes,
+  domain,
+  maxBrowsingLevel,
   onConsentGranted,
 }: IframeHostProps) {
   // Treat the slot context as ModelSlotContext when the optional viewer/theme
@@ -408,6 +418,8 @@ export function IframeHost({
     viewer: projectBlockInitViewer(context),
     theme: modelCtx.theme ?? 'light',
     renderMode: install.renderMode,
+    // Advisory maturity signal — server-authoritative values from the mint.
+    ...projectBlockInitMaturity({ domain, maxBrowsingLevel }),
   });
 
   // Keep the controller's interval posting the freshest payload. buildInitPayload
