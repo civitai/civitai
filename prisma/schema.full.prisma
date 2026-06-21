@@ -2519,6 +2519,11 @@ model BlockUserSubscription {
   // express partial unique indexes with array expressions inline). One
   // blanket sub per (user, app, scope); one pinned sub per
   // (user, app, scope, slot, target_model_ids[1]).
+
+  // Phase 0 author analytics: installs-over-time for an owned app block
+  // (app_block_id equality + created_at range). See migration
+  // 20260621120000_bus_app_block_created_analytics_idx.
+  @@index([appBlockId, createdAt(sort: Desc)], map: "bus_app_block_created_idx")
   @@map("block_user_subscriptions")
 }
 

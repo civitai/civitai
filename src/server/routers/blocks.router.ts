@@ -50,9 +50,15 @@ import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
+  emptyRevenue,
   getRecentAttributionsForOwner,
   getRevenueForOwner,
 } from '~/server/services/blocks/buzz-attribution.service';
+import {
+  emptyAnalytics,
+  getMyAppAnalytics,
+  resolveRange,
+} from '~/server/services/blocks/app-analytics.service';
 import {
   getRepresentativeBaseModel,
   resolveBlockCheckpoint,
@@ -2411,6 +2417,12 @@ export const blocksRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
+      // Dark-flag fail-closed: while the appBlocks flag is off the middleware
+      // marks the ctx → return the zeroed revenue shape WITHOUT running any
+      // aggregate, so a flag-off moderator gets no live revenue data.
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return emptyRevenue();
+      }
       const user = ctx.user as SessionUser;
       const { summary, topApps } = await getRevenueForOwner({
         ownerUserId: user.id,
@@ -2423,6 +2435,44 @@ export const blocksRouter = router({
         appBlockId: input.appBlockId,
       });
       return { summary, topApps, recentAttributions };
+    }),
+
+  /**
+   * Phase 0 author analytics — installs, runs+buzz spent, buzz purchased,
+   * and engagement for the caller's OWN app(s), derived entirely from
+   * existing App Blocks tables (no new instrumentation). Read-only.
+   *
+   * Same audience gate as getMyRevenue (moderatorProcedure +
+   * enforceAppBlocksFlag — dark behind the appBlocks flag). Ownership is
+   * enforced inside the service: it resolves the caller's owned app_block
+   * ids via AppBlock.app.userId and returns zeroed/empty analytics for a
+   * non-owned id, so an author can never read another author's metrics.
+   */
+  getMyAppAnalytics: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64).optional(),
+        from: z.string().datetime().optional(),
+        to: z.string().datetime().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const from = input.from ? new Date(input.from) : undefined;
+      const to = input.to ? new Date(input.to) : undefined;
+      // Dark-flag fail-closed: while the appBlocks flag is off the middleware
+      // marks the ctx → return the zeroed analytics shape (with the resolved
+      // range, so the UI still has a window) WITHOUT running any aggregate.
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return emptyAnalytics(resolveRange({ from, to }), false);
+      }
+      const user = ctx.user as SessionUser;
+      return getMyAppAnalytics({
+        userId: user.id,
+        appBlockId: input.appBlockId,
+        from,
+        to,
+      });
     }),
 
   /**

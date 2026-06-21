@@ -1250,6 +1250,30 @@ export async function getRevenueForOwner({
 }
 
 /**
+ * Zeroed revenue payload — the dark-behind-the-flag shape for getMyRevenue.
+ * Mirrors getRevenueForOwner's `{ summary, topApps }` (+ empty attributions
+ * feed) with every bucket at zero so a flag-off caller gets no data and we
+ * run NO aggregate queries. Pure constant; no DB access.
+ */
+export function emptyRevenue(): {
+  summary: RevenueSummary;
+  topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
+  recentAttributions: [];
+} {
+  const zeroBucket = { count: 0, grossCents: 0, shareCents: 0 };
+  return {
+    summary: {
+      pending: { ...zeroBucket },
+      confirmed: { ...zeroBucket },
+      paidOut: { ...zeroBucket },
+      voided: { count: 0, grossCents: 0 },
+    },
+    topApps: [],
+    recentAttributions: [],
+  };
+}
+
+/**
  * Recent attributions for the publisher dashboard's activity feed.
  * Limited to the last 50 so the response stays small; the timeseries
  * chart uses the aggregate above instead of walking individual rows.
