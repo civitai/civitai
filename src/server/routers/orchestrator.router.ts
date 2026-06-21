@@ -11,7 +11,11 @@ import {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { getWorkflow as clientGetWorkflow } from '@civitai/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
-import { logToAxiom } from '~/server/logging/client';
+import {
+  logToAxiom,
+  classifyErrorFault,
+  buildServerFaultErrorLog,
+} from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
 import { generationStatusDefaultMessage } from '~/server/schema/generation.schema';
@@ -518,19 +522,33 @@ export const orchestratorRouter = router({
           currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         });
       } catch (e) {
-        logToAxiom({
-          name: 'what-if-from-graph',
-          type: 'error',
-          payload: input,
-          error:
-            e instanceof TRPCError
-              ? {
-                  code: e.code,
-                  name: e.name,
-                  message: e.message,
-                }
-              : e,
-        }).catch();
+        // ~94% of failures here are EXPECTED client-fault validation (BAD_REQUEST
+        // et al. — "resources not available for generation", "request is invalid")
+        // for a non-critical cost PREVIEW. Logging those at error severity made
+        // this the single largest error-by-name entry in prod and buried the real
+        // ~6% server faults. Branch on the TRPCError code:
+        //  - client fault → log at 'info' (normal user feedback, not an incident);
+        //  - server fault → log at 'error' WITH the un-masked underlying cause
+        //    (errorHandling.ts replaces the message with a generic string but keeps
+        //    the original on `.cause`), so the real 500s stay diagnosable.
+        // Behavior is otherwise unchanged: the client still receives the original
+        // 400/500 because we always re-throw `e`.
+        if (classifyErrorFault(e) === 'client') {
+          logToAxiom({
+            name: 'what-if-from-graph',
+            type: 'info',
+            payload: input,
+            error:
+              e instanceof TRPCError ? { code: e.code, name: e.name, message: e.message } : e,
+          }).catch();
+        } else {
+          logToAxiom({
+            name: 'what-if-from-graph',
+            type: 'error',
+            payload: input,
+            error: buildServerFaultErrorLog(e),
+          }).catch();
+        }
         throw e;
       }
     }),
