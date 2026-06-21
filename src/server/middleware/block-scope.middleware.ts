@@ -41,6 +41,21 @@ export interface BlockTokenClaims {
   ctx: Record<string, unknown>;
   scopes: string[];
   buzzBudget?: number;
+  /**
+   * AUTHORITATIVE color-domain maturity ceiling — a bitwise browsing-level
+   * flag stamped at token mint from the request host's color domain. SFW
+   * domains (green/blue) carry the SFW flag; red carries all levels. The
+   * block catalog/generation belts derive the effective browsing level by
+   * intersecting the client's requested level with this ceiling, so a
+   * SFW-domain token can never widen to mature content.
+   *
+   * OPTIONAL by design: a token minted before this claim existed (legacy /
+   * the pre-#2670 mint path) carries NO value. Consumers MUST fail CLOSED —
+   * treat an absent / non-finite claim as the SFW ceiling.
+   */
+  maxBrowsingLevel?: number;
+  /** Advisory: the color domain the token was minted on (`green`|`blue`|`red`). */
+  domain?: string;
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
@@ -321,6 +336,20 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       ) {
         return null;
       }
+      // Maturity claims are optional, but if PRESENT they must be well-typed:
+      // a token carrying a non-numeric / NaN / Infinity maxBrowsingLevel is
+      // rejected at verify time (so the clamp's fail-closed-to-SFW fallback
+      // never has to defend against a garbage finite-looking value reaching
+      // it). Same for the advisory `domain` string.
+      if (
+        claims.maxBrowsingLevel !== undefined &&
+        (typeof claims.maxBrowsingLevel !== 'number' || !Number.isFinite(claims.maxBrowsingLevel))
+      ) {
+        return null;
+      }
+      if (claims.domain !== undefined && typeof claims.domain !== 'string') {
+        return null;
+      }
       // Audit-9 #1: validate sub shape here so a forged token with
       // sub: "user:abc" is rejected at verify-time. Otherwise the seam is
       // a future handler that does claims.sub.startsWith('user:') and
@@ -403,6 +432,16 @@ export function enforceContextBinding(
       throw forbidden(`unknown scope: ${scope}`);
     }
     switch (scope) {
+      case 'catalog:read': {
+        // BROWSE scope (Phase 3 block catalog endpoint). No context binding:
+        // it searches the PUBLIC catalog, so there is no single modelId to bind
+        // to and no `:self` subject requirement (anon tokens may browse). The
+        // maturity ceiling is enforced separately + authoritatively by the
+        // endpoint via claims.maxBrowsingLevel (clamped, fail-closed to SFW) —
+        // NOT here. This explicit no-op case is required so the fail-closed
+        // `default` below does not reject a valid catalog:read token.
+        break;
+      }
       case 'models:read:self': {
         const modelIdStr =
           readBoundQueryString(req, 'id') ?? readBoundQueryString(req, 'modelId');
