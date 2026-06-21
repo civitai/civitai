@@ -8,6 +8,7 @@ import {
   SimpleGrid,
   Stack,
   Table,
+  Tabs,
   Text,
   Title,
   Tooltip,
@@ -15,6 +16,7 @@ import {
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import Link from 'next/link';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { AppAnalyticsPanel } from '~/components/AppBlocks/AppAnalyticsPanel';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
@@ -145,29 +147,13 @@ function SummaryCards({ summary }: { summary: SummaryShape }) {
   );
 }
 
-export default function RevenueDashboardPage() {
-  const features = useFeatureFlags();
-  if (!features.appBlocks) return <NotFound />;
+function RevenuePanel() {
   const { data: rawData, isLoading, error } = trpc.blocks.getMyRevenue.useQuery({});
   const data = rawData as RevenueData | undefined;
 
   return (
-    <>
-      <Meta title="App Blocks Revenue — Civitai" deIndex />
-      <Container size="lg" py="xl">
-        <Stack gap="lg">
-          <div>
-            <Title order={2}>App Blocks Revenue</Title>
-            <Text c="dimmed" size="sm">
-              Revenue share from buzz purchases originated inside your blocks. Payouts
-              are batched weekly; see <Anchor component={Link} href="/apps/installed">
-                Apps
-              </Anchor>{' '}
-              to manage installations.
-            </Text>
-          </div>
-
-          {isLoading && (
+    <Stack gap="lg">
+      {isLoading && (
             <Group justify="center" py="xl">
               <Loader />
             </Group>
@@ -278,6 +264,43 @@ export default function RevenueDashboardPage() {
               </Card>
             </>
           )}
+    </Stack>
+  );
+}
+
+export default function AppBlocksDashboardPage() {
+  const features = useFeatureFlags();
+  if (!features.appBlocks) return <NotFound />;
+
+  return (
+    <>
+      <Meta title="App Blocks Dashboard — Civitai" deIndex />
+      <Container size="lg" py="xl">
+        <Stack gap="lg">
+          <div>
+            <Title order={2}>App Blocks Dashboard</Title>
+            <Text c="dimmed" size="sm">
+              Revenue share and analytics for your blocks. Payouts are batched
+              weekly; see{' '}
+              <Anchor component={Link} href="/apps/installed">
+                Apps
+              </Anchor>{' '}
+              to manage installations.
+            </Text>
+          </div>
+
+          <Tabs defaultValue="revenue" keepMounted={false}>
+            <Tabs.List mb="md">
+              <Tabs.Tab value="revenue">Revenue</Tabs.Tab>
+              <Tabs.Tab value="analytics">Analytics</Tabs.Tab>
+            </Tabs.List>
+            <Tabs.Panel value="revenue">
+              <RevenuePanel />
+            </Tabs.Panel>
+            <Tabs.Panel value="analytics">
+              <AppAnalyticsPanel />
+            </Tabs.Panel>
+          </Tabs>
         </Stack>
       </Container>
     </>
