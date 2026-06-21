@@ -89,17 +89,28 @@ export type UpsertAppBlockReviewResult = {
  *
  * Returns `isFirstReview` so the caller fires the blue-buzz reward ONLY on the
  * first create. Busts the rating cache after the write.
+ *
+ * `recommended`: CREATE defaults it to true; UPDATE leaves an existing value
+ * UNCHANGED when the caller omits it (so a partial edit can't silently flip a
+ * stored `false` back to true).
  */
 export const upsertAppBlockReview = async ({
   userId,
   appBlockId,
   rating,
-  recommended = true,
+  recommended,
   details = null,
 }: UpsertAppBlockReviewInput & { userId: number }): Promise<UpsertAppBlockReviewResult> => {
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
     throw throwBadRequestError('Rating must be a whole number from 1 to 5');
   }
+
+  // CREATE defaults `recommended` to true; UPDATE leaves it UNCHANGED when the
+  // caller omitted it (input.recommended === undefined) — so a direct-API edit
+  // that doesn't send `recommended` can't silently flip an existing `false` back
+  // to true. Only an EXPLICIT boolean is written on update.
+  const createRecommended = recommended ?? true;
+  const updateRecommended = recommended === undefined ? {} : { recommended };
 
   // Gate 2: no self-review. Reject before any write so the owner can't seed
   // their own (even though it's excluded from the aggregate too).
@@ -141,7 +152,7 @@ export const upsertAppBlockReview = async ({
     // the winner's create already set isFirstReview=true and fired it once.
     try {
       review = await dbWrite.appBlockReview.create({
-        data: { appBlockId, userId, rating, recommended, details },
+        data: { appBlockId, userId, rating, recommended: createRecommended, details },
         select: reviewSelect,
       });
       isFirstReview = true;
@@ -149,7 +160,7 @@ export const upsertAppBlockReview = async ({
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         review = await dbWrite.appBlockReview.update({
           where: { appBlockId_userId: { appBlockId, userId } },
-          data: { rating, recommended, details },
+          data: { rating, ...updateRecommended, details },
           select: reviewSelect,
         });
         isFirstReview = false;
@@ -160,7 +171,7 @@ export const upsertAppBlockReview = async ({
   } else {
     review = await dbWrite.appBlockReview.update({
       where: { id: existing.id },
-      data: { rating, recommended, details },
+      data: { rating, ...updateRecommended, details },
       select: reviewSelect,
     });
     isFirstReview = false;

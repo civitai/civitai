@@ -90,6 +90,62 @@ describe('upsertAppBlockReview — create vs update', () => {
   });
 });
 
+describe('upsertAppBlockReview — recommended default/preserve (FIX 2)', () => {
+  it('CREATE defaults recommended to true when omitted', async () => {
+    mockDb.appBlockReview.findUnique.mockResolvedValue(null);
+    await upsertAppBlockReview({ userId: 7, appBlockId: 'ab_1', rating: 5 });
+    const data = (mockDb.appBlockReview.create.mock.calls[0][0] as { data: any }).data;
+    expect(data.recommended).toBe(true);
+  });
+
+  it('CREATE honors an explicit recommended=false', async () => {
+    mockDb.appBlockReview.findUnique.mockResolvedValue(null);
+    await upsertAppBlockReview({
+      userId: 7,
+      appBlockId: 'ab_1',
+      rating: 5,
+      recommended: false,
+    });
+    const data = (mockDb.appBlockReview.create.mock.calls[0][0] as { data: any }).data;
+    expect(data.recommended).toBe(false);
+  });
+
+  it('UPDATE that OMITS recommended does NOT write it (preserves a stored false)', async () => {
+    mockDb.appBlockReview.findUnique.mockResolvedValue({ id: 1 });
+    await upsertAppBlockReview({ userId: 7, appBlockId: 'ab_1', rating: 4 });
+    const data = (mockDb.appBlockReview.update.mock.calls[0][0] as { data: any }).data;
+    // The bug: a default `recommended = true` would flip an existing false back
+    // to true. The field must be ABSENT from the update payload when omitted.
+    expect('recommended' in data).toBe(false);
+    expect(data).toMatchObject({ rating: 4 });
+  });
+
+  it('UPDATE that PROVIDES recommended writes it explicitly', async () => {
+    mockDb.appBlockReview.findUnique.mockResolvedValue({ id: 1 });
+    await upsertAppBlockReview({
+      userId: 7,
+      appBlockId: 'ab_1',
+      rating: 4,
+      recommended: false,
+    });
+    const data = (mockDb.appBlockReview.update.mock.calls[0][0] as { data: any }).data;
+    expect(data.recommended).toBe(false);
+  });
+
+  it('P2002-fallback UPDATE also preserves recommended when omitted', async () => {
+    mockDb.appBlockReview.findUnique.mockResolvedValue(null);
+    mockDb.appBlockReview.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+    await upsertAppBlockReview({ userId: 7, appBlockId: 'ab_1', rating: 5 });
+    const data = (mockDb.appBlockReview.update.mock.calls[0][0] as { data: any }).data;
+    expect('recommended' in data).toBe(false);
+  });
+});
+
 describe('upsertAppBlockReview — concurrent first-review race (P2002 → update)', () => {
   it('a CREATE that loses the unique race falls back to UPDATE with isFirstReview=false (no 2nd reward, no 500)', async () => {
     // Both racers read null (findUnique) → both reach create. This racer LOSES:

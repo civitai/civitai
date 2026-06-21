@@ -2578,9 +2578,10 @@ export class BlockRegistry {
   /**
    * Marketplace listing. Filters by slot (manifest @> {targets:[{slotId}]}),
    * a free-text ILIKE on the manifest name/blockId, and (F-E E3) a mod-assigned
-   * `category`. Sortable (F-E E3) by `popular` (install_count desc — the
-   * default, unchanged from pre-E3), `newest` (current_version_deployed_at
-   * desc, falling back to created_at), or `name` (manifest name asc).
+   * `category`. Sortable by `rating` (Bayesian-shrinkage avg rating desc — the
+   * DEFAULT; 0-review apps sit mid-pack at the global mean), `popular`
+   * (install_count desc), `newest` (current_version_deployed_at desc, falling
+   * back to created_at), or `name` (manifest name asc).
    *
    * Cursor: a deterministic keyset over `(sortKey, id)`. We always append
    * `ab.id ASC` as the final tiebreaker so the cursor is unambiguous; the
