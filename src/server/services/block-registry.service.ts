@@ -31,6 +31,9 @@ import type {
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { toPublicBlockManifest, toPublicScreenshots } from '~/server/schema/blocks/subscription.schema';
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+import { CacheTTL } from '~/server/common/constants';
+import { queryCache } from '~/server/utils/cache-helpers';
+import { BAYES_MIN_REVIEWS } from '~/server/services/appBlockReview.service';
 
 const CACHE_TTL_SECONDS = 60;
 export const MAX_BLOCKS_PER_SLOT = 3;
@@ -45,36 +48,155 @@ export const MAX_BLOCKS_PER_SLOT = 3;
 export const MARKETPLACE_SCOPES_SUMMARY_LIMIT = 3;
 
 /**
- * F-E E3 marketplace keyset cursor. Encodes the last row's `(sortKey, id)` as a
- * base64url string so the next page resumes strictly after it (the sort key is
- * embedded so a paged scan stays stable even when many rows share a sort value,
- * e.g. install_count=0). Opaque to the client. We use a unit-separator (\x1f) —
- * a char that can't appear in any of our sort keys (zero-padded digits, a
- * fixed-width timestamp, or a lowercased name) nor in an app_block id — so the
- * split is unambiguous.
+ * F-E E3 marketplace keyset cursor. Encodes the last row's `(sortKey, id)` plus
+ * the pinned Bayesian mean `m` as a base64url string so the next page resumes
+ * strictly after it (the sort key is embedded so a paged scan stays stable even
+ * when many rows share a sort value, e.g. install_count=0). Opaque to the
+ * client. We use a unit-separator (\x1f) — a char that can't appear in any of
+ * our sort keys (zero-padded digits, a fixed-width timestamp, or a lowercased
+ * name) nor in an app_block id nor a numeric mean — so the split is unambiguous.
+ *
+ * `m` PINNING (the `rating` sort): the sort key is computed from the global mean
+ * `m`, which is read from a 1h cache that can expire/bust MID-PAGINATION. If
+ * page 2 re-derived every row's key with a different `m` than page 1's cursor
+ * was encoded with, the keyset boundary shifts and one row is silently skipped
+ * or duplicated. So we PIN `m` into the cursor and reuse it for every page of a
+ * paging session. Empty for sorts that don't use `m` (popular/newest/name).
  */
 const CURSOR_SEPARATOR = String.fromCharCode(31); // unit separator (\x1f)
-function encodeMarketplaceCursor(sortKey: string, id: string): string {
-  return Buffer.from(`${sortKey}${CURSOR_SEPARATOR}${id}`, 'utf8').toString('base64url');
+function encodeMarketplaceCursor(sortKey: string, id: string, pinnedMean?: number): string {
+  // Only the `rating` sort pins a mean; other sorts emit the legacy 2-field
+  // `sortKey␟id` cursor (no trailing separator) so their format is unchanged.
+  const body =
+    pinnedMean == null
+      ? `${sortKey}${CURSOR_SEPARATOR}${id}`
+      : `${sortKey}${CURSOR_SEPARATOR}${id}${CURSOR_SEPARATOR}${pinnedMean}`;
+  return Buffer.from(body, 'utf8').toString('base64url');
 }
 function decodeMarketplaceCursor(cursor: string | undefined): {
   cursorSortKey: string | null;
   cursorId: string | null;
+  /** The mean `m` pinned by the FIRST page of this session (null if absent). */
+  cursorMean: number | null;
 } {
-  if (!cursor) return { cursorSortKey: null, cursorId: null };
+  const empty = { cursorSortKey: null, cursorId: null, cursorMean: null };
+  if (!cursor) return empty;
   let decoded: string;
   try {
     decoded = Buffer.from(cursor, 'base64url').toString('utf8');
   } catch {
     // Malformed cursor → treat as first page (fail-open to a safe default).
-    return { cursorSortKey: null, cursorId: null };
+    return empty;
   }
-  const sep = decoded.indexOf(CURSOR_SEPARATOR);
-  if (sep < 0) return { cursorSortKey: null, cursorId: null };
+  // Split on the FIRST two separators: [sortKey, id, mean]. sortKey + id can't
+  // contain \x1f (zero-padded digits / timestamp / lowercased name / app id),
+  // so the first two indexOf hits are the field boundaries.
+  const sep1 = decoded.indexOf(CURSOR_SEPARATOR);
+  if (sep1 < 0) return empty;
+  const sep2 = decoded.indexOf(CURSOR_SEPARATOR, sep1 + 1);
+  // Legacy 2-field cursor (no pinned mean) — fail-open to an unpinned page.
+  const cursorId = sep2 < 0 ? decoded.slice(sep1 + 1) : decoded.slice(sep1 + 1, sep2);
+  const meanField = sep2 < 0 ? '' : decoded.slice(sep2 + 1);
+  const meanNum = meanField === '' ? NaN : Number(meanField);
   return {
-    cursorSortKey: decoded.slice(0, sep),
-    cursorId: decoded.slice(sep + 1),
+    cursorSortKey: decoded.slice(0, sep1),
+    cursorId,
+    cursorMean: Number.isFinite(meanNum) ? meanNum : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace reviews — aggregate SQL + Bayesian sort (F-E "marketplace").
+// ---------------------------------------------------------------------------
+
+/**
+ * Correlated subquery: AVG(rating) over an app's AGGREGATE-ELIGIBLE reviews —
+ * NOT mod-excluded AND NOT the app owner's own (self-review). NULL for a
+ * 0-review app. The card number, the detail number, and the global-mean `m`
+ * share this eligibility filter so they all agree (one source of truth).
+ */
+const AVG_RATING_SUBQUERY = Prisma.sql`(
+  SELECT AVG(abr.rating)::float
+  FROM app_block_reviews abr
+  WHERE abr.app_block_id = ab.id
+    AND NOT abr.exclude
+    AND abr.user_id IS DISTINCT FROM oc."userId"
+)`;
+
+/** Correlated subquery: COUNT of aggregate-eligible reviews (same filter). */
+const REVIEW_COUNT_SUBQUERY = Prisma.sql`(
+  SELECT COUNT(*)::bigint
+  FROM app_block_reviews abr
+  WHERE abr.app_block_id = ab.id
+    AND NOT abr.exclude
+    AND abr.user_id IS DISTINCT FROM oc."userId"
+)`;
+
+/** Correlated subquery: SUM(rating) of aggregate-eligible reviews (same filter). */
+const SUM_RATING_SUBQUERY = Prisma.sql`(
+  SELECT COALESCE(SUM(abr.rating), 0)::float
+  FROM app_block_reviews abr
+  WHERE abr.app_block_id = ab.id
+    AND NOT abr.exclude
+    AND abr.user_id IS DISTINCT FROM oc."userId"
+)`;
+
+// Scale factor for encoding the [1,5] Bayesian score as a zero-padded sortable
+// integer string. score * 1e6 → 7 digits max (5_000_000), lpad to 9 for headroom.
+const BAYES_SCORE_SCALE = 1_000_000;
+const BAYES_SCORE_PAD = 9;
+const INSTALL_PAD = 20; // matches the `popular` sort's install-count padding
+
+/**
+ * The Bayesian-shrinkage `rating` sort key, as a single zero-padded sortable
+ * TEXT (the same fragment reused IDENTICALLY in SELECT, the keyset WHERE, and
+ * ORDER BY — if it drifts, keyset pagination silently skips rows).
+ *
+ *   score = (C*m + SUM(rating)) / (C + n)
+ *     n = aggregate-eligible review count, m = global mean (param), C = prior.
+ *   0-review apps → score = m (mid-pack, not buried).
+ *
+ * Encoded DESC: lpad(round(score*SCALE)) so a plain TEXT DESC compare orders by
+ * score. Tiebreaker concatenated: equal scores fall back to install_count
+ * (lpad), then `ab.id` (the row-value keyset's final component). The whole key
+ * is one TEXT so the keyset tuple `(sort_key, id)` is a correct total order.
+ */
+function bayesianRatingSortKey(globalMean: number): Prisma.Sql {
+  // score = (C*m + SUM) / (C + n). C and m are server constants/params (safe).
+  const score = Prisma.sql`(
+    (${BAYES_MIN_REVIEWS}::float * ${globalMean}::float + ${SUM_RATING_SUBQUERY})
+    / (${BAYES_MIN_REVIEWS}::float + ${REVIEW_COUNT_SUBQUERY})
+  )`;
+  const installCount = Prisma.sql`(
+    SELECT COUNT(DISTINCT bus.user_id) FROM block_user_subscriptions bus
+    WHERE bus.app_block_id = ab.id
+  )`;
+  return Prisma.sql`(
+    lpad(round(${score} * ${BAYES_SCORE_SCALE})::bigint::text, ${BAYES_SCORE_PAD}, '0')
+    || lpad(${installCount}::text, ${INSTALL_PAD}, '0')
+  )`;
+}
+
+/**
+ * The global mean rating `m` across ALL aggregate-eligible app reviews (NOT
+ * exclude AND not self-review), cached 1h. Falls back to the neutral mid-scale
+ * (3.0) when there are no reviews yet (the marketplace is dark/empty), so a
+ * 0-review world still produces a sane, stable sort.
+ */
+async function getGlobalMeanRating(): Promise<number> {
+  const cacheable = queryCache(dbRead, 'getGlobalMeanRating', 'v1');
+  const rows = await cacheable<{ mean: number | null }[]>(
+    Prisma.sql`
+      SELECT AVG(abr.rating)::float AS mean
+      FROM app_block_reviews abr
+      JOIN app_blocks ab ON ab.id = abr.app_block_id
+      JOIN "OauthClient" oc ON oc.id = ab.app_id
+      WHERE NOT abr.exclude
+        AND abr.user_id IS DISTINCT FROM oc."userId"
+    `,
+    { ttl: CacheTTL.hour, tag: ['app-rating:global-mean'] }
+  );
+  return rows[0]?.mean ?? 3.0;
 }
 
 // Slot-reservation math lives in a client-safe module so the model-page SSR
@@ -2456,9 +2578,10 @@ export class BlockRegistry {
   /**
    * Marketplace listing. Filters by slot (manifest @> {targets:[{slotId}]}),
    * a free-text ILIKE on the manifest name/blockId, and (F-E E3) a mod-assigned
-   * `category`. Sortable (F-E E3) by `popular` (install_count desc — the
-   * default, unchanged from pre-E3), `newest` (current_version_deployed_at
-   * desc, falling back to created_at), or `name` (manifest name asc).
+   * `category`. Sortable by `rating` (Bayesian-shrinkage avg rating desc — the
+   * DEFAULT; 0-review apps sit mid-pack at the global mean), `popular`
+   * (install_count desc), `newest` (current_version_deployed_at desc, falling
+   * back to created_at), or `name` (manifest name asc).
    *
    * Cursor: a deterministic keyset over `(sortKey, id)`. We always append
    * `ab.id ASC` as the final tiebreaker so the cursor is unambiguous; the
@@ -2490,6 +2613,8 @@ export class BlockRegistry {
       install_count: bigint;
       category: string | null;
       approved_scopes: string[] | null;
+      avg_rating: number | null;
+      review_count: bigint;
       // The sort key for THIS row, projected so we can encode it into the
       // nextCursor for a stable keyset scan. Text so one column fits all sorts.
       sort_key: string;
@@ -2501,8 +2626,9 @@ export class BlockRegistry {
     const categoryFilter = category ?? null;
 
     // Keyset cursor = `${sortKey} ${id}` of the last row of the prior page.
-    // Split it back into (sortKey, id) so the WHERE clause resumes after it.
-    const { cursorSortKey, cursorId } = decodeMarketplaceCursor(cursor);
+    // Split it back into (sortKey, id, mean) so the WHERE clause resumes after
+    // it and the `rating` sort reuses the SAME pinned mean across all pages.
+    const { cursorSortKey, cursorId, cursorMean } = decodeMarketplaceCursor(cursor);
 
     // The sort key is a TEXT expression chosen so a plain text comparison
     // orders rows correctly for the requested sort. The SAME expression is used
@@ -2517,13 +2643,27 @@ export class BlockRegistry {
     // less-than the cursor tuple); name ASC (resume strictly greater-than).
     // ab.id shares the sort_key direction so the row-value tuple comparison is
     // a correct, total keyset.
+    // `rating` (the default) needs the marketplace-wide Bayesian prior `m`
+    // (cheap, 1h-cached scalar) injected as a param. The other sorts ignore it.
+    // PIN `m` across a paging session: page 1 reads the 1h cache and encodes the
+    // value it used into nextCursor; pages 2..N decode that pinned `m` and reuse
+    // it (NOT a fresh cache read) so the sort key stays identical even if the
+    // cache expires/busts mid-pagination — otherwise the keyset boundary shifts
+    // and one row is silently skipped or duplicated. Cursorless first page only
+    // reads the cache. Other sorts don't use `m` (kept 0).
+    const globalMean =
+      sort === 'rating'
+        ? cursorMean ?? (await getGlobalMeanRating())
+        : 0;
     const sortKeyExpr =
-      sort === 'popular'
+      sort === 'rating'
+        ? bayesianRatingSortKey(globalMean)
+        : sort === 'popular'
         ? Prisma.sql`lpad((SELECT COUNT(DISTINCT bus.user_id) FROM block_user_subscriptions bus WHERE bus.app_block_id = ab.id)::text, 20, '0')`
         : sort === 'newest'
         ? Prisma.sql`to_char(COALESCE(ab.current_version_deployed_at, ab.created_at) AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')`
         : Prisma.sql`LOWER(COALESCE(ab.manifest->>'name', ab.block_id))`;
-    const descending = sort === 'popular' || sort === 'newest';
+    const descending = sort === 'rating' || sort === 'popular' || sort === 'newest';
     const dir = descending ? Prisma.sql`DESC` : Prisma.sql`ASC`;
     const keysetCmp = descending ? Prisma.sql`<` : Prisma.sql`>`;
 
@@ -2544,6 +2684,10 @@ export class BlockRegistry {
         -- ranking. COUNT(DISTINCT user_id) makes the number mean "users".
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count,
+        -- Marketplace reviews: aggregate-eligible AVG + COUNT (excludes
+        -- mod-excluded + self-reviews). NULL avg = 0-review app.
+        ${AVG_RATING_SUBQUERY} AS avg_rating,
+        ${REVIEW_COUNT_SUBQUERY} AS review_count,
         -- The sort key for this row, as text, so the keyset cursor can carry it.
         ${sortKeyExpr} AS sort_key
       FROM app_blocks ab
@@ -2571,8 +2715,13 @@ export class BlockRegistry {
     `)) as Row[];
     const trimmed = rows.slice(0, limit);
     const last = trimmed[trimmed.length - 1];
+    // Pin `m` into the cursor for the `rating` sort so every subsequent page
+    // reuses page 1's mean (see globalMean above). Omitted for other sorts.
+    const pinnedMean = sort === 'rating' ? globalMean : undefined;
     const nextCursor =
-      rows.length > limit && last ? encodeMarketplaceCursor(last.sort_key, last.id) : undefined;
+      rows.length > limit && last
+        ? encodeMarketplaceCursor(last.sort_key, last.id, pinnedMean)
+        : undefined;
     return {
       // F-E E1 anon-exposure allowlist: project the raw stored manifest down to
       // the vetted PUBLIC subset (name/description/targets[].slotId) via
@@ -2600,6 +2749,9 @@ export class BlockRegistry {
               .filter((s): s is string => typeof s === 'string')
               .slice(0, MARKETPLACE_SCOPES_SUMMARY_LIMIT)
           : [],
+        // Marketplace reviews (aggregate-eligible). avgRating NULL = 0-review.
+        avgRating: r.avg_rating ?? null,
+        reviewCount: Number(r.review_count),
       })),
       nextCursor,
     };
@@ -2644,6 +2796,8 @@ export class BlockRegistry {
       version: string | null;
       approved_scopes: string[] | null;
       install_count: bigint;
+      avg_rating: number | null;
+      review_count: bigint;
       // F-E E5: stored screenshot records ([{ key, index, ext, contentType }]),
       // jsonb. NULL until the E5 migration is applied + an app is (re)approved
       // with a `screenshots/` dir — projected to PUBLIC display URLs below.
@@ -2662,7 +2816,9 @@ export class BlockRegistry {
         ab.approved_scopes,
         ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
-         WHERE bus.app_block_id = ab.id) AS install_count
+         WHERE bus.app_block_id = ab.id) AS install_count,
+        ${AVG_RATING_SUBQUERY} AS avg_rating,
+        ${REVIEW_COUNT_SUBQUERY} AS review_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.id = ${appBlockId}::text
@@ -2695,6 +2851,10 @@ export class BlockRegistry {
       contentRating: row.content_rating ?? null,
       version: row.version ?? null,
       installCount: Number(row.install_count),
+      // Marketplace reviews (aggregate-eligible — excludes mod-excluded +
+      // self-reviews). avgRating NULL = 0-review. Display-safe aggregates.
+      avgRating: row.avg_rating ?? null,
+      reviewCount: Number(row.review_count),
       // Already-public standalone origin (no token/scope). Same host the webhook
       // validates the submitted bundle's iframe.src against.
       liveUrl: `https://${row.block_id}.${env.APPS_DOMAIN}`,
@@ -2740,6 +2900,8 @@ export class BlockRegistry {
       install_count: bigint;
       category: string | null;
       approved_scopes: string[] | null;
+      avg_rating: number | null;
+      review_count: bigint;
     };
     const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT
@@ -2751,7 +2913,9 @@ export class BlockRegistry {
         ab.category,
         ab.approved_scopes,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
-         WHERE bus.app_block_id = ab.id) AS install_count
+         WHERE bus.app_block_id = ab.id) AS install_count,
+        ${AVG_RATING_SUBQUERY} AS avg_rating,
+        ${REVIEW_COUNT_SUBQUERY} AS review_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'
@@ -2777,6 +2941,8 @@ export class BlockRegistry {
             .filter((s): s is string => typeof s === 'string')
             .slice(0, MARKETPLACE_SCOPES_SUMMARY_LIMIT)
         : [],
+      avgRating: r.avg_rating ?? null,
+      reviewCount: Number(r.review_count),
     }));
   }
 

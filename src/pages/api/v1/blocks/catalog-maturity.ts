@@ -1,6 +1,7 @@
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 import {
   allBrowsingLevelsFlag,
+  allowMatureContentForCeiling,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -27,13 +28,13 @@ import { Flags } from '~/shared/utils/flags';
  *     (allBrowsingLevelsFlag) with the ceiling, which collapses to exactly the
  *     ceiling — so no client-supplied maturity field is ever read or honored.
  *
- * IMPORTANT (advisory until #2670 merges): the `maxBrowsingLevel` claim is
- * MINTED by PR #2670. Until that lands, no token carries it → every token
- * resolves to the SFW ceiling here (the safe GA posture). The red-domain
- * unclamp path activates automatically once #2670 stamps the claim. When
- * #2670 merges, this can delegate to the shared `domainBrowsingCeiling` /
- * `resolveBlockMaturity` it introduces in browsingLevel.constants.ts /
- * blocks.router.ts (single source of truth) — see the follow-up note in the PR.
+ * The `maxBrowsingLevel` claim is MINTED by PR #2670 (now merged). The SFW /
+ * mature determination here DELEGATES to that PR's single source of truth,
+ * `allowMatureContentForCeiling` in browsingLevel.constants.ts (the same helper
+ * the generation belt in blocks.router.ts uses), so the catalog and generation
+ * paths can never drift on what "this domain's ceiling allows mature content"
+ * means. The intersection clamp below is the catalog-specific application of
+ * that ceiling to a browsing-level filter.
  */
 export function resolveCatalogBrowsingLevel(claims: Pick<BlockTokenClaims, 'maxBrowsingLevel'>): {
   browsingLevel: number;
@@ -48,9 +49,14 @@ export function resolveCatalogBrowsingLevel(claims: Pick<BlockTokenClaims, 'maxB
   // client can never widen because (anything ∩ ceiling) ⊆ ceiling.
   const browsingLevel = Flags.intersection(allBrowsingLevelsFlag, ceiling);
 
-  // SFW iff the ceiling is a subset of the SFW flag (red carries nsfw bits →
-  // not SFW). Drives the per-image filter: no nsfw cover image on a SFW ceiling.
-  const isSfwCeiling = Flags.intersection(ceiling, sfwBrowsingLevelsFlag) === ceiling;
+  // SFW iff the ceiling permits NO mature content. Delegate to #2670's single
+  // source of truth (`allowMatureContentForCeiling` returns `false` for a
+  // ceiling carrying no nsfw bits, `undefined` only when mature is allowed —
+  // i.e. red) instead of re-deriving the SFW-ceiling test here. Behaviorally
+  // identical to `intersection(ceiling, sfwFlag) === ceiling` because the SFW
+  // and nsfw flags are disjoint and partition allBrowsingLevels. Drives the
+  // per-image filter: no nsfw cover image on a SFW ceiling.
+  const isSfwCeiling = allowMatureContentForCeiling(ceiling) === false;
 
   return { browsingLevel, isSfwCeiling };
 }

@@ -167,6 +167,21 @@ export interface BlockInitPayload {
   } | null;
   theme: 'light' | 'dark';
   renderMode: 'iframe' | 'inline';
+  /**
+   * Color-domain maturity signal (ADVISORY — for block self-filtering / blur).
+   * The AUTHORITATIVE enforcement is the server-side generation clamp keyed on
+   * the same value baked into the block token's `maxBrowsingLevel` claim; this
+   * field lets a block proactively filter its own catalog reads and blur mature
+   * thumbnails without a round-trip.
+   *
+   * - `domain`: the color domain the token was minted on (`green`|`blue`|`red`),
+   *   or null when the host didn't resolve to a known color.
+   * - `maxBrowsingLevel`: the bitwise browsing-level ceiling for this domain
+   *   (green/blue → SFW, red → all). Consumed by the SDK `useDomainMaturity()`
+   *   hook (separate follow-up PR in the SDK repo).
+   */
+  domain?: 'green' | 'blue' | 'red' | null;
+  maxBrowsingLevel?: number;
 }
 
 export interface BlockManifest {

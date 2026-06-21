@@ -72,6 +72,92 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
     expect(payload.buzzBudget).toBe(200);
   });
 
+  it('stamps maxBrowsingLevel + domain claims when supplied (SFW domain)', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['ai:write:budgeted'],
+      ctx: { modelId: 1 },
+      domain: 'green',
+      maxBrowsingLevel: 3, // sfwBrowsingLevelsFlag (PG | PG13)
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(payload.maxBrowsingLevel).toBe(3);
+    expect(payload.domain).toBe('green');
+  });
+
+  it('stamps the mature ceiling for a red domain', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['ai:write:budgeted'],
+      ctx: { modelId: 1 },
+      domain: 'red',
+      maxBrowsingLevel: 31, // allBrowsingLevelsFlag
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(payload.maxBrowsingLevel).toBe(31);
+    expect(payload.domain).toBe('red');
+  });
+
+  it('omits the maturity claims entirely when not supplied (legacy path)', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['models:read:self'],
+      ctx: { modelId: 1 },
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(payload.maxBrowsingLevel).toBeUndefined();
+    expect(payload.domain).toBeUndefined();
+  });
+
+  it('omits the domain claim when null (host did not resolve a color) but keeps the ceiling', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['models:read:self'],
+      ctx: { modelId: 1 },
+      domain: null,
+      maxBrowsingLevel: 3, // still the fail-closed SFW ceiling
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(payload.domain).toBeUndefined();
+    expect(payload.maxBrowsingLevel).toBe(3);
+  });
+
   it('signs anon subjects as sub="anon"', async () => {
     const { BlockTokenService } = await import('../block-token.service');
     const r = await BlockTokenService.sign({

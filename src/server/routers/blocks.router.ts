@@ -20,10 +20,20 @@ import {
   getAppDetailSchema,
   getFeaturedBlocksSchema,
   getMarketplaceMetaSchema,
+  listAppBlockReviewsSchema,
   listAvailableSchema,
+  setAppReviewExcludedSchema,
   setMarketplaceMetaSchema,
   subscriptionScopeSchema,
+  upsertAppBlockReviewSchema,
 } from '~/server/schema/blocks/subscription.schema';
+import {
+  getMyAppBlockReview,
+  listAppBlockReviews,
+  setAppReviewExcluded,
+  upsertAppBlockReview,
+} from '~/server/services/appBlockReview.service';
+import { appBlockReviewReward } from '~/server/rewards/active/appBlockReview.reward';
 import {
   approveRequestSchema,
   backfillPublishRequestSchema,
@@ -36,19 +46,31 @@ import {
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
+import {
+  allowMatureContentForCeiling,
+  domainBrowsingCeiling,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
+  emptyRevenue,
   getRecentAttributionsForOwner,
   getRevenueForOwner,
 } from '~/server/services/blocks/buzz-attribution.service';
+import {
+  emptyAnalytics,
+  getMyAppAnalytics,
+  resolveRange,
+} from '~/server/services/blocks/app-analytics.service';
 import {
   getRepresentativeBaseModel,
   resolveBlockCheckpoint,
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
@@ -71,6 +93,7 @@ import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/o
 import { createTextToImageStep } from '~/server/services/orchestrator/textToImage/textToImage';
 import { getUserById } from '~/server/services/user.service';
 import {
+  guardedProcedure,
   moderatorProcedure,
   protectedProcedure,
   middleware,
@@ -140,6 +163,45 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
 // block-tokens/index.ts); model tokens never carry `entityType`.
 function isPageToken(claims: { ctx?: unknown }): boolean {
   return (claims.ctx as { entityType?: unknown } | undefined)?.entityType === 'none';
+}
+
+// ---- Maturity enforcement (GA gate) ---------------------------------------
+//
+// AUTHORITATIVE server-side belt. The maturity ceiling comes from the TOKEN's
+// `maxBrowsingLevel` claim (server-minted from the request host at issuance —
+// see block-tokens/index.ts), NEVER from a client-supplied body field, so a
+// block on a SFW domain (green/blue) cannot generate mature output even if its
+// own code is wrong or malicious.
+//
+// FAIL CLOSED: a token minted before this feature (or any token missing the
+// numeric claim) is treated as the most restrictive SFW ceiling, never as
+// "unrestricted". `verifyBlockToken` already rejects a present-but-non-numeric
+// claim, so by here the value is either a finite number or undefined.
+//
+// Returns:
+//   - maxBrowsingLevel:   the effective ceiling (claim value, or SFW fallback)
+//   - allowMatureContent: the orchestrator flag derived from it
+//                         (`false` on SFW, `undefined`/no-clamp only on red)
+//   - isGreen:            the prompt-audit's "SFW prompt audit" toggle — true
+//                         whenever the ceiling is SFW (i.e. NOT mature-allowed)
+function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
+  maxBrowsingLevel: number;
+  allowMatureContent: boolean | undefined;
+  isGreen: boolean;
+} {
+  const maxBrowsingLevel =
+    typeof claims.maxBrowsingLevel === 'number' && Number.isFinite(claims.maxBrowsingLevel)
+      ? claims.maxBrowsingLevel
+      : sfwBrowsingLevelsFlag; // fail closed
+  const allowMatureContent = allowMatureContentForCeiling(maxBrowsingLevel);
+  return {
+    maxBrowsingLevel,
+    allowMatureContent,
+    // `auditPromptServer`'s `isGreen` flag selects the SFW prompt audit. Tie it
+    // to the maturity ceiling rather than the literal green domain: a blue
+    // (SFW, per the App-Blocks product decision) block gets the SFW audit too.
+    isGreen: allowMatureContent === false,
+  };
 }
 
 // SECURITY-CRITICAL (W10). A page token has no model binding, so the model-
@@ -1360,6 +1422,117 @@ export const blocksRouter = router({
       return { items };
     }),
 
+  // -------------------------------------------------------------------------
+  // F-E marketplace REVIEWS (5-star) — all DARK behind enforceAppBlocksFlag.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Create-or-update the viewer's review for an app block (5-star).
+   *
+   * GATING / ANTI-ABUSE (all enforced, see appBlockReview.service):
+   *   - enforceAppBlocksFlag (dark today: mutation throws UNAUTHORIZED when off).
+   *   - guardedProcedure: authenticated, email-verified, NOT muted.
+   *   - rating ∈ [1,5]; NO self-review (owner rejected); MUST have an enabled
+   *     install; ONE per (user, app) via the DB unique (upsert, not a 2nd row).
+   *
+   * REWARD (money-touching): a blue-buzz reward fires ONCE per (user, app), only
+   * on the CREATE branch (isFirstReview), AFTER the insert succeeds. It is
+   * FAIL-SOFT — a reward/ClickHouse outage must never 500 the review. We wrap
+   * it in try/catch as defense-in-depth on top of createBuzzEvent's own
+   * fail-soft inline path.
+   */
+  upsertReview: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 60,
+        errorMessage: 'Too many review submissions — slow down.',
+      })
+    )
+    .input(upsertAppBlockReviewSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { review, isFirstReview } = await upsertAppBlockReview({
+        userId: ctx.user.id,
+        appBlockId: input.appBlockId,
+        rating: input.rating,
+        recommended: input.recommended,
+        details: input.details ?? null,
+      });
+
+      // Blue-buzz reward — first review only, fail-soft. The reward must never
+      // fail the review write (it's an audit/analytics + non-cashable grant).
+      if (isFirstReview) {
+        try {
+          await appBlockReviewReward.apply(
+            { appBlockId: input.appBlockId, userId: ctx.user.id, isFirstReview: true },
+            { ip: ctx.ip }
+          );
+        } catch (error) {
+          logToAxiom(
+            {
+              name: 'app-block-review-reward',
+              type: 'error',
+              message: 'Failed to apply appBlockReview reward (non-fatal)',
+              appBlockId: input.appBlockId,
+              userId: ctx.user.id,
+              error: (error as Error)?.message,
+            },
+            'app-blocks'
+          ).catch(() => undefined);
+        }
+      }
+
+      return { review, isFirstReview };
+    }),
+
+  /**
+   * Keyset-paginated list of an app's reviews (newest first), excluding
+   * mod-excluded rows. Public/anon-CAPABLE but DARK behind the flag (returns an
+   * empty page when the flag is off, same posture as listAvailable).
+   */
+  listReviews: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many review requests — slow down.',
+      })
+    )
+    .input(listAppBlockReviewsSchema)
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return { items: [], nextCursor: undefined };
+      }
+      return listAppBlockReviews(input);
+    }),
+
+  /**
+   * The viewer's own review for an app block (or null) — backs the
+   * "you rated this N★" state on the detail page. protectedProcedure (per-user
+   * data), DARK behind the flag.
+   */
+  getMyReview: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getAppDetailSchema)
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return null;
+      return getMyAppBlockReview(input.appBlockId, ctx.user.id);
+    }),
+
+  /**
+   * MOD-ONLY: flip `exclude` on a review so it drops out of the rating aggregate
+   * + the Bayesian sort. moderatorProcedure + the flag gate. Mirrors
+   * toggleExcludeResourceReview.
+   */
+  setReviewExcluded: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(setAppReviewExcludedSchema)
+    .mutation(async ({ input }) => {
+      return setAppReviewExcluded(input);
+    }),
+
   /**
    * MOD-ONLY: read the current marketplace metadata (category/featured/order)
    * for one app_block — seeds the review-page curation form (F-E E4).
@@ -1727,6 +1900,13 @@ export const blocksRouter = router({
       // for the whole array — is enforced downstream by the orchestrator
       // resource belt over the FULL resources array; this gate is not the sole
       // boundary. Keep both belts.
+      // Maturity clamp (authoritative). Derived ONCE from the token's
+      // server-minted ceiling claim, NOT a client body field nor request-time
+      // `ctx.domain`. Drives both the resource-selection gate (`sfwOnly`, so a
+      // SFW-domain block can't even PICK a mature resource — defense in depth)
+      // and the generation-output clamp (`allowMatureContent`). Green AND blue
+      // → sfwOnly true; red → false. Mirrors submitWorkflow below.
+      const { allowMatureContent } = resolveBlockMaturity(claims);
       if (isPage) {
         // Resolve + validate the LoRA stack first (LoRA-only + family-match)
         // so a bad resource fails BEFORE the entitlement gate / any cost.
@@ -1738,7 +1918,10 @@ export const blocksRouter = router({
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
           viewer: { id: userId, isModerator: !!user.isModerator },
-          sfwOnly: ctx.domain === 'green',
+          // SFW-only resource selection unifies with the output clamp: derive
+          // from the authoritative token maturity (green/blue → true), not the
+          // request domain. `allowMatureContent === false` ⇔ SFW ceiling.
+          sfwOnly: allowMatureContent === false,
           wildcardsEnabled: !!ctx.features.wildcards,
         });
       }
@@ -1754,6 +1937,7 @@ export const blocksRouter = router({
           steps: [step],
           tags: buildWorkflowTags(claims, resolved.baseModel),
           currencies: BLOCK_CURRENCIES,
+          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         },
         query: { whatif: true },
       });
@@ -1852,6 +2036,16 @@ export const blocksRouter = router({
       // for the whole array, is enforced downstream by the orchestrator
       // resource belt over the FULL array (whatIf + real) — this gate is not
       // the sole boundary. Keep both belts.
+      // Maturity clamp (authoritative, GA gate). Derived ONCE from the token's
+      // server-minted ceiling claim and applied to: (a) the resource-selection
+      // gate (`sfwOnly`, defense in depth — a SFW block can't even PICK a
+      // mature resource), (b) the prompt audit (`isGreen` → SFW prompt audit on
+      // SFW domains), (c) the whatIf cost step, and (d) the real submit. NEVER
+      // from a client body field nor request-time `ctx.domain`, so a SFW-domain
+      // (green/blue) block cannot widen to mature output. Fail closed: a
+      // legacy/absent claim resolves to the SFW ceiling.
+      const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+
       if (isPage) {
         const loraGates = await resolvePageLoraGates({
           additionalResources: input.body.additionalResources,
@@ -1860,7 +2054,10 @@ export const blocksRouter = router({
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
           viewer: { id: userId, isModerator: !!user.isModerator },
-          sfwOnly: ctx.domain === 'green',
+          // Unify resource selection with the output clamp: SFW-only iff the
+          // authoritative token maturity is SFW (green/blue), not the request
+          // domain. `allowMatureContent === false` ⇔ SFW ceiling.
+          sfwOnly: allowMatureContent === false,
           wildcardsEnabled: !!ctx.features.wildcards,
         });
       }
@@ -1868,12 +2065,13 @@ export const blocksRouter = router({
 
       // Prompt audit before any orchestrator interaction (mirrors what
       // generateFromGraph does). A block can't bypass moderation by submitting
-      // through this path.
+      // through this path. `isGreen` (SFW prompt audit) is domain/ceiling-
+      // derived so a SFW-domain block's prompts get the stricter audit.
       await auditPromptServer({
         prompt: input.body.params.prompt,
         negativePrompt: input.body.params.negativePrompt,
         userId,
-        isGreen: false,
+        isGreen,
         isModerator: !!user.isModerator,
       });
 
@@ -1894,7 +2092,12 @@ export const blocksRouter = router({
       const tags = buildWorkflowTags(claims, resolved.baseModel);
       const whatIfResult = await submitWorkflow({
         token,
-        body: { steps: [stepForCostCheck], tags, currencies: BLOCK_CURRENCIES },
+        body: {
+          steps: [stepForCostCheck],
+          tags,
+          currencies: BLOCK_CURRENCIES,
+          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        },
         query: { whatif: true },
       });
       const cost = whatIfResult.cost?.total ?? 0;
@@ -1972,7 +2175,14 @@ export const blocksRouter = router({
         const step = await createTextToImageStep({ ...generateInput, user });
         const submitted = await submitWorkflow({
           token,
-          body: { steps: [step], tags, currencies: BLOCK_CURRENCIES },
+          body: {
+            steps: [step],
+            tags,
+            currencies: BLOCK_CURRENCIES,
+            // Authoritative maturity clamp on the REAL submit — the orchestrator
+            // rejects mature output when this is false. Token-claim derived.
+            ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+          },
         });
         snapshot = snapshotFromWorkflow(submitted);
       } catch (e) {
@@ -2107,9 +2317,31 @@ export const blocksRouter = router({
       // gen-meta (prompt/seed) aren't leaked into the third-party publisher
       // iframe for NSFW-opted-out or logged-out viewers. Anon (no ctx.user)
       // is forced to public (PG) inside the service.
+      //
+      // The color domain carries the maturity CEILING: on a SFW domain
+      // (green/blue) the service clamps the effective browsing level to SFW so a
+      // logged-in viewer can't request `browsingLevel: 31` and pull mature
+      // thumbnails + meta into the iframe. This is the display-surface analogue
+      // of the authoritative generation clamp. This is a public read with no
+      // block-token claim handy, so the request-time domain is the authority.
+      //
+      // LOW-1 hardening: derive the maturity domain from the RAW
+      // `getRequestDomainColor(req)` — which returns `undefined` for an
+      // UNRESOLVED host — NOT from `ctx.domain`, which is `?? 'blue'`-defaulted
+      // in createContext for the convenience of code that wants a concrete
+      // color. Routing the showcase clamp through that default would make an
+      // unresolved host fail-CLOSED today only because `domainBrowsingCeiling`
+      // happens to map 'blue' → SFW; the moment the platform flips blue→mature
+      // there, the `?? 'blue'` default would silently turn this fail-closed read
+      // into a fail-OPEN one for unresolved hosts. Passing the raw `undefined`
+      // through makes `domainBrowsingCeiling(undefined)` fail closed to SFW
+      // independent of blue's mapping — matching how the authoritative
+      // generation belt clamps off the raw color (never the 'blue' default).
+      const rawDomain = getRequestDomainColor(ctx.req);
       return getModelShowcaseImages(input.modelVersionId, {
         userId: ctx.user?.id ?? null,
         browsingLevel: input.browsingLevel,
+        domain: rawDomain,
       });
     }),
 
@@ -2289,6 +2521,12 @@ export const blocksRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
+      // Dark-flag fail-closed: while the appBlocks flag is off the middleware
+      // marks the ctx → return the zeroed revenue shape WITHOUT running any
+      // aggregate, so a flag-off moderator gets no live revenue data.
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return emptyRevenue();
+      }
       const user = ctx.user as SessionUser;
       const { summary, topApps } = await getRevenueForOwner({
         ownerUserId: user.id,
@@ -2301,6 +2539,44 @@ export const blocksRouter = router({
         appBlockId: input.appBlockId,
       });
       return { summary, topApps, recentAttributions };
+    }),
+
+  /**
+   * Phase 0 author analytics — installs, runs+buzz spent, buzz purchased,
+   * and engagement for the caller's OWN app(s), derived entirely from
+   * existing App Blocks tables (no new instrumentation). Read-only.
+   *
+   * Same audience gate as getMyRevenue (moderatorProcedure +
+   * enforceAppBlocksFlag — dark behind the appBlocks flag). Ownership is
+   * enforced inside the service: it resolves the caller's owned app_block
+   * ids via AppBlock.app.userId and returns zeroed/empty analytics for a
+   * non-owned id, so an author can never read another author's metrics.
+   */
+  getMyAppAnalytics: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64).optional(),
+        from: z.string().datetime().optional(),
+        to: z.string().datetime().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const from = input.from ? new Date(input.from) : undefined;
+      const to = input.to ? new Date(input.to) : undefined;
+      // Dark-flag fail-closed: while the appBlocks flag is off the middleware
+      // marks the ctx → return the zeroed analytics shape (with the resolved
+      // range, so the UI still has a window) WITHOUT running any aggregate.
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return emptyAnalytics(resolveRange({ from, to }), false);
+      }
+      const user = ctx.user as SessionUser;
+      return getMyAppAnalytics({
+        userId: user.id,
+        appBlockId: input.appBlockId,
+        from,
+        to,
+      });
     }),
 
   /**

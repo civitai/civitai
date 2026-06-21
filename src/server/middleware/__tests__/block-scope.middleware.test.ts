@@ -283,4 +283,75 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
   it('rejects a token with a non-string domain', async () => {
     expect(await verifyBlockToken(await signRaw({ domain: 123 }))).toBeNull();
   });
+
+  // ---- Maturity claim shape guard (from #2670, redundant cross-check) -----
+  // The maxBrowsingLevel claim is optional (absent on legacy tokens), but if
+  // PRESENT it must be a finite number — a forged non-numeric value is rejected
+  // outright so the generation clamp never coerces a junk ceiling.
+  async function kidForCurrentKey(): Promise<string> {
+    const { BlockTokenService } = await import('~/server/services/block-token.service');
+    return BlockTokenService.getJwks().keys[0].kid;
+  }
+
+  it('passes through a valid numeric maxBrowsingLevel + domain claim', async () => {
+    const { BlockTokenService } = await import('~/server/services/block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      ...baseClaims,
+      domain: 'green',
+      maxBrowsingLevel: 3,
+    });
+    const claims = await verifyBlockToken(r.token);
+    expect(claims).not.toBeNull();
+    expect(claims?.maxBrowsingLevel).toBe(3);
+    expect(claims?.domain).toBe('green');
+  });
+
+  it('rejects a token whose maxBrowsingLevel claim is non-numeric (forged)', async () => {
+    const key = await importPrivateKey();
+    const kid = await kidForCurrentKey();
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({ ...baseClaims, sub: 'user:1', maxBrowsingLevel: 'all' })
+      .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+      .setIssuer('civitai')
+      .setAudience('civitai-app-block')
+      .setSubject('user:1')
+      .setIssuedAt(now)
+      .setNotBefore(now)
+      .setExpirationTime(now + 600)
+      .sign(key);
+    expect(await verifyBlockToken(token)).toBeNull();
+  });
+
+  it('rejects a token whose maxBrowsingLevel claim is NaN/Infinity', async () => {
+    const key = await importPrivateKey();
+    const kid = await kidForCurrentKey();
+    const now = Math.floor(Date.now() / 1000);
+    // JSON has no NaN literal; jose serializes it, but a forger could emit one
+    // via a raw payload. Simulate the post-parse shape with a non-finite number
+    // surrogate (a stringy huge value is the realistic forge vector handled
+    // above; here we assert the Number.isFinite guard via an object).
+    const token = await new SignJWT({
+      ...baseClaims,
+      sub: 'user:1',
+      maxBrowsingLevel: [3] as unknown as number,
+    })
+      .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+      .setIssuer('civitai')
+      .setAudience('civitai-app-block')
+      .setSubject('user:1')
+      .setIssuedAt(now)
+      .setNotBefore(now)
+      .setExpirationTime(now + 600)
+      .sign(key);
+    expect(await verifyBlockToken(token)).toBeNull();
+  });
+
+  it('accepts a token that OMITS the maturity claim (legacy) — consumer fails closed', async () => {
+    const { BlockTokenService } = await import('~/server/services/block-token.service');
+    const r = await BlockTokenService.sign({ userId: 1, ...baseClaims });
+    const claims = await verifyBlockToken(r.token);
+    expect(claims).not.toBeNull();
+    expect(claims?.maxBrowsingLevel).toBeUndefined();
+  });
 });

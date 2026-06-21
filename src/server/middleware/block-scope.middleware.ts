@@ -42,16 +42,14 @@ export interface BlockTokenClaims {
   scopes: string[];
   buzzBudget?: number;
   /**
-   * AUTHORITATIVE color-domain maturity ceiling — a bitwise browsing-level
-   * flag stamped at token mint from the request host's color domain. SFW
-   * domains (green/blue) carry the SFW flag; red carries all levels. The
-   * block catalog/generation belts derive the effective browsing level by
-   * intersecting the client's requested level with this ceiling, so a
-   * SFW-domain token can never widen to mature content.
-   *
-   * OPTIONAL by design: a token minted before this claim existed (legacy /
-   * the pre-#2670 mint path) carries NO value. Consumers MUST fail CLOSED —
-   * treat an absent / non-finite claim as the SFW ceiling.
+   * AUTHORITATIVE color-domain maturity ceiling (bitwise browsing-level flag,
+   * from `domainBrowsingCeiling`) stamped at mint. The block generation path
+   * derives `allowMatureContent` from this — never from a client body field.
+   * ABSENT on legacy tokens minted before the maturity feature → consumers
+   * MUST fail closed (treat as SFW). The block catalog endpoints
+   * (/api/v1/blocks/models, /api/v1/blocks/images) likewise intersect the
+   * requested browsing level with this ceiling so a SFW-domain token can never
+   * widen to mature catalog content.
    */
   maxBrowsingLevel?: number;
   /** Advisory: the color domain the token was minted on (`green`|`blue`|`red`). */
@@ -336,11 +334,18 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       ) {
         return null;
       }
-      // Maturity claims are optional, but if PRESENT they must be well-typed:
-      // a token carrying a non-numeric / NaN / Infinity maxBrowsingLevel is
-      // rejected at verify time (so the clamp's fail-closed-to-SFW fallback
-      // never has to defend against a garbage finite-looking value reaching
-      // it). Same for the advisory `domain` string.
+      // Audit-9 #1: validate sub shape here so a forged token with
+      // sub: "user:abc" is rejected at verify-time. Otherwise the seam is
+      // a future handler that does claims.sub.startsWith('user:') and
+      // parseInts without going through parseSubjectUserId.
+      if (!isValidSubject(claims.sub)) return null;
+      // Maturity claim shape guard. The claim is optional (absent on legacy
+      // tokens), but if present it MUST be a finite number — a forged token
+      // carrying a non-numeric / NaN / Infinity maxBrowsingLevel is rejected
+      // outright so the generation clamp never coerces a junk ceiling into an
+      // unintended (wider) maturity. (Consumers ALSO fail closed on absence;
+      // this is the upstream belt that keeps a malformed claim from ever
+      // reaching them.) Same for the advisory `domain` string.
       if (
         claims.maxBrowsingLevel !== undefined &&
         (typeof claims.maxBrowsingLevel !== 'number' || !Number.isFinite(claims.maxBrowsingLevel))
@@ -350,11 +355,6 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       if (claims.domain !== undefined && typeof claims.domain !== 'string') {
         return null;
       }
-      // Audit-9 #1: validate sub shape here so a forged token with
-      // sub: "user:abc" is rejected at verify-time. Otherwise the seam is
-      // a future handler that does claims.sub.startsWith('user:') and
-      // parseInts without going through parseSubjectUserId.
-      if (!isValidSubject(claims.sub)) return null;
       return claims;
     } catch {
       // try the next key

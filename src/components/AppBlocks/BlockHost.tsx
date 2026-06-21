@@ -16,10 +16,8 @@ interface BlockHostProps {
  * so v2 can light it up without a structural refactor.
  */
 export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
-  const { token, expiresAt, error, pending, missingScopes, refresh } = useBlockToken(
-    blockInstall,
-    slotContext
-  );
+  const { token, expiresAt, error, pending, missingScopes, domain, maxBrowsingLevel, refresh } =
+    useBlockToken(blockInstall, slotContext);
 
   // Terminal token-mint failure → collapse (render null, take no space)
   // rather than show a visible "authorization error" card. Matches the
@@ -63,6 +61,8 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
       token={token}
       expiresAt={expiresAt}
       missingScopes={missingScopes}
+      domain={domain}
+      maxBrowsingLevel={maxBrowsingLevel}
       onConsentGranted={() => {
         void refresh();
       }}
