@@ -1623,12 +1623,14 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       );
     });
 
-    it('derives sfwOnly:true from a green-domain ctx and forwards it into the canGenerate gate', async () => {
-      // The page branch mirrors model-version.controller: the gate context's
-      // sfwOnly is `ctx.domain === 'green'`. fakeCtx() omits domain (→ false),
-      // so a green ctx is the only way to exercise the SFW-gating branch — it
-      // must flow into resolveCanGenerateForVersions' context arg as true.
-      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+    it('derives sfwOnly:true from a SFW token maturity claim (not the request domain)', async () => {
+      // FIX 2: the resource-selection gate's `sfwOnly` is now derived from the
+      // AUTHORITATIVE token maturity (`resolveBlockMaturity` → allowMatureContent
+      // === false on a SFW ceiling), NOT request-time `ctx.domain`. A SFW
+      // maturity claim (green/blue ceiling = 3) must flow into
+      // resolveCanGenerateForVersions' context arg as sfwOnly:true even when the
+      // request `ctx.domain` is the default (blue, which used to map to false).
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ maxBrowsingLevel: 3 }));
       happyVersionLookup();
       happyUser();
       mockSubmitWorkflow.mockResolvedValue({
@@ -1637,7 +1639,8 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
         cost: { total: 12 },
         steps: [],
       });
-      const caller = blocksRouter.createCaller({ ...fakeCtx(), domain: 'green' } as never);
+      // fakeCtx() omits domain → defaults are irrelevant now; the claim drives it.
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
       await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
       expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
       const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
@@ -1646,12 +1649,55 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       expect(gateCtx.wildcardsEnabled).toBe(false);
     });
 
+    it('a BLUE token (SFW per App-Blocks product decision) also derives sfwOnly:true', async () => {
+      // FIX 2 regression guard: under the OLD `ctx.domain === 'green'` rule a
+      // blue block had sfwOnly:false → could pick a mature resource. Now a blue
+      // token mints a SFW ceiling (maxBrowsingLevel = 3) so the resource gate is
+      // SFW too, unified with the generation-output clamp.
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ domain: 'blue', maxBrowsingLevel: 3 })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller({ ...fakeCtx(), domain: 'blue' } as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(gateCtx.sfwOnly).toBe(true);
+    });
+
+    it('a RED token (mature ceiling) derives sfwOnly:false (mature resource selection allowed)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ domain: 'red', maxBrowsingLevel: 31 })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller({ ...fakeCtx(), domain: 'red' } as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(gateCtx.sfwOnly).toBe(false);
+    });
+
     it('derives wildcardsEnabled:true from ctx.features.wildcards and forwards it into the canGenerate gate', async () => {
       // The page branch mirrors model-version.controller: the gate context's
       // wildcardsEnabled is `!!ctx.features.wildcards`. fakeCtx() omits the flag
       // (→ false), so an enabled-wildcards ctx is the only way to exercise this
       // branch — it must flow into the gate context arg as true.
-      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      // Red ceiling (maxBrowsingLevel = 31) so sfwOnly stays false — this test
+      // is about wildcards independence, not the maturity clamp. A token with no
+      // claim would now FAIL CLOSED to sfwOnly:true (FIX 2), masking the point.
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ maxBrowsingLevel: 31 }));
       happyVersionLookup();
       happyUser();
       mockSubmitWorkflow.mockResolvedValue({
@@ -1669,7 +1715,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
       const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
       expect(gateCtx.wildcardsEnabled).toBe(true);
-      // green-domain is independent and untouched here → sfwOnly still false.
+      // maturity is independent here → with a red ceiling sfwOnly is false.
       expect(gateCtx.sfwOnly).toBe(false);
     });
 
