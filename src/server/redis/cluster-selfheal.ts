@@ -10,11 +10,23 @@
  * pod 500s / slow-degrades indefinitely. ONLY a full client reconnect (rebuilds the
  * connections + `_slots`) or a process restart clears the orphaned `_execute` promises.
  *
- * SIGNATURE of a wedged pod: `redis_commands_inflight{client="cluster"}` jumps PAST the
- * threshold and stays PINNED (hundreds–thousands of leaked inflight); a healthy pod sits
- * near 0 and a busy pod only SPIKES transiently. This watchdog samples the same in-process
- * inflight counter that feeds the gauge and forces ONE reconnect when it stays above the
- * threshold CONTINUOUSLY for the sustained window, then waits out a cooldown.
+ * TWO TRIGGERS (either forces a reconnect, subject to the shared cooldown + single-flight):
+ *
+ *   TRIGGER 1 — DEADLINE-HIT RATE (the real-wave signal, sawtooth-immune): N cluster
+ *   command-deadline TIMEOUTS within a sliding window. A healthy client hits the 15s deadline
+ *   ZERO times; a half-open client hits it on ~every command. This is the trigger that
+ *   actually fires during a real fleet wave (see the bug below).
+ *
+ *   TRIGGER 2 — SUSTAINED INFLIGHT (legacy continuous-breach): `redis_commands_inflight`
+ *   pinned above a threshold CONTINUOUSLY for the sustained window. Kept as a backstop for
+ *   wedge shapes that leak inflight without deadline-rejecting.
+ *
+ * THE BUG TRIGGER 1 FIXES: TRIGGER 2 alone NEVER fired during real waves. The per-command
+ * deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS = 15s) mass-rejects the parked commands every
+ * ~15s, so inflight SAWTOOTHS to ~0 and the sustained-breach timer (sustainedMs = 20s > 15s)
+ * resets before it can accumulate 20 continuous seconds. Confirmed live: 21 pods wedged to
+ * inflight≈200 for 6–12 min with selfheal_reconnect_total = 0 across the fleet. The
+ * deadline-TIMEOUT rate is immune to that drain (the drains ARE the timeouts).
  *
  * RECONNECT-STORM SAFETY — three independent brakes:
  *   1. SUSTAINED window: a transient spike drops back under the threshold within the window
@@ -46,11 +58,46 @@ export interface ClusterSelfHealConfig {
   sustainedMs: number;
   /** Minimum wall-clock time between two reconnects. */
   cooldownMs: number;
+  /**
+   * DEADLINE-HIT TRIGGER (the sawtooth-immune signal — see deadlineHitWindowMs note below).
+   * If this many cluster command-deadline TIMEOUTS occur within `deadlineHitWindowMs`, force a
+   * reconnect IMMEDIATELY (subject to the cooldown), WITHOUT requiring inflight to stay
+   * continuously above the threshold. <= 0 disables this trigger (inflight path only).
+   *
+   * WHY this exists: the inflight-continuity trigger above can NEVER fire during a real
+   * half-open park, because the per-command deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS = 15s)
+   * mass-rejects the parked commands every ~15s → inflight sawtooths to ~0 → the sustained
+   * timer (sustainedMs = 20s > 15s) resets before it can accumulate. Confirmed live: 21 pods
+   * wedged to inflight≈200 for minutes with selfheal_reconnect_total = 0. The deadline-TIMEOUT
+   * rate is immune to that drain (the drains ARE the timeouts), so a half-open trips this fast.
+   */
+  deadlineHitThreshold: number;
+  /**
+   * Sliding window (ms) over which deadlineHitThreshold deadline timeouts are counted. A
+   * healthy client hits the 15s deadline ZERO times in any window; a half-open client hits it
+   * continuously. Default sized so a genuine wedge (every cluster read deadline-rejecting)
+   * trips well inside the kubelet readiness-shed threshold, while a one-off transient slow
+   * command (a single deadline hit) does not.
+   */
+  deadlineHitWindowMs: number;
 }
 
 export interface ClusterSelfHealDeps {
   /** Reads the current in-process cluster inflight count (same source as the gauge). */
   getInflight: () => number;
+  /**
+   * Reads the number of cluster command-deadline timeouts within the last `deadlineHitWindowMs`
+   * (the sawtooth-immune wedge signal). Receives the window so the recorder owns the windowing.
+   * Optional so existing callers/tests that only drive the inflight path can omit it (treated
+   * as 0 → deadline trigger inert).
+   */
+  getDeadlineHits?: (windowMs: number) => number;
+  /**
+   * Clears the deadline-hit window. Called right after a reconnect is triggered so the
+   * post-heal window starts clean and the same wedge can't immediately re-trigger inside the
+   * cooldown. Optional (no-op if omitted).
+   */
+  resetDeadlineHits?: () => void;
   /**
    * Forces a full client reconnect (destroy → connect, rebuilding `_slots`). The teardown must
    * REJECT in-flight commands immediately (client.ts uses the v5 cluster `destroy()`, NOT the
@@ -64,10 +111,17 @@ export interface ClusterSelfHealDeps {
   log: (msg: string, ...rest: unknown[]) => void;
   /**
    * Called once per successful (or attempted) self-heal reconnect with the inflight value at
-   * trigger time, so client.ts can increment the Prometheus counter + emit a Loki line.
+   * trigger time AND which trigger fired ('deadline' = the sawtooth-immune deadline-hit rate;
+   * 'inflight' = the legacy sustained-inflight breach), so client.ts can increment the
+   * Prometheus counter (labeled by trigger) + emit a Loki line. Distinguishing the trigger is
+   * how the next prod wave is confirmed to have fired the DEADLINE path (the one the inflight
+   * path could never reach) rather than a stray inflight breach.
    */
-  onReconnect: (inflightAtTrigger: number) => void;
+  onReconnect: (inflightAtTrigger: number, trigger: ClusterSelfHealTrigger) => void;
 }
+
+/** Which watchdog trigger forced a given reconnect (for the labeled metric + log line). */
+export type ClusterSelfHealTrigger = 'deadline' | 'inflight';
 
 export class ClusterSelfHealWatchdog {
   private readonly cfg: ClusterSelfHealConfig;
@@ -113,41 +167,60 @@ export class ClusterSelfHealWatchdog {
     const now = this.deps.now();
     const inflight = this.deps.getInflight();
 
+    // ── TRIGGER 1: DEADLINE-HIT RATE (sawtooth-immune — the real-wave signal) ──────────
+    // A half-open park makes ~every cluster command deadline-reject; the per-command deadline
+    // then drains inflight, which is exactly why the inflight-continuity trigger below never
+    // fired during real waves. The deadline-TIMEOUT count is immune to that drain. Evaluate it
+    // FIRST and independently of the inflight breach timer.
+    const deadlineHits =
+      this.cfg.deadlineHitThreshold > 0 && this.deps.getDeadlineHits
+        ? this.deps.getDeadlineHits(this.cfg.deadlineHitWindowMs)
+        : 0;
+    const deadlineTriggered =
+      this.cfg.deadlineHitThreshold > 0 && deadlineHits >= this.cfg.deadlineHitThreshold;
+
+    // ── TRIGGER 2: SUSTAINED INFLIGHT (legacy continuous-breach path) ──────────────────
+    let inflightTriggered = false;
     if (inflight <= this.cfg.inflightThreshold) {
       // Healthy / recovered / transient-spike-ended: reset the sustained timer.
       this.breachStartedAt = null;
-      return false;
-    }
-
-    // Inflight is above the threshold. Start (or continue) the sustained-breach timer.
-    if (this.breachStartedAt == null) {
+    } else if (this.breachStartedAt == null) {
+      // Inflight just crossed above the threshold. Start the sustained-breach timer.
       this.breachStartedAt = now;
-      return false;
+    } else if (now - this.breachStartedAt >= this.cfg.sustainedMs) {
+      inflightTriggered = true;
     }
 
-    // Require the breach to have lasted at least sustainedMs.
-    if (now - this.breachStartedAt < this.cfg.sustainedMs) return false;
+    if (!deadlineTriggered && !inflightTriggered) return false;
 
-    // Respect the cooldown — at most one reconnect per cooldown window.
+    // Respect the cooldown — at most one reconnect per cooldown window (either trigger).
     if (this.lastReconnectAt != null && now - this.lastReconnectAt < this.cfg.cooldownMs) {
       return false;
     }
 
     // ── TRIGGER ──────────────────────────────────────────────────────────────────────
     // Mark the reconnect time + clear the breach timer up front so a long-running reconnect
-    // can't re-trigger and so the cooldown is measured from the trigger, not completion.
+    // can't re-trigger and so the cooldown is measured from the trigger, not completion. Also
+    // clear the deadline-hit window so the post-heal window starts clean (the same wedge can't
+    // instantly re-count the pre-heal hits).
     this.lastReconnectAt = now;
     this.breachStartedAt = null;
     this.reconnecting = true;
+    this.deps.resetDeadlineHits?.();
 
     this.deps.log(
-      `Cluster self-heal: inflight pinned at ${inflight} > ${this.cfg.inflightThreshold} for >=${this.cfg.sustainedMs}ms — forcing reconnect`
+      deadlineTriggered
+        ? `Cluster self-heal: ${deadlineHits} command-deadline timeouts in ${this.cfg.deadlineHitWindowMs}ms (>= ${this.cfg.deadlineHitThreshold}), inflight=${inflight} — forcing reconnect`
+        : `Cluster self-heal: inflight pinned at ${inflight} > ${this.cfg.inflightThreshold} for >=${this.cfg.sustainedMs}ms — forcing reconnect`
     );
     // onReconnect is a fire-and-forget observability hook (Prom counter + Loki line). A throw
     // from it must NOT abort the reconnect or wedge the watchdog (it would leave reconnecting
     // pinned true), so it's isolated.
     try {
-      this.deps.onReconnect(inflight);
+      // 'deadline' takes precedence: it's the trigger we expect during a real fleet wave and
+      // the one we need confirmed at the next wave. (If both conditions are somehow true, the
+      // deadline-hit rate is the more specific wedge signal.)
+      this.deps.onReconnect(inflight, deadlineTriggered ? 'deadline' : 'inflight');
     } catch (err) {
       this.deps.log(
         `Cluster self-heal: onReconnect hook threw (ignored): ${

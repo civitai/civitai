@@ -17,6 +17,10 @@ const DEFAULTS: ClusterSelfHealConfig = {
   inflightThreshold: 50,
   sustainedMs: 20000,
   cooldownMs: 60000,
+  // Default the deadline-hit trigger OFF in this harness so the legacy inflight-path tests
+  // below are unaffected; the deadline-trigger tests opt in explicitly.
+  deadlineHitThreshold: 0,
+  deadlineHitWindowMs: 20000,
 };
 
 /** Test harness: a controllable clock + inflight value + spy reconnect/onReconnect. */
@@ -26,11 +30,17 @@ function makeHarness(
 ) {
   let nowMs = 0;
   let inflight = 0;
+  let deadlineHits = 0;
   const reconnect = vi.fn(opts.reconnect ?? (() => Promise.resolve()));
   const onReconnect = vi.fn();
+  const resetDeadlineHits = vi.fn(() => {
+    deadlineHits = 0;
+  });
   const log = vi.fn();
   const deps: ClusterSelfHealDeps = {
     getInflight: () => inflight,
+    getDeadlineHits: () => deadlineHits,
+    resetDeadlineHits,
     reconnect,
     now: () => nowMs,
     log,
@@ -41,8 +51,10 @@ function makeHarness(
     watchdog,
     reconnect,
     onReconnect,
+    resetDeadlineHits,
     log,
     setInflight: (v: number) => (inflight = v),
+    setDeadlineHits: (v: number) => (deadlineHits = v),
     advance: (ms: number) => (nowMs += ms),
     setNow: (ms: number) => (nowMs = ms),
     now: () => nowMs,
@@ -78,8 +90,9 @@ describe('ClusterSelfHealWatchdog', () => {
     expect(h.watchdog.tick()).toBe(true);
     expect(h.reconnect).toHaveBeenCalledTimes(1);
     expect(h.onReconnect).toHaveBeenCalledTimes(1);
-    // onReconnect carries the inflight value at trigger time (for the Prom counter/Loki line).
-    expect(h.onReconnect).toHaveBeenCalledWith(500);
+    // onReconnect carries the inflight value at trigger time + which trigger fired (for the
+    // Prom counter label / Loki line). This is the legacy sustained-inflight path → 'inflight'.
+    expect(h.onReconnect).toHaveBeenCalledWith(500, 'inflight');
 
     await flush(); // let the fire-and-forget reconnect settle
   });
@@ -187,6 +200,130 @@ describe('ClusterSelfHealWatchdog', () => {
     const firesAgain = runFor(h, DEFAULTS.sustainedMs + 2000, 1000);
     expect(firesAgain).toBe(1);
     expect(h.reconnect).toHaveBeenCalledTimes(2);
+    await flush();
+  });
+
+  // ── DEADLINE-HIT TRIGGER (the fix for the real-wave non-firing bug) ────────────────
+
+  it('REGRESSION: a sawtoothing inflight (deadline drains it every ~15s) never fires the inflight trigger', () => {
+    // Reproduces the live bug: the 15s command deadline mass-rejects parked commands, so
+    // inflight crashes below the threshold within each 20s sustained window → breachStartedAt
+    // keeps resetting → the inflight trigger can NEVER accumulate. Deadline trigger OFF here to
+    // isolate the inflight path. Simulate the sawtooth: ~14s pinned high, then a 1s crash to 0.
+    const h = makeHarness({ deadlineHitThreshold: 0 });
+    let fires = 0;
+    for (let cycle = 0; cycle < 10; cycle++) {
+      h.setInflight(200);
+      for (let t = 0; t < 14000; t += 1000) {
+        if (h.watchdog.tick()) fires++;
+        h.advance(1000);
+      }
+      // Deadline batch rejects → inflight crashes below threshold for one sample.
+      h.setInflight(0);
+      if (h.watchdog.tick()) fires++;
+      h.advance(1000);
+    }
+    // ~150s of a real half-open wedge, zero reconnects — exactly the observed prod behavior.
+    expect(fires).toBe(0);
+    expect(h.reconnect).not.toHaveBeenCalled();
+  });
+
+  it('FIX: the deadline-hit trigger fires on the SAME sawtoothing wedge, regardless of inflight dips', async () => {
+    // Same sawtooth, but now the deadline-hit trigger is armed (the drains ARE the hits, so the
+    // hit count stays high even while inflight dips). It must fire on the very first tick once
+    // the hit count is at/above threshold, without needing any inflight continuity.
+    const h = makeHarness({ deadlineHitThreshold: 10, deadlineHitWindowMs: 20000 });
+    h.setInflight(0); // inflight can be ANYTHING — deadline trigger is independent of it
+    h.setDeadlineHits(25); // 25 deadline timeouts in the last 20s window >= 10
+
+    expect(h.watchdog.tick()).toBe(true);
+    expect(h.reconnect).toHaveBeenCalledTimes(1);
+    expect(h.onReconnect).toHaveBeenCalledTimes(1);
+    // onReconnect is told WHICH trigger fired so client.ts emits the `trigger="deadline"`
+    // metric label — the series we watch at the next prod wave to confirm THIS path fired.
+    expect(h.onReconnect).toHaveBeenCalledWith(expect.any(Number), 'deadline');
+    // The window is cleared on trigger so the same pre-heal hits can't immediately re-fire.
+    expect(h.resetDeadlineHits).toHaveBeenCalledTimes(1);
+    await flush();
+  });
+
+  it('does NOT fire the deadline trigger below the hit threshold (a one-off transient slow command)', () => {
+    const h = makeHarness({ deadlineHitThreshold: 10, deadlineHitWindowMs: 20000 });
+    h.setInflight(0);
+    h.setDeadlineHits(9); // one short of the threshold
+    const fires = runFor(h, DEFAULTS.sustainedMs * 3, 1000);
+    expect(fires).toBe(0);
+    expect(h.reconnect).not.toHaveBeenCalled();
+  });
+
+  it('deadline trigger respects the cooldown (one reconnect per cooldown even while hits stay high)', async () => {
+    const h = makeHarness({ deadlineHitThreshold: 10, deadlineHitWindowMs: 20000 });
+    h.setInflight(0);
+    h.setDeadlineHits(100); // stays wedged
+
+    expect(h.watchdog.tick()).toBe(true);
+    expect(h.reconnect).toHaveBeenCalledTimes(1);
+    await flush();
+
+    // resetDeadlineHits zeroed the window; the wedge keeps producing hits, re-arming it.
+    h.setDeadlineHits(100);
+    // Within the cooldown: no second reconnect.
+    const firesDuringCooldown = runFor(h, DEFAULTS.cooldownMs, 1000);
+    expect(firesDuringCooldown).toBe(0);
+    expect(h.reconnect).toHaveBeenCalledTimes(1);
+
+    // Past the cooldown, still wedged → exactly one more.
+    h.setDeadlineHits(100);
+    const firesAfter = runFor(h, 3000, 1000);
+    expect(firesAfter).toBe(1);
+    expect(h.reconnect).toHaveBeenCalledTimes(2);
+    await flush();
+  });
+
+  it('deadline trigger is inert when its threshold is 0 (falls back to the inflight path only)', () => {
+    const h = makeHarness({ deadlineHitThreshold: 0 });
+    h.setInflight(0);
+    h.setDeadlineHits(100000); // enormous, but the trigger is disabled
+    const fires = runFor(h, DEFAULTS.sustainedMs * 3, 1000);
+    expect(fires).toBe(0);
+    expect(h.reconnect).not.toHaveBeenCalled();
+  });
+
+  it('deadline trigger is inert when getDeadlineHits dep is omitted (back-compat)', () => {
+    // A caller (or older test) that doesn't supply getDeadlineHits must behave as before.
+    let nowMs = 0;
+    let inflight = 0;
+    const reconnect = vi.fn(() => Promise.resolve());
+    const deps: ClusterSelfHealDeps = {
+      getInflight: () => inflight,
+      reconnect,
+      now: () => nowMs,
+      log: vi.fn(),
+      onReconnect: vi.fn(),
+    };
+    const watchdog = new ClusterSelfHealWatchdog(
+      { ...DEFAULTS, deadlineHitThreshold: 10 },
+      deps
+    );
+    inflight = 0; // inflight path never trips
+    for (let t = 0; t < DEFAULTS.sustainedMs * 3; t += 1000) {
+      watchdog.tick();
+      nowMs += 1000;
+    }
+    expect(reconnect).not.toHaveBeenCalled();
+  });
+
+  it('still fires the inflight trigger when inflight genuinely stays pinned (no deadline drain)', async () => {
+    // Belt-and-suspenders: a wedge that leaks inflight WITHOUT deadline-rejecting (e.g. deadline
+    // disabled) must still be caught by the legacy continuous-breach path.
+    const h = makeHarness({ deadlineHitThreshold: 10 });
+    h.setInflight(200); // pinned, never dips
+    h.setDeadlineHits(0); // no deadline hits at all
+    runFor(h, DEFAULTS.sustainedMs, 1000);
+    expect(h.watchdog.tick()).toBe(true);
+    expect(h.reconnect).toHaveBeenCalledTimes(1);
+    // Reported as the legacy 'inflight' trigger (no deadline hits) → metric label distinguishes it.
+    expect(h.onReconnect).toHaveBeenCalledWith(expect.any(Number), 'inflight');
     await flush();
   });
 

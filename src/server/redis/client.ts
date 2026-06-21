@@ -10,12 +10,18 @@ import { slugit } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { withCommandDeadline } from '~/server/redis/command-deadline';
 import { ClusterSelfHealWatchdog } from '~/server/redis/cluster-selfheal';
+import type { ClusterSelfHealTrigger } from '~/server/redis/cluster-selfheal';
 import {
   decClusterInflight,
   getClusterInflight,
   incClusterInflight,
   resetClusterInflight,
 } from '~/server/redis/cluster-inflight';
+import {
+  countClusterDeadlineHits,
+  recordClusterDeadlineHit,
+  resetClusterDeadlineHits,
+} from '~/server/redis/cluster-deadline-hits';
 import { compressPacked, decompressPacked } from '~/server/redis/packed-compression';
 // NOTE: do NOT statically import the redis prom metrics from '~/server/prom/client'.
 // This module is client-bundle-reachable (`_app.tsx` → `system-cache.ts` → here),
@@ -413,15 +419,22 @@ function startClusterSelfHeal(
       inflightThreshold: env.REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD,
       sustainedMs: env.REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS,
       cooldownMs: env.REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS,
+      deadlineHitThreshold: env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD,
+      deadlineHitWindowMs: env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS,
     },
     {
       getInflight: () => getClusterInflight(),
+      getDeadlineHits: (windowMs: number) => countClusterDeadlineHits(windowMs),
+      resetDeadlineHits: () => resetClusterDeadlineHits(),
       reconnect: () => forceClusterReconnect(clusterClient, reSetupFailover),
       log,
-      onReconnect: (inflightAtTrigger: number) => {
-        getRedisMetrics()?.redisSelfHealReconnectCounter?.inc();
+      onReconnect: (inflightAtTrigger: number, trigger: ClusterSelfHealTrigger) => {
+        // Labeled by trigger so a rising `trigger="deadline"` series at the next prod wave is the
+        // direct confirmation that the fix's new path fired (the one the inflight path could
+        // never reach). See cluster-selfheal.ts and prom/client.ts.
+        getRedisMetrics()?.redisSelfHealReconnectCounter?.inc({ trigger });
         log(
-          `Cluster self-heal RECONNECT fired [inflight=${inflightAtTrigger}, threshold=${env.REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD}, sustainedMs=${env.REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS}]`
+          `Cluster self-heal RECONNECT fired [trigger=${trigger}, inflight=${inflightAtTrigger}, inflightThreshold=${env.REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD}, sustainedMs=${env.REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS}, deadlineHitThreshold=${env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD}, deadlineHitWindowMs=${env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS}]`
         );
       },
     }
@@ -443,7 +456,7 @@ function startClusterSelfHeal(
   // Don't keep the event loop alive for the watchdog on a graceful process exit.
   clusterSelfHealInterval.unref?.();
   log(
-    `Cluster self-heal watchdog ENABLED [threshold=${env.REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD}, sustainedMs=${env.REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS}, cooldownMs=${env.REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS}, checkMs=${interval}]`
+    `Cluster self-heal watchdog ENABLED [inflightThreshold=${env.REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD}, sustainedMs=${env.REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS}, deadlineHitThreshold=${env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD}, deadlineHitWindowMs=${env.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS}, cooldownMs=${env.REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS}, checkMs=${interval}]`
   );
   return watchdog;
 }
@@ -930,11 +943,11 @@ type RedisMetricsBridge = {
   // reachable module. attachSysSentinelListeners reads them at attach time.
   sysredisSentinelTopologyChangesCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
   sysredisSentinelClientErrorsCounter: { labels: (labels: Record<string, string>) => { inc: () => void } };
-  // FIX #1 self-heal reconnect counter (no labels) + FIX #3 metric-write fail-soft counter.
-  // Read via the globalThis bridge so this client-bundle-reachable module avoids a static
-  // prom-client import (which drags in fs/cluster). Both may be undefined until prom/client
-  // loads server-side; callers null-check.
-  redisSelfHealReconnectCounter?: { inc: () => void };
+  // FIX #1 self-heal reconnect counter (labeled by `trigger`: 'deadline' | 'inflight') + FIX #3
+  // metric-write fail-soft counter. Read via the globalThis bridge so this client-bundle-
+  // reachable module avoids a static prom-client import (which drags in fs/cluster). Both may be
+  // undefined until prom/client loads server-side; callers null-check.
+  redisSelfHealReconnectCounter?: { inc: (labels: { trigger: string }) => void };
   redisMetricWriteFailSoftCounter?: { labels: (labels: { op: string }) => { inc: () => void } };
 };
 
@@ -1008,7 +1021,7 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     // the sys client (wrapWithDeadline=false). withCommandDeadline reaps the late
     // rejection of the orphaned command so it can't surface as an unhandledRejection.
     const settled = wrapWithDeadline
-      ? withCommandDeadline(Promise.resolve(result))
+      ? withCommandDeadline(Promise.resolve(result), undefined, recordClusterDeadlineHit)
       : Promise.resolve(result);
     return settled.finally(done);
   };
