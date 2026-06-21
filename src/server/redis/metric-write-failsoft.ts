@@ -4,16 +4,19 @@ import { env } from '~/env/server';
  * Fail-fast + fail-soft guard for NON-CRITICAL metric WRITE/LOCK cluster commands
  * (FIX #3 for the inflight-leak wedge).
  *
- * WHY: the metric write/lock commands — `metrics:lock:Image:<id>` setNX/expire
- * (entity-metric-populate.ts), the increment hIncrBy (entity-metric.redis.ts) — are pure
- * analytics/engagement counters. They are NOT money or entitlement: the values are
+ * WHY: the metric write/lock commands — `metrics:lock:Comic:<id>` exists/setNX/expire/del
+ * (the surviving comic populate path in entity-metric-populate.ts; the Image-legacy path was
+ * retired in the watcher/v2 cutover), the increment hIncrBy (entity-metric.redis.ts) — are
+ * pure analytics/engagement counters. They are NOT money or entitlement: the values are
  * reaction/comment/collection/buzz-tip ROLLUP counts repopulated from ClickHouse on a cache
  * miss, and the locks are thundering-herd guards (a failed lock just means another process
  * may also populate, or the populate is skipped this call — the read path already fail-opens
- * to {} and the increment caller already swallows). EVIDENCE: imageMetricsCache.fetch's only
- * caller (image.service.ts getImageMetrics) catches and returns {}; the increment path
- * (metric-helpers.ts updateEntityMetric) catches and logs. So skipping any of these can
- * never move money or grant/deny entitlement — at worst a counter is momentarily stale.
+ * and the increment caller already swallows). EVIDENCE: comicMetricsCache.fetch populates via
+ * `populateComicMetrics`, whose own catch logs and proceeds with whatever is in Redis; the
+ * increment path (entity-metric.redis.ts increment()) returns 0 on the fail-soft path, which
+ * its only consumer (the <0 negative-correction in metric-helpers.ts) safely skips. So
+ * skipping any of these can never move money or grant/deny entitlement — at worst a counter
+ * is momentarily stale.
  *
  * Under the 15s default cluster command deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS), a
  * WEDGED cluster client makes each of these PARK up to 15s and then throw — which can 500 a
