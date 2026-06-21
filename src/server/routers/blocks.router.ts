@@ -20,10 +20,20 @@ import {
   getAppDetailSchema,
   getFeaturedBlocksSchema,
   getMarketplaceMetaSchema,
+  listAppBlockReviewsSchema,
   listAvailableSchema,
+  setAppReviewExcludedSchema,
   setMarketplaceMetaSchema,
   subscriptionScopeSchema,
+  upsertAppBlockReviewSchema,
 } from '~/server/schema/blocks/subscription.schema';
+import {
+  getMyAppBlockReview,
+  listAppBlockReviews,
+  setAppReviewExcluded,
+  upsertAppBlockReview,
+} from '~/server/services/appBlockReview.service';
+import { appBlockReviewReward } from '~/server/rewards/active/appBlockReview.reward';
 import {
   approveRequestSchema,
   backfillPublishRequestSchema,
@@ -71,6 +81,7 @@ import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/o
 import { createTextToImageStep } from '~/server/services/orchestrator/textToImage/textToImage';
 import { getUserById } from '~/server/services/user.service';
 import {
+  guardedProcedure,
   moderatorProcedure,
   protectedProcedure,
   middleware,
@@ -1358,6 +1369,117 @@ export const blocksRouter = router({
         !ctx.user?.isModerator
       );
       return { items };
+    }),
+
+  // -------------------------------------------------------------------------
+  // F-E marketplace REVIEWS (5-star) — all DARK behind enforceAppBlocksFlag.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Create-or-update the viewer's review for an app block (5-star).
+   *
+   * GATING / ANTI-ABUSE (all enforced, see appBlockReview.service):
+   *   - enforceAppBlocksFlag (dark today: mutation throws UNAUTHORIZED when off).
+   *   - guardedProcedure: authenticated, email-verified, NOT muted.
+   *   - rating ∈ [1,5]; NO self-review (owner rejected); MUST have an enabled
+   *     install; ONE per (user, app) via the DB unique (upsert, not a 2nd row).
+   *
+   * REWARD (money-touching): a blue-buzz reward fires ONCE per (user, app), only
+   * on the CREATE branch (isFirstReview), AFTER the insert succeeds. It is
+   * FAIL-SOFT — a reward/ClickHouse outage must never 500 the review. We wrap
+   * it in try/catch as defense-in-depth on top of createBuzzEvent's own
+   * fail-soft inline path.
+   */
+  upsertReview: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 60,
+        errorMessage: 'Too many review submissions — slow down.',
+      })
+    )
+    .input(upsertAppBlockReviewSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { review, isFirstReview } = await upsertAppBlockReview({
+        userId: ctx.user.id,
+        appBlockId: input.appBlockId,
+        rating: input.rating,
+        recommended: input.recommended,
+        details: input.details ?? null,
+      });
+
+      // Blue-buzz reward — first review only, fail-soft. The reward must never
+      // fail the review write (it's an audit/analytics + non-cashable grant).
+      if (isFirstReview) {
+        try {
+          await appBlockReviewReward.apply(
+            { appBlockId: input.appBlockId, userId: ctx.user.id, isFirstReview: true },
+            { ip: ctx.ip }
+          );
+        } catch (error) {
+          logToAxiom(
+            {
+              name: 'app-block-review-reward',
+              type: 'error',
+              message: 'Failed to apply appBlockReview reward (non-fatal)',
+              appBlockId: input.appBlockId,
+              userId: ctx.user.id,
+              error: (error as Error)?.message,
+            },
+            'app-blocks'
+          ).catch(() => undefined);
+        }
+      }
+
+      return { review, isFirstReview };
+    }),
+
+  /**
+   * Keyset-paginated list of an app's reviews (newest first), excluding
+   * mod-excluded rows. Public/anon-CAPABLE but DARK behind the flag (returns an
+   * empty page when the flag is off, same posture as listAvailable).
+   */
+  listReviews: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many review requests — slow down.',
+      })
+    )
+    .input(listAppBlockReviewsSchema)
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return { items: [], nextCursor: undefined };
+      }
+      return listAppBlockReviews(input);
+    }),
+
+  /**
+   * The viewer's own review for an app block (or null) — backs the
+   * "you rated this N★" state on the detail page. protectedProcedure (per-user
+   * data), DARK behind the flag.
+   */
+  getMyReview: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getAppDetailSchema)
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return null;
+      return getMyAppBlockReview(input.appBlockId, ctx.user.id);
+    }),
+
+  /**
+   * MOD-ONLY: flip `exclude` on a review so it drops out of the rating aggregate
+   * + the Bayesian sort. moderatorProcedure + the flag gate. Mirrors
+   * toggleExcludeResourceReview.
+   */
+  setReviewExcluded: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(setAppReviewExcludedSchema)
+    .mutation(async ({ input }) => {
+      return setAppReviewExcluded(input);
     }),
 
   /**

@@ -40,10 +40,14 @@ vi.mock('~/server/redis/client', () => ({
     get: vi.fn(async () => null),
     set: vi.fn(async () => undefined),
     del: vi.fn(async () => 0),
+    // sAdd: used by cache-helpers tagCacheKey — the `rating` sort caches the
+    // global-mean scalar through queryCache, which tags the key.
+    sAdd: vi.fn(async () => 0),
     scanIterator: async function* () {},
   },
   sysRedis: { sMembers: vi.fn(async () => []) },
   REDIS_KEYS: {
+    TAG: 'cache:tag',
     BLOCKS: { REGISTRY: 'packed:caches:block-registry', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
   },
   REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
@@ -96,6 +100,8 @@ function rawRow(over: Partial<Record<string, unknown>> = {}) {
     // service uses to build the keyset cursor.
     category: 'utility',
     approved_scopes: ['ai:write:budgeted', 'models:read:self', 'buzz:read:self', 'social:tip:self'],
+    avg_rating: 4.2,
+    review_count: 8n,
     sort_key: '00000000000000000005',
     manifest: {
       name: 'Cool Block',
@@ -176,6 +182,9 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
         'installCount',
         'manifest',
         'scopesSummary',
+        // F-E marketplace reviews — display-safe aggregates.
+        'avgRating',
+        'reviewCount',
       ].sort()
     );
     // status is a DB-internal field; it must never appear on the wire shape.
@@ -244,7 +253,7 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
   // F-E E3 — sort, category filter, scopes-summary.
   // ---------------------------------------------------------------------------
 
-  it('sort=popular orders by install count DESC (default)', async () => {
+  it('sort=popular orders by install count DESC', async () => {
     const { BlockRegistry } = await import('../block-registry.service');
     await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
     const sql = capturedSql();
@@ -270,6 +279,36 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
     expect(sql).toMatch(/ORDER BY\s+sort_key\s+ASC/i);
     // ASC sort resumes with `>` (not `<`) on the keyset tuple.
     expect(sql).toMatch(/,\s*ab\.id\)\s*>\s*\(/);
+  });
+
+  // ---------------------------------------------------------------------------
+  // F-E marketplace REVIEWS — Bayesian `rating` sort DRIFT GUARD.
+  // The rating sort key text MUST be reused identically in the SELECT (AS
+  // sort_key) and the keyset WHERE — if it drifts, keyset pagination silently
+  // skips rows. The Bayesian-score ordering + keyset-completeness PROPERTIES are
+  // pinned in block-registry.rating-sort.test.ts (pure-JS mirror of the SQL).
+  // ---------------------------------------------------------------------------
+
+  it('sort=rating (the schema DEFAULT) emits the Bayesian key in SELECT + keyset WHERE (no drift)', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    // `rating` is the marketplaceSortSchema default; the service takes the parsed
+    // input so we pass it explicitly here (the zod default applies at the router).
+    await BlockRegistry.listAvailable({ limit: 20, sort: 'rating' });
+    const sql = capturedSql();
+    // The Bayesian encoding fragment (round(score*scale) zero-padded, concat the
+    // install-count) is unique to the rating key.
+    const occurrences = sql.match(/lpad\(round\(/gi)?.length ?? 0;
+    // Emitted once in SELECT (AS sort_key) and once in the keyset WHERE tuple.
+    expect(occurrences).toBeGreaterThanOrEqual(2);
+    expect(sql).toMatch(/AS sort_key/i);
+    expect(sql).toMatch(/ORDER BY\s+sort_key\s+DESC/i);
+    expect(sql).toMatch(/,\s*ab\.id\)\s*<\s*\(/); // DESC keyset resumes with `<`
+  });
+
+  it('a NON-rating sort does NOT emit the Bayesian fragment', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
+    expect(capturedSql()).not.toMatch(/lpad\(round\(/i);
   });
 
   it('category filter is threaded into the SQL (only the requested category)', async () => {
@@ -331,7 +370,18 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
     const { BlockRegistry } = await import('../block-registry.service');
     const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
     expect(Object.keys(items[0]).sort()).toEqual(
-      ['appId', 'appName', 'blockId', 'category', 'id', 'installCount', 'manifest', 'scopesSummary'].sort()
+      [
+        'appId',
+        'appName',
+        'avgRating',
+        'blockId',
+        'category',
+        'id',
+        'installCount',
+        'manifest',
+        'reviewCount',
+        'scopesSummary',
+      ].sort()
     );
     expect(items[0]).not.toHaveProperty('status');
     expect(items[0]).not.toHaveProperty('approved_scopes');

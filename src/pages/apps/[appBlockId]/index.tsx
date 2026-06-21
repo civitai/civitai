@@ -141,6 +141,9 @@ export default function AppDetailPage() {
       // scopes from the authenticated getInstallConfig), so safe placeholders.
       category: null,
       scopesSummary: [],
+      // Marketplace reviews — carry through from the detail (display-safe).
+      avgRating: detail.avgRating,
+      reviewCount: detail.reviewCount,
     };
     openAppSettingsModal({ block, existingByScope });
   }

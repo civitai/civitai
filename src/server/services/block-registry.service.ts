@@ -31,6 +31,9 @@ import type {
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { toPublicBlockManifest, toPublicScreenshots } from '~/server/schema/blocks/subscription.schema';
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+import { CacheTTL } from '~/server/common/constants';
+import { queryCache } from '~/server/utils/cache-helpers';
+import { BAYES_MIN_REVIEWS } from '~/server/services/appBlockReview.service';
 
 const CACHE_TTL_SECONDS = 60;
 export const MAX_BLOCKS_PER_SLOT = 3;
@@ -75,6 +78,100 @@ function decodeMarketplaceCursor(cursor: string | undefined): {
     cursorSortKey: decoded.slice(0, sep),
     cursorId: decoded.slice(sep + 1),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace reviews — aggregate SQL + Bayesian sort (F-E "marketplace").
+// ---------------------------------------------------------------------------
+
+/**
+ * Correlated subquery: AVG(rating) over an app's AGGREGATE-ELIGIBLE reviews —
+ * NOT mod-excluded AND NOT the app owner's own (self-review). NULL for a
+ * 0-review app. Identical eligibility to getAppRatingTotals so the card number,
+ * the detail number, and the sort all agree.
+ */
+const AVG_RATING_SUBQUERY = Prisma.sql`(
+  SELECT AVG(abr.rating)::float
+  FROM app_block_reviews abr
+  WHERE abr.app_block_id = ab.id
+    AND NOT abr.exclude
+    AND abr.user_id IS DISTINCT FROM oc."userId"
+)`;
+
+/** Correlated subquery: COUNT of aggregate-eligible reviews (same filter). */
+const REVIEW_COUNT_SUBQUERY = Prisma.sql`(
+  SELECT COUNT(*)::bigint
+  FROM app_block_reviews abr
+  WHERE abr.app_block_id = ab.id
+    AND NOT abr.exclude
+    AND abr.user_id IS DISTINCT FROM oc."userId"
+)`;
+
+/** Correlated subquery: SUM(rating) of aggregate-eligible reviews (same filter). */
+const SUM_RATING_SUBQUERY = Prisma.sql`(
+  SELECT COALESCE(SUM(abr.rating), 0)::float
+  FROM app_block_reviews abr
+  WHERE abr.app_block_id = ab.id
+    AND NOT abr.exclude
+    AND abr.user_id IS DISTINCT FROM oc."userId"
+)`;
+
+// Scale factor for encoding the [1,5] Bayesian score as a zero-padded sortable
+// integer string. score * 1e6 → 7 digits max (5_000_000), lpad to 9 for headroom.
+const BAYES_SCORE_SCALE = 1_000_000;
+const BAYES_SCORE_PAD = 9;
+const INSTALL_PAD = 20; // matches the `popular` sort's install-count padding
+
+/**
+ * The Bayesian-shrinkage `rating` sort key, as a single zero-padded sortable
+ * TEXT (the same fragment reused IDENTICALLY in SELECT, the keyset WHERE, and
+ * ORDER BY — if it drifts, keyset pagination silently skips rows).
+ *
+ *   score = (C*m + SUM(rating)) / (C + n)
+ *     n = aggregate-eligible review count, m = global mean (param), C = prior.
+ *   0-review apps → score = m (mid-pack, not buried).
+ *
+ * Encoded DESC: lpad(round(score*SCALE)) so a plain TEXT DESC compare orders by
+ * score. Tiebreaker concatenated: equal scores fall back to install_count
+ * (lpad), then `ab.id` (the row-value keyset's final component). The whole key
+ * is one TEXT so the keyset tuple `(sort_key, id)` is a correct total order.
+ */
+function bayesianRatingSortKey(globalMean: number): Prisma.Sql {
+  // score = (C*m + SUM) / (C + n). C and m are server constants/params (safe).
+  const score = Prisma.sql`(
+    (${BAYES_MIN_REVIEWS}::float * ${globalMean}::float + ${SUM_RATING_SUBQUERY})
+    / (${BAYES_MIN_REVIEWS}::float + ${REVIEW_COUNT_SUBQUERY})
+  )`;
+  const installCount = Prisma.sql`(
+    SELECT COUNT(DISTINCT bus.user_id) FROM block_user_subscriptions bus
+    WHERE bus.app_block_id = ab.id
+  )`;
+  return Prisma.sql`(
+    lpad(round(${score} * ${BAYES_SCORE_SCALE})::bigint::text, ${BAYES_SCORE_PAD}, '0')
+    || lpad(${installCount}::text, ${INSTALL_PAD}, '0')
+  )`;
+}
+
+/**
+ * The global mean rating `m` across ALL aggregate-eligible app reviews (NOT
+ * exclude AND not self-review), cached 1h. Falls back to the neutral mid-scale
+ * (3.0) when there are no reviews yet (the marketplace is dark/empty), so a
+ * 0-review world still produces a sane, stable sort.
+ */
+async function getGlobalMeanRating(): Promise<number> {
+  const cacheable = queryCache(dbRead, 'getGlobalMeanRating', 'v1');
+  const rows = await cacheable<{ mean: number | null }[]>(
+    Prisma.sql`
+      SELECT AVG(abr.rating)::float AS mean
+      FROM app_block_reviews abr
+      JOIN app_blocks ab ON ab.id = abr.app_block_id
+      JOIN "OauthClient" oc ON oc.id = ab.app_id
+      WHERE NOT abr.exclude
+        AND abr.user_id IS DISTINCT FROM oc."userId"
+    `,
+    { ttl: CacheTTL.hour, tag: ['app-rating:global-mean'] }
+  );
+  return rows[0]?.mean ?? 3.0;
 }
 
 // Slot-reservation math lives in a client-safe module so the model-page SSR
@@ -2490,6 +2587,8 @@ export class BlockRegistry {
       install_count: bigint;
       category: string | null;
       approved_scopes: string[] | null;
+      avg_rating: number | null;
+      review_count: bigint;
       // The sort key for THIS row, projected so we can encode it into the
       // nextCursor for a stable keyset scan. Text so one column fits all sorts.
       sort_key: string;
@@ -2517,13 +2616,18 @@ export class BlockRegistry {
     // less-than the cursor tuple); name ASC (resume strictly greater-than).
     // ab.id shares the sort_key direction so the row-value tuple comparison is
     // a correct, total keyset.
+    // `rating` (the default) needs the marketplace-wide Bayesian prior `m`
+    // (cheap, 1h-cached scalar) injected as a param. The other sorts ignore it.
+    const globalMean = sort === 'rating' ? await getGlobalMeanRating() : 0;
     const sortKeyExpr =
-      sort === 'popular'
+      sort === 'rating'
+        ? bayesianRatingSortKey(globalMean)
+        : sort === 'popular'
         ? Prisma.sql`lpad((SELECT COUNT(DISTINCT bus.user_id) FROM block_user_subscriptions bus WHERE bus.app_block_id = ab.id)::text, 20, '0')`
         : sort === 'newest'
         ? Prisma.sql`to_char(COALESCE(ab.current_version_deployed_at, ab.created_at) AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')`
         : Prisma.sql`LOWER(COALESCE(ab.manifest->>'name', ab.block_id))`;
-    const descending = sort === 'popular' || sort === 'newest';
+    const descending = sort === 'rating' || sort === 'popular' || sort === 'newest';
     const dir = descending ? Prisma.sql`DESC` : Prisma.sql`ASC`;
     const keysetCmp = descending ? Prisma.sql`<` : Prisma.sql`>`;
 
@@ -2544,6 +2648,10 @@ export class BlockRegistry {
         -- ranking. COUNT(DISTINCT user_id) makes the number mean "users".
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count,
+        -- Marketplace reviews: aggregate-eligible AVG + COUNT (excludes
+        -- mod-excluded + self-reviews). NULL avg = 0-review app.
+        ${AVG_RATING_SUBQUERY} AS avg_rating,
+        ${REVIEW_COUNT_SUBQUERY} AS review_count,
         -- The sort key for this row, as text, so the keyset cursor can carry it.
         ${sortKeyExpr} AS sort_key
       FROM app_blocks ab
@@ -2600,6 +2708,9 @@ export class BlockRegistry {
               .filter((s): s is string => typeof s === 'string')
               .slice(0, MARKETPLACE_SCOPES_SUMMARY_LIMIT)
           : [],
+        // Marketplace reviews (aggregate-eligible). avgRating NULL = 0-review.
+        avgRating: r.avg_rating ?? null,
+        reviewCount: Number(r.review_count),
       })),
       nextCursor,
     };
@@ -2644,6 +2755,8 @@ export class BlockRegistry {
       version: string | null;
       approved_scopes: string[] | null;
       install_count: bigint;
+      avg_rating: number | null;
+      review_count: bigint;
       // F-E E5: stored screenshot records ([{ key, index, ext, contentType }]),
       // jsonb. NULL until the E5 migration is applied + an app is (re)approved
       // with a `screenshots/` dir — projected to PUBLIC display URLs below.
@@ -2662,7 +2775,9 @@ export class BlockRegistry {
         ab.approved_scopes,
         ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
-         WHERE bus.app_block_id = ab.id) AS install_count
+         WHERE bus.app_block_id = ab.id) AS install_count,
+        ${AVG_RATING_SUBQUERY} AS avg_rating,
+        ${REVIEW_COUNT_SUBQUERY} AS review_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.id = ${appBlockId}::text
@@ -2695,6 +2810,10 @@ export class BlockRegistry {
       contentRating: row.content_rating ?? null,
       version: row.version ?? null,
       installCount: Number(row.install_count),
+      // Marketplace reviews (aggregate-eligible — excludes mod-excluded +
+      // self-reviews). avgRating NULL = 0-review. Display-safe aggregates.
+      avgRating: row.avg_rating ?? null,
+      reviewCount: Number(row.review_count),
       // Already-public standalone origin (no token/scope). Same host the webhook
       // validates the submitted bundle's iframe.src against.
       liveUrl: `https://${row.block_id}.${env.APPS_DOMAIN}`,
@@ -2740,6 +2859,8 @@ export class BlockRegistry {
       install_count: bigint;
       category: string | null;
       approved_scopes: string[] | null;
+      avg_rating: number | null;
+      review_count: bigint;
     };
     const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT
@@ -2751,7 +2872,9 @@ export class BlockRegistry {
         ab.category,
         ab.approved_scopes,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
-         WHERE bus.app_block_id = ab.id) AS install_count
+         WHERE bus.app_block_id = ab.id) AS install_count,
+        ${AVG_RATING_SUBQUERY} AS avg_rating,
+        ${REVIEW_COUNT_SUBQUERY} AS review_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'
@@ -2777,6 +2900,8 @@ export class BlockRegistry {
             .filter((s): s is string => typeof s === 'string')
             .slice(0, MARKETPLACE_SCOPES_SUMMARY_LIMIT)
         : [],
+      avgRating: r.avg_rating ?? null,
+      reviewCount: Number(r.review_count),
     }));
   }
 
