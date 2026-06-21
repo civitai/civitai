@@ -36,6 +36,19 @@ export type ScopeBitmaskRequirement = number | typeof SKIP_OAUTH_CHECK;
 
 export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> = {
   'models:read:self': TokenScope.ModelsRead,
+  // catalog:read — the Phase 3 block catalog-search endpoint
+  // (/api/v1/blocks/models). Distinct from `models:read:self`:
+  //   - models:read:self is single-model + modelId-bound (query.id ≡
+  //     ctx.modelId) — for a block that reads its OWN host model.
+  //   - catalog:read is a BROWSE (search the public catalog) — there is no
+  //     single model to bind to, so its enforceContextBinding case is a NO-OP.
+  // It maps to the same OAuth ceiling bit (ModelsRead) because both read model
+  // data, but it grants NO new data exposure: the catalog is public and the
+  // block endpoint is strictly MORE restricted than the public /api/v1/models
+  // (it authoritatively clamps maturity to the token's domain ceiling — a
+  // SFW-domain block cannot fetch mature catalog content). A block that wants
+  // the in-block model selector declares `catalog:read` in its manifest.
+  'catalog:read': TokenScope.ModelsRead,
   'media:read:owned': TokenScope.MediaRead,
   'user:read:self': TokenScope.UserRead,
   'ai:write:budgeted': TokenScope.AIServicesWrite,

@@ -46,7 +46,10 @@ export interface BlockTokenClaims {
    * from `domainBrowsingCeiling`) stamped at mint. The block generation path
    * derives `allowMatureContent` from this — never from a client body field.
    * ABSENT on legacy tokens minted before the maturity feature → consumers
-   * MUST fail closed (treat as SFW).
+   * MUST fail closed (treat as SFW). The block catalog endpoints
+   * (/api/v1/blocks/models, /api/v1/blocks/images) likewise intersect the
+   * requested browsing level with this ceiling so a SFW-domain token can never
+   * widen to mature catalog content.
    */
   maxBrowsingLevel?: number;
   /** Advisory: the color domain the token was minted on (`green`|`blue`|`red`). */
@@ -429,6 +432,16 @@ export function enforceContextBinding(
       throw forbidden(`unknown scope: ${scope}`);
     }
     switch (scope) {
+      case 'catalog:read': {
+        // BROWSE scope (Phase 3 block catalog endpoint). No context binding:
+        // it searches the PUBLIC catalog, so there is no single modelId to bind
+        // to and no `:self` subject requirement (anon tokens may browse). The
+        // maturity ceiling is enforced separately + authoritatively by the
+        // endpoint via claims.maxBrowsingLevel (clamped, fail-closed to SFW) —
+        // NOT here. This explicit no-op case is required so the fail-closed
+        // `default` below does not reject a valid catalog:read token.
+        break;
+      }
       case 'models:read:self': {
         const modelIdStr =
           readBoundQueryString(req, 'id') ?? readBoundQueryString(req, 'modelId');
