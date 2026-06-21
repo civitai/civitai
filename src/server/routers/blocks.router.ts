@@ -40,10 +40,15 @@ import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
+  emptyRevenue,
   getRecentAttributionsForOwner,
   getRevenueForOwner,
 } from '~/server/services/blocks/buzz-attribution.service';
-import { getMyAppAnalytics } from '~/server/services/blocks/app-analytics.service';
+import {
+  emptyAnalytics,
+  getMyAppAnalytics,
+  resolveRange,
+} from '~/server/services/blocks/app-analytics.service';
 import {
   getRepresentativeBaseModel,
   resolveBlockCheckpoint,
@@ -2290,6 +2295,12 @@ export const blocksRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
+      // Dark-flag fail-closed: while the appBlocks flag is off the middleware
+      // marks the ctx → return the zeroed revenue shape WITHOUT running any
+      // aggregate, so a flag-off moderator gets no live revenue data.
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return emptyRevenue();
+      }
       const user = ctx.user as SessionUser;
       const { summary, topApps } = await getRevenueForOwner({
         ownerUserId: user.id,
@@ -2325,12 +2336,20 @@ export const blocksRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
+      const from = input.from ? new Date(input.from) : undefined;
+      const to = input.to ? new Date(input.to) : undefined;
+      // Dark-flag fail-closed: while the appBlocks flag is off the middleware
+      // marks the ctx → return the zeroed analytics shape (with the resolved
+      // range, so the UI still has a window) WITHOUT running any aggregate.
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return emptyAnalytics(resolveRange({ from, to }), false);
+      }
       const user = ctx.user as SessionUser;
       return getMyAppAnalytics({
         userId: user.id,
         appBlockId: input.appBlockId,
-        from: input.from ? new Date(input.from) : undefined,
-        to: input.to ? new Date(input.to) : undefined,
+        from,
+        to,
       });
     }),
 

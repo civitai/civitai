@@ -83,7 +83,7 @@ export type AppAnalytics = {
   };
 };
 
-function emptyAnalytics(range: AppAnalytics['range'], notOwned: boolean): AppAnalytics {
+export function emptyAnalytics(range: AppAnalytics['range'], notOwned: boolean): AppAnalytics {
   return {
     range,
     notOwned,

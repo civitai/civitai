@@ -18,6 +18,8 @@ import { TRPCError } from '@trpc/server';
 const {
   mockIsAppBlocksEnabled,
   mockGetMyAppAnalytics,
+  mockGetRevenueForOwner,
+  mockGetRecentAttributionsForOwner,
   mockVerifyBlockToken,
   mockParseSubjectUserId,
   mockGetUserById,
@@ -29,6 +31,8 @@ const {
 } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(),
   mockGetMyAppAnalytics: vi.fn(),
+  mockGetRevenueForOwner: vi.fn(),
+  mockGetRecentAttributionsForOwner: vi.fn(),
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
   mockGetUserById: vi.fn(),
@@ -50,10 +54,31 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 }));
 vi.mock('~/server/services/blocks/app-analytics.service', () => ({
   getMyAppAnalytics: (...a: unknown[]) => mockGetMyAppAnalytics(...a),
+  // emptyAnalytics + resolveRange are pure (no DB) — use the real ones so the
+  // flag-off short-circuit returns the genuine zeroed shape.
+  emptyAnalytics: (range: unknown, notOwned: boolean) => ({
+    range,
+    notOwned,
+    installs: { total: 0, active: 0, series: [] },
+    runs: { count: 0, buzzSpent: 0, series: [] },
+    buzzPurchased: { count: 0, buzzAmount: 0, grossCents: 0 },
+    engagement: { apiCalls: 0, activeUsers: 0, errorRate: 0, topScopes: [], topEndpoints: [] },
+  }),
+  resolveRange: () => ({ from: new Date(0), to: new Date(0), granularity: 'day' as const }),
 }));
 vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
-  getRevenueForOwner: vi.fn(),
-  getRecentAttributionsForOwner: vi.fn(),
+  getRevenueForOwner: (...a: unknown[]) => mockGetRevenueForOwner(...a),
+  getRecentAttributionsForOwner: (...a: unknown[]) => mockGetRecentAttributionsForOwner(...a),
+  emptyRevenue: () => ({
+    summary: {
+      pending: { count: 0, grossCents: 0, shareCents: 0 },
+      confirmed: { count: 0, grossCents: 0, shareCents: 0 },
+      paidOut: { count: 0, grossCents: 0, shareCents: 0 },
+      voided: { count: 0, grossCents: 0 },
+    },
+    topApps: [],
+    recentAttributions: [],
+  }),
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
@@ -149,6 +174,10 @@ beforeEach(() => {
   mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
   mockGetMyAppAnalytics.mockReset();
   mockGetMyAppAnalytics.mockResolvedValue(SENTINEL);
+  mockGetRevenueForOwner.mockReset();
+  mockGetRevenueForOwner.mockResolvedValue({ summary: {}, topApps: [] });
+  mockGetRecentAttributionsForOwner.mockReset();
+  mockGetRecentAttributionsForOwner.mockResolvedValue([]);
 });
 
 describe('getMyAppAnalytics — gate', () => {
@@ -171,6 +200,20 @@ describe('getMyAppAnalytics — gate', () => {
   it('anonymous: rejected', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
     await expect(caller.getMyAppAnalytics({})).rejects.toBeInstanceOf(TRPCError);
+    expect(mockGetMyAppAnalytics).not.toHaveBeenCalled();
+  });
+
+  it('flag OFF (even for a moderator): returns zeroed analytics + runs NO aggregate', async () => {
+    // moderatorProcedure passes (mod), but the appBlocks flag is OFF →
+    // enforceAppBlocksFlag marks _appBlocksDisabled on the query ctx → the proc
+    // short-circuits to the empty shape and never touches the aggregate service.
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getMyAppAnalytics({ appBlockId: 'apb_1' });
+    expect(result.notOwned).toBe(false);
+    expect(result.installs).toEqual({ total: 0, active: 0, series: [] });
+    expect(result.runs).toEqual({ count: 0, buzzSpent: 0, series: [] });
+    expect(result.buzzPurchased).toEqual({ count: 0, buzzAmount: 0, grossCents: 0 });
     expect(mockGetMyAppAnalytics).not.toHaveBeenCalled();
   });
 });
@@ -202,5 +245,25 @@ describe('getMyAppAnalytics — input validation & delegation', () => {
       caller.getMyAppAnalytics({ from: 'not-a-date' })
     ).rejects.toBeInstanceOf(TRPCError);
     expect(mockGetMyAppAnalytics).not.toHaveBeenCalled();
+  });
+});
+
+describe('getMyRevenue — dark-flag short-circuit', () => {
+  it('flag ON (moderator): runs the revenue aggregate', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getMyRevenue({ appBlockId: 'apb_1' });
+    expect(mockGetRevenueForOwner).toHaveBeenCalledTimes(1);
+    expect(result.recentAttributions).toEqual([]);
+  });
+
+  it('flag OFF (even for a moderator): returns zeroed revenue + runs NO query', async () => {
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getMyRevenue({ appBlockId: 'apb_1' });
+    expect(result.topApps).toEqual([]);
+    expect(result.recentAttributions).toEqual([]);
+    expect(result.summary.confirmed).toEqual({ count: 0, grossCents: 0, shareCents: 0 });
+    expect(mockGetRevenueForOwner).not.toHaveBeenCalled();
+    expect(mockGetRecentAttributionsForOwner).not.toHaveBeenCalled();
   });
 });
