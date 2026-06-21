@@ -1,9 +1,33 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isProd } from '~/env/other';
+import { env } from '~/env/server';
 import { isWarm, getWarmState, getWarmDurationMs, didFailOpenTimeout } from '~/server/warmup';
 import { runHealthChecks } from '~/pages/api/health';
+import type { CheckKey } from '~/pages/api/health';
+import { parseReadinessNonCritical } from '~/server/readiness/non-critical';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
+
+// Check names the READINESS probe treats as NON-CRITICAL (a failure does NOT make this pod
+// NotReady). Parsed once at module load and filtered to real check names so a typo can't
+// silently suppress the wrong check. Default empty → readiness uses the same fatal-set as
+// /api/health (today's behavior). Set READINESS_NONCRITICAL_CHECKS="redis" once the redis
+// self-heal fix is proven, so a cluster-redis half-open park degrades-in-place instead of
+// shedding the whole api-primary fleet from the LB.
+const VALID_CHECK_KEYS: readonly CheckKey[] = [
+  'write',
+  'read',
+  'pgWrite',
+  'pgRead',
+  'searchMetrics',
+  'redis',
+  'sysRedis',
+  'clickhouse',
+];
+const readinessNonCritical: CheckKey[] = parseReadinessNonCritical(
+  env.READINESS_NONCRITICAL_CHECKS,
+  VALID_CHECK_KEYS
+);
 
 // Warmup-gated readiness probe.
 //
@@ -68,7 +92,7 @@ export default WebhookEndpoint(async (_req: NextApiRequest, res: NextApiResponse
     return;
   }
 
-  const { healthy, results } = await runHealthChecks(signal);
+  const { healthy, results } = await runHealthChecks(signal, readinessNonCritical);
 
   res.off('close', onClose);
 

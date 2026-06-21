@@ -411,6 +411,23 @@ export const serverSchema = z.object({
   // Comma-delimited check names to skip in /api/health (e.g. "searchMetrics").
   // Static counterpart to the runtime sysRedis DISABLED_HEALTHCHECKS list.
   HEALTHCHECK_DISABLED: commaDelimitedStringArray().optional(),
+  // ── READINESS-ONLY non-critical checks (shared-dependency park decouple) ──────────
+  //
+  // Comma-delimited check names that the READINESS probe (/api/ready) treats as
+  // NON-CRITICAL — i.e. a failure of these checks does NOT make a pod NotReady — while the
+  // diagnostic /api/health view still reports them as fatal (unchanged). This is the source
+  // half of the backstop for the cluster-redis half-open park: a SHARED dependency blip
+  // (every pod's cluster-redis client wedging on the same next-redis-cluster node) must NOT
+  // shed the WHOLE api-primary fleet from the LB at once — that capacity collapse is the 504
+  // wave itself. With "redis" here, a parked pod keeps serving (degrading through the existing
+  // cache fail-open paths) instead of being pulled, while the redis self-heal clears the park
+  // within seconds. Pod-local readiness (warmup gate) is unaffected.
+  //
+  // SAFETY: applies to /api/ready ONLY (never /api/health). A check listed here is still run
+  // and still reported in the readiness body + healthcheck_* metrics — only its contribution
+  // to the binary Ready/NotReady verdict is suppressed. Default empty → today's behavior
+  // exactly (fully reversible). Recommended prod value once the self-heal fix is proven: "redis".
+  READINESS_NONCRITICAL_CHECKS: commaDelimitedStringArray().optional(),
   FRESHDESK_JWT_SECRET: z.string().optional(),
   FRESHDESK_JWT_URL: z.string().optional(),
   FRESHDESK_DOMAIN: z.string().optional(),

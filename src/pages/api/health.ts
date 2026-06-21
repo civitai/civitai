@@ -254,7 +254,14 @@ function getOverallDeadlineMs() {
  * map plus the computed `healthy` flag and whether the overall deadline fired.
  */
 export async function runHealthChecks(
-  signal: AbortSignal
+  signal: AbortSignal,
+  // Extra check names to treat as NON-CRITICAL for THIS run's `healthy` verdict, on top of the
+  // runtime sysRedis NON_CRITICAL_HEALTHCHECKS list. /api/ready passes
+  // env.READINESS_NONCRITICAL_CHECKS so a SHARED-dependency blip (e.g. the cluster-redis
+  // half-open park) can't shed the whole fleet from the LB; /api/health passes nothing so its
+  // diagnostic verdict is unchanged. The checks still RUN and are still reported in `results` +
+  // the healthcheck_* metrics — only their contribution to `healthy` is suppressed.
+  extraNonCritical: readonly CheckKey[] = []
 ): Promise<{ healthy: boolean; results: Record<CheckKey, boolean>; deadlineTimedOut: boolean }> {
   // Start the overall deadline at the TOP — before the config-fetch leg — so
   // the timer bounds the WHOLE run (config fetch + checks), not just the check
@@ -362,8 +369,15 @@ export async function runHealthChecks(
       });
     }
 
+    // A check is non-fatal for THIS run's verdict if it's in the runtime sysRedis
+    // NON_CRITICAL_HEALTHCHECKS list OR in the caller-supplied extraNonCritical set (the
+    // readiness probe passes env.READINESS_NONCRITICAL_CHECKS so a shared-dep park can't shed
+    // the fleet; /api/health passes nothing → unchanged).
     const healthy = activeChecks.every(
-      ([name]) => nonCriticalChecks.includes(name as CheckKey) || results[name as CheckKey]
+      ([name]) =>
+        nonCriticalChecks.includes(name as CheckKey) ||
+        extraNonCritical.includes(name as CheckKey) ||
+        results[name as CheckKey]
     );
     if (!healthy) counters.overall?.inc();
 
