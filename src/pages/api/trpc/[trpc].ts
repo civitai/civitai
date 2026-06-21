@@ -72,10 +72,24 @@ const trpcHandler = createNextApiHandler({
       // stringify + Axiom ingest would add event-loop pressure during the exact
       // storm the bulkhead exists to relieve. The `civitai_app_heavy_bulkhead_rejects`
       // gauge already carries the signal, so skip the ingest here too.
+      //
+      // SERVICE_UNAVAILABLE is the transient-upstream mapping (orchestrator 5xx /
+      // network blip → 503; see workflows.ts). It is retry-able + self-describing,
+      // and the continuously-polled `orchestrator.statusUpdate` turns one upstream
+      // blip into a sustained wave of 503 rejects — paying full stack-capture +
+      // JSON.stringify(input) + Axiom ingest per reject would add event-loop
+      // pressure during the exact outage (the same failure mode TOO_MANY_REQUESTS
+      // skips for). The 503 status itself, the preserved `cause`, and the
+      // `redis_commands_inflight` cluster gauge already carry the diagnostic
+      // signal, so the per-reject ingest is pure event-loop cost — skip it. (This
+      // skips ONLY the Axiom ingest: recordTrpcError above still counts the 503 in
+      // civitai_app_http_errors_total{status="503"}, and the client still gets a
+      // real 503.)
       if (
         error.code === 'FORBIDDEN' ||
         error.code === 'UNAUTHORIZED' ||
-        error.code === 'TOO_MANY_REQUESTS'
+        error.code === 'TOO_MANY_REQUESTS' ||
+        error.code === 'SERVICE_UNAVAILABLE'
       ) {
         return error;
       }
