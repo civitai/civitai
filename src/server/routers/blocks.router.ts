@@ -46,6 +46,11 @@ import {
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
+import {
+  allowMatureContentForCeiling,
+  domainBrowsingCeiling,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -65,6 +70,7 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
@@ -157,6 +163,45 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
 // block-tokens/index.ts); model tokens never carry `entityType`.
 function isPageToken(claims: { ctx?: unknown }): boolean {
   return (claims.ctx as { entityType?: unknown } | undefined)?.entityType === 'none';
+}
+
+// ---- Maturity enforcement (GA gate) ---------------------------------------
+//
+// AUTHORITATIVE server-side belt. The maturity ceiling comes from the TOKEN's
+// `maxBrowsingLevel` claim (server-minted from the request host at issuance —
+// see block-tokens/index.ts), NEVER from a client-supplied body field, so a
+// block on a SFW domain (green/blue) cannot generate mature output even if its
+// own code is wrong or malicious.
+//
+// FAIL CLOSED: a token minted before this feature (or any token missing the
+// numeric claim) is treated as the most restrictive SFW ceiling, never as
+// "unrestricted". `verifyBlockToken` already rejects a present-but-non-numeric
+// claim, so by here the value is either a finite number or undefined.
+//
+// Returns:
+//   - maxBrowsingLevel:   the effective ceiling (claim value, or SFW fallback)
+//   - allowMatureContent: the orchestrator flag derived from it
+//                         (`false` on SFW, `undefined`/no-clamp only on red)
+//   - isGreen:            the prompt-audit's "SFW prompt audit" toggle — true
+//                         whenever the ceiling is SFW (i.e. NOT mature-allowed)
+function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
+  maxBrowsingLevel: number;
+  allowMatureContent: boolean | undefined;
+  isGreen: boolean;
+} {
+  const maxBrowsingLevel =
+    typeof claims.maxBrowsingLevel === 'number' && Number.isFinite(claims.maxBrowsingLevel)
+      ? claims.maxBrowsingLevel
+      : sfwBrowsingLevelsFlag; // fail closed
+  const allowMatureContent = allowMatureContentForCeiling(maxBrowsingLevel);
+  return {
+    maxBrowsingLevel,
+    allowMatureContent,
+    // `auditPromptServer`'s `isGreen` flag selects the SFW prompt audit. Tie it
+    // to the maturity ceiling rather than the literal green domain: a blue
+    // (SFW, per the App-Blocks product decision) block gets the SFW audit too.
+    isGreen: allowMatureContent === false,
+  };
 }
 
 // SECURITY-CRITICAL (W10). A page token has no model binding, so the model-
@@ -1855,6 +1900,13 @@ export const blocksRouter = router({
       // for the whole array — is enforced downstream by the orchestrator
       // resource belt over the FULL resources array; this gate is not the sole
       // boundary. Keep both belts.
+      // Maturity clamp (authoritative). Derived ONCE from the token's
+      // server-minted ceiling claim, NOT a client body field nor request-time
+      // `ctx.domain`. Drives both the resource-selection gate (`sfwOnly`, so a
+      // SFW-domain block can't even PICK a mature resource — defense in depth)
+      // and the generation-output clamp (`allowMatureContent`). Green AND blue
+      // → sfwOnly true; red → false. Mirrors submitWorkflow below.
+      const { allowMatureContent } = resolveBlockMaturity(claims);
       if (isPage) {
         // Resolve + validate the LoRA stack first (LoRA-only + family-match)
         // so a bad resource fails BEFORE the entitlement gate / any cost.
@@ -1866,7 +1918,10 @@ export const blocksRouter = router({
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
           viewer: { id: userId, isModerator: !!user.isModerator },
-          sfwOnly: ctx.domain === 'green',
+          // SFW-only resource selection unifies with the output clamp: derive
+          // from the authoritative token maturity (green/blue → true), not the
+          // request domain. `allowMatureContent === false` ⇔ SFW ceiling.
+          sfwOnly: allowMatureContent === false,
           wildcardsEnabled: !!ctx.features.wildcards,
         });
       }
@@ -1882,6 +1937,7 @@ export const blocksRouter = router({
           steps: [step],
           tags: buildWorkflowTags(claims, resolved.baseModel),
           currencies: BLOCK_CURRENCIES,
+          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         },
         query: { whatif: true },
       });
@@ -1980,6 +2036,16 @@ export const blocksRouter = router({
       // for the whole array, is enforced downstream by the orchestrator
       // resource belt over the FULL array (whatIf + real) — this gate is not
       // the sole boundary. Keep both belts.
+      // Maturity clamp (authoritative, GA gate). Derived ONCE from the token's
+      // server-minted ceiling claim and applied to: (a) the resource-selection
+      // gate (`sfwOnly`, defense in depth — a SFW block can't even PICK a
+      // mature resource), (b) the prompt audit (`isGreen` → SFW prompt audit on
+      // SFW domains), (c) the whatIf cost step, and (d) the real submit. NEVER
+      // from a client body field nor request-time `ctx.domain`, so a SFW-domain
+      // (green/blue) block cannot widen to mature output. Fail closed: a
+      // legacy/absent claim resolves to the SFW ceiling.
+      const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+
       if (isPage) {
         const loraGates = await resolvePageLoraGates({
           additionalResources: input.body.additionalResources,
@@ -1988,7 +2054,10 @@ export const blocksRouter = router({
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
           viewer: { id: userId, isModerator: !!user.isModerator },
-          sfwOnly: ctx.domain === 'green',
+          // Unify resource selection with the output clamp: SFW-only iff the
+          // authoritative token maturity is SFW (green/blue), not the request
+          // domain. `allowMatureContent === false` ⇔ SFW ceiling.
+          sfwOnly: allowMatureContent === false,
           wildcardsEnabled: !!ctx.features.wildcards,
         });
       }
@@ -1996,12 +2065,13 @@ export const blocksRouter = router({
 
       // Prompt audit before any orchestrator interaction (mirrors what
       // generateFromGraph does). A block can't bypass moderation by submitting
-      // through this path.
+      // through this path. `isGreen` (SFW prompt audit) is domain/ceiling-
+      // derived so a SFW-domain block's prompts get the stricter audit.
       await auditPromptServer({
         prompt: input.body.params.prompt,
         negativePrompt: input.body.params.negativePrompt,
         userId,
-        isGreen: false,
+        isGreen,
         isModerator: !!user.isModerator,
       });
 
@@ -2022,7 +2092,12 @@ export const blocksRouter = router({
       const tags = buildWorkflowTags(claims, resolved.baseModel);
       const whatIfResult = await submitWorkflow({
         token,
-        body: { steps: [stepForCostCheck], tags, currencies: BLOCK_CURRENCIES },
+        body: {
+          steps: [stepForCostCheck],
+          tags,
+          currencies: BLOCK_CURRENCIES,
+          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        },
         query: { whatif: true },
       });
       const cost = whatIfResult.cost?.total ?? 0;
@@ -2100,7 +2175,14 @@ export const blocksRouter = router({
         const step = await createTextToImageStep({ ...generateInput, user });
         const submitted = await submitWorkflow({
           token,
-          body: { steps: [step], tags, currencies: BLOCK_CURRENCIES },
+          body: {
+            steps: [step],
+            tags,
+            currencies: BLOCK_CURRENCIES,
+            // Authoritative maturity clamp on the REAL submit — the orchestrator
+            // rejects mature output when this is false. Token-claim derived.
+            ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+          },
         });
         snapshot = snapshotFromWorkflow(submitted);
       } catch (e) {
@@ -2235,9 +2317,31 @@ export const blocksRouter = router({
       // gen-meta (prompt/seed) aren't leaked into the third-party publisher
       // iframe for NSFW-opted-out or logged-out viewers. Anon (no ctx.user)
       // is forced to public (PG) inside the service.
+      //
+      // The color domain carries the maturity CEILING: on a SFW domain
+      // (green/blue) the service clamps the effective browsing level to SFW so a
+      // logged-in viewer can't request `browsingLevel: 31` and pull mature
+      // thumbnails + meta into the iframe. This is the display-surface analogue
+      // of the authoritative generation clamp. This is a public read with no
+      // block-token claim handy, so the request-time domain is the authority.
+      //
+      // LOW-1 hardening: derive the maturity domain from the RAW
+      // `getRequestDomainColor(req)` — which returns `undefined` for an
+      // UNRESOLVED host — NOT from `ctx.domain`, which is `?? 'blue'`-defaulted
+      // in createContext for the convenience of code that wants a concrete
+      // color. Routing the showcase clamp through that default would make an
+      // unresolved host fail-CLOSED today only because `domainBrowsingCeiling`
+      // happens to map 'blue' → SFW; the moment the platform flips blue→mature
+      // there, the `?? 'blue'` default would silently turn this fail-closed read
+      // into a fail-OPEN one for unresolved hosts. Passing the raw `undefined`
+      // through makes `domainBrowsingCeiling(undefined)` fail closed to SFW
+      // independent of blue's mapping — matching how the authoritative
+      // generation belt clamps off the raw color (never the 'blue' default).
+      const rawDomain = getRequestDomainColor(ctx.req);
       return getModelShowcaseImages(input.modelVersionId, {
         userId: ctx.user?.id ?? null,
         browsingLevel: input.browsingLevel,
+        domain: rawDomain,
       });
     }),
 

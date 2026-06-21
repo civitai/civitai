@@ -41,6 +41,16 @@ export interface BlockTokenClaims {
   ctx: Record<string, unknown>;
   scopes: string[];
   buzzBudget?: number;
+  /**
+   * AUTHORITATIVE color-domain maturity ceiling (bitwise browsing-level flag,
+   * from `domainBrowsingCeiling`) stamped at mint. The block generation path
+   * derives `allowMatureContent` from this — never from a client body field.
+   * ABSENT on legacy tokens minted before the maturity feature → consumers
+   * MUST fail closed (treat as SFW).
+   */
+  maxBrowsingLevel?: number;
+  /** Advisory: the color domain the token was minted on (`green`|`blue`|`red`). */
+  domain?: string;
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
@@ -326,6 +336,22 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       // a future handler that does claims.sub.startsWith('user:') and
       // parseInts without going through parseSubjectUserId.
       if (!isValidSubject(claims.sub)) return null;
+      // Maturity claim shape guard. The claim is optional (absent on legacy
+      // tokens), but if present it MUST be a finite number — a forged token
+      // carrying a non-numeric / NaN / Infinity maxBrowsingLevel is rejected
+      // outright so the generation clamp never coerces a junk ceiling into an
+      // unintended (wider) maturity. (Consumers ALSO fail closed on absence;
+      // this is the upstream belt that keeps a malformed claim from ever
+      // reaching them.) Same for the advisory `domain` string.
+      if (
+        claims.maxBrowsingLevel !== undefined &&
+        (typeof claims.maxBrowsingLevel !== 'number' || !Number.isFinite(claims.maxBrowsingLevel))
+      ) {
+        return null;
+      }
+      if (claims.domain !== undefined && typeof claims.domain !== 'string') {
+        return null;
+      }
       return claims;
     } catch {
       // try the next key
