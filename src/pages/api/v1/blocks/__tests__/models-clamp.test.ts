@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { resolveCatalogBrowsingLevel } from '../models-maturity';
+import { resolveCatalogBrowsingLevel } from '../catalog-maturity';
 import {
   sfwBrowsingLevelsFlag,
   allBrowsingLevelsFlag,

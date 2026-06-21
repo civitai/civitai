@@ -7,10 +7,12 @@ import { Flags } from '~/shared/utils/flags';
 
 /**
  * Authoritative App-Blocks catalog maturity clamp (Phase 3; GA-safety
- * follow-up to PR #2670). Kept in a server-import-free module so the
+ * follow-up to PR #2670). Catalog-generic: the SINGLE shared clamp for BOTH
+ * block catalog endpoints (/api/v1/blocks/models AND /api/v1/blocks/images) —
+ * there is no per-type duplicate. Kept in a server-import-free module so the
  * security-critical clamp can be unit-tested without dragging the Prisma
- * client (the /api/v1/blocks/models endpoint statically imports the model
- * service → eager Prisma load).
+ * client (both endpoints statically import a search service → eager Prisma
+ * load).
  *
  * The EFFECTIVE browsing level is the bitwise intersection (AND) of the
  * broadest possible request and the token's domain ceiling

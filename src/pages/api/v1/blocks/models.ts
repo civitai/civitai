@@ -13,7 +13,7 @@ import {
   resolveModelSearchIds,
   runModelSearch,
 } from '~/server/services/model-search.service';
-import { resolveCatalogBrowsingLevel } from './models-maturity';
+import { resolveCatalogBrowsingLevel } from './catalog-maturity';
 import { ModelSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
