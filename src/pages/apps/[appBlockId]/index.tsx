@@ -27,6 +27,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -112,6 +113,12 @@ export default function AppDetailPage() {
     return map;
   }, [mySubs, appBlockId]);
   const alreadySubscribed = Object.keys(existingByScope).length > 0;
+  // Subscriptions for THIS app — feeds the reviews write-form gate (an enabled
+  // install is required to review, mirroring the server gate).
+  const mySubsForApp = useMemo(
+    () => (mySubs ?? []).filter((sub) => sub.appBlockId === appBlockId),
+    [mySubs, appBlockId]
+  );
 
   if (!features.appBlocks) return <NotFound />;
 
@@ -397,6 +404,21 @@ export default function AppDetailPage() {
                   </List>
                 )}
               </Stack>
+
+              <Divider />
+
+              {/* F-E marketplace REVIEWS — summary + (gated) write form + list.
+                  Rendered behind the same appBlocks flag as the rest of the page
+                  (the component also self-guards). The aggregate (avgRating /
+                  reviewCount) comes from getAppDetail; the write form shows only
+                  for a signed-in viewer with an enabled install (server-enforced
+                  gates mirrored client-side). */}
+              <AppBlockReviews
+                appBlockId={appBlockId}
+                avgRating={detail.avgRating}
+                reviewCount={detail.reviewCount}
+                subscriptions={mySubsForApp}
+              />
             </Stack>
           )}
         </Stack>
