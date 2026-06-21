@@ -10,7 +10,7 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { runImageSearch } from '~/server/services/image-search.service';
-import { resolveCatalogBrowsingLevel } from './catalog-maturity';
+import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
 import {
   isFailfastStatus,

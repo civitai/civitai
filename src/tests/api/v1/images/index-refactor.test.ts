@@ -101,7 +101,7 @@ function fakeRes() {
 }
 
 async function invoke(query: Record<string, unknown>) {
-  const mod = await import('../index');
+  const mod = await import('~/pages/api/v1/images/index');
   const handler = mod.default as any;
   const req = {
     method: 'GET',

@@ -101,7 +101,7 @@ function fakeRes() {
 }
 
 async function invoke(query: Record<string, unknown>) {
-  const mod = await import('../images');
+  const mod = await import('~/pages/api/v1/blocks/images');
   const handler = mod.default as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   const req = {
     method: 'GET',
@@ -195,7 +195,7 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
 
   it('rejects non-GET', async () => {
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
-    const mod = await import('../images');
+    const mod = await import('~/pages/api/v1/blocks/images');
     const handler = mod.default as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
     const req = { method: 'POST', query: {}, headers: {}, url: '/x' } as unknown as NextApiRequest;
     const res = fakeRes();
