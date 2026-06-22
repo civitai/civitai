@@ -65,7 +65,17 @@ function Providers({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Render a component under the standard generation-form provider stack. */
+/**
+ * Render a component under the standard generation-form provider stack.
+ *
+ * Providers are supplied via the `wrapper` option (not by manually wrapping
+ * `ui`) so the `rerender` returned by vitest-browser-react re-applies the SAME
+ * wrapper on every re-render. Manually wrapping (`render(<Providers>{ui}</…>)`)
+ * works for the initial render but `rerender(newUi)` replaces the root with the
+ * bare element — dropping MantineProvider/QueryClient and crashing any Mantine
+ * child with "MantineProvider was not found". Passing `wrapper` fixes that for
+ * every component test that drives prop changes via `rerender`.
+ */
 export function renderWithProviders(ui: React.ReactElement) {
-  return render(<Providers>{ui}</Providers>);
+  return render(ui, { wrapper: Providers });
 }
