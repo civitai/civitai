@@ -588,11 +588,16 @@ export async function updateModel3DNsfwLevels(model3dIds: number[]): Promise<voi
 
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return;
-  const updateSystemNsfwLevel =
-    (await sysRedis.hGet(
-      REDIS_SYS_KEYS.SYSTEM.FEATURES,
-      'update-system-model-version-nsfw-level'
-    )) !== 'false';
+  // sysRedis.hGet is typed string but the HA/Sentinel client returns a
+  // Buffer for BLOB_STRING replies. `Buffer !== 'false'` is always true,
+  // so the kill-switch silently never fires in sentinel mode. Coerce to
+  // utf8 string before comparing. See PR #2697 for the canonical case.
+  const rawFlag = await sysRedis.hGet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    'update-system-model-version-nsfw-level'
+  );
+  const flag = Buffer.isBuffer(rawFlag) ? rawFlag.toString('utf8') : rawFlag;
+  const updateSystemNsfwLevel = flag !== 'false';
 
   await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level as (
