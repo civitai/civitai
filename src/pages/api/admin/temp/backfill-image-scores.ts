@@ -25,10 +25,11 @@ import { booleanString } from '~/utils/zod-helpers';
  * pass: range-scan v2 for engaged images, roll reactions/comments up per owner in
  * memory, then write each owner's score + total and stamp `imageScoreRecomputedAt`.
  *
- * Run it (drive from the no-timeout dev server, which talks to prod; keep the
- * client connected — nohup/screen):
- *   GET /api/admin/temp/backfill-image-scores?token=$WEBHOOK_TOKEN
- *   optional: &concurrency=3 &batchSize=1000000 &dryRun=true
+ * Defaults to a DRY RUN (scan + count owners, no writes) — pass &dryRun=false to
+ * actually write. Run it (drive from the no-timeout dev server, which talks to
+ * prod; keep the client connected — nohup/screen):
+ *   GET /api/admin/temp/backfill-image-scores?token=$WEBHOOK_TOKEN&dryRun=false
+ *   optional: &concurrency=3 &batchSize=1000000  (larger entityId window = fewer v2 scans)
  *
  * Idempotent + resumable: owners already stamped with `imageScoreRecomputedAt` are
  * always skipped, so a re-run only fills in the rest (never recomputes finished
@@ -42,7 +43,7 @@ const REACTION_TYPES = "'Like', 'Heart', 'Laugh', 'Cry'";
 
 const schema = z.object({
   concurrency: z.coerce.number().min(1).max(20).optional().default(3),
-  batchSize: z.coerce.number().min(1).optional().default(1_000_000), // entityId window per v2 scan
+  batchSize: z.coerce.number().min(1).optional().default(10000), // entityId window per v2 scan
   start: z.coerce.number().min(0).optional().default(0),
   end: z.coerce.number().min(0).optional(),
   // preview: scan + count owners, write nothing.
