@@ -352,19 +352,26 @@ const DEFAULT_SCORE_MULTIPLIERS: ScoreMultipliers = {
   reportsAgainst: -1000,
 };
 
-// Defense in depth so a single wiped store can never freeze all user scores
-// again: sysRedis (hot override) -> PG KeyValue (durable) -> hardcoded default.
+// Defense in depth so a single wiped/offline store can never freeze all user
+// scores again: sysRedis (hot override) -> PG KeyValue (durable) -> hardcoded
+// default. Each read is guarded so an ERROR (e.g. redis client offline), not just
+// a miss, falls through to the next source.
 export async function getScoreMultipliers(): Promise<ScoreMultipliers> {
-  const fromRedis = await sysRedis.packed.get<ScoreMultipliers>(USER_SCORE_MULTIPLIERS_KEY);
-  if (fromRedis) return fromRedis;
-
-  const fromDb = await dbRead.keyValue.findUnique({ where: { key: USER_SCORE_MULTIPLIERS_KEY } });
-  if (fromDb?.value) {
-    log('score multipliers: sysRedis miss, falling back to PG KeyValue');
-    return fromDb.value as unknown as ScoreMultipliers;
+  try {
+    const fromRedis = await sysRedis.packed.get<ScoreMultipliers>(USER_SCORE_MULTIPLIERS_KEY);
+    if (fromRedis) return fromRedis;
+  } catch (e) {
+    log('score multipliers: sysRedis read failed, falling back to KeyValue', (e as Error).message);
   }
 
-  log('score multipliers: sysRedis + KeyValue miss, using hardcoded default');
+  try {
+    const fromDb = await dbRead.keyValue.findUnique({ where: { key: USER_SCORE_MULTIPLIERS_KEY } });
+    if (fromDb?.value) return fromDb.value as unknown as ScoreMultipliers;
+  } catch (e) {
+    log('score multipliers: KeyValue read failed, using default', (e as Error).message);
+  }
+
+  log('score multipliers: sysRedis + KeyValue unavailable, using hardcoded default');
   return DEFAULT_SCORE_MULTIPLIERS;
 }
 
