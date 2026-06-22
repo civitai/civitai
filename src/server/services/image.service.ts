@@ -4629,6 +4629,78 @@ type ImageMetricsObject = Record<
   }
 >;
 
+// The (post-remap) metric types the image feed shapes into ImageMetricsObject.
+// Mirrors the metricType IN (...) set the app's view query uses and the fields
+// the mapping loop below reads. Kept as one source so the point-table read and
+// the shaping loop can't drift.
+const IMAGE_METRIC_TYPES = [
+  'Like',
+  'Heart',
+  'Laugh',
+  'Cry',
+  'commentCount',
+  'Collection',
+  'tippedAmount',
+] as const;
+
+// Point-lookup current-totals table maintained by the metric-event-watcher repo
+// (entityMetricCurrentTotals_v2 + its refreshable MV). Holds the SAME running
+// total per (entityType, entityId, metricType) that entityMetricDailyAgg_v2
+// computes, but pre-rolled so a hot-path read is a plain point lookup. See the
+// watcher PR `scripts/sql/entity-metric-current-totals.sql`.
+const IMAGE_CURRENT_TOTALS_TABLE = 'entityMetricCurrentTotals_v2';
+
+// Same shape MetricService.fetch('Image', ids) returns: { [imageId]: { [metricType]: total } }.
+type ImageMetricMap = Record<number, Partial<Record<string, number>>>;
+
+// Flag-ON read path: read current totals directly from the point-lookup table
+// via the civitai clickhouse client. A plain SELECT — no GROUP BY / argMax /
+// UNION at read time. Returns the SAME map shape as MetricService.fetch so the
+// shaping loop in getImageMetricsObject is identical for both paths. On ANY
+// error returns {} (fail-soft; never throws) so the caller's timeout/fallback
+// contract is preserved.
+const fetchImageMetricsFromCurrentTotals = async (ids: number[]): Promise<ImageMetricMap> => {
+  if (!ids.length) return {};
+  if (!clickhouse) return {};
+  try {
+    // Build via the $query tagged template's value formatting (formatSqlType):
+    // a number[] interpolates to a comma-joined list, so `IN (${ids})` is safe
+    // for our numeric ids. The metric-type list is a fixed compile-time constant
+    // (no user input) inlined as a quoted SQL literal list. Table name is a
+    // constant. No user-controlled string reaches the query text.
+    const metricList = IMAGE_METRIC_TYPES.map((m) => `'${m}'`).join(', ');
+    const rows = await clickhouse.$query<{
+      entityId: number;
+      metricType: string;
+      total: number;
+    }>`
+      SELECT entityId, metricType, total
+      FROM ${IMAGE_CURRENT_TOTALS_TABLE}
+      WHERE entityType = 'Image'
+        AND entityId IN (${ids})
+        AND metricType IN (${metricList})
+    `;
+    const map: ImageMetricMap = {};
+    for (const { entityId, metricType, total } of rows) {
+      (map[entityId] ??= {})[metricType] = total;
+    }
+    return map;
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'getImageMetrics current-totals read failed',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'clickhouse'
+    ).catch();
+    return {};
+  }
+};
+
 // Image metric counts are read from the watcher-fed `metrics:*` cache via
 // MetricService (which now pulls from the FINAL `entityMetricDailyAgg_v2` view).
 // The legacy in-app `entitymetric:*` read path (imageMetricsCache) was retired
@@ -4645,11 +4717,18 @@ export const getImageMetricsObject = async (
     // (callers treat missing ids as null) instead of parking ~30s and blowing the
     // SSR deadline. Empty `{}` matches the existing catch fallback.
     const timeoutMs = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS;
-    // Narrow type flows from this call (`fetch('Image', …)` → Record<number,
-    // ImageMetrics>); withTimeoutFallback infers T from it so the empty fallback
-    // is typed identically (no widening to the full metric union).
-    const fetchPromise = getImageMetricService().fetch('Image', ids);
-    type ImageMetricMap = Awaited<typeof fetchPromise>;
+    // Flag-gated read source. DEFAULT (flag OFF / absent / Flipt unreachable) =
+    // the existing MetricService path over `entityMetricDailyAgg_v2`, UNCHANGED.
+    // Flag ON = the cheap point-lookup table `entityMetricCurrentTotals_v2`
+    // (plain SELECT). Both produce the same { [id]: { [metricType]: total } }
+    // map shape, so the shaping loop and the timeout/counter wrapping below are
+    // identical for both paths.
+    const useCurrentTotals = await isFlipt(
+      FLIPT_FEATURE_FLAGS.IMAGE_METRICS_USE_CURRENT_TOTALS
+    );
+    const fetchPromise: Promise<ImageMetricMap> = useCurrentTotals
+      ? fetchImageMetricsFromCurrentTotals(ids)
+      : (getImageMetricService().fetch('Image', ids) as Promise<ImageMetricMap>);
     const metrics = await withTimeoutFallback(
       fetchPromise,
       timeoutMs,
