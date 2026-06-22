@@ -127,3 +127,44 @@ describe('signals.service getAccessToken', () => {
     expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 });
+
+// `_app` SSR-seeds `signals.getToken` by calling this SAME `getAccessToken`
+// function server-side, so the seeded `initialData` is byte-identical to the
+// tRPC resolver output by construction (the resolver also just calls it). These
+// tests pin the two shapes the SSR seed relies on:
+//  - a SUCCESS seed carries `accessToken` → AppProvider's `enabled:
+//    !!signalsToken?.accessToken` primes the worker query and suppresses the
+//    bootstrap fetch; the worker opens the connection from the seed.
+//  - a DEGRADED seed is `{}` (no `accessToken`) → the seed gate is false, the
+//    worker falls back to its own query (which re-degrades to `{}`), and
+//    `useSignalsWorker` reads `data?.accessToken` as undefined → no connection,
+//    exactly as today. No 500 reaches the SSR render path.
+describe('signals.service getAccessToken (signals.getToken SSR-seed shapes)', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', fetchMock);
+    mockWithSignals.mockImplementation((fn: () => Promise<unknown>) => fn());
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('success seed exposes a truthy accessToken (primes the worker query)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accessToken: 'tok_seed' }),
+    });
+    const seed = await getAccessToken({ id: 1 });
+    // The exact gate AppProvider uses to decide whether to seed.
+    expect(!!seed.accessToken).toBe(true);
+    expect(seed).toEqual({ accessToken: 'tok_seed' });
+  });
+
+  it('degraded seed is {} with no accessToken (worker self-heals, no connection)', async () => {
+    fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+    const seed = await getAccessToken({ id: 1 });
+    expect(!!seed.accessToken).toBe(false);
+    expect(seed).toEqual({});
+  });
+});

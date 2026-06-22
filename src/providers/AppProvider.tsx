@@ -8,6 +8,7 @@ import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
+import type { GetSignalsAccessTokenResponse } from '~/server/schema/signals.schema';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -30,6 +31,11 @@ type AppProviderProps = {
   // `undefined` key) so it never fires on bootstrap. Public procedure → seeded
   // for everyone, no auth gate.
   liveNow: boolean;
+  // SSR-computed `signals.getToken` (logged-in only) — the SignalR access token
+  // for the signals SharedWorker. Seeds the ambient query (fixed `undefined`
+  // key) so the worker reads a primed cache and never fires it on bootstrap.
+  // Absent for anon / fail-soft path (worker degrades to no-connection).
+  signalsToken?: GetSignalsAccessTokenResponse;
   seed: number;
   canIndex: boolean;
   region: RegionInfo;
@@ -85,6 +91,7 @@ export function AppProvider({
   announcements,
   following,
   liveNow,
+  signalsToken,
   domain,
   host,
   serverDomains,
@@ -119,6 +126,21 @@ export function AppProvider({
   trpc.system.getLiveNow.useQuery(undefined, {
     initialData: liveNow,
     staleTime: 1000 * 60 * 5,
+  });
+  // Seed `signals.getToken` (the SignalR access token) from the SSR snapshot so
+  // the signals SharedWorker reads a primed cache and never fires the query on
+  // bootstrap (~10 req/s off api-primary). Shares the fixed `undefined` query
+  // key with `useSignalsWorker`'s `trpc.signals.getToken.useQuery`. The worker
+  // re-invalidates this query on every `connection:state === 'closed'`
+  // transition (its token-renewal path), so the global `staleTime: Infinity`
+  // default is correct — the seed primes the FIRST connect and the reconnect
+  // path keeps the token fresh thereafter. `enabled: !!signalsToken?.accessToken`
+  // seeds ONLY when we hold a real token: anon (no session) and the fail-soft
+  // `{}` path (signals-service blip) both skip the seed and fall back to the
+  // worker's own query (which re-applies the same fail-soft degrade).
+  trpc.signals.getToken.useQuery(undefined, {
+    initialData: signalsToken,
+    enabled: !!signalsToken?.accessToken,
   });
   // Populate the module-level server domain map so `syncAccount(url)` can
   // resolve hosts to colors without pulling from React context.

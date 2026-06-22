@@ -55,6 +55,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserContentSettings } from '~/server/schema/user.schema';
+import type { GetSignalsAccessTokenResponse } from '~/server/schema/signals.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
@@ -109,6 +110,11 @@ type CustomAppProps = {
   settings: UserContentSettings;
   browsingSettingsAddons: BrowsingSettingsAddon[];
   liveNow: boolean;
+  // SSR-seeded `signals.getToken` (logged-in only) — the SignalR access token
+  // the signals SharedWorker uses to open the live connection. Optional: absent
+  // for anon and on the fail-soft path (the worker reads `data?.accessToken` as
+  // undefined and simply doesn't connect, exactly as today). See AppProvider seed.
+  signalsToken?: GetSignalsAccessTokenResponse;
   canIndex: boolean;
   hasAuthCookie: boolean;
   region: RegionInfo;
@@ -137,6 +143,7 @@ function MyApp(props: CustomAppProps) {
       settings,
       browsingSettingsAddons,
       liveNow = false,
+      signalsToken,
       region,
       domain,
       host,
@@ -190,6 +197,7 @@ function MyApp(props: CustomAppProps) {
       announcements={announcements}
       following={following}
       liveNow={liveNow}
+      signalsToken={signalsToken}
       region={region}
       domain={domain}
       host={host}
@@ -480,6 +488,35 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   const domain = getRequestDomainColor(request);
 
+  // SSR-seed `signals.getToken` (logged-in only) so the signals SharedWorker
+  // reads a primed cache and never fires the token query on bootstrap (~10 req/s
+  // off api-primary). This query CANNOT be deferred to first interaction: the
+  // SignalR connection it powers must open on first paint to deliver the live
+  // buzz/generation/chat/notification updates the whole app depends on.
+  //
+  // Safe to put on the render path because `getAccessToken` is already fully
+  // fail-soft (PR #2366): any signals-service blip (Orleans crashloop / timeout
+  // / open circuit / bad body) returns `{}` rather than throwing, and the worker
+  // reads `data?.accessToken` as undefined and simply doesn't connect — the
+  // exact degrade behaviour that exists today. So a degraded signals service can
+  // never 500 a page render here. We additionally guard with try/catch (the
+  // `SIGNALS_ENDPOINT`-unconfigured PRECONDITION_FAILED throw, the only non-
+  // soft path) and fall back to undefined → the worker's own query self-heals on
+  // its `connection:state === 'closed'` invalidate.
+  let signalsToken: GetSignalsAccessTokenResponse | undefined;
+  if (session?.user) {
+    try {
+      const { getAccessToken } = await import('~/server/services/signals.service');
+      signalsToken = await getAccessToken({ id: session.user.id });
+    } catch (e) {
+      console.warn(
+        `[_app] signals.getToken bootstrap failed, rendering without seed: ${
+          e instanceof Error ? e.message : String(e)
+        }`
+      );
+    }
+  }
+
   // SSR-inject two ambient per-bootstrap trpc results that fire on every
   // logged-in page load but are fully derivable from data already fetched here.
   // Both client queries gate on a logged-in user, so only seed for sessions.
@@ -526,6 +563,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       settings,
       browsingSettingsAddons,
       liveNow,
+      signalsToken,
       flags,
       userFeatureFlags,
       tosMeta,
