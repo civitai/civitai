@@ -55,6 +55,8 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserContentSettings } from '~/server/schema/user.schema';
+import type { UserSettingsChat } from '~/server/schema/chat.schema';
+import { resolveChatSettings } from '~/server/schema/chat.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
@@ -111,6 +113,11 @@ type CustomAppProps = {
   settings: UserContentSettings;
   browsingSettingsAddons: BrowsingSettingsAddon[];
   liveNow: boolean;
+  // SSR-seeded `chat.getUserSettings` (logged-in only) — the per-user chat
+  // settings (mute sounds / bad-word filter / acknowledged). Derived from the
+  // `settings.chat` field already fetched for the bootstrap; no extra I/O. See
+  // AppProvider seed.
+  chatSettings?: UserSettingsChat;
   canIndex: boolean;
   hasAuthCookie: boolean;
   region: RegionInfo;
@@ -140,6 +147,7 @@ function MyApp(props: CustomAppProps) {
       settings,
       browsingSettingsAddons,
       liveNow = false,
+      chatSettings,
       region,
       domain,
       host,
@@ -194,6 +202,7 @@ function MyApp(props: CustomAppProps) {
       following={following}
       notificationCounts={notificationCounts}
       liveNow={liveNow}
+      chatSettings={chatSettings}
       region={region}
       domain={domain}
       host={host}
@@ -505,6 +514,23 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   let userFeatureFlags: FeatureAccess | undefined;
   if (session?.user && settings) {
     userFeatureFlags = computeUserFeatureFlagsOverlay(settings.features, flags);
+  }
+
+  // SSR-seed `chat.getUserSettings` (logged-in only) so the chat widget reads a
+  // primed cache and never fires the query on bootstrap (~19 req/s off
+  // api-primary). Fully DERIVED from the `settings.chat` field already fetched
+  // above for the bootstrap — NO extra I/O. The chat settings are static per
+  // user (only the user's own `setUserSettings` changes them, which patches the
+  // cache via optimistic `setData`), so SSR-seeding is exact.
+  //
+  // Byte-equality (#2471): the `chat.getUserSettings` resolver returns
+  // `settings.chat` and substitutes the SAME default object when absent — mirror
+  // it here so the seed matches the resolver output exactly. Seed only when a
+  // settings snapshot is present (the degraded/anon path leaves it undefined and
+  // the client query self-heals).
+  let chatSettings: UserSettingsChat | undefined;
+  if (session?.user && settings) {
+    chatSettings = resolveChatSettings(settings.chat);
   }
 
   if (session) {
