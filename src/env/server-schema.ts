@@ -258,7 +258,10 @@ export const serverSchema = z.object({
   // next render serves real numbers. Callers already treat missing ids as null
   // metrics. The durable fix is the slow CH query itself (out of scope here).
   // Default 3000ms — snappy SSR over correctness on the first cold render.
-  CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().default(3000),
+  // .int().positive() so a misconfigured 0 / negative fails fast at BOOT instead
+  // of silently disabling the guard (withTimeoutFallback passes through unbounded
+  // when ms<=0 → the exact ~30s hang this exists to prevent, with no signal).
+  CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
