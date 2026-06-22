@@ -4,6 +4,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getTosMeta } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import { getUserFollows } from '~/server/redis/caches';
+import { getAccessToken } from '~/server/services/signals.service';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 
 export default PublicEndpoint(
@@ -19,7 +20,7 @@ export default PublicEndpoint(
       // and drop the critical settings/session payload; tosMeta (static, no user
       // input) can still throw to the outer catch (preserving prior behaviour).
       const domainColor = getRequestDomainColor(req);
-      const [tosMeta, announcements, following] = await Promise.all([
+      const [tosMeta, announcements, following, signalsToken] = await Promise.all([
         // Resolve the static per-domain ToS metadata here (server-only API route)
         // so `_app` getInitialProps can deliver it WITHOUT importing
         // `content.service` — which pulls `fs/promises` into `_app`'s client-bundled
@@ -47,12 +48,30 @@ export default PublicEndpoint(
         session?.user
           ? getUserFollows(session.user.id).catch(() => undefined)
           : Promise.resolve(undefined),
+        // SSR-seed the ambient, auth-gated `signals.getToken` query (~10 req/s on
+        // api-primary; the SignalR access token the signals SharedWorker uses to
+        // open the live connection). Computed here — NOT in `_app`
+        // getInitialProps — because `signals.service` is server-only and importing
+        // it into `_app` (even via a dynamic `await import`) pulls Node built-ins
+        // (`tls`/`v8`/`node:perf_hooks`, via `env/server` + `prom-client` in the
+        // signals `withSignals` wrapper) into the client bundle and breaks
+        // `next build`. `getAccessToken` is the SAME fn the resolver runs, so the
+        // seed is byte-identical. It is already fully fail-soft (PR #2366): a
+        // signals-service blip returns a degraded `{}` rather than throwing, so it
+        // can never reject this Promise.all. We additionally `.catch(() =>
+        // undefined)` the only non-soft path (the `SIGNALS_ENDPOINT`-unconfigured
+        // PRECONDITION_FAILED throw); the worker then self-heals via its own query.
+        // Anon never fires this protected query, so seed authed-only.
+        session?.user
+          ? getAccessToken({ id: session.user.id }).catch(() => undefined)
+          : Promise.resolve(undefined),
       ]);
       res.status(200).json({
         settings,
         tosMeta,
         announcements,
         following,
+        signalsToken,
         session: session?.user && Object.keys(session.user).length > 0 ? session : null,
       });
     } catch (e) {

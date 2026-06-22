@@ -390,6 +390,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     tosMeta?: TosMeta;
     announcements?: AnnouncementsSeed;
     following?: number[];
+    signalsToken?: GetSignalsAccessTokenResponse;
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
@@ -442,10 +443,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       tosMeta: undefined,
       announcements: undefined,
       following: undefined,
+      signalsToken: undefined,
       session: null,
     };
   }
-  const { settings, session, tosMeta, announcements, following } = settingsBootstrap;
+  const { settings, session, tosMeta, announcements, following, signalsToken } =
+    settingsBootstrap;
   // Pass these via the request so we can use them in SSR. Resolve the per-user
   // feature flags and the global (redis-cached, identical-for-all-users) browsing
   // setting addons in PARALLEL — neither depends on the other and both sit on
@@ -488,34 +491,26 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   const domain = getRequestDomainColor(request);
 
-  // SSR-seed `signals.getToken` (logged-in only) so the signals SharedWorker
-  // reads a primed cache and never fires the token query on bootstrap (~10 req/s
-  // off api-primary). This query CANNOT be deferred to first interaction: the
-  // SignalR connection it powers must open on first paint to deliver the live
-  // buzz/generation/chat/notification updates the whole app depends on.
-  //
-  // Safe to put on the render path because `getAccessToken` is already fully
-  // fail-soft (PR #2366): any signals-service blip (Orleans crashloop / timeout
-  // / open circuit / bad body) returns `{}` rather than throwing, and the worker
-  // reads `data?.accessToken` as undefined and simply doesn't connect — the
-  // exact degrade behaviour that exists today. So a degraded signals service can
-  // never 500 a page render here. We additionally guard with try/catch (the
-  // `SIGNALS_ENDPOINT`-unconfigured PRECONDITION_FAILED throw, the only non-
-  // soft path) and fall back to undefined → the worker's own query self-heals on
-  // its `connection:state === 'closed'` invalidate.
-  let signalsToken: GetSignalsAccessTokenResponse | undefined;
-  if (session?.user) {
-    try {
-      const { getAccessToken } = await import('~/server/services/signals.service');
-      signalsToken = await getAccessToken({ id: session.user.id });
-    } catch (e) {
-      console.warn(
-        `[_app] signals.getToken bootstrap failed, rendering without seed: ${
-          e instanceof Error ? e.message : String(e)
-        }`
-      );
-    }
-  }
+  // NOTE: `signals.getToken` (the SignalR access token the signals SharedWorker
+  // uses to open the live connection, ~10 req/s off api-primary) is SSR-seeded
+  // too, but it is computed in the server-only `/api/user/settings` route above
+  // and delivered via that fetch (read off `settingsBootstrap` as
+  // `signalsToken`). It is deliberately NOT resolved here: `signals.service` is
+  // server-only and importing it into this graph — even via a dynamic
+  // `await import` — pulls Node built-ins (`tls`/`v8`/`node:perf_hooks`, via the
+  // `env/server` + `prom-client` chain in the `withSignals` wrapper) into
+  // `_app`'s client bundle and breaks `next build` (same class as the
+  // `content.service`/`announcement.service` carve-outs above and the
+  // `prom-client` note in the settings-fetch catch). It rides down through
+  // pageProps to AppProvider and seeds the ambient query there. This CANNOT be
+  // deferred to first interaction: the SignalR connection it powers must open on
+  // first paint to deliver the live buzz/generation/chat/notification updates
+  // the whole app depends on. `getAccessToken` is already fully fail-soft
+  // (PR #2366): a signals-service blip degrades to `{}` (the worker reads
+  // `data?.accessToken` as undefined and simply doesn't connect, exactly as
+  // today), and the route additionally `.catch`es the only non-soft path → an
+  // absent seed → the worker's own query self-heals. So a degraded signals
+  // service can never 500 a page render.
 
   // SSR-inject two ambient per-bootstrap trpc results that fire on every
   // logged-in page load but are fully derivable from data already fetched here.
