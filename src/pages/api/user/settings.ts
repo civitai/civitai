@@ -4,6 +4,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getTosMeta } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import { getUserFollows } from '~/server/redis/caches';
+import { getUnreadMessagesForUser } from '~/server/services/chat.service';
 import { getUserNotificationCounts } from '~/server/services/notification.service';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 
@@ -20,7 +21,8 @@ export default PublicEndpoint(
       // and drop the critical settings/session payload; tosMeta (static, no user
       // input) can still throw to the outer catch (preserving prior behaviour).
       const domainColor = getRequestDomainColor(req);
-      const [tosMeta, announcements, following, notificationCounts] = await Promise.all([
+      const [tosMeta, announcements, following, chatUnreadCount, notificationCounts] =
+        await Promise.all([
         // Resolve the static per-domain ToS metadata here (server-only API route)
         // so `_app` getInitialProps can deliver it WITHOUT importing
         // `content.service` — which pulls `fs/promises` into `_app`'s client-bundled
@@ -48,6 +50,20 @@ export default PublicEndpoint(
         session?.user
           ? getUserFollows(session.user.id).catch(() => undefined)
           : Promise.resolve(undefined),
+        // SSR-seed the ambient, auth-gated `chat.getUnreadCount` query (~19 req/s
+        // on api-primary; the always-visible header chat badge). Computed here —
+        // NOT in `_app` getInitialProps — because `chat.service` is server-only
+        // and importing it into `_app` (even via a dynamic `await import`) pulls
+        // Node built-ins (`node:fs`/`node:perf_hooks`, via the `env/server` +
+        // `errorHandling` + `unfurl.js` import chain) into the client bundle and
+        // breaks `next build`. `getUnreadMessagesForUser` is the same fn the
+        // resolver runs, so the seed is byte-identical (`{ chatId, cnt }[]`, #2471
+        // gotcha). Anon never fires this protected query, so seed authed-only; on
+        // a chat-service error fall back to undefined and let the client self-heal
+        // via `ChatButton`'s own live fetch.
+        session?.user
+          ? getUnreadMessagesForUser({ userId: session.user.id }).catch(() => undefined)
+          : Promise.resolve(undefined),
         // SSR-seed the ambient, auth-gated `user.checkNotifications` query (the
         // header bell unread count, fires on every logged-in bootstrap). Uses
         // the SAME shared `getUserNotificationCounts` reduce the resolver uses,
@@ -66,6 +82,7 @@ export default PublicEndpoint(
         tosMeta,
         announcements,
         following,
+        chatUnreadCount,
         notificationCounts,
         session: session?.user && Object.keys(session.user).length > 0 ? session : null,
       });

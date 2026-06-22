@@ -55,6 +55,8 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserContentSettings } from '~/server/schema/user.schema';
+import type { RouterOutput } from '~/types/router';
+type ChatUnreadCount = RouterOutput['chat']['getUnreadCount'];
 import type { UserSettingsChat } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -113,6 +115,10 @@ type CustomAppProps = {
   settings: UserContentSettings;
   browsingSettingsAddons: BrowsingSettingsAddon[];
   liveNow: boolean;
+  // SSR-seeded `chat.getUnreadCount` (logged-in only). The per-chat unread tallies
+  // behind the header chat badge. Optional: absent for anon and on the fail-open
+  // path (the client query self-heals on its own fetch). See AppProvider seed.
+  chatUnreadCount?: ChatUnreadCount;
   // SSR-seeded `chat.getUserSettings` (logged-in only) — the per-user chat
   // settings (mute sounds / bad-word filter / acknowledged). Derived from the
   // `settings.chat` field already fetched for the bootstrap; no extra I/O. See
@@ -147,6 +153,7 @@ function MyApp(props: CustomAppProps) {
       settings,
       browsingSettingsAddons,
       liveNow = false,
+      chatUnreadCount,
       chatSettings,
       region,
       domain,
@@ -202,6 +209,7 @@ function MyApp(props: CustomAppProps) {
       following={following}
       notificationCounts={notificationCounts}
       liveNow={liveNow}
+      chatUnreadCount={chatUnreadCount}
       chatSettings={chatSettings}
       region={region}
       domain={domain}
@@ -395,6 +403,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     tosMeta?: TosMeta;
     announcements?: AnnouncementsSeed;
     following?: number[];
+    chatUnreadCount?: ChatUnreadCount;
     notificationCounts?: UserNotificationCounts;
     session: Session | null;
   };
@@ -448,12 +457,20 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       tosMeta: undefined,
       announcements: undefined,
       following: undefined,
+      chatUnreadCount: undefined,
       notificationCounts: undefined,
       session: null,
     };
   }
-  const { settings, session, tosMeta, announcements, following, notificationCounts } =
-    settingsBootstrap;
+  const {
+    settings,
+    session,
+    tosMeta,
+    announcements,
+    following,
+    chatUnreadCount,
+    notificationCounts,
+  } = settingsBootstrap;
   // Pass these via the request so we can use them in SSR. Resolve the per-user
   // feature flags and the global (redis-cached, identical-for-all-users) browsing
   // setting addons in PARALLEL — neither depends on the other and both sit on
@@ -495,6 +512,22 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   }
 
   const domain = getRequestDomainColor(request);
+
+  // NOTE: `chat.getUnreadCount` (the always-visible header chat badge, ~19 req/s
+  // off api-primary) is SSR-seeded too, but it is computed in the server-only
+  // `/api/user/settings` route above and delivered via that fetch (read off
+  // `settingsBootstrap` as `chatUnreadCount`). It is deliberately NOT resolved
+  // here: `chat.service` is server-only and importing it into this graph — even
+  // via a dynamic `await import` — pulls Node built-ins (`node:fs`/
+  // `node:perf_hooks`) into `_app`'s client bundle and breaks `next build` (same
+  // class as the `content.service`/`announcement.service` carve-outs above and
+  // the `prom-client` note below). It rides down through pageProps to AppProvider
+  // and seeds the ambient query there. It CANNOT be deferred to chat-open: the
+  // badge is always visible, and the live-increment path in ChatSignals.ts only
+  // bumps an EXISTING cache entry (`produce((old) => if (!old) return old)`) — an
+  // unseeded badge would silently drop every incoming-message bump until the user
+  // opened chat. Fail open to `undefined` (the client query self-heals on its own
+  // fetch) — a DB blip in the route must never 500 a page render.
 
   // SSR-inject two ambient per-bootstrap trpc results that fire on every
   // logged-in page load but are fully derivable from data already fetched here.
@@ -564,6 +597,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       tosMeta,
       announcements,
       following,
+      chatUnreadCount,
       notificationCounts,
       seed: Date.now(),
       hasAuthCookie,
