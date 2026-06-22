@@ -11,6 +11,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { runImageSearch } from '~/server/services/image-search.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
 import {
@@ -144,6 +145,19 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   const reqParams = blockImagesSchema.safeParse(req.query);
   if (!reqParams.success) {
     res.status(400).json({ error: reqParams.error });
+    return;
+  }
+
+  // Per-token rate limit (keyed on the stable blockInstanceId) — bounds a block
+  // hammering this private,no-store (Cloudflare-uncacheable) catalog route onto
+  // the origin. Fail-open + generous enough that a paginating image browser
+  // never trips it (see block-catalog-rate-limit.ts). Runs BEFORE the bulkhead
+  // slot + the expensive image search. Mirrors the 429+Retry-After shape this
+  // endpoint already returns for the paging guard / bulkhead shed.
+  const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+  if (!rateLimit.allowed) {
+    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
     return;
   }
 

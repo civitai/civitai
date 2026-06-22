@@ -20,9 +20,10 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
  * service is mocked so no Prisma client is loaded.
  */
 
-const { mockRunModelSearch, mockResolveModelSearchIds } = vi.hoisted(() => ({
+const { mockRunModelSearch, mockResolveModelSearchIds, mockCheckRateLimit } = vi.hoisted(() => ({
   mockRunModelSearch: vi.fn(),
   mockResolveModelSearchIds: vi.fn(),
+  mockCheckRateLimit: vi.fn(),
 }));
 
 // Holds the claims the mocked withBlockScope will stamp onto req for the
@@ -33,6 +34,13 @@ vi.mock('~/server/services/model-search.service', () => ({
   runModelSearch: mockRunModelSearch,
   resolveModelSearchIds: mockResolveModelSearchIds,
   ModelSearchMeiliTimeoutError: class extends Error {},
+}));
+
+// Per-token catalog rate limiter — mocked so the existing maturity-clamp tests
+// are unaffected (default: allowed). Its own logic is covered in
+// server/utils/__tests__/block-catalog-rate-limit.test.ts.
+vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
+  checkBlockCatalogRateLimit: mockCheckRateLimit,
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -128,6 +136,8 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
     regionBox.restricted = false;
     mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
     mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    // Default: under the per-token ceiling (existing clamp tests must be served).
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
   });
 
   it('GREEN token + nsfw=true → search called with SFW level (clamped), passthrough false', async () => {
@@ -236,5 +246,32 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
     await handler(req, res);
     expect(res.statusCode).toBe(405);
     expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  it('over the per-token ceiling → 429 + Retry-After, search NOT called', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockCheckRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 6 });
+    const res = await invoke({ query: 'dreamshaper' });
+
+    expect(res.statusCode).toBe(429);
+    expect((res as unknown as { headers: Record<string, unknown> }).headers['Retry-After']).toBe(
+      '6'
+    );
+    // Keyed on the stable blockInstanceId from the claims.
+    expect(mockCheckRateLimit).toHaveBeenCalledWith('bki_test');
+    // The expensive search (and its Meili pre-step) must be short-circuited.
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+    expect(mockResolveModelSearchIds).not.toHaveBeenCalled();
+  });
+
+  it('limiter redis failure is FAIL-OPEN — request is still served (200)', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    // The helper itself catches redis errors and returns allowed:true; model
+    // that here so the endpoint never 429/500s when the limiter's redis is down.
+    mockCheckRateLimit.mockResolvedValueOnce({ allowed: true });
+    const res = await invoke({});
+
+    expect(res.statusCode).toBe(200);
+    expect(mockRunModelSearch).toHaveBeenCalledTimes(1);
   });
 });
