@@ -174,7 +174,8 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
   const isModerator = currentUser?.isModerator ?? false;
-  const isOwner = currentUser?.id === article?.user?.id || isModerator;
+  const isActualOwner = currentUser?.id === article?.user?.id;
+  const isOwner = isActualOwner || isModerator;
 
   // boolean value that allows us to disable articles via feature flags and still allow us to show articles created by moderators
   const disableArticles = !features.articles && !article?.user.isModerator;
@@ -184,7 +185,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const { data: myReview } = trpc.article.getMyArticleRatingReview.useQuery(
     { articleId: id },
-    { enabled: isOwner && features.articleRatingDispute, staleTime: 60_000 }
+    { enabled: isActualOwner && features.articleRatingDispute, staleTime: 60_000 }
   );
   const handlePublishArticle = () => {
     if (!article || article.status === ArticleStatus.Published) return;
@@ -442,7 +443,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
             />
           )}
-          {isOwner && features.articleRatingDispute && (
+          {isActualOwner && features.articleRatingDispute && (
             <ArticleOwnerRatingControls
               articleId={article.id}
               nsfwLevel={article.nsfwLevel}
