@@ -52,9 +52,12 @@ describe('marketplace-categories taxonomy (F-E E3)', () => {
     expect(() => listAvailableSchema.parse({ category: 'not-a-category' })).toThrow();
   });
 
-  it('listAvailable sort defaults to popular and rejects unknown sorts', () => {
-    expect(listAvailableSchema.parse({}).sort).toBe('popular');
-    for (const s of ['popular', 'newest', 'name']) {
+  it('listAvailable sort defaults to rating and rejects unknown sorts', () => {
+    // #2668 (marketplace reviews + Bayesian rating sort) made `rating` a sort
+    // option AND the default so the best-reviewed apps surface first; the
+    // pre-#2668 default was `popular`.
+    expect(listAvailableSchema.parse({}).sort).toBe('rating');
+    for (const s of ['rating', 'popular', 'newest', 'name']) {
       expect(listAvailableSchema.parse({ sort: s }).sort).toBe(s);
     }
     expect(() => listAvailableSchema.parse({ sort: 'trending' })).toThrow();
