@@ -60,7 +60,6 @@ import { resolveChatSettings } from '~/server/schema/chat.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
-import type { UserNotificationCounts } from '~/server/services/notification.service';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
@@ -108,7 +107,6 @@ type CustomAppProps = {
   tosMeta?: TosMeta;
   announcements?: AnnouncementsSeed;
   following?: number[];
-  notificationCounts?: UserNotificationCounts;
   seed: number;
   settings: UserContentSettings;
   browsingSettingsAddons: BrowsingSettingsAddon[];
@@ -140,7 +138,6 @@ function MyApp(props: CustomAppProps) {
       tosMeta,
       announcements,
       following,
-      notificationCounts,
       seed = Date.now(),
       canIndex,
       hasAuthCookie,
@@ -200,7 +197,6 @@ function MyApp(props: CustomAppProps) {
       tosMeta={tosMeta}
       announcements={announcements}
       following={following}
-      notificationCounts={notificationCounts}
       liveNow={liveNow}
       chatSettings={chatSettings}
       region={region}
@@ -395,7 +391,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     tosMeta?: TosMeta;
     announcements?: AnnouncementsSeed;
     following?: number[];
-    notificationCounts?: UserNotificationCounts;
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
@@ -448,12 +443,10 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       tosMeta: undefined,
       announcements: undefined,
       following: undefined,
-      notificationCounts: undefined,
       session: null,
     };
   }
-  const { settings, session, tosMeta, announcements, following, notificationCounts } =
-    settingsBootstrap;
+  const { settings, session, tosMeta, announcements, following } = settingsBootstrap;
   // Pass these via the request so we can use them in SSR. Resolve the per-user
   // feature flags and the global (redis-cached, identical-for-all-users) browsing
   // setting addons in PARALLEL — neither depends on the other and both sit on
@@ -564,7 +557,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       tosMeta,
       announcements,
       following,
-      notificationCounts,
       seed: Date.now(),
       hasAuthCookie,
       region,
