@@ -61,7 +61,30 @@ export type BlockScopedNextApiRequest = NextApiRequest & {
 };
 
 export interface WithBlockScopeOpts {
-  requiredScope: string;
+  /**
+   * The block scope this endpoint requires. When PRESENT, the middleware
+   * enforces `claims.scopes.includes(requiredScope)` (403 on miss) AND runs
+   * `enforceContextBinding` for the token's scopes — the standard per-scope
+   * authorization path (me.ts, submit-version, settings, etc.).
+   *
+   * When OMITTED ("any valid block token" mode), the middleware STILL performs
+   * the FULL token validation (RS256 signature + kid, iss/aud/exp, max-age,
+   * the claim shape guards incl. `maxBrowsingLevel`), the per-instance
+   * revocation check, the `private, no-store` cache header, and exact-origin
+   * CORS — it ONLY skips the per-scope authorization check and
+   * `enforceContextBinding`. Anonymous callers (no token / non-JWT bearer) are
+   * still rejected (the wrapped handler's own 401 guard fires).
+   *
+   * This mode exists for the block CATALOG endpoints (/api/v1/blocks/models,
+   * /api/v1/blocks/images): they serve PUBLIC, maturity-clamped data, so a
+   * specific declarable+grantable scope adds friction (CLI manifest validator +
+   * per-app OauthClient.allowedScopes bit) with no security value. They need a
+   * token ONLY for its signed `maxBrowsingLevel` claim — the authoritative
+   * maturity ceiling source — NOT for authorization. Token validity + the
+   * clamp (resolveCatalogBrowsingLevel, fail-closed SFW) is the whole authority
+   * surface; the scope gate would add nothing.
+   */
+  requiredScope?: string;
 }
 
 // L7 (audit-10): issuer/audience imported from block-token.service so a
@@ -432,16 +455,6 @@ export function enforceContextBinding(
       throw forbidden(`unknown scope: ${scope}`);
     }
     switch (scope) {
-      case 'catalog:read': {
-        // BROWSE scope (Phase 3 block catalog endpoint). No context binding:
-        // it searches the PUBLIC catalog, so there is no single modelId to bind
-        // to and no `:self` subject requirement (anon tokens may browse). The
-        // maturity ceiling is enforced separately + authoritatively by the
-        // endpoint via claims.maxBrowsingLevel (clamped, fail-closed to SFW) —
-        // NOT here. This explicit no-op case is required so the fail-closed
-        // `default` below does not reject a valid catalog:read token.
-        break;
-      }
       case 'models:read:self': {
         const modelIdStr =
           readBoundQueryString(req, 'id') ?? readBoundQueryString(req, 'modelId');
@@ -579,19 +592,27 @@ export function withBlockScope(
       return;
     }
 
-    if (!claims.scopes.includes(opts.requiredScope)) {
-      res.status(403).json({ error: `missing required scope: ${opts.requiredScope}` });
-      return;
-    }
-
-    try {
-      enforceContextBinding(claims, req);
-    } catch (err) {
-      if (err instanceof ForbiddenError) {
-        res.status(403).json({ error: err.message });
+    // "Any valid block token" mode (opts.requiredScope omitted): the token has
+    // already passed full validation + the revocation check above. Skip the
+    // per-scope authorization check AND enforceContextBinding — these endpoints
+    // (the public catalog) authorize on token-validity alone and derive their
+    // only authority (the maturity ceiling) from claims.maxBrowsingLevel, not a
+    // scope. See WithBlockScopeOpts.requiredScope.
+    if (opts.requiredScope !== undefined) {
+      if (!claims.scopes.includes(opts.requiredScope)) {
+        res.status(403).json({ error: `missing required scope: ${opts.requiredScope}` });
         return;
       }
-      throw err;
+
+      try {
+        enforceContextBinding(claims, req);
+      } catch (err) {
+        if (err instanceof ForbiddenError) {
+          res.status(403).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
     }
 
     (req as BlockScopedNextApiRequest).blockClaims = claims;
@@ -682,7 +703,10 @@ export function withBlockScope(
               userId: userIdForLog,
               appBlockId: claims.appBlockId,
               blockInstanceId: claims.blockInstanceId,
-              scope: opts.requiredScope,
+              // In "any valid block token" mode there is no required scope; the
+            // audit column is NOT NULL, so record a stable sentinel that
+            // distinguishes these rows from real per-scope invocations.
+            scope: opts.requiredScope ?? '(any-token)',
               endpoint: endpointForLog,
               statusCode: res.statusCode,
             })

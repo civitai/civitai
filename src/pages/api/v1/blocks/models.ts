@@ -40,11 +40,16 @@ import { constants } from '~/server/common/constants';
  * + exact-origin CORS on this route, so there is no cache-key / cross-domain
  * leak here.
  *
- * Scope: `catalog:read` (a BROWSE scope with a no-op context binding — see
- * block-scope.constants.ts + enforceContextBinding). It maps to the ModelsRead
- * OAuth ceiling bit but grants NO new data exposure: the catalog is public and
- * this endpoint is strictly MORE restricted than the public one. A block that
- * wants the selector declares `catalog:read` in its manifest.
+ * Auth: ANY valid block token (no required scope). The catalog is PUBLIC,
+ * maturity-clamped data, so a specific declarable+grantable scope adds friction
+ * (the Go CLI manifest validator must allow it + each app's
+ * OauthClient.allowedScopes would need the bit) with ZERO security value — this
+ * endpoint is strictly MORE restricted than the public /api/v1/models. The
+ * token is required ONLY for its signed `maxBrowsingLevel` claim (the
+ * authoritative maturity ceiling), NOT for authorization. withBlockScope still
+ * runs the FULL token validation + revocation + `private, no-store` +
+ * exact-origin CORS; it just skips the per-scope check. Anon (no token) → 401.
+ * (Previously gated on `catalog:read`, retired as no-value friction.)
  *
  * NOTE (advisory until #2670 merges): the authoritative `maxBrowsingLevel`
  * claim is MINTED by PR #2670 (color-domain maturity). Until #2670 lands,
@@ -168,4 +173,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 });
 
-export default withBlockScope(baseHandler, { requiredScope: 'catalog:read' });
+// No requiredScope: any valid block token is accepted (see doc above). The
+// maturity clamp (resolveCatalogBrowsingLevel) remains the whole authority
+// surface.
+export default withBlockScope(baseHandler, {});
