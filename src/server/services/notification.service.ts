@@ -178,6 +178,31 @@ export async function getUserNotificationCount({
   return result;
 }
 
+// The reduced { all, <category>: count } shape consumed by the header bell.
+// Extracted so BOTH `user.checkNotifications` (the tRPC resolver) and the
+// `_app` SSR-seed path (`/api/user/settings`) produce a byte-identical object —
+// the seed must equal a live fetch or the header count would render wrong on
+// first paint. Single source of truth for the reduce + key-casing.
+export type UserNotificationCounts = Record<Lowercase<NotificationCategory> | 'all', number>;
+
+export async function getUserNotificationCounts({
+  userId,
+}: {
+  userId: number;
+}): Promise<UserNotificationCounts> {
+  const unreadCount = await getUserNotificationCount({ userId, unread: true });
+
+  return unreadCount.reduce(
+    (acc, { category, count }) => {
+      const key = category.toLowerCase() as Lowercase<NotificationCategory>;
+      acc[key] = Number(count);
+      acc['all'] += Number(count);
+      return acc;
+    },
+    { all: 0 } as UserNotificationCounts
+  );
+}
+
 // Per-user serialization queue. Rapid-click streams previously fanned out to
 // N concurrent pool.connect() acquisitions against the notif pool, which
 // starved it under load (46k "Connection terminated due to connection timeout"
