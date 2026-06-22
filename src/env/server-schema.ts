@@ -624,6 +624,16 @@ export const serverSchema = z.object({
   FORGEJO_PUBLIC_URL: z.string().url().default('https://forgejo.civitai.com'),
   FORGEJO_ADMIN_TOKEN: z.string().optional(),
   FORGEJO_WEBHOOK_SECRET: z.string().optional(),
+  // Client-side abort timeouts for Forgejo API calls. The cheap metadata calls
+  // (get repo/version, add collaborator, list tree, branch lookup) are
+  // sub-second and use FORGEJO_API_TIMEOUT_MS so an in-cluster reachability
+  // problem surfaces fast. The BUNDLE COMMIT/PUSH path (first-time review-repo
+  // create + a single multi-file commit of every bundle file) is genuinely slow
+  // for a real app — gen-matrix is ~888 files — so it gets the much larger
+  // FORGEJO_COMMIT_TIMEOUT_MS. A 15s ceiling on the commit aborted real submits
+  // with "The operation was aborted due to timeout"; 120s gives headroom.
+  FORGEJO_API_TIMEOUT_MS: z.coerce.number().default(15000),
+  FORGEJO_COMMIT_TIMEOUT_MS: z.coerce.number().default(120000),
   // F6 — optional second HMAC secret accepted during a zero-downtime rotation.
   // verifyForgejoSignature (git-push.ts) / verifySignature (build-callback.ts)
   // accept a signature valid under EITHER the current or the _NEXT secret. When
