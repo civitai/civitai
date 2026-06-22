@@ -9,6 +9,7 @@ import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { applyUserScoreUpdates, getScoreMultipliers } from '~/server/jobs/update-user-score';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { booleanString } from '~/utils/zod-helpers';
 
 /**
  * One-off backfill for the creator-score `images` category — a single command.
@@ -22,14 +23,14 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
  * Image-driven, so it scans the slow v2 view ONCE in entityId ranges (~135 range
  * scans) instead of re-querying it per owner (~23k random IN lookups, ~60h). One
  * pass: range-scan v2 for engaged images, roll reactions/comments up per owner in
- * memory, then write each owner's score + total and stamp `imagesBackfilledAt`.
+ * memory, then write each owner's score + total and stamp `imageScoreRecomputedAt`.
  *
  * Run it (drive from the no-timeout dev server, which talks to prod; keep the
  * client connected — nohup/screen):
  *   GET /api/admin/temp/backfill-image-scores?token=$WEBHOOK_TOKEN
  *   optional: &concurrency=3 &batchSize=1000000 &dryRun=true
  *
- * Idempotent + resumable: owners already stamped with `imagesBackfilledAt` are
+ * Idempotent + resumable: owners already stamped with `imageScoreRecomputedAt` are
  * always skipped, so a re-run only fills in the rest (never recomputes finished
  * users). Run the FULL range (default) — a partial start/end gives partial scores
  * since an owner's images are spread across the id space.
@@ -45,10 +46,7 @@ const schema = z.object({
   start: z.coerce.number().min(0).optional().default(0),
   end: z.coerce.number().min(0).optional(),
   // preview: scan + count owners, write nothing.
-  dryRun: z
-    .union([z.boolean(), z.string()])
-    .optional()
-    .transform((v) => v === true || v === 'true' || v === '1'),
+  dryRun: booleanString().default(true),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
@@ -121,7 +119,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     // a re-run resume (only fills in the rest) instead of redoing finished users.
     const stamped = await pgDbRead
       .cancellableQuery<{ id: number }>(
-        `SELECT id FROM "User" WHERE id = ANY($1::int[]) AND (meta->'scores'->>'imagesBackfilledAt') IS NOT NULL`,
+        `SELECT id FROM "User" WHERE id = ANY($1::int[]) AND (meta->'scores'->>'imageScoreRecomputedAt') IS NOT NULL`,
         [batch.map(([userId]) => userId)]
       )
       .then((q) => q.result());
@@ -141,7 +139,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     await pgDbWrite
       .cancellableQuery(
         `UPDATE "User"
-         SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores,imagesBackfilledAt}', to_jsonb($1::text))
+         SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores,imageScoreRecomputedAt}', to_jsonb($1::text))
          WHERE id = ANY($2::int[])`,
         [stampedAt, todo.map(([userId]) => userId)]
       )
