@@ -22,6 +22,18 @@ export { createSessionTokenClient } from './session-token-client'; // rolling re
 export type { SessionTokenClient } from './session-token-client';
 export { createImpersonationClient } from './impersonation-client'; // moderator impersonate / exit
 export type { ImpersonationClient, ImpersonationResult } from './impersonation-client';
+export { createSpokeGuard } from './spoke-guard'; // framework-agnostic first-party app session+role gate
+export type { SpokeGuard, SpokeGuardConfig, SpokeGuardResult } from './spoke-guard';
+export {
+  buildAuthorizeRedirect,
+  completeFirstPartyCallback,
+  clearBridgeCookie,
+  generatePkce,
+  randomState,
+  safePath,
+  OAUTH_BRIDGE_COOKIE,
+} from './first-party-bridge'; // framework-agnostic first-party login bridge (spoke side)
+export type { AuthorizeRedirect, FirstPartyCallbackResult } from './first-party-bridge';
 export { createSessionSigner, maybeCreateSessionSigner } from './sign';
 export type { SessionSigner, SessionSignerConfig } from './sign';
 export { createAuthMiddleware } from './middleware';

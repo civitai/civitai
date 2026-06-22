@@ -40,9 +40,10 @@ export interface ReturnTargetOptions {
   isAllowedOrigin?: (origin: string) => boolean;
 }
 
-/** True for same-origin paths or absolute URLs whose origin is allowed. Rejects `//host`. */
+/** True for same-origin paths or absolute URLs whose origin is allowed. Rejects `//host` AND `/\host`
+ * (some agents normalize `\`→`/`, making the latter a protocol-relative external redirect). */
 export function isSafeReturnTarget(target: string, opts: ReturnTargetOptions = {}): boolean {
-  if (target.startsWith('/') && !target.startsWith('//')) return true;
+  if (target.startsWith('/') && !/^\/[/\\]/.test(target)) return true;
   try {
     const { origin } = new URL(target);
     return !!opts.allowAllOrigins || !!opts.isAllowedOrigin?.(origin);

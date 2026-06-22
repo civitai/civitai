@@ -1,0 +1,158 @@
+import { randomBytes, createHash } from 'crypto';
+import { TokenScope } from './token-scope';
+import { hubBaseUrl, hubFetch } from './hub';
+import { firstPartyClientId, SPOKE_CALLBACK_PATH } from './first-party';
+import { isSecureCookie } from './cookies';
+
+// FIRST-PARTY LOGIN BRIDGE (spoke side) — the framework-agnostic core of the OAuth authorization-code + PKCE
+// login a first-party app runs against the hub. A spoke on a different registrable domain can't read the hub's
+// `.civitai.com` cookie, so it runs this flow to mint its OWN session cookie. Two steps, both pure (strings in,
+// strings out) so a Next route handler or a SvelteKit `+server.ts` is a thin wrapper:
+//   1. buildAuthorizeRedirect — generate PKCE+state, return the hub /authorize URL + the bridge Set-Cookie.
+//   2. completeFirstPartyCallback — verify state, exchange the code at the hub /session endpoint, return token.
+// The app owns only what's genuinely framework-specific: deriving its own origin, reading the request
+// cookie/query, setting the session cookie, and issuing the redirects.
+
+/** Short-lived cookie carrying the PKCE verifier + state + returnUrl between initiate and callback. */
+export const OAUTH_BRIDGE_COOKIE = 'oauth_bridge';
+const OAUTH_BRIDGE_TTL_S = 600; // 10 min — matches the hub's auth-code TTL
+
+const b64url = (buf: Buffer): string => buf.toString('base64url');
+
+/** RFC 7636 PKCE (S256): a high-entropy verifier + its SHA-256 challenge. */
+export function generatePkce(): { verifier: string; challenge: string } {
+  const verifier = b64url(randomBytes(32)); // 43-char base64url — within RFC 7636's 43–128 range
+  const challenge = b64url(createHash('sha256').update(verifier).digest());
+  return { verifier, challenge };
+}
+
+/** Opaque CSRF state value. */
+export function randomState(): string {
+  return b64url(randomBytes(24));
+}
+
+/**
+ * Only ever continue to a same-origin PATH (no open redirect through returnUrl). Rejects protocol-relative
+ * `//host` AND backslash-prefixed `/\host` / `/\/host` — some agents normalize `\`→`/`, turning the latter
+ * into a protocol-relative external redirect.
+ */
+export function safePath(raw: unknown): string {
+  return typeof raw === 'string' && raw.startsWith('/') && !/^\/[/\\]/.test(raw) ? raw : '/';
+}
+
+function buildBridgeCookie(value: string, secure: boolean, maxAge: number): string {
+  return [
+    `${OAUTH_BRIDGE_COOKIE}=${value}`,
+    `Path=${SPOKE_CALLBACK_PATH}`, // scoped to the callback — never sent elsewhere
+    'HttpOnly',
+    'SameSite=Lax', // rides the top-level GET redirect back from the hub
+    ...(secure ? ['Secure'] : []),
+    `Max-Age=${maxAge}`,
+  ].join('; ');
+}
+
+/** Set-Cookie string that expires the bridge cookie (single-use cleanup; set it on the callback response). */
+export function clearBridgeCookie(secure: boolean = isSecureCookie()): string {
+  return buildBridgeCookie('', secure, 0);
+}
+
+export interface AuthorizeRedirect {
+  /** The hub `/api/auth/oauth/authorize` URL to 302 the browser to (top-level navigation). */
+  location: string;
+  /** The bridge `Set-Cookie` to attach to that 302 (verifier + state + returnUrl, for the callback). */
+  setCookie: string;
+}
+
+/**
+ * Initiate first-party login: generate PKCE + state, stash them (+ the validated returnUrl) in the bridge
+ * cookie, and build the hub authorize URL with this spoke's first-party client_id + exact redirect_uri.
+ * Throws only if the hub isn't configured (`AUTH_JWT_ISSUER`).
+ */
+export function buildAuthorizeRedirect(opts: {
+  /** This spoke's own origin (the request host) — its host is validated by the HUB against TrustedSpokeDomain. */
+  selfOrigin: string;
+  /** Post-login destination (a safe same-origin path; validated here). */
+  returnUrl?: string;
+  /** Requested scope. First-party defaults to a full session. */
+  scope?: number;
+  /** Cookie `Secure` flag. Defaults to the app's own protocol (`isSecureCookie()`). */
+  secure?: boolean;
+}): AuthorizeRedirect {
+  const hub = hubBaseUrl();
+  if (!hub) throw new Error('[@civitai/auth] hub not configured (AUTH_JWT_ISSUER)');
+
+  const origin = opts.selfOrigin.replace(/\/+$/, '');
+  const { verifier, challenge } = generatePkce();
+  const state = randomState();
+  const returnUrl = safePath(opts.returnUrl);
+
+  const url = new URL(`${hub}/api/auth/oauth/authorize`);
+  url.searchParams.set('client_id', firstPartyClientId(origin));
+  url.searchParams.set('redirect_uri', `${origin}${SPOKE_CALLBACK_PATH}`);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', String(opts.scope ?? TokenScope.Full));
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+
+  const payload = encodeURIComponent(JSON.stringify({ v: verifier, s: state, r: returnUrl }));
+  return {
+    location: url.toString(),
+    setCookie: buildBridgeCookie(payload, opts.secure ?? isSecureCookie(), OAUTH_BRIDGE_TTL_S),
+  };
+}
+
+export type FirstPartyCallbackResult =
+  /** Success — set `token` as the session cookie and continue to `returnUrl`. */
+  | { token: string; returnUrl: string }
+  /** Failure — redirect to `/login?error=<error>` (e.g. `oauth_state`, `oauth_exchange`, or the hub's error). */
+  | { error: string; returnUrl: string };
+
+/**
+ * Complete first-party login: verify `state` against the bridge cookie, then exchange the code for a civ-token
+ * SESSION at the hub's `/api/auth/oauth/session` endpoint (server-to-server, with the PKCE verifier). Returns
+ * the token + validated returnUrl, or an error code. The caller clears the bridge cookie + sets the session
+ * cookie.
+ */
+export async function completeFirstPartyCallback(opts: {
+  selfOrigin: string;
+  query: { code?: string | null; state?: string | null; error?: string | null };
+  /** The decoded `oauth_bridge` cookie value from the request (Next `req.cookies[...]` / SvelteKit `cookies.get`). */
+  bridgeCookieValue: string | undefined;
+}): Promise<FirstPartyCallbackResult> {
+  let stash: { v?: string; s?: string; r?: string } | undefined;
+  if (opts.bridgeCookieValue) {
+    try {
+      stash = JSON.parse(opts.bridgeCookieValue);
+    } catch {
+      // malformed cookie — treated as a missing stash below
+    }
+  }
+  const returnUrl = safePath(stash?.r);
+
+  // Deny / error from the hub → surface the reason.
+  if (opts.query.error) return { error: opts.query.error, returnUrl };
+
+  const code = opts.query.code ?? undefined;
+  const state = opts.query.state ?? undefined;
+  // CSRF: the returned state must match the one we stashed (and we must have a verifier).
+  if (!code || !state || !stash?.v || !stash.s || state !== stash.s) {
+    return { error: 'oauth_state', returnUrl };
+  }
+
+  const origin = opts.selfOrigin.replace(/\/+$/, '');
+  try {
+    const res = await hubFetch('/api/auth/oauth/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code, code_verifier: stash.v, client_id: firstPartyClientId(origin) }),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { token?: string };
+      if (data.token) return { token: data.token, returnUrl };
+    }
+  } catch {
+    // network/hub error — fall through to the error result
+  }
+  return { error: 'oauth_exchange', returnUrl };
+}

@@ -50,9 +50,10 @@ describe('isCivitaiOrigin', () => {
 });
 
 describe('isSafeReturnTarget', () => {
-  it('allows same-origin paths, rejects protocol-relative', () => {
+  it('allows same-origin paths, rejects protocol-relative + backslash-prefixed', () => {
     expect(isSafeReturnTarget('/x', civitai)).toBe(true);
     expect(isSafeReturnTarget('//evil.com', civitai)).toBe(false);
+    expect(isSafeReturnTarget('/\\evil.com', civitai)).toBe(false); // `\`→`/` normalization
   });
   it('allows civitai origins, rejects others', () => {
     expect(isSafeReturnTarget('https://civitai.red/x', civitai)).toBe(true);

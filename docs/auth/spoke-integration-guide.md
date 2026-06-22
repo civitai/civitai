@@ -209,14 +209,29 @@ Family subdomains (e.g. `moderator.civitai.com`) were already covered by the eTL
 actually-served hosts) and the hub's CORS allowlist (`AUTH_CORS_ORIGINS`, env) remain their own mechanisms. They
 *could* also derive from the registry, but that's a larger, separate change.
 
-## 9. Packaging gap — toward a drop-in spoke kit
+## 9. The drop-in spoke kit — what's in `@civitai/auth`
 
-Already in `@civitai/auth` (reuse directly): `createSessionClient`, `createSessionTokenClient`,
-`createDeviceAccountClient`, `createImpersonationClient`, `createAuthVerifier`, the cookie-name helpers,
-`buildPostLoginRedirect`/`isCivitaiOrigin`, `hubFetch`, and the first-party id/path helpers.
+The framework-agnostic core now covers **both** the session-read side and the login bridge, so a spoke is thin
+per-framework wiring over the package:
 
-Not yet packaged (each spoke currently hand-rolls these as framework routes): the **authorize/callback bridge**
-logic (`oauth-bridge.ts`: derive-own-origin, PKCE/state stash, bridge cookie) and the thin HTTP handlers for
-groups A–D. The next step toward "standard auth in any app" is to extract the bridge into a framework-thin
-adapter (Next + SvelteKit shims) so a new spoke is: *import the adapter, mount the group-A–D routes, add one
-`TrustedSpokeDomain` row, set env.* No bespoke crypto, no per-app constants.
+- **Session gate (read side):** `createSpokeGuard({ require?, isRevoked?, loginPath? })` — cookie header →
+  `{ status: 'ok' | 'login' | 'forbidden' }`. Resolves the rich user (so `require: u => u.isModerator` works)
+  and builds the hub login redirect. The Next adapter is `apps/moderator/proxy.ts`; the SvelteKit adapter is a
+  `handle` hook. **NOTE:** `createSpokeGuard` omits revocation by default (signature-only) — fine for a
+  redis-less POC, but a production spoke should pass `isRevoked` (the shared sysRedis `TOKEN_STATE` check, as
+  the main app does) so a banned/logged-out token is rejected before its TTL.
+- **Login bridge (cross-domain):** `buildAuthorizeRedirect({ selfOrigin, returnUrl })` → `{ location, setCookie }`
+  and `completeFirstPartyCallback({ selfOrigin, query, bridgeCookieValue })` → `{ token, returnUrl } | { error }`
+  (+ `generatePkce`, `randomState`, `safePath`, `clearBridgeCookie`, `OAUTH_BRIDGE_COOKIE`). The main app's
+  `authorize.ts`/`callback.ts` are now thin wrappers over these; a SvelteKit spoke mounts the same two calls in
+  `+server.ts` handlers. Only the per-framework glue stays app-side: deriving the request origin
+  (`resolveSelfOrigin`), reading the cookie/query, setting the session cookie, and issuing redirects.
+- **Already there:** `createSessionClient`, `createSessionTokenClient`, `createDeviceAccountClient`,
+  `createImpersonationClient`, `createAuthVerifier`, the cookie-name helpers, `buildPostLoginRedirect` /
+  `isCivitaiOrigin` / `createTrustedDomainRegistry`, `hubFetch`, and the first-party id/path helpers.
+
+So a new first-party app is: *import the package core, write the thin framework adapter (guard hook + the two
+login routes if cross-domain), set env (`AUTH_JWT_ISSUER` + `AUTH_JWKS_URI`), and add one `TrustedSpokeDomain`
+row only if it's on a different registrable domain.* No bespoke crypto, no per-app constants. The remaining
+optional step is to formalize `@civitai/auth-next` / `@civitai/auth-sveltekit` adapter packages once a third app
+appears, so the glue is one import instead of a copied handler.
