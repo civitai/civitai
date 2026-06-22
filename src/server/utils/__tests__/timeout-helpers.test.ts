@@ -52,6 +52,22 @@ describe('withTimeoutFallback', () => {
     }
   });
 
+  it('still resolves with the fallback when onTimeout throws synchronously', async () => {
+    vi.useFakeTimers();
+    try {
+      const onTimeout = vi.fn(() => {
+        throw new Error('onTimeout blew up');
+      });
+      const p = withTimeoutFallback(never(), 2500, 'fallback', onTimeout);
+      await vi.advanceTimersByTimeAsync(2500);
+      // The throwing callback must not strand the caller nor propagate.
+      await expect(p).resolves.toBe('fallback');
+      expect(onTimeout).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('passes the promise straight through when ms <= 0 (guard disabled)', async () => {
     const result = await withTimeoutFallback(Promise.resolve('real'), 0, 'fallback');
     expect(result).toBe('real');

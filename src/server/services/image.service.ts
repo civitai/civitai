@@ -59,7 +59,11 @@ import {
   wrapMeilisearchClientWithLimiter,
 } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
-import { leakingContentCounter, registerCounterWithLabels } from '~/server/prom/client';
+import {
+  leakingContentCounter,
+  registerCounter,
+  registerCounterWithLabels,
+} from '~/server/prom/client';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import {
   getBaseModelFromResources,
@@ -1189,6 +1193,15 @@ const imageFeedStatementTimeoutCounter = registerCounterWithLabels({
   name: 'image_feed_statement_timeout_total',
   help: 'getAllImages raw query cancelled by server-side statement_timeout',
   labelNames: ['dbTarget'] as const,
+});
+
+// getImageMetricsObject soft-fallback rate: incremented whenever the ClickHouse
+// image-metrics read exceeds CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and we serve
+// empty (TRANSIENT-zero) metrics. Makes the otherwise axiom-only fallback rate
+// observable in Prometheus. No label dimension — the timeout has no natural one.
+const imageMetricsClickhouseTimeoutCounter = registerCounter({
+  name: 'image_metrics_clickhouse_timeout_total',
+  help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (served empty metrics)',
 });
 
 export const getAllImages = async (
@@ -4634,7 +4647,8 @@ export const getImageMetricsObject = async (
       fetchPromise,
       timeoutMs,
       {} as ImageMetricMap,
-      () =>
+      () => {
+        imageMetricsClickhouseTimeoutCounter.inc();
         logToAxiom(
           {
             type: 'warning',
@@ -4644,7 +4658,8 @@ export const getImageMetricsObject = async (
             timeoutMs,
           },
           'clickhouse'
-        ).catch()
+        ).catch();
+      }
     );
     const result: ImageMetricsObject = {};
     for (const id of ids) {

@@ -20,7 +20,14 @@ export async function withTimeoutFallback<T>(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<T>((resolve) => {
     timer = setTimeout(() => {
-      onTimeout?.();
+      // Never let a throwing onTimeout callback strand the caller: if it throws
+      // synchronously before resolve runs, the race never settles and the caller
+      // hangs forever. Swallow so resolve(fallback) ALWAYS runs.
+      try {
+        onTimeout?.();
+      } catch {
+        // intentionally ignored — the fallback resolution below must still happen
+      }
       resolve(fallback);
     }, ms);
   });
