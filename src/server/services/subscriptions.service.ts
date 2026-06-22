@@ -370,8 +370,12 @@ export const deliverMonthlyCosmetics = async ({
       FROM users_affected p
       JOIN "Cosmetic" c ON
         c."productId" = p."productId"
-        AND (c."availableStart" IS NULL OR p."createdAt" >= c."availableStart")
-        AND (c."availableEnd" IS NULL OR p."createdAt" <= c."availableEnd")
+        -- Compare at date granularity: membership badges represent a whole month, and the
+        -- delivery cron runs at 01:00 UTC while badges are authored with an 11:00 UTC
+        -- availableStart. A timestamp comparison made day-1-anniversary subscribers miss
+        -- their badge (cron fired 10h before the window opened, then never retried).
+        AND (c."availableStart" IS NULL OR p."createdAt"::date >= c."availableStart"::date)
+        AND (c."availableEnd" IS NULL OR p."createdAt"::date <= c."availableEnd"::date)
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
 };
