@@ -226,15 +226,20 @@ export const getFileForModelVersion = async ({
   const isMod = user?.isModerator;
   const userId = user?.id;
   const isOwner = !!userId && modelVersion.model.userId === userId;
-  // A deleted model must not be downloadable by its owner. The owner is normally
-  // allowed to download their own unpublished work, but for a deleted (incl.
-  // DMCA-removed) model that owner bypass keeps the file reachable to the exact
-  // person a takedown targets. Moderators retain access for investigation.
+
+  // A deleted model is downloadable by moderators only — no exceptions. This
+  // gate runs before every other access path (owner, internal noAuth callers,
+  // and the published-state check) so a deleted (incl. DMCA-removed) model can
+  // never be served to its owner or anyone else. Owners are otherwise allowed
+  // to download their own unpublished work, but a deleted model's owner is
+  // frequently the exact party a takedown targets (the uploader).
   const modelDeleted = modelVersion.model.status === 'Deleted';
+  if (modelDeleted && !isMod) return { status: 'not-found' };
+
   const canDownload =
     noAuth ||
     isMod ||
-    (isOwner && !modelDeleted) ||
+    isOwner ||
     (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published');
 
   if (!canDownload) return { status: 'not-found' };
