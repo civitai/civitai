@@ -13,6 +13,7 @@ import {
   resolveResourcePickerRequest,
 } from './pageBlockHostLogic';
 import { projectBlockInitMaturity } from './projectBlockInit';
+import { sendBlockRender } from './sendBlockRender';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -161,6 +162,12 @@ export function PageBlockHost({
   const initSentRef = useRef<boolean>(false);
   const controllerRef = useRef<IframeInitController | null>(null);
   const buildInitPayloadRef = useRef<() => BlockInitPayload>();
+  // Analytics Phase 2: emit-once guard for the block-render beacon. The
+  // status-transition gate ('loading' → 'ready') is the primary dedup, but a
+  // burst of duplicate BLOCK_READY acks arriving before React commits the
+  // 'ready' state could each still observe `current === 'loading'`. This ref
+  // makes the per-mount emit deterministic regardless of ack timing.
+  const blockRenderEmittedRef = useRef<boolean>(false);
 
   const expectedOrigin = useMemo(() => {
     try {
@@ -187,11 +194,14 @@ export function PageBlockHost({
 
   // App Blocks Analytics Phase 2 — fire-and-forget block render/impression.
   // Emitted exactly once per mount at the BLOCK_READY transition (see the
-  // BLOCK_READY effect below). `isAnon`/`userId` are stamped server-side; the
-  // client only passes the three identifiers. This host only mounts behind the
-  // `appBlocks` (+ `appBlocksPages`) gate (SSR fail-closed in [[...path]].tsx),
-  // so the event is dark behind the same flag as the rest of App Blocks.
-  const { mutate: emitBlockRender } = trpc.track.blockRender.useMutation();
+  // BLOCK_READY effect below) via the lightweight /api/track/block-render beacon
+  // (NOT a tRPC mutation — this fires per model-page-with-a-block view and per
+  // /apps/run load, so at GA it must skip the full tRPC middleware chain; mirrors
+  // the #2680 addView -> beacon move). `isAnon`/`userId` are derived/stamped
+  // server-side in the route; the client only passes the three identifiers. This
+  // host only mounts behind the `appBlocks` (+ `appBlocksPages`) gate (SSR
+  // fail-closed in [[...path]].tsx), so the event is dark behind the same flag as
+  // the rest of App Blocks.
 
   // #3/#6: the scopes the minted JWT ACTUALLY carries (declared − missing).
   // See pageBlockHostLogic.grantedPageScopes. Posting `[]` (the old hardcode)
@@ -345,16 +355,19 @@ export function PageBlockHost({
       if (acked) {
         controllerRef.current?.notifyReady();
         // Analytics Phase 2: one render/impression per mount. The `acked` gate
-        // only flips on the loading→ready transition (and only once, since a
-        // late BLOCK_READY finds status !== 'loading'), so this fires exactly
-        // once per mount and never on re-render. Fire-and-forget — failures are
-        // a no-op (and a harmless no-op until the `blockRenders` ClickHouse
-        // table exists; see PR body).
-        emitBlockRender({ appBlockId, blockInstanceId, slotId: 'app.page' });
+        // flips on the loading→ready transition; the emit-once ref makes it
+        // deterministic even if duplicate acks land before React commits 'ready'
+        // (so it fires exactly once per mount and never on re-render).
+        // Fire-and-forget beacon — failures are a no-op (and a harmless no-op
+        // until the `blockRenders` ClickHouse table exists; see PR body).
+        if (!blockRenderEmittedRef.current) {
+          blockRenderEmittedRef.current = true;
+          sendBlockRender({ appBlockId, blockInstanceId, slotId: 'app.page' });
+        }
       }
     });
     return off;
-  }, [onMessage, emitBlockRender, appBlockId, blockInstanceId]);
+  }, [onMessage, appBlockId, blockInstanceId]);
 
   // BLOCK_ERROR{fatal:true} → fatal.
   useEffect(() => {

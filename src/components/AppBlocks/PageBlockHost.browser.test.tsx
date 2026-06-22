@@ -4,10 +4,6 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
-// Analytics Phase 2: shared spy for trpc.track.blockRender.useMutation().mutate,
-// asserted to fire exactly once at BLOCK_READY (and never on re-render).
-const { mockBlockRenderMutate } = vi.hoisted(() => ({ mockBlockRenderMutate: vi.fn() }));
-
 // PageBlockHost wires the money-path workflow bridge AND the storage bridge,
 // which call `trpc.blocks.*.useMutation()`, `trpc.apps.storage.*.useMutation()`,
 // and `trpc.useUtils()` at render — that needs the tRPC Context (the `withTRPC`
@@ -23,9 +19,6 @@ vi.mock('~/utils/trpc', () => ({
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-    },
-    track: {
-      blockRender: { useMutation: () => ({ mutate: mockBlockRenderMutate }) },
     },
     apps: {
       storage: {
@@ -211,37 +204,61 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
 });
 
 describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
+  // Analytics Phase 2 now emits via the /api/track/block-render BEACON
+  // (sendBlockRender → fetch), not a tRPC mutation. Spy on global fetch and
+  // assert the beacon fires exactly once at BLOCK_READY (and never on re-render).
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  // Only the block-render beacon goes through fetch in this test; resolve OK.
+  function isBeacon(call: unknown[]) {
+    return typeof call[0] === 'string' && (call[0] as string).includes('/api/track/block-render');
+  }
+  function beaconCalls() {
+    return fetchSpy.mock.calls.filter(isBeacon);
+  }
+
   beforeEach(() => {
-    mockBlockRenderMutate.mockClear();
+    // vi.spyOn dedupes to the same mock when fetch is already spied, so its
+    // .mock.calls would accumulate across tests — clear it each time.
+    fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    fetchSpy.mockClear();
   });
 
-  test('emits track.blockRender exactly once at BLOCK_READY with the page identifiers', async () => {
+  test('emits the block-render beacon exactly once at BLOCK_READY with the page identifiers', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
 
     // Not emitted before the handshake completes.
-    expect(mockBlockRenderMutate).not.toHaveBeenCalled();
+    expect(beaconCalls()).toHaveLength(0);
 
     await driveToReady();
 
     await vi.waitFor(() => {
-      expect(mockBlockRenderMutate).toHaveBeenCalledTimes(1);
+      expect(beaconCalls()).toHaveLength(1);
     });
-    expect(mockBlockRenderMutate).toHaveBeenCalledWith({
+
+    const [url, init] = beaconCalls()[0];
+    expect(url).toBe('/api/track/block-render');
+    expect((init as RequestInit | undefined)?.method).toBe('POST');
+    // keepalive so the beacon survives a page unload/navigation.
+    expect((init as RequestInit | undefined)?.keepalive).toBe(true);
+    const body = JSON.parse(String((init as RequestInit).body));
+    expect(body).toEqual({
       appBlockId: 'apb_test',
       blockInstanceId: 'page_apb_test',
       slotId: 'app.page',
     });
-    // No isAnon/userId from the client — those are server-stamped.
-    const arg = mockBlockRenderMutate.mock.calls[0][0];
-    expect(arg).not.toHaveProperty('isAnon');
-    expect(arg).not.toHaveProperty('userId');
+    // No isAnon/userId from the client — those are server-derived in the route.
+    expect(body).not.toHaveProperty('isAnon');
+    expect(body).not.toHaveProperty('userId');
   });
 
   test('does NOT re-emit on a late/duplicate BLOCK_READY (status no longer loading)', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
 
     await driveToReady();
-    await vi.waitFor(() => expect(mockBlockRenderMutate).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
 
     // A second BLOCK_READY (block re-ack, or a re-render re-running listeners)
     // finds status === 'ready', so the `acked` gate stays false → no re-emit.
@@ -249,6 +266,6 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
     postFromBlock('BLOCK_READY', {});
     await new Promise((r) => setTimeout(r, 150));
 
-    expect(mockBlockRenderMutate).toHaveBeenCalledTimes(1);
+    expect(beaconCalls()).toHaveLength(1);
   });
 });

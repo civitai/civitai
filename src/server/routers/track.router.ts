@@ -17,6 +17,13 @@ export const trackRouter = router({
   // ANON viewers (the whole point of this event) can emit. `isAnon` is derived
   // SERVER-SIDE from the session here (`!ctx.user`) and is NOT part of the input
   // schema — a client cannot override it.
+  //
+  // The browser hosts (PageBlockHost / IframeHost) emit this via the lightweight
+  // /api/track/block-render BEACON, not this procedure — the event fires per
+  // model-page-with-a-block view + per /apps/run load, so at GA it must skip the
+  // full tRPC middleware chain (mirrors the #2680 addView -> /api/track/view
+  // move, which likewise left its tRPC procedure intact). This procedure is kept
+  // for any bearer/API-key (non-cookie) caller, consistent with `addView`.
   blockRender: publicProcedure
     .input(blockRenderSchema)
     .mutation(({ input, ctx }) => ctx.track.blockRender({ ...input, isAnon: !ctx.user })),
