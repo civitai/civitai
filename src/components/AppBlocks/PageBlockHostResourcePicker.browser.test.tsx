@@ -47,6 +47,9 @@ vi.mock('~/utils/trpc', () => ({
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
+    // Analytics Phase 2: PageBlockHost calls trpc.track.blockRender.useMutation()
+    // at render (fire-and-forget impression emit). Inert stub here.
+    track: { blockRender: { useMutation: () => ({ mutate: vi.fn() }) } },
     apps: {
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },

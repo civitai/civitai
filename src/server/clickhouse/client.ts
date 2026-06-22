@@ -514,6 +514,21 @@ export class Tracker {
     return this.track('views', values);
   }
 
+  // App Blocks Analytics Phase 2 — block render/impression event. Fired once per
+  // host mount (BLOCK_READY) so anon viewers + static/no-scope blocks (which
+  // `block_scope_invocations` misses) become measurable. `userId`/`ip`/`userAgent`
+  // are stamped by track() from the resolved actor; `isAnon` is derived
+  // server-side by the caller (the track.blockRender tRPC procedure from
+  // `!ctx.user`) — it is NOT accepted from the browser.
+  public blockRender(values: {
+    appBlockId: string;
+    blockInstanceId: string;
+    slotId: string;
+    isAnon: boolean;
+  }) {
+    return this.track('blockRenders', values);
+  }
+
   public pageView(values: {
     pageId: string;
     path: string;

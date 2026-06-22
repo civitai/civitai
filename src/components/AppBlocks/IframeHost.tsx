@@ -255,6 +255,18 @@ export function IframeHost({
   // re-creating the controller and resetting its timers.
   const buildInitPayloadRef = useRef<() => BlockInitPayload>();
 
+  // App Blocks Analytics Phase 2 — fire-and-forget block render/impression,
+  // emitted exactly once per mount at the BLOCK_READY transition (see the
+  // BLOCK_READY effect below). The client passes only the three identifiers;
+  // `isAnon`/`userId` are stamped server-side. This host only mounts via the
+  // `appBlocks`-flag-gated BlockSlot → BlockSlotClient → BlockHost path, so the
+  // event is dark behind the same flag as the rest of App Blocks. `mutate` from
+  // useMutation is referentially stable, so it's safe in the effect deps below.
+  const { mutate: emitBlockRender } = trpc.track.blockRender.useMutation();
+  // Slot the block rendered in (e.g. 'model.sidebar_top'). Mirrors the default
+  // used everywhere else modelCtx.slotId is read in this component.
+  const slotId = modelCtx.slotId ?? 'model.sidebar_top';
+
   const iframeSrc = install.manifest.iframe?.src ?? '';
   const expectedOrigin = useMemo(() => {
     try {
@@ -559,10 +571,20 @@ export function IframeHost({
         // (the block dedupes init), but we must not keep spamming.
         controllerRef.current?.notifyReady();
         applyHeight(payload.height);
+        // Analytics Phase 2: one render/impression per mount. `appliedReady`
+        // only flips on the loading→ready transition (a late BLOCK_READY finds
+        // status !== 'loading'), so this fires exactly once per mount and never
+        // on re-render. Fire-and-forget — failures are a no-op (and a harmless
+        // no-op until the `blockRenders` ClickHouse table exists; see PR body).
+        emitBlockRender({
+          appBlockId: install.appBlockId,
+          blockInstanceId: install.blockInstanceId,
+          slotId,
+        });
       }
     });
     return off;
-  }, [onMessage, applyHeight]);
+  }, [onMessage, applyHeight, emitBlockRender, install.appBlockId, install.blockInstanceId, slotId]);
 
   useEffect(() => {
     const off = onMessage<unknown>('RESIZE_IFRAME', (raw) => {

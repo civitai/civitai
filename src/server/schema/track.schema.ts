@@ -32,6 +32,30 @@ export const addViewSchema = z.object({
 
 export type AddViewSchema = z.infer<typeof addViewSchema>;
 
+// App Blocks Analytics Phase 2 — block render/impression event.
+//
+// `block_scope_invocations` (Postgres) only captures AUTHENTICATED scoped API
+// calls, so anon viewers and static/no-scope blocks (which never make a scoped
+// call) are invisible. This event fires once per host mount at the BLOCK_READY
+// transition to make those renders measurable.
+//
+// SECURITY: the client supplies ONLY the three identifiers below. `isAnon` is
+// derived server-side from the session (`!ctx.user`) in the tRPC procedure and
+// `userId` is stamped by the Tracker — neither is accepted from the client, so
+// an anon viewer can't spoof an authed render (or vice-versa).
+export type BlockRenderInput = z.infer<typeof blockRenderSchema>;
+export const blockRenderSchema = z.object({
+  // The approved AppBlock's id (UUID-ish string). Capped to keep a tampered
+  // client from bloating the tracker payload; well above any real id length.
+  appBlockId: z.string().trim().min(1).max(256),
+  // The block instance id (`page_<appBlockId>` for pages, or the per-slot
+  // install instance id for slot hosts).
+  blockInstanceId: z.string().trim().min(1).max(256),
+  // Where the block rendered: 'app.page' for the full-page runner, or a slot
+  // id like 'model.sidebar_top' for the in-page slot host.
+  slotId: z.string().trim().min(1).max(128),
+});
+
 export type TrackShareInput = z.infer<typeof trackShareSchema>;
 export const trackShareSchema = z.object({
   platform: z.enum(['reddit', 'twitter', 'clipboard']),

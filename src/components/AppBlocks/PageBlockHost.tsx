@@ -185,6 +185,14 @@ export function PageBlockHost({
 
   const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin, opaqueOrigin });
 
+  // App Blocks Analytics Phase 2 — fire-and-forget block render/impression.
+  // Emitted exactly once per mount at the BLOCK_READY transition (see the
+  // BLOCK_READY effect below). `isAnon`/`userId` are stamped server-side; the
+  // client only passes the three identifiers. This host only mounts behind the
+  // `appBlocks` (+ `appBlocksPages`) gate (SSR fail-closed in [[...path]].tsx),
+  // so the event is dark behind the same flag as the rest of App Blocks.
+  const { mutate: emitBlockRender } = trpc.track.blockRender.useMutation();
+
   // #3/#6: the scopes the minted JWT ACTUALLY carries (declared − missing).
   // See pageBlockHostLogic.grantedPageScopes. Posting `[]` (the old hardcode)
   // lied to the block about its capabilities.
@@ -334,10 +342,19 @@ export function PageBlockHost({
         }
         return current;
       });
-      if (acked) controllerRef.current?.notifyReady();
+      if (acked) {
+        controllerRef.current?.notifyReady();
+        // Analytics Phase 2: one render/impression per mount. The `acked` gate
+        // only flips on the loading→ready transition (and only once, since a
+        // late BLOCK_READY finds status !== 'loading'), so this fires exactly
+        // once per mount and never on re-render. Fire-and-forget — failures are
+        // a no-op (and a harmless no-op until the `blockRenders` ClickHouse
+        // table exists; see PR body).
+        emitBlockRender({ appBlockId, blockInstanceId, slotId: 'app.page' });
+      }
     });
     return off;
-  }, [onMessage]);
+  }, [onMessage, emitBlockRender, appBlockId, blockInstanceId]);
 
   // BLOCK_ERROR{fatal:true} → fatal.
   useEffect(() => {

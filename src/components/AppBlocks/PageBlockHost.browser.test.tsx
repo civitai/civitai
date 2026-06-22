@@ -4,6 +4,10 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
+// Analytics Phase 2: shared spy for trpc.track.blockRender.useMutation().mutate,
+// asserted to fire exactly once at BLOCK_READY (and never on re-render).
+const { mockBlockRenderMutate } = vi.hoisted(() => ({ mockBlockRenderMutate: vi.fn() }));
+
 // PageBlockHost wires the money-path workflow bridge AND the storage bridge,
 // which call `trpc.blocks.*.useMutation()`, `trpc.apps.storage.*.useMutation()`,
 // and `trpc.useUtils()` at render — that needs the tRPC Context (the `withTRPC`
@@ -19,6 +23,9 @@ vi.mock('~/utils/trpc', () => ({
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
+    track: {
+      blockRender: { useMutation: () => ({ mutate: mockBlockRenderMutate }) },
     },
     apps: {
       storage: {
@@ -200,5 +207,48 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
 
     await new Promise((r) => setTimeout(r, 150));
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+});
+
+describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
+  beforeEach(() => {
+    mockBlockRenderMutate.mockClear();
+  });
+
+  test('emits track.blockRender exactly once at BLOCK_READY with the page identifiers', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    // Not emitted before the handshake completes.
+    expect(mockBlockRenderMutate).not.toHaveBeenCalled();
+
+    await driveToReady();
+
+    await vi.waitFor(() => {
+      expect(mockBlockRenderMutate).toHaveBeenCalledTimes(1);
+    });
+    expect(mockBlockRenderMutate).toHaveBeenCalledWith({
+      appBlockId: 'apb_test',
+      blockInstanceId: 'page_apb_test',
+      slotId: 'app.page',
+    });
+    // No isAnon/userId from the client — those are server-stamped.
+    const arg = mockBlockRenderMutate.mock.calls[0][0];
+    expect(arg).not.toHaveProperty('isAnon');
+    expect(arg).not.toHaveProperty('userId');
+  });
+
+  test('does NOT re-emit on a late/duplicate BLOCK_READY (status no longer loading)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    await driveToReady();
+    await vi.waitFor(() => expect(mockBlockRenderMutate).toHaveBeenCalledTimes(1));
+
+    // A second BLOCK_READY (block re-ack, or a re-render re-running listeners)
+    // finds status === 'ready', so the `acked` gate stays false → no re-emit.
+    postFromBlock('BLOCK_READY', {});
+    postFromBlock('BLOCK_READY', {});
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(mockBlockRenderMutate).toHaveBeenCalledTimes(1);
   });
 });
