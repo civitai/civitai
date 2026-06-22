@@ -67,7 +67,10 @@ function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
     appBlockId: 'apb_test',
     blockInstanceId: 'bki_test',
     ctx: {},
-    scopes: ['catalog:read'],
+    // No catalog:read (retired): the endpoint accepts ANY valid block token
+    // (withBlockScope with no requiredScope). The handler never reads `scopes` —
+    // its only authority is the maturity clamp on claims.maxBrowsingLevel.
+    scopes: [],
     ...over,
   };
 }
@@ -190,6 +193,15 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
     const res = await invoke({ page: '11', limit: '100' });
     expect(res.statusCode).toBe(429);
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+
+  it('401s when no block claims were stamped (defense-in-depth; e.g. no token)', async () => {
+    // The middleware (real) rejects anon before reaching here; this guards the
+    // handler-internal `if (!claims) 401` path that fires if claims is absent.
+    claimsBox.claims = undefined;
+    const res = await invoke({});
+    expect(res.statusCode).toBe(401);
     expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
 

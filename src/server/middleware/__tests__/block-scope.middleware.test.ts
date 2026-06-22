@@ -117,17 +117,13 @@ describe('enforceContextBinding', () => {
     ).toThrow();
   });
 
-  it('catalog:read is a no-op browse binding (no modelId, anon allowed)', () => {
-    // The Phase 3 catalog scope searches PUBLIC data, so it has no modelId
-    // binding and no :self subject requirement. The maturity ceiling is
-    // enforced by the endpoint (claims.maxBrowsingLevel), NOT here.
+  it('rejects the retired catalog:read scope (no longer a known scope)', () => {
+    // catalog:read was added in #2671 and retired the next day: the block
+    // catalog endpoints now accept ANY valid token (no requiredScope) — see
+    // block-scope.anytoken-mode.test.ts. A token still carrying the dead scope
+    // is now an UNKNOWN scope → deny-by-default at runtime.
     const authed = fakeClaims({ scopes: ['catalog:read'] });
-    expect(() => enforceContextBinding(authed, fakeReq({}))).not.toThrow();
-    // No modelId binding: an unrelated id query param does not constrain it.
-    expect(() => enforceContextBinding(authed, fakeReq({ id: '999' }))).not.toThrow();
-    // Anon may browse the catalog.
-    const anon = fakeClaims({ sub: 'anon', scopes: ['catalog:read'] });
-    expect(() => enforceContextBinding(anon, fakeReq({}))).not.toThrow();
+    expect(() => enforceContextBinding(authed, fakeReq({}))).toThrow();
   });
 });
 

@@ -65,10 +65,15 @@ export const config = {
  * no-store` + exact-origin CORS on this route, so there is no cache-key /
  * cross-domain leak here.
  *
- * Scope: `catalog:read` — the SAME browse scope blocks/models uses (a no-op
- * context binding; maps to the ModelsRead OAuth ceiling bit but grants NO new
- * data exposure: the catalog is public + this endpoint is strictly MORE
- * restricted than the public one). No new scope is introduced.
+ * Auth: ANY valid block token (no required scope) — the SAME mode
+ * blocks/models uses. The catalog is PUBLIC, maturity-clamped data, so a
+ * declarable+grantable scope adds CLI-validator + per-app-allowedScopes
+ * friction with NO security value (this endpoint is strictly MORE restricted
+ * than the public /api/v1/images). The token is required ONLY for its signed
+ * `maxBrowsingLevel` claim (the maturity ceiling), NOT for authorization.
+ * withBlockScope still runs FULL token validation + revocation + `private,
+ * no-store` + exact-origin CORS; it just skips the per-scope check. Anon → 401.
+ * (Previously gated on `catalog:read`, retired as no-value friction.)
  *
  * NOTE (advisory until #2670 merges): the authoritative `maxBrowsingLevel`
  * claim is MINTED by PR #2670. Until then every token resolves to SFW here (the
@@ -228,4 +233,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 });
 
-export default withBlockScope(baseHandler, { requiredScope: 'catalog:read' });
+// No requiredScope: any valid block token is accepted (see doc above). The
+// maturity clamp (resolveCatalogBrowsingLevel) remains the whole authority
+// surface.
+export default withBlockScope(baseHandler, {});

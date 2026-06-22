@@ -69,7 +69,10 @@ function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
     appBlockId: 'apb_test',
     blockInstanceId: 'bki_test',
     ctx: {},
-    scopes: ['catalog:read'],
+    // No catalog:read (retired): the endpoint accepts ANY valid block token
+    // (withBlockScope with no requiredScope). The handler never reads `scopes` —
+    // its only authority is the maturity clamp on claims.maxBrowsingLevel.
+    scopes: [],
     ...over,
   };
 }
@@ -187,6 +190,15 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
     // The Meili pre-step must be called with the CLAMPED level too.
     expect(mockResolveModelSearchIds).toHaveBeenCalledTimes(1);
     expect(mockResolveModelSearchIds.mock.calls[0][0].browsingLevel).toBe(sfwBrowsingLevelsFlag);
+  });
+
+  it('401s when no block claims were stamped (defense-in-depth; e.g. no token)', async () => {
+    // The middleware (real) rejects anon before reaching here; this guards the
+    // handler-internal `if (!claims) 401` path that fires if claims is absent.
+    claimsBox.claims = undefined;
+    const res = await invoke({});
+    expect(res.statusCode).toBe(401);
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
   });
 
   it('rejects non-GET', async () => {
