@@ -498,7 +498,19 @@ export class Tracker {
     });
   }
 
-  public view(values: { type: ViewType; entityType: EntityType; entityId: number }) {
+  public view(values: {
+    type: ViewType;
+    entityType: EntityType;
+    entityId: number;
+    // Optional client-supplied context, forwarded verbatim into the `views`
+    // ClickHouse row (same shape the track.addView tRPC resolver passed
+    // through). Kept optional so server-side callers can omit them.
+    ads?: 'Member' | 'Blocked' | 'Served' | 'Off';
+    nsfw?: boolean;
+    nsfwLevel?: number;
+    browsingLevel?: number;
+    details?: Record<string, unknown>;
+  }) {
     return this.track('views', values);
   }
 
