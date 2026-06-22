@@ -55,6 +55,8 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserContentSettings } from '~/server/schema/user.schema';
+import type { RouterOutput } from '~/types/router';
+type ChatUnreadCount = RouterOutput['chat']['getUnreadCount'];
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
@@ -109,6 +111,10 @@ type CustomAppProps = {
   settings: UserContentSettings;
   browsingSettingsAddons: BrowsingSettingsAddon[];
   liveNow: boolean;
+  // SSR-seeded `chat.getUnreadCount` (logged-in only). The per-chat unread tallies
+  // behind the header chat badge. Optional: absent for anon and on the fail-open
+  // path (the client query self-heals on its own fetch). See AppProvider seed.
+  chatUnreadCount?: ChatUnreadCount;
   canIndex: boolean;
   hasAuthCookie: boolean;
   region: RegionInfo;
@@ -137,6 +143,7 @@ function MyApp(props: CustomAppProps) {
       settings,
       browsingSettingsAddons,
       liveNow = false,
+      chatUnreadCount,
       region,
       domain,
       host,
@@ -190,6 +197,7 @@ function MyApp(props: CustomAppProps) {
       announcements={announcements}
       following={following}
       liveNow={liveNow}
+      chatUnreadCount={chatUnreadCount}
       region={region}
       domain={domain}
       host={host}
@@ -479,6 +487,31 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   }
 
   const domain = getRequestDomainColor(request);
+
+  // SSR-seed `chat.getUnreadCount` (logged-in only) so the header chat badge
+  // reads a primed cache and never fires the query on bootstrap (~19 req/s off
+  // api-primary). It CANNOT be deferred to chat-open: the badge is always
+  // visible in the header, and the live-increment path in ChatSignals.ts only
+  // bumps an EXISTING cache entry (`produce((old) => if (!old) return old)`) —
+  // an unseeded badge would silently drop every incoming-message bump until the
+  // user opened chat. Tradeoff: this adds the unread-count DB read (two cheap
+  // indexed `count` queries) to the SSR render path; the net win is removing the
+  // full per-request middleware+context+superjson cycle that the standalone
+  // tRPC call paid. Fail open to `undefined` (the client query self-heals on its
+  // own fetch) — a DB blip here must never 500 a page render.
+  let chatUnreadCount: ChatUnreadCount | undefined;
+  if (session?.user) {
+    try {
+      const { getUnreadMessagesForUser } = await import('~/server/services/chat.service');
+      chatUnreadCount = await getUnreadMessagesForUser({ userId: session.user.id });
+    } catch (e) {
+      console.warn(
+        `[_app] chat.getUnreadCount bootstrap failed, rendering without seed: ${
+          e instanceof Error ? e.message : String(e)
+        }`
+      );
+    }
+  }
 
   // SSR-inject two ambient per-bootstrap trpc results that fire on every
   // logged-in page load but are fully derivable from data already fetched here.

@@ -20,7 +20,12 @@ import type {
 } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
-import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
+import {
+  createMessage,
+  getUnreadMessagesForUser,
+  maxUsersPerChat,
+  upsertChat,
+} from '~/server/services/chat.service';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
 import {
@@ -110,34 +115,7 @@ export const getUnreadMessagesForUserHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-
-    const unread = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
-      select memb."chatId"          as "chatId",
-             count(msg.id)::integer as "cnt"
-      from "ChatMember" memb
-             left join "ChatMessage" msg
-                       on msg."chatId" = memb."chatId" and
-                          (msg.id > memb."lastViewedMessageId" or
-                           memb."lastViewedMessageId" is null
-                            )
-      where memb."userId" = ${userId}
-        and memb.status = 'Joined'
-        and memb."isMuted" is false
-        and msg."userId" != ${userId}
-      group by memb."chatId"
-    `;
-
-    const pending = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
-      select memb."chatId" as "chatId",
-             1             as "cnt"
-      from "ChatMember" memb
-      where memb."userId" = ${userId}
-        and memb.status = 'Invited'
-        and memb."isMuted" is false
-      group by memb."chatId"
-    `;
-
-    return [...unread, ...pending];
+    return await getUnreadMessagesForUser({ userId });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

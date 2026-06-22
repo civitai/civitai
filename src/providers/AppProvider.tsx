@@ -8,6 +8,9 @@ import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
+import type { RouterOutput } from '~/types/router';
+
+type ChatUnreadCount = RouterOutput['chat']['getUnreadCount'];
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -30,6 +33,11 @@ type AppProviderProps = {
   // `undefined` key) so it never fires on bootstrap. Public procedure → seeded
   // for everyone, no auth gate.
   liveNow: boolean;
+  // SSR-computed `chat.getUnreadCount` (logged-in only) — the per-chat unread
+  // tallies behind the header chat badge. Seeds the ambient query (fixed
+  // `undefined` key) so the badge never fires it on bootstrap. Absent for anon
+  // and on the fail-open path (the consumers' own live fetch takes over).
+  chatUnreadCount?: ChatUnreadCount;
   seed: number;
   canIndex: boolean;
   region: RegionInfo;
@@ -85,6 +93,7 @@ export function AppProvider({
   announcements,
   following,
   liveNow,
+  chatUnreadCount,
   domain,
   host,
   serverDomains,
@@ -119,6 +128,20 @@ export function AppProvider({
   trpc.system.getLiveNow.useQuery(undefined, {
     initialData: liveNow,
     staleTime: 1000 * 60 * 5,
+  });
+  // Seed `chat.getUnreadCount` (the header chat badge) from the SSR snapshot so
+  // the badge reads a primed cache and never fires the query on bootstrap
+  // (~19 req/s off api-primary). Shares the fixed `undefined` query key with
+  // `ChatButton`'s `trpc.chat.getUnreadCount.useQuery`. Updates stay LIVE via
+  // `ChatSignals`' `setData` on incoming messages (same model as
+  // `getFollowingUsers` above — no external churn to poll for), so the global
+  // `staleTime: Infinity` default is correct. `enabled: !!chatUnreadCount` skips
+  // the seed (and any self-heal fetch) only when there's no snapshot: anon never
+  // fires this protected query, and a failed authed snapshot falls back to
+  // `ChatButton`'s own live fetch.
+  trpc.chat.getUnreadCount.useQuery(undefined, {
+    initialData: chatUnreadCount,
+    enabled: !!chatUnreadCount,
   });
   // Populate the module-level server domain map so `syncAccount(url)` can
   // resolve hosts to colors without pulling from React context.
