@@ -2,8 +2,8 @@ import { useEffect } from 'react';
 import { LOGIN_POPUP_CHANNEL, LOGIN_POPUP_DONE } from '~/utils/auth-helpers';
 
 // Login-completion landing, reached by EITHER the OAuth popup OR the email magic-link tab (which has no opener).
-// By now the session cookie is set on this domain (the hub set it for *.civitai.com, or /api/auth/sync minted it
-// cross-site). We broadcast on a same-origin channel so the ORIGINATING tab navigates back to where login
+// By now the session cookie is set on this domain (the auth-code flow's /api/auth/callback minted it on this
+// origin). We broadcast on a same-origin channel so the ORIGINATING tab navigates back to where login
 // started (and closes the popup it owns). For the OAuth popup the opener closes us; for the email magic-link tab
 // (no same-origin opener) we send ourselves to that same `cb` page so the user lands where they began.
 export default function LoginPopupDonePage() {

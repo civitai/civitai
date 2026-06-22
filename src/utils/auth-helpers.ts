@@ -1,35 +1,16 @@
-import { hubLoginUrl } from '@civitai/auth/client';
+import { buildHubLoginUrl } from '~/utils/hub-login';
 import { env } from '~/env/client';
 
 // All authentication is centralized at the hub (auth.civitai.com) — the HUB's login UI sets the session cookie;
 // the main app never mints one. These helpers just navigate (or pop up) to the hub login.
 const HUB = env.NEXT_PUBLIC_AUTH_HUB_URL;
 
-// 2-label registrable domain (civitai.com / civitai.red), to tell same-site from cross-site relative to the hub.
-function registrableDomain(hostname: string): string {
-  const parts = hostname.toLowerCase().split('.');
-  return parts.length >= 2 ? parts.slice(-2).join('.') : hostname.toLowerCase();
-}
-
 /**
- * The hub login entry URL that lands back on `dest` once login completes. The hub sets its own `.civitai.com`
- * cookie; on a CROSS-SITE host (civitai.red) that cookie isn't readable here, so the landing first runs the
- * existing swap-token sync (/api/auth/sync) to mint THIS domain's cookie — then post-login side-effects, then
- * `dest`. Same hub mechanism that works full-page; we just choose where it lands.
+ * The hub login entry URL that lands back on `dest` once login completes. Delegates to the shared
+ * `buildHubLoginUrl` (the same builder the server `/login` redirect uses) so the two can't drift.
  */
 function hubLoginEntryUrl(hub: string, dest: string, reason?: string): string {
-  const origin = window.location.origin;
-  // `reason` is embedded in the post-login path (attribution on completion) AND passed as a hub param below
-  // (the hub's LoginRedirect analytics).
-  const postLoginPath = `/api/auth/post-login?dest=${encodeURIComponent(dest)}${
-    reason ? `&reason=${encodeURIComponent(reason)}` : ''
-  }`;
-  const crossSite =
-    registrableDomain(window.location.hostname) !== registrableDomain(new URL(hub).hostname);
-  const landing = crossSite
-    ? `${origin}/api/auth/sync?returnUrl=${encodeURIComponent(postLoginPath)}`
-    : `${origin}${postLoginPath}`;
-  return hubLoginUrl(hub, { returnUrl: landing, reason });
+  return buildHubLoginUrl({ origin: window.location.origin, hub, dest, reason });
 }
 
 /** Same-origin BroadcastChannel the popup-done page signals on, so the opener (and the email magic-link tab, which

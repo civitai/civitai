@@ -12,23 +12,36 @@ import { setSessionCookie } from '~/server/auth/civ-cookie';
 const impersonation = createImpersonationClient();
 const schema = z.object({ userId: z.coerce.number() });
 
-export default AuthedEndpoint(async function handler(req, res) {
-  const cookie = req.headers.cookie ?? '';
+export default AuthedEndpoint(
+  async function handler(req, res) {
+    const cookie = req.headers.cookie ?? '';
 
-  if (req.method === 'DELETE') {
-    const result = await impersonation.exit(cookie);
-    if (!result) return res.status(400).json({ error: 'not impersonating' });
-    setSessionCookie(res, result.token, { host: req.headers.host });
+    if (req.method === 'DELETE') {
+      const result = await impersonation.exit(cookie);
+      // Forward the hub's REAL status + reason (e.g. 400 "not an impersonation session", 404, 500) instead of
+      // masking every failure as a generic message. status 0 = hub unreachable → 502.
+      if (!result.ok) {
+        return res
+          .status(result.status || 502)
+          .json({ error: result.error ?? 'could not exit impersonation' });
+      }
+      setSessionCookie(res, result.token, { host: req.headers.host });
+      return res.status(200).json({ ok: true });
+    }
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+
+    const minted = await impersonation.impersonate(cookie, parsed.data.userId);
+    if (!minted.ok) {
+      return res
+        .status(minted.status || 502)
+        .json({ error: minted.error ?? 'Could not impersonate' });
+    }
+
+    // NB: impersonation deliberately does NOT touch the device account-set
+    setSessionCookie(res, minted.token, { host: req.headers.host });
     return res.status(200).json({ ok: true });
-  }
-
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-
-  const minted = await impersonation.impersonate(cookie, parsed.data.userId);
-  if (!minted) return res.status(403).json({ error: 'Could not impersonate' });
-
-  // NB: impersonation deliberately does NOT touch the device account-set
-  setSessionCookie(res, minted.token, { host: req.headers.host });
-  return res.status(200).json({ ok: true });
-}, ['POST', 'DELETE']);
+  },
+  ['POST', 'DELETE']
+);

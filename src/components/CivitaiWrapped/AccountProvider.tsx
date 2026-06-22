@@ -56,7 +56,7 @@ type AccountState = {
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
   // Switch by userId: seamless device switch if fresh in the set, legacy-token redeem if mid-migration, else
-  // re-authenticate at the hub. (Cross-domain .red now goes through the server /api/auth/sync flow, not here.)
+  // re-authenticate at the hub. (Cross-domain .red now goes through the server auth-code flow, not here.)
   swapAccount: (userId: number, callbackUrl?: string) => Promise<void>;
   removeAccount: (id: number) => Promise<void>;
   // Moderator impersonation (F) — start acting as `userId` / return to your own account. Both reload on success

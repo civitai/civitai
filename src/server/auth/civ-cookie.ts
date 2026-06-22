@@ -47,11 +47,35 @@ function buildCookie(
   ].join('; ');
 }
 
+// The legacy next-auth session cookie (`civitai-token` / prod `__Secure-civitai-token`). We CLEAR it whenever
+// a fresh civ-token is set: a valid civ-token supersedes it (getServerAuthSession only falls back to the
+// legacy cookie when civ-token is absent), so leaving it set is stale cruft that keeps a legacy-cookie user
+// "logged in" via the fallback. Cleared across the domains next-auth could have used — host-only,
+// NEXTAUTH_COOKIE_DOMAIN, and the request-derived `.{host}` parent — mirroring /api/auth/logout's legacy
+// clear. (oauth2-proxy uses its own `_oauth2_proxy` cookie, not this one, so it's never the source.) Remove
+// this whole helper once legacy cookies have aged out post-cutover.
+function clearLegacySessionCookies(host?: string): string[] {
+  const h = (host ?? '').split(':')[0].toLowerCase();
+  const parent = h && h !== 'localhost' && !/^\d+\.\d+\.\d+\.\d+$/.test(h) ? `.${h}` : undefined;
+  const domains = [...new Set([undefined, process.env.NEXTAUTH_COOKIE_DOMAIN || undefined, parent])];
+  const out: string[] = [];
+  for (const [name, secure] of [
+    ['civitai-token', false],
+    ['__Secure-civitai-token', true],
+  ] as const) {
+    for (const d of domains) {
+      out.push(`${name}=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}${d ? `; Domain=${d}` : ''}`);
+    }
+  }
+  return out;
+}
+
 /**
  * Set the civ-token session cookie from a hub-minted token (Max-Age derived from the token's `exp`). Appends to
  * any Set-Cookie already on the response. Pass `host` (the request's `Host` header) so the cookie Domain matches
  * the serving color; omit it only where there's no request (then the cookie is host-only). Pass `deviceCookie`
  * to roll the device cookie in lockstep (switch + rolling-refresh; impersonation does NOT touch the device set).
+ * Also clears the legacy next-auth cookie — a fresh civ-token supersedes it.
  */
 export function setSessionCookie(
   res: CookieWritable,
@@ -73,5 +97,7 @@ export function setSessionCookie(
   if (opts?.deviceCookie) {
     all.push(buildCookie(deviceCookieName(), opts.deviceCookie, secure, domain, DEVICE_TTL_S));
   }
+  // A valid civ-token supersedes the legacy next-auth cookie → clear it so it doesn't linger.
+  all.push(...clearLegacySessionCookies(opts?.host));
   res.setHeader('Set-Cookie', all);
 }
