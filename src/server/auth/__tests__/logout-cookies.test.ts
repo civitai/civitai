@@ -56,13 +56,21 @@ describe('buildLogoutCookies', () => {
     expect(headers.some((h) => /Max-Age=0/i.test(h) && h.includes('=;'))).toBe(true);
   });
 
-  it('clears the device cookie across the request parent domain too', async () => {
-    const headers = (await import('../../../pages/api/auth/logout')).buildLogoutCookies('.civitai.com');
+  // Regression for the preview/staging logout bug: on a SUBDOMAIN host (e.g. stage.civitai.com) the spoke sets
+  // civ-token/civ-device with Domain=civitai.com (the REGISTRABLE domain, via cookieDomainForHost). The old
+  // logout cleared over `.{full-host}` (`.stage.civitai.com`) — which does NOT match `civitai.com` — so the
+  // cookies survived sign-out. Assert we now clear the session AND device cookies over the registrable domain.
+  it('clears the session + device cookies over the registrable domain on a subdomain host', async () => {
+    const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
+    const headers = buildLogoutCookies('stage.civitai.com');
 
-    // The HttpOnly device cookie is set with a registrable-domain Domain by the spoke proxy, so a host-only
-    // clear would miss it — assert we also emit a Domain-scoped clear for it.
-    const deviceHeaders = headers.filter((h) => h.startsWith(`${deviceCookieName(true)}=;`));
-    expect(deviceHeaders.some((h) => h.includes('Domain=.civitai.com'))).toBe(true);
+    for (const name of [sessionCookieName(true), deviceCookieName(true)]) {
+      const scoped = headers.filter((h) => h.startsWith(`${name}=;`));
+      // The fix: a clear scoped to the registrable domain the cookie was actually set with.
+      expect(scoped.some((h) => h.includes('Domain=civitai.com'))).toBe(true);
+      // Defensive host-only fallback still emitted.
+      expect(scoped.some((h) => !/Domain=/.test(h))).toBe(true);
+    }
   });
 
   // The HUB sets the device cookie with Domain=AUTH_COOKIE_DOMAIN (apps/auth/.../device.ts cookieOpts). On a

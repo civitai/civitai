@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { sessionCookieName, deviceCookieName, createSessionTokenClient } from '@civitai/auth';
+import { cookieDomainForHost } from '~/server/auth/civ-cookie';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
 // Main-app logout for the hub flow. Clears BOTH the hub's civ-token AND the legacy next-auth session cookie
@@ -12,11 +13,11 @@ const sessionTokenClient = createSessionTokenClient();
 
 const uniq = <T>(arr: T[]): T[] => [...new Set(arr)];
 
-// The `.{hostname}` parent domain next-auth uses for the session cookie on non-localhost hosts.
-function parentDomain(req: NextApiRequest): string | undefined {
-  const host = (req.headers.host ?? '').split(':')[0];
-  if (!host || host === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return undefined;
-  return `.${host}`;
+// The `.{hostname}` parent domain next-auth used for the LEGACY session cookie on non-localhost hosts.
+function legacyParentDomain(host: string | undefined): string | undefined {
+  const h = (host ?? '').split(':')[0];
+  if (!h || h === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(h)) return undefined;
+  return `.${h}`;
 }
 
 // Clear a cookie across host-only + each candidate domain, so we match however it was actually set.
@@ -35,12 +36,23 @@ function safeCallback(cb: unknown): string {
 
 // The full set of Set-Cookie headers that end a session on this host. Pulled out so the cookie names cleared
 // (in particular the device cookie that gates seamless switching) are unit-testable without an HTTP round-trip.
-export function buildLogoutCookies(dParent: string | undefined): string[] {
-  // civ-token + device cookie: scoped by AUTH_COOKIE_DOMAIN (hub) or the request-derived `.{host}`. Both are
-  // set with the same Domain logic (civ-cookie.ts / the hub's device.ts), so clear them over the same set.
-  const civDomains = [undefined, process.env.AUTH_COOKIE_DOMAIN || undefined, dParent];
-  // legacy civitai-token: scoped by NEXTAUTH_COOKIE_DOMAIN or the request-derived `.{host}`.
-  const legacyDomains = [undefined, process.env.NEXTAUTH_COOKIE_DOMAIN || undefined, dParent];
+export function buildLogoutCookies(host: string | undefined): string[] {
+  // civ-token + civ-device are set by the spoke (civ-cookie.ts setSessionCookie) with `cookieDomainForHost()`
+  // — the REGISTRABLE domain (e.g. civitai.com), or AUTH_COOKIE_DOMAIN — NOT `.{host}`. Clear over that EXACT
+  // scope, else a preview/staging SUBDOMAIN (host `stage.civitai.com`, cookie `Domain=civitai.com`) keeps its
+  // cookie after logout. Host-only is the defensive fallback; the registrable already folds in
+  // AUTH_COOKIE_DOMAIN when it scopes the host, but include the raw override too for the hub-set device cookie.
+  const civDomains = [
+    undefined,
+    process.env.AUTH_COOKIE_DOMAIN || undefined,
+    cookieDomainForHost(host),
+  ];
+  // legacy civitai-token: next-auth scoped it by NEXTAUTH_COOKIE_DOMAIN or the request-derived `.{host}`.
+  const legacyDomains = [
+    undefined,
+    process.env.NEXTAUTH_COOKIE_DOMAIN || undefined,
+    legacyParentDomain(host),
+  ];
 
   return [
     // new hub session cookie — clear BOTH prefixes explicitly (defensive: nuke it regardless of how it was set)
@@ -66,7 +78,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // blip must never block logout (the helper never throws).
   if (token) await sessionTokenClient.revoke(token);
 
-  res.setHeader('Set-Cookie', buildLogoutCookies(parentDomain(req)));
+  res.setHeader('Set-Cookie', buildLogoutCookies(req.headers.host));
 
   res.redirect(302, callbackUrl);
 }

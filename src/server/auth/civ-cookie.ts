@@ -23,7 +23,9 @@ function domainScopesHost(domain: string, host: string): boolean {
 // Resolve the cookie Domain for this host: the registrable domain (civitai.com / civitai.red), matching the
 // domain the hub uses so it's the SAME shared *.<domain> cookie rather than a host-only sibling. localhost / IP
 // / unknown → undefined (host-only). Assumes a 2-label registrable domain, which is all we deploy.
-function cookieDomainForHost(host?: string): string | undefined {
+// Exported so logout clears the session/device cookies over the EXACT same Domain scope they were set with
+// (a preview/staging SUBDOMAIN sets Domain=civitai.com but clearing only `.{host}` would orphan it).
+export function cookieDomainForHost(host?: string): string | undefined {
   const h = (host ?? '').split(':')[0].toLowerCase();
   if (!h || h === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(h)) return undefined;
 
@@ -80,14 +82,20 @@ function buildCookie(
 function clearLegacySessionCookies(host?: string): string[] {
   const h = (host ?? '').split(':')[0].toLowerCase();
   const parent = h && h !== 'localhost' && !/^\d+\.\d+\.\d+\.\d+$/.test(h) ? `.${h}` : undefined;
-  const domains = [...new Set([undefined, process.env.NEXTAUTH_COOKIE_DOMAIN || undefined, parent])];
+  const domains = [
+    ...new Set([undefined, process.env.NEXTAUTH_COOKIE_DOMAIN || undefined, parent]),
+  ];
   const out: string[] = [];
   for (const [name, secure] of [
     ['civitai-token', false],
     ['__Secure-civitai-token', true],
   ] as const) {
     for (const d of domains) {
-      out.push(`${name}=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}${d ? `; Domain=${d}` : ''}`);
+      out.push(
+        `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}${
+          d ? `; Domain=${d}` : ''
+        }`
+      );
     }
   }
   return out;
@@ -123,4 +131,44 @@ export function setSessionCookie(
   // A valid civ-token supersedes the legacy next-auth cookie → clear it so it doesn't linger.
   all.push(...clearLegacySessionCookies(opts?.host));
   res.setHeader('Set-Cookie', all);
+}
+
+// ── First-party login loop recovery ───────────────────────────────────────────────────────────────────────
+// One-shot marker the callback sets right after minting a session, so /api/auth/authorize can distinguish a
+// session cookie that DIDN'T stick (a cross-domain Domain/Secure misconfig — the redirect-loop case) from a
+// normal login. Deliberately host-only and NOT Secure: it must stick regardless of the session cookie's fate,
+// which is the whole point of using it as the "did the real cookie land?" probe.
+export const POST_LOGIN_MARKER = 'civ_postlogin';
+
+/** Set-Cookie for the one-shot post-login marker (60s; host-only; non-secure so it always lands). */
+export function postLoginMarkerCookie(): string {
+  return `${POST_LOGIN_MARKER}=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=60`;
+}
+
+/**
+ * Expire the civ-token session cookie (BOTH name prefixes) across every plausible Domain scope — host-only, the
+ * registrable domain we'd set, and any AUTH_COOKIE_DOMAIN override — plus the marker. A stale, wrong-scope
+ * cookie can wedge the session (the spoke reads the bad one and never authenticates); this removes it no matter
+ * how it was scoped, so the next login attempt is clean. Used by the loop-recovery path.
+ */
+export function clearAllSessionCookies(host?: string): string[] {
+  const h = (host ?? '').split(':')[0].toLowerCase();
+  const scopes = [
+    ...new Set<string | undefined>([undefined, cookieDomainForHost(h), COOKIE_DOMAIN_OVERRIDE]),
+  ];
+  const out: string[] = [];
+  for (const [name, secure] of [
+    [sessionCookieName(false), false],
+    [sessionCookieName(true), true],
+  ] as const) {
+    for (const d of scopes) {
+      out.push(
+        `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}${
+          d ? `; Domain=${d}` : ''
+        }`
+      );
+    }
+  }
+  out.push(`${POST_LOGIN_MARKER}=; Path=/; Max-Age=0; SameSite=Lax`);
+  return out;
 }
