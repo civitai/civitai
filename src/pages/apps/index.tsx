@@ -52,6 +52,7 @@ const MODEL_SLOT_FILTER_LABELS: Record<ModelSlotId, string> = {
 };
 
 const SORT_OPTIONS: { value: MarketplaceSort; label: string }[] = [
+  { value: 'rating', label: 'Top rated' },
   { value: 'popular', label: 'Most popular' },
   { value: 'newest', label: 'Newest' },
   { value: 'name', label: 'Name (A–Z)' },
@@ -76,7 +77,7 @@ export default function AppsPage() {
   const currentUser = useCurrentUser();
   const [slotFilter, setSlotFilter] = useState<SlotFilter | null>(null);
   const [category, setCategory] = useState<MarketplaceCategory | null>(null);
-  const [sort, setSort] = useState<MarketplaceSort>('popular');
+  const [sort, setSort] = useState<MarketplaceSort>('rating');
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch] = useDebouncedValue(searchInput, 300);
 

@@ -1622,12 +1622,14 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       );
     });
 
-    it('derives sfwOnly:true from a green-domain ctx and forwards it into the canGenerate gate', async () => {
-      // The page branch mirrors model-version.controller: the gate context's
-      // sfwOnly is `ctx.domain === 'green'`. fakeCtx() omits domain (→ false),
-      // so a green ctx is the only way to exercise the SFW-gating branch — it
-      // must flow into resolveCanGenerateForVersions' context arg as true.
-      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+    it('derives sfwOnly:true from a SFW token maturity claim (not the request domain)', async () => {
+      // FIX 2: the resource-selection gate's `sfwOnly` is now derived from the
+      // AUTHORITATIVE token maturity (`resolveBlockMaturity` → allowMatureContent
+      // === false on a SFW ceiling), NOT request-time `ctx.domain`. A SFW
+      // maturity claim (green/blue ceiling = 3) must flow into
+      // resolveCanGenerateForVersions' context arg as sfwOnly:true even when the
+      // request `ctx.domain` is the default (blue, which used to map to false).
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ maxBrowsingLevel: 3 }));
       happyVersionLookup();
       happyUser();
       mockSubmitWorkflow.mockResolvedValue({
@@ -1636,7 +1638,8 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
         cost: { total: 12 },
         steps: [],
       });
-      const caller = blocksRouter.createCaller({ ...fakeCtx(), domain: 'green' } as never);
+      // fakeCtx() omits domain → defaults are irrelevant now; the claim drives it.
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
       await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
       expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
       const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
@@ -1645,12 +1648,55 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       expect(gateCtx.wildcardsEnabled).toBe(false);
     });
 
+    it('a BLUE token (SFW per App-Blocks product decision) also derives sfwOnly:true', async () => {
+      // FIX 2 regression guard: under the OLD `ctx.domain === 'green'` rule a
+      // blue block had sfwOnly:false → could pick a mature resource. Now a blue
+      // token mints a SFW ceiling (maxBrowsingLevel = 3) so the resource gate is
+      // SFW too, unified with the generation-output clamp.
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ domain: 'blue', maxBrowsingLevel: 3 })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller({ ...fakeCtx(), domain: 'blue' } as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(gateCtx.sfwOnly).toBe(true);
+    });
+
+    it('a RED token (mature ceiling) derives sfwOnly:false (mature resource selection allowed)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ domain: 'red', maxBrowsingLevel: 31 })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller({ ...fakeCtx(), domain: 'red' } as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(gateCtx.sfwOnly).toBe(false);
+    });
+
     it('derives wildcardsEnabled:true from ctx.features.wildcards and forwards it into the canGenerate gate', async () => {
       // The page branch mirrors model-version.controller: the gate context's
       // wildcardsEnabled is `!!ctx.features.wildcards`. fakeCtx() omits the flag
       // (→ false), so an enabled-wildcards ctx is the only way to exercise this
       // branch — it must flow into the gate context arg as true.
-      mockVerifyBlockToken.mockResolvedValue(pageClaims());
+      // Red ceiling (maxBrowsingLevel = 31) so sfwOnly stays false — this test
+      // is about wildcards independence, not the maturity clamp. A token with no
+      // claim would now FAIL CLOSED to sfwOnly:true (FIX 2), masking the point.
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ maxBrowsingLevel: 31 }));
       happyVersionLookup();
       happyUser();
       mockSubmitWorkflow.mockResolvedValue({
@@ -1668,7 +1714,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
       const [, gateCtx] = mockResolveCanGenerateForVersions.mock.calls[0];
       expect(gateCtx.wildcardsEnabled).toBe(true);
-      // green-domain is independent and untouched here → sfwOnly still false.
+      // maturity is independent here → with a red ceiling sfwOnly is false.
       expect(gateCtx.sfwOnly).toBe(false);
     });
 
@@ -1796,7 +1842,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     //
     // The pre-spend gate (`resolveCanGenerateForVersions`) deliberately does NOT
     // check early-access `hasAccess` or the `availability:Private` subscription
-    // requirement (see the SCOPE comment on assertViewerCanGeneratePageModel).
+    // requirement (see the SCOPE comment on assertViewerCanGeneratePageResources).
     // Those are enforced DOWNSTREAM by the orchestrator resource belt
     // (`getGenerationResourceData` → `getResourceData`, which folds
     // `canGenerate = hasAccess && canGenerate` and throws on a Private resource
@@ -1865,6 +1911,580 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     });
   });
 
+  // ───────────────────── Page-LoRA (Increment 1) ───────────────────────────
+  //
+  // A page token can carry `body.additionalResources: [{ modelVersionId,
+  // strength }]` (LoRA stack). The server resolves each statelessly, enforces
+  // LoRA-only + platform generation-compatibility (getResourceGenerationSupport,
+  // GA — allows same-ecosystem AND platform-defined cross-ecosystem LoRAs, still
+  // fail-closed on null/unknown), then gates the checkpoint AND every LoRA
+  // through resolveCanGenerateForVersions in ONE call — fail-closed if any
+  // resource is non-LoRA / not platform-compatible / not entitled. This runs
+  // BEFORE resolveBlockCheckpoint / any cost / any reservation.
+  describe('Page-LoRA — additionalResources', () => {
+    // Multi-version lookup keyed by where.id. Checkpoint 99 = SDXL Checkpoint;
+    // additional rows are LoRAs (override per-test for family/type cases).
+    function versionRows(rows: Record<number, Record<string, unknown>>) {
+      const defaults: Record<number, Record<string, unknown>> = {
+        99: {
+          id: 99,
+          baseModel: 'SDXL 1.0',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'Checkpoint', userId: 1 },
+        },
+        ...rows,
+      };
+      mockDbRead.modelVersion.findUnique.mockImplementation(async (args: any) => {
+        return defaults[args?.where?.id] ?? null;
+      });
+    }
+
+    const sdxlLora = (id: number, over: Record<string, unknown> = {}) => ({
+      id,
+      baseModel: 'SDXL 1.0',
+      modelId: 100 + id,
+      status: 'Published',
+      availability: 'Public',
+      usageControl: 'Download',
+      meta: null,
+      generationCoverage: { covered: true },
+      model: { id: 100 + id, type: 'LORA', userId: 2 },
+      ...over,
+    });
+
+    const bodyWithLoras = (resources: Array<{ modelVersionId: number; strength?: number }>) =>
+      validBody({ additionalResources: resources });
+
+    function pageClaimsLocal(over: Record<string, unknown> = {}) {
+      return validClaims({
+        blockInstanceId: 'page_apb_page',
+        ctx: { slotId: 'app.page', entityType: 'none' },
+        ...over,
+      });
+    }
+
+    // FIX1 tests use a NON-Checkpoint page body, so resolveBlockCheckpoint falls
+    // through rungs 2-4 (viewer override / publisher default / popular). The
+    // LoRA-install-precedence suite above leaves a `default_checkpoint_version_id`
+    // on the (un-reset) resolveBlockInstance mock — clear both override sources
+    // so these tests deterministically reach the platform-popular fallback.
+    function clearCheckpointOverrides() {
+      (BlockRegistry.resolveBlockInstance as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        source: 'install',
+        modelId: 7,
+        slotId: 'app.page',
+        enabled: true,
+        settings: {},
+        installedByUserId: 42,
+        appBlock: {
+          id: 'ab_x',
+          blockId: 'gen-from-model',
+          appId: 'app',
+          status: 'approved',
+          manifest: { targets: [{ slotId: 'app.page' }] },
+          approvedScopes: ['ai:write:budgeted'],
+          app: { allowedScopes: 33554431 },
+        },
+      });
+      mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
+    }
+
+    it('a page submit gates the checkpoint AND every LoRA in ONE call', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201), 202: sdxlLora(202) });
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201, strength: 0.8 }, { modelVersionId: 202 }]),
+      });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      // The gate ran ONCE with checkpoint + both LoRAs in a single array.
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [versions] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(versions.map((v: { id: number }) => v.id).sort((a: number, b: number) => a - b)).toEqual([
+        99, 201, 202,
+      ]);
+    });
+
+    it('SECURITY: an un-entitled LoRA (canGenerate:false) → FORBIDDEN, no spend, no reservation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      // Checkpoint is generatable, the LoRA is NOT.
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([
+          [99, { canGenerate: true }],
+          [201, { canGenerate: false }],
+        ])
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled(); // no reservation
+      expect(mockAuditPromptServer).not.toHaveBeenCalled();
+    });
+
+    it('SECURITY fail-closed: a LoRA MISSING from the result Map → FORBIDDEN', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      // The LoRA (201) is simply absent from the Map → must be treated as deny.
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([[99, { canGenerate: true }]])
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('rejects a NON-LoRA additional resource (BAD_REQUEST), before the entitlement gate', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // 201 is a Checkpoint, not a LoRA.
+      versionRows({ 201: sdxlLora(201, { model: { id: 301, type: 'Checkpoint', userId: 2 } }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // Type rejection happens before the entitlement gate / any spend.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('rejects a platform-INCOMPATIBLE cross-ecosystem LoRA (BAD_REQUEST), before the entitlement gate', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // GA: the boundary is now getResourceGenerationSupport (platform
+      // compatibility), not exact-family equality. Checkpoint is SDXL; the LoRA
+      // is SD 1.5 — and there is NO cross-ecosystem generation rule for a SD1
+      // LORA into SDXL (the only SD1→SDXL rule covers TextualInversion, not
+      // LORA), so getResourceGenerationSupport returns null → still rejected.
+      versionRows({ 201: sdxlLora(201, { baseModel: 'SD 1.5' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unpublished LoRA (NOT_FOUND), no info leak', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201, { status: 'Draft' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('estimate: an un-entitled LoRA → FORBIDDEN, no orchestrator whatif', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal());
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([
+          [99, { canGenerate: true }],
+          [201, { canGenerate: false }],
+        ])
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.estimateWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('BELT: a LoRA that passes the pre-spend gate but is rejected by the orchestrator belt (early-access/Private) → no spend', async () => {
+      // The pre-spend gate deliberately does NOT see early-access / Private
+      // entitlement (default canGenerate:true here). The orchestrator belt (run
+      // inside createTextToImageStep for the FULL resource array at whatIf,
+      // BEFORE any reservation) is the second fail-closed layer.
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201) });
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(
+        new Map<number, { canGenerate: boolean }>([
+          [99, { canGenerate: true }],
+          [201, { canGenerate: true }],
+        ])
+      );
+      mockCreateTextToImageStep.mockRejectedValueOnce(
+        new TRPCError({ code: 'BAD_REQUEST', message: 'Using Private resources require an active subscription.' })
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled(); // belt threw before reserve
+      expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+    });
+
+    // ── Money (Piece 4): the multi-resource cost is bounded by BOTH ceilings ──
+    it('MONEY: a 2-LoRA gen whose cost exceeds the per-gen budget returns the failed snapshot', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 30 }));
+      versionRows({ 201: sdxlLora(201), 202: sdxlLora(202) });
+      happyUser();
+      // whatif cost (with the LoRAs) is 75 > the 30 per-gen budget.
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 75 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201 }, { modelVersionId: 202 }]),
+      });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.cost).toEqual({ total: 75 });
+      expect(result.snapshot.error).toMatch(/insufficient buzz/i);
+      // Only the whatif ran; no real submit, no reservation taken.
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('MONEY: a multi-LoRA gen accumulates against the per-user daily cap (reservation over cap → failed + refund)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201), 202: sdxlLora(202) });
+      happyUser();
+      // whatif clears the per-call budget, but the reservation (with the LoRA
+      // cost folded in) tops the 50,000 daily cap → reject + refund.
+      mockSysRedis.incrBy.mockResolvedValue(50040);
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 60 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201 }, { modelVersionId: 202 }]),
+      });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/daily Buzz cap/i);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatif only
+      expect(mockSysRedis.decrBy).toHaveBeenCalledTimes(1); // reservation refunded
+      // The reservation amount is the multi-resource cost (ceil 60).
+      expect(mockSysRedis.incrBy.mock.calls[0][1]).toBe(60);
+    });
+
+    // ── FIX 1: family-match anchors on the RESOLVED checkpoint, not the body ──
+    //
+    // For a normal page the body model IS the Checkpoint, so resolved.baseModel
+    // and the resolved-checkpoint baseModel coincide. But nothing forces the
+    // page body to be a Checkpoint: if a page sends a NON-Checkpoint body,
+    // resolveBlockCheckpoint resolves a DIFFERENT default checkpoint as the
+    // anchor (viewer/publisher/popular-in-ecosystem). The LoRA family-match must
+    // validate against THAT checkpoint's baseModel — not the body model's.
+    it('FIX1: non-Checkpoint page body — LoRA family-matches the RESOLVED default checkpoint, not the body model', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Body model 99 is a LoRA (NOT a Checkpoint), baseModel SD 1.5. The
+      // additional LoRA 201 is SDXL — it MISMATCHES the body model's family but
+      // MATCHES the resolved default checkpoint's family (SDXL, below).
+      versionRows({
+        99: {
+          id: 99,
+          baseModel: 'SD 1.5',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'LORA', userId: 1 },
+        },
+        201: sdxlLora(201),
+      });
+      happyUser();
+      clearCheckpointOverrides();
+      // resolveBlockCheckpoint (non-Checkpoint body) falls through to the
+      // platform-popular fallback → modelMetric.findFirst returns an SDXL
+      // checkpoint (version 500). redis.get default = null (cache miss).
+      mockDbRead.modelMetric.findFirst.mockResolvedValue({
+        modelId: 300,
+        model: {
+          id: 300,
+          name: 'Popular SDXL',
+          modelVersions: [{ id: 500, name: 'v1', baseModel: 'SDXL 1.0' }],
+        },
+      });
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      // The SDXL LoRA is compatible with the SDXL *resolved checkpoint* (it would
+      // have been rejected if the match used the SD 1.5 body model).
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201 }]),
+      });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      // The gate ran with the body version + the LoRA (both passed the
+      // checkpoint-anchored family match).
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [versions] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(versions.map((v: { id: number }) => v.id).sort((a: number, b: number) => a - b)).toEqual([
+        99, 201,
+      ]);
+      // The anchor at the head of the resources array is the RESOLVED checkpoint
+      // (500), not the body version (99).
+      const stepArg = mockCreateTextToImageStep.mock.calls[0][0];
+      expect(stepArg.resources[0].id).toBe(500);
+    });
+
+    it('FIX1: non-Checkpoint page body — a LoRA matching the BODY family but NOT the resolved checkpoint is REJECTED', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Body model 99 is an SD 1.5 LoRA; additional LoRA 201 is ALSO SD 1.5
+      // (matches the body) — but the resolved default checkpoint is SDXL, so the
+      // checkpoint-anchored match must REJECT it. (Old body-anchored logic would
+      // have wrongly accepted it.)
+      versionRows({
+        99: {
+          id: 99,
+          baseModel: 'SD 1.5',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'LORA', userId: 1 },
+        },
+        201: sdxlLora(201, { baseModel: 'SD 1.5', model: { id: 301, type: 'LORA', userId: 2 } }),
+      });
+      happyUser();
+      clearCheckpointOverrides();
+      mockDbRead.modelMetric.findFirst.mockResolvedValue({
+        modelId: 300,
+        model: {
+          id: 300,
+          name: 'Popular SDXL',
+          modelVersions: [{ id: 500, name: 'v1', baseModel: 'SDXL 1.0' }],
+        },
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // Rejected at the family boundary — before the entitlement gate / any spend.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    // ── FIX 2: an unrecognized base-model FAILS CLOSED under the GA check ──────
+    //
+    // GA: the boundary is getResourceGenerationSupport, which does
+    // baseModelByName.get(...) for BOTH sides and returns null when either is
+    // unrecognized. So an unknown checkpoint baseModel OR an unknown LoRA
+    // baseModel → null → reject. This preserves the fail-closed-on-unknown
+    // posture the old 'Other'-sentinel guards provided, without those guards.
+    it('FIX2: a checkpoint + LoRA with unknown baseModels → BAD_REQUEST (fail-closed on unknown)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint body baseModel is an unrecognized string; the LoRA has a
+      // DIFFERENT unrecognized string. The unknown CHECKPOINT alone makes
+      // getResourceGenerationSupport return null → reject (it never even looks
+      // up the LoRA's ecosystem once the primary is unresolved).
+      versionRows({
+        99: {
+          id: 99,
+          baseModel: 'TotallyUnknownBase-Z',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'Checkpoint', userId: 1 },
+        },
+        201: sdxlLora(201, { baseModel: 'AnotherUnknownBase-Q' }),
+      });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // Denied before the entitlement gate / any spend.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    it('FIX2: a known checkpoint + an unknown-baseModel LoRA → BAD_REQUEST', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint is a recognized SDXL baseModel; the LoRA baseModel is unknown.
+      // getResourceGenerationSupport resolves the primary ecosystem but then
+      // baseModelByName.get(loraBaseModel) is undefined → null → reject. An
+      // unrecognized LoRA must be denied even against a known checkpoint.
+      versionRows({ 201: sdxlLora(201, { baseModel: 'UnknownBaseModel-XYZ' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    // ── LOW-1: the literal 'Other' base-model group FAILS CLOSED ──────────────
+    //
+    // Regression guard for the GA swap. The null check alone does NOT catch the
+    // platform's RECOGNIZED baseModel record literally named 'Other' (BM.Other →
+    // ECO.Other): baseModelByName.get('Other') SUCCEEDS, so an ('Other','Other')
+    // pair resolves both sides to the SAME ECO.Other ecosystem and
+    // getGenerationSupport short-circuits to 'full' BEFORE any disabled/coverage
+    // check → non-null → ACCEPT — a fail-OPEN on a billing boundary. The re-added
+    // getBaseModelSetType(...) === 'Other' guard must reject it (the entitlement
+    // gate must NOT be reached and NO spend reserved).
+    it("LOW-1: a checkpoint + LoRA both with the literal 'Other' baseModel → BAD_REQUEST (fail-closed on 'Other' group)", async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint body 99 is the recognized 'Other' baseModel record; the LoRA
+      // is also 'Other'. Without the explicit guard getResourceGenerationSupport
+      // would return 'full' (same ECO.Other ecosystem) and the pair would be
+      // accepted — the fail-open this test pins shut.
+      versionRows({
+        99: {
+          id: 99,
+          baseModel: 'Other',
+          modelId: 7,
+          status: 'Published',
+          availability: 'Public',
+          usageControl: 'Download',
+          meta: null,
+          generationCoverage: { covered: true },
+          model: { id: 7, type: 'Checkpoint', userId: 1 },
+        },
+        201: sdxlLora(201, { baseModel: 'Other' }),
+      });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      // The entitlement gate must NOT be reached and NO Buzz reserved.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    // LOW-1 (LoRA side): a recognized non-'Other' checkpoint + a literal-'Other'
+    // LoRA must also fail closed — the LoRA-side guard rejects before the
+    // support call even though the checkpoint is fine.
+    it("LOW-1: a recognized checkpoint + a literal-'Other' LoRA → BAD_REQUEST", async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint 99 is SDXL (versionRows default); the LoRA is the literal
+      // 'Other' baseModel record. getResourceGenerationSupport('SDXL 1.0',
+      // 'Other', LORA) is null here (different ecosystems, no rule) so this also
+      // passes via the null check — but the explicit guard rejects it FIRST,
+      // independent of the support call.
+      versionRows({ 201: sdxlLora(201, { baseModel: 'Other' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    // ── GA: platform-VALID cross-ecosystem LoRA is now ACCEPTED ────────────────
+    //
+    // This is the core proof of the GA swap. Before GA, the exact-family
+    // equality (getBaseModelSetType) collapsed Pony into its own family ('Pony')
+    // distinct from SDXL and REJECTED a Pony LoRA on an SDXL checkpoint. The
+    // platform, however, defines an explicit cross-ecosystem generation rule
+    // (crossEcosystemRules: Pony → SDXL for LORA/DoRA/LoCon/etc. = 'partial'), so
+    // getResourceGenerationSupport('SDXL 1.0', 'Pony', LORA) is non-null → the
+    // gate must now PROCEED to the entitlement gate (no family BAD_REQUEST).
+    it('GA: a platform-compatible cross-ecosystem LoRA (Pony on an SDXL checkpoint) is ACCEPTED', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      // Checkpoint 99 is SDXL (versionRows default); the additional LoRA is Pony.
+      versionRows({ 201: sdxlLora(201, { baseModel: 'Pony' }) });
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: bodyWithLoras([{ modelVersionId: 201 }]),
+      });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      // It cleared the compatibility boundary and reached the entitlement gate
+      // (checkpoint + the cross-ecosystem LoRA in ONE call) — NOT a family
+      // BAD_REQUEST.
+      expect(mockResolveCanGenerateForVersions).toHaveBeenCalledTimes(1);
+      const [versions] = mockResolveCanGenerateForVersions.mock.calls[0];
+      expect(versions.map((v: { id: number }) => v.id).sort((a: number, b: number) => a - b)).toEqual([
+        99, 201,
+      ]);
+    });
+
+    // ── GA: a genuinely-incompatible cross-ecosystem LoRA is STILL rejected ────
+    //
+    // A Flux LoRA on an SDXL checkpoint: different ecosystems with NO
+    // cross-ecosystem generation rule between them, so
+    // getResourceGenerationSupport('SDXL 1.0', 'Flux.1 D', LORA) is null → reject.
+    // This proves the GA widening did NOT collapse into "accept any cross-
+    // ecosystem LoRA" — only the platform-permitted pairs pass.
+    it('GA: a genuinely-incompatible cross-ecosystem LoRA (Flux on an SDXL checkpoint) is STILL BAD_REQUEST', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaimsLocal({ buzzBudget: 1000 }));
+      versionRows({ 201: sdxlLora(201, { baseModel: 'Flux.1 D' }) });
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+    });
+
+    // ── Model-path guard: additionalResources is page-only ─────────────────
+    it('MODEL token with additionalResources → FORBIDDEN (page-only feature, no un-gated fan-out)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      // Rejected before the entitlement gate / any orchestrator interaction.
+      expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('MODEL token estimate with additionalResources → FORBIDDEN', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.estimateWorkflow({ blockToken: 'tok', body: bodyWithLoras([{ modelVersionId: 201 }]) })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
   describe('REGRESSION — model token still enforces model binding', () => {
     it('estimate: a MODEL token (no entityType) with a mismatched body.modelId → FORBIDDEN', async () => {
       // ctx.modelId 999 ≠ body.modelId 7, and NO entityType → model path → the
@@ -1907,6 +2527,185 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
       expect(result.snapshot.workflowId).toBe('wf_real');
       expect(mockResolveCanGenerateForVersions).not.toHaveBeenCalled();
+    });
+  });
+});
+
+/**
+ * MATURITY ENFORCEMENT (GA gate) — the authoritative server-side belt.
+ *
+ * The maturity ceiling is derived from the TOKEN's `maxBrowsingLevel` claim
+ * (server-minted from the request host), NEVER from a client body field. A
+ * SFW-domain token (green/blue → claim = sfwBrowsingLevelsFlag) must force
+ * `allowMatureContent: false` into the orchestrator workflow body; a red token
+ * (claim = allBrowsingLevelsFlag) must leave it unset (no clamp). A token with
+ * NO claim (legacy / pre-feature) fails CLOSED to SFW.
+ *
+ * Browsing-level flag values (NsfwLevel bits): PG=1, PG13=2 → SFW=3;
+ * R|X|XXX add 4|8|16 → all = 31.
+ */
+const SFW_CEILING = 3; // sfwBrowsingLevelsFlag (PG | PG13)
+const ALL_CEILING = 31; // allBrowsingLevelsFlag (PG | PG13 | R | X | XXX)
+
+describe('blocks workflow — color-domain maturity enforcement', () => {
+  function lastSubmitBody() {
+    const calls = mockSubmitWorkflow.mock.calls;
+    return (calls[calls.length - 1][0] as { body: Record<string, unknown> }).body;
+  }
+  function firstSubmitBody() {
+    return (mockSubmitWorkflow.mock.calls[0][0] as { body: Record<string, unknown> }).body;
+  }
+
+  describe('estimateWorkflow', () => {
+    it('green-domain token (SFW ceiling) forces allowMatureContent=false into the whatif body', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ domain: 'green', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 5 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(firstSubmitBody().allowMatureContent).toBe(false);
+    });
+
+    it('blue-domain token (SFW ceiling, product decision) ALSO forces allowMatureContent=false', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ domain: 'blue', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 5 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(firstSubmitBody().allowMatureContent).toBe(false);
+    });
+
+    it('red-domain token (mature ceiling) does NOT clamp — allowMatureContent omitted', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ domain: 'red', maxBrowsingLevel: ALL_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 5 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(firstSubmitBody()).not.toHaveProperty('allowMatureContent');
+    });
+
+    it('legacy token (no maxBrowsingLevel claim) FAILS CLOSED to SFW', async () => {
+      // validClaims() carries NO maxBrowsingLevel — the pre-feature shape.
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 5 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(firstSubmitBody().allowMatureContent).toBe(false);
+    });
+  });
+
+  describe('submitWorkflow', () => {
+    function happySubmit(cost = 10) {
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: cost }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: cost }, steps: [] });
+    }
+
+    it('green-domain token forces allowMatureContent=false on BOTH whatif and real submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'green', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+      expect(firstSubmitBody().allowMatureContent).toBe(false); // whatif
+      expect(lastSubmitBody().allowMatureContent).toBe(false); // real submit
+    });
+
+    it('blue-domain token (SFW per product decision) forces allowMatureContent=false on the real submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'blue', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(lastSubmitBody().allowMatureContent).toBe(false);
+    });
+
+    it('red-domain token leaves allowMatureContent UNSET (mature allowed)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'red', maxBrowsingLevel: ALL_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(firstSubmitBody()).not.toHaveProperty('allowMatureContent');
+      expect(lastSubmitBody()).not.toHaveProperty('allowMatureContent');
+    });
+
+    it('legacy token (no claim) FAILS CLOSED to SFW on the real submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(lastSubmitBody().allowMatureContent).toBe(false);
+    });
+
+    it('clamp is TOKEN-derived: a malicious body cannot widen a SFW token to mature', async () => {
+      // The token is SFW (green). The attacker stuffs allowMatureContent:true
+      // (and an nsfwLevel) onto the BODY. The schema strips unknowns, and even
+      // if it didn't, the clamp reads the TOKEN claim — the submitted body MUST
+      // still carry allowMatureContent:false.
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'green', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: { ...validBody(), allowMatureContent: true, nsfwLevel: 'xxx' } as never,
+      });
+      expect(lastSubmitBody().allowMatureContent).toBe(false);
+    });
+
+    it('prompt audit isGreen is DOMAIN-derived: SFW token → isGreen=true', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'blue', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockAuditPromptServer).toHaveBeenCalledWith(
+        expect.objectContaining({ isGreen: true })
+      );
+    });
+
+    it('prompt audit isGreen is DOMAIN-derived: red token → isGreen=false', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, domain: 'red', maxBrowsingLevel: ALL_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockAuditPromptServer).toHaveBeenCalledWith(
+        expect.objectContaining({ isGreen: false })
+      );
     });
   });
 });

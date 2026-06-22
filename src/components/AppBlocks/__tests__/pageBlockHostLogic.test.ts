@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   grantedPageScopes,
   pageFallbackReason,
+  resolveResourcePickerRequest,
+  PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
 } from '../pageBlockHostLogic';
 
@@ -66,5 +68,78 @@ describe('pageFallbackReason (#4 — terminal state renders a fallback, not a bl
     for (const status of ['timeout', 'fatal', 'no_token', 'error'] as PageHostStatus[]) {
       expect(pageFallbackReason(status)).not.toBeNull();
     }
+  });
+});
+
+describe('resolveResourcePickerRequest (OPEN_RESOURCE_PICKER — type allowlist + drop rules)', () => {
+  it('accepts a Checkpoint request and returns the canonical type', () => {
+    expect(resolveResourcePickerRequest({ requestId: 'r1', resourceType: 'Checkpoint' })).toEqual({
+      requestId: 'r1',
+      resourceType: 'Checkpoint',
+    });
+  });
+
+  it('accepts a LoRA request (canonical LORA token)', () => {
+    expect(resolveResourcePickerRequest({ requestId: 'r2', resourceType: 'LORA' })).toEqual({
+      requestId: 'r2',
+      resourceType: 'LORA',
+    });
+  });
+
+  it('is case-insensitive on the wire but returns the canonical token', () => {
+    expect(resolveResourcePickerRequest({ requestId: 'r3', resourceType: 'lora' })?.resourceType).toBe(
+      'LORA'
+    );
+    expect(
+      resolveResourcePickerRequest({ requestId: 'r4', resourceType: 'checkpoint' })?.resourceType
+    ).toBe('Checkpoint');
+    expect(
+      resolveResourcePickerRequest({ requestId: 'r5', resourceType: '  LoRA  ' })?.resourceType
+    ).toBe('LORA');
+  });
+
+  it('passes through an optional baseModelGroup family hint', () => {
+    expect(
+      resolveResourcePickerRequest({
+        requestId: 'r6',
+        resourceType: 'LORA',
+        baseModelGroup: 'Flux1',
+      })
+    ).toEqual({ requestId: 'r6', resourceType: 'LORA', baseModelGroup: 'Flux1' });
+  });
+
+  it('omits an empty/blank baseModelGroup (no spurious family key)', () => {
+    const r = resolveResourcePickerRequest({ requestId: 'r7', resourceType: 'Checkpoint', baseModelGroup: '' });
+    expect(r).toEqual({ requestId: 'r7', resourceType: 'Checkpoint' });
+    expect(r).not.toHaveProperty('baseModelGroup');
+  });
+
+  it('REJECTS an unsupported type (VAE / embeddings / wildcards) → null (modal never opens)', () => {
+    for (const t of ['VAE', 'TextualInversion', 'Wildcards', 'Upscaler', 'LoCon', 'DoRA', 'Hypernetwork']) {
+      expect(resolveResourcePickerRequest({ requestId: 'r', resourceType: t })).toBeNull();
+    }
+  });
+
+  it('DROPS a request with a missing or non-string requestId', () => {
+    expect(resolveResourcePickerRequest({ resourceType: 'Checkpoint' })).toBeNull();
+    expect(resolveResourcePickerRequest({ requestId: '', resourceType: 'Checkpoint' })).toBeNull();
+    expect(resolveResourcePickerRequest({ requestId: 42, resourceType: 'Checkpoint' })).toBeNull();
+  });
+
+  it('DROPS a request with a missing or non-string resourceType', () => {
+    expect(resolveResourcePickerRequest({ requestId: 'r' })).toBeNull();
+    expect(resolveResourcePickerRequest({ requestId: 'r', resourceType: 123 })).toBeNull();
+    expect(resolveResourcePickerRequest({ requestId: 'r', resourceType: null })).toBeNull();
+  });
+
+  it('DROPS non-object / nullish payloads', () => {
+    expect(resolveResourcePickerRequest(undefined)).toBeNull();
+    expect(resolveResourcePickerRequest(null)).toBeNull();
+    expect(resolveResourcePickerRequest('Checkpoint')).toBeNull();
+    expect(resolveResourcePickerRequest(123)).toBeNull();
+  });
+
+  it('the v1 allowlist is exactly Checkpoint + LoRA (guards against scope creep)', () => {
+    expect([...PAGE_RESOURCE_PICKER_TYPES].sort()).toEqual(['Checkpoint', 'LORA']);
   });
 });

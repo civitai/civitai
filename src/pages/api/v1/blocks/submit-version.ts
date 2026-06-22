@@ -6,6 +6,8 @@ import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { submitVersionSchema } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { Flags } from '~/shared/utils/flags';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -22,16 +24,25 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  * applies the SAME gates the session route applies and calls the SAME
  * `submitVersion` service UNCHANGED. The publish logic is not forked.
  *
- * ## Gate posture (intentionally identical to the session route — launch-dark)
- *   - Auth: a valid civitai API key (resolved by `getSessionFromBearerToken`,
- *     which hashes the key with the same `generateSecretHash` the public REST API
- *     uses and looks it up in the `ApiKey` table — NO new key system).
+ * ## Gate posture
+ *   - Auth: a valid civitai API key OR OAuth-issued token (both resolved by
+ *     `getSessionFromBearerToken`, which hashes the credential with the same
+ *     `generateSecretHash` the public REST API uses and looks it up in the
+ *     `ApiKey` table — NO new key system).
+ *   - Token type: a PERSONAL key always passes the type gate (unchanged). An
+ *     OAuth-client-issued token passes ONLY if it carries the dedicated
+ *     `TokenScope.AppBlocksSubmit` bit. That scope is opt-in, off-by-default, and
+ *     EXCLUDED from `TokenScope.Full`, so only a client that explicitly lists it
+ *     in `allowedScopes` and a user who explicitly consented can mint such a
+ *     token (the first-party `civitai-cli` client is provisioned with it). An
+ *     un-scoped OAuth token is rejected 403.
  *   - Feature flag: `isAppBlocksEnabled({ user })` evaluated WITH the resolved
  *     user's context (mirrors the session route + `enforceAppBlocksFlag`).
- *   - Moderator: the resolved user must be `isModerator` and not banned. App
- *     Blocks is mod-only pre-GA; this route keeps that posture (same as the
- *     session route's `ModEndpoint`). When App Blocks goes GA, RELAX this gate in
- *     lockstep with the session route — not unilaterally.
+ *   - Moderator: the resolved user must be `isModerator` and not banned, on BOTH
+ *     the personal-key and OAuth-token paths. App Blocks is mod-only pre-GA; this
+ *     route keeps that posture (same as the session route's `ModEndpoint`). When
+ *     App Blocks goes GA, RELAX this gate in lockstep with the session route —
+ *     not unilaterally.
  *
  * ## Why no CSRF / Origin check here (unlike the session route)
  * The session route guards Origin because it is COOKIE-authed: a logged-in mod's
@@ -94,25 +105,40 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   }
   const user = session.user as SessionUser;
 
-  // 1b. Personal-API-key gate — reject OAuth-client-issued tokens.
-  // `getSessionFromBearerToken` (src/server/auth/bearer-token.ts:42-58) sets
-  // `subject = { type: 'oauth', id: clientId }` IFF the resolved `ApiKey` row has
-  // a non-null `clientId` (i.e. it was minted for an OAuth client a user
+  // 1b. Token-type gate — accept EITHER a personal API key OR a scoped OAuth
+  // token. `getSessionFromBearerToken` (src/server/auth/bearer-token.ts:42-58)
+  // sets `subject = { type: 'oauth', id: clientId }` IFF the resolved `ApiKey`
+  // row has a non-null `clientId` (minted for an OAuth client a user
   // authorized), and `{ type: 'apiKey', id }` for a user-type personal-access
-  // key. `oauthClient.create` is an open `protectedProcedure` — any logged-in
-  // user can register a client — so without this gate a third-party app a mod
-  // authorizes for ANY scope would receive a key that can publish App Blocks
-  // attributed to that mod (an escalation of the consent the mod granted). App
-  // Blocks has no dedicated write-scope flag yet, so a personal-key requirement
-  // (`subject.type !== 'oauth'`, equivalently `clientId == null`) is the minimal
-  // correct gate. This mirrors the OAuth/scoped-token treatment in
-  // src/pages/api/v1/me.ts:24-40 (`subject !== null`). Ordered after auth (401)
-  // and before the mod gate so an OAuth key gets 403, never a leak.
+  // key.
+  //
+  //  - PERSONAL key (`subject.type !== 'oauth'`, i.e. clientId == null): pass.
+  //    This path is UNCHANGED from the launch-dark version — a logged-in mod's
+  //    own key publishes as before. The downstream mod + flag gates still apply.
+  //
+  //  - OAUTH token (`subject.type === 'oauth'`): pass ONLY if the token carries
+  //    the dedicated `TokenScope.AppBlocksSubmit` bit. `oauthClient.create` is an
+  //    open `protectedProcedure` (any logged-in user can register a client), so
+  //    we must NOT accept arbitrary OAuth tokens: a third-party app a mod
+  //    authorizes for some unrelated scope would otherwise be able to publish App
+  //    Blocks attributed to that mod (a consent escalation). `AppBlocksSubmit` is
+  //    opt-in, off-by-default, and EXCLUDED from `TokenScope.Full` (see
+  //    token-scope.constants.ts), so only a client that explicitly lists it in
+  //    `allowedScopes` AND a user who explicitly consented to it can mint a token
+  //    that reaches here. The first-party `civitai-cli` client is provisioned
+  //    with exactly `UserRead | AppBlocksSubmit`.
+  //
+  // The moderator + not-banned gate (step 2) applies to BOTH paths — a scoped
+  // OAuth token from a NON-moderator is still rejected there. Ordered after auth
+  // (401) and before the mod gate so an un-scoped OAuth key gets 403, never a leak.
   if (session.subject?.type === 'oauth') {
-    res.status(403).json({
-      message: 'App Blocks submit requires a personal API key, not an OAuth client token',
-    });
-    return;
+    if (!Flags.hasFlag(session.tokenScope, TokenScope.AppBlocksSubmit)) {
+      res.status(403).json({
+        message:
+          'App Blocks submit requires a personal API key or an OAuth token with the App Blocks submit scope',
+      });
+      return;
+    }
   }
 
   // 2. Moderator gate — App Blocks is mod-only pre-GA (parity with the session

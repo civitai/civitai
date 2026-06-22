@@ -7,9 +7,7 @@ import { filenamize, generateToken } from '~/utils/string-helpers';
 import { getMultipartPutUrl, getUploadS3Client, getUploadBucket } from '~/utils/s3-utils';
 import type { UploadBackend } from '~/utils/s3-utils';
 import { env } from '~/env/server';
-import { isPreview } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
-import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
@@ -32,15 +30,15 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     return res.status(400).json({ error: 'File type not allowed' });
   }
 
-  // Determine upload backend: B2 for model/training uploads when flag is enabled
+  // Determine upload backend: B2 for model/training uploads when the B2
+  // endpoint is configured (no Flipt flag — see below).
   let backend: UploadBackend = 'default';
   if (type === UploadType.Model && env.S3_UPLOAD_B2_ENDPOINT) {
-    // Force B2 on preview environments; otherwise check Flipt flag
-    const useB2 =
-      isPreview || (await isFlipt(FLIPT_FEATURE_FLAGS.B2_UPLOAD_DEFAULT, String(userId)));
-    if (useB2) {
-      backend = 'b2';
-    }
+    // Model files always route to B2 when the endpoint is configured. The
+    // b2-upload-default Flipt flag was used for gradual rollout and is now
+    // globally enabled. Removing the flag dependency prevents silent S3
+    // fallback when Flipt initialization fails (matches the training path).
+    backend = 'b2';
   } else if (
     (type === UploadType.TrainingImages || type === UploadType.TrainingImagesTemp) &&
     env.S3_UPLOAD_B2_ENDPOINT

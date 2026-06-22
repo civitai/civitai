@@ -30,6 +30,7 @@ export const appRouter = router({
   homeBlock: lazy(() => import('./home-block.router').then((m) => m.homeBlockRouter)),
   image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
   model: lazy(() => import('./model.router').then((m) => m.modelRouter)),
+  model3d: lazy(() => import('./model3d.router').then((m) => m.model3dRouter)),
   modelFile: lazy(() => import('./model-file.router').then((m) => m.modelFileRouter)),
   modelVersion: lazy(() => import('./model-version.router').then((m) => m.modelVersionRouter)),
   notification: lazy(() => import('./notification.router').then((m) => m.notificationRouter)),

@@ -28,7 +28,9 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
 }));
 vi.mock('~/env/server', () => ({
-  env: { FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com' },
+  // LOGGING is read by cache-helpers' createLogger at module-eval (the router
+  // now statically imports appBlockReview.service, which imports cache-helpers).
+  env: { FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com', LOGGING: '' },
 }));
 vi.mock('~/server/services/blocks/dev-git-access.service', () => ({
   ensureForgejoIdentity: mockEnsureForgejoIdentity,
@@ -84,6 +86,17 @@ vi.mock('~/server/redis/client', () => ({
 }));
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
+}));
+// F-E marketplace reviews — the router now statically imports these; stub them
+// so this test stays isolated (it exercises getMyAppRepo, not reviews).
+vi.mock('~/server/rewards/active/appBlockReview.reward', () => ({
+  appBlockReviewReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
+}));
+vi.mock('~/server/services/appBlockReview.service', () => ({
+  upsertAppBlockReview: vi.fn(),
+  listAppBlockReviews: vi.fn(),
+  getMyAppBlockReview: vi.fn(),
+  setAppReviewExcluded: vi.fn(),
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),

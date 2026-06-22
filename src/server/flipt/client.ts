@@ -8,11 +8,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
-  ENTITY_METRIC_NO_CACHE_BUST = 'entity-metric-no-cache-bust',
-  // When ON, image metric counts are read from the watcher-fed `metrics:*`
-  // cache (MetricService) instead of the legacy in-app `entitymetric:*` cache.
-  // Default OFF — reversible kill switch for the metrics-source cutover.
-  IMAGE_METRICS_FROM_WATCHER = 'image-metrics-from-watcher',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
@@ -38,7 +33,6 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_TRAINING = 'wan22-training',
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
-  B2_UPLOAD_DEFAULT = 'b2-upload-default',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',
@@ -385,6 +379,24 @@ export function isFliptSync(
 
 export async function ensureFliptInitialized(): Promise<void> {
   await FliptSingleton.getInstance();
+}
+
+// Build the inner `(entityId, metricType, day, total)` subquery the direct CH
+// read sites (search-index / comic populate / metric-helpers) sum over. `where`
+// is the caller's full WHERE clause (e.g. "WHERE entityType = 'Image' AND ...").
+// Reads the already-FINAL view `entityMetricDailyAgg_v2`, so we select total
+// directly (no argMax dedup). Selecting metricType is harmless even for callers
+// that only group by day (it's just carried through the subquery).
+//
+// (Historically this was flag-switchable via METRICS_AGG_V2_READ between the
+// ReplacingMergeTree `entityMetricDailyAgg_new` — which needed argMax — and the
+// v2 view; the v2 cutover is now permanent so the source is hardcoded.)
+export function buildEntityMetricPerDaySource(where: string): string {
+  return `(
+      SELECT entityId, metricType, day, total
+      FROM entityMetricDailyAgg_v2
+      ${where}
+    )`;
 }
 
 export default FliptSingleton;

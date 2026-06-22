@@ -360,6 +360,7 @@ export const TagTarget = {
   Article: 'Article',
   Bounty: 'Bounty',
   Collection: 'Collection',
+  Model3D: 'Model3D',
 } as const;
 export type TagTarget = (typeof TagTarget)[keyof typeof TagTarget];
 export const TagType = {
@@ -436,6 +437,7 @@ export const CosmeticEntity = {
   Image: 'Image',
   Article: 'Article',
   Post: 'Post',
+  Model3D: 'Model3D',
 } as const;
 export type CosmeticEntity = (typeof CosmeticEntity)[keyof typeof CosmeticEntity];
 export const BuzzAccountType = {
@@ -509,6 +511,7 @@ export const CollectionType = {
   Article: 'Article',
   Post: 'Post',
   Image: 'Image',
+  Model3D: 'Model3D',
 } as const;
 export type CollectionType = (typeof CollectionType)[keyof typeof CollectionType];
 export const CollectionMode = {
@@ -641,6 +644,7 @@ export const EntityType = {
   UserProfile: 'UserProfile',
   ResourceReview: 'ResourceReview',
   ChatMessage: 'ChatMessage',
+  Model3D: 'Model3D',
 } as const;
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
 export const JobQueueType = {
@@ -868,3 +872,17 @@ export const ReviewVerdict = {
   Unsure: 'Unsure',
 } as const;
 export type ReviewVerdict = (typeof ReviewVerdict)[keyof typeof ReviewVerdict];
+export const Model3DStatus = {
+  Draft: 'Draft',
+  Published: 'Published',
+  Unpublished: 'Unpublished',
+  Deleted: 'Deleted',
+} as const;
+export type Model3DStatus = (typeof Model3DStatus)[keyof typeof Model3DStatus];
+export const Model3DEngagementType = {
+  Favorite: 'Favorite',
+  Hide: 'Hide',
+  Notify: 'Notify',
+} as const;
+export type Model3DEngagementType =
+  (typeof Model3DEngagementType)[keyof typeof Model3DEngagementType];

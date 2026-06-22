@@ -1,19 +1,31 @@
 import type { GroupProps } from '@mantine/core';
-import { Box, Group, List, Popover, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import {
   IconBrush,
-  IconCheck,
   IconCurrencyDollar,
   IconGitMerge,
   IconLicense,
   IconRating18Plus,
   IconUser,
-  IconX,
 } from '@tabler/icons-react';
 import React from 'react';
+import {
+  PermissionIndicatorBase,
+  type PermissionBadge,
+} from '~/components/PermissionIndicator/PermissionIndicatorBase';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CommercialUse } from '~/shared/utils/prisma/enums';
 
+/**
+ * Permission badge strip for AI Models. Surfaces the model's licensing
+ * permissions (commercial use, generation services, credit, merges,
+ * derivative licenses, NSFW) as a row of tooltipped colored icons with a
+ * popover summary. Mod-only badges (NSFW) are filtered out for
+ * non-moderators.
+ *
+ * The visual is shared with Model3DPermissionIndicator via
+ * `PermissionIndicatorBase`; the two components diverge only in their
+ * domain mapping (Model permissions vs. Model3D license fields).
+ */
 export const PermissionIndicator = ({
   permissions,
   size = 24,
@@ -23,7 +35,6 @@ export const PermissionIndicator = ({
 }: Props) => {
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator ?? false;
-  const theme = useMantineTheme();
 
   const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense, sfwOnly } =
     permissions;
@@ -44,7 +55,7 @@ export const PermissionIndicator = ({
   };
 
   const iconSize = Math.round(size / 2);
-  const badges: { label: string; icon: React.ReactNode; allowed: boolean; visible?: boolean }[] = [
+  const badges: PermissionBadge[] = [
     {
       label: canSellImages || canSell ? 'Commercial use allowed' : 'No commercial use',
       icon: <IconCurrencyDollar size={iconSize} stroke={1.5} />,
@@ -81,61 +92,14 @@ export const PermissionIndicator = ({
   ];
 
   return (
-    <Popover withArrow withinPortal>
-      <Popover.Target>
-        <Group gap={gap} style={{ cursor: 'pointer' }} wrap="nowrap" {...props}>
-          {badges
-            .filter((b) => b.visible !== false)
-            .map(({ label, icon, allowed }, i) => (
-              <Tooltip key={i} label={label} withArrow withinPortal position="top">
-                <Box
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: size,
-                    height: size,
-                    borderRadius: theme.radius.sm,
-                    backgroundColor: allowed ? 'rgba(64, 192, 87, 0.2)' : 'rgba(250, 82, 82, 0.2)',
-                    color: allowed ? theme.colors.green[4] : theme.colors.red[4],
-                  }}
-                >
-                  {icon}
-                </Box>
-              </Tooltip>
-            ))}
-          {showNone && badges.filter((b) => b.visible !== false).every((b) => b.allowed) && (
-            <Text fs="italic" size="xs">
-              None
-            </Text>
-          )}
-        </Group>
-      </Popover.Target>
-      <Popover.Dropdown>
-        <Text fw={500}>This model permits users to:</Text>
-        <List
-          size="xs"
-          styles={{
-            itemIcon: { marginRight: 4, paddingTop: 2 },
-          }}
-        >
-          {Object.entries(explanation).map(([permission, allowed], i) => (
-            <List.Item
-              key={i}
-              icon={
-                allowed ? (
-                  <IconCheck style={{ color: 'green' }} size={12} stroke={4} />
-                ) : (
-                  <IconX style={{ color: 'red' }} size={12} stroke={3} />
-                )
-              }
-            >
-              {permission}
-            </List.Item>
-          ))}
-        </List>
-      </Popover.Dropdown>
-    </Popover>
+    <PermissionIndicatorBase
+      badges={badges}
+      explanation={explanation}
+      size={size}
+      gap={gap}
+      showNone={showNone}
+      {...props}
+    />
   );
 };
 

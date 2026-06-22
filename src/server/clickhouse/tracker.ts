@@ -401,8 +401,35 @@ export class Tracker {
     });
   }
 
-  public view(values: { type: ViewType; entityType: EntityType; entityId: number }) {
+  public view(values: {
+    type: ViewType;
+    entityType: EntityType;
+    entityId: number;
+    // Optional client-supplied context, forwarded verbatim into the `views`
+    // ClickHouse row (same shape the track.addView tRPC resolver passed
+    // through). Kept optional so server-side callers can omit them.
+    ads?: 'Member' | 'Blocked' | 'Served' | 'Off';
+    nsfw?: boolean;
+    nsfwLevel?: number;
+    browsingLevel?: number;
+    details?: Record<string, unknown>;
+  }) {
     return this.track('views', values);
+  }
+
+  // App Blocks Analytics Phase 2 — block render/impression event. Fired once per
+  // host mount (BLOCK_READY) so anon viewers + static/no-scope blocks (which
+  // `block_scope_invocations` misses) become measurable. `userId`/`ip`/`userAgent`
+  // are stamped by track() from the resolved actor; `isAnon` is derived
+  // server-side by the caller (the track.blockRender tRPC procedure from
+  // `!ctx.user`) — it is NOT accepted from the browser.
+  public blockRender(values: {
+    appBlockId: string;
+    blockInstanceId: string;
+    slotId: string;
+    isAnon: boolean;
+  }) {
+    return this.track('blockRenders', values);
   }
 
   public pageView(values: {

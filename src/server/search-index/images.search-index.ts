@@ -8,6 +8,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
 import {
   tagCache,
   tagIdsForImagesCache,
@@ -406,6 +407,10 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       // Metrics:
       if (step === 1) {
         logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
+        const perDaySource = buildEntityMetricPerDaySource(
+          `WHERE entityType = 'Image'
+                AND entityId IN (${batch.join(',')})`
+        );
         const metrics = await clickhouse?.$query<Metrics>(`
             SELECT entityId as "id",
                    sumIf(total, metricType = 'Collection') as "collectedCount",
@@ -416,13 +421,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
                    sumIf(total, metricType = 'tippedAmount') as "tippedAmountCount",
                    sumIf(total, metricType = 'Heart') as "heartCount",
                    sumIf(total, metricType = 'Laugh') as "laughCount"
-            FROM (
-              SELECT entityId, metricType, day, argMax(total, refreshedAt) as total
-              FROM entityMetricDailyAgg_new
-              WHERE entityType = 'Image'
-                AND entityId IN (${batch.join(',')})
-              GROUP BY entityId, metricType, day
-            )
+            FROM ${perDaySource}
             GROUP BY id
           `);
 

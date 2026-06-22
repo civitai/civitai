@@ -56,6 +56,8 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserContentSettings } from '~/server/schema/user.schema';
+import type { UserSettingsChat } from '~/server/schema/chat.schema';
+import { resolveChatSettings } from '~/server/schema/chat.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
@@ -109,6 +111,12 @@ type CustomAppProps = {
   seed: number;
   settings: UserContentSettings;
   browsingSettingsAddons: BrowsingSettingsAddon[];
+  liveNow: boolean;
+  // SSR-seeded `chat.getUserSettings` (logged-in only) — the per-user chat
+  // settings (mute sounds / bad-word filter / acknowledged). Derived from the
+  // `settings.chat` field already fetched for the bootstrap; no extra I/O. See
+  // AppProvider seed.
+  chatSettings?: UserSettingsChat;
   canIndex: boolean;
   hasAuthCookie: boolean;
   region: RegionInfo;
@@ -136,6 +144,8 @@ function MyApp(props: CustomAppProps) {
       hasAuthCookie,
       settings,
       browsingSettingsAddons,
+      liveNow = false,
+      chatSettings,
       region,
       domain,
       host,
@@ -188,6 +198,8 @@ function MyApp(props: CustomAppProps) {
       tosMeta={tosMeta}
       announcements={announcements}
       following={following}
+      liveNow={liveNow}
+      chatSettings={chatSettings}
       region={region}
       domain={domain}
       host={host}
@@ -448,11 +460,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // every full render's critical path. SSR-injecting the addons keeps the
   // `system.getBrowsingSettingAddons` round-trip off api-primary (it becomes
   // `initialData` for the client provider).
-  const [{ getFeatureFlagsAsync, computeUserFeatureFlagsOverlay }, { getBrowsingSettingAddons }] =
-    await Promise.all([
-      import('~/server/services/feature-flags.service'),
-      import('~/server/services/system-cache'),
-    ]);
+  const [
+    { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay },
+    { getBrowsingSettingAddons, getLiveNow },
+  ] = await Promise.all([
+    import('~/server/services/feature-flags.service'),
+    import('~/server/services/system-cache'),
+  ]);
   const [flags, browsingSettingsAddons] = await Promise.all([
     getFeatureFlagsAsync({
       user: session?.user,
@@ -461,6 +475,24 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     }),
     getBrowsingSettingAddons(),
   ]);
+
+  // SSR-seed the global `system.getLiveNow` boolean (a single `redis.get`,
+  // identical for every user) so the ambient `useIsLive` client query reads a
+  // primed cache and never fires on bootstrap (~26 req/s off api-primary).
+  // Fail open to `false` (the "not live" default): `getLiveNow` has no internal
+  // try/catch, and an uncaught redis throw here would 500 every page render —
+  // so a degraded sysRedis must degrade to "not live", never to an error. The
+  // client query still self-heals on its 5-minute refetch interval.
+  let liveNow = false;
+  try {
+    liveNow = await getLiveNow();
+  } catch (e) {
+    console.warn(
+      `[_app] getLiveNow bootstrap failed, defaulting to not-live: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
+  }
 
   const domain = getRequestDomainColor(request);
 
@@ -482,6 +514,23 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   let userFeatureFlags: FeatureAccess | undefined;
   if (session?.user && settings) {
     userFeatureFlags = computeUserFeatureFlagsOverlay(settings.features, flags);
+  }
+
+  // SSR-seed `chat.getUserSettings` (logged-in only) so the chat widget reads a
+  // primed cache and never fires the query on bootstrap (~19 req/s off
+  // api-primary). Fully DERIVED from the `settings.chat` field already fetched
+  // above for the bootstrap — NO extra I/O. The chat settings are static per
+  // user (only the user's own `setUserSettings` changes them, which patches the
+  // cache via optimistic `setData`), so SSR-seeding is exact.
+  //
+  // Byte-equality (#2471): the `chat.getUserSettings` resolver returns
+  // `settings.chat` and substitutes the SAME default object when absent — mirror
+  // it here so the seed matches the resolver output exactly. Seed only when a
+  // settings snapshot is present (the degraded/anon path leaves it undefined and
+  // the client query self-heals).
+  let chatSettings: UserSettingsChat | undefined;
+  if (session?.user && settings) {
+    chatSettings = resolveChatSettings(settings.chat);
   }
 
   if (session) {
@@ -528,6 +577,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       session,
       settings,
       browsingSettingsAddons,
+      liveNow,
       flags,
       userFeatureFlags,
       tosMeta,

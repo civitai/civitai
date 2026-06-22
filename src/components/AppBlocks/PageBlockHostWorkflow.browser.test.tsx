@@ -303,9 +303,15 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
       onPurchaseSuccess: () => void;
     };
     expect(dialogProps.minBuzzAmount).toBe(1000);
-    // (c) Page attribution is OMITTED — deriveScopeFromInstanceId('page_apb_test')
-    // returns null, so the host passes NO attribution scope to the spend modal.
-    expect(dialogProps.attribution).toBeUndefined();
+    // (c) Page attribution is TRACKED — deriveScopeFromInstanceId('page_apb_test')
+    // returns 'viewer_global' (PR #2624), so the host derives the attribution and
+    // passes it to the spend modal (the iframe never supplies it).
+    expect(dialogProps.attribution).toEqual({
+      appId: 'app_test',
+      appBlockId: 'apb_test',
+      blockInstanceId: 'page_apb_test',
+      scope: 'viewer_global',
+    });
 
     // Simulate a successful purchase, then close the modal (BuyBuzzModal's
     // onPurchaseSuccess flips `purchased`; the dialog onClose posts the reply).

@@ -16,6 +16,10 @@ vi.mock('~/env/server', () => ({
     FORGEJO_ADMIN_TOKEN: 'tok-test',
     FORGEJO_WEBHOOK_SECRET: 'sec-test',
     APPS_DOMAIN: 'civit.ai',
+    // Distinct values so the timeout-routing assertions are unambiguous about
+    // which ceiling a given call used.
+    FORGEJO_API_TIMEOUT_MS: 15000,
+    FORGEJO_COMMIT_TIMEOUT_MS: 120000,
   },
 }));
 
@@ -367,5 +371,164 @@ describe('mintForgejoUserToken', () => {
     await expect(
       mintForgejoUserToken({ username: 'dev-7', password: 'pw', name: 'x', scopes: [] })
     ).rejects.toThrow(/no sha1/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Timeout routing — the bug fix. The bundle COMMIT/PUSH path must use the
+// generous FORGEJO_COMMIT_TIMEOUT_MS (120s) so a real app (gen-matrix = ~888
+// files) doesn't abort at the old 15s ceiling ("The operation was aborted due
+// to timeout"); the cheap metadata calls keep the small FORGEJO_API_TIMEOUT_MS
+// (15s) so an in-cluster reachability problem still surfaces fast.
+//
+// Strategy: spy on AbortSignal.timeout to capture each call's timeout in order.
+// Each fjFetch / raw fetch calls AbortSignal.timeout immediately before fetch,
+// so the Nth captured timeout pairs with the Nth recorded fetch call.
+// ---------------------------------------------------------------------------
+describe('Forgejo client-side timeout routing', () => {
+  let timeouts: number[];
+  let realTimeout: typeof AbortSignal.timeout;
+
+  beforeEach(() => {
+    timeouts = [];
+    realTimeout = AbortSignal.timeout;
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms: number) => {
+      timeouts.push(ms);
+      // Return a never-firing signal: the fetch mock resolves synchronously,
+      // so the real timer would only leak. We just need to observe `ms`.
+      return new AbortController().signal;
+    });
+  });
+
+  afterEach(() => {
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(realTimeout);
+    vi.restoreAllMocks();
+  });
+
+  it('commitFiles: the multi-file commit POST uses the 120s commit timeout; the tree/branch reads keep 15s', async () => {
+    const { commitFiles } = await import('../forgejo.service');
+    fm.enqueue({ commit: { id: 'commit_sha' } }); // listRepoTree: branch
+    fm.enqueue({ tree: [], truncated: false }); // listRepoTree: tree
+    fm.enqueue({ commit: { sha: 'new_commit_sha' } }); // contents POST
+
+    await commitFiles({
+      slug: 'gen-matrix',
+      files: [{ path: 'a.txt', content: Buffer.from('hi') }],
+      message: 'msg',
+    });
+
+    // Pair captured timeouts to fetch calls by index.
+    const branchIdx = fm.calls.findIndex((c) => c.url.includes('/branches/'));
+    const treeIdx = fm.calls.findIndex((c) => c.url.includes('/git/trees/'));
+    const commitIdx = fm.calls.findIndex((c) => c.url.endsWith('/contents'));
+    expect(branchIdx).toBeGreaterThanOrEqual(0);
+    expect(treeIdx).toBeGreaterThanOrEqual(0);
+    expect(commitIdx).toBeGreaterThanOrEqual(0);
+
+    // Cheap reads keep the small ceiling.
+    expect(timeouts[branchIdx]).toBe(15000);
+    expect(timeouts[treeIdx]).toBe(15000);
+    // The slow commit/push gets the generous one.
+    expect(timeouts[commitIdx]).toBe(120000);
+  });
+
+  it('ensureReviewRepo: the auto_init repo-create POST uses the 120s commit timeout; the org-create keeps 15s', async () => {
+    const { ensureReviewRepo } = await import('../forgejo.service');
+    fm.enqueue(null, 422); // POST /orgs (already exists)
+    fm.enqueue(null, 201); // POST /orgs/<review>/repos (created)
+
+    await ensureReviewRepo('gen-matrix');
+
+    const orgIdx = fm.calls.findIndex((c) => c.url.endsWith('/api/v1/orgs'));
+    const repoIdx = fm.calls.findIndex((c) =>
+      c.url.endsWith('/orgs/civitai-apps-review/repos')
+    );
+    expect(orgIdx).toBeGreaterThanOrEqual(0);
+    expect(repoIdx).toBeGreaterThanOrEqual(0);
+    expect(timeouts[orgIdx]).toBe(15000);
+    expect(timeouts[repoIdx]).toBe(120000);
+  });
+
+  it('createRepoFromTemplate: the repo-create POST uses the 120s commit timeout', async () => {
+    const { createRepoFromTemplate } = await import('../forgejo.service');
+    fm.enqueue({
+      id: 1,
+      name: 'gen-matrix',
+      full_name: 'civitai-apps/gen-matrix',
+      html_url: '',
+      clone_url: '',
+      ssh_url: '',
+      default_branch: 'main',
+    }); // generate POST
+
+    await createRepoFromTemplate({ slug: 'gen-matrix', template: 'starter' });
+
+    const genIdx = fm.calls.findIndex((c) => c.url.endsWith('/generate'));
+    expect(genIdx).toBeGreaterThanOrEqual(0);
+    expect(timeouts[genIdx]).toBe(120000);
+  });
+
+  it('cheap metadata calls (getRepo, addCollaborator, setCommitStatus) keep the 15s API timeout', async () => {
+    const svc = await import('../forgejo.service');
+
+    fm.enqueue({
+      id: 1,
+      name: 'gen-matrix',
+      full_name: 'civitai-apps/gen-matrix',
+      html_url: '',
+      clone_url: '',
+      ssh_url: '',
+      default_branch: 'main',
+    });
+    await svc.getRepo('gen-matrix');
+    expect(timeouts[timeouts.length - 1]).toBe(15000);
+
+    // addCollaborator treats res.ok as success; a 200 avoids the JS Response
+    // 204-must-be-null-body constructor quirk and exercises the same path.
+    fm.enqueueRaw(new Response('', { status: 200 }));
+    await svc.addCollaborator({ slug: 'gen-matrix', username: 'dev-7' });
+    expect(timeouts[timeouts.length - 1]).toBe(15000);
+
+    fm.enqueue({ id: 1 });
+    await svc.setCommitStatus({
+      slug: 'gen-matrix',
+      sha: 'abc',
+      state: 'pending',
+      context: 'civitai/build',
+    });
+    expect(timeouts[timeouts.length - 1]).toBe(15000);
+  });
+
+  it('respects overridden env timeouts (config-driven, not hardcoded)', async () => {
+    // Re-mock the env module with different values, fresh-import the service.
+    vi.resetModules();
+    vi.doMock('~/env/server', () => ({
+      env: {
+        FORGEJO_BASE_URL: 'https://forgejo.example',
+        FORGEJO_ADMIN_TOKEN: 'tok-test',
+        FORGEJO_WEBHOOK_SECRET: 'sec-test',
+        APPS_DOMAIN: 'civit.ai',
+        FORGEJO_API_TIMEOUT_MS: 9000,
+        FORGEJO_COMMIT_TIMEOUT_MS: 300000,
+      },
+    }));
+    const { commitFiles } = await import('../forgejo.service');
+    fm.enqueue({ commit: { id: 'commit_sha' } });
+    fm.enqueue({ tree: [], truncated: false });
+    fm.enqueue({ commit: { sha: 'new_commit_sha' } });
+
+    await commitFiles({
+      slug: 'gen-matrix',
+      files: [{ path: 'a.txt', content: Buffer.from('hi') }],
+      message: 'msg',
+    });
+
+    const treeIdx = fm.calls.findIndex((c) => c.url.includes('/git/trees/'));
+    const commitIdx = fm.calls.findIndex((c) => c.url.endsWith('/contents'));
+    expect(timeouts[treeIdx]).toBe(9000);
+    expect(timeouts[commitIdx]).toBe(300000);
+
+    vi.doUnmock('~/env/server');
+    vi.resetModules();
   });
 });

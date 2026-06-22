@@ -1480,6 +1480,7 @@ export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
 export const TOOLS_SEARCH_INDEX = 'tools_v2';
 export const COMICS_SEARCH_INDEX = 'comics_v1';
+export const MODELS_3D_SEARCH_INDEX = 'models_3d_v1';
 
 // Metrics:
 export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';

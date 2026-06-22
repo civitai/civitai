@@ -18,7 +18,9 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 
 import {
   buildTextToImageInput,
+  isPageLoraResource,
   resolveBlockVersionContext,
+  resolvePageResourceContext,
   snapshotFromWorkflow,
 } from '../workflow.service';
 
@@ -284,5 +286,189 @@ describe('buildTextToImageInput', () => {
     expect(out.params.sampler).toBe('DPM++ 2M Karras');
     expect(out.params.steps).toBe(30);
     expect(out.params.seed).toBe(12345);
+  });
+
+  // ── Page-LoRA (Increment 1): fan additionalResources into `resources` ──────
+  it('fans N additional LoRAs into the resources array after the checkpoint anchor', () => {
+    const body = {
+      ...baseBody,
+      additionalResources: [
+        { modelVersionId: 201, strength: 0.8 },
+        { modelVersionId: 202, strength: 1.2 },
+        { modelVersionId: 203, strength: -0.5 },
+      ],
+    };
+    const out = buildTextToImageInput(body as never, checkpointResolved);
+    expect(out.resources).toEqual([
+      { id: 99, strength: 1 }, // checkpoint anchor
+      { id: 201, strength: 0.8 },
+      { id: 202, strength: 1.2 },
+      { id: 203, strength: -0.5 },
+    ]);
+  });
+
+  it('does NOT duplicate the checkpoint when an additionalResource repeats it', () => {
+    const body = {
+      ...baseBody,
+      additionalResources: [
+        { modelVersionId: 99, strength: 0.7 }, // same as the checkpoint anchor
+        { modelVersionId: 201, strength: 1 },
+      ],
+    };
+    const out = buildTextToImageInput(body as never, checkpointResolved);
+    // The checkpoint stays as the single anchor at strength 1 (no double-bill /
+    // double-strength), and only the genuinely-new LoRA is appended.
+    expect(out.resources).toEqual([
+      { id: 99, strength: 1 },
+      { id: 201, strength: 1 },
+    ]);
+  });
+
+  it('does NOT duplicate the bound-model anchor when the body model is a LoRA', () => {
+    // fluxLoraResolved: checkpointVersionId=691639 (resolver anchor),
+    // body.modelVersionId=99 is itself a LoRA pushed as the second entry. An
+    // additionalResource repeating either id must be deduped.
+    const body = {
+      ...baseBody,
+      additionalResources: [
+        { modelVersionId: 691639, strength: 0.5 }, // == checkpoint anchor
+        { modelVersionId: 99, strength: 0.5 }, // == bound-model anchor
+        { modelVersionId: 300, strength: 0.9 }, // genuinely new
+      ],
+    };
+    const out = buildTextToImageInput(body as never, fluxLoraResolved);
+    expect(out.resources).toEqual([
+      { id: 691639, strength: 1 },
+      { id: 99, strength: 1 },
+      { id: 300, strength: 0.9 },
+    ]);
+  });
+
+  it('first-wins dedupe for a LoRA that appears twice in additionalResources', () => {
+    const body = {
+      ...baseBody,
+      additionalResources: [
+        { modelVersionId: 201, strength: 0.3 },
+        { modelVersionId: 201, strength: 0.9 }, // duplicate id
+      ],
+    };
+    const out = buildTextToImageInput(body as never, checkpointResolved);
+    expect(out.resources).toEqual([
+      { id: 99, strength: 1 },
+      { id: 201, strength: 0.3 }, // first occurrence kept
+    ]);
+  });
+
+  it('is byte-identical when additionalResources is absent (no behaviour change)', () => {
+    const out = buildTextToImageInput(baseBody as never, checkpointResolved);
+    expect(out.resources).toEqual([{ id: 99, strength: 1 }]);
+  });
+});
+
+describe('isPageLoraResource', () => {
+  it('returns true for the LoRA family (LORA / LoCon / DoRA)', () => {
+    expect(isPageLoraResource('LORA')).toBe(true);
+    expect(isPageLoraResource('LoCon')).toBe(true);
+    expect(isPageLoraResource('DoRA')).toBe(true);
+  });
+
+  it('returns false for non-LoRA types (Checkpoint / VAE / TextualInversion)', () => {
+    expect(isPageLoraResource('Checkpoint')).toBe(false);
+    expect(isPageLoraResource('VAE')).toBe(false);
+    expect(isPageLoraResource('TextualInversion')).toBe(false);
+    expect(isPageLoraResource('Upscaler')).toBe(false);
+  });
+});
+
+describe('resolvePageResourceContext', () => {
+  beforeEach(() => {
+    mockDbRead.modelVersion.findUnique.mockReset();
+  });
+
+  it('returns the gate bag + baseModel + modelType with NO modelId binding check', async () => {
+    // Note: modelId (8) intentionally differs from any "expected" model — the
+    // page resolver has no binding to enforce, so this resolves successfully
+    // where resolveBlockVersionContext(…, 7) would FORBIDDEN.
+    mockDbRead.modelVersion.findUnique.mockResolvedValue({
+      id: 201,
+      baseModel: 'SDXL 1.0',
+      modelId: 8,
+      status: 'Published',
+      availability: 'Public',
+      usageControl: 'Download',
+      meta: null,
+      generationCoverage: { covered: true },
+      model: { id: 8, type: 'LORA', userId: 55 },
+    });
+    const out = await resolvePageResourceContext(201);
+    expect(out).toEqual({
+      modelId: 8,
+      modelVersionId: 201,
+      baseModel: 'SDXL 1.0',
+      modelType: 'LORA',
+      gate: {
+        id: 201,
+        status: 'Published',
+        availability: 'Public',
+        usageControl: 'Download',
+        baseModel: 'SDXL 1.0',
+        covered: true,
+        modelUserId: 55,
+        modelType: 'LORA',
+        modelVersionAlias: null,
+      },
+    });
+  });
+
+  it('defaults covered to false when no generationCoverage row exists', async () => {
+    mockDbRead.modelVersion.findUnique.mockResolvedValue({
+      id: 201,
+      baseModel: 'SDXL 1.0',
+      modelId: 8,
+      status: 'Published',
+      availability: 'Public',
+      usageControl: 'Download',
+      meta: null,
+      generationCoverage: null,
+      model: { id: 8, type: 'LORA', userId: 55 },
+    });
+    const out = await resolvePageResourceContext(201);
+    expect(out.gate.covered).toBe(false);
+  });
+
+  it('reads the generation alias from version.meta.generationAlias', async () => {
+    mockDbRead.modelVersion.findUnique.mockResolvedValue({
+      id: 201,
+      baseModel: 'SDXL 1.0',
+      modelId: 8,
+      status: 'Published',
+      availability: 'Public',
+      usageControl: 'Download',
+      meta: { generationAlias: { versionId: 999 } },
+      generationCoverage: { covered: true },
+      model: { id: 8, type: 'LORA', userId: 55 },
+    });
+    const out = await resolvePageResourceContext(201);
+    expect(out.gate.modelVersionAlias).toEqual({ versionId: 999 });
+  });
+
+  it('throws NOT_FOUND when the version is missing', async () => {
+    mockDbRead.modelVersion.findUnique.mockResolvedValue(null);
+    await expect(resolvePageResourceContext(201)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('throws NOT_FOUND when the version is unpublished (no info leak)', async () => {
+    mockDbRead.modelVersion.findUnique.mockResolvedValue({
+      id: 201,
+      baseModel: 'SDXL 1.0',
+      modelId: 8,
+      status: 'Draft',
+      availability: 'Public',
+      usageControl: 'Download',
+      meta: null,
+      generationCoverage: { covered: true },
+      model: { id: 8, type: 'LORA', userId: 55 },
+    });
+    await expect(resolvePageResourceContext(201)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

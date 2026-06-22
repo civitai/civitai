@@ -56,9 +56,17 @@ export function createMetricProcessor({
 
       // Check if update is needed
       const shouldUpdate = lastUpdate.getTime() + updateInterval < Date.now();
-      const metricUpdateAllowed =
-        ((await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `metric:${name.toLowerCase()}`)) ??
-          'true') === 'true';
+      // sysRedis.hGet is typed string but the HA/Sentinel client returns a
+      // Buffer for BLOB_STRING replies. `Buffer === 'true'` is always false,
+      // which silently flips this flag to disabled in sentinel mode. Coerce
+      // to a utf8 string before comparing. See PR #2697 for the canonical
+      // regression case (queues.ts getBucketNames).
+      const metricRaw = await sysRedis.hGet(
+        REDIS_SYS_KEYS.SYSTEM.FEATURES,
+        `metric:${name.toLowerCase()}`
+      );
+      const metricFlag = Buffer.isBuffer(metricRaw) ? metricRaw.toString('utf8') : metricRaw;
+      const metricUpdateAllowed = (metricFlag ?? 'true') === 'true';
       if (!shouldUpdate || !metricUpdateAllowed) return;
 
       // Run update
@@ -78,9 +86,15 @@ export function createMetricProcessor({
       const [lastUpdate, setLastUpdate] = await getJobDate(`rank:${name.toLowerCase()}`);
       const refreshInterval = rank.refreshInterval ?? DEFAULT_RANK_REFRESH_INTERVAL;
       const shouldUpdateRank = lastUpdate.getTime() + refreshInterval < Date.now();
-      const rankUpdateAllowed =
-        ((await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `rank:${name.toLowerCase()}`)) ??
-          'true') === 'true';
+      // Buffer-coerce mirror of the metric flag above. Same root cause —
+      // sentinel-mode sysRedis returns Buffer, which silently fails the
+      // === 'true' check. See PR #2697.
+      const rankRaw = await sysRedis.hGet(
+        REDIS_SYS_KEYS.SYSTEM.FEATURES,
+        `rank:${name.toLowerCase()}`
+      );
+      const rankFlag = Buffer.isBuffer(rankRaw) ? rankRaw.toString('utf8') : rankRaw;
+      const rankUpdateAllowed = (rankFlag ?? 'true') === 'true';
       if (!shouldUpdateRank || !rankUpdateAllowed) return;
 
       // Run rank refresh

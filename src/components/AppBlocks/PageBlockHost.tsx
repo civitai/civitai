@@ -7,7 +7,13 @@ import { failureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
-import { grantedPageScopes, pageFallbackReason } from './pageBlockHostLogic';
+import {
+  grantedPageScopes,
+  pageFallbackReason,
+  resolveResourcePickerRequest,
+} from './pageBlockHostLogic';
+import { projectBlockInitMaturity } from './projectBlockInit';
+import { sendBlockRender } from './sendBlockRender';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -16,6 +22,8 @@ import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { openLoginPopup } from '~/utils/auth-helpers';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
+import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
+import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -115,6 +123,10 @@ export interface PageBlockHostProps {
   /** #3/#6: the token mint errored. Surface an error state instead of hanging at
    *  `no_token`. */
   tokenError?: boolean;
+  /** Advisory color-domain maturity signal (BLOCK_INIT). Server-authoritative
+   *  values from the token mint — forwarded, never derived client-side. */
+  domain?: 'green' | 'blue' | 'red' | null;
+  maxBrowsingLevel?: number;
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
   /** Re-mint the page token after a consent grant so it carries the newly
@@ -139,6 +151,8 @@ export function PageBlockHost({
   missingScopes,
   needsConsent,
   tokenError,
+  domain,
+  maxBrowsingLevel,
   viewer,
   theme,
   onConsentGranted,
@@ -149,6 +163,12 @@ export function PageBlockHost({
   const initSentRef = useRef<boolean>(false);
   const controllerRef = useRef<IframeInitController | null>(null);
   const buildInitPayloadRef = useRef<() => BlockInitPayload>();
+  // Analytics Phase 2: emit-once guard for the block-render beacon. The
+  // status-transition gate ('loading' → 'ready') is the primary dedup, but a
+  // burst of duplicate BLOCK_READY acks arriving before React commits the
+  // 'ready' state could each still observe `current === 'loading'`. This ref
+  // makes the per-mount emit deterministic regardless of ack timing.
+  const blockRenderEmittedRef = useRef<boolean>(false);
 
   const expectedOrigin = useMemo(() => {
     try {
@@ -172,6 +192,17 @@ export function PageBlockHost({
   );
 
   const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin, opaqueOrigin });
+
+  // App Blocks Analytics Phase 2 — fire-and-forget block render/impression.
+  // Emitted exactly once per mount at the BLOCK_READY transition (see the
+  // BLOCK_READY effect below) via the lightweight /api/track/block-render beacon
+  // (NOT a tRPC mutation — this fires per model-page-with-a-block view and per
+  // /apps/run load, so at GA it must skip the full tRPC middleware chain; mirrors
+  // the #2680 addView -> beacon move). `isAnon`/`userId` are derived/stamped
+  // server-side in the route; the client only passes the three identifiers. This
+  // host only mounts behind the `appBlocks` (+ `appBlocksPages`) gate (SSR
+  // fail-closed in [[...path]].tsx), so the event is dark behind the same flag as
+  // the rest of App Blocks.
 
   // #3/#6: the scopes the minted JWT ACTUALLY carries (declared − missing).
   // See pageBlockHostLogic.grantedPageScopes. Posting `[]` (the old hardcode)
@@ -223,8 +254,22 @@ export function PageBlockHost({
       viewer,
       theme,
       renderMode: 'iframe',
+      // Advisory maturity signal — server-authoritative values from the mint.
+      ...projectBlockInitMaturity({ domain, maxBrowsingLevel }),
     }),
-    [appId, blockId, blockInstanceId, buildContext, expiresAt, grantedScopes, token, viewer, theme]
+    [
+      appId,
+      blockId,
+      blockInstanceId,
+      buildContext,
+      expiresAt,
+      grantedScopes,
+      token,
+      viewer,
+      theme,
+      domain,
+      maxBrowsingLevel,
+    ]
   );
   buildInitPayloadRef.current = buildInitPayload;
 
@@ -308,10 +353,22 @@ export function PageBlockHost({
         }
         return current;
       });
-      if (acked) controllerRef.current?.notifyReady();
+      if (acked) {
+        controllerRef.current?.notifyReady();
+        // Analytics Phase 2: one render/impression per mount. The `acked` gate
+        // flips on the loading→ready transition; the emit-once ref makes it
+        // deterministic even if duplicate acks land before React commits 'ready'
+        // (so it fires exactly once per mount and never on re-render).
+        // Fire-and-forget beacon — failures are a no-op (and a harmless no-op
+        // until the `blockRenders` ClickHouse table exists; see PR body).
+        if (!blockRenderEmittedRef.current) {
+          blockRenderEmittedRef.current = true;
+          sendBlockRender({ appBlockId, blockInstanceId, slotId: 'app.page' });
+        }
+      }
     });
     return off;
-  }, [onMessage]);
+  }, [onMessage, appBlockId, blockInstanceId]);
 
   // BLOCK_ERROR{fatal:true} → fatal.
   useEffect(() => {
@@ -842,6 +899,123 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, trpcUtils]);
+
+  // ── OPEN_RESOURCE_PICKER → RESOURCE_PICKER_RESULT (Design 1 host-chrome) ────
+  //
+  // Generalizes the model-slot OPEN_CHECKPOINT_PICKER (IframeHost) to the page
+  // surface and widens it from Checkpoint-only to a typed allowlist (v1:
+  // Checkpoint + LoRA only). The block asks the HOST to open its OWN native
+  // ResourceSelectModal as host chrome; the viewer searches in host chrome (NOT
+  // the iframe); the host posts back ONLY the single chosen resource. The
+  // untrusted iframe NEVER receives a list, the search API, or the catalog — it
+  // only ever learns about the one resource the user physically picked.
+  //
+  // This feeds the merged page-LoRA `additionalResources` plumbing: the block
+  // puts a Checkpoint pick into body.modelVersionId and each LoRA pick into
+  // body.additionalResources. The picker is DISCOVERY ONLY — every chosen ID is
+  // re-validated server-side at estimate/submit by the page gate
+  // (assertViewerCanGeneratePageResources) + the orchestrator belt. Nothing the
+  // iframe says about a resource is trusted at spend time.
+  //
+  // The picker reuses the host's native ResourceSelectModal UNMODIFIED. The
+  // block never sees the catalog or the search API — it only ever receives the
+  // ONE resource the user physically picked (host chrome can't be enumerated by
+  // the iframe). The real authorization boundary is the SERVER gate
+  // (assertViewerCanGeneratePageResources) at estimate/submit, NOT the picker UI.
+  //  - `canGenerate: true` (UX floor) + the spend-time re-gate (authoritative).
+  //  - resourceType allowlist enforced in resolveResourcePickerRequest (pure,
+  //    unit-tested): an unsupported type is DROPPED and the modal never opens.
+  // NSFW-by-domain is inherited from the native modal's existing parent-context
+  // browsing-level handling, exactly as the model checkpoint picker already
+  // relies on.
+  //
+  // MEDIUM-2 (deferred — documented, NOT wired): that inherited handling is the
+  // SITE-WIDE browsing level, where `blue` is mature. So on a blue (or green)
+  // block — which generation clamps to SFW via `domainBrowsingCeiling` — the
+  // picker UI can still SURFACE mature resources, an inconsistent SFW
+  // experience. This is NOT an iframe leak: the RESOURCE_PICKER_RESULT below is
+  // name/id-only (no thumbnails/meta), and every picked id is re-gated SFW
+  // server-side at estimate/submit (assertViewerCanGeneratePageResources +
+  // domainBrowsingCeiling off the RAW request color) before any spend.
+  //
+  // Why not wired here: `openResourceSelectModal`'s `ResourceSelectOptions`
+  // (resource-select.types.ts) exposes NO browsing-level / sfwOnly / nsfw
+  // constraint — only `canGenerate`, `resources`, `excludeIds`. NSFW filtering
+  // is done purely client-side in the SHARED `ResourceHitList` via
+  // `useApplyHiddenPreferences`, which defaults to the site-wide
+  // `useBrowsingLevelDebounced()` context (the Meili query in
+  // useResourceSelectFilters doesn't filter by browsing level at all). Passing a
+  // block-SFW ceiling in would require adding a new option to
+  // `ResourceSelectOptions`, threading it through `ResourceSelectProvider` /
+  // `useResourceSelectContext`, and feeding it to that `useApplyHiddenPreferences`
+  // call — i.e. modifying the shared modal's filtering internals (higher blast
+  // radius, affects every generation-form picker), and even then the hook's
+  // `isModerator && nsfwLevel===0` carve-out leaves gaps for the currently
+  // mod-gated audience. Deferred as a follow-up in the same bucket as the
+  // Phase-3 REST clamp; tracked in the PR body.
+  //
+  // requestId threads each pick so concurrent requests (e.g. a checkpoint pick
+  // and a LoRA pick open back-to-back) never cross — the SDK hook resolves only
+  // the RESOURCE_PICKER_RESULT whose requestId matches its own request.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_RESOURCE_PICKER', (raw) => {
+      const req = resolveResourcePickerRequest(raw);
+      if (!req) return; // invalid / unsupported type → drop, never open the modal
+      const { requestId, resourceType, baseModelGroup } = req;
+
+      // Normalize an optional family hint through getBaseModelGroup (accepts an
+      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). An
+      // unresolved/empty baseModelGroup applies NO baseModel narrowing — the
+      // modal emits the bare `type = <T>` clause, so it returns ALL resources of
+      // that type (still gated by `canGenerate`), NOT a subset.
+      // That's intentional and safe: the server is the authority on family
+      // compatibility at spend (it family-checks the resources at submit), so an
+      // incompatible pick is rejected there rather than being silently filtered
+      // out of the picker here.
+      const groupKey = baseModelGroup ? getBaseModelGroup(baseModelGroup) : null;
+      const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
+
+      let answered = false;
+      openResourceSelectModal({
+        title: resourceType === 'Checkpoint' ? 'Choose a checkpoint' : 'Choose a resource',
+        options: {
+          canGenerate: true,
+          resources: [{ type: resourceType, baseModels }],
+        },
+        onSelect: (resource) => {
+          answered = true;
+          // Post back ONLY the narrow single-pick allowlist. Never spread the
+          // full GenerationResource — no availability/hasAccess/early-access/
+          // usageControl/minor/poi/sfwOnly/cover-image internals reach the
+          // iframe, only what the block needs to build a body + display it.
+          send('RESOURCE_PICKER_RESULT', {
+            requestId,
+            selected: {
+              // GenerationResource.id is the modelVersionId at the wire.
+              versionId: resource.id,
+              modelId: resource.model.id,
+              // Public display names of the user-chosen resource — the user
+              // picked it, so surfacing its name is safe (mirrors the
+              // CHECKPOINT_PICKER_RESULT projection in IframeHost.tsx).
+              modelName: resource.model.name,
+              versionName: resource.name,
+              baseModel: resource.baseModel,
+              modelType: resource.model.type,
+            },
+          });
+        },
+        onClose: () => {
+          // Dialog dismiss fires after onSelect when the user picks (the modal
+          // closes itself); only emit the "cancelled" result if onSelect never
+          // ran. answered=true short-circuits so a pick isn't followed by a
+          // spurious cancel.
+          if (answered) return;
+          send('RESOURCE_PICKER_RESULT', { requestId });
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send]);
 
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';

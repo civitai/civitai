@@ -296,6 +296,27 @@ export const redisCommandDuration = registerHistogram({
   buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
 });
 
+// Cluster-client SELF-HEAL reconnect counter (FIX #1). Incremented once each time the inflight-leak
+// watchdog forces a full cluster reconnect. Healthy pods never touch this; a nonzero rate flags a pod
+// that hit the binary-wedge state and was auto-recovered (vs needing a human rolling-restart). `trigger`
+// distinguishes the two watchdog paths: 'deadline' = the sawtooth-immune deadline-hit-rate trigger,
+// 'inflight' = the legacy sustained-inflight breach. (See @civitai/redis cluster-selfheal.)
+export const redisSelfHealReconnectCounter = registerCounterWithLabels({
+  name: 'redis_selfheal_reconnect_total',
+  help: 'Forced cluster-client reconnects by the inflight-leak self-heal watchdog',
+  labelNames: ['trigger'] as const,
+});
+
+// Non-critical metric WRITE/LOCK fail-soft counter (FIX #3). Incremented when a metrics:lock setNX/expire
+// or an increment hIncrBy hit the short fail-fast timeout (or a redis error) and the call site skipped the
+// metric/lock so the user mutation could still succeed. A sustained rate means engagement metrics are
+// momentarily under-counting on a wedged pod — never a money/entitlement impact (analytics counters).
+export const redisMetricWriteFailSoftCounter = registerCounterWithLabels({
+  name: 'redis_metric_write_failsoft_total',
+  help: 'Non-critical metric write/lock cluster commands that failed soft (timed out/errored, skipped)',
+  labelNames: ['op'] as const,
+});
+
 // sysRedis Sentinel observability. Uses the `civitai_sysredis_*` metric prefix (NOT civitai_app_*)
 // to match the dashboard naming, so it needs its own registrar.
 const SYSREDIS_PREFIX = 'civitai_sysredis_';

@@ -20,10 +20,20 @@ import {
   getAppDetailSchema,
   getFeaturedBlocksSchema,
   getMarketplaceMetaSchema,
+  listAppBlockReviewsSchema,
   listAvailableSchema,
+  setAppReviewExcludedSchema,
   setMarketplaceMetaSchema,
   subscriptionScopeSchema,
+  upsertAppBlockReviewSchema,
 } from '~/server/schema/blocks/subscription.schema';
+import {
+  getMyAppBlockReview,
+  listAppBlockReviews,
+  setAppReviewExcluded,
+  upsertAppBlockReview,
+} from '~/server/services/appBlockReview.service';
+import { appBlockReviewReward } from '~/server/rewards/active/appBlockReview.reward';
 import {
   approveRequestSchema,
   backfillPublishRequestSchema,
@@ -36,37 +46,54 @@ import {
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
+import {
+  allowMatureContentForCeiling,
+  domainBrowsingCeiling,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
+  emptyRevenue,
   getRecentAttributionsForOwner,
   getRevenueForOwner,
 } from '~/server/services/blocks/buzz-attribution.service';
+import {
+  emptyAnalytics,
+  getMyAppAnalytics,
+  resolveRange,
+} from '~/server/services/blocks/app-analytics.service';
 import {
   getRepresentativeBaseModel,
   resolveBlockCheckpoint,
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
-// dynamic import() inside assertViewerCanGeneratePageModel so the heavy
+// dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
 // stays OUT of this router's static import graph — mirroring the existing
 // lazy import of recordScopeInvocation below.
 import type { ResolveCanGenerateVersion } from '~/server/services/generation/generation.service';
 import {
   buildTextToImageInput,
+  isPageLoraResource,
   resolveBlockVersionContext,
+  resolvePageResourceContext,
   snapshotFromWorkflow,
 } from '~/server/services/blocks/workflow.service';
+import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { createTextToImageStep } from '~/server/services/orchestrator/textToImage/textToImage';
 import { getUserById } from '~/server/services/user.service';
 import {
+  guardedProcedure,
   moderatorProcedure,
   protectedProcedure,
   middleware,
@@ -138,6 +165,45 @@ function isPageToken(claims: { ctx?: unknown }): boolean {
   return (claims.ctx as { entityType?: unknown } | undefined)?.entityType === 'none';
 }
 
+// ---- Maturity enforcement (GA gate) ---------------------------------------
+//
+// AUTHORITATIVE server-side belt. The maturity ceiling comes from the TOKEN's
+// `maxBrowsingLevel` claim (server-minted from the request host at issuance —
+// see block-tokens/index.ts), NEVER from a client-supplied body field, so a
+// block on a SFW domain (green/blue) cannot generate mature output even if its
+// own code is wrong or malicious.
+//
+// FAIL CLOSED: a token minted before this feature (or any token missing the
+// numeric claim) is treated as the most restrictive SFW ceiling, never as
+// "unrestricted". `verifyBlockToken` already rejects a present-but-non-numeric
+// claim, so by here the value is either a finite number or undefined.
+//
+// Returns:
+//   - maxBrowsingLevel:   the effective ceiling (claim value, or SFW fallback)
+//   - allowMatureContent: the orchestrator flag derived from it
+//                         (`false` on SFW, `undefined`/no-clamp only on red)
+//   - isGreen:            the prompt-audit's "SFW prompt audit" toggle — true
+//                         whenever the ceiling is SFW (i.e. NOT mature-allowed)
+function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
+  maxBrowsingLevel: number;
+  allowMatureContent: boolean | undefined;
+  isGreen: boolean;
+} {
+  const maxBrowsingLevel =
+    typeof claims.maxBrowsingLevel === 'number' && Number.isFinite(claims.maxBrowsingLevel)
+      ? claims.maxBrowsingLevel
+      : sfwBrowsingLevelsFlag; // fail closed
+  const allowMatureContent = allowMatureContentForCeiling(maxBrowsingLevel);
+  return {
+    maxBrowsingLevel,
+    allowMatureContent,
+    // `auditPromptServer`'s `isGreen` flag selects the SFW prompt audit. Tie it
+    // to the maturity ceiling rather than the literal green domain: a blue
+    // (SFW, per the App-Blocks product decision) block gets the SFW audit too.
+    isGreen: allowMatureContent === false,
+  };
+}
+
 // SECURITY-CRITICAL (W10). A page token has no model binding, so the model-
 // binding check (`ctxModelId === body.modelId`) that bounds a model slot does
 // NOT apply. The replacement bound is a PRE-SPEND slice of the platform's
@@ -163,27 +229,35 @@ function isPageToken(claims: { ctx?: unknown }): boolean {
 // always a mod (assertViewerIsModerator), so they see mod-level access, which
 // is correct platform behaviour; when GA opens to non-mods the same gate bounds
 // them properly. Fail-closed: a version missing from the result Map → FORBIDDEN.
-async function assertViewerCanGeneratePageModel(opts: {
-  gate: ReturnType<typeof buildGateVersion>;
+//
+// Page-LoRA (Increment 1): generalized from 1→N versions. The checkpoint AND
+// every picked LoRA are gated in ONE `resolveCanGenerateForVersions` call (it
+// already takes an array and returns a Map keyed by version id). FAIL CLOSED if
+// ANY gate's canGenerate is false OR the version is missing from the result Map
+// — a missed entry must deny, never default-allow.
+async function assertViewerCanGeneratePageResources(opts: {
+  gates: ReturnType<typeof buildGateVersion>[];
   viewer: { id: number; isModerator: boolean };
   sfwOnly: boolean;
   wildcardsEnabled: boolean;
 }): Promise<void> {
-  const { gate, viewer, sfwOnly, wildcardsEnabled } = opts;
+  const { gates, viewer, sfwOnly, wildcardsEnabled } = opts;
   const { resolveCanGenerateForVersions } = await import(
     '~/server/services/generation/generation.service'
   );
-  const states = await resolveCanGenerateForVersions([gate], {
+  const states = await resolveCanGenerateForVersions(gates, {
     user: { id: viewer.id, isModerator: viewer.isModerator },
     sfwOnly,
     wildcardsEnabled,
   });
-  const canGenerate = states.get(gate.id)?.canGenerate ?? false;
-  if (!canGenerate) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'model is not available for generation',
-    });
+  for (const gate of gates) {
+    const canGenerate = states.get(gate.id)?.canGenerate ?? false;
+    if (!canGenerate) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'a selected resource is not available for generation',
+      });
+    }
   }
 }
 
@@ -202,6 +276,123 @@ function buildGateVersion(gate: {
   modelVersionAlias: unknown;
 }): ResolveCanGenerateVersion {
   return gate as unknown as ResolveCanGenerateVersion;
+}
+
+// Page-LoRA (Increment 1; GA): resolve + validate the page's additional-
+// resource (LoRA) stack from `body.additionalResources`. For each entry it:
+//   1. resolves the version statelessly (NO modelId binding — pages have none),
+//   2. enforces LoRA-only v1 (rejects any non-LoRA additional resource), and
+//   3. enforces the platform's REAL generation-compatibility check against the
+//      checkpoint.
+// The compatibility check is the correctness boundary: the orchestrator belt
+// filters by resource TYPE (common.ts keeps a LoRA-typed resource), NOT by
+// generation compatibility — so an incompatible LoRA of type LORA is PASSED
+// downstream and billed for, producing a gen the viewer paid for that quietly
+// ignored (or degraded) their LoRA. This explicit check is what prevents such a
+// LoRA from being sent (and charged) at all.
+//
+// GA change: this previously collapsed both sides to a coarse base-model FAMILY
+// (getBaseModelSetType, e.g. all SDXL variants → 'SDXL') and required exact
+// equality — which rejected platform-VALID cross-ecosystem LoRAs (e.g. a Pony
+// LoRA on an SDXL checkpoint). It now defers to the platform's own
+// generation-compatibility model via `getResourceGenerationSupport`, the SAME
+// function the generation form / orchestrator pipeline uses
+// (getResourceEcosystemCompatibility, areResourcesCompatible). A non-null
+// SupportLevel ('full' | 'partial') = the platform considers this LoRA
+// generatable against this checkpoint (same-ecosystem OR an explicit
+// cross-ecosystem rule); `null` = NOT compatible → reject. This widens what's
+// accepted to exactly the platform's definition while staying FAIL-CLOSED.
+//
+// FAIL-CLOSED on unknown: `getResourceGenerationSupport` does
+// `baseModelByName.get(...)` for BOTH the checkpoint and the LoRA baseModel and
+// returns `null` when either is unrecognized (an UNKNOWN baseModel STRING) — so
+// an unknown checkpoint baseModel OR an unknown LoRA baseModel → null → reject.
+//
+// BUT the null check ALONE does NOT cover one case the old family collapse did:
+// the platform's RECOGNIZED baseModel record literally named 'Other'
+// (basemodel.constants.ts BM.Other → ecosystemId ECO.Other). For that record
+// `baseModelByName.get('Other')` SUCCEEDS, so a ('Other' checkpoint, 'Other'
+// LoRA) pair resolves both sides to the SAME ECO.Other ecosystem and
+// getGenerationSupport returns 'full' at its same-ecosystem short-circuit
+// (BEFORE the disabled/coverage checks) → non-null → ACCEPT. That is a
+// fail-OPEN on a billing boundary against the platform's "unclassified" bucket.
+// The old `getBaseModelSetType(...) === 'Other'` guard caught it because that
+// helper maps BOTH unknown strings AND the literal-'Other' record to the
+// 'Other' ecosystem key. We therefore RE-ADD an explicit 'Other'-group reject
+// (below, before/independent of the support call) so BOTH the literal-'Other'
+// and unrecognized-string cases stay FAIL-CLOSED — fail-closed is mandatory on
+// this gate.
+//
+// `checkpointBaseModel` MUST be the baseModel of the ACTUAL checkpoint
+// resolveBlockCheckpoint resolves (the anchor buildTextToImageInput uses), NOT
+// the page body model — for a non-Checkpoint page body those differ.
+//
+// Returns the per-LoRA gate bags so the caller can pass checkpoint + every LoRA
+// through the entitlement gate in ONE call. Throws BAD_REQUEST (non-LoRA /
+// not platform-compatible incl. unknown baseModel), NOT_FOUND
+// (missing/unpublished version) — all BEFORE any cost/spend.
+async function resolvePageLoraGates(opts: {
+  additionalResources: { modelVersionId: number; strength: number }[] | undefined;
+  checkpointBaseModel: string;
+}): Promise<ReturnType<typeof buildGateVersion>[]> {
+  const { additionalResources, checkpointBaseModel } = opts;
+  if (!additionalResources?.length) return [];
+  // FAIL-CLOSED on the 'Other' ecosystem group. getResourceGenerationSupport's
+  // null check does NOT catch the platform's recognized 'Other' baseModel
+  // record (it resolves to a real ECO.Other ecosystem and short-circuits to
+  // 'full' same-ecosystem), so a ('Other', 'Other') pair would fail OPEN. If
+  // the resolved CHECKPOINT baseModel is in the 'Other' group we can't
+  // establish compatibility for ANY LoRA — reject up front, before/independent
+  // of the support call. getBaseModelSetType maps BOTH unknown strings and the
+  // literal-'Other' record to 'Other', closing both holes.
+  if (getBaseModelSetType(checkpointBaseModel) === 'Other') {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'a selected LoRA is not compatible with the checkpoint base model',
+    });
+  }
+  const gates: ReturnType<typeof buildGateVersion>[] = [];
+  for (const r of additionalResources) {
+    const lora = await resolvePageResourceContext(r.modelVersionId);
+    // LoRA-only v1. A non-LoRA additional resource (Checkpoint, VAE, embedding,
+    // etc.) is rejected at the boundary rather than silently passed downstream.
+    if (!isPageLoraResource(lora.modelType)) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'additional resources must be LoRA models',
+      });
+    }
+    // Platform generation-compatibility check (correctness boundary; the belt
+    // filters by type, not compatibility, so it would PASS an incompatible LoRA
+    // and bill for it). `null` = NOT generatable against this checkpoint per the
+    // platform's own model — including when EITHER baseModel is unrecognized
+    // (fail-closed on unknown). A non-null SupportLevel ('full'|'partial') means
+    // the platform permits it, which now allows same-ecosystem AND platform-
+    // defined cross-ecosystem LoRAs (e.g. a Pony LoRA on an SDXL checkpoint).
+    // FAIL-CLOSED on the 'Other' ecosystem group for the LoRA side too — same
+    // reasoning as the checkpoint guard above: the support call would return
+    // 'full' for a literal-'Other' LoRA against an 'Other' checkpoint, so reject
+    // an 'Other'-group LoRA before/independent of the support call.
+    if (getBaseModelSetType(lora.baseModel) === 'Other') {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'a selected LoRA is not compatible with the checkpoint base model',
+      });
+    }
+    const support = getResourceGenerationSupport(
+      checkpointBaseModel,
+      lora.baseModel,
+      lora.modelType as ModelType
+    );
+    if (support === null) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'a selected LoRA is not compatible with the checkpoint base model',
+      });
+    }
+    gates.push(buildGateVersion(lora.gate));
+  }
+  return gates;
 }
 
 // ---- Cumulative Buzz-spend cap (audit A7 / design-gaps H1) -----------------
@@ -1231,6 +1422,117 @@ export const blocksRouter = router({
       return { items };
     }),
 
+  // -------------------------------------------------------------------------
+  // F-E marketplace REVIEWS (5-star) — all DARK behind enforceAppBlocksFlag.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Create-or-update the viewer's review for an app block (5-star).
+   *
+   * GATING / ANTI-ABUSE (all enforced, see appBlockReview.service):
+   *   - enforceAppBlocksFlag (dark today: mutation throws UNAUTHORIZED when off).
+   *   - guardedProcedure: authenticated, email-verified, NOT muted.
+   *   - rating ∈ [1,5]; NO self-review (owner rejected); MUST have an enabled
+   *     install; ONE per (user, app) via the DB unique (upsert, not a 2nd row).
+   *
+   * REWARD (money-touching): a blue-buzz reward fires ONCE per (user, app), only
+   * on the CREATE branch (isFirstReview), AFTER the insert succeeds. It is
+   * FAIL-SOFT — a reward/ClickHouse outage must never 500 the review. We wrap
+   * it in try/catch as defense-in-depth on top of createBuzzEvent's own
+   * fail-soft inline path.
+   */
+  upsertReview: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 60,
+        errorMessage: 'Too many review submissions — slow down.',
+      })
+    )
+    .input(upsertAppBlockReviewSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { review, isFirstReview } = await upsertAppBlockReview({
+        userId: ctx.user.id,
+        appBlockId: input.appBlockId,
+        rating: input.rating,
+        recommended: input.recommended,
+        details: input.details ?? null,
+      });
+
+      // Blue-buzz reward — first review only, fail-soft. The reward must never
+      // fail the review write (it's an audit/analytics + non-cashable grant).
+      if (isFirstReview) {
+        try {
+          await appBlockReviewReward.apply(
+            { appBlockId: input.appBlockId, userId: ctx.user.id, isFirstReview: true },
+            { ip: ctx.ip }
+          );
+        } catch (error) {
+          logToAxiom(
+            {
+              name: 'app-block-review-reward',
+              type: 'error',
+              message: 'Failed to apply appBlockReview reward (non-fatal)',
+              appBlockId: input.appBlockId,
+              userId: ctx.user.id,
+              error: (error as Error)?.message,
+            },
+            'app-blocks'
+          ).catch(() => undefined);
+        }
+      }
+
+      return { review, isFirstReview };
+    }),
+
+  /**
+   * Keyset-paginated list of an app's reviews (newest first), excluding
+   * mod-excluded rows. Public/anon-CAPABLE but DARK behind the flag (returns an
+   * empty page when the flag is off, same posture as listAvailable).
+   */
+  listReviews: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many review requests — slow down.',
+      })
+    )
+    .input(listAppBlockReviewsSchema)
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return { items: [], nextCursor: undefined };
+      }
+      return listAppBlockReviews(input);
+    }),
+
+  /**
+   * The viewer's own review for an app block (or null) — backs the
+   * "you rated this N★" state on the detail page. protectedProcedure (per-user
+   * data), DARK behind the flag.
+   */
+  getMyReview: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getAppDetailSchema)
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return null;
+      return getMyAppBlockReview(input.appBlockId, ctx.user.id);
+    }),
+
+  /**
+   * MOD-ONLY: flip `exclude` on a review so it drops out of the rating aggregate
+   * + the Bayesian sort. moderatorProcedure + the flag gate. Mirrors
+   * toggleExcludeResourceReview.
+   */
+  setReviewExcluded: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(setAppReviewExcludedSchema)
+    .mutation(async ({ input }) => {
+      return setAppReviewExcluded(input);
+    }),
+
   /**
    * MOD-ONLY: read the current marketplace metadata (category/featured/order)
    * for one app_block — seeds the review-page curation form (F-E E4).
@@ -1524,12 +1826,14 @@ export const blocksRouter = router({
       }
       // Context binding. A MODEL token pins `ctx.modelId`; the body must match
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
-      // lets the viewer pick any model they're entitled to generate against, so
-      // the modelId match is SKIPPED and replaced (below, after the version
-      // read) by the pre-spend availability/coverage gate
-      // (assertViewerCanGeneratePageModel). Early-access + Private-subscription
-      // entitlement is enforced separately by the orchestrator resource belt.
-      // See isPageToken / assertViewerCanGeneratePageModel.
+      // lets the viewer pick a model, so the modelId match is SKIPPED and
+      // replaced (below, after the version read) by the pre-spend availability
+      // gate (assertViewerCanGeneratePageResources). That gate is a fail-fast UX
+      // layer over the body version + LoRAs only — it does NOT cover the
+      // resolved/billed checkpoint anchor; early-access + Private-subscription
+      // entitlement (and the resolved anchor) are enforced by the orchestrator
+      // resource belt over the full array. See isPageToken /
+      // assertViewerCanGeneratePageResources.
       const isPage = isPageToken(claims);
       if (!isPage) {
         const ctxModelId = Number(
@@ -1537,6 +1841,17 @@ export const blocksRouter = router({
         );
         if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+        }
+        // Page-LoRA (Increment 1): additionalResources is a PAGE-ONLY feature.
+        // A MODEL token's checkpoint comes from resolveBlockCheckpoint (install
+        // rows), and the model branch never runs the per-resource entitlement
+        // gate — so accepting additionalResources here would fan un-gated LoRAs
+        // into the resources array. Reject them fail-closed on the model path.
+        if (input.body.additionalResources?.length) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'additionalResources are not supported for model-bound blocks',
+          });
         }
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -1556,18 +1871,15 @@ export const blocksRouter = router({
         input.body.modelId
       );
       const user = await getBlockSessionUser(userId);
-      // PAGE branch: pre-spend availability/coverage gate on the model the REAL
-      // viewer picked (the security replacement for the skipped model-binding
-      // check) — fail-closed before any spend. Early-access + Private-sub
-      // entitlement is enforced downstream by the orchestrator resource belt.
-      if (isPage) {
-        await assertViewerCanGeneratePageModel({
-          gate: buildGateVersion(resolved.gate),
-          viewer: { id: userId, isModerator: !!user.isModerator },
-          sfwOnly: ctx.domain === 'green',
-          wildcardsEnabled: !!ctx.features.wildcards,
-        });
-      }
+      // Resolve the effective checkpoint BEFORE the page gate. This is the
+      // ACTUAL anchor buildTextToImageInput puts at the head of the resources
+      // array — for a non-Checkpoint page body it is NOT resolved.baseModel
+      // (resolveBlockCheckpoint falls through to a viewer/publisher/popular
+      // checkpoint that may belong to a different base-model family). The page
+      // LoRA family-match must anchor on THIS checkpoint, not the body model.
+      // resolveBlockCheckpoint is a pure read (install/override rows + a
+      // fail-open cache populate) with no side effect that must follow the
+      // gate, so it is safe to run before it.
       const checkpoint = await resolveBlockCheckpoint({
         blockInstanceId: claims.blockInstanceId,
         modelId: resolved.modelId,
@@ -1577,6 +1889,42 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
+      // PAGE branch: pre-spend availability gate over the resources THIS gate
+      // can see — the viewer-picked BODY version (`resolved.gate`) AND each
+      // additional LoRA — as a fail-fast UX layer in place of the skipped
+      // model-binding check. NOTE it does NOT cover the resolved/billed
+      // checkpoint ANCHOR: for a non-Checkpoint page body, resolveBlockCheckpoint
+      // picks a DIFFERENT default checkpoint (validated there only for
+      // Published + base-model family — not early-access/Private/availability).
+      // That anchor's entitlement — and early-access + Private-sub entitlement
+      // for the whole array — is enforced downstream by the orchestrator
+      // resource belt over the FULL resources array; this gate is not the sole
+      // boundary. Keep both belts.
+      // Maturity clamp (authoritative). Derived ONCE from the token's
+      // server-minted ceiling claim, NOT a client body field nor request-time
+      // `ctx.domain`. Drives both the resource-selection gate (`sfwOnly`, so a
+      // SFW-domain block can't even PICK a mature resource — defense in depth)
+      // and the generation-output clamp (`allowMatureContent`). Green AND blue
+      // → sfwOnly true; red → false. Mirrors submitWorkflow below.
+      const { allowMatureContent } = resolveBlockMaturity(claims);
+      if (isPage) {
+        // Resolve + validate the LoRA stack first (LoRA-only + family-match)
+        // so a bad resource fails BEFORE the entitlement gate / any cost.
+        // Family-match anchors on the RESOLVED checkpoint's baseModel.
+        const loraGates = await resolvePageLoraGates({
+          additionalResources: input.body.additionalResources,
+          checkpointBaseModel: checkpoint.baseModel,
+        });
+        await assertViewerCanGeneratePageResources({
+          gates: [buildGateVersion(resolved.gate), ...loraGates],
+          viewer: { id: userId, isModerator: !!user.isModerator },
+          // SFW-only resource selection unifies with the output clamp: derive
+          // from the authoritative token maturity (green/blue → true), not the
+          // request domain. `allowMatureContent === false` ⇔ SFW ceiling.
+          sfwOnly: allowMatureContent === false,
+          wildcardsEnabled: !!ctx.features.wildcards,
+        });
+      }
       const token = await getOrchestratorToken(userId, ctx);
       const generateInput = buildTextToImageInput(input.body, {
         ...resolved,
@@ -1589,6 +1937,7 @@ export const blocksRouter = router({
           steps: [step],
           tags: buildWorkflowTags(claims, resolved.baseModel),
           currencies: BLOCK_CURRENCIES,
+          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         },
         query: { whatif: true },
       });
@@ -1616,11 +1965,12 @@ export const blocksRouter = router({
       }
       // Context binding. MODEL token → body.modelId must match ctx.modelId.
       // PAGE token (ctx.entityType==='none') → no model binding; skip the match
-      // and enforce the pre-spend availability/coverage gate after the version
-      // read instead (see estimateWorkflow for the same branch; early-access +
-      // Private-sub entitlement is left to the orchestrator resource belt). The
-      // buzzBudget claim + per-user daily cap still bound spend identically for
-      // pages.
+      // and enforce the pre-spend availability gate after the version read
+      // instead (see estimateWorkflow for the same branch; that gate covers the
+      // body version + LoRAs as fail-fast UX — the resolved checkpoint anchor
+      // plus early-access + Private-sub entitlement are left to the orchestrator
+      // resource belt over the full array). The buzzBudget claim + per-user
+      // daily cap still bound spend identically for pages.
       const isPage = isPageToken(claims);
       if (!isPage) {
         const ctxModelId = Number(
@@ -1628,6 +1978,16 @@ export const blocksRouter = router({
         );
         if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+        }
+        // Page-LoRA (Increment 1): additionalResources is PAGE-ONLY. The model
+        // branch never runs the per-resource entitlement gate, so reject the
+        // field fail-closed rather than fan un-gated LoRAs into the resources
+        // array. (See estimateWorkflow for the same guard.)
+        if (input.body.additionalResources?.length) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'additionalResources are not supported for model-bound blocks',
+          });
         }
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -1651,18 +2011,12 @@ export const blocksRouter = router({
         input.body.modelId
       );
       const user = await getBlockSessionUser(userId);
-      // PAGE branch: pre-spend availability/coverage gate on the model the REAL
-      // viewer picked (replaces the skipped model-binding check) — fail closed
-      // BEFORE any reservation. Early-access + Private-sub entitlement is
-      // enforced downstream by the orchestrator resource belt (whatIf + real).
-      if (isPage) {
-        await assertViewerCanGeneratePageModel({
-          gate: buildGateVersion(resolved.gate),
-          viewer: { id: userId, isModerator: !!user.isModerator },
-          sfwOnly: ctx.domain === 'green',
-          wildcardsEnabled: !!ctx.features.wildcards,
-        });
-      }
+      // Resolve the effective checkpoint BEFORE the page gate so the page LoRA
+      // family-match anchors on the ACTUAL checkpoint buildTextToImageInput
+      // uses (see estimateWorkflow for the full rationale — for a
+      // non-Checkpoint page body this differs from resolved.baseModel).
+      // resolveBlockCheckpoint is a pure read with no gate-ordering side
+      // effect, so resolving it ahead of the gate is safe.
       const checkpoint = await resolveBlockCheckpoint({
         blockInstanceId: claims.blockInstanceId,
         modelId: resolved.modelId,
@@ -1672,16 +2026,52 @@ export const blocksRouter = router({
         userId,
         slotId: ctxSlotId,
       });
+      // PAGE branch: pre-spend availability gate over the resources THIS gate
+      // can see — the viewer-picked BODY version (`resolved.gate`) AND each
+      // additional LoRA — a fail-fast UX layer in place of the skipped
+      // model-binding check. It does NOT cover the resolved/billed checkpoint
+      // ANCHOR: a non-Checkpoint page body resolves a DIFFERENT default
+      // checkpoint (validated there only for Published + base-model family).
+      // That anchor's entitlement, plus early-access + Private-sub entitlement
+      // for the whole array, is enforced downstream by the orchestrator
+      // resource belt over the FULL array (whatIf + real) — this gate is not
+      // the sole boundary. Keep both belts.
+      // Maturity clamp (authoritative, GA gate). Derived ONCE from the token's
+      // server-minted ceiling claim and applied to: (a) the resource-selection
+      // gate (`sfwOnly`, defense in depth — a SFW block can't even PICK a
+      // mature resource), (b) the prompt audit (`isGreen` → SFW prompt audit on
+      // SFW domains), (c) the whatIf cost step, and (d) the real submit. NEVER
+      // from a client body field nor request-time `ctx.domain`, so a SFW-domain
+      // (green/blue) block cannot widen to mature output. Fail closed: a
+      // legacy/absent claim resolves to the SFW ceiling.
+      const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+
+      if (isPage) {
+        const loraGates = await resolvePageLoraGates({
+          additionalResources: input.body.additionalResources,
+          checkpointBaseModel: checkpoint.baseModel,
+        });
+        await assertViewerCanGeneratePageResources({
+          gates: [buildGateVersion(resolved.gate), ...loraGates],
+          viewer: { id: userId, isModerator: !!user.isModerator },
+          // Unify resource selection with the output clamp: SFW-only iff the
+          // authoritative token maturity is SFW (green/blue), not the request
+          // domain. `allowMatureContent === false` ⇔ SFW ceiling.
+          sfwOnly: allowMatureContent === false,
+          wildcardsEnabled: !!ctx.features.wildcards,
+        });
+      }
       const token = await getOrchestratorToken(userId, ctx);
 
       // Prompt audit before any orchestrator interaction (mirrors what
       // generateFromGraph does). A block can't bypass moderation by submitting
-      // through this path.
+      // through this path. `isGreen` (SFW prompt audit) is domain/ceiling-
+      // derived so a SFW-domain block's prompts get the stricter audit.
       await auditPromptServer({
         prompt: input.body.params.prompt,
         negativePrompt: input.body.params.negativePrompt,
         userId,
-        isGreen: false,
+        isGreen,
         isModerator: !!user.isModerator,
       });
 
@@ -1702,7 +2092,12 @@ export const blocksRouter = router({
       const tags = buildWorkflowTags(claims, resolved.baseModel);
       const whatIfResult = await submitWorkflow({
         token,
-        body: { steps: [stepForCostCheck], tags, currencies: BLOCK_CURRENCIES },
+        body: {
+          steps: [stepForCostCheck],
+          tags,
+          currencies: BLOCK_CURRENCIES,
+          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        },
         query: { whatif: true },
       });
       const cost = whatIfResult.cost?.total ?? 0;
@@ -1780,7 +2175,14 @@ export const blocksRouter = router({
         const step = await createTextToImageStep({ ...generateInput, user });
         const submitted = await submitWorkflow({
           token,
-          body: { steps: [step], tags, currencies: BLOCK_CURRENCIES },
+          body: {
+            steps: [step],
+            tags,
+            currencies: BLOCK_CURRENCIES,
+            // Authoritative maturity clamp on the REAL submit — the orchestrator
+            // rejects mature output when this is false. Token-claim derived.
+            ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+          },
         });
         snapshot = snapshotFromWorkflow(submitted);
       } catch (e) {
@@ -1915,9 +2317,31 @@ export const blocksRouter = router({
       // gen-meta (prompt/seed) aren't leaked into the third-party publisher
       // iframe for NSFW-opted-out or logged-out viewers. Anon (no ctx.user)
       // is forced to public (PG) inside the service.
+      //
+      // The color domain carries the maturity CEILING: on a SFW domain
+      // (green/blue) the service clamps the effective browsing level to SFW so a
+      // logged-in viewer can't request `browsingLevel: 31` and pull mature
+      // thumbnails + meta into the iframe. This is the display-surface analogue
+      // of the authoritative generation clamp. This is a public read with no
+      // block-token claim handy, so the request-time domain is the authority.
+      //
+      // LOW-1 hardening: derive the maturity domain from the RAW
+      // `getRequestDomainColor(req)` — which returns `undefined` for an
+      // UNRESOLVED host — NOT from `ctx.domain`, which is `?? 'blue'`-defaulted
+      // in createContext for the convenience of code that wants a concrete
+      // color. Routing the showcase clamp through that default would make an
+      // unresolved host fail-CLOSED today only because `domainBrowsingCeiling`
+      // happens to map 'blue' → SFW; the moment the platform flips blue→mature
+      // there, the `?? 'blue'` default would silently turn this fail-closed read
+      // into a fail-OPEN one for unresolved hosts. Passing the raw `undefined`
+      // through makes `domainBrowsingCeiling(undefined)` fail closed to SFW
+      // independent of blue's mapping — matching how the authoritative
+      // generation belt clamps off the raw color (never the 'blue' default).
+      const rawDomain = getRequestDomainColor(ctx.req);
       return getModelShowcaseImages(input.modelVersionId, {
         userId: ctx.user?.id ?? null,
         browsingLevel: input.browsingLevel,
+        domain: rawDomain,
       });
     }),
 
@@ -2097,6 +2521,12 @@ export const blocksRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
+      // Dark-flag fail-closed: while the appBlocks flag is off the middleware
+      // marks the ctx → return the zeroed revenue shape WITHOUT running any
+      // aggregate, so a flag-off moderator gets no live revenue data.
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return emptyRevenue();
+      }
       const user = ctx.user as SessionUser;
       const { summary, topApps } = await getRevenueForOwner({
         ownerUserId: user.id,
@@ -2109,6 +2539,44 @@ export const blocksRouter = router({
         appBlockId: input.appBlockId,
       });
       return { summary, topApps, recentAttributions };
+    }),
+
+  /**
+   * Phase 0 author analytics — installs, runs+buzz spent, buzz purchased,
+   * and engagement for the caller's OWN app(s), derived entirely from
+   * existing App Blocks tables (no new instrumentation). Read-only.
+   *
+   * Same audience gate as getMyRevenue (moderatorProcedure +
+   * enforceAppBlocksFlag — dark behind the appBlocks flag). Ownership is
+   * enforced inside the service: it resolves the caller's owned app_block
+   * ids via AppBlock.app.userId and returns zeroed/empty analytics for a
+   * non-owned id, so an author can never read another author's metrics.
+   */
+  getMyAppAnalytics: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64).optional(),
+        from: z.string().datetime().optional(),
+        to: z.string().datetime().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const from = input.from ? new Date(input.from) : undefined;
+      const to = input.to ? new Date(input.to) : undefined;
+      // Dark-flag fail-closed: while the appBlocks flag is off the middleware
+      // marks the ctx → return the zeroed analytics shape (with the resolved
+      // range, so the UI still has a window) WITHOUT running any aggregate.
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return emptyAnalytics(resolveRange({ from, to }), false);
+      }
+      const user = ctx.user as SessionUser;
+      return getMyAppAnalytics({
+        userId: user.id,
+        appBlockId: input.appBlockId,
+        from,
+        to,
+      });
     }),
 
   /**

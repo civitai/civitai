@@ -19,7 +19,8 @@ import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getAllServerHosts } from '~/server/utils/server-domain';
+import { getAllServerHosts, getRequestDomainColor } from '~/server/utils/server-domain';
+import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
 import {
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
@@ -680,6 +681,22 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
           slotId: install.slotId,
         };
 
+  // MATURITY ENFORCEMENT (GA gate). Stamp the AUTHORITATIVE color-domain
+  // maturity ceiling into the token AT MINT, derived from the request host
+  // (the same host the CORS allowlist above already trusts). This claim is the
+  // generation/catalog maturity boundary for the token's whole 15-min lifetime:
+  // a token minted on green/blue carries the SFW ceiling, red carries the
+  // mature ceiling. The block submit/estimate path derives `allowMatureContent`
+  // from THIS claim (never a client body field), so a SFW-domain block cannot
+  // generate mature output even if its own code is wrong or malicious.
+  //
+  // Fail-closed: an unknown/missing domain → domainBrowsingCeiling() returns the
+  // SFW ceiling. We always emit the claim so consumers can distinguish a
+  // legacy (pre-feature) token — which has NO claim and is treated as SFW by
+  // the consumer — from an explicit red mint.
+  const domainColor = getRequestDomainColor(req);
+  const maxBrowsingLevel = domainBrowsingCeiling(domainColor);
+
   const result = await BlockTokenService.sign({
     userId,
     blockId: block.blockId,
@@ -689,6 +706,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     scopes: manifestScopes,
     ctx,
     buzzBudget,
+    domain: domainColor ?? null,
+    maxBrowsingLevel,
   });
 
   // A6: surface the consent signal alongside the token. The token carries only
@@ -702,5 +721,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     expiresAt: result.expiresAt,
     needsConsent,
     missingScopes,
+    // Advisory maturity signal for the host → BLOCK_INIT. The AUTHORITATIVE
+    // enforcement is the same claim baked into the token above; this is the
+    // plaintext mirror so the host doesn't JWT-decode and blocks can
+    // self-filter their catalog reads / blur. See projectBlockInit.ts.
+    domain: domainColor ?? null,
+    maxBrowsingLevel,
   });
 });

@@ -30,6 +30,7 @@ import {
   trainingDetailsBaseModelsAcestep15,
   trainingDetailsBaseModelsAcestep15Xl,
   trainingDetailsBaseModelsAnima,
+  trainingDetailsBaseModelsBoogu,
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsErnie,
   trainingDetailsBaseModelsFlux,
@@ -479,6 +480,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsAnima as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelBoogu =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsBoogu as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelAcestep15 =
     !!formBaseModel &&
     (trainingDetailsBaseModelsAcestep15 as ReadonlyArray<string>).includes(formBaseModel)
@@ -646,6 +652,17 @@ export const ModelSelect = ({
                       isNew={new Date() < new Date('2026-06-25')}
                     />
                   )}
+                  {features.booguTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="orange"
+                      name="Boogu"
+                      value={baseModelBoogu}
+                      baseType="boogu"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew={new Date() < new Date('2026-07-19')}
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'audio' && (
@@ -783,6 +800,7 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'ltx23' ||
                   selectedRun.baseType === 'hidream-o1' ||
                   selectedRun.baseType === 'anima' ||
+                  selectedRun.baseType === 'boogu' ||
                   selectedRun.baseType === 'acestep15' ||
                   selectedRun.baseType === 'acestep15xl' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">

@@ -8,6 +8,7 @@ import {
 } from '~/server/orchestrator/lightricks/lightricks.schema';
 import { minimaxGenerationConfig } from '~/server/orchestrator/minimax/minimax.schema';
 import { mochiGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema';
+import { polyGenGenerationConfig } from '~/server/orchestrator/polygen/polygen.schema';
 import { veo3GenerationConfig } from '~/server/orchestrator/veo3/veo3.schema';
 import { viduGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
 import { wanGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
@@ -32,4 +33,27 @@ export const videoGenerationConfig2 = {
 
 export function getVideoGenerationConfig(key: string): VideoGenerationConfig | undefined {
   return videoGenerationConfig2[key as OrchestratorEngine2];
+}
+
+// =============================================================================
+// 3D Model generation (PolyGen / Meshy via Fal)
+//
+// PolyGen output isn't a video, so it lives in its own registry — kept in
+// this file alongside `videoGenerationConfig2` so all generator engines
+// have one discoverable home. The form + whatif machinery looks up the
+// engine here with `getModel3DGenerationConfig`.
+// =============================================================================
+
+export type Model3DOrchestratorEngine = keyof typeof model3DGenerationConfig;
+export const model3DGenerationConfig = {
+  polyGen: polyGenGenerationConfig,
+};
+export type Model3DGenerationConfig =
+  (typeof model3DGenerationConfig)[keyof typeof model3DGenerationConfig];
+export type Model3DGenerationSchemaInfer = z.infer<Model3DGenerationConfig['schema']>;
+
+export function getModel3DGenerationConfig(
+  key: string
+): Model3DGenerationConfig | undefined {
+  return model3DGenerationConfig[key as Model3DOrchestratorEngine];
 }

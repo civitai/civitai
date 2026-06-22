@@ -63,7 +63,7 @@ vi.mock('~/server/redis/client', () => ({
   },
   REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
 }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
+vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai', LOGGING: '' } }));
 
 /** Reconstruct the assembled SQL string from the captured Prisma.sql object. */
 function capturedSql(): string {

@@ -32,6 +32,38 @@ export const addViewSchema = z.object({
 
 export type AddViewSchema = z.infer<typeof addViewSchema>;
 
+// App Blocks Analytics Phase 2 — block render/impression event.
+//
+// `block_scope_invocations` (Postgres) only captures AUTHENTICATED scoped API
+// calls, so anon viewers and static/no-scope blocks (which never make a scoped
+// call) are invisible. This event fires once per host mount at the BLOCK_READY
+// transition to make those renders measurable. It is emitted via the lightweight
+// /api/track/block-render beacon (see that route) rather than a tRPC mutation,
+// to skip the per-request tRPC middleware cost at GA volume.
+//
+// GRANULARITY: this is ONE row PER HOST MOUNT. A tab-switch or model-navigation
+// remount RE-FIRES it, so the same viewer can produce multiple rows for the
+// "same" block view. Consumers computing "unique views" MUST dedup in-query
+// (e.g. by viewer/session over a window) — do NOT treat each row as a unique view.
+//
+// SECURITY: the client supplies ONLY the three identifiers below. `isAnon` is
+// derived server-side from the session (`!session?.user` in the beacon route)
+// and `userId` is stamped by the Tracker — neither is accepted from the client
+// (the non-strict object strips any client-sent isAnon/userId), so an anon
+// viewer can't spoof an authed render (or vice-versa).
+export type BlockRenderInput = z.infer<typeof blockRenderSchema>;
+export const blockRenderSchema = z.object({
+  // The approved AppBlock's id (UUID-ish string). Capped to keep a tampered
+  // client from bloating the tracker payload; well above any real id length.
+  appBlockId: z.string().trim().min(1).max(256),
+  // The block instance id (`page_<appBlockId>` for pages, or the per-slot
+  // install instance id for slot hosts).
+  blockInstanceId: z.string().trim().min(1).max(256),
+  // Where the block rendered: 'app.page' for the full-page runner, or a slot
+  // id like 'model.sidebar_top' for the in-page slot host.
+  slotId: z.string().trim().min(1).max(128),
+});
+
 export type TrackShareInput = z.infer<typeof trackShareSchema>;
 export const trackShareSchema = z.object({
   platform: z.enum(['reddit', 'twitter', 'clipboard']),

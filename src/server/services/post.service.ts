@@ -75,6 +75,7 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   MediaType,
+  Model3DStatus,
   ModelHashType,
   TagTarget,
   TagType,
@@ -818,6 +819,23 @@ export const createPost = async ({
     availability = modelVersion?.model.availability ?? Availability.Public;
   }
 
+  // Anyone can post to any published 3D model (mirrors Models). Non-owners are
+  // still blocked from attaching to a draft/unpublished/deleted 3D model so a
+  // queue-card draft can't be hijacked before its owner ships it.
+  if (data.model3dId) {
+    const model3d = await dbWrite.model3D.findUnique({
+      where: { id: data.model3dId },
+      select: { id: true, userId: true, status: true, deletedAt: true },
+    });
+    if (!model3d || model3d.deletedAt) {
+      throw throwNotFoundError(`No 3D model with id ${data.model3dId}`);
+    }
+    const isOwner = model3d.userId === userId;
+    if (!isOwner && model3d.status !== Model3DStatus.Published) {
+      throw throwAuthorizationError('This 3D model is not available for posting.');
+    }
+  }
+
   const post = await dbWrite.post.create({
     data: {
       ...data,
@@ -1262,15 +1280,25 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   const ids = Array.isArray(postIds) ? postIds : [postIds];
   // Use dbWrite — bustCachesForPosts runs immediately after image/post writes
   // so the replica may not yet reflect the post.modelVersionId we need.
+  // LEFT JOIN ModelVersion so Model3D-linked posts (modelVersionId = null,
+  // model3dId set) aren't filtered out by the join — without this we never
+  // bust `images-model3d:` and the gallery serves stale empty results until
+  // CacheTTL.md (10m) expires.
   const results = await dbWrite.$queryRaw<
-    { isShowcase: boolean; modelVersionId: number; modelId: number }[]
+    {
+      isShowcase: boolean | null;
+      modelVersionId: number | null;
+      modelId: number | null;
+      model3dId: number | null;
+    }[]
   >`
     SELECT m."userId" = p."userId" as "isShowcase",
            p."modelVersionId",
-           mv."modelId"
+           mv."modelId",
+           p."model3dId"
     FROM "Post" p
-           JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
-           JOIN "Model" m ON m."id" = mv."modelId"
+           LEFT JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
+           LEFT JOIN "Model" m ON m."id" = mv."modelId"
     WHERE p."id" IN (${Prisma.join(ids)})
   `;
 
@@ -1278,14 +1306,24 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   // not just showcase posts. Deletion/moderation paths also call this, and stale
   // gallery results for deleted/blocked images would defeat fast removal (e.g.
   // DMCA, CSAM, policy moderation). Deduplicate to avoid redundant Redis ops.
-  const modelVersionIds = [...new Set(results.map((x) => x.modelVersionId))];
-  const modelIds = [...new Set(results.map((x) => x.modelId))];
+  const modelVersionIds = [
+    ...new Set(results.map((x) => x.modelVersionId).filter((x): x is number => x != null)),
+  ];
+  const modelIds = [
+    ...new Set(results.map((x) => x.modelId).filter((x): x is number => x != null)),
+  ];
+  const model3dIds = [
+    ...new Set(results.map((x) => x.model3dId).filter((x): x is number => x != null)),
+  ];
   await Promise.all([
     ...modelVersionIds.map((mvId) => bustCacheTag(`images-modelVersion:${mvId}`)),
     ...modelIds.map((mId) => bustCacheTag(`images-model:${mId}`)),
+    ...model3dIds.map((mId) => bustCacheTag(`images-model3d:${mId}`)),
   ]);
 
-  const showcaseVersionIds = results.filter((x) => x.isShowcase).map((x) => x.modelVersionId);
+  const showcaseVersionIds = results
+    .filter((x) => x.isShowcase && x.modelVersionId != null)
+    .map((x) => x.modelVersionId as number);
   if (!showcaseVersionIds.length) return;
 
   // Flag modelVersion-lag so imagesForModelVersionsCache.lookupFn (cache-miss

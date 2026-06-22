@@ -2398,6 +2398,17 @@ export async function createArticleRatingReview({
     });
   }
 
+  // --- No-op guard ---
+  // A review that suggests the rating the article already carries can never
+  // change anything, so reject it up front (before the rate-limit gate burns
+  // a slot). The modal also disables the current level, but a stale client or
+  // the mod API could still send it.
+  if (suggestedLevel === article.nsfwLevel) {
+    throw throwBadRequestError(
+      'The suggested rating matches the article’s current rating. Choose a different level.'
+    );
+  }
+
   // --- One Pending per article ---
   if (existingPending) {
     throw throwBadRequestError('A review is already pending for this article');
@@ -2648,6 +2659,16 @@ export async function getArticleRatingReviews({
       appliedLevel: true,
       userComment: true,
       modComment: true,
+      resolvedBy: true,
+      // The moderator who actioned the review (null for auto-approved /
+      // system-resolved rows) — surfaced on the card for audit.
+      resolver: {
+        select: {
+          id: true,
+          username: true,
+          image: true,
+        },
+      },
       user: {
         select: {
           id: true,
@@ -2659,7 +2680,10 @@ export async function getArticleRatingReviews({
         select: {
           id: true,
           title: true,
+          // Legacy URL column — null for all current articles. Kept only as a
+          // fallback; the live cover is resolved from `coverId` below.
           cover: true,
+          coverId: true,
           nsfwLevel: true,
           userNsfwLevel: true,
           moderatorNsfwLevel: true,
@@ -2675,7 +2699,50 @@ export async function getArticleRatingReviews({
     nextCursor = last?.id;
   }
 
-  return { items: rows, nextCursor };
+  // Resolve cover images from `coverId` (mirrors the main article feed). The
+  // legacy `Article.cover` string is null for every current article, so the
+  // review cards rendered blank covers until this lookup was added.
+  // Dedupe ids (resolved tabs can hold multiple reviews for the same article)
+  // and index the result by id so the per-row attach below stays linear.
+  const coverIds = [...new Set(rows.map((x) => x.article.coverId).filter(isDefined))];
+  const coverImages = coverIds.length
+    ? await dbRead.image.findMany({
+        where: { id: { in: coverIds } },
+        select: { id: true, url: true, type: true, nsfwLevel: true },
+      })
+    : [];
+  const coverImageById = new Map(coverImages.map((img) => [img.id, img]));
+
+  const items = rows.map((row) => {
+    const coverImage =
+      row.article.coverId != null ? coverImageById.get(row.article.coverId) ?? null : null;
+    return { ...row, article: { ...row.article, coverImage } };
+  });
+
+  return { items, nextCursor };
+}
+
+export async function getArticleRatingReviewCounts() {
+  const grouped = await dbRead.articleRatingReview.groupBy({
+    by: ['status'],
+    _count: { _all: true },
+  });
+
+  // Initialize every ReportStatus so the result is a complete
+  // Record<ReportStatus, number> (empty buckets read as 0). The dashboard only
+  // surfaces Pending/Actioned/Unactioned; Processing is here to satisfy the
+  // type, not because it's a filterable bucket.
+  const counts: Record<ReportStatus, number> = {
+    [ReportStatus.Pending]: 0,
+    [ReportStatus.Processing]: 0,
+    [ReportStatus.Actioned]: 0,
+    [ReportStatus.Unactioned]: 0,
+  };
+  for (const row of grouped) {
+    counts[row.status] = row._count._all;
+  }
+
+  return counts;
 }
 
 /**

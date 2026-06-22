@@ -548,6 +548,12 @@ model User {
   generationPresets           GenerationPreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
 
+  // 3D Models
+  model3ds                    Model3D[]                       @relation("model3dCreator")
+  deletedModel3Ds             Model3D[]                       @relation("model3dDeletedBy")
+  model3dEngagements          Model3DEngagement[]
+  model3dReviews              Model3DReview[]
+
   // Comics
   comicProjects              ComicProject[]
   comicReferences            ComicReference[]
@@ -568,6 +574,7 @@ model User {
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
   appUserScopeGrants         AppUserScopeGrant[]
+  appBlockReviews            AppBlockReview[]
   appDevForgejoIdentity      AppDevForgejoIdentity?
 
   @@index([deletedAt])
@@ -1353,6 +1360,8 @@ model Report {
   chat           ChatReport?
   comicProject   ComicProjectReport?
   automated      ReportAutomated?
+  model3d        Model3DReport?
+  model3dReview  Model3DReviewReport?
 }
 
 model ResourceReviewReport {
@@ -1542,6 +1551,10 @@ model Post {
   user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  model3dId      Int?
+  model3d        Model3D?      @relation(fields: [model3dId], references: [id], onDelete: SetNull)
+  model3dReviewId Int?         @unique
+  model3dReview   Model3DReview? @relation(fields: [model3dReviewId], references: [id], onDelete: SetNull)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   publishedAt    DateTime?
@@ -1568,6 +1581,7 @@ model Post {
   collectionItems CollectionItem[]
 
   @@index([modelVersionId])
+  @@index([model3dId])
   @@index([publishedAt])
 }
 
@@ -1697,6 +1711,8 @@ model Image {
   comicProjectHero        ComicProject[]         @relation("comicProjectHero")
   challengesCover     Challenge[]           @relation("ChallengeCoverImage")
   challengeWins       ChallengeWinner[]
+  model3dThumbnails   Model3D[]             @relation("model3dThumbnail")
+  model3dSources      Model3D[]             @relation("model3dSource")
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1909,6 +1925,7 @@ enum TagTarget {
   Article
   Bounty
   Collection
+  Model3D
 }
 
 enum TagType {
@@ -1953,6 +1970,7 @@ model Tag {
   tagsOnBounties       TagsOnBounty[]
   CollectionItem       CollectionItem[]
   tagsOnImage          TagsOnImageDetails[]
+  tagsOnModel3D        TagsOnModel3D[]
 
   @@unique([name])
 }
@@ -2303,6 +2321,7 @@ model AppBlock {
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
   userScopeGrants    AppUserScopeGrant[]
+  reviews            AppBlockReview[]
 
   @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
   // W1 audit C-3 fix: enforce one app per slug at the DB layer. The
@@ -2314,6 +2333,40 @@ model AppBlock {
   @@index([status, category], map: "app_blocks_status_category_idx")
   @@index([featured, featuredOrder], map: "app_blocks_featured_order_idx")
   @@map("app_blocks")
+}
+
+/// App Blocks marketplace review (F-E "marketplace" cluster). A parallel table
+/// to ResourceReview (which is hard-bound to model/version FKs) so we can carry
+/// star ratings for app blocks without bending the model-review shape.
+///
+/// 5-star rating (1..5, validated in the service). A blue-buzz reward fires
+/// ONCE per (user, app) on the first create. Self-reviews (app owner reviewing
+/// their own app) are rejected at the service layer AND excluded from the
+/// aggregate. `exclude`/`tosViolation` are moderator controls that keep abusive
+/// reviews out of the rating aggregate + the Bayesian marketplace sort.
+///
+/// ADDITIVE + MANUALLY APPLIED (CNPG nvme0 does not auto-apply; see the
+/// migration). NULL/empty until applied — read only by the dark, mod-gated
+/// marketplace + the gated review procedures.
+model AppBlockReview {
+  id           Int      @id @default(autoincrement())
+  appBlockId   String   @map("app_block_id")
+  appBlock     AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  userId       Int      @map("user_id")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating       Int // 1..5 (STARS — validated in the service)
+  recommended  Boolean  @default(true)
+  details      String?
+  exclude      Boolean  @default(false)
+  tosViolation Boolean  @default(false) @map("tos_violation")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // One review per (user, app).
+  @@unique([appBlockId, userId], map: "app_block_reviews_app_user_uniq")
+  // Aggregate read path (AVG/COUNT WHERE NOT exclude).
+  @@index([appBlockId, exclude], map: "app_block_reviews_app_agg_idx")
+  @@map("app_block_reviews")
 }
 
 /// W1 v0 publish request — every version of every app goes through the
@@ -2476,6 +2529,11 @@ model BlockUserSubscription {
   // express partial unique indexes with array expressions inline). One
   // blanket sub per (user, app, scope); one pinned sub per
   // (user, app, scope, slot, target_model_ids[1]).
+
+  // Phase 0 author analytics: installs-over-time for an owned app block
+  // (app_block_id equality + created_at range). See migration
+  // 20260621120000_bus_app_block_created_analytics_idx.
+  @@index([appBlockId, createdAt(sort: Desc)], map: "bus_app_block_created_idx")
   @@map("block_user_subscriptions")
 }
 
@@ -3014,6 +3072,10 @@ model Thread {
   comicChapter         ComicChapter? @relation(fields: [comicProjectId, comicChapterPosition], references: [projectId, position], onDelete: SetNull, onUpdate: Cascade)
   challengeId   Int?            @unique
   challenge     Challenge?      @relation(fields: [challengeId], references: [id], onDelete: SetNull)
+  model3dId        Int?            @unique
+  model3d          Model3D?        @relation(fields: [model3dId], references: [id], onDelete: SetNull)
+  model3dReviewId  Int?            @unique
+  model3dReview    Model3DReview?  @relation(fields: [model3dReviewId], references: [id], onDelete: SetNull)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -3212,6 +3274,7 @@ enum CosmeticEntity {
   Image
   Article
   Post
+  Model3D
 }
 
 model UserCosmetic {
@@ -3506,6 +3569,7 @@ enum CollectionType {
   Article
   Post
   Image
+  Model3D
 }
 
 enum CollectionMode {
@@ -3567,6 +3631,8 @@ model CollectionItem {
   image        Image?                @relation(fields: [imageId], references: [id], onDelete: Cascade)
   modelId      Int?
   model        Model?                @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model3dId    Int?
+  model3d      Model3D?              @relation(fields: [model3dId], references: [id], onDelete: Cascade)
   addedById    Int?
   addedBy      User?                 @relation(fields: [addedById], references: [id], onDelete: SetNull)
   reviewedById Int?
@@ -3578,10 +3644,11 @@ model CollectionItem {
   tag          Tag?                  @relation(fields: [tagId], references: [id], onDelete: SetNull)
   scores       CollectionItemScore[]
 
-  @@unique([collectionId, articleId, postId, imageId, modelId])
+  @@unique([collectionId, articleId, postId, imageId, modelId, model3dId])
   @@index([addedById], type: Hash)
   @@index([imageId], type: Hash)
   @@index([modelId], type: Hash)
+  @@index([model3dId], type: Hash)
   @@index([collectionId], type: Hash)
 }
 
@@ -4237,6 +4304,7 @@ enum EntityType {
   UserProfile
   ResourceReview
   ChatMessage
+  Model3D
 }
 
 enum JobQueueType {
@@ -6344,4 +6412,214 @@ model ScannerContentSnapshot {
   createdAt   DateTime @default(now())
 
   @@index([scanner])
+}
+
+// ============================================================
+// 3D Models — see docs/3d-models-plan.md (rev 9)
+// v1 source = orchestrator PolyGen generation (Meshy via Fal).
+// Schema is upload-ready so a future user-upload flow can write
+// rows with workflowId = NULL.
+// No versioning. No reactions on Model3D (react on thumbnail Image
+// instead). No DownloadHistory in Postgres (ClickHouse events).
+// Reviews own an optional Post for image attachments.
+// ============================================================
+
+enum Model3DStatus {
+  Draft
+  Published
+  Unpublished
+  Deleted
+}
+
+enum Model3DEngagementType {
+  Favorite
+  Hide
+  Notify
+}
+
+model Model3DLicense {
+  id                  Int      @id @default(autoincrement())
+  name                String   @unique
+  description         String
+  allowCommercialUse  Boolean  @default(false)
+  allowPrintFarm      Boolean  @default(false)
+  allowDerivatives    Boolean  @default(true)
+  allowRedistribution Boolean  @default(false)
+  requireAttribution  Boolean  @default(true)
+  isCustom            Boolean  @default(false)
+  createdAt           DateTime @default(now())
+
+  models Model3D[]
+}
+
+model Model3D {
+  id               Int            @id @default(autoincrement())
+  name             String         @db.Citext
+  description      String?
+  userId           Int
+  user             User           @relation("model3dCreator", fields: [userId], references: [id])
+  thumbnailImageId Int?           @unique
+  thumbnailImage   Image?         @relation("model3dThumbnail", fields: [thumbnailImageId], references: [id], onDelete: SetNull)
+  licenseId        Int
+  license          Model3DLicense @relation(fields: [licenseId], references: [id])
+  licenseDetails   String?
+
+  // Generation provenance — NULL for future user-uploaded rows.
+  workflowId       String?        @unique
+  sourceImageId    Int?
+  sourceImage      Image?         @relation("model3dSource", fields: [sourceImageId], references: [id], onDelete: SetNull)
+  generationParams Json?
+
+  status           Model3DStatus  @default(Draft)
+  nsfw             Boolean        @default(false)
+  tosViolation     Boolean        @default(false)
+  poi              Boolean        @default(false)
+  minor            Boolean        @default(false)
+  unlisted         Boolean        @default(false)
+  lockedProperties String[]       @default([])
+  availability     Availability   @default(Public)
+  nsfwLevel        Int            @default(0)
+  meta             Json           @default("{}")
+  // Per-Model3D gallery moderation (creator/mod hide image/user/tag). No
+  // version dimension — `images` is a flat list of hidden image ids.
+  gallerySettings  Json           @default("{\"users\":[],\"tags\":[],\"images\":[]}")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  publishedAt      DateTime?
+  deletedAt        DateTime?
+  deletedBy        Int?
+  deletedByUser    User?          @relation("model3dDeletedBy", fields: [deletedBy], references: [id], onDelete: SetNull)
+
+  files           Model3DFile[]
+  posts           Post[]
+  tags            TagsOnModel3D[]
+  engagements     Model3DEngagement[]
+  reports         Model3DReport[]
+  reviews         Model3DReview[]
+  threads         Thread[]
+  collectionItems CollectionItem[]
+  metric          Model3DMetric?
+
+  @@index([userId, status, publishedAt(sort: Desc)])
+  @@index([status, publishedAt(sort: Desc)])
+  @@index([status, nsfwLevel, publishedAt(sort: Desc)])
+  @@index([name])
+  @@index([licenseId], type: Hash)
+  @@index([sourceImageId], type: Hash)
+}
+
+model Model3DFile {
+  id                Int            @id @default(autoincrement())
+  model3dId         Int
+  model3d           Model3D        @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  name              String
+  url               String
+  sizeKB            Float
+  format            String
+  // Variant discriminator. Lets a single Model3D carry multiple glb/fbx
+  // exports for the same generation — base, rigged, animated, walking
+  // (with armature sibling), running (with armature sibling). Defaults to
+  // "primary" so existing rows + non-PolyGen ingest paths are unaffected.
+  variant           String         @default("primary")
+  isPrimary         Boolean        @default(false)
+  metadata          Json?
+  virusScanResult   ScanResultCode @default(Success)
+  virusScanMessage  String?
+  rawScanResult     Json?
+  scannedAt         DateTime?
+  scanRequestedAt   DateTime?
+  exists            Boolean?
+  createdAt         DateTime       @default(now())
+
+  @@unique([model3dId, format, variant])
+  @@index([model3dId], type: Hash)
+}
+
+model TagsOnModel3D {
+  model3dId Int
+  model3d   Model3D  @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([model3dId, tagId])
+  @@index([model3dId], type: Hash)
+  @@index([tagId], type: Hash)
+}
+
+model Model3DEngagement {
+  userId    Int
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  model3dId Int
+  model3d   Model3D               @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  type      Model3DEngagementType
+  createdAt DateTime              @default(now())
+
+  @@id([userId, model3dId])
+  @@index([model3dId], type: Hash)
+}
+
+model Model3DReport {
+  model3dId Int
+  model3d   Model3D @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  reportId  Int     @unique
+  report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, model3dId])
+  @@index([model3dId], type: Hash)
+}
+
+model Model3DReview {
+  id           Int      @id @default(autoincrement())
+  model3dId    Int
+  model3d      Model3D  @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recommended  Boolean  @default(true)
+  details      String?
+  nsfw         Boolean  @default(false)
+  tosViolation Boolean  @default(false)
+  exclude      Boolean  @default(false)
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  thread       Thread?
+  post         Post?
+  reports      Model3DReviewReport[]
+
+  @@unique([model3dId, userId])
+  @@index([model3dId], type: Hash)
+  @@index([userId], type: Hash)
+}
+
+model Model3DReviewReport {
+  model3dReviewId Int
+  model3dReview   Model3DReview @relation(fields: [model3dReviewId], references: [id], onDelete: Cascade)
+  reportId        Int           @unique
+  report          Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, model3dReviewId])
+  @@index([model3dReviewId], type: Hash)
+}
+
+model Model3DMetric {
+  model3dId         Int              @id
+  model3d           Model3D          @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  downloadCount     Int              @default(0)
+  commentCount      Int              @default(0)
+  collectedCount    Int              @default(0)
+  imageCount        Int              @default(0)
+  tippedCount       Int              @default(0)
+  tippedAmountCount Int              @default(0)
+  ratingCount       Int              @default(0)
+  recommendedCount  Int              @default(0)
+  reactionCount     Int              @default(0)
+  earnedAmount      Int              @default(0)
+  updatedAt         DateTime         @default(now())
+  nsfwLevel         Int              @default(0)
+  userId            Int              @default(0)
+  status            Model3DStatus    @default(Draft)
+  availability      Availability     @default(Public)
+  poi               Boolean          @default(false)
+  minor             Boolean          @default(false)
 }

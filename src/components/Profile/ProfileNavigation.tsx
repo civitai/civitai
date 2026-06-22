@@ -2,11 +2,12 @@ import React from 'react';
 import {
   IconAssembly,
   IconBook,
+  IconBookmark,
   IconCategory,
+  IconCube,
   IconLayoutList,
   IconPencilMinus,
   IconPhoto,
-  IconBookmark,
   IconVideo,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -64,6 +65,12 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconVideo {...props} />,
       count: userOverview?.videoCount ?? 0,
       disabled: !!user?.bannedAt,
+    },
+    '3d-models': {
+      url: `${baseUrl}/3d-models`,
+      icon: (props) => <IconCube {...props} />,
+      count: userOverview?.model3dCount ?? 0,
+      disabled: !features.model3dFeed || !!user?.bannedAt,
     },
     articles: {
       url: `${baseUrl}/articles`,

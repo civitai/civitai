@@ -749,6 +749,9 @@ export default function InstalledAppsPage() {
       // E3 marketplace-card fields — unused on the Manage path (modal-only).
       category: null,
       scopesSummary: [],
+      // Marketplace reviews — unused on the Manage path (modal-only).
+      avgRating: null,
+      reviewCount: 0,
     };
     const existingByScope: Partial<Record<typeof sub.scope, SubscriptionRecord>> = {};
     for (const candidate of subs ?? []) {

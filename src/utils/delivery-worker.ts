@@ -10,6 +10,23 @@ export type DownloadInfo = {
   urlExpiryDate: Date;
 };
 
+/**
+ * `decodeURIComponent` throws `URIError: URI malformed` on a value with a
+ * broken/truncated percent-sequence (e.g. a lone `%`, `%E0%A4%A`). Some stored
+ * `file.url` / filename values are already-encoded or contain raw `%` literals,
+ * so a bare `decodeURIComponent` on the download path throws → caught upstream →
+ * 500 on every download of that file. Decode best-effort: when decoding is not
+ * possible, fall back to the raw value (the storage-resolver / delivery-worker
+ * can still resolve it from the raw key) instead of throwing.
+ */
+export function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export type BucketInfo = {
   name: string;
   createdDate: Date;
@@ -34,7 +51,7 @@ export async function getDownloadUrlByFileId(
 
   const body = JSON.stringify({
     fileId,
-    fileName: fileName ? decodeURIComponent(fileName) : undefined,
+    fileName: fileName ? safeDecodeURIComponent(fileName) : undefined,
   });
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -95,8 +112,11 @@ export async function resolveDownloadUrl(
  */
 export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   const { key } = parseKey(fileUrl);
-  // Some of our old file keys should not be decoded.
-  const keys = [decodeURIComponent(key), key];
+  // Some of our old file keys should not be decoded. `safeDecodeURIComponent`
+  // never throws on a malformed/already-encoded key — it falls back to the raw
+  // key, which is already the second candidate, so a bad key still tries the raw
+  // form instead of 500ing the whole download.
+  const keys = [safeDecodeURIComponent(key), key];
 
   let i = 0;
   let response: Response = new Response();
@@ -105,7 +125,7 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   while (i < keys.length) {
     const body = JSON.stringify({
       key: keys[i],
-      fileName: fileName ? decodeURIComponent(fileName) : undefined,
+      fileName: fileName ? safeDecodeURIComponent(fileName) : undefined,
     });
 
     response = await fetch(deliveryWorkerEndpoint, {

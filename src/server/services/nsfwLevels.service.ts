@@ -11,12 +11,13 @@ import {
   comicsSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { enqueueJobs } from '~/server/services/job-queue.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { CollectionItemStatus, EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 async function getImageConnectedEntities(imageIds: number[]) {
@@ -229,6 +230,7 @@ export async function updateNsfwLevels({
   modelIds,
   modelVersionIds,
   comicProjectIds = [],
+  model3dIds = [],
 }: {
   postIds: number[];
   articleIds: number[];
@@ -238,6 +240,7 @@ export async function updateNsfwLevels({
   modelIds: number[];
   modelVersionIds: number[];
   comicProjectIds?: number[];
+  model3dIds?: number[];
 }) {
   const updatePosts = batcher(postIds, updatePostNsfwLevels);
   const updateArticles = batcher(articleIds, updateArticleNsfwLevels);
@@ -247,11 +250,22 @@ export async function updateNsfwLevels({
   const updateModels = batcher(modelIds, updateModelNsfwLevels);
   const updateComicChapters = batcher(comicProjectIds, updateComicChapterNsfwLevels);
   const updateComicProjects = batcher(comicProjectIds, updateComicProjectNsfwLevels);
+  // Model3D nsfwLevel comes from the thumbnail Image alone — no aggregation
+  // across child entities, so it can run in the leaf batch alongside Posts /
+  // Articles / Bounties (none of those depend on Model3D either).
+  const updateModel3Ds = batcher(model3dIds, updateModel3DNsfwLevels);
   // Collections are processed by separate optimized job
   // const updateCollections = batcher(collectionIds, updateCollectionsNsfwLevels);
 
   const nsfwLevelChangeBatches = [
-    [updatePosts, updateArticles, updateBounties, updateBountyEntries, updateComicChapters],
+    [
+      updatePosts,
+      updateArticles,
+      updateBounties,
+      updateBountyEntries,
+      updateComicChapters,
+      updateModel3Ds,
+    ],
     [updateModelVersions, updateComicProjects],
     [updateModels],
     // Collections handled by dedicated job for performance
@@ -526,13 +540,64 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
   );
 }
 
+/**
+ * Propagate the thumbnail Image's nsfwLevel up to the Model3D row and its
+ * denormalized copy on Model3DMetric. Only the thumbnail is scanned in v1
+ * (see plan §2.10), so the thumbnail's nsfwLevel is the single signal for
+ * the entire Model3D record.
+ *
+ * Mirrors the `updateModelNsfwLevels` / `updateArticleNsfwLevels` pattern:
+ * single SQL pass keyed off Model3D ids, only writes rows whose level has
+ * actually changed, returns the affected ids for downstream search-index
+ * fan-out (the dedicated `model3d` Meilisearch index lands in Phase 2).
+ */
+export async function updateModel3DNsfwLevels(model3dIds: number[]): Promise<void> {
+  if (!model3dIds.length) return;
+  // Honor `lockedProperties` — rows where a mod has manually locked the
+  // nsfwLevel (via `setModel3DNsfwLevel({ lock: true })`) must not be
+  // clobbered by the thumbnail-derived recompute. We filter at the CTE level
+  // so both the Model3D + Model3DMetric branches naturally exclude locked
+  // rows. (R8 in `docs/3d-models-followups.md`.)
+  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+    WITH level AS (
+      SELECT
+        m.id,
+        COALESCE(i."nsfwLevel", 0) AS "nsfwLevel"
+      FROM "Model3D" m
+      LEFT JOIN "Image" i ON i.id = m."thumbnailImageId"
+      WHERE m.id IN (${Prisma.join(model3dIds)})
+        AND NOT ('nsfwLevel' = ANY(m."lockedProperties"))
+    ), model_update AS (
+      UPDATE "Model3D" m
+      SET "nsfwLevel" = level."nsfwLevel"
+      FROM level
+      WHERE level.id = m.id AND level."nsfwLevel" != m."nsfwLevel"
+      RETURNING m.id
+    )
+    UPDATE "Model3DMetric" mm
+    SET "nsfwLevel" = level."nsfwLevel"
+    FROM level
+    WHERE mm."model3dId" = level.id AND mm."nsfwLevel" != level."nsfwLevel"
+    RETURNING mm."model3dId" AS id;
+  `);
+  // TODO(phase2): queue the dedicated `model3d` Meilisearch index for the
+  // affected ids once `model3dSearchIndex` lands (plan §2.9). Currently we
+  // intentionally do not surface Model3D via any of the existing search
+  // indexes, so there's no fan-out to do here.
+}
+
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return;
-  const updateSystemNsfwLevel =
-    (await sysRedis.hGet(
-      REDIS_SYS_KEYS.SYSTEM.FEATURES,
-      'update-system-model-version-nsfw-level'
-    )) !== 'false';
+  // sysRedis.hGet is typed string but the HA/Sentinel client returns a
+  // Buffer for BLOB_STRING replies. `Buffer !== 'false'` is always true,
+  // so the kill-switch silently never fires in sentinel mode. Coerce to
+  // utf8 string before comparing. See PR #2697 for the canonical case.
+  const rawFlag = await sysRedis.hGet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    'update-system-model-version-nsfw-level'
+  );
+  const flag = Buffer.isBuffer(rawFlag) ? rawFlag.toString('utf8') : rawFlag;
+  const updateSystemNsfwLevel = flag !== 'false';
 
   await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level as (
@@ -685,5 +750,60 @@ export async function queueComicsForPanelImages(imageIds: number[]) {
   const projectIds = [...new Set(panels.map((p) => p.projectId))];
   await comicsSearchIndex.queueUpdate(
     projectIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+}
+
+/**
+ * Enqueue the Model3D row(s) whose `thumbnailImageId === imageId` for an
+ * `UpdateNsfwLevel` job. Called by the image-scan side-effects path so a
+ * fresh thumbnail nsfwLevel propagates up to `Model3D.nsfwLevel` /
+ * `Model3DMetric.nsfwLevel` on the next `update-nsfw-levels` cron tick
+ * (`src/server/jobs/job-queue.ts`).
+ *
+ * Cheap single-row read — the FK is `@unique`, so this matches at most one
+ * Model3D row. We still loop in case the lookup widens in the future.
+ * Safe to fire-and-forget — no-op when the image isn't a Model3D thumbnail.
+ */
+export async function queueModel3DForThumbnailImage(imageId: number) {
+  // Use the primary, NOT the read replica: the polyGen handler creates the
+  // Image row first (which kicks off scanning) and the Model3D row a few ms
+  // later. Replica lag can make the freshly-created Model3D invisible to
+  // this lookup at the moment the scan webhook fires, which silently drops
+  // the enqueue and leaves `Model3D.nsfwLevel = 0` for a thumbnail that
+  // actually got rated (the bug surfaced in prod: image PG13, model3d 0).
+  // The query is a single `thumbnailImageId` index hit, so the primary load
+  // is negligible.
+  const model3ds = await dbWrite.model3D.findMany({
+    where: { thumbnailImageId: imageId },
+    select: { id: true },
+  });
+  if (!model3ds.length) return;
+  await enqueueJobs(
+    model3ds.map((m) => ({
+      entityId: m.id,
+      entityType: EntityType.Model3D,
+      type: JobQueueType.UpdateNsfwLevel,
+    }))
+  );
+}
+
+/**
+ * Batched variant of {@link queueModel3DForThumbnailImage}. Used by
+ * moderator bulk paths (block/unblock/appeal) that touch many images at once.
+ */
+export async function queueModel3DsForThumbnailImages(imageIds: number[]) {
+  if (!imageIds.length) return;
+  // Same replica-lag hazard as `queueModel3DForThumbnailImage` — see there.
+  const model3ds = await dbWrite.model3D.findMany({
+    where: { thumbnailImageId: { in: imageIds } },
+    select: { id: true },
+  });
+  if (!model3ds.length) return;
+  await enqueueJobs(
+    model3ds.map((m) => ({
+      entityId: m.id,
+      entityType: EntityType.Model3D,
+      type: JobQueueType.UpdateNsfwLevel,
+    }))
   );
 }

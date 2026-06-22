@@ -4,6 +4,7 @@ import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
+import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import {
   createOauthClientSchema,
   deleteOauthClientSchema,
@@ -170,10 +171,28 @@ export const oauthClientRouter = router({
       });
       if (!client) throw new TRPCError({ code: 'NOT_FOUND' });
 
+      // Collect every user who holds a token under this client BEFORE the
+      // cascade wipes the rows — we need their ids to expire the orchestrator's
+      // auth cache below. A client can be authorized by many users, not just
+      // the owner.
+      const tokenHolders = await dbWrite.apiKey.findMany({
+        where: { clientId: input.id },
+        select: { userId: true },
+        distinct: ['userId'],
+      });
+
       // Cascade delete handles tokens and consents
       await dbWrite.oauthClient.delete({ where: { id: input.id } });
 
       logOAuthEvent({ type: 'client.deleted', userId: ctx.user.id, clientId: input.id });
+
+      // The DB cascade revokes the tokens, but the orchestrator caches them
+      // for auth and would keep honoring the deleted tokens until TTL. Expire
+      // each affected user's cache so revocation takes effect immediately.
+      // Best-effort: invalidateCivitaiUser swallows its own errors.
+      await Promise.all(
+        tokenHolders.map(({ userId }) => invalidateCivitaiUser({ userId }))
+      );
 
       return { success: true };
     }),

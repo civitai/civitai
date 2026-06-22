@@ -75,7 +75,6 @@ import {
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -132,6 +131,10 @@ import {
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import {
+  getVisibleModel3DIdForPost,
+  getVisibleModel3DIds,
+} from '~/server/services/model3d.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
 import {
@@ -141,7 +144,10 @@ import {
 import type { ImageModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
-import { queueComicsForPanelImages } from '~/server/services/nsfwLevels.service';
+import {
+  queueComicsForPanelImages,
+  queueModel3DForThumbnailImage,
+} from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { getVotableTags2 } from '~/server/services/tag.service';
@@ -1127,6 +1133,11 @@ type GetAllImagesRaw = {
   postId: number | null;
   postTitle: string | null;
   modelVersionId: number | null;
+  // RAW Post.model3dId — visibility-checked into a nullable output field below
+  // (the batched `getVisibleModel3DIds` gate) before reaching the client. Drives
+  // the "Posted to 3D Model" chip on the feed-modal path without an ambient
+  // `model3d.getByPostId` lookup.
+  model3dId: number | null;
   imageId: number | null;
   publishedAt: Date | null;
   unpublishedAt?: Date | null;
@@ -1194,6 +1205,7 @@ export const getAllImages = async (
     collectionId, // TODO - call this from separate method?
     modelId,
     modelVersionId,
+    model3dId,
     imageId, // used in public API
     username,
     period,
@@ -1417,6 +1429,17 @@ export const getAllImages = async (
     }
   }
 
+  // Model3D gallery: posts link to a Model3D via Post.model3dId (no
+  // ModelVersion / ImageResourceNew chain involved), so this is just a
+  // direct filter on the always-present Post join below. Mirrors the
+  // collection / model gallery cache shape — Model3D image uploads are
+  // captured by the same post.service bust hooks.
+  if (model3dId) {
+    AND.push(Prisma.sql`p."model3dId" = ${model3dId}`);
+    cacheTime = CacheTTL.md;
+    cacheTags.push(`images-model3d:${model3dId}`);
+  }
+
   // [x] TODO remove
   if (targetUserId) {
     // WITH.push(
@@ -1564,7 +1587,7 @@ export const getAllImages = async (
     AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
-  const isGallery = modelId || modelVersionId || reviewId || userId;
+  const isGallery = modelId || modelVersionId || model3dId || reviewId || userId;
   if (postId && !modelId) {
     // a post image query won't include modelId
     orderBy = `i."index"`;
@@ -1779,6 +1802,7 @@ export const getAllImages = async (
       p."publishedAt",
       p.metadata->>'unpublishedAt' "unpublishedAt",
       p."modelVersionId",
+      p."model3dId",
       p."availability",
       i.minor,
       i.poi,
@@ -1810,7 +1834,13 @@ export const getAllImages = async (
       return rows as Row[];
     },
     'getAllImages',
-    'v1'
+    // Bumped v1 -> v2 when `p."model3dId"` was added to the SELECT. The query
+    // hash already changes with the new column (so old entries fall out of the
+    // keyspace on their own), but the explicit version bump abandons the stale
+    // keyspace immediately rather than leaving model3dId-less rows resident
+    // until their TTL — keeps the feed-modal chip from silently lacking the
+    // field on a warm cache after deploy.
+    'v2'
   );
   let rawImages: GetAllImagesRaw[];
   try {
@@ -1910,6 +1940,20 @@ export const getAllImages = async (
     ])
   );
 
+  // Visibility-check the RAW `model3dId`s carried on the feed rows before they
+  // reach the client. `p."model3dId"` is unfiltered (it reflects the link, not
+  // whether the viewer may SEE the linked Model3D), so a hidden Draft / deleted
+  // model's id would otherwise leak as a clickable chip on the feed-modal path.
+  // Most feed images aren't linked (model3dId null) so the common page skips the
+  // query entirely; the linked few resolve in ONE batched query (no N+1),
+  // applying the SAME `canViewModel3d` predicate as the single-post lookup.
+  const rawModel3dIds = [
+    ...new Set(rawImages.map((i) => i.model3dId).filter((id): id is number => id != null)),
+  ];
+  const visibleModel3DIds = rawModel3dIds.length
+    ? await getVisibleModel3DIds({ model3dIds: rawModel3dIds, userId, isModerator })
+    : undefined;
+
   const images = withSpan('image:getAllImages:transform', () => {
     // Process reactions into lookup
     let userReactions: Record<number, ReviewReactions[]> | undefined;
@@ -1974,6 +2018,9 @@ export const getAllImages = async (
         poi?: boolean;
         minor?: boolean;
         judgeScore?: JudgeScore | null;
+        // Visibility-gated linked-Model3D id (or null) for the "Posted to 3D
+        // Model" chip on the feed-modal path. See the model3dId override below.
+        model3dId?: number | null;
       }
     > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, collectionItemNote, ...i }) => {
       const judgeScore = parseJudgeScore(collectionItemNote ?? null);
@@ -1983,6 +2030,12 @@ export const getAllImages = async (
 
       return {
         ...i,
+        // Override the RAW `p."model3dId"` (spread in via `...i`) with the
+        // visibility-gated value: keep the id only when the viewer may see the
+        // linked Model3D, else null. Drives the feed-modal chip from a prop —
+        // no ambient `model3d.getByPostId`. (`null` here is the three-state
+        // "resolved-absent" the chip needs to NOT fall back.)
+        model3dId: i.model3dId != null && visibleModel3DIds?.has(i.model3dId) ? i.model3dId : null,
         meta: imageMeta?.[i.id] ?? null,
         nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
         modelVersionIds: imageResources?.[i.id]?.resources?.map((r) => r.modelVersionId) ?? [],
@@ -2234,6 +2287,29 @@ export const getAllImagesIndex = async (
       }, new Map<number, typeof tagsVar>())
     : undefined;
 
+  // Visibility-check the RAW `model3dId` carried on the search docs (indexed
+  // from `Post.model3dId`) before it reaches the client — same no-leak bar as
+  // the raw-SQL feed path and `image.get`. Meili docs carry it; BitDex docs do
+  // NOT (the field is left `undefined` there → the chip falls back to the
+  // postId lookup, the documented self-healing path). Only the non-null few
+  // are resolved, in ONE batched query (no per-image N+1).
+  const rawIndexModel3dIds = [
+    ...new Set(
+      searchResults
+        // model3dId is present on Meili docs but not on BitDex docs (which the
+        // search-result union also covers) — read it defensively.
+        .map((sr) => (sr as { model3dId?: number }).model3dId)
+        .filter((id): id is number => typeof id === 'number')
+    ),
+  ];
+  const visibleIndexModel3DIds = rawIndexModel3dIds.length
+    ? await getVisibleModel3DIds({
+        model3dIds: rawIndexModel3dIds,
+        userId: currentUserId,
+        isModerator: user?.isModerator,
+      })
+    : undefined;
+
   const mergedData = withSpan('image:getAllImagesIndex:transform', () =>
     searchResults.map(({ publishedAtUnix, ...sr }) => {
       const thisUser = userDatas[sr.userId] ?? {};
@@ -2246,8 +2322,29 @@ export const getAllImagesIndex = async (
       const nsfwLevel = Math.max(thumbnail?.nsfwLevel ?? 0, sr.nsfwLevel);
       const metrics = imageMetrics[sr.id];
 
+      // Three-state chip signal on the feed-modal path:
+      //  - linked model3d (any source)  → gated number | null (no leak)
+      //  - Meili doc, no link           → null (resolved-absent → chip renders
+      //                                   nothing AND does NOT fall back, the
+      //                                   durable elimination of getByPostId)
+      //  - BitDex doc (field not stored)→ undefined (fall back to getByPostId;
+      //                                   self-healing, the documented gap)
+      // `searchSource` is per-page (one backend serves the whole page), so an
+      // absent model3dId means "confirmed no link" on Meili but "not indexed"
+      // on BitDex — only the former is safe to assert as a resolved null.
+      const rawModel3dId = (sr as { model3dId?: number }).model3dId;
+      const model3dId =
+        typeof rawModel3dId === 'number'
+          ? visibleIndexModel3DIds?.has(rawModel3dId)
+            ? rawModel3dId
+            : null
+          : searchSource === 'bitdex'
+          ? undefined
+          : null;
+
       return {
         ...sr,
+        model3dId,
         // Override tagIds from authoritative cache when available.
         // This ensures client-side hidden-tag filtering works even when
         // the search engine (BitDex) doesn't return tagIds.
@@ -2729,7 +2826,9 @@ export async function getImagesFromFeedSearch(
         // `image:tagIds` Redis hash. Same {imageId, tags[]} shape + same WD14/Rekognition +
         // styleTags/subjectTags filter, so it's a drop-in. Relieves next-redis-cluster memory.
         (ids: number[]) =>
-          tagIdsForImagesCache.fetch(ids) as Promise<Record<number, { imageId: number; tags: number[] }>>
+          tagIdsForImagesCache.fetch(ids) as Promise<
+            Record<number, { imageId: number; tags: number[] }>
+          >
       )
     );
 
@@ -2846,6 +2945,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const {
     sort,
     modelVersionId,
+    model3dId,
     types,
     withMeta,
     fromPlatform,
@@ -3023,6 +3123,14 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
+  }
+
+  // Model3D gallery filter — `model3dId` is the index analog of `postedToId`
+  // (set at index time from `Post.model3dId`). Lets the 3D-model detail page
+  // serve its gallery from Meilisearch instead of the DB feed path, which
+  // was tripping the 20s ceiling on `getAllImages` for model3d queries.
+  if (model3dId) {
+    filters.push(makeMeiliImageSearchFilter('model3dId', `= ${model3dId}`));
   }
 
   if (remixOfId) {
@@ -3712,6 +3820,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   const {
     sort,
     modelVersionId,
+    model3dId,
     types,
     withMeta,
     fromPlatform,
@@ -3876,6 +3985,14 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
+  }
+
+  // Model3D gallery filter — `model3dId` is the index analog of `postedToId`
+  // (set at index time from `Post.model3dId`). Lets the 3D-model detail page
+  // serve its gallery from Meilisearch instead of the DB feed path, which
+  // was tripping the 20s ceiling on `getAllImages` for model3d queries.
+  if (model3dId) {
+    filters.push(makeMeiliImageSearchFilter('model3dId', `= ${model3dId}`));
   }
 
   if (remixOfId) {
@@ -4477,38 +4594,44 @@ const getImageMetricService = () =>
     redis as unknown as IRedisClient
   ));
 
-type ImageMetricsObject = Awaited<ReturnType<typeof imageMetricsCache.fetch>>;
+type ImageMetricsObject = Record<
+  number,
+  {
+    imageId: number;
+    reactionLike: number | null;
+    reactionHeart: number | null;
+    reactionLaugh: number | null;
+    reactionCry: number | null;
+    comment: number | null;
+    collection: number | null;
+    buzz: number | null;
+  }
+>;
 
+// Image metric counts are read from the watcher-fed `metrics:*` cache via
+// MetricService (which now pulls from the FINAL `entityMetricDailyAgg_v2` view).
+// The legacy in-app `entitymetric:*` read path (imageMetricsCache) was retired
+// after the v2 + watcher cutover went 100% stable.
 const getImageMetricsObject = async (data: { id: number }[]): Promise<ImageMetricsObject> => {
   try {
     const ids = data.map((d) => d.id);
 
-    // Cutover kill switch. When ON, read image metrics from the watcher-fed
-    // `metrics:*` cache (MetricService). Default OFF keeps the legacy in-app
-    // `entitymetric:*` path, so merging this is a no-op; flip the flag to roll
-    // over, and flip back (then bust `metrics:*`) to revert instantly. The
-    // legacy write path is intentionally left intact so flip-back stays warm.
-    const fromWatcher = await getFliptBoolean(FLIPT_FEATURE_FLAGS.IMAGE_METRICS_FROM_WATCHER);
-    if (fromWatcher) {
-      const metrics = await getImageMetricService().fetch('Image', ids);
-      const result: ImageMetricsObject = {};
-      for (const id of ids) {
-        const m = metrics[id];
-        result[id] = {
-          imageId: id,
-          reactionLike: m?.Like || null,
-          reactionHeart: m?.Heart || null,
-          reactionLaugh: m?.Laugh || null,
-          reactionCry: m?.Cry || null,
-          comment: m?.commentCount || null,
-          collection: m?.Collection || null,
-          buzz: m?.tippedAmount || null,
-        };
-      }
-      return result;
+    const metrics = await getImageMetricService().fetch('Image', ids);
+    const result: ImageMetricsObject = {};
+    for (const id of ids) {
+      const m = metrics[id];
+      result[id] = {
+        imageId: id,
+        reactionLike: m?.Like || null,
+        reactionHeart: m?.Heart || null,
+        reactionLaugh: m?.Laugh || null,
+        reactionCry: m?.Cry || null,
+        comment: m?.commentCount || null,
+        collection: m?.Collection || null,
+        buzz: m?.tippedAmount || null,
+      };
     }
-
-    return await imageMetricsCache.fetch(ids);
+    return result;
   } catch (e) {
     const error = e as Error;
     logToAxiom(
@@ -4680,8 +4803,20 @@ export const getImage = async ({
     entity: 'Image',
   });
 
+  // Durable replacement for the ambient `model3d.getByPostId` chip call: carry
+  // the visibility-checked linked Model3D id on this payload (the image
+  // viewers already fetch it) so the "Posted to 3D Model" chip renders from a
+  // prop instead of firing a per-image tRPC query for every image (~36/s,
+  // mostly null). Resolves the SAME visibility predicate the chip lookup used,
+  // so a hidden draft/deleted Model3D yields null here too. Null when the post
+  // isn't linked, isn't visible, or there's no postId at all.
+  const model3dId = firstRawImage.postId
+    ? await getVisibleModel3DIdForPost({ postId: firstRawImage.postId, userId, isModerator })
+    : null;
+
   const image = {
     ...firstRawImage,
+    model3dId,
     cosmetic: imageCosmetics?.[firstRawImage.id] ?? null,
     user: {
       id: creatorId,
@@ -6494,6 +6629,13 @@ export async function updateImageNsfwLevel({
         data: { status },
       });
     }
+    // If this image is the thumbnail of a Model3D, enqueue the parent
+    // Model3D for nsfwLevel recompute. Without this, a moderator clamping
+    // the thumbnail's nsfwLevel via the image mod surface would leave
+    // `Model3D.nsfwLevel` (and the denormalized `Model3DMetric.nsfwLevel`)
+    // stale — the parent row's level is derived from the thumbnail alone
+    // (`updateModel3DNsfwLevels` in `nsfwLevels.service.ts`).
+    await queueModel3DForThumbnailImage(id);
     await trackModActivity(userId, {
       entityType: 'image',
       entityId: id,

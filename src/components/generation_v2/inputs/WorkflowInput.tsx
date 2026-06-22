@@ -11,6 +11,7 @@ import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
   IconArrowLeft,
   IconCheck,
+  IconCube,
   IconMusic,
   IconPhoto,
   IconVideo,
@@ -494,6 +495,7 @@ export function WorkflowInput({
   const [imageOpened, { close: closeImage, open: openImage }] = useDisclosure(false);
   const [videoOpened, { close: closeVideo, open: openVideo }] = useDisclosure(false);
   const [audioOpened, { close: closeAudio, open: openAudio }] = useDisclosure(false);
+  const [model3dOpened, { close: closeModel3d, open: openModel3d }] = useDisclosure(false);
 
   // Get all workflows grouped by category, then drop any whose backing ecosystems
   // are all HIDDEN by a gate rule for this user (so e.g. the Audio segment
@@ -513,15 +515,17 @@ export function WorkflowInput({
   }, [gateRules, features]);
   const selected = getSelectedWorkflow(options, value, ecosystemId);
 
-  // Separate image, video, and audio categories
+  // Separate image, video, audio, and 3D model categories
   const imageCategories = options.filter((cat) => cat.category === 'image');
   const videoCategories = options.filter((cat) => cat.category === 'video');
   const audioCategories = options.filter((cat) => cat.category === 'audio');
+  const model3dCategories = options.filter((cat) => cat.category === 'model3d');
 
-  // Check if current selection is image, video, or audio
+  // Check if current selection is image, video, audio, or 3D model
   const isImageWorkflow = selected && selected.category.category === 'image';
   const isVideoWorkflow = selected && selected.category.category === 'video';
   const isAudioWorkflow = selected && selected.category.category === 'audio';
+  const isModel3dWorkflow = selected && selected.category.category === 'model3d';
 
   const handleImageSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
     onChange?.(graphKey, ecosystemIds, optionId);
@@ -536,6 +540,11 @@ export function WorkflowInput({
   const handleAudioSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
     onChange?.(graphKey, ecosystemIds, optionId);
     closeAudio();
+  };
+
+  const handleModel3dSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
+    onChange?.(graphKey, ecosystemIds, optionId);
+    closeModel3d();
   };
 
   const openImageModal = () => {
@@ -586,9 +595,26 @@ export function WorkflowInput({
     });
   };
 
-  // Check if video/audio workflows are available
+  const openModel3dModal = () => {
+    dialogStore.trigger({
+      id: 'workflow-select-model3d',
+      component: WorkflowSelectModal,
+      props: {
+        title: 'Select 3D Model Workflow',
+        categories: model3dCategories,
+        selectedValue: selected?.workflow.id,
+        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) =>
+          onChange?.(graphKey, ecosystemIds, optionId),
+        isCompatible,
+        isMember,
+      },
+    });
+  };
+
+  // Check if video/audio/3D workflows are available
   const hasVideoWorkflows = videoCategories.some((cat) => cat.workflows.length > 0);
   const hasAudioWorkflows = audioCategories.some((cat) => cat.workflows.length > 0);
+  const hasModel3dWorkflows = model3dCategories.some((cat) => cat.workflows.length > 0);
 
   const segmentedContainerClass = clsx(
     'flex h-8 shrink-0 items-center overflow-hidden rounded-md border bg-white dark:bg-dark-6',
@@ -628,6 +654,16 @@ export function WorkflowInput({
             onClick={openAudioModal}
           />
         )}
+        {hasModel3dWorkflows && (
+          <WorkflowSegmentButton
+            icon={<IconCube size={16} />}
+            label="3D Models"
+            isActive={isModel3dWorkflow ?? false}
+            hasDivider
+            disabled={disabled}
+            onClick={openModel3dModal}
+          />
+        )}
       </div>
     );
   }
@@ -637,6 +673,7 @@ export function WorkflowInput({
     if (disabled) return;
     closeVideo();
     closeAudio();
+    closeModel3d();
     imageOpened ? closeImage() : openImage();
   };
 
@@ -644,6 +681,7 @@ export function WorkflowInput({
     if (disabled) return;
     closeImage();
     closeAudio();
+    closeModel3d();
     videoOpened ? closeVideo() : openVideo();
   };
 
@@ -651,11 +689,21 @@ export function WorkflowInput({
     if (disabled) return;
     closeImage();
     closeVideo();
+    closeModel3d();
     audioOpened ? closeAudio() : openAudio();
+  };
+
+  const handleModel3dClick = () => {
+    if (disabled) return;
+    closeImage();
+    closeVideo();
+    closeAudio();
+    model3dOpened ? closeModel3d() : openModel3d();
   };
 
   const hasSecondSegment = hasVideoWorkflows;
   const hasThirdSegment = hasAudioWorkflows;
+  const hasFourthSegment = hasModel3dWorkflows;
 
   return (
     <div className={segmentedContainerClass}>
@@ -743,6 +791,37 @@ export function WorkflowInput({
               categories={audioCategories}
               selectedValue={selected?.workflow.id}
               onSelect={handleAudioSelect}
+              isCompatible={isCompatible}
+              isMember={isMember}
+            />
+          </Popover.Dropdown>
+        </Popover>
+      )}
+
+      {hasFourthSegment && (
+        <Popover
+          opened={model3dOpened}
+          onChange={(isOpen) => !isOpen && closeModel3d()}
+          position="bottom-start"
+          width={300}
+          shadow="md"
+          withinPortal
+        >
+          <Popover.Target>
+            <WorkflowSegmentButton
+              icon={<IconCube size={16} />}
+              label="3D Models"
+              isActive={isModel3dWorkflow ?? false}
+              hasDivider
+              disabled={disabled}
+              onClick={handleModel3dClick}
+            />
+          </Popover.Target>
+          <Popover.Dropdown p="xs">
+            <WorkflowListContent
+              categories={model3dCategories}
+              selectedValue={selected?.workflow.id}
+              onSelect={handleModel3dSelect}
               isCompatible={isCompatible}
               isMember={isMember}
             />
