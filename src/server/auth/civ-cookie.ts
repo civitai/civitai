@@ -12,15 +12,38 @@ import { decodeTokenClaim } from './token-claims';
 const COOKIE_DOMAIN_OVERRIDE = process.env.AUTH_COOKIE_DOMAIN || undefined;
 const DEVICE_TTL_S = 30 * 24 * 60 * 60; // 30d rolling — matches the hub's device record TTL
 
+// True if `domain` (leading dot tolerated) is `host` or a parent of it — i.e. the browser will ACCEPT a
+// `Domain=domain` cookie on `host`. A Domain that fails this is silently dropped by the browser, which (for
+// the session cookie) presents as an infinite login redirect loop, so callers fall back to host-only instead.
+function domainScopesHost(domain: string, host: string): boolean {
+  const d = domain.replace(/^\./, '').toLowerCase();
+  return host === d || host.endsWith(`.${d}`);
+}
+
 // Resolve the cookie Domain for this host: the registrable domain (civitai.com / civitai.red), matching the
 // domain the hub uses so it's the SAME shared *.<domain> cookie rather than a host-only sibling. localhost / IP
 // / unknown → undefined (host-only). Assumes a 2-label registrable domain, which is all we deploy.
 function cookieDomainForHost(host?: string): string | undefined {
-  if (COOKIE_DOMAIN_OVERRIDE) return COOKIE_DOMAIN_OVERRIDE;
   const h = (host ?? '').split(':')[0].toLowerCase();
   if (!h || h === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(h)) return undefined;
+
+  // Explicit override wins — but ONLY if it actually scopes this host. A mismatched override (e.g.
+  // `.civitai.com` left set in the shared .com/.red env, applied to a .red response) would be rejected by the
+  // browser → the spoke can never read its own session → login loop. Drop to host-only + warn instead.
+  if (COOKIE_DOMAIN_OVERRIDE) {
+    if (domainScopesHost(COOKIE_DOMAIN_OVERRIDE, h)) return COOKIE_DOMAIN_OVERRIDE;
+    console.warn(
+      `[civ-cookie] AUTH_COOKIE_DOMAIN="${COOKIE_DOMAIN_OVERRIDE}" does not scope host "${h}" — ignoring it ` +
+        `and setting a host-only cookie. (Leave AUTH_COOKIE_DOMAIN unset in the shared .com/.red env.)`
+    );
+    return undefined;
+  }
+
   const parts = h.split('.');
-  return parts.length >= 2 ? parts.slice(-2).join('.') : undefined;
+  if (parts.length < 2) return undefined;
+  const registrable = parts.slice(-2).join('.');
+  // Derived value is a suffix of the host by construction; guard anyway so we never emit a rejected Domain.
+  return domainScopesHost(registrable, h) ? registrable : undefined;
 }
 
 // Minimal response surface — works for both NextApiResponse and the rolling-refresh path.
