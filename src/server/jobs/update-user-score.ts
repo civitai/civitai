@@ -118,11 +118,14 @@ async function getImageScore(ctx: Context) {
   // table is an incomplete owner source (event-sourced; missing Create rows for
   // older images), so the imageId -> owner join must come from Postgres.
 
-  // 1. Images whose engagement changed since the last run (event stream).
+  // 1. Images whose score-relevant engagement changed since the last run. Only
+  // reactions + comments feed the image score, so we ignore view/collection/tip
+  // events here to avoid rescoring owners whose score can't have changed.
   const changed = await ctx.ch.$query<{ imageId: number }>`
     SELECT DISTINCT entityId AS imageId
     FROM entityMetricEvents_month
     WHERE entityType = 'Image'
+    AND metricType IN ('Like', 'Heart', 'Laugh', 'Cry', 'commentCount')
     AND createdAt > ${ctx.lastUpdate}
   `;
   if (!changed.length) return;
@@ -131,10 +134,10 @@ async function getImageScore(ctx: Context) {
   // 2. Changed images -> affected owners (Postgres is the authoritative owner map).
   const affectedUserIds = new Set<number>();
   for (const ids of chunk(changedImageIds, 10000)) {
-    const query = await ctx.pg.cancellableQuery<{ userId: number }>(`
-      SELECT DISTINCT "userId" FROM "Image"
-      WHERE id IN (${ids.join(',')}) AND "userId" IS NOT NULL
-    `);
+    const query = await ctx.pg.cancellableQuery<{ userId: number }>(
+      `SELECT DISTINCT "userId" FROM "Image" WHERE id = ANY($1::int[]) AND "userId" IS NOT NULL`,
+      [ids]
+    );
     ctx.jobContext.on('cancel', query.cancel);
     for (const { userId } of await query.result()) affectedUserIds.add(userId);
   }
@@ -168,7 +171,7 @@ export type ImageScoreBreakdown = { reactions: number; comments: number; score: 
 // imageId -> owner mapping comes from Postgres `Image` (the ClickHouse `images`
 // event table is an incomplete owner source). Every requested userId is present
 // in the result (score 0 when there's no engagement). Shared by the cron job and
-// the `testing/user-score` debug endpoint so both exercise the same logic.
+// the `admin/temp/backfill-image-scores` endpoint so both exercise the same logic.
 export async function computeImageScores(
   deps: ImageScoreDeps,
   userIds: number[]
@@ -179,9 +182,10 @@ export async function computeImageScores(
   // imageId -> userId for every image these users own.
   const ownerByImage = new Map<number, number>();
   for (const ids of chunk(userIds, 1000)) {
-    const query = await deps.pg.cancellableQuery<{ id: number; userId: number }>(`
-      SELECT id, "userId" FROM "Image" WHERE "userId" IN (${ids.join(',')})
-    `);
+    const query = await deps.pg.cancellableQuery<{ id: number; userId: number }>(
+      `SELECT id, "userId" FROM "Image" WHERE "userId" = ANY($1::int[])`,
+      [ids]
+    );
     deps.onCancel?.(query.cancel);
     for (const { id, userId } of await query.result()) ownerByImage.set(id, userId);
   }

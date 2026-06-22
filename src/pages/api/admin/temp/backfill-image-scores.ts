@@ -75,11 +75,12 @@ async function backfillImageScores(req: NextApiRequest, res: NextApiResponse) {
       // Distinct owners in this userId window (bounded range → cheap index scan).
       // Inclusive lower bound so `start=X&end=X` targets exactly user X (and so
       // consecutive dataProcessor windows stay contiguous with no skipped id).
-      const ownerQuery = await pgDbRead.cancellableQuery<{ id: number }>(`
-        SELECT DISTINCT "userId" AS id
-        FROM "Image"
-        WHERE "userId" >= ${start} AND "userId" <= ${end} AND "userId" IS NOT NULL
-      `);
+      const ownerQuery = await pgDbRead.cancellableQuery<{ id: number }>(
+        `SELECT DISTINCT "userId" AS id
+         FROM "Image"
+         WHERE "userId" >= $1 AND "userId" <= $2 AND "userId" IS NOT NULL`,
+        [start, end]
+      );
       cancelFns.push(ownerQuery.cancel);
       const owners = (await ownerQuery.result()).map((r) => r.id);
       if (!owners.length) return;
