@@ -8,7 +8,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
-  ENTITY_METRIC_NO_CACHE_BUST = 'entity-metric-no-cache-bust',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
