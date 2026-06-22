@@ -478,14 +478,17 @@ export function ImageDetail2() {
                       />
                     )}
                     {image.postId && (
-                      // Durable data-gate: the `image.get` payload now carries
-                      // the visibility-checked `model3dId`, so on the direct
-                      // image-page path the chip renders from the prop and
-                      // never fires the ambient `model3d.getByPostId` query.
-                      // `model3dId` is absent on feed-sourced items (we
-                      // intentionally don't enrich the hot feed query) — there
-                      // the chip falls back to the postId lookup, gated by the
-                      // model3dFeed flag client-side (PR #2682).
+                      // Durable data-gate: BOTH the `image.get` payload (direct
+                      // image-page path) AND the feed payloads (getAllImages /
+                      // getAllImagesIndex, the feed-modal path) now carry the
+                      // visibility-checked `model3dId`, so the chip renders from
+                      // the prop and never fires the ambient
+                      // `model3d.getByPostId` query. A Meili-sourced feed item
+                      // with no link resolves to `null` (chip hidden, no
+                      // fallback). The only residual fallback is BitDex-sourced
+                      // items (model3dId not indexed → `undefined`), which
+                      // self-heal as the index gains the field — the #2682
+                      // model3dFeed flag-gate is otherwise redundant now.
                       <PostingToModel3DCard
                         model3dId={(image as { model3dId?: number | null }).model3dId}
                         postId={image.postId}
