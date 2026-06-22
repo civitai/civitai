@@ -25,6 +25,11 @@ type AppProviderProps = {
   // followed userIds. Seeds the query directly (fixed `undefined` key) so the
   // ambient follow/notify buttons never fire it on bootstrap.
   following?: number[];
+  // SSR-computed `system.getLiveNow` global boolean (a single redis.get,
+  // identical for every user). Seeds the ambient `useIsLive` query (fixed
+  // `undefined` key) so it never fires on bootstrap. Public procedure → seeded
+  // for everyone, no auth gate.
+  liveNow: boolean;
   seed: number;
   canIndex: boolean;
   region: RegionInfo;
@@ -79,6 +84,7 @@ export function AppProvider({
   tosMeta,
   announcements,
   following,
+  liveNow,
   domain,
   host,
   serverDomains,
@@ -102,6 +108,17 @@ export function AppProvider({
   trpc.user.getFollowingUsers.useQuery(undefined, {
     initialData: following,
     enabled: !!following,
+  });
+  // Seed the global `system.getLiveNow` boolean from the SSR snapshot so the
+  // ambient `useIsLive` consumers (header logo, social links, social home
+  // block) read a primed cache and never fire the query on bootstrap. Shares
+  // the fixed `undefined` query key with `useIsLive`. `staleTime` matches the
+  // hook's 5-minute interval so the seed counts as fresh and no immediate
+  // refetch fires; `useIsLive`'s own `refetchInterval`/`refetchOnWindowFocus`
+  // still keep it current once a consumer mounts.
+  trpc.system.getLiveNow.useQuery(undefined, {
+    initialData: liveNow,
+    staleTime: 1000 * 60 * 5,
   });
   // Populate the module-level server domain map so `syncAccount(url)` can
   // resolve hosts to colors without pulling from React context.
