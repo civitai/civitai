@@ -12,7 +12,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // so importing image.service doesn't boot real infra (the established pattern in
 // the other service tests, e.g. block-registry.subscriptions.test.ts).
 
-const { fetch: fetchMock } = vi.hoisted(() => ({ fetch: vi.fn() }));
+const { fetch: fetchMock, counterIncMock } = vi.hoisted(() => ({
+  fetch: vi.fn(),
+  counterIncMock: vi.fn(),
+}));
+
+// Capture the soft-fallback Prometheus counter. image.service creates exactly one
+// counter via `registerCounter` (imageMetricsClickhouseTimeoutCounter); override
+// just that export with a shared spy so we can assert it increments on the timeout
+// path, while keeping every other prom helper real (the import graph also uses
+// registerGaugeWithLabels / registerCounterWithLabels at module load).
+vi.mock('~/server/prom/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/prom/client')>();
+  return { ...actual, registerCounter: () => ({ inc: counterIncMock }) };
+});
 
 // event-engine-common is a private git submodule not checked out in this
 // worktree — stub the value imports image.service pulls from it. MetricService
@@ -99,6 +112,8 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
       collection: 4,
       buzz: 100,
     });
+    // happy path must NOT count a soft-fallback
+    expect(counterIncMock).not.toHaveBeenCalled();
   });
 
   it('fails soft to all-null metrics within the timeout when the metric read HANGS (no parking)', async () => {
@@ -125,5 +140,7 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
         buzz: null,
       });
     }
+    // the timeout path must increment the soft-fallback counter exactly once
+    expect(counterIncMock).toHaveBeenCalledTimes(1);
   });
 });
