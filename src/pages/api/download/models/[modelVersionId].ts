@@ -45,6 +45,15 @@ const downloadLimiter = createLimiter({
 
 export default PublicEndpoint(
   async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
+    // This response is per-user, auth/early-access-gated, rate-limited, and
+    // redirects to a short-lived signed file URL. It must never be cached by the
+    // CDN. PublicEndpoint stamps a `public, s-maxage` default which would
+    // (a) leak one user's signed redirect to every other requester and
+    // (b) keep serving a deleted/taken-down model's 302 from edge for the whole
+    // cache window after the origin already returns 404 — defeating DMCA
+    // takedowns. Override with no-store so deletes take effect immediately.
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+
     const isBrowser = isRequestFromBrowser(req);
     function errorResponse(status: number, message: string) {
       res.status(status);
