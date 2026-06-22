@@ -40,7 +40,7 @@
 
 import inspector from 'node:inspector';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, readdir } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
 
@@ -48,6 +48,10 @@ const DEFAULT_SIGNAL = 'SIGWINCH';
 const DEFAULT_DURATION_SECONDS = 25;
 const MAX_DURATION_SECONDS = 120;
 const DEFAULT_OUTPUT_DIR = '/tmp';
+// Max `.cpuprofile` files allowed in the output dir before a capture is refused
+// (bounds disk on the unrotated, heartbeat-shared writable layer). Override with
+// CPU_PROFILE_MAX_FILES.
+const DEFAULT_MAX_PROFILE_FILES = 12;
 
 // --- Event-loop stall self-trigger (default OFF) --------------------------
 // The watchdog is DISARMED unless CPU_PROFILE_LAG_TRIGGER_MS is set to a
@@ -130,6 +134,33 @@ function resolveDurationMs(): number {
 
 function resolveOutputDir(): string {
   return (process.env.CPU_PROFILE_DIR || DEFAULT_OUTPUT_DIR).trim();
+}
+
+// Disk-bound guard. The output dir (default /tmp) has no rotation and — on
+// dp-prod — is the SAME writable layer as the liveness `/tmp/heartbeat`. The
+// lag self-trigger fires UNATTENDED and repeatedly during a sustained/recurring
+// wave (~1 profile / (duration+cooldown)), each multi-MB, so without a cap a
+// long wave could fill the layer → heartbeat write fails → liveness reaps the
+// pod (the profiler becoming a CAUSE of an incident). Before each capture we
+// refuse if the dir already holds >= this many `*.cpuprofile` files; the
+// operator retrieves + deletes them out of band. Applies to BOTH the SIGWINCH
+// and lag-trigger paths.
+export function resolveMaxProfileFiles(): number {
+  const raw = process.env.CPU_PROFILE_MAX_FILES;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_PROFILE_FILES;
+}
+
+// Count existing .cpuprofile files in the output dir. Best-effort: a readdir
+// failure (missing dir, perms) must never block a capture — return 0 so we
+// proceed (the write itself will surface a real error).
+async function countExistingProfiles(outputDir: string): Promise<number> {
+  try {
+    const entries = await readdir(outputDir);
+    return entries.filter((f) => f.endsWith('.cpuprofile')).length;
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -223,6 +254,19 @@ export function shouldTriggerLagCapture(args: {
 async function captureProfile(labelSegment?: string): Promise<string> {
   const durationMs = resolveDurationMs();
   const outputDir = resolveOutputDir();
+
+  // Disk-bound guard (protects the heartbeat-shared writable layer — see
+  // resolveMaxProfileFiles). Refuse rather than fill the disk; the operator
+  // clears retrieved profiles to re-enable capture.
+  const maxFiles = resolveMaxProfileFiles();
+  const existing = await countExistingProfiles(outputDir);
+  if (existing >= maxFiles) {
+    throw new Error(
+      `[cpu-profiler] refusing capture: ${existing} .cpuprofile file(s) already in ${outputDir} ` +
+        `(>= CPU_PROFILE_MAX_FILES=${maxFiles}). Retrieve + delete them to re-enable capture.`
+    );
+  }
+
   const pod = resolvePodName();
   const iso = new Date().toISOString().replace(/[:.]/g, '-');
   const prefix = labelSegment ? `cpu-${labelSegment}-` : 'cpu-';

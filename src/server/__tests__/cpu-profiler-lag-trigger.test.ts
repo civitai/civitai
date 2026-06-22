@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 
-import { shouldTriggerLagCapture } from '~/server/cpu-profiler';
+import { shouldTriggerLagCapture, resolveMaxProfileFiles } from '~/server/cpu-profiler';
 
 // These tests exercise the PURE trigger-decision function in isolation. The
 // actual capture needs a real node:inspector Session (separate-thread V8
@@ -61,5 +61,30 @@ describe('cpu-profiler: shouldTriggerLagCapture (lag self-trigger decision)', ()
     expect(
       shouldTriggerLagCapture({ ...base, maxLagMs: 50_000, capturing: true, cooldownUntilMs: 0 })
     ).toBe(false);
+  });
+});
+
+describe('cpu-profiler: resolveMaxProfileFiles (disk-bound guard config)', () => {
+  const prev = process.env.CPU_PROFILE_MAX_FILES;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.CPU_PROFILE_MAX_FILES;
+    else process.env.CPU_PROFILE_MAX_FILES = prev;
+  });
+
+  it('defaults to 12 when unset', () => {
+    delete process.env.CPU_PROFILE_MAX_FILES;
+    expect(resolveMaxProfileFiles()).toBe(12);
+  });
+
+  it('honors a positive override', () => {
+    process.env.CPU_PROFILE_MAX_FILES = '5';
+    expect(resolveMaxProfileFiles()).toBe(5);
+  });
+
+  it('falls back to the default on invalid / non-positive values', () => {
+    for (const bad of ['0', '-3', 'nope', '']) {
+      process.env.CPU_PROFILE_MAX_FILES = bad;
+      expect(resolveMaxProfileFiles()).toBe(12);
+    }
   });
 });
