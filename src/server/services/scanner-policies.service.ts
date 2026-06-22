@@ -401,7 +401,12 @@ export async function markRunCancelled(runId: string): Promise<void> {
 
 export async function isRunCancelled(runId: string): Promise<boolean> {
   try {
-    const v = await sysRedis.get(runCancelKey(runId));
+    // sysRedis.get is typed string but the HA/Sentinel client returns a Buffer
+    // for BLOB_STRING replies. `Buffer === '1'` is always false, so cancellation
+    // would silently never be detected in sentinel mode. Coerce to utf8 first.
+    // See PR #2697/#2700 for the canonical Buffer-vs-string regression.
+    const raw = await sysRedis.get(runCancelKey(runId));
+    const v = Buffer.isBuffer(raw) ? raw.toString('utf8') : raw;
     return v === '1';
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'isRunCancelled', err, { runId });
