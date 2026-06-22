@@ -42,6 +42,18 @@ vi.mock('@civitai/next-axiom', () => ({
   withAxiom: (handler: any) => handler,
 }));
 
+// Controllable region state — default unrestricted so existing tests are
+// unaffected; flip `regionBox.restricted` per-test to exercise the geo clamp.
+const regionBox = { restricted: false };
+vi.mock('~/server/utils/region-blocking', () => ({
+  getRegion: () => ({
+    countryCode: regionBox.restricted ? 'GB' : 'US',
+    regionCode: null,
+    fullLocationCode: regionBox.restricted ? 'GB' : 'US',
+  }),
+  isRegionRestricted: () => regionBox.restricted,
+}));
+
 vi.mock('~/server/utils/pagination-helpers', () => ({
   getNextPage: () => ({ baseUrl: { origin: 'https://civitai.com' }, nextPage: undefined }),
   getPagination: () => ({ skip: 0 }),
@@ -120,6 +132,7 @@ async function invoke(query: Record<string, unknown>) {
 describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    regionBox.restricted = false;
     mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
   });
 
@@ -149,6 +162,16 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     await invoke({});
     const [, ctx] = mockRunImageSearch.mock.calls[0];
     expect(ctx.browsingLevel).toBe(allBrowsingLevelsFlag);
+  });
+
+  it('RED token from a RESTRICTED region → narrowed to SFW (geo clamp wiring)', async () => {
+    regionBox.restricted = true;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: allBrowsingLevelsFlag, domain: 'red' });
+    await invoke({});
+    const [, ctx] = mockRunImageSearch.mock.calls[0];
+    // Region restriction overrides the red ceiling down to SFW.
+    expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(ctx.browsingLevel & (4 | 8 | 16)).toBe(0);
   });
 
   it('MISSING claim (legacy/pre-#2670 token) → fails closed to SFW', async () => {

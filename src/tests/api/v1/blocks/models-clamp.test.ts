@@ -64,4 +64,53 @@ describe('resolveCatalogBrowsingLevel (authoritative maturity clamp)', () => {
     const nsfwBits = 4 | 8 | 16; // R | X | XXX
     expect(browsingLevel & nsfwBits).toBe(0);
   });
+
+  describe('region restriction clamp (GA-safety gap close)', () => {
+    it('a RED ceiling is narrowed to SFW when the region is restricted', () => {
+      const open = resolveCatalogBrowsingLevel({ maxBrowsingLevel: allBrowsingLevelsFlag });
+      expect(open.isSfwCeiling).toBe(false); // sanity: unrestricted red allows mature
+
+      const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(
+        { maxBrowsingLevel: allBrowsingLevelsFlag },
+        { regionRestricted: true }
+      );
+      expect(browsingLevel).toBe(sfwBrowsingLevelsFlag);
+      expect(isSfwCeiling).toBe(true);
+      const nsfwBits = 4 | 8 | 16; // R | X | XXX
+      expect(browsingLevel & nsfwBits).toBe(0);
+    });
+
+    it('regionRestricted:false (default) leaves the ceiling clamp unchanged', () => {
+      const a = resolveCatalogBrowsingLevel({ maxBrowsingLevel: allBrowsingLevelsFlag });
+      const b = resolveCatalogBrowsingLevel(
+        { maxBrowsingLevel: allBrowsingLevelsFlag },
+        { regionRestricted: false }
+      );
+      expect(b.browsingLevel).toBe(a.browsingLevel);
+      expect(b.isSfwCeiling).toBe(a.isSfwCeiling);
+    });
+
+    it('region restriction can only NARROW — never widens a sub-SFW ceiling', () => {
+      // A green block whose ceiling is a strict subset of the SFW set (e.g. only
+      // the lowest bit) must NOT be widened back up to the full SFW flag.
+      const subSfw = 1; // single lowest browsing-level bit, ⊂ sfwBrowsingLevelsFlag
+      const { browsingLevel } = resolveCatalogBrowsingLevel(
+        { maxBrowsingLevel: subSfw },
+        { regionRestricted: true }
+      );
+      // Result ⊆ original ceiling clamp (no new bits) AND ⊆ SFW.
+      expect(browsingLevel & ~subSfw).toBe(0);
+      expect(browsingLevel & ~sfwBrowsingLevelsFlag).toBe(0);
+      expect(browsingLevel).toBe(subSfw);
+    });
+
+    it('a MISSING claim in a restricted region stays fail-closed SFW', () => {
+      const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(
+        {},
+        { regionRestricted: true }
+      );
+      expect(browsingLevel).toBe(sfwBrowsingLevelsFlag);
+      expect(isSfwCeiling).toBe(true);
+    });
+  });
 });

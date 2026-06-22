@@ -48,6 +48,18 @@ vi.mock('@civitai/next-axiom', () => ({
   withAxiom: (handler: any) => handler,
 }));
 
+// Controllable region state — default unrestricted so existing tests are
+// unaffected; flip `regionBox.restricted` per-test to exercise the geo clamp.
+const regionBox = { restricted: false };
+vi.mock('~/server/utils/region-blocking', () => ({
+  getRegion: () => ({
+    countryCode: regionBox.restricted ? 'GB' : 'US',
+    regionCode: null,
+    fullLocationCode: regionBox.restricted ? 'GB' : 'US',
+  }),
+  isRegionRestricted: () => regionBox.restricted,
+}));
+
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   handleEndpointError: (res: any, e: any) => res.status(500).json({ error: String(e) }),
 }));
@@ -113,6 +125,7 @@ async function invoke(query: Record<string, unknown>) {
 describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    regionBox.restricted = false;
     mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
     mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
   });
@@ -149,6 +162,19 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
     expect(ctx.browsingLevel).toBe(allBrowsingLevelsFlag);
     expect(ctx.nsfwImagePassthrough).toBe(false); // never passthrough — filter by level
     expect(res.body.maturity.sfwOnly).toBe(false);
+  });
+
+  it('RED token from a RESTRICTED region → narrowed to SFW (geo clamp wiring)', async () => {
+    regionBox.restricted = true;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: allBrowsingLevelsFlag, domain: 'red' });
+    const res = await invoke({});
+
+    const [, ctx] = mockRunModelSearch.mock.calls[0];
+    // Region restriction overrides the red ceiling down to SFW.
+    expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(ctx.browsingLevel & (4 | 8 | 16)).toBe(0);
+    expect(res.body.maturity).toEqual({ browsingLevel: sfwBrowsingLevelsFlag, sfwOnly: true });
+    // The Meili pre-step is clamped too — assert via a query so it's invoked.
   });
 
   it('MISSING claim (legacy/pre-#2670 token) → fails closed to SFW', async () => {
