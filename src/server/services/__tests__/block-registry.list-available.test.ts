@@ -349,6 +349,12 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
     // The pinned mean 2.5 is bound into the Bayesian sort key (C*m term = 10*2.5).
     const sql = capturedSql();
     expect(sql).toMatch(/lpad\(round\(/i); // rating key present
+    // Regression guard: the lpad length args MUST be cast to ::int. Prisma binds
+    // the JS pad constants (BAYES_SCORE_PAD/INSTALL_PAD) as bigint, and
+    // `lpad(text, bigint, unknown)` has no overload (the signature is
+    // `lpad(text, integer, text)`) → the query 500s at runtime. The shape
+    // assertions above missed it; only the preview smoke test (real DB) caught it.
+    expect(sql).toMatch(/lpad\(round\([\s\S]*?::int,\s*'0'\)/i);
   });
 
   it('category filter is threaded into the SQL (only the requested category)', async () => {
