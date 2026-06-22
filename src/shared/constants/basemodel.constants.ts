@@ -1015,6 +1015,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   },
   { ecosystemId: ECO.Anima, supportType: 'training', modelTypes: loraOnly },
 
+  // Boogu - LORA training (AI Toolkit only)
+  { ecosystemId: ECO.Boogu, supportType: 'training', modelTypes: loraOnly },
+
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
 
@@ -1027,6 +1030,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.ZImageBase, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: loraOnly },
   { ecosystemId: ECO.ZImageBase, supportType: 'auction', modelTypes: checkpointAndLora },
+
+  // Boogu - checkpoint and LORA (training upcoming per orchestrator)
+  { ecosystemId: ECO.Boogu, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // LTXV - checkpoint only (parent ecosystem)
   { ecosystemId: ECO.LTXV, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1371,6 +1377,12 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.ZImageBase,
     defaults: {
       model: { id: 2635223 },
+    },
+  },
+  {
+    ecosystemId: ECO.Boogu,
+    defaults: {
+      model: { id: 3049541 },
     },
   },
   {
@@ -2514,6 +2526,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Boogu,
     licenseId: 13,
+    experimental: true, // show "Experimental Build" alert in the generator while Boogu rolls out
   },
 
   // Illustrious

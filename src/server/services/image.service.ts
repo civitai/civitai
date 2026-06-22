@@ -75,7 +75,6 @@ import {
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -132,6 +131,7 @@ import {
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { getVisibleModel3DIdForPost } from '~/server/services/model3d.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
 import {
@@ -197,13 +197,7 @@ import { getImageS3Client } from '~/utils/s3-client';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import {
-  FLIPT_FEATURE_FLAGS,
-  getEntityMetricAggSource,
-  getFliptBoolean,
-  getFliptVariant,
-  isFlipt,
-} from '../flipt/client';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import { queryBitdex } from '~/server/bitdex/client';
 import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
@@ -1925,7 +1919,7 @@ export const getAllImages = async (
       include?.includes('profilePictures') ? getProfilePicturesForUsers(userIds) : undefined,
       includeCosmetics ? getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }) : undefined,
       getThumbnailsForImages(videoIds),
-      getImageMetricsObject(rawImages, userId),
+      getImageMetricsObject(rawImages),
       include?.includes('metaSelect') ? getMetaForImages(imageIds) : undefined,
       includeBaseModel ? imageResourcesCache.fetch(imageIds) : undefined,
     ])
@@ -2237,7 +2231,7 @@ export const getAllImagesIndex = async (
       include?.includes('metaSelect') ? getMetaForImages(imageIds) : undefined,
       getMetadataForImages(videoIds), // Only need this for videos
       getThumbnailsForImages(videoIds), // Only need this for videos
-      getImageMetricsObject(searchResults, currentUserId),
+      getImageMetricsObject(searchResults),
       // Fetch tagIds from cache so client-side hidden-tag filtering works.
       // Search results from BitDex don't include tagIds (too expensive to store),
       // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
@@ -2739,11 +2733,7 @@ export async function getImagesFromFeedSearch(
       },
       clickhouse as IClickhouseClient,
       pgDbWrite as IDbClient,
-      new MetricService(
-        clickhouse as IClickhouseClient,
-        redis as unknown as IRedisClient,
-        getEntityMetricAggSource
-      ),
+      new MetricService(clickhouse as IClickhouseClient, redis as unknown as IRedisClient),
       new CacheService(
         redis as unknown as IRedisClient,
         pgDbWrite as IDbClient,
@@ -3299,7 +3289,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       const droppedCount = results.length - filtered.length;
       droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
 
-      const imageMetrics = await getImageMetricsObject(filtered, currentUserId);
+      const imageMetrics = await getImageMetricsObject(filtered);
       const fullData = filtered.map((h) => {
         const match = imageMetrics[h.id];
         return {
@@ -3419,7 +3409,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // Apply the (flagged) existence check
     const filtered = await checkImageExistence(filteredHitIds);
 
-    const imageMetrics = await getImageMetricsObject(filtered, currentUserId);
+    const imageMetrics = await getImageMetricsObject(filtered);
 
     const fullData = filtered.map((h) => {
       const match = imageMetrics[h.id];
@@ -4348,7 +4338,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       const droppedCount = limitedHits.length - filtered.length;
       droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
 
-      const imageMetrics = await getImageMetricsObject(filtered, currentUserId);
+      const imageMetrics = await getImageMetricsObject(filtered);
       const fullData = filtered.map((h) => {
         const match = imageMetrics[h.id];
         return {
@@ -4472,7 +4462,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       nextCursor = undefined;
     }
 
-    const imageMetrics = await getImageMetricsObject(filtered, currentUserId);
+    const imageMetrics = await getImageMetricsObject(filtered);
 
     const fullData = filtered.map((h) => {
       const match = imageMetrics[h.id];
@@ -4519,59 +4509,47 @@ let _imageMetricService: MetricService | null = null;
 const getImageMetricService = () =>
   (_imageMetricService ??= new MetricService(
     clickhouse as IClickhouseClient,
-    redis as unknown as IRedisClient,
-    getEntityMetricAggSource
+    redis as unknown as IRedisClient
   ));
 
-type ImageMetricsObject = Awaited<ReturnType<typeof imageMetricsCache.fetch>>;
+type ImageMetricsObject = Record<
+  number,
+  {
+    imageId: number;
+    reactionLike: number | null;
+    reactionHeart: number | null;
+    reactionLaugh: number | null;
+    reactionCry: number | null;
+    comment: number | null;
+    collection: number | null;
+    buzz: number | null;
+  }
+>;
 
-const getImageMetricsObject = async (
-  data: { id: number }[],
-  // The current viewer's userId, used solely to bucket the watcher-cutover
-  // rollout (below). Undefined for anon/unauthenticated reads.
-  userId?: number
-): Promise<ImageMetricsObject> => {
+// Image metric counts are read from the watcher-fed `metrics:*` cache via
+// MetricService (which now pulls from the FINAL `entityMetricDailyAgg_v2` view).
+// The legacy in-app `entitymetric:*` read path (imageMetricsCache) was retired
+// after the v2 + watcher cutover went 100% stable.
+const getImageMetricsObject = async (data: { id: number }[]): Promise<ImageMetricsObject> => {
   try {
     const ids = data.map((d) => d.id);
 
-    // Cutover kill switch. When ON, read image metrics from the watcher-fed
-    // `metrics:*` cache (MetricService). Default OFF keeps the legacy in-app
-    // `entitymetric:*` path, so merging this is a no-op; flip the flag to roll
-    // over, and flip back (then bust `metrics:*`) to revert instantly. The
-    // legacy write path is intentionally left intact so flip-back stays warm.
-    //
-    // Bucketed per-user (entityId = userId) so Flipt's percentage rollout ramps
-    // gradually (1% -> 10% -> 100%): a given user gets a consistent source
-    // across their whole feed, and the metrics:* cache warms in proportion to
-    // the rolled-out fraction rather than all at once (the cold-stampede that
-    // sank the first cutover, now also capped per-pod in MetricService). Anon
-    // traffic shares the 'anon' bucket and crosses the threshold atomically as
-    // the percentage ramps. The agg-source table (v2 vs legacy) is a SEPARATE
-    // global flag so every metrics:* populate uses one consistent CH source.
-    const fromWatcher = await getFliptBoolean(
-      FLIPT_FEATURE_FLAGS.IMAGE_METRICS_FROM_WATCHER,
-      userId?.toString() || 'anon'
-    );
-    if (fromWatcher) {
-      const metrics = await getImageMetricService().fetch('Image', ids);
-      const result: ImageMetricsObject = {};
-      for (const id of ids) {
-        const m = metrics[id];
-        result[id] = {
-          imageId: id,
-          reactionLike: m?.Like || null,
-          reactionHeart: m?.Heart || null,
-          reactionLaugh: m?.Laugh || null,
-          reactionCry: m?.Cry || null,
-          comment: m?.commentCount || null,
-          collection: m?.Collection || null,
-          buzz: m?.tippedAmount || null,
-        };
-      }
-      return result;
+    const metrics = await getImageMetricService().fetch('Image', ids);
+    const result: ImageMetricsObject = {};
+    for (const id of ids) {
+      const m = metrics[id];
+      result[id] = {
+        imageId: id,
+        reactionLike: m?.Like || null,
+        reactionHeart: m?.Heart || null,
+        reactionLaugh: m?.Laugh || null,
+        reactionCry: m?.Cry || null,
+        comment: m?.commentCount || null,
+        collection: m?.Collection || null,
+        buzz: m?.tippedAmount || null,
+      };
     }
-
-    return await imageMetricsCache.fetch(ids);
+    return result;
   } catch (e) {
     const error = e as Error;
     logToAxiom(
@@ -4736,15 +4714,27 @@ export const getImage = async ({
   const userCosmetics = await getCosmeticsForUsers([creatorId]);
   const profilePictures = await getProfilePicturesForUsers([creatorId]);
 
-  const imageMetrics = await getImageMetricsObject([firstRawImage], userId);
+  const imageMetrics = await getImageMetricsObject([firstRawImage]);
   const match = imageMetrics[firstRawImage.id];
   const imageCosmetics = await getCosmeticsForEntity({
     ids: [firstRawImage.id],
     entity: 'Image',
   });
 
+  // Durable replacement for the ambient `model3d.getByPostId` chip call: carry
+  // the visibility-checked linked Model3D id on this payload (the image
+  // viewers already fetch it) so the "Posted to 3D Model" chip renders from a
+  // prop instead of firing a per-image tRPC query for every image (~36/s,
+  // mostly null). Resolves the SAME visibility predicate the chip lookup used,
+  // so a hidden draft/deleted Model3D yields null here too. Null when the post
+  // isn't linked, isn't visible, or there's no postId at all.
+  const model3dId = firstRawImage.postId
+    ? await getVisibleModel3DIdForPost({ postId: firstRawImage.postId, userId, isModerator })
+    : null;
+
   const image = {
     ...firstRawImage,
+    model3dId,
     cosmetic: imageCosmetics?.[firstRawImage.id] ?? null,
     user: {
       id: creatorId,

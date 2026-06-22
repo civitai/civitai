@@ -242,12 +242,11 @@ const unscannedFile = {
 };
 
 export function prepareFile(file: ModelFileInput) {
-  let format: ModelFileFormat = 'Other';
-  if (file.type === 'Model') {
-    const includeFileFormat = file.name.endsWith('.zip');
-    if (includeFileFormat && file.metadata?.format) format = file.metadata.format;
-    else format = getModelFileFormat(file.name);
-  }
+  // .zip files can contain formats that aren't inferable from the extension (e.g. Diffusers),
+  // so trust an explicit metadata.format for those. Otherwise infer from the filename — for
+  // every file type, not only `Model` (multi-file packs use VAE / Text Encoder / Diffusion Model).
+  const providedFormat = file.name.endsWith('.zip') ? file.metadata?.format : undefined;
+  const format: ModelFileFormat = providedFormat ?? getModelFileFormat(file.name);
 
   return {
     ...file,

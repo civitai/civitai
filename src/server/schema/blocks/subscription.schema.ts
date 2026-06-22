@@ -169,6 +169,11 @@ export type AvailableBlock = {
   installCount: number;
   category: string | null;
   scopesSummary: string[];
+  // Marketplace reviews (F-E "marketplace" cluster). avgRating is NULL when the
+  // app has no aggregate-eligible reviews (0-review apps); reviewCount excludes
+  // mod-excluded + self-reviews. Both display-safe (aggregate numbers only).
+  avgRating: number | null;
+  reviewCount: number;
 };
 
 /**
@@ -200,13 +205,17 @@ export function toPublicBlockManifest(raw: unknown): PublicBlockManifest {
 }
 
 /**
- * F-E E3 marketplace sort options:
- *   - `popular` (default) — install_count DESC (distinct-user installs).
- *   - `newest`            — current_version_deployed_at DESC, falling back to
- *                           created_at for pre-W2 rows with no deploy timestamp.
- *   - `name`              — manifest name ASC (case-insensitive).
+ * F-E marketplace sort options:
+ *   - `rating` (DEFAULT) — Bayesian-shrinkage avg rating DESC (a few-review 5★
+ *                          app can't outrank a many-review 4.x app; 0-review
+ *                          apps sit mid-pack at the global mean `m`). Ties fall
+ *                          back to install_count then id.
+ *   - `popular`          — install_count DESC (distinct-user installs).
+ *   - `newest`           — current_version_deployed_at DESC, falling back to
+ *                          created_at for pre-W2 rows with no deploy timestamp.
+ *   - `name`             — manifest name ASC (case-insensitive).
  */
-export const marketplaceSortSchema = z.enum(['popular', 'newest', 'name']);
+export const marketplaceSortSchema = z.enum(['rating', 'popular', 'newest', 'name']);
 export type MarketplaceSort = z.infer<typeof marketplaceSortSchema>;
 
 export const listAvailableSchema = z.object({
@@ -218,9 +227,10 @@ export const listAvailableSchema = z.object({
   // taxonomy const (MARKETPLACE_CATEGORIES) so the schema and the UI/DB share
   // ONE list — adding a category is a one-line const edit, no schema migration.
   category: z.enum(MARKETPLACE_CATEGORIES).optional(),
-  // F-E E3: sort order; defaults to popular (install_count desc) — same as the
-  // pre-E3 fixed ordering, so the default behaviour is unchanged.
-  sort: marketplaceSortSchema.default('popular'),
+  // F-E marketplace: sort order; defaults to `rating` (Bayesian-shrinkage avg
+  // rating desc) so the best-reviewed apps surface first; 0-review apps sit
+  // mid-pack at the global mean (not unfairly buried).
+  sort: marketplaceSortSchema.default('rating'),
   cursor: z.string().max(64).optional(),
   limit: z.number().int().min(1).max(50).default(20),
 });
@@ -278,6 +288,34 @@ export const getMarketplaceMetaSchema = z.object({
   appBlockId: z.string().min(1).max(64),
 });
 export type GetMarketplaceMetaInput = z.infer<typeof getMarketplaceMetaSchema>;
+
+// ---------------------------------------------------------------------------
+// F-E marketplace REVIEWS (5-star) — schemas.
+// ---------------------------------------------------------------------------
+
+/** Upsert (create-or-update) the viewer's review for an app block. */
+export const upsertAppBlockReviewSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+  rating: z.number().int().min(1).max(5), // STARS
+  recommended: z.boolean().optional(),
+  details: z.string().max(10000).nullish(),
+});
+export type UpsertAppBlockReviewInput = z.infer<typeof upsertAppBlockReviewSchema>;
+
+/** Keyset-paginated list of an app's reviews (newest first). */
+export const listAppBlockReviewsSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+  cursor: z.number().int().positive().optional(),
+  limit: z.number().int().min(1).max(50).default(20),
+});
+export type ListAppBlockReviewsInput = z.infer<typeof listAppBlockReviewsSchema>;
+
+/** MOD-ONLY: flip `exclude` on a review (keeps abuse out of the aggregate). */
+export const setAppReviewExcludedSchema = z.object({
+  id: z.number().int().positive(),
+  exclude: z.boolean(),
+});
+export type SetAppReviewExcludedInput = z.infer<typeof setAppReviewExcludedSchema>;
 
 /**
  * MOD-ONLY current marketplace metadata for one app_block — returned by
@@ -390,6 +428,9 @@ export type PublicAppDetail = {
   contentRating: string | null;
   version: string | null;
   installCount: number;
+  // Marketplace reviews (aggregate-eligible). avgRating NULL = 0-review app.
+  avgRating: number | null;
+  reviewCount: number;
   liveUrl: string;
   screenshots: PublicScreenshot[];
 };

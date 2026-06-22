@@ -8,7 +8,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { buildEntityMetricPerDaySource, getEntityMetricAggSource } from '~/server/flipt/client';
+import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
 import {
   tagCache,
   tagIdsForImagesCache,
@@ -407,9 +407,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       // Metrics:
       if (step === 1) {
         logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
-        const aggSource = await getEntityMetricAggSource();
         const perDaySource = buildEntityMetricPerDaySource(
-          aggSource,
           `WHERE entityType = 'Image'
                 AND entityId IN (${batch.join(',')})`
         );

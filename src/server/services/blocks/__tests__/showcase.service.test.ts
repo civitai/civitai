@@ -179,9 +179,14 @@ describe('getModelShowcaseImages', () => {
         imageRow(3, 80, {}, { nsfwLevel: X }),
         imageRow(4, 70, {}, { nsfwLevel: XXX }),
       ]);
+      // domain:'red' so the color-domain ceiling is all-levels and this test
+      // isolates the VIEWER-level dimension (the domain clamp is covered in the
+      // dedicated suite below); without it the SFW fail-closed default would
+      // mask the requested-level pass-through.
       const result = await getModelShowcaseImages(99, {
         userId: 42,
         browsingLevel: PG | PG13 | R | X | XXX,
+        domain: 'red',
       });
       // All intersect the requested level → all returned (reaction order).
       expect(result.map((i) => i.id)).toEqual([1, 2, 3, 4]);
@@ -193,9 +198,11 @@ describe('getModelShowcaseImages', () => {
         imageRow(2, 90, {}, { nsfwLevel: R }),
         imageRow(3, 80, {}, { nsfwLevel: X }),
       ]);
+      // domain:'red' isolates the viewer-level dimension (see note above).
       const result = await getModelShowcaseImages(99, {
         userId: 42,
         browsingLevel: PG | PG13 | R,
+        domain: 'red',
       });
       expect(result.map((i) => i.id)).toEqual([1, 2]);
     });
@@ -257,6 +264,131 @@ describe('getModelShowcaseImages', () => {
       // BEFORE the 6-image cap, so the lower-reaction PG images aren't starved.
       const result = await getModelShowcaseImages(99);
       expect(result.map((i) => i.id)).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+  });
+
+  describe('color-domain ceiling (security: mature thumbnail leak on a SFW domain)', () => {
+    const wideRows = [
+      imageRow(1, 100, {}, { nsfwLevel: PG }),
+      imageRow(2, 90, {}, { nsfwLevel: PG13 }),
+      imageRow(3, 80, {}, { nsfwLevel: R }),
+      imageRow(4, 70, {}, { nsfwLevel: X }),
+      imageRow(5, 60, {}, { nsfwLevel: XXX }),
+    ];
+
+    it('green domain clamps a viewer requesting browsingLevel:31 to SFW (no R/X/XXX)', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([...wideRows]);
+      // Logged-in viewer asks for everything (PG|PG13|R|X|XXX = 31) but is on a
+      // green (SFW) domain — the ceiling intersection drops R/X/XXX so no mature
+      // thumbnail URL or its prompt/seed meta reaches the iframe.
+      const result = await getModelShowcaseImages(99, {
+        userId: 42,
+        browsingLevel: PG | PG13 | R | X | XXX,
+        domain: 'green',
+      });
+      expect(result.map((i) => i.id)).toEqual([1, 2]);
+    });
+
+    it('blue domain (App-Blocks SFW) also clamps browsingLevel:31 to SFW', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([...wideRows]);
+      const result = await getModelShowcaseImages(99, {
+        userId: 42,
+        browsingLevel: PG | PG13 | R | X | XXX,
+        domain: 'blue',
+      });
+      // blue is SFW for App Blocks (mirrors the generation clamp) → mature dropped.
+      expect(result.map((i) => i.id)).toEqual([1, 2]);
+    });
+
+    it('red domain leaves the requested level unclamped (mature thumbnails returned)', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([...wideRows]);
+      const result = await getModelShowcaseImages(99, {
+        userId: 42,
+        browsingLevel: PG | PG13 | R | X | XXX,
+        domain: 'red',
+      });
+      expect(result.map((i) => i.id)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('unknown/missing domain fails closed to SFW for a wide-requesting viewer', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([...wideRows]);
+      // No domain passed (or an unrecognized one) → ceiling fails closed to SFW,
+      // so even a logged-in browsingLevel:31 viewer never sees R/X/XXX.
+      const result = await getModelShowcaseImages(99, {
+        userId: 42,
+        browsingLevel: PG | PG13 | R | X | XXX,
+      });
+      expect(result.map((i) => i.id)).toEqual([1, 2]);
+    });
+
+    it('anon on red domain is still capped to public/PG (ceiling never widens anon)', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([...wideRows]);
+      // The ceiling intersection only ever tightens; anon stays at public (PG)
+      // even on red, since public ⊆ red-ceiling.
+      const result = await getModelShowcaseImages(99, {
+        userId: null,
+        browsingLevel: PG | PG13 | R | X | XXX,
+        domain: 'red',
+      });
+      expect(result.map((i) => i.id)).toEqual([1]);
+    });
+  });
+
+  // LOW-1: the showcase clamp must fail closed for an UNRESOLVED host
+  // independent of how `domainBrowsingCeiling` happens to map 'blue' today.
+  // The router passes the RAW `getRequestDomainColor(req)` (→ `undefined` for an
+  // unresolved host) rather than `ctx.domain` (which is `?? 'blue'`-defaulted in
+  // createContext). If, instead, the showcase rode on the 'blue'-defaulted
+  // value, the moment the platform flips blue→mature in `domainBrowsingCeiling`
+  // an unresolved host would silently turn this fail-closed read into a
+  // fail-OPEN one. This suite stubs the ceiling so blue→mature and proves an
+  // `undefined` domain still clamps to SFW — i.e. the fix does NOT depend on
+  // blue's value.
+  describe('LOW-1: undefined domain fails closed independent of the blue ceiling', () => {
+    const wideRows = [
+      imageRow(1, 100, {}, { nsfwLevel: PG }),
+      imageRow(2, 90, {}, { nsfwLevel: PG13 }),
+      imageRow(3, 80, {}, { nsfwLevel: R }),
+      imageRow(4, 70, {}, { nsfwLevel: X }),
+      imageRow(5, 60, {}, { nsfwLevel: XXX }),
+    ];
+
+    it('undefined domain stays SFW even when blue would map to all-levels', async () => {
+      // Stub the SINGLE source of truth so blue (and only blue) maps to the
+      // all-levels ceiling — simulating a future site-wide blue→mature flip.
+      // `undefined` must still fail closed to SFW: had the router passed the
+      // 'blue'-defaulted ctx.domain, this viewer would now see R/X/XXX.
+      const constants = await import('~/shared/constants/browsingLevel.constants');
+      const spy = vi
+        .spyOn(constants, 'domainBrowsingCeiling')
+        .mockImplementation((color) => {
+          if (color === 'blue' || color === 'red') return constants.allBrowsingLevelsFlag;
+          if (color == null) return constants.sfwBrowsingLevelsFlag; // fail closed
+          return constants.sfwBrowsingLevelsFlag;
+        });
+      try {
+        mockDbRead.imageResourceNew.findMany.mockResolvedValue([...wideRows]);
+        // Unresolved host → raw color undefined → passed through as undefined.
+        const undefinedResult = await getModelShowcaseImages(99, {
+          userId: 42,
+          browsingLevel: PG | PG13 | R | X | XXX,
+          domain: undefined,
+        });
+        expect(undefinedResult.map((i) => i.id)).toEqual([1, 2]); // SFW only
+
+        // Control: explicit blue, under the SAME stub, WOULD widen to mature —
+        // proving the undefined-fails-closed result above is not an artifact of
+        // the stub being inert (i.e. the blue default would have been a leak).
+        mockDbRead.imageResourceNew.findMany.mockResolvedValue([...wideRows]);
+        const blueResult = await getModelShowcaseImages(99, {
+          userId: 42,
+          browsingLevel: PG | PG13 | R | X | XXX,
+          domain: 'blue',
+        });
+        expect(blueResult.map((i) => i.id)).toEqual([1, 2, 3, 4, 5]);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 

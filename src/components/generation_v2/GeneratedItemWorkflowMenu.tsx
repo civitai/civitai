@@ -72,9 +72,31 @@ export function GeneratedItemWorkflowMenu({
   function handleRemix(seed?: number | null) {
     dialogStore.closeById('generated-image');
 
+    // PolyGen submissions don't reliably carry `params.workflow` (and may
+    // also be missing `params.ecosystem` in the saved metadata snapshot —
+    // the orchestrator-side polyGen step is the source of truth, not the
+    // form-state). Without these overrides, `GenerationFormProvider`'s
+    // remix branch falls back to `txt2img` and the user hits the compat-
+    // confirm modal ("ecosystem popup") instead of landing in the 3D form
+    // with their original settings. Mirror the same fallback the queue-
+    // card replay uses (`QueueItem.handleGenerate`).
+    const params = image.params as Record<string, unknown>;
+    const isPolyGen = image.ecosystemKey === 'PolyGen';
+    const polyGenOverrides = isPolyGen
+      ? {
+          ecosystem: 'PolyGen',
+          workflow:
+            (params.workflow as string | undefined) ??
+            (params.process === 'imageTo3D' ? 'img2model3d' : 'txt2model3d'),
+        }
+      : {};
+
     generationGraphStore.setData({
-      params: { ...image.params, seed: seed ?? undefined },
-      resources: image.resources ?? [],
+      params: { ...image.params, seed: seed ?? undefined, ...polyGenOverrides },
+      // PolyGen has no checkpoint/LoRA resources — drop any inherited ones
+      // so the form provider doesn't push a stray `model` onto the polyGen
+      // branch (matches `QueueItem.handleGenerate`).
+      resources: isPolyGen ? [] : image.resources ?? [],
       runType: 'remix',
       remixOfId: image.remixOfId,
     });

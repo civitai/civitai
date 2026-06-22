@@ -760,7 +760,15 @@ export async function queueComicsForPanelImages(imageIds: number[]) {
  * Safe to fire-and-forget — no-op when the image isn't a Model3D thumbnail.
  */
 export async function queueModel3DForThumbnailImage(imageId: number) {
-  const model3ds = await dbRead.model3D.findMany({
+  // Use the primary, NOT the read replica: the polyGen handler creates the
+  // Image row first (which kicks off scanning) and the Model3D row a few ms
+  // later. Replica lag can make the freshly-created Model3D invisible to
+  // this lookup at the moment the scan webhook fires, which silently drops
+  // the enqueue and leaves `Model3D.nsfwLevel = 0` for a thumbnail that
+  // actually got rated (the bug surfaced in prod: image PG13, model3d 0).
+  // The query is a single `thumbnailImageId` index hit, so the primary load
+  // is negligible.
+  const model3ds = await dbWrite.model3D.findMany({
     where: { thumbnailImageId: imageId },
     select: { id: true },
   });
@@ -780,7 +788,8 @@ export async function queueModel3DForThumbnailImage(imageId: number) {
  */
 export async function queueModel3DsForThumbnailImages(imageIds: number[]) {
   if (!imageIds.length) return;
-  const model3ds = await dbRead.model3D.findMany({
+  // Same replica-lag hazard as `queueModel3DForThumbnailImage` — see there.
+  const model3ds = await dbWrite.model3D.findMany({
     where: { thumbnailImageId: { in: imageIds } },
     select: { id: true },
   });

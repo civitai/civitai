@@ -11,7 +11,7 @@ import type { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { imageOnSiteSql } from '~/server/utils/image-onsite';
-import { buildEntityMetricPerDaySource, getEntityMetricAggSource } from '~/server/flipt/client';
+import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
 
 const READ_BATCH_SIZE = 100000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -391,9 +391,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
 
       if (step === 1) {
         logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
-        const aggSource = await getEntityMetricAggSource();
         const perDaySource = buildEntityMetricPerDaySource(
-          aggSource,
           `WHERE entityType = 'Image'
                 AND entityId IN (${batch.join(',')})`
         );

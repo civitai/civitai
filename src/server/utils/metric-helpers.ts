@@ -5,8 +5,7 @@ import type { ProtectedContext } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { entityMetricRedis } from '~/server/redis/entity-metric.redis';
-import FliptSingleton, { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
-import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
+import { isFlipt } from '../flipt/client';
 
 const logError = (name: string, details: Record<string, unknown>) => {
   logToAxiom({ type: 'error', name, details }, 'clickhouse').catch(() => {
@@ -24,7 +23,7 @@ const getAllMetricsFromClickHouse = async (
 
   const cData = await clickhouse.$query<{ metricType: string; total: number }>`
     SELECT metricType, sum(total) as total
-    FROM entityMetricDailyAgg
+    FROM entityMetricDailyAgg_v2
     WHERE entityType = '${entityType}' AND entityId = ${entityId}
     GROUP BY metricType
   `;
@@ -117,22 +116,12 @@ export const updateEntityMetric = async ({
       await entityMetricRedis.setMetric(entityType, entityId, metricType, 0);
     }
 
-    if (entityType === 'Image') {
-      let shouldBustCache = true;
-      const fliptClient = await FliptSingleton.getInstance();
-      if (fliptClient) {
-        const flag = fliptClient.evaluateBoolean({
-          flagKey: FLIPT_FEATURE_FLAGS.ENTITY_METRIC_NO_CACHE_BUST,
-          entityId: ctx.user?.id.toString() || 'anonymous',
-          context: {},
-        });
-        shouldBustCache = !flag.enabled;
-      }
-
-      if (shouldBustCache) {
-        await imageMetricsCache.bust(entityId);
-      }
-    }
+    // NOTE: the legacy `imageMetricsCache.bust(entityId)` call was removed here
+    // after the watcher/v2 cutover — nothing reads that in-app `entitymetric:*`
+    // image read cache anymore (image reads now go through the watcher-fed
+    // `metrics:*` MetricService cache). The `entityMetricRedis` increment above
+    // and the `ctx.track.entityMetric(...)` emission below are intentionally
+    // kept: the latter is what feeds the watcher (reactions -> metrics).
   } catch (e) {
     const error = e as Error;
     logError('Failed to increment metric', {

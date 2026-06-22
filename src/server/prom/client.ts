@@ -228,6 +228,35 @@ export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
   labelNames: ['cache_name'] as const,
 });
 
+// Cluster-client SELF-HEAL reconnect counter (FIX #1). Incremented once each time the
+// inflight-leak watchdog forces a full cluster reconnect because inflight stayed pinned
+// above the threshold for the sustained window. Healthy pods never touch this; a nonzero
+// rate flags a pod that hit the binary-wedge state and was auto-recovered (vs needing a
+// human rolling-restart). Pair with redis_commands_inflight on a dashboard to see the
+// pin → reconnect → drain. No labels (per-pod attribution comes from the Prometheus `pod`
+// label); cardinality is 1 series.
+// `trigger` distinguishes the two watchdog paths: 'deadline' = the sawtooth-immune
+// deadline-hit-rate trigger (the one that actually fires during a real fleet half-open wave —
+// see cluster-selfheal.ts), 'inflight' = the legacy sustained-inflight breach. At the next prod
+// wave, a rising deadline-labeled series is the confirmation that the fix worked. 2 series.
+export const redisSelfHealReconnectCounter = registerCounterWithLabels({
+  name: 'redis_selfheal_reconnect_total',
+  help: 'Forced cluster-client reconnects by the inflight-leak self-heal watchdog',
+  labelNames: ['trigger'] as const,
+});
+
+// Non-critical metric WRITE/LOCK fail-soft counter (FIX #3). Incremented when a
+// metrics:lock setNX/expire or an increment hIncrBy hit the short fail-fast timeout (or a
+// redis error) and the call site skipped the metric/lock so the user mutation could still
+// succeed. `op` is a tiny fixed enum (populate-lock:*, increment:*). A sustained rate means
+// engagement metrics are momentarily under-counting on a wedged pod — never a money/
+// entitlement impact (these are analytics counters).
+export const redisMetricWriteFailSoftCounter = registerCounterWithLabels({
+  name: 'redis_metric_write_failsoft_total',
+  help: 'Non-critical metric write/lock cluster commands that failed soft (timed out/errored, skipped)',
+  labelNames: ['op'] as const,
+});
+
 // tRPC per-procedure latency — wall-clock duration of the full middleware chain +
 // resolver, labeled by procedure path. Used to rank heavy-pool isolation
 // candidates by P99 x rate (the criterion behind the image-feed cutover). Bucket
@@ -471,6 +500,8 @@ export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
   redisCommandDuration,
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
+  redisSelfHealReconnectCounter,
+  redisMetricWriteFailSoftCounter,
 };
 
 // pgPoolAcquireHistogram is registered in src/server/db/db-helpers.ts, not here.

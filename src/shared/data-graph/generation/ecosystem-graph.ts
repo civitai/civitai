@@ -48,6 +48,7 @@ import { flux2Graph } from './flux2-graph';
 import { flux2KleinGraph } from './flux2-klein-graph';
 import { fluxKontextGraph } from './flux-kontext-graph';
 import { zImageGraph } from './z-image-graph';
+import { booguGraph } from './boogu-graph';
 import { chromaGraph } from './chroma-graph';
 import { hiDreamGraph } from './hi-dream-graph';
 import { hiDreamO1Graph } from './hi-dream-o1-graph';
@@ -351,6 +352,7 @@ export const ecosystemGraph = new DataGraph<
     },
     { values: ['Flux1Kontext'] as const, graph: fluxKontextGraph },
     { values: ['ZImageTurbo', 'ZImageBase'] as const, graph: zImageGraph },
+    { values: ['Boogu'] as const, graph: booguGraph },
     { values: ['Chroma'] as const, graph: chromaGraph },
     { values: ['HiDream'] as const, graph: hiDreamGraph },
     { values: ['HiDream-O1'] as const, graph: hiDreamO1Graph },

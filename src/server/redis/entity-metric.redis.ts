@@ -6,8 +6,23 @@ import { chunk } from 'lodash-es';
 import type { RedisKeyTemplateCache } from './client';
 import { redis, REDIS_KEYS } from './client';
 import { createLogger } from '~/utils/logging';
+import { withMetricWriteFailSoft } from '~/server/redis/metric-write-failsoft';
 
 const log = createLogger('entity-metrics-redis', 'blue');
+
+// FIX #3: fail-soft hook for the increment WRITE path. Engagement-count increments are
+// analytics only (never money/entitlement), so a wedged cluster client must not 500/park a
+// user mutation through them — skip the increment, log + count, let the action succeed.
+function metricWriteFailHook(op: string, err: unknown) {
+  log(`metric write fail-soft [op=${op}]:`, err instanceof Error ? err.message : err);
+  (
+    globalThis as unknown as {
+      __civitaiRedisMetrics?: {
+        redisMetricWriteFailSoftCounter?: { labels: (l: { op: string }) => { inc: () => void } };
+      };
+    }
+  ).__civitaiRedisMetrics?.redisMetricWriteFailSoftCounter?.labels({ op }).inc();
+}
 
 /**
  * Static helper methods for entity metrics calculations
@@ -67,14 +82,26 @@ export class EntityMetricRedisClient {
     amount = 1
   ): Promise<number> {
     const key = this.getKey(entityType, entityId);
-    const result = await this.redis.hIncrBy(key, metricType, amount);
+    // FIX #3: fail-fast (short timeout) + fail-soft (skip on wedge → return 0) so a wedged
+    // cluster client can't 500/park the user mutation that triggered this analytics
+    // increment. 0 means "couldn't read the new total" — the only consumer is the < 0
+    // negative-correction in metric-helpers.ts, which 0 safely skips.
+    const result = await withMetricWriteFailSoft(
+      () => this.redis.hIncrBy(key, metricType, amount),
+      0,
+      { op: 'increment:hIncrBy', onFail: metricWriteFailHook }
+    );
     // Bound the key on the hot increment path too. setMetric/setMultipleMetrics
     // set this TTL, but increment() previously left the key permanent — so any
     // entitymetric:* key whose first/only touch was an increment (the hot
     // reaction/comment path) never expired. Refreshing on each increment also
     // gives a sliding TTL: the key lives while active, reaped 1h after the last
     // touch. (2026-06-09 redis usage audit)
-    await this.redis.expire(key, EntityMetricRedisClient.METRIC_TTL_SECONDS);
+    await withMetricWriteFailSoft(
+      () => this.redis.expire(key, EntityMetricRedisClient.METRIC_TTL_SECONDS),
+      false,
+      { op: 'increment:expire', onFail: metricWriteFailHook }
+    );
     return result;
   }
 

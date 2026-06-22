@@ -150,6 +150,103 @@ export const serverSchema = z.object({
   // instrumentCommands() and utils/cache-helpers.ts (fetchThroughCache + createCachedArray
   // fail-open).
   REDIS_CLUSTER_COMMAND_TIMEOUT_MS: z.coerce.number().default(15000),
+
+  // ── CLUSTER CLIENT SELF-HEAL WATCHDOG (FIX #1, the inflight-leak wedge) ──────────
+  //
+  // The per-command deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS) reaps each individual
+  // orphaned `_execute` promise (turns a 125s hang into an error so the gauge dec's and
+  // the handler unparks), but it NEVER resets the wedged client/socket: once a pod's
+  // cluster client starts orphaning commands across a retry / `_slots.rediscover()`
+  // topology refresh, the NEXT command orphans identically → the pod produces 500s/slow-
+  // degrades indefinitely. Only a full client reconnect (or a process restart) rebuilds
+  // the connections/`_slots` and clears the orphaned promises.
+  //
+  // Signature of a wedged pod: `redis_commands_inflight{client="cluster"}` jumps PAST the
+  // threshold and stays PINNED (hundreds–thousands of leaked inflight) — a healthy pod
+  // sits near 0 and a busy pod only spikes transiently. The watchdog samples the same
+  // in-process inflight counter that feeds the gauge; when it stays ABOVE the threshold
+  // CONTINUOUSLY for the sustained window it forces ONE reconnect, then waits out a
+  // cooldown before it can fire again (so it can never become a reconnect storm).
+  //
+  // ON by default (this is the only thing that clears the wedge short of a pod restart),
+  // but fully kill-switchable via REDIS_CLUSTER_SELFHEAL_ENABLED=false. Cluster client
+  // ONLY — the single-node sysRedis client is never reconnected by this watchdog.
+  REDIS_CLUSTER_SELFHEAL_ENABLED: z.preprocess(
+    // default true; only the literal string 'false' disables it
+    (x) => x !== 'false',
+    z.boolean().default(true)
+  ),
+  // Inflight count above which a pod is considered POTENTIALLY wedged. Must be > the
+  // command-deadline guard's effective concurrency floor so a merely-busy pod doesn't
+  // trip it. 50 matches the binary-wedge observation (healthy ~0, wedged jumps past 50).
+  REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD: z.coerce.number().default(50),
+  // The inflight count must stay ABOVE the threshold continuously for THIS long before a
+  // reconnect fires. A transient spike (a slow batch, a brief failover) drops back under
+  // the threshold within the window and resets the timer → no reconnect. A genuine wedge
+  // stays pinned. 20s is long enough to exclude every transient we've seen and short
+  // enough to clear a wedge well inside a human's reaction time.
+  REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS: z.coerce.number().default(20000),
+  // Minimum time between two self-heal reconnects. At most one reconnect per cooldown,
+  // so even a flapping wedge can't drive a reconnect storm (each reconnect rejects the
+  // pod's in-flight cluster commands, which the fail-open/fail-soft paths absorb). 60s.
+  REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS: z.coerce.number().default(60000),
+  // How often the watchdog samples inflight. Cheap (one gauge read), so a tight 1s
+  // sample keeps the sustained-window measurement accurate without overhead.
+  REDIS_CLUSTER_SELFHEAL_CHECK_INTERVAL_MS: z.coerce.number().default(1000),
+  // ── DEADLINE-HIT TRIGGER (the sawtooth-immune self-heal signal) ──────────────────
+  //
+  // The inflight-continuity trigger above CANNOT fire during a real half-open park: the
+  // per-command deadline (REDIS_CLUSTER_COMMAND_TIMEOUT_MS = 15s) mass-rejects the parked
+  // commands every ~15s, so inflight SAWTOOTHS to ~0 and the sustained-breach timer
+  // (REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS = 20s > 15s) resets before it ever accumulates.
+  // Confirmed live: 21 pods wedged to inflight≈200 for 6–12 min with
+  // civitai_app_redis_selfheal_reconnect_total = 0 across the whole fleet.
+  //
+  // The fix triggers self-heal on a signal the deadline-drain can't erase: the RATE of
+  // deadline TIMEOUTS. A healthy cluster client hits the 15s deadline ZERO times in any
+  // window (healthy p99 ≈ 23ms); a half-open client hits it on ~every command (the drains
+  // ARE the hits). So "N deadline timeouts within W ms" is a monotonic, sawtooth-immune
+  // "this client is wedged" signal that fires within seconds of a park — well inside the
+  // ~60s kubelet readiness-shed threshold, instead of never.
+  //
+  // Default 10 hits within 20000ms (20s): a half-open pool serving even modest traffic
+  // produces dozens–hundreds of 15s deadline rejects in a 20s window, so 10 trips fast;
+  // a one-off transient slow command (a single hit) never reaches 10. 0 disables this
+  // trigger (falls back to the inflight-continuity path only).
+  REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD: z.coerce.number().default(10),
+  REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS: z.coerce.number().default(20000),
+  // ── PER-POD RECONNECT JITTER (fleet-stampede brake) ──────────────────────────────
+  //
+  // The deadline-hit trigger fires within seconds of a half-open park. That's the point
+  // for a pod-LOCAL wedge, but it has a correlated-failure edge: if next-redis-cluster
+  // ITSELF has a genuine >=15s event (master failover, network blip), EVERY pod's cluster
+  // commands deadline-reject at once → the whole fleet (~80-100 pods) trips the deadline-hit
+  // trigger inside the same ~1s watchdog tick and fires forceClusterReconnect (destroy() +
+  // connect()) simultaneously → a connection thundering-herd against an already-unhealthy
+  // cluster, right when it can least absorb it.
+  //
+  // This spreads each pod's reconnect over a random [0, jitter) delay AFTER the trigger
+  // decision (the cooldown/single-flight guards are taken up front, so the jitter cannot
+  // queue a second reconnect or restart the cooldown). A synchronized fleet event then
+  // smears its reconnects across the jitter window instead of all landing on one tick.
+  // 0 disables jitter (reconnect fires immediately — the prior behavior). 1000ms (1s) is
+  // ~the watchdog tick, enough to de-correlate the fleet without materially delaying a
+  // single-pod self-heal (1s on top of the multi-second deadline-hit accumulation).
+  REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(1000),
+
+  // ── METRIC WRITE/LOCK FAIL-SOFT DEADLINE (FIX #3) ───────────────────────────────
+  //
+  // The metric WRITE/LOCK commands (`metrics:lock:Image` setNX/expire in
+  // entity-metric-populate.ts, the increment hIncrBy in entity-metric.redis.ts) are
+  // pure analytics/engagement counters — never money or entitlement (see the fail-soft
+  // note in those files). They currently inherit the 15s cluster command deadline and,
+  // when the cluster client is wedged, PARK up to 15s and then throw — which can 500 a
+  // user mutation. This shorter per-command timeout fails those non-critical writes FAST
+  // and the call sites then fail-SOFT (log + count, skip the metric/lock, let the user
+  // action succeed). Unset/<=0 falls back to REDIS_CLUSTER_COMMAND_TIMEOUT_MS (no change
+  // in behavior beyond the existing 15s deadline). Default 1500ms (1.5s) — ~65× the
+  // ~23ms healthy p99, so it never clips a healthy write, but bounds a wedged one.
+  REDIS_METRIC_WRITE_TIMEOUT_MS: z.coerce.number().default(1500),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(

@@ -46,6 +46,7 @@ import { createLensInput } from './lens.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createMAIInput } from './mai.handler';
 import { createZImageInput } from './z-image.handler';
+import { createBooguInput } from './boogu.handler';
 import { createHiDreamInput } from './hi-dream.handler';
 import { createHiDreamO1Input } from './hi-dream-o1.handler';
 import { createPonyV7Input } from './pony-v7.handler';
@@ -129,6 +130,9 @@ export type ChromaCtx = EcosystemGraphOutput & { ecosystem: 'Chroma' };
 
 /** ZImage context (ZImageTurbo and ZImageBase) */
 export type ZImageCtx = EcosystemGraphOutput & { ecosystem: 'ZImageTurbo' | 'ZImageBase' };
+
+/** Boogu context */
+export type BooguCtx = EcosystemGraphOutput & { ecosystem: 'Boogu' };
 
 /** HiDream context */
 export type HiDreamCtx = EcosystemGraphOutput & { ecosystem: 'HiDream' };
@@ -220,6 +224,7 @@ export { createNanoBananaInput } from './nano-banana.handler';
 export { createAnimaInput } from './anima.handler';
 export { createChromaInput } from './chroma.handler';
 export { createZImageInput } from './z-image.handler';
+export { createBooguInput } from './boogu.handler';
 export { createHiDreamInput } from './hi-dream.handler';
 export { createHiDreamO1Input } from './hi-dream-o1.handler';
 export { createPonyV7Input } from './pony-v7.handler';
@@ -330,6 +335,10 @@ async function createEcosystemStep(
     case 'ZImageTurbo':
     case 'ZImageBase':
       return createZImageInput(normalizedData, handlerCtx);
+
+    // Boogu
+    case 'Boogu':
+      return createBooguInput(normalizedData, handlerCtx);
 
     // HiDream
     case 'HiDream':

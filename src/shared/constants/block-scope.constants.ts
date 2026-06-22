@@ -36,6 +36,15 @@ export type ScopeBitmaskRequirement = number | typeof SKIP_OAUTH_CHECK;
 
 export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> = {
   'models:read:self': TokenScope.ModelsRead,
+  // NOTE: there is intentionally NO `catalog:read` scope. The block catalog
+  // endpoints (/api/v1/blocks/models, /api/v1/blocks/images) serve PUBLIC,
+  // maturity-clamped data and accept ANY valid block token (withBlockScope with
+  // no requiredScope) — they need the token only for its signed
+  // `maxBrowsingLevel` claim, not for authorization. A `catalog:read` scope was
+  // briefly added (#2671) and retired the next day: requiring a
+  // declarable+grantable scope added friction (Go CLI manifest validator + each
+  // app's OauthClient.allowedScopes bit) with no security value, since the
+  // catalog is strictly MORE restricted than the public /api/v1/models.
   'media:read:owned': TokenScope.MediaRead,
   'user:read:self': TokenScope.UserRead,
   'ai:write:budgeted': TokenScope.AIServicesWrite,

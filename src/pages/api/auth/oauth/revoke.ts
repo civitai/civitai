@@ -8,6 +8,7 @@ import { addCorsHeaders } from '~/server/utils/endpoint-helpers';
 import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-limit';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
@@ -146,6 +147,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             },
           });
         }
+
+        // Expire the revoked token in the orchestrator's auth cache so it
+        // stops authenticating immediately instead of lingering until TTL.
+        await invalidateCivitaiUser({ userId: apiKey.userId });
         break;
       }
     }

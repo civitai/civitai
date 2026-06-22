@@ -5,7 +5,7 @@ import type { AugmentedPool } from '~/server/db/db-helpers';
 import { parameterizedTemplateHandler, templateHandler } from '~/server/db/db-helpers';
 import type { JobContext } from '~/server/jobs/job';
 import { createLogger } from '~/utils/logging';
-import { buildEntityMetricPerDaySource, getEntityMetricAggSource } from '~/server/flipt/client';
+import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
 
 const log = createLogger('metric-helpers');
 
@@ -216,9 +216,7 @@ export function getEntityMetricTasks(ctx: EntityMetricContext) {
       ctx.jobContext.checkIfCanceled();
       log(`getEntityMetricTasks(${entityType}, ${metricType})`, i + 1, 'of', tasks.length);
 
-      const aggSource = await getEntityMetricAggSource();
       const perDaySource = buildEntityMetricPerDaySource(
-        aggSource,
         `WHERE entityType = '${entityType}'
             AND metricType = '${metricType}'
             AND entityId IN (${ids.join(',')})`

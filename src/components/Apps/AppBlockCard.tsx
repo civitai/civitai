@@ -1,5 +1,11 @@
 import { Anchor, Badge, Button, Card, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
-import { IconBolt, IconPlugConnected, IconSettings, IconShieldLock } from '@tabler/icons-react';
+import {
+  IconBolt,
+  IconPlugConnected,
+  IconSettings,
+  IconShieldLock,
+  IconStarFilled,
+} from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -144,11 +150,27 @@ export function AppBlockCard({
           </Group>
         )}
         <Group justify="space-between" mt="auto" pt="xs">
-          <Group gap={4}>
-            <IconBolt size={14} />
-            <Text size="xs" c="dimmed">
-              {block.installCount.toLocaleString()} installs
-            </Text>
+          <Group gap={10}>
+            <Group gap={4}>
+              <IconBolt size={14} />
+              <Text size="xs" c="dimmed">
+                {block.installCount.toLocaleString()} installs
+              </Text>
+            </Group>
+            {/* F-E marketplace reviews: avg rating + review count. avgRating is
+                null for a 0-review app → show "No reviews". */}
+            <Group gap={4}>
+              <IconStarFilled size={13} className="text-yellow-500" />
+              {block.avgRating != null ? (
+                <Text size="xs" c="dimmed">
+                  {block.avgRating.toFixed(1)} ({block.reviewCount.toLocaleString()})
+                </Text>
+              ) : (
+                <Text size="xs" c="dimmed">
+                  No reviews
+                </Text>
+              )}
+            </Group>
           </Group>
           {/*
             Anon-conversion CTA (F-E E1): for a session-less viewer, clicking
