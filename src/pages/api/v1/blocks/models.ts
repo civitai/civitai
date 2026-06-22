@@ -14,6 +14,7 @@ import {
   runModelSearch,
 } from '~/server/services/model-search.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { ModelSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
@@ -102,8 +103,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     return;
   }
 
-  // AUTHORITATIVE clamp — maturity comes ONLY from the token's domain ceiling.
-  const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims);
+  // AUTHORITATIVE clamp — maturity comes ONLY from the token's domain ceiling,
+  // then narrowed to SFW for region-restricted viewers (mirrors the public
+  // /api/v1/models region override the shared search service does NOT apply).
+  const regionRestricted = isRegionRestricted(getRegion(req));
+  const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
 
   const { query, types, baseModels, sort, limit, cursor, supportsGeneration } = parsed.data;
 

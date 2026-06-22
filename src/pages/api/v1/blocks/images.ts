@@ -11,6 +11,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { runImageSearch } from '~/server/services/image-search.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
 import {
   isFailfastStatus,
@@ -146,10 +147,13 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     return;
   }
 
-  // AUTHORITATIVE clamp — maturity comes ONLY from the token's domain ceiling.
+  // AUTHORITATIVE clamp — maturity comes ONLY from the token's domain ceiling,
+  // then narrowed to SFW for region-restricted viewers (mirrors the public
+  // /api/v1/images region override the shared search service does NOT apply).
   // (The schema doesn't even expose nsfw/browsingLevel, so there is nothing to
   // read from the request; this is the single maturity authority.)
-  const { browsingLevel } = resolveCatalogBrowsingLevel(claims);
+  const regionRestricted = isRegionRestricted(getRegion(req));
+  const { browsingLevel } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
 
   const { limit, page, cursor, type, withMeta, flatMeta, withTags, ...data } = reqParams.data;
 
