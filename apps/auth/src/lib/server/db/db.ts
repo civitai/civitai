@@ -22,6 +22,7 @@ types.setTypeParser(types.builtins.INT8, (val) => parseFloat(val));
 // Mirrors the main app's db-helpers. (Advertising's URL simply has no sslmode, so it never hits
 // this; ours does.)
 function buildConnectionString(): string {
+  if (!env.DATABASE_URL) throw new Error('DATABASE_URL is not configured');
   const url = new URL(env.DATABASE_URL);
   url.searchParams.set('sslmode', 'no-verify');
   return url.toString();

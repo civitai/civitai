@@ -62,7 +62,7 @@
       <p class="error">Login error: {data.error}</p>
     {/if}
 
-    {#if data.user}
+    {#if data.user && !data.addAccount}
       <div class="signed-in-card">
         <p>Signed in as <strong>{data.user.username ?? data.user.id}</strong>.</p>
         <form method="POST" action="/logout" class="logout-form">
@@ -70,6 +70,13 @@
         </form>
       </div>
     {:else}
+      {#if data.user && data.addAccount}
+        <p class="add-account-note">
+          Signed in as <strong>{data.user.username ?? data.user.id}</strong>. Log in below to add another
+          account.
+        </p>
+      {/if}
+
       {#if data.providers.length === 0 && !data.emailEnabled}
         <p class="empty">No login methods are configured. Set provider CLIENT_ID/SECRET or EMAIL_* env vars.</p>
       {/if}
@@ -331,6 +338,12 @@
     margin: 0;
     font-size: 0.95rem;
     color: #c8ccd0;
+    text-align: center;
+  }
+  .add-account-note {
+    margin: 0 0 1rem;
+    font-size: 0.9rem;
+    color: #9aa0a6;
     text-align: center;
   }
   .signed-in-card .social {

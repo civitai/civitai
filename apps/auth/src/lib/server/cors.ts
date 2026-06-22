@@ -6,9 +6,9 @@ import { env } from '$env/dynamic/private';
 // createAuthBrowserClient instead of building its own same-origin proxies. These are different origins from the
 // hub (CORS applies) but the SAME site, so their cookies ride along and the hub's Set-Cookie is accepted.
 //
-// DISTINCT from AUTH_SPOKE_ORIGINS, which is the CROSS-site swap-token (navigation) allowlist for `.red`. A
-// cross-site origin must NOT go here — it can't send cookies on a cross-site fetch, so credentialed CORS is
-// useless to it; it uses the swap-token sync flow instead.
+// DISTINCT from the `TrustedSpokeDomain` table, the CROSS-site first-party login registry for `.red` (the
+// auth-code flow's redirect_uri host registry). A cross-site origin must NOT go here — it can't send
+// cookies on a cross-site fetch, so credentialed CORS is useless to it; it uses the auth-code login flow.
 //
 // Exact origins, comma-separated, e.g. "https://moderator.civitai.com". localhost (any port) is allowed only in
 // dev. An empty/unset value means no spoke uses the direct browser client (the main app goes through proxies).
