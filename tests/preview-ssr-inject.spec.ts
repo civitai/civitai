@@ -43,6 +43,7 @@ const FEATURE_FLAGS_PROCEDURE = 'user.getFeatureFlags';
 const TOS_PROCEDURE = 'content.checkTosUpdate';
 const ANNOUNCEMENTS_PROCEDURE = 'announcement.getAnnouncements';
 const FOLLOWING_PROCEDURE = 'user.getFollowingUsers';
+const LIVE_NOW_PROCEDURE = 'system.getLiveNow';
 
 // A core page a gate-passing user lands on directly (no /login bounce). Both
 // procedures fire on every logged-in bootstrap regardless of which page, so
@@ -396,6 +397,77 @@ test.describe('SSR-injected getFollowingUsers (logged-in)', () => {
     for (const id of ids) {
       expect(typeof id, 'following item is a userId (number)').toBe('number');
     }
+  });
+});
+
+/**
+ * Regression guard for the SSR-inject of `system.getLiveNow` (~26/s on
+ * api-primary). NOT auth-gated — it is a `publicProcedure` consumed by the
+ * ambient `useIsLive` hook (header logo, social links, social home block), so
+ * it fires on every bootstrap, anon and authed alike. SSR-computed in
+ * `_app.getInitialProps` (fail-open to `false`) and seeded in AppProvider on the
+ * fixed `undefined` key. The payload is a plain `boolean` — no Date/array
+ * serialization subtlety, so the seed (JSON) and a live fetch (`result.data.json`)
+ * compare directly. The seed can legitimately be `false` (stream offline); that
+ * is still a valid, present seed and the byte-equality assertion holds.
+ */
+test.describe('SSR-injected getLiveNow (logged-in)', () => {
+  test.use({ storageState: storageStatePath('mod') });
+
+  test('getLiveNow is seeded into __NEXT_DATA__ and not fetched on bootstrap', async ({ page }) => {
+    const trpcUrls = await collectTrpcRequests(page, AUTHED_LANDING);
+
+    const liveNow = await readPageProp(page, 'liveNow');
+    expect(liveNow.present, 'liveNow present in __NEXT_DATA__ pageProps').toBe(true);
+    expect(typeof liveNow.value, 'liveNow seed is a boolean').toBe('boolean');
+
+    const liveNowRequests = trpcUrls.filter((u) => u.includes(LIVE_NOW_PROCEDURE));
+    expect(
+      liveNowRequests,
+      `no ${LIVE_NOW_PROCEDURE} tRPC request should fire on bootstrap (it is SSR-injected); saw:\n${liveNowRequests.join(
+        '\n'
+      )}`
+    ).toHaveLength(0);
+  });
+
+  test('SSR seed byte-equals a live fetch', async ({ page }) => {
+    await page.goto(AUTHED_LANDING, { waitUntil: 'domcontentloaded' });
+
+    const seed = await readPageProp(page, 'liveNow');
+    expect(seed.present, 'liveNow seed present in __NEXT_DATA__').toBe(true);
+
+    const live = await fetchTrpcQueryJson(page, LIVE_NOW_PROCEDURE);
+    expect(
+      seed.value,
+      'system.getLiveNow SSR seed must byte-equal a live resolver fetch'
+    ).toEqual(live);
+    expect(typeof live, 'live getLiveNow is a boolean').toBe('boolean');
+  });
+});
+
+test.describe('SSR-injected getLiveNow (anonymous)', () => {
+  // `system.getLiveNow` is a publicProcedure and fires for anon too, so the seed
+  // must be present on the anon bootstrap as well. No anon "byte-equals a live
+  // fetch" test: the preview-auth gate blocks ALL anonymous /api/trpc/* and
+  // 302-redirects to /login (same reason documented for the anon announcements
+  // case), so an anon live fetch never returns tRPC JSON. The seed-present +
+  // no-bootstrap-fetch contract is what matters and is asserted here.
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test('getLiveNow is seeded into __NEXT_DATA__ and not fetched on bootstrap', async ({ page }) => {
+    const trpcUrls = await collectTrpcRequests(page, ANON_LANDING);
+
+    const liveNow = await readPageProp(page, 'liveNow');
+    expect(liveNow.present, 'liveNow present in __NEXT_DATA__ pageProps').toBe(true);
+    expect(typeof liveNow.value, 'liveNow seed is a boolean').toBe('boolean');
+
+    const liveNowRequests = trpcUrls.filter((u) => u.includes(LIVE_NOW_PROCEDURE));
+    expect(
+      liveNowRequests,
+      `no ${LIVE_NOW_PROCEDURE} tRPC request should fire on bootstrap (it is SSR-injected); saw:\n${liveNowRequests.join(
+        '\n'
+      )}`
+    ).toHaveLength(0);
   });
 });
 

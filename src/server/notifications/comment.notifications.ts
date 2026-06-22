@@ -21,6 +21,7 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     bountyEntry: `/bounties/entries/${threadParentId}?${queryString}`,
     challenge: `/challenges/${threadParentId}?${queryString}`,
     comicChapter: `/comics/${threadParentId}?${queryString}`,
+    model3d: `/3d-models/${threadParentId}?${queryString}`,
     // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
     // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;
@@ -167,7 +168,8 @@ export const commentNotifications = createNotificationProcessor({
                 root."articleId",
                 root."bountyId",
                 root."bountyEntryId",
-                root."challengeId"
+                root."challengeId",
+                root."model3dId"
              ),
             'threadType', CASE
                 WHEN root."imageId" IS NOT NULL THEN 'image'
@@ -180,6 +182,7 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN root."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN root."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN root."challengeId" IS NOT NULL THEN 'challenge'
+                WHEN root."model3dId" IS NOT NULL THEN 'model3d'
                 ELSE 'comment'
                 END,
              'commentParentId', t."commentId",
@@ -258,6 +261,7 @@ export const commentNotifications = createNotificationProcessor({
                 root."bountyId",
                 root."bountyEntryId",
                 root."challengeId",
+                root."model3dId",
                 t."imageId",
                 t."modelId",
                 t."postId",
@@ -267,7 +271,8 @@ export const commentNotifications = createNotificationProcessor({
                 t."articleId",
                 t."bountyId",
                 t."bountyEntryId",
-                t."challengeId"
+                t."challengeId",
+                t."model3dId"
              ),
             'threadType', CASE
               WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
@@ -280,6 +285,7 @@ export const commentNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
+              WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
               ELSE 'comment'
             END,
              'commentParentId', COALESCE(
@@ -293,6 +299,7 @@ export const commentNotifications = createNotificationProcessor({
                 t."bountyId",
                 t."bountyEntryId",
                 t."challengeId",
+                t."model3dId",
                 t."commentId"
              ),
              'commentParentType', CASE
@@ -306,6 +313,7 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN t."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN t."challengeId" IS NOT NULL THEN 'challenge'
+                WHEN t."model3dId" IS NOT NULL THEN 'model3d'
                 ELSE 'comment'
               END,
             'username', u.username
@@ -556,6 +564,137 @@ export const commentNotifications = createNotificationProcessor({
       FROM new_challenge_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-challenge-comment');
+    `,
+  },
+  // Model3D comments — mirror the Model 3-tier (`new-comment` /
+  // `new-comment-response` / `new-comment-nested`) but use the CommentV2 +
+  // Thread surface (Model3D never used the V1 `Comment` table). Pilot ships
+  // with these defaulted off (`defaultDisabled: true`) since the audience is
+  // mod-only at launch — opt-in users will subscribe explicitly.
+  'new-3d-model-comment': {
+    displayName: 'New comments on your 3D models',
+    category: NotificationCategory.Comment,
+    defaultDisabled: true,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} commented on your 3D model: "${details.model3dName}"`,
+      url: `/3d-models/${details.model3dId}?highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH new_3d_model_comment AS (
+        SELECT DISTINCT
+          m3d."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'model3dId', m3d.id,
+            'model3dName', m3d.name,
+            'commentId', c.id,
+            'username', u.username
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "User" u ON c."userId" = u.id
+        JOIN "Thread" t ON t.id = c."threadId" AND t."model3dId" IS NOT NULL
+        JOIN "Model3D" m3d ON m3d.id = t."model3dId"
+        WHERE m3d."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != m3d."userId"
+      )
+      SELECT
+        concat('new-comment-model3d:owner:v2:', details->>'commentId') "key",
+        "ownerId"    "userId",
+        'new-3d-model-comment' "type",
+        details
+      FROM new_3d_model_comment
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-3d-model-comment');
+    `,
+  },
+  'new-3d-model-comment-response': {
+    displayName: 'New responses to your comments on 3D models',
+    category: NotificationCategory.Comment,
+    defaultDisabled: true,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} responded to your comment on the 3D model "${details.model3dName}"`,
+      url: `/3d-models/${details.model3dId}?highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      -- A "response" here is a CommentV2 whose Thread is rooted at a parent
+      -- CommentV2 (Thread.commentId) that itself lives inside a Model3D
+      -- thread. We notify the parent comment's author. Mirrors the
+      -- Model-side new-comment-response shape.
+      WITH new_3d_model_comment_response AS (
+        SELECT DISTINCT
+          pc."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'model3dId', root."model3dId",
+            'model3dName', m3d.name,
+            'commentId', c.id,
+            'parentId', pc.id,
+            'username', u.username
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "Thread" t ON t.id = c."threadId"
+        JOIN "CommentV2" pc ON pc.id = t."commentId"
+        JOIN "Thread" root ON root.id = t."rootThreadId"
+        JOIN "Model3D" m3d ON m3d.id = root."model3dId"
+        JOIN "User" u ON c."userId" = u.id
+        WHERE root."model3dId" IS NOT NULL
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != pc."userId"
+      )
+      SELECT
+        concat('new-comment-response-model3d:owner:v2:', details->>'commentId') "key",
+        "ownerId"    "userId",
+        'new-3d-model-comment-response' "type",
+        details
+      FROM new_3d_model_comment_response
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-3d-model-comment-response')
+    `,
+  },
+  'new-3d-model-comment-nested': {
+    displayName: 'New nested comments on your 3D models',
+    category: NotificationCategory.Comment,
+    defaultDisabled: true,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username} responded to a comment on your 3D model "${details.model3dName}"`,
+      url: `/3d-models/${details.model3dId}?highlight=${details.commentId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      -- A "nested" Model3D comment is a CommentV2 whose Thread is anchored
+      -- in a comment under the model3d root thread. The Model3D owner gets
+      -- the heads-up (the parent comment's author is covered by
+      -- new-3d-model-comment-response). Mirrors the Model new-comment-nested
+      -- shape.
+      WITH new_3d_model_comment_nested AS (
+        SELECT DISTINCT
+          m3d."userId" "ownerId",
+          JSONB_BUILD_OBJECT(
+            'version', 2,
+            'model3dId', m3d.id,
+            'model3dName', m3d.name,
+            'commentId', c.id,
+            'parentId', t."commentId",
+            'username', u.username
+          ) "details"
+        FROM "CommentV2" c
+        JOIN "Thread" t ON t.id = c."threadId" AND t."commentId" IS NOT NULL
+        JOIN "Thread" root ON root.id = t."rootThreadId"
+        JOIN "Model3D" m3d ON m3d.id = root."model3dId"
+        JOIN "User" u ON c."userId" = u.id
+        WHERE root."model3dId" IS NOT NULL
+          AND m3d."userId" > 0
+          AND c."createdAt" > '${lastSent}'
+          AND c."userId" != m3d."userId"
+      )
+      SELECT
+        concat('new-comment-nested-model3d:user:v2:', details->>'commentId') "key",
+        "ownerId"    "userId",
+        'new-3d-model-comment-nested' "type",
+        details
+      FROM new_3d_model_comment_nested
+      WHERE
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-3d-model-comment-nested')
     `,
   },
 });

@@ -1,4 +1,4 @@
-import { TokenScope, tokenScopeLabels } from '@civitai/auth/token-scope';
+import { ALL_SCOPES, tokenScopeLabels } from '@civitai/auth/token-scope';
 
 // Scope is a bitmask carried through @node-oauth/oauth2-server as a single-element string array (the
 // library is string-scope oriented; we encode the number as its decimal string). These helpers are the
@@ -20,7 +20,9 @@ export function stringToScope(scope: string | string[] | undefined): number {
   if (!scope) return 0;
   const str = Array.isArray(scope) ? scope[0] : scope;
   const parsed = parseInt(str, 10);
-  if (isNaN(parsed) || parsed < 0 || parsed > TokenScope.Full) return 0;
+  // Bound against ALL_SCOPES (incl. opt-in bits like AppBlocksSubmit), NOT `Full` — clamping to `Full`
+  // would silently drop an opt-in bit a client legitimately requested. Out-of-range → 0 (deny).
+  if (isNaN(parsed) || parsed < 0 || parsed > ALL_SCOPES) return 0;
   return parsed;
 }
 

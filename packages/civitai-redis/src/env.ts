@@ -39,6 +39,31 @@ export const redisEnvSchema = z
     // minority of cluster `_execute` promises never settle and park the SSR handler ~125s.
     // Racing against a rejecting deadline guarantees the command settles. 0 = off.
     REDIS_CLUSTER_COMMAND_TIMEOUT_MS: z.coerce.number().default(15000),
+    // ── CLUSTER SELF-HEAL WATCHDOG (FIX #1/#2/#3) ──────────────────────────────────────
+    // Master kill-switch. ON by default (a forced reconnect is the only thing that clears the
+    // inflight-leak wedge short of a pod restart). Cluster client ONLY — the single-node
+    // sysRedis client is never reconnected by this watchdog.
+    REDIS_CLUSTER_SELFHEAL_ENABLED: z.preprocess(
+      // default true; only the literal string 'false' disables it
+      (x) => x !== 'false',
+      z.boolean().default(true)
+    ),
+    // Inflight count strictly above which a pod is considered potentially wedged (50 matches
+    // the binary-wedge observation: healthy ~0, wedged jumps past 50).
+    REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD: z.coerce.number().default(50),
+    // Inflight must stay ABOVE the threshold continuously for this long before a reconnect.
+    REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS: z.coerce.number().default(20000),
+    // Minimum time between two self-heal reconnects (at most one per cooldown).
+    REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS: z.coerce.number().default(60000),
+    // How often the watchdog samples inflight (cheap one-gauge read).
+    REDIS_CLUSTER_SELFHEAL_CHECK_INTERVAL_MS: z.coerce.number().default(1000),
+    // DEADLINE-HIT TRIGGER (the sawtooth-immune self-heal signal): N cluster command-deadline
+    // TIMEOUTS within the window force a reconnect. <= 0 disables this trigger.
+    REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD: z.coerce.number().default(10),
+    REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS: z.coerce.number().default(20000),
+    // PER-POD RECONNECT JITTER (fleet-stampede brake): wait a random [0, this) before the
+    // actual reconnect so a synchronized fleet event doesn't stampede the cluster.
+    REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(1000),
     // Used only to derive a hostname for the failover feature-flag context
     NEXTAUTH_URL: z.string().optional(),
     FLIPT_DEPLOYMENT_ID: z.string().optional(),
@@ -79,6 +104,14 @@ function buildEnv() {
     sysCommandsQueueMaxLength: parsed.data.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH,
     pingIntervalMs: parsed.data.REDIS_PING_INTERVAL_MS,
     clusterCommandTimeoutMs: parsed.data.REDIS_CLUSTER_COMMAND_TIMEOUT_MS,
+    clusterSelfHealEnabled: parsed.data.REDIS_CLUSTER_SELFHEAL_ENABLED,
+    clusterSelfHealInflightThreshold: parsed.data.REDIS_CLUSTER_SELFHEAL_INFLIGHT_THRESHOLD,
+    clusterSelfHealSustainedMs: parsed.data.REDIS_CLUSTER_SELFHEAL_SUSTAINED_MS,
+    clusterSelfHealCooldownMs: parsed.data.REDIS_CLUSTER_SELFHEAL_COOLDOWN_MS,
+    clusterSelfHealCheckIntervalMs: parsed.data.REDIS_CLUSTER_SELFHEAL_CHECK_INTERVAL_MS,
+    clusterSelfHealDeadlineHitThreshold: parsed.data.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD,
+    clusterSelfHealDeadlineHitWindowMs: parsed.data.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS,
+    clusterSelfHealReconnectJitterMs: parsed.data.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS,
     nextAuthUrl: parsed.data.NEXTAUTH_URL,
     fliptDeploymentId: parsed.data.FLIPT_DEPLOYMENT_ID,
   };

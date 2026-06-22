@@ -8,6 +8,8 @@ import {
   redisCommandDuration,
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
+  redisSelfHealReconnectCounter,
+  redisMetricWriteFailSoftCounter,
 } from '@civitai/telemetry/client';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
@@ -20,13 +22,16 @@ export * from '@civitai/telemetry/client';
 // Bridge to @civitai/redis via globalThis: the redis client lives in a package that must NOT
 // statically import prom-client (it's reachable from the client bundle), so it reads these metric
 // handles off globalThis at command/connect time (getRedisMetrics()/attachSysSentinelListeners).
-// Publishing here — where prom-client is already loaded — captures all four directly. No eager
-// reader exists; consumed only from redis/client.ts function bodies.
+// Publishing here — where prom-client is already loaded — captures all six directly. No eager
+// reader exists; consumed only from @civitai/redis client function bodies (self-heal watchdog +
+// metric-write fail-soft path).
 (globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics = {
   redisCommandsInflight,
   redisCommandDuration,
   sysredisSentinelTopologyChangesCounter,
   sysredisSentinelClientErrorsCounter,
+  redisSelfHealReconnectCounter,
+  redisMetricWriteFailSoftCounter,
 };
 
 // pgPoolAcquireHistogram is registered in @civitai/db's db-helpers, not here, to avoid

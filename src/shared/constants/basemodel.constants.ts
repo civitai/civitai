@@ -189,6 +189,13 @@ export const ECO = {
   // Root ecosystems - Audio models
   AceAudio: 68,
 
+  // Root ecosystems - 3D Model providers
+  // PolyGen has been displaced twice on main merges:
+  //   originally 71 on the hackaton branch; bumped to 72 to dodge MAI
+  //   (main-line); bumped again to 73 to dodge Ideogram (main-line, also
+  //   landed on 72). Same renumber-cascade as BM.PolyGen (see BM block).
+  PolyGen: 73,
+
   // Utility ecosystems
   Upscaler: 66,
 
@@ -203,6 +210,9 @@ export const ECO = {
 
   // Ideogram
   Ideogram: 72,
+
+  // Boogu
+  Boogu: 74,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -622,6 +632,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 170,
   },
 
+  // Boogu Family (familyId: 23)
+  {
+    id: ECO.Boogu,
+    key: 'Boogu',
+    displayName: 'Boogu',
+    familyId: 23,
+    sortOrder: 180,
+  },
+
   // HiDream Family (familyId: 19)
   {
     id: ECO.HiDream,
@@ -750,6 +769,14 @@ export const ecosystems: EcosystemRecord[] = [
     key: 'Ace',
     displayName: 'ACE Audio',
     sortOrder: 300,
+  },
+
+  // 3D Model ecosystems
+  {
+    id: ECO.PolyGen,
+    key: 'PolyGen',
+    displayName: 'PolyGen (Meshy)',
+    sortOrder: 301,
   },
 ];
 
@@ -988,6 +1015,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   },
   { ecosystemId: ECO.Anima, supportType: 'training', modelTypes: loraOnly },
 
+  // Boogu - LORA training (AI Toolkit only)
+  { ecosystemId: ECO.Boogu, supportType: 'training', modelTypes: loraOnly },
+
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
 
@@ -1001,6 +1031,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: loraOnly },
   { ecosystemId: ECO.ZImageBase, supportType: 'auction', modelTypes: checkpointAndLora },
 
+  // Boogu - checkpoint and LORA (training upcoming per orchestrator)
+  { ecosystemId: ECO.Boogu, supportType: 'generation', modelTypes: checkpointAndLora },
+
   // LTXV - checkpoint only (parent ecosystem)
   { ecosystemId: ECO.LTXV, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1012,6 +1045,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // AceAudio - checkpoint only (audio generation)
   { ecosystemId: ECO.AceAudio, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // PolyGen - remote 3D generator (Meshy via Fal). No Civitai checkpoint/LoRA;
+  // entry exists so the unified generator picker can route 3D-Models workflows
+  // and the dev-time `getEcosystemSupport` audit in workflows.ts stays clean.
+  { ecosystemId: ECO.PolyGen, supportType: 'generation', modelTypes: [] },
 
   // Upscaler - upscaler models only
   { ecosystemId: ECO.Upscaler, supportType: 'generation', modelTypes: [ModelType.Upscaler] },
@@ -1339,6 +1377,12 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.ZImageBase,
     defaults: {
       model: { id: 2635223 },
+    },
+  },
+  {
+    ecosystemId: ECO.Boogu,
+    defaults: {
+      model: { id: 3049541 },
     },
   },
   {
@@ -1884,6 +1928,11 @@ export const BM = {
   Krea2: 89,
   MAI: 90,
   Ideogram: 91,
+  Boogu: 93,
+  // PolyGen was originally 90 on the hackaton branch; bumped to 91 to dodge
+  // MAI (main-line), then bumped again to 92 on the main merge to dodge
+  // Ideogram (also main-line).
+  PolyGen: 92,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2262,6 +2311,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     name: 'Ideogram',
     description: "Ideogram, Inc.'s text-to-image generation models with strong typography",
   },
+  {
+    id: 23,
+    name: 'Boogu',
+    description: "Boogu's unified multimodal image generation and editing models",
+  },
 ];
 
 export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f]));
@@ -2462,6 +2516,17 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Ideogram,
     licenseId: 37,
+  },
+
+  // Boogu
+  {
+    id: BM.Boogu,
+    name: 'Boogu',
+    description: "Boogu's unified multimodal image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.Boogu,
+    licenseId: 13,
+    experimental: true, // show "Experimental Build" alert in the generator while Boogu rolls out
   },
 
   // Illustrious
@@ -3132,6 +3197,19 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'audio',
     ecosystemId: ECO.AceAudio,
     licenseId: 13,
+  },
+
+  // PolyGen (Meshy via Fal) — remote 3D model generator. Type='image' matches
+  // the Upscaler base-model convention for "no Civitai checkpoint" ecosystems
+  // (Prisma's MediaType enum has no 'model3d' variant). Hidden from the
+  // base-model picker — PolyGen exposes no Civitai resources.
+  {
+    id: BM.PolyGen,
+    name: 'PolyGen',
+    description: 'Meshy text-to-3D / image-to-3D generation (via Fal)',
+    type: 'image',
+    ecosystemId: ECO.PolyGen,
+    hidden: true,
   },
 ];
 
@@ -3819,8 +3897,8 @@ export interface GetEcosystemDisplayItemsOptions {
   compatibleEcosystems?: string[];
   /** Function to check if an ecosystem is compatible */
   isCompatible?: (ecosystemKey: string) => boolean;
-  /** Filter by output type (image/video/audio) */
-  outputType?: 'image' | 'video' | 'audio';
+  /** Filter by output type (image/video/audio/model3d) */
+  outputType?: 'image' | 'video' | 'audio' | 'model3d';
 }
 
 /**
@@ -3835,10 +3913,18 @@ export function getEcosystemDisplayItems(
   // Build set of supported ecosystems
   const supportedEcosystems = compatibleEcosystems ? new Set(compatibleEcosystems) : null;
 
-  // Get ecosystems valid for the current output type
-  const outputTypeEcosystems = outputType
-    ? new Set(getGenerationEcosystemsForMediaType(outputType))
-    : null;
+  // Get ecosystems valid for the current output type.
+  //
+  // `model3d` is intentionally split out: the Prisma `MediaType` enum only has
+  // image/video/audio variants (changing it would require a DB migration), and
+  // PolyGen's `BaseModelRecord` is registered with `type: 'image'` to satisfy
+  // that enum. We instead enumerate model3d ecosystems explicitly from the
+  // ecosystem registry — any ecosystem with a `model3d`-shaped key counts.
+  const outputTypeEcosystems = !outputType
+    ? null
+    : outputType === 'model3d'
+    ? new Set(ecosystems.filter((e) => e.id === ECO.PolyGen).map((e) => e.key))
+    : new Set(getGenerationEcosystemsForMediaType(outputType));
 
   const groupedEcosystemIds = new Set(ecosystemGroups.flatMap((g) => g.ecosystemIds));
   const result: EcosystemDisplayItem[] = [];

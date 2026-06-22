@@ -62,11 +62,38 @@ export const TokenScope = {
   VaultRead: 1 << 23, // 8388608
   VaultWrite: 1 << 24, // 16777216
 
+  // App Blocks — submit an App Block bundle/version for moderator review.
+  // Opt-in, off-by-default (NOT part of `Full`): granted only to OAuth clients
+  // that explicitly list it in `allowedScopes` and request it (e.g. the
+  // first-party `civitai-cli` client). The submit endpoint
+  // (api/v1/blocks/submit-version) accepts an OAuth-issued token ONLY if it
+  // carries this bit AND the user is a moderator. See AppBlocksSubmit gate.
+  AppBlocksSubmit: 1 << 25, // 33554432
+
   // All scopes
+  //
+  // NOTE: `Full` is INTENTIONALLY frozen at (1 << 25) - 1 = 33554431 — it is the
+  // OR of bits 0..24 ONLY and deliberately EXCLUDES `AppBlocksSubmit` (bit 25).
+  // Existing personal API keys persist `tokenScope = 33554431` in the DB; changing
+  // this constant would silently re-interpret every stored key. `AppBlocksSubmit`
+  // is an opt-in capability, never folded into "Full Access". To bound a value
+  // against every DEFINED bit (incl. AppBlocksSubmit), use `ALL_SCOPES` below, not
+  // `Full`.
   Full: (1 << 25) - 1, // 33554431
 } as const;
 
 export type TokenScopeValue = (typeof TokenScope)[keyof typeof TokenScope];
+
+/**
+ * Mask of EVERY defined scope bit, including opt-in scopes that are NOT part of
+ * `Full` (currently `AppBlocksSubmit`). Use this as the upper bound when
+ * validating a requested/stored scope value in the OAuth flow — bounding against
+ * `Full` would reject any value carrying an opt-in bit. Computed from the enum so
+ * it can never drift behind a newly-added bit.
+ */
+export const ALL_SCOPES: number = Object.entries(TokenScope)
+  .filter(([key]) => key !== 'None' && key !== 'Full')
+  .reduce((acc, [, value]) => acc | value, 0);
 
 /** Human-readable labels for each scope, used in UI */
 export const tokenScopeLabels: Record<number, string> = {
@@ -95,6 +122,7 @@ export const tokenScopeLabels: Record<number, string> = {
   [TokenScope.NotificationsWrite]: 'Manage notification preferences',
   [TokenScope.VaultRead]: 'View vault',
   [TokenScope.VaultWrite]: 'Manage vault',
+  [TokenScope.AppBlocksSubmit]: 'Submit App Blocks for review',
 };
 
 /** Convenience presets for the API key creation UI */

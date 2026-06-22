@@ -28,6 +28,60 @@ export function grantedPageScopes(
   return declaredScopes.filter((s) => !withheld.has(s));
 }
 
+// ── OPEN_RESOURCE_PICKER (Design 1 host-chrome resource picker) ──────────────
+//
+// The page block asks the HOST to open its native ResourceSelectModal so the
+// viewer can DISCOVER a generation resource (checkpoint / LoRA). The iframe
+// never sees the catalog — only the single picked resource comes back via
+// RESOURCE_PICKER_RESULT. This generalizes the model-slot OPEN_CHECKPOINT_PICKER
+// (IframeHost) from Checkpoint-only to a typed allowlist.
+//
+// v1 type allowlist: Checkpoint + LoRA ONLY (matches the page-LoRA v1 body
+// contract — model.type LORA → additionalResources, Checkpoint → modelVersionId).
+// Any other requested type is REJECTED (the request is dropped, the modal never
+// opens) so a block can't open an embeddings/VAE/wildcards picker on a page.
+
+/** Canonical model-type tokens the page resource picker accepts in v1. */
+export const PAGE_RESOURCE_PICKER_TYPES = ['Checkpoint', 'LORA'] as const;
+export type PageResourcePickerType = (typeof PAGE_RESOURCE_PICKER_TYPES)[number];
+
+export type ResourcePickerRequest = {
+  requestId: string;
+  resourceType: PageResourcePickerType;
+  /** Optional base-model family hint (ecosystem key or baseModel name). */
+  baseModelGroup?: string;
+};
+
+/**
+ * Validate + normalize a raw OPEN_RESOURCE_PICKER payload from an untrusted
+ * iframe. Returns the sanitized request, or `null` when it must be DROPPED
+ * (missing/invalid requestId, missing/unsupported resourceType). Pure so the
+ * security-critical type allowlist + drop rules are unit-testable in the node
+ * vitest env (no RTL). The CALLER opens the native modal — this only decides
+ * whether to, and with what type/family filter.
+ *
+ * Type acceptance is case-insensitive on the wire (a block may send 'lora' or
+ * 'LoRA'); the returned `resourceType` is the canonical token the native modal
+ * filter expects ('Checkpoint' | 'LORA').
+ */
+export function resolveResourcePickerRequest(raw: unknown): ResourcePickerRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
+
+  if (typeof obj.resourceType !== 'string') return null;
+  const wanted = obj.resourceType.trim().toLowerCase();
+  const canonical = PAGE_RESOURCE_PICKER_TYPES.find((t) => t.toLowerCase() === wanted);
+  if (!canonical) return null; // unsupported type → reject (modal never opens)
+
+  const baseModelGroup =
+    typeof obj.baseModelGroup === 'string' && obj.baseModelGroup.length > 0
+      ? obj.baseModelGroup
+      : undefined;
+
+  return { requestId: obj.requestId, resourceType: canonical, ...(baseModelGroup ? { baseModelGroup } : {}) };
+}
+
 export type PageFallbackReason = 'timeout' | 'token_error' | 'fatal_block_error';
 
 /**

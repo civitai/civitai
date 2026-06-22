@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState } from 'react';
 import type { UserContentSettings } from '~/server/schema/user.schema';
+import type { UserSettingsChat } from '~/server/schema/chat.schema';
 import type { TosMeta } from '~/server/services/content.service';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
@@ -25,6 +26,17 @@ type AppProviderProps = {
   // followed userIds. Seeds the query directly (fixed `undefined` key) so the
   // ambient follow/notify buttons never fire it on bootstrap.
   following?: number[];
+  // SSR-computed `system.getLiveNow` global boolean (a single redis.get,
+  // identical for every user). Seeds the ambient `useIsLive` query (fixed
+  // `undefined` key) so it never fires on bootstrap. Public procedure → seeded
+  // for everyone, no auth gate.
+  liveNow: boolean;
+  // SSR-computed `chat.getUserSettings` (logged-in only) — the per-user chat
+  // settings (mute sounds / bad-word filter / acknowledged). Seeds the ambient
+  // query (fixed `undefined` key) so the chat widget never fires it on
+  // bootstrap. Static per user (only the user's own `setUserSettings` mutates
+  // it, which patches the cache). Absent for anon / fail-open path.
+  chatSettings?: UserSettingsChat;
   seed: number;
   canIndex: boolean;
   region: RegionInfo;
@@ -79,6 +91,8 @@ export function AppProvider({
   tosMeta,
   announcements,
   following,
+  liveNow,
+  chatSettings,
   domain,
   host,
   serverDomains,
@@ -102,6 +116,31 @@ export function AppProvider({
   trpc.user.getFollowingUsers.useQuery(undefined, {
     initialData: following,
     enabled: !!following,
+  });
+  // Seed the global `system.getLiveNow` boolean from the SSR snapshot so the
+  // ambient `useIsLive` consumers (header logo, social links, social home
+  // block) read a primed cache and never fire the query on bootstrap. Shares
+  // the fixed `undefined` query key with `useIsLive`. `staleTime` matches the
+  // hook's 5-minute interval so the seed counts as fresh and no immediate
+  // refetch fires; `useIsLive`'s own `refetchInterval`/`refetchOnWindowFocus`
+  // still keep it current once a consumer mounts.
+  trpc.system.getLiveNow.useQuery(undefined, {
+    initialData: liveNow,
+    staleTime: 1000 * 60 * 5,
+  });
+  // Seed `chat.getUserSettings` (per-user chat settings) from the SSR snapshot
+  // so the chat widget reads a primed cache and never fires the query on
+  // bootstrap (~19 req/s off api-primary). Shares the fixed `undefined` query
+  // key with `ChatButton`/`ExistingChat`'s `trpc.chat.getUserSettings.useQuery`.
+  // Settings are static per user — only the user's own `setUserSettings`
+  // mutation changes them, and it patches the cache via `setData` — so the
+  // global `staleTime: Infinity` default is correct (no external churn to poll
+  // for). `enabled: !!chatSettings` skips the seed (and any self-heal fetch)
+  // only when there's no snapshot: anon never fires this protected query, and a
+  // failed/degraded authed snapshot falls back to the widget's own live fetch.
+  trpc.chat.getUserSettings.useQuery(undefined, {
+    initialData: chatSettings,
+    enabled: !!chatSettings,
   });
   // Populate the module-level server domain map so `syncAccount(url)` can
   // resolve hosts to colors without pulling from React context.

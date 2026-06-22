@@ -24,7 +24,14 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
   title: true,
   publishedAt: true,
   status: true,
-  tags: { select: { tag: { select: simpleTagSelect } } },
+  // `tag` is a required relation on TagsOnArticle, but orphaned join rows
+  // exist in prod (tagId pointing at a hard-deleted Tag). Selecting the
+  // required relation on such a row makes Prisma throw "Inconsistent query
+  // result: Field tag is required ... got null" → HTTP 500 for every consumer
+  // of this select (getArticleById, getModeratorArticles, the search indexer,
+  // the outbound webhook). Filtering on tag existence drops the orphan join
+  // rows so these queries degrade gracefully instead of erroring.
+  tags: { select: { tag: { select: simpleTagSelect } }, where: { tag: { is: {} } } },
   user: {
     select: { ...userWithCosmeticsSelect, isModerator: true },
   },

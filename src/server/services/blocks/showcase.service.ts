@@ -3,10 +3,12 @@ import { dbRead } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Flags } from '~/shared/utils/flags';
 import {
+  domainBrowsingCeiling,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 
 const MAX_SHOWCASE_IMAGES = 6;
 
@@ -34,6 +36,19 @@ export interface ShowcaseViewer {
    * When omitted for a logged-in viewer we fall back to SFW (safe default).
    */
   browsingLevel?: number;
+  /**
+   * The color domain of the block-host request (`green`/`blue`/`red`). Maps to
+   * a maturity CEILING via `domainBrowsingCeiling` that the viewer's resolved
+   * level is intersected against — so a logged-in viewer on a SFW domain
+   * (green/blue) can't request `browsingLevel: 31` and pull mature thumbnails +
+   * gen-meta into the iframe. `undefined`/unknown fails closed to SFW. This is
+   * the display-surface analogue of the authoritative generation maturity
+   * clamp (blocks.router `resolveBlockMaturity`); `getShowcaseImages` is a
+   * public read with no token claim handy, so the request-time `ctx.domain` is
+   * the authority for this read. Anon viewers are already capped to public
+   * regardless, so the ceiling only ever tightens a logged-in view.
+   */
+  domain?: ColorDomain | null;
 }
 
 /**
@@ -47,11 +62,21 @@ export interface ShowcaseViewer {
  *   - logged-in               → the requested level, with unselectable bits
  *     (Blocked) stripped via `onlySelectableLevels`. Missing / zero falls back
  *     to SFW so a viewer with no settings yet never gets NSFW by default.
+ *
+ * The resolved level is then INTERSECTED with the color-domain maturity ceiling
+ * (`domainBrowsingCeiling(viewer.domain)`): on a SFW domain (green/blue, or an
+ * unknown/missing domain which fails closed to SFW) the result can never carry
+ * mature bits even when a logged-in viewer requests `browsingLevel: 31`. On a
+ * red domain the ceiling is all-levels, so it's a no-op there. (Anon is already
+ * forced to public above, so the intersection only ever tightens a logged-in
+ * view — `public ⊆ SFW` makes it a no-op for anon.)
  */
 function resolveAllowedBrowsingLevel(viewer?: ShowcaseViewer): number {
-  if (!viewer?.userId) return publicBrowsingLevelsFlag;
+  const ceiling = domainBrowsingCeiling(viewer?.domain);
+  if (!viewer?.userId) return Flags.intersection(publicBrowsingLevelsFlag, ceiling);
   const requested = onlySelectableLevels(viewer.browsingLevel ?? 0);
-  return requested > 0 ? requested : sfwBrowsingLevelsFlag;
+  const resolved = requested > 0 ? requested : sfwBrowsingLevelsFlag;
+  return Flags.intersection(resolved, ceiling);
 }
 
 /**

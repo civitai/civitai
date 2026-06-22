@@ -31,6 +31,7 @@ const jobQueueMap = {
   [EntityType.UserProfile]: 'userProfileIds', // unused
   [EntityType.ResourceReview]: 'resourceReviewIds', // unused
   [EntityType.ChatMessage]: 'chatMessageIds', // unused
+  [EntityType.Model3D]: 'model3dIds',
 } as const;
 type JobQueueMap = typeof jobQueueMap;
 type JobQueueIds = {
@@ -102,6 +103,10 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
     }
 
     const comicProjectIds = relatedEntities.comicProjectIds;
+    // Model3D rows enqueue directly via JobQueue (no derived discovery yet — the
+    // thumbnail-Image-driven mod flow enqueues the Model3D side-by-side with
+    // the Image). Pass them straight through to the master updater.
+    const model3dIds = jobQueueIds.model3dIds;
 
     await updateNsfwLevels({
       postIds,
@@ -112,6 +117,7 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       modelIds,
       collectionIds: [], // Collections processed by separate job
       comicProjectIds,
+      model3dIds,
     });
 
     const tuple: [entityIds: number[], entityType: EntityType, type: JobQueueType][] = [
@@ -122,6 +128,7 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       [jobQueueIds.modelVersionIds, EntityType.ModelVersion, JobQueueType.UpdateNsfwLevel],
       [jobQueueIds.bountyIds, EntityType.Bounty, JobQueueType.UpdateNsfwLevel],
       [jobQueueIds.bountyEntryIds, EntityType.BountyEntry, JobQueueType.UpdateNsfwLevel],
+      [jobQueueIds.model3dIds, EntityType.Model3D, JobQueueType.UpdateNsfwLevel],
     ];
     await Promise.all(tuple.map((args) => deleteJobQueueItems(...args)));
   } catch (e: any) {

@@ -90,7 +90,7 @@ export type ImageEngagementType = "Favorite" | "Hide";
 
 export type ImageOnModelType = "Example" | "Training";
 
-export type TagTarget = "Model" | "Question" | "Image" | "Post" | "Tag" | "Article" | "Bounty" | "Collection";
+export type TagTarget = "Model" | "Question" | "Image" | "Post" | "Tag" | "Article" | "Bounty" | "Collection" | "Model3D";
 
 export type TagType = "UserGenerated" | "Label" | "Moderation" | "System";
 
@@ -110,7 +110,7 @@ export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "Profil
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 
-export type CosmeticEntity = "Model" | "Image" | "Article" | "Post";
+export type CosmeticEntity = "Model" | "Image" | "Article" | "Post" | "Model3D";
 
 export type BuzzAccountType = "user" | "generation" | "club" | "green" | "fakered";
 
@@ -126,7 +126,7 @@ export type CollectionWriteConfiguration = "Private" | "Public" | "Review";
 
 export type CollectionReadConfiguration = "Private" | "Public" | "Unlisted";
 
-export type CollectionType = "Model" | "Article" | "Post" | "Image";
+export type CollectionType = "Model" | "Article" | "Post" | "Image" | "Model3D";
 
 export type CollectionMode = "Contest" | "Bookmark";
 
@@ -160,7 +160,7 @@ export type ChatMessageType = "Markdown" | "Image" | "Video" | "Audio" | "Embed"
 
 export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
-export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage";
+export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D";
 
 export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan";
 
@@ -223,6 +223,10 @@ export type WildcardSetAuditStatus = "Pending" | "Clean" | "Mixed" | "Dirty";
 export type WildcardSetCategoryAuditStatus = "Pending" | "Clean" | "Dirty";
 
 export type ReviewVerdict = "TruePositive" | "FalsePositive" | "TrueNegative" | "FalseNegative" | "Unsure";
+
+export type Model3DStatus = "Draft" | "Published" | "Unpublished" | "Deleted";
+
+export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
 
 export interface Account {
   id: number;
@@ -597,6 +601,10 @@ export interface User {
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
   ownedWildcardSets?: WildcardSet[];
+  model3ds?: Model3D[];
+  deletedModel3Ds?: Model3D[];
+  model3dEngagements?: Model3DEngagement[];
+  model3dReviews?: Model3DReview[];
   comicProjects?: ComicProject[];
   comicReferences?: ComicReference[];
   comicProjectEngagements?: ComicProjectEngagement[];
@@ -614,6 +622,7 @@ export interface User {
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
+  appBlockReviews?: AppBlockReview[];
   appDevForgejoIdentity?: AppDevForgejoIdentity | null;
 }
 
@@ -1116,6 +1125,8 @@ export interface Report {
   chat?: ChatReport | null;
   comicProject?: ComicProjectReport | null;
   automated?: ReportAutomated | null;
+  model3d?: Model3DReport | null;
+  model3dReview?: Model3DReviewReport | null;
 }
 
 export interface ResourceReviewReport {
@@ -1252,6 +1263,10 @@ export interface Post {
   user?: User;
   modelVersionId: number | null;
   modelVersion?: ModelVersion | null;
+  model3dId: number | null;
+  model3d?: Model3D | null;
+  model3dReviewId: number | null;
+  model3dReview?: Model3DReview | null;
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
@@ -1368,6 +1383,8 @@ export interface Image {
   comicProjectHero?: ComicProject[];
   challengesCover?: Challenge[];
   challengeWins?: ChallengeWinner[];
+  model3dThumbnails?: Model3D[];
+  model3dSources?: Model3D[];
 }
 
 export interface ImageTagForReview {
@@ -1539,6 +1556,7 @@ export interface Tag {
   tagsOnBounties?: TagsOnBounty[];
   CollectionItem?: CollectionItem[];
   tagsOnImage?: TagsOnImageDetails[];
+  tagsOnModel3D?: TagsOnModel3D[];
 }
 
 export interface TagsOnTags {
@@ -1775,6 +1793,22 @@ export interface AppBlock {
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
   userScopeGrants?: AppUserScopeGrant[];
+  reviews?: AppBlockReview[];
+}
+
+export interface AppBlockReview {
+  id: number;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  userId: number;
+  user?: User;
+  rating: number;
+  recommended: boolean;
+  details: string | null;
+  exclude: boolean;
+  tosViolation: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface AppBlockPublishRequest {
@@ -2192,6 +2226,10 @@ export interface Thread {
   comicChapter?: ComicChapter | null;
   challengeId: number | null;
   challenge?: Challenge | null;
+  model3dId: number | null;
+  model3d?: Model3D | null;
+  model3dReviewId: number | null;
+  model3dReview?: Model3DReview | null;
   metadata: JsonValue;
   commentCount: number;
   comments?: CommentV2[];
@@ -2569,6 +2607,8 @@ export interface CollectionItem {
   image?: Image | null;
   modelId: number | null;
   model?: Model | null;
+  model3dId: number | null;
+  model3d?: Model3D | null;
   addedById: number | null;
   addedBy?: User | null;
   reviewedById: number | null;
@@ -4617,6 +4657,155 @@ export interface ScannerContentSnapshot {
   scanner: string;
   content: JsonValue;
   createdAt: Date;
+}
+
+export interface Model3DLicense {
+  id: number;
+  name: string;
+  description: string;
+  allowCommercialUse: boolean;
+  allowPrintFarm: boolean;
+  allowDerivatives: boolean;
+  allowRedistribution: boolean;
+  requireAttribution: boolean;
+  isCustom: boolean;
+  createdAt: Date;
+  models?: Model3D[];
+}
+
+export interface Model3D {
+  id: number;
+  name: string;
+  description: string | null;
+  userId: number;
+  user?: User;
+  thumbnailImageId: number | null;
+  thumbnailImage?: Image | null;
+  licenseId: number;
+  license?: Model3DLicense;
+  licenseDetails: string | null;
+  workflowId: string | null;
+  sourceImageId: number | null;
+  sourceImage?: Image | null;
+  generationParams: JsonValue | null;
+  status: Model3DStatus;
+  nsfw: boolean;
+  tosViolation: boolean;
+  poi: boolean;
+  minor: boolean;
+  unlisted: boolean;
+  lockedProperties: string[];
+  availability: Availability;
+  nsfwLevel: number;
+  meta: JsonValue;
+  gallerySettings: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+  publishedAt: Date | null;
+  deletedAt: Date | null;
+  deletedBy: number | null;
+  deletedByUser?: User | null;
+  files?: Model3DFile[];
+  posts?: Post[];
+  tags?: TagsOnModel3D[];
+  engagements?: Model3DEngagement[];
+  reports?: Model3DReport[];
+  reviews?: Model3DReview[];
+  threads?: Thread[];
+  collectionItems?: CollectionItem[];
+  metric?: Model3DMetric | null;
+}
+
+export interface Model3DFile {
+  id: number;
+  model3dId: number;
+  model3d?: Model3D;
+  name: string;
+  url: string;
+  sizeKB: number;
+  format: string;
+  variant: string;
+  isPrimary: boolean;
+  metadata: JsonValue | null;
+  virusScanResult: ScanResultCode;
+  virusScanMessage: string | null;
+  rawScanResult: JsonValue | null;
+  scannedAt: Date | null;
+  scanRequestedAt: Date | null;
+  exists: boolean | null;
+  createdAt: Date;
+}
+
+export interface TagsOnModel3D {
+  model3dId: number;
+  model3d?: Model3D;
+  tagId: number;
+  tag?: Tag;
+  createdAt: Date;
+}
+
+export interface Model3DEngagement {
+  userId: number;
+  user?: User;
+  model3dId: number;
+  model3d?: Model3D;
+  type: Model3DEngagementType;
+  createdAt: Date;
+}
+
+export interface Model3DReport {
+  model3dId: number;
+  model3d?: Model3D;
+  reportId: number;
+  report?: Report;
+}
+
+export interface Model3DReview {
+  id: number;
+  model3dId: number;
+  model3d?: Model3D;
+  userId: number;
+  user?: User;
+  recommended: boolean;
+  details: string | null;
+  nsfw: boolean;
+  tosViolation: boolean;
+  exclude: boolean;
+  metadata: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+  thread?: Thread | null;
+  post?: Post | null;
+  reports?: Model3DReviewReport[];
+}
+
+export interface Model3DReviewReport {
+  model3dReviewId: number;
+  model3dReview?: Model3DReview;
+  reportId: number;
+  report?: Report;
+}
+
+export interface Model3DMetric {
+  model3dId: number;
+  model3d?: Model3D;
+  downloadCount: number;
+  commentCount: number;
+  collectedCount: number;
+  imageCount: number;
+  tippedCount: number;
+  tippedAmountCount: number;
+  ratingCount: number;
+  recommendedCount: number;
+  reactionCount: number;
+  earnedAmount: number;
+  updatedAt: Date;
+  nsfwLevel: number;
+  userId: number;
+  status: Model3DStatus;
+  availability: Availability;
+  poi: boolean;
+  minor: boolean;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

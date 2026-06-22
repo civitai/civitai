@@ -215,3 +215,42 @@ export async function isAppBlocksPipelineEnabled(): Promise<boolean> {
 export async function isAppBlocksRuntimeEnabled(): Promise<boolean> {
   return isFlipt(APP_BLOCKS_RUNTIME_FLAG);
 }
+
+/**
+ * Dedicated GLOBAL fail-closed flag for the attribution BACKPAY reader
+ * (W3 attribution back-half — Slice 4 read leg, see backpay.service.ts).
+ *
+ * The backpay reader transitions TRACK-ONLY attribution rows
+ * (`status='tracked'`) to `confirmed` at a SIGNED-OFF rate, stamping the
+ * computed author share. It moves NO money — a separate payout rail disburses
+ * `confirmed` rows. Because it is the gate between "recorded but unrated" and
+ * "confirmed for disbursement," it must be DARK until monetization sign-off.
+ *
+ * This is one half of the backpay's DOUBLE-DARK gate; the other half is a
+ * `SIGNED_OFF_RATE_CARD_VERSION` constant (null today) checked in the service.
+ * BOTH must pass for the reader to write — so even with this flag on, an
+ * unsigned/mismatched rate version still refuses (the reader can never apply a
+ * placeholder rate).
+ *
+ * Evaluated globally (entityId='global', empty context), mirroring
+ * `isAppBlocksPipelineEnabled` exactly — so it must be a PLAIN base-`enabled`
+ * boolean in Flipt (NOT segmented), or it would never resolve true.
+ *
+ * Fail-safe: the flag does NOT exist in Flipt yet (it is created only AFTER
+ * this merges, and only when leadership has signed off a rate), or Flipt is
+ * unreachable → `isFlipt` returns `false` → the backpay reader REFUSES (writes
+ * nothing, `skipped:'flag-disabled'`). So the as-merged behaviour is fully
+ * dark and cannot regress open.
+ */
+export const APP_BLOCKS_BACKPAY_FLAG = 'app-blocks-backpay-enabled';
+
+/**
+ * GLOBAL fail-closed gate for the attribution BACKPAY reader (Slice 4).
+ *
+ * Evaluates the dedicated `app-blocks-backpay-enabled` flag with no user
+ * context, mirroring `isAppBlocksPipelineEnabled`. See APP_BLOCKS_BACKPAY_FLAG
+ * for the fail-safe + double-dark reasoning.
+ */
+export async function isAppBlocksBackpayEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_BACKPAY_FLAG);
+}

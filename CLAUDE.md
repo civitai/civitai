@@ -59,6 +59,9 @@ pnpm test                 # Run Playwright tests
 pnpm run test:ui          # Run tests with UI
 ```
 
+#### Never put unit tests under `src/pages`
+Next.js 16 treats **every** `.ts`/`.tsx` file under `src/pages` (incl. nested `__tests__/`) as a route, and `next build` runs a route-type validator over it. A Vitest test file there fails the build with `Type '...test' does not satisfy the constraint 'ApiRouteConfig'. Property 'default' is missing` — and **only `next build` catches it**: `pnpm typecheck`, `pnpm test`/vitest, and the CI typecheck/unit/component tasks all pass, so it sneaks through to the preview `build-image` step. Keep handler tests in a `__tests__/` dir **outside** `src/pages` (e.g. `src/server/__tests__/`) and import the handler via the `~/pages/...` alias. (Bit us on PR #2653.)
+
 ### Database
 ```bash
 pnpm run db:migrate:empty  # Create an empty migration file

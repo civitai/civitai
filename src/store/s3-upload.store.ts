@@ -250,6 +250,24 @@ export const useS3UploadStore = create<StoreProps>()(
             });
           };
 
+          // Coalesce progress writes to one store update per animation frame. Concurrent
+          // parts/files fire 'progress' events far faster than the screen refreshes, so
+          // without this each byte event triggers a zustand set + re-render of every row.
+          let rafId: number | null = null;
+          const scheduleProgress = () => {
+            if (rafId !== null) return;
+            rafId = requestAnimationFrame(() => {
+              rafId = null;
+              updateProgress();
+            });
+          };
+          const cancelProgress = () => {
+            if (rafId !== null) {
+              cancelAnimationFrame(rafId);
+              rafId = null;
+            }
+          };
+
           // Prepare abort
           const abortUpload = () =>
             fetch(abortEndpoint, {
@@ -291,7 +309,7 @@ export const useS3UploadStore = create<StoreProps>()(
               activeXhrs.add(xhr);
               xhr.upload.addEventListener('progress', ({ loaded }) => {
                 partProgress.set(i, loaded);
-                updateProgress();
+                scheduleProgress();
               });
               xhr.upload.addEventListener('loadend', ({ loaded }) => {
                 partProgress.set(i, loaded);
@@ -339,6 +357,7 @@ export const useS3UploadStore = create<StoreProps>()(
           try {
             updateFile(pendingItem.uuid, {
               abort: () => {
+                cancelProgress();
                 cancelController.abort();
                 for (const x of activeXhrs) x.abort();
               },
@@ -382,6 +401,10 @@ export const useS3UploadStore = create<StoreProps>()(
           await Promise.all(
             Array.from({ length: Math.min(CONCURRENT_PARTS, urls.length) }, () => runWorker())
           );
+
+          // No more progress events past this point; drop any queued frame so it can't
+          // clobber the terminal status written below.
+          cancelProgress();
 
           if (failureStatus) {
             try {

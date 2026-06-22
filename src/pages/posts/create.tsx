@@ -18,6 +18,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Page } from '~/components/AppLayout/Page';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { CollectionUploadSettingsWrapper } from '~/components/Collections/components/CollectionUploadSettingsWrapper';
+import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 import type { ReviewEditCommandsRef } from '~/components/ResourceReview/EditUserResourceReview';
@@ -56,6 +57,7 @@ export default Page(
     const {
       modelId,
       modelVersionId,
+      model3dId,
       tag: tagId,
       video: postingVideo,
       clubId,
@@ -97,6 +99,7 @@ export default Page(
       ? getModelUrl({ modelId, modelName: version?.model.name, modelVersionId })
       : '/';
 
+    if (model3dId) backButtonUrl = `/3d-models/${model3dId}`;
     if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
     if (clubId) backButtonUrl = `/clubs/${clubId}`;
     if (collectionIds?.length)
@@ -158,6 +161,7 @@ export default Page(
               </Text>
             </Group>
           )}
+          {model3dId && <PostingToModel3DCard model3dId={model3dId} />}
           {versions && !reviewing && (
             <Select
               description="Select a resource to ensure that all uploaded images receive correct resource attribution"

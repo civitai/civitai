@@ -36,21 +36,35 @@ import { env } from '~/env/server';
  * `ms` defaults to REDIS_CLUSTER_COMMAND_TIMEOUT_MS; pass an explicit value in tests.
  * `<= 0` disables the guard (returns the input unchanged — no wrapper, no timer).
  *
+ * `onTimeout` (optional) is invoked exactly once iff the deadline fires (the command did NOT
+ * settle in time). This is the SELF-HEAL TRIGGER SIGNAL: a healthy cluster client never hits
+ * the deadline, a half-open one hits it constantly, and — unlike the inflight gauge — the
+ * deadline-drain cannot erase this count (the drains ARE the hits). instrumentCommands wires
+ * it to recordClusterDeadlineHit; tests inject a spy. It must never throw into the hot path,
+ * so it is isolated in a try/catch.
+ *
  * Mirrors withSysReadDeadline (sys-read-deadline.ts): the timer is always cleared in
  * finally() (within `ms`), and Promise.race reaps any late rejection from the orphaned
  * command so it never surfaces as an unhandledRejection.
  */
 export function withCommandDeadline<T>(
   p: Promise<T>,
-  ms: number = env.REDIS_CLUSTER_COMMAND_TIMEOUT_MS
+  ms: number = env.REDIS_CLUSTER_COMMAND_TIMEOUT_MS,
+  onTimeout?: () => void
 ): Promise<T> {
   if (!ms || ms <= 0) return p;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`redis cluster command timed out after ${ms}ms`)),
-      ms
-    );
+    timer = setTimeout(() => {
+      if (onTimeout) {
+        try {
+          onTimeout();
+        } catch {
+          // A broken hook (e.g. a throwing recorder) must never break the deadline guard.
+        }
+      }
+      reject(new Error(`redis cluster command timed out after ${ms}ms`));
+    }, ms);
   });
   // Timer is always cleared in finally() (within `ms`), so no unref() is needed.
   return Promise.race([p, deadline]).finally(() => {

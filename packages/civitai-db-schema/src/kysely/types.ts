@@ -117,6 +117,8 @@ import type {
   WildcardSetAuditStatus,
   WildcardSetCategoryAuditStatus,
   ReviewVerdict,
+  Model3DStatus,
+  Model3DEngagementType,
 } from './enums';
 
 export type Account = {
@@ -291,6 +293,18 @@ export type AppBlockPublishRequest = {
   deploy_updated_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+};
+export type AppBlockReview = {
+  id: Generated<number>;
+  app_block_id: string;
+  user_id: number;
+  rating: number;
+  recommended: Generated<boolean>;
+  details: string | null;
+  exclude: Generated<boolean>;
+  tos_violation: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
 };
 export type AppDevForgejoIdentity = {
   user_id: number;
@@ -1448,6 +1462,7 @@ export type CollectionItem = {
   postId: number | null;
   imageId: number | null;
   modelId: number | null;
+  model3dId: number | null;
   addedById: number | null;
   reviewedById: number | null;
   reviewedAt: Timestamp | null;
@@ -2220,6 +2235,111 @@ export type Model = {
   allowDerivatives: Generated<boolean>;
   allowDifferentLicense: Generated<boolean>;
 };
+export type Model3D = {
+  id: Generated<number>;
+  name: string;
+  description: string | null;
+  userId: number;
+  thumbnailImageId: number | null;
+  licenseId: number;
+  licenseDetails: string | null;
+  workflowId: string | null;
+  sourceImageId: number | null;
+  generationParams: unknown | null;
+  status: Generated<Model3DStatus>;
+  nsfw: Generated<boolean>;
+  tosViolation: Generated<boolean>;
+  poi: Generated<boolean>;
+  minor: Generated<boolean>;
+  unlisted: Generated<boolean>;
+  lockedProperties: Generated<string[]>;
+  availability: Generated<Availability>;
+  nsfwLevel: Generated<number>;
+  meta: Generated<unknown>;
+  gallerySettings: Generated<unknown>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  publishedAt: Timestamp | null;
+  deletedAt: Timestamp | null;
+  deletedBy: number | null;
+};
+export type Model3DEngagement = {
+  userId: number;
+  model3dId: number;
+  type: Model3DEngagementType;
+  createdAt: Generated<Timestamp>;
+};
+export type Model3DFile = {
+  id: Generated<number>;
+  model3dId: number;
+  name: string;
+  url: string;
+  sizeKB: number;
+  format: string;
+  variant: Generated<string>;
+  isPrimary: Generated<boolean>;
+  metadata: unknown | null;
+  virusScanResult: Generated<ScanResultCode>;
+  virusScanMessage: string | null;
+  rawScanResult: unknown | null;
+  scannedAt: Timestamp | null;
+  scanRequestedAt: Timestamp | null;
+  exists: boolean | null;
+  createdAt: Generated<Timestamp>;
+};
+export type Model3DLicense = {
+  id: Generated<number>;
+  name: string;
+  description: string;
+  allowCommercialUse: Generated<boolean>;
+  allowPrintFarm: Generated<boolean>;
+  allowDerivatives: Generated<boolean>;
+  allowRedistribution: Generated<boolean>;
+  requireAttribution: Generated<boolean>;
+  isCustom: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+};
+export type Model3DMetric = {
+  model3dId: number;
+  downloadCount: Generated<number>;
+  commentCount: Generated<number>;
+  collectedCount: Generated<number>;
+  imageCount: Generated<number>;
+  tippedCount: Generated<number>;
+  tippedAmountCount: Generated<number>;
+  ratingCount: Generated<number>;
+  recommendedCount: Generated<number>;
+  reactionCount: Generated<number>;
+  earnedAmount: Generated<number>;
+  updatedAt: Generated<Timestamp>;
+  nsfwLevel: Generated<number>;
+  userId: Generated<number>;
+  status: Generated<Model3DStatus>;
+  availability: Generated<Availability>;
+  poi: Generated<boolean>;
+  minor: Generated<boolean>;
+};
+export type Model3DReport = {
+  model3dId: number;
+  reportId: number;
+};
+export type Model3DReview = {
+  id: Generated<number>;
+  model3dId: number;
+  userId: number;
+  recommended: Generated<boolean>;
+  details: string | null;
+  nsfw: Generated<boolean>;
+  tosViolation: Generated<boolean>;
+  exclude: Generated<boolean>;
+  metadata: unknown | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type Model3DReviewReport = {
+  model3dReviewId: number;
+  reportId: number;
+};
 export type ModelAssociations = {
   id: Generated<number>;
   fromModelId: number;
@@ -2545,6 +2665,8 @@ export type Post = {
   detail: string | null;
   userId: number;
   modelVersionId: number | null;
+  model3dId: number | null;
+  model3dReviewId: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
   publishedAt: Timestamp | null;
@@ -3070,6 +3192,11 @@ export type TagsOnImageVote = {
   createdAt: Generated<Timestamp>;
   applied: Generated<boolean>;
 };
+export type TagsOnModel3D = {
+  model3dId: number;
+  tagId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type TagsOnModels = {
   modelId: number;
   tagId: number;
@@ -3161,6 +3288,8 @@ export type Thread = {
   comicProjectId: number | null;
   comicChapterPosition: number | null;
   challengeId: number | null;
+  model3dId: number | null;
+  model3dReviewId: number | null;
   metadata: Generated<unknown>;
   commentCount: Generated<number>;
 };
@@ -3529,6 +3658,7 @@ export type DB = {
   AnswerVote: AnswerVote;
   ApiKey: ApiKey;
   app_block_publish_requests: AppBlockPublishRequest;
+  app_block_reviews: AppBlockReview;
   app_blocks: AppBlock;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
   app_user_scope_grants: AppUserScopeGrant;
@@ -3671,6 +3801,14 @@ export type DB = {
   Link: Link;
   ModActivity: ModActivity;
   Model: Model;
+  Model3D: Model3D;
+  Model3DEngagement: Model3DEngagement;
+  Model3DFile: Model3DFile;
+  Model3DLicense: Model3DLicense;
+  Model3DMetric: Model3DMetric;
+  Model3DReport: Model3DReport;
+  Model3DReview: Model3DReview;
+  Model3DReviewReport: Model3DReviewReport;
   ModelAssociations: ModelAssociations;
   ModelBaseModelMetric: ModelBaseModelMetric;
   ModelEngagement: ModelEngagement;
@@ -3749,6 +3887,7 @@ export type DB = {
   TagsOnImageDetails: TagsOnImageDetails;
   TagsOnImageNew: TagsOnImageNew;
   TagsOnImageVote: TagsOnImageVote;
+  TagsOnModel3D: TagsOnModel3D;
   TagsOnModels: TagsOnModels;
   TagsOnModelsVote: TagsOnModelsVote;
   TagsOnPost: TagsOnPost;

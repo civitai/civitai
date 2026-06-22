@@ -1708,7 +1708,7 @@ export const comicsRouter = router({
       }
 
       // Hydrate ClickHouse-backed counters (reads / followers / tips / hides)
-      // from Redis. The cache lazily populates from `entityMetricDailyAgg_new`
+      // from Redis. The cache lazily populates from `entityMetricDailyAgg_v2`
       // on miss, so first-page-of-a-cold-comic costs one CH query and
       // subsequent pages are pure Redis. Fall back to the PG engagement
       // count for `followerCount` until the watcher has fully backfilled.
@@ -2032,7 +2032,7 @@ export const comicsRouter = router({
       // Pull all watcher-fed counters (tips / reads / followers / hides)
       // through the cache. Replaces the previous inline aggregate against
       // BuzzTip — the watcher already rolls those tips up into
-      // `entityMetricDailyAgg_new` under `entityType = 'ComicProject'`,
+      // `entityMetricDailyAgg_v2` under `entityType = 'ComicProject'`,
       // and the cache merges them in with the engagement counters.
       const metrics = (await comicMetricsCache.fetch(project.id))[project.id] ?? null;
 

@@ -96,6 +96,10 @@ export const postsQuerySchema = baseQuerySchema.merge(
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
   modelVersionId: z.number().nullish(),
+  // Optional Model3D link — set by the queue-card "Post from Generation" flow
+  // so the Post is bound to the draft Model3D on create. Validated server-side
+  // (must be owner or moderator) inside `createPost`.
+  model3dId: z.number().int().positive().nullish(),
   title: z.string().trim().nullish(),
   detail: z.string().nullish(),
   tag: z.number().nullish(),
@@ -216,6 +220,7 @@ export const postEditQuerySchema = z.object({
   postId: z.coerce.number().optional(),
   modelId: z.coerce.number().optional(),
   modelVersionId: z.coerce.number().nullish(),
+  model3dId: z.coerce.number().optional(),
   tag: z.coerce.number().optional(),
   video: z.coerce.boolean().optional(),
   returnUrl: z.string().optional(),

@@ -12,7 +12,11 @@ import {
 import { getWorkflow as clientGetWorkflow } from '@civitai/client';
 import { GENERATION_UPDATE_HEADER } from '~/shared/constants/generation.constants';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
-import { logToAxiom } from '~/server/logging/client';
+import {
+  logToAxiom,
+  classifyErrorFault,
+  buildServerFaultErrorLog,
+} from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
 import { generationStatusDefaultMessage } from '~/server/schema/generation.schema';
@@ -45,6 +49,7 @@ import {
 } from '~/server/services/orchestrator/workflows';
 import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
 import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
+import { getRequiredFeatureFlagForWorkflow } from '~/shared/data-graph/generation/config/workflows';
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import {
   guardedProcedure,
@@ -404,6 +409,24 @@ export const orchestratorRouter = router({
         isModerator: ctx.user.isModerator,
       });
 
+      // Workflow-level feature-flag gate. `filterWorkflowsByFeatureFlags` only
+      // hides the option in the picker UI — a crafted submission payload would
+      // otherwise reach the dispatcher unchecked. Mirrors the client filter
+      // server-side so e.g. `txt2model3d` / `img2model3d` (gated on
+      // `model3dGenerator`) is rejected for users who don't have the flag.
+      const generateRequiredFlag = getRequiredFeatureFlagForWorkflow(
+        formInput?.workflow as string | undefined
+      );
+      if (
+        generateRequiredFlag &&
+        (ctx.features as Record<string, boolean | undefined>)[generateRequiredFlag] !== true
+      ) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'This workflow is not available for your account.',
+        });
+      }
+
       // Check generation status early
       if (status.mode === 'disabled' && !ctx.user.isModerator) {
         throw new TRPCError({
@@ -460,6 +483,22 @@ export const orchestratorRouter = router({
         isModerator: ctx.user.isModerator,
       });
 
+      // Mirror of the gate in `generateFromGraph`. Reject what-if costing for
+      // flag-gated workflows the user can't reach so we don't leak pricing
+      // for hidden generation modes.
+      const whatIfRequiredFlag = getRequiredFeatureFlagForWorkflow(
+        (input as { workflow?: string } | undefined)?.workflow
+      );
+      if (
+        whatIfRequiredFlag &&
+        (ctx.features as Record<string, boolean | undefined>)[whatIfRequiredFlag] !== true
+      ) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'This workflow is not available for your account.',
+        });
+      }
+
       if (status.mode === 'disabled' && !ctx.user.isModerator) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -484,19 +523,33 @@ export const orchestratorRouter = router({
           currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         });
       } catch (e) {
-        logToAxiom({
-          name: 'what-if-from-graph',
-          type: 'error',
-          payload: input,
-          error:
-            e instanceof TRPCError
-              ? {
-                  code: e.code,
-                  name: e.name,
-                  message: e.message,
-                }
-              : e,
-        }).catch();
+        // ~94% of failures here are EXPECTED client-fault validation (BAD_REQUEST
+        // et al. — "resources not available for generation", "request is invalid")
+        // for a non-critical cost PREVIEW. Logging those at error severity made
+        // this the single largest error-by-name entry in prod and buried the real
+        // ~6% server faults. Branch on the TRPCError code:
+        //  - client fault → log at 'info' (normal user feedback, not an incident);
+        //  - server fault → log at 'error' WITH the un-masked underlying cause
+        //    (errorHandling.ts replaces the message with a generic string but keeps
+        //    the original on `.cause`), so the real 500s stay diagnosable.
+        // Behavior is otherwise unchanged: the client still receives the original
+        // 400/500 because we always re-throw `e`.
+        if (classifyErrorFault(e) === 'client') {
+          logToAxiom({
+            name: 'what-if-from-graph',
+            type: 'info',
+            payload: input,
+            error:
+              e instanceof TRPCError ? { code: e.code, name: e.name, message: e.message } : e,
+          }).catch();
+        } else {
+          logToAxiom({
+            name: 'what-if-from-graph',
+            type: 'error',
+            payload: input,
+            error: buildServerFaultErrorLog(e),
+          }).catch();
+        }
         throw e;
       }
     }),

@@ -3,7 +3,17 @@ import { REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client'
 
 async function getBucketNames(key: string) {
   const currentBucket = await sysRedis.hGet(REDIS_SYS_KEYS.QUEUES.BUCKETS, key);
-  return (currentBucket?.split(',') ?? []) as RedisKeyTemplateSys[]; // values are redis key names
+  // sysRedis.hGet is typed to return a string, but the live HA/Sentinel client
+  // can hand back a Buffer for the BLOB_STRING reply. A Buffer has no `.split`,
+  // so `currentBucket?.split(',')` threw `i?.split is not a function` and 500'd
+  // EVERY content-create mutation that enqueues a search-index update
+  // (post.createWithImages, modelVersion.upsert, collection.saveItem, …). Coerce
+  // to a utf8 string first — the bucket value is always written as a comma-joined
+  // string (see hSet calls below), so decoding then splitting is exact.
+  const asString = Buffer.isBuffer(currentBucket)
+    ? currentBucket.toString('utf8')
+    : (currentBucket as string | null | undefined);
+  return (asString ? asString.split(',') : []) as RedisKeyTemplateSys[]; // values are redis key names
 }
 
 function getNewBucket(key: string) {

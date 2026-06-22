@@ -1,5 +1,5 @@
 import { json, redirect, type RequestHandler } from '@sveltejs/kit';
-import { TokenScope } from '@civitai/auth/token-scope';
+import { TokenScope, ALL_SCOPES } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { oauthServer } from '$lib/server/oauth/server';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
@@ -89,7 +89,9 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   }
 
   const rawScope = parseInt(params.scope, 10);
-  if (isNaN(rawScope) || rawScope < 0 || rawScope > TokenScope.Full) {
+  // Bound against ALL_SCOPES (incl. opt-in AppBlocksSubmit), NOT `Full`; the per-client allowedScopes
+  // intersection (validateScope) is the real auth gate.
+  if (isNaN(rawScope) || rawScope < 0 || rawScope > ALL_SCOPES) {
     return oauthError(400, 'invalid_scope', 'Invalid scope value');
   }
   // UserRead is the mandatory baseline (createOAuthTokenPair forces it on the issued token); force it

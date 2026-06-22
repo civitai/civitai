@@ -48,19 +48,23 @@ export function createAxiomLogger(overrides: Partial<AxiomConfig> = {}): AxiomLo
   async function logToAxiom(data: MixedObject, datastream?: string) {
     const sendData = { pod: config.podName, ...data };
     if (config.isProd) {
-      if (!axiom) return;
       datastream ??= config.datastream;
-      if (!datastream) return;
 
-      // Write stderr BEFORE awaiting Axiom — when Axiom is degraded,
-      // ingestEvents rejects and the rest of this function never runs.
-      // Loki ingest depends on the stderr line; without this ordering,
-      // the Grafana alerts that consume `{ "name": "sysredis-fail-open",
-      // ... }` go silent during the exact multi-service incident class
-      // they exist to handle (sysRedis + Axiom both down).
+      // Write stderr BEFORE the Axiom-null/datastream guards (and before awaiting
+      // Axiom) — Loki ingest depends on this stderr line, so it must fire even when
+      // no Axiom client is configured (preview envs use a placeholder token → axiom
+      // is null) or when Axiom is degraded (ingestEvents rejects and the rest of this
+      // function never runs). Without this ordering, preview tRPC 500s never reach
+      // Loki, and the Grafana alerts that consume `{ "name": "sysredis-fail-open",
+      // ... }` go silent during the exact multi-service incident class they exist to
+      // handle (sysRedis + Axiom both down). `_axiom: datastream` may be undefined in
+      // previews (no AXIOM_DATASTREAM) — JSON.stringify drops it; the line still
+      // carries message/stack/code/path.
       if (config.logErrorsToStdout)
         console.error(JSON.stringify({ _axiom: datastream, ...sendData }));
 
+      if (!axiom) return;
+      if (!datastream) return;
       await axiom.ingestEvents(datastream, sendData);
     } else {
       console.log('logToAxiom', sendData);

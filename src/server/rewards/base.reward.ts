@@ -12,6 +12,15 @@ import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/servi
 import { hashifyObject } from '~/utils/string-helpers';
 import { withRetries } from '../utils/errorHandling';
 
+// Retry budget for the batch `process` (cron) path — can afford to block.
+const BATCH_RETRY_COUNT = 5;
+const BATCH_RETRY_DELAY = 500;
+// Retry budget for the inline `apply` path, which runs synchronously inside user
+// mutations. Keep it tight so a ClickHouse brownout can't block a user action for
+// ~2.5s of retries: 1 retry (= 2 attempts) with a short backoff.
+const INLINE_RETRY_COUNT = 1;
+const INLINE_RETRY_DELAY = 200;
+
 const log = (event: BuzzEventLog, data: MixedObject) => {
   logToAxiom({
     name: 'buzz-rewards',
@@ -231,12 +240,26 @@ export function createBuzzEvent<T>({
       if (event.status === 'capped') event.awardAmount = 0;
     }
 
+    // Fail-soft: the inline `apply` path runs synchronously inside user mutations
+    // (toggleFollow, post.update, collection.saveItem, claimDailyBoostReward, ...).
+    // The ClickHouse `buzzEvents` insert is an AUDIT/analytics row — it does NOT
+    // move money. The actual Buzz grant is `sendAward` below, and dedup is enforced
+    // by the Redis Lua script in `processOnDemand` (which already committed the dedup
+    // entry above). So a failed insert must NEVER 500 the user action: we log + count
+    // and skip the award for this event. The user simply doesn't receive one reward
+    // credit during a ClickHouse brownout — no 500, no double-award (the Redis dedup
+    // entry is already set, so a retry of the same event returns early and never
+    // re-awards). Use a SHORT retry budget so we don't block the mutation for ~2.5s
+    // during a brownout. The batch `process` path is unchanged (background cron).
     try {
-      await addBuzzEvent(event);
+      await addBuzzEvent(event, INLINE_RETRY_COUNT, INLINE_RETRY_DELAY);
     } catch (error) {
       log(event, { message: 'Failed to record Buzz event', error });
       rewardFailedCounter?.inc?.();
-      throw new Error(`Failed to record Buzz event: ${error}`);
+      // Fail-soft: do not rethrow. Skip sendAward for this event too — the audit row
+      // that records the grant could not be written, so we treat the reward as not
+      // granted this time rather than granting Buzz with no corresponding event row.
+      return;
     }
 
     if (event.status === 'awarded') {
@@ -249,9 +272,11 @@ export function createBuzzEvent<T>({
           error,
         });
         rewardFailedCounter?.inc?.();
-        throw new Error(
-          `Failed to send award for Buzz event: ${error}.\n\nTransaction: ${JSON.stringify(event)}`
-        );
+        // Fail-soft: do not rethrow. No double-spend risk — `sendAward` is idempotent
+        // on `externalTransactionId`, and the Redis dedup entry is already set so the
+        // same event will never reach `sendAward` again. The user loses one reward
+        // credit during the outage; the user's mutation still succeeds.
+        return;
       }
     }
   };
@@ -373,7 +398,11 @@ export function createBuzzEvent<T>({
 // TODO: sometimes this can cause duplicate entries.
 //  hypothesis is that this occurs due to a combination of
 //  async inserts + ch's merge strategy
-async function addBuzzEvent(event: BuzzEventLog) {
+async function addBuzzEvent(
+  event: BuzzEventLog,
+  retries: number = BATCH_RETRY_COUNT,
+  retryTimeout: number = BATCH_RETRY_DELAY
+) {
   await withRetries(
     async () =>
       await clickhouse?.insert({
@@ -381,8 +410,8 @@ async function addBuzzEvent(event: BuzzEventLog) {
         values: [event],
         format: 'JSONEachRow',
       }),
-    5,
-    500
+    retries,
+    retryTimeout
   );
 }
 

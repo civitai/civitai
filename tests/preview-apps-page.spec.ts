@@ -32,9 +32,22 @@ import { trpcQuery } from './preview-trpc';
  *    projection) + `blockId` (the `<slug>` used by the page route).
  *  - Page route `/apps/run/[slug]/[[...path]]` SSR-gates on
  *    `features.appBlocks && features.appBlocksPages`, resolves the approved app
- *    by `block_id`, and renders `<PageBlockHost>` (data-testid="app-page-frame"
- *    with the `<iframe data-testid="app-page-iframe">` inside, plus the W7
- *    `data-testid="app-block-chrome"` trust bar).
+ *    by `block_id`, and renders `<PageBlockHost>`: the W7 trust chrome
+ *    (`AppBlockChrome`, with an "App block menu" button) above the block
+ *    `<iframe>` (`title=<appName>`, `data-block-instance-id="page_<appBlockId>"`,
+ *    `data-block-ready` flipping to "true" on BLOCK_READY).
+ *
+ * ⚠️ SELECTORS — NO `data-testid`. The preview is a PRODUCTION Next build
+ * (NODE_ENV=production), and next.config.mjs strips every `data-testid` in
+ * production (`compiler.reactRemoveProperties: { properties: ['^data-testid$'] }`).
+ * So `getByTestId('app-page-iframe' | 'app-block-chrome' | 'app-page-frame')`
+ * NEVER matches against a deployed preview — the elements render fine, the
+ * attribute is just gone. We therefore assert on attributes the production build
+ * KEEPS: the chrome's accessible "App block menu" button, and the iframe's
+ * `data-block-instance-id` (a `page_*` id) + `data-block-ready`. (`reactRemove
+ * Properties` only strips `^data-testid$`, so other `data-*` attrs survive.)
+ * This mirrors the sibling preview-apps-* specs, which assert via tRPC + ARIA
+ * roles, never rendered testids.
  */
 
 const ROLE = 'mod' as const;
@@ -52,7 +65,7 @@ type ListAvailableResult = { items: AvailableBlock[]; nextCursor?: string };
 test.describe('App Blocks full-page app surface (mod)', () => {
   test.use({ storageState: storageStatePath(ROLE) });
 
-  test('a page-declaring app opens at /apps/run/<slug> and the iframe mounts + inits', async ({
+  test('a page-declaring app opens at /apps/run/<slug>: chrome + iframe mount and the host mints a page token', async ({
     page,
   }) => {
     // DISCOVER a page-declaring approved app from the public listing. `{}` is a
@@ -79,23 +92,77 @@ test.describe('App Blocks full-page app surface (mod)', () => {
     ).toBeLessThan(400);
 
     // The host trust chrome (rendered in civitai-web, spoof-proof) is present —
-    // proves PageBlockHost mounted (not a 404 / blank).
+    // proves PageBlockHost mounted (not a 404 / blank). The chrome's "App block
+    // menu" button is unique to AppBlockChrome and uses a production-safe
+    // accessible name (NOT a stripped data-testid).
     await expect(
-      page.getByTestId('app-block-chrome'),
+      page.getByRole('button', { name: 'App block menu' }),
       'the full-page host should render the W7 trust chrome'
     ).toBeVisible();
 
-    // The block iframe mounts (server-resolved manifest.iframe.src).
-    const frame = page.getByTestId('app-page-iframe');
+    // The block iframe mounts (server-resolved manifest.iframe.src). Located by
+    // its surviving `data-block-instance-id` (a synthetic `page_<appBlockId>` id
+    // unique to the page host) — `getByTestId` would never match (stripped).
+    const frame = page.locator('iframe[data-block-instance-id^="page_"]');
     await expect(frame, 'the full-page block iframe should mount').toBeVisible();
 
-    // The host posts BLOCK_INIT (viewer page token + subPath) on a retry loop
-    // until the block acks BLOCK_READY → data-block-ready flips to "true". This
-    // is the e2e proof that the page-mint + handshake worked. Allow generous
-    // time for the cross-origin bundle to load + ack on a cold preview.
-    await expect(
-      frame,
-      'the full-page block should receive BLOCK_INIT and ack ready (page token minted)'
-    ).toHaveAttribute('data-block-ready', 'true', { timeout: 20_000 });
+    // The iframe points at the server-resolved block origin (manifest.iframe.src
+    // → `<slug>.civit.ai`), not a blank/about:blank — proves the SSR-resolved
+    // src reached the DOM.
+    const iframeSrc = await frame.getAttribute('src');
+    expect(iframeSrc, 'the iframe src is the server-resolved block origin').toMatch(
+      /^https?:\/\//
+    );
+
+    // PAGE-MINT PROOF (the host-side half of the handshake we CAN verify on a
+    // preview): the host posts BLOCK_INIT only after minting a viewer-scoped page
+    // token from POST /api/v1/block-tokens (entityType:'none', `page_<appBlockId>`).
+    // Exercise that exact mint with the mod cookie — a 200 + non-empty token is
+    // the e2e proof the page-mint path works (two-flag gate cleared, synthetic
+    // page instance resolved, JWT issued). The host then posts BLOCK_INIT to the
+    // block origin.
+    //
+    // We do NOT assert `data-block-ready === 'true'` (the block's BLOCK_READY
+    // ack): that flips only when the cross-origin block bundle at `<slug>.civit.ai`
+    // ACCEPTS the BLOCK_INIT, which requires the PARENT origin (here the ephemeral
+    // preview host `pr-N.civitaic.com`) to be in the block's own
+    // `allowedParentOrigins` allowlist. Production blocks allowlist civitai.com /
+    // *.civit.ai, never an ephemeral preview origin, so the ack can never arrive
+    // on a preview no matter how correct civitai-web is — asserting it makes this
+    // spec un-passable by construction. The host-side contract (chrome + iframe +
+    // page-token mint) is what a preview can prove; the BLOCK_READY round-trip is
+    // covered by the PageBlockHost.browser.test.tsx component test with a stubbed
+    // block.
+    const tokenResp = await page.request.post('/api/v1/block-tokens', {
+      headers: {
+        'content-type': 'application/json',
+        origin: process.env.PREVIEW_URL ?? '',
+        referer: `${process.env.PREVIEW_URL ?? ''}/apps/run/${pageApp.blockId}`,
+      },
+      data: {
+        // Synthetic page instance id: `page_<appBlockId>`, where appBlockId is
+        // `AvailableBlock.id` (== app_blocks.id, the `apb_*` value) — the same id
+        // the page route builds in `page_${appBlockId}`.
+        blockInstanceId: `page_${pageApp.id}`,
+        slotContext: {
+          slotId: 'app.page',
+          entityType: 'none',
+          slug: pageApp.blockId,
+          subPath: '',
+          viewerUserId: null,
+          viewerUsername: null,
+          theme: 'dark',
+        },
+      },
+    });
+    expect(
+      tokenResp.status(),
+      'the host mints a viewer-scoped page token (the BLOCK_INIT prerequisite)'
+    ).toBe(200);
+    const tokenBody = (await tokenResp.json()) as { token?: string };
+    expect(
+      typeof tokenBody.token === 'string' && tokenBody.token.length > 0,
+      'page-token mint returns a non-empty JWT'
+    ).toBe(true);
   });
 });

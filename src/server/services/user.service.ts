@@ -1785,13 +1785,16 @@ export const toggleBookmarkedArticle = async ({
   userId: number;
 }) => toggleBookmarked({ entityId: articleId, type: CollectionType.Article, userId });
 
-const collectionEntityProps = {
+// TODO(model3d-workstream-E): wire CollectionType.Model3D through bookmark + metrics flow
+//   once model3dMetrics exists. For now Model3D bookmarks short-circuit before reaching
+//   these maps (see toggleBookmarked below).
+const collectionEntityProps: Partial<Record<CollectionType, string>> = {
   [CollectionType.Article]: 'articleId',
   [CollectionType.Model]: 'modelId',
   [CollectionType.Image]: 'imageId',
   [CollectionType.Post]: 'postId',
 };
-const collectionEntityMetrics = {
+const collectionEntityMetrics: Partial<Record<CollectionType, typeof articleMetrics>> = {
   [CollectionType.Article]: articleMetrics,
   [CollectionType.Model]: modelMetrics,
   [CollectionType.Image]: imageMetrics,
@@ -1824,6 +1827,11 @@ export const toggleBookmarked = async ({
   }
 
   const entityProp = collectionEntityProps[type];
+  const metricsEngine = collectionEntityMetrics[type];
+  if (!entityProp || !metricsEngine) {
+    // TODO(model3d-workstream-E): Model3D bookmarks land here until model3dMetrics ships.
+    throw new Error(`toggleBookmarked: no bookmark route for CollectionType.${type}`);
+  }
   const collectionItem = await dbWrite.collectionItem.findFirst({
     where: {
       [entityProp]: entityId,
@@ -1840,7 +1848,6 @@ export const toggleBookmarked = async ({
         id: collectionItem.id,
       },
     });
-    const metricsEngine = collectionEntityMetrics[type];
     metricsEngine.queueUpdate(entityId);
   } else if (!exists && setTo !== false) {
     await dbWrite.collectionItem.create({

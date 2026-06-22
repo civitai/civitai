@@ -1,7 +1,7 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { randomBytes, randomInt } from 'crypto';
 import { REDIS_KEYS } from '@civitai/redis';
-import { TokenScope } from '@civitai/auth/token-scope';
+import { TokenScope, ALL_SCOPES } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
@@ -62,7 +62,8 @@ export const POST: RequestHandler = async ({ request, url }) => {
   }
 
   const rawScope = parseInt(scope, 10) || 0;
-  if (rawScope < 0 || rawScope > TokenScope.Full) {
+  // Bound against ALL_SCOPES (incl. opt-in AppBlocksSubmit), NOT `Full`; allowedScopes is the real gate.
+  if (rawScope < 0 || rawScope > ALL_SCOPES) {
     return json({ error: 'invalid_scope' }, { status: 400, headers });
   }
   // UserRead baseline, always allowed.

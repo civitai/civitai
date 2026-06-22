@@ -1,4 +1,5 @@
 import { NsfwLevel } from '~/server/common/enums';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { Flags } from '~/shared/utils/flags';
 
 export function parseBitwiseBrowsingLevel(level: number): number[] {
@@ -99,6 +100,54 @@ export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArr
 
 // all browsing levels
 export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
+
+/**
+ * App Blocks maturity policy — the SINGLE SOURCE OF TRUTH mapping a color
+ * domain to the maximum browsing-level flag content rendered/generated inside a
+ * block on that domain may carry.
+ *
+ * PRODUCT DECISION (App-Blocks-scoped): BOTH `green` AND `blue` clamp to SFW
+ * (PG + PG-13); only `red` permits mature output. This DELIBERATELY differs
+ * from the site-wide `canViewNsfw` feature flag, which today is TRUE on `blue`
+ * (the main site treats blue as a mature domain). Blocks lead the platform
+ * here: until the site-wide blue→SFW flip lands as a separate platform change,
+ * the App-Blocks generation/catalog belts enforce blue=SFW on their own. Change
+ * the policy in ONE place — this function — and the token-mint claim, the
+ * generation clamp, the prompt-audit, and the BLOCK_INIT signal all follow.
+ *
+ * Returned value is a bitwise browsing-level flag (see `NsfwLevel`):
+ *   - green → SFW  (PG + PG-13)              `sfwBrowsingLevelsFlag`
+ *   - blue  → SFW  (PG + PG-13) [product]    `sfwBrowsingLevelsFlag`
+ *   - red   → all levels (no clamp)          `allBrowsingLevelsFlag`
+ *
+ * Unknown / undefined domain → FAIL CLOSED to SFW (the most restrictive
+ * non-empty ceiling). Callers must never widen on ambiguity.
+ */
+export function domainBrowsingCeiling(color: ColorDomain | undefined | null): number {
+  switch (color) {
+    case 'red':
+      return allBrowsingLevelsFlag;
+    case 'green':
+    case 'blue':
+      return sfwBrowsingLevelsFlag;
+    default:
+      // Fail closed: an unknown/missing domain gets the most restrictive ceiling.
+      return sfwBrowsingLevelsFlag;
+  }
+}
+
+/**
+ * Derive whether mature (NSFW) generation output is permitted for a given
+ * browsing-level ceiling. Mirrors the orchestrator's `allowMatureContent`
+ * semantics (orchestrator.router.ts): `false` hard-blocks mature output,
+ * `undefined` leaves it to the caller/orchestrator default (red domain).
+ *
+ * A ceiling that contains NO nsfw bits (SFW domains) → `false` (block mature).
+ * A ceiling that contains any nsfw bit (red) → `undefined` (no clamp).
+ */
+export function allowMatureContentForCeiling(maxBrowsingLevel: number): boolean | undefined {
+  return Flags.intersects(maxBrowsingLevel, nsfwBrowsingLevelsFlag) ? undefined : false;
+}
 
 // helpers
 export function onlySelectableLevels(level: number) {

@@ -30,6 +30,12 @@ const notFound = (req: NextApiRequest, res: NextApiResponse, message = 'Not Foun
 
 export default PublicEndpoint(
   async function downloadAttachment(req: NextApiRequest, res: NextApiResponse) {
+    // Per-user, permission-gated redirect to a short-lived signed file URL —
+    // never cache it. PublicEndpoint's `public, s-maxage` default would leak
+    // one user's signed redirect to others and keep serving a removed file from
+    // edge after the origin returns 404. Override with no-store.
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+
     // Get ip so that we can block exploits we catch
     const ip = requestIp.getClientIp(req);
     const ipBlacklist = (
