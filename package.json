@@ -363,6 +363,9 @@
     }
   },
   "pnpm": {
+    "overrides": {
+      "vite": "6.4.1"
+    },
     "onlyBuiltDependencies": [
       "@parcel/watcher",
       "@prisma/client",
