@@ -572,8 +572,19 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
           meta: { versionId, type, size, fp, format, quantType, isRequired, uuid },
         },
-        async ({ meta, size, backend, ...result }) => {
-          const { versionId, uuid } = meta as { versionId: number; uuid: string };
+        async ({ meta, size: uploadedSize, backend, ...result }) => {
+          // `uploadedSize` is the byte size of the upload (renamed to avoid
+          // shadowing the `size` model-metadata field, which is 'full' | 'pruned').
+          const start = meta as {
+            versionId: number;
+            uuid: string;
+            size?: FileFromContextProps['size'];
+            fp?: FileFromContextProps['fp'];
+            format?: FileFromContextProps['format'];
+            quantType?: FileFromContextProps['quantType'];
+            isRequired?: FileFromContextProps['isRequired'];
+          };
+          const { versionId, uuid } = start;
           if (!versionId) return;
           // Read the latest metadata the user (or precision auto-detect) has set
           // during the upload, falling back to what was captured at upload start.
@@ -583,16 +594,16 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           const fileType = latest?.type ?? type;
           if (!fileType) return;
           const metadata = {
-            size: latest?.size ?? undefined,
-            fp: latest?.fp ?? undefined,
-            format: latest?.format ?? undefined,
-            quantType: latest?.quantType ?? undefined,
-            isRequired: latest?.isRequired ?? undefined,
+            size: latest?.size ?? start.size ?? undefined,
+            fp: latest?.fp ?? start.fp ?? undefined,
+            format: latest?.format ?? start.format ?? undefined,
+            quantType: latest?.quantType ?? start.quantType ?? undefined,
+            isRequired: latest?.isRequired ?? start.isRequired ?? undefined,
           };
           try {
             const saved = await createFileMutation.mutateAsync({
               ...result,
-              sizeKB: bytesToKB(size),
+              sizeKB: bytesToKB(uploadedSize),
               modelVersionId: versionId,
               type: fileType,
               metadata,

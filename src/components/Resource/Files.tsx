@@ -557,8 +557,12 @@ function LinkedComponentCard({
  */
 function isMissingRequiredInfo(file: FileFromContextProps): boolean {
   if (!file.type) return true;
-  if (file.name.toLowerCase().endsWith('.gguf')) return !file.quantType;
-  if (file.type === 'Model' && file.modelType === 'Checkpoint') return !file.size || !file.fp;
+  const isGguf = file.name.toLowerCase().endsWith('.gguf');
+  const isCheckpointModel = file.type === 'Model' && file.modelType === 'Checkpoint';
+  // GGUF always needs a quant type; Checkpoint weights additionally need a size
+  // regardless of extension (precision is the only field GGUF Checkpoints skip).
+  if (isGguf) return !file.quantType || (isCheckpointModel && !file.size);
+  if (isCheckpointModel) return !file.size || !file.fp;
   return false;
 }
 
