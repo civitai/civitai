@@ -70,6 +70,14 @@ beforeEach(() => {
 });
 
 describe('appBlockReviewReward', () => {
+  // GA ACTIVATION: the reward is surfaced on the Buzz dashboard at launch
+  // (user.controller.ts filters the reward list by `.visible`). It was `false`
+  // while App Blocks was dark/mod-gated (PR #2675); this pins the GA flip so an
+  // accidental revert to hidden is caught.
+  it('is visible on the Buzz dashboard (GA activation)', () => {
+    expect(appBlockReviewReward.visible).toBe(true);
+  });
+
   it('fires once on the create branch: blue account, forId=appBlockId, correct user', async () => {
     await appBlockReviewReward.apply(
       { appBlockId: 'ab_42', userId: 7, isFirstReview: true },
