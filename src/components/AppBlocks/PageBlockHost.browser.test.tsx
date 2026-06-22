@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
@@ -267,5 +268,48 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
     await new Promise((r) => setTimeout(r, 150));
 
     expect(beaconCalls()).toHaveLength(1);
+  });
+
+  // Per-mount semantics guard: a GENUINE remount (the host re-mounted under a
+  // CHANGED key — what happens on model navigation / tab switch) must create a
+  // FRESH emit-once ref and therefore emit AGAIN. Without this assertion a
+  // future change that makes `blockRenderEmittedRef` persistent (e.g. hoisting
+  // it to a module/global) would silently UNDER-count impressions and no test
+  // would catch it. We bump a React-state key around the host (a real unmount +
+  // remount, not a re-render) and assert a 2nd beacon.
+  function RemountHarness({ onSetKey }: { onSetKey: (set: (k: number) => void) => void }) {
+    const [k, setK] = useState(0);
+    onSetKey(setK);
+    // The key is on PageBlockHost so changing it unmounts+remounts ONLY the host
+    // (fresh refs/effects) while the surrounding providers/QueryClient persist —
+    // exactly a model-navigation remount.
+    return <PageBlockHost key={k} {...baseProps} onConsentGranted={vi.fn()} />;
+  }
+
+  test('re-emits on a genuine remount under a new key (fresh emit-once ref)', async () => {
+    let bumpKey: (k: number) => void = () => undefined;
+    renderWithProviders(<RemountHarness onSetKey={(set) => (bumpKey = set)} />);
+
+    // First mount → exactly one beacon.
+    await driveToReady();
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+
+    // Remount under a NEW key — tears down the host and mounts a fresh instance
+    // with a brand-new `blockRenderEmittedRef`.
+    bumpKey(1);
+
+    // The fresh mount starts in 'loading' (data-block-ready='false'). Wait for
+    // that reset so driveToReady() drives the NEW instance, not a stale 'true'
+    // node from the prior mount.
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (el.getAttribute('data-block-ready') !== 'false') throw new Error('not reset yet');
+    });
+
+    // The fresh instance re-runs the whole handshake; ack BLOCK_READY again.
+    await driveToReady();
+
+    // The new mount emitted a 2nd, independent impression → total 2.
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(2));
   });
 });
