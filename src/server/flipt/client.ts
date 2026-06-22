@@ -33,7 +33,6 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_TRAINING = 'wan22-training',
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
-  B2_UPLOAD_DEFAULT = 'b2-upload-default',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',
