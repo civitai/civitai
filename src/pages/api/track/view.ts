@@ -36,9 +36,15 @@ export default PublicEndpoint(
     if (!sourceHost || sourceHost !== req.headers.host)
       return res.status(400).send('invalid request');
 
-    let parsed;
+    // Next's body parser already deserializes an `application/json` request body
+    // into an object (the <TrackView> client sends that Content-Type), but a
+    // client that omits Content-Type (text/plain) leaves it a raw string. Handle
+    // BOTH — JSON.parse(<object>) would throw ("[object Object]") and 400 every
+    // real browser beacon. (The /api/page-view sibling only does JSON.parse
+    // because ITS client sends no Content-Type.)
+    let parsed: unknown;
     try {
-      parsed = JSON.parse(req.body);
+      parsed = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
     } catch {
       return res.status(400).send('invalid body');
     }

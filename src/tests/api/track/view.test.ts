@@ -56,7 +56,17 @@ function makeRes() {
   return res;
 }
 
-function makeReq(opts: { host?: string; origin?: string; referer?: string; body?: unknown }) {
+function makeReq(opts: {
+  host?: string;
+  origin?: string;
+  referer?: string;
+  body?: unknown;
+  // When true, pass `body` through as-is (an OBJECT) to simulate how Next's body
+  // parser delivers an `application/json` request — which is the real browser path
+  // (<TrackView> sends Content-Type: application/json). Default stringifies, which
+  // only matches a no-Content-Type (text/plain) client.
+  objectBody?: boolean;
+}) {
   return {
     method: 'POST',
     headers: {
@@ -64,7 +74,11 @@ function makeReq(opts: { host?: string; origin?: string; referer?: string; body?
       ...(opts.origin ? { origin: opts.origin } : {}),
       ...(opts.referer ? { referer: opts.referer } : {}),
     },
-    body: typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body),
+    body: opts.objectBody
+      ? opts.body
+      : typeof opts.body === 'string'
+      ? opts.body
+      : JSON.stringify(opts.body),
   } as unknown as NextApiRequest;
 }
 
@@ -88,6 +102,22 @@ describe('POST /api/track/view', () => {
   it('dispatches Tracker.view with the full parsed payload on a same-origin request', async () => {
     const handler = (await import('~/pages/api/track/view')).default;
     const req = makeReq({ host: 'civitai.com', origin: 'https://civitai.com', body: validInput });
+    const res = makeRes();
+
+    await handler(req as any, res);
+
+    expect(mockView).toHaveBeenCalledTimes(1);
+    expect(mockView).toHaveBeenCalledWith(validInput);
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('dispatches when Next pre-parsed the body to an OBJECT (application/json — the real browser path)', async () => {
+    // Regression guard: the <TrackView> client sends Content-Type: application/json,
+    // so Next's body parser hands the handler an OBJECT, not a string. A naive
+    // JSON.parse(req.body) would throw on the object → 400 → drop EVERY production
+    // view. This must dispatch the insert exactly like the string path.
+    const handler = (await import('~/pages/api/track/view')).default;
+    const req = makeReq({ origin: 'https://civitai.com', body: validInput, objectBody: true });
     const res = makeRes();
 
     await handler(req as any, res);
