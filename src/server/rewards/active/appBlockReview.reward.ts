@@ -44,6 +44,12 @@ export const appBlockReviewReward = createBuzzEvent({
   toAccountType: 'blue',
   description: 'You left a review on an app',
   triggerDescription: 'For each app you review for the first time',
+  // HIDDEN from the Buzz-dashboard reward list until App Blocks GA. App Blocks
+  // are still dark/mod-gated, so advertising this reward to everyone leaks the
+  // unreleased feature. The reward still FIRES for the few mod testers who can
+  // review — it's just not listed (user.controller.ts filters the dashboard by
+  // `.visible`). Flip to true (or remove) at App Blocks launch.
+  visible: false,
   awardAmount: REVIEW_AWARD,
   // Daily ceiling, NOT a per-app cap. The per-(user, app) once-ever guarantee is
   // the DB-unique + isFirstReview belt; same-app same-day is the Redis forId
