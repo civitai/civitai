@@ -85,6 +85,32 @@ export interface WithBlockScopeOpts {
    * surface; the scope gate would add nothing.
    */
   requiredScope?: string;
+
+  /**
+   * Opt-in: answer CORS for an OPAQUE-origin caller (`Origin: null`) by echoing
+   * `Access-Control-Allow-Origin: null`.
+   *
+   * WHY: UNVERIFIED App Blocks are sandboxed WITHOUT `allow-same-origin` (see
+   * `src/components/AppBlocks/sandbox.ts` — only internal/verified tiers get
+   * it), so the iframe runs at an OPAQUE origin and every `fetch` it makes
+   * sends `Origin: null`. `null` can never be in the OauthClient.allowedOrigins
+   * allowlist, so a direct (non-bridge) catalog fetch's CORS preflight falls
+   * through to the handler and 405s — the in-block resource browser then can't
+   * load. (Generation/money go through the postMessage host bridge, which is
+   * CORS-free; the catalog selector is the one path that direct-fetches.)
+   *
+   * SAFE ONLY for the block CATALOG endpoints (/api/v1/blocks/{models,images}),
+   * which is why this is an explicit per-endpoint opt-in and NOT a blanket
+   * middleware behavior: they return PUBLIC, maturity-clamped data (strictly ⊆
+   * the public, already-`ACAO:*` /api/v1/models), carry NO credentials
+   * (Allow-Credentials is omitted and block iframes have no civitai cookie), and
+   * the real request still requires a valid short-lived block JWT in
+   * `Authorization` (an attacker's own null-origin sandboxed page can't mint
+   * one). The preflight is CORS POLICY only; the token remains the gate. NEVER
+   * set this on a scoped/credentialed endpoint (me.ts, settings, …) — `ACAO:
+   * null` there would let ANY sandboxed page read a per-user response.
+   */
+  allowOpaqueOrigin?: boolean;
 }
 
 // L7 (audit-10): issuer/audience imported from block-token.service so a
@@ -234,7 +260,8 @@ function rememberWarnedOrigin(origin: string) {
  */
 async function setBlockCors(
   req: NextApiRequest,
-  res: NextApiResponse
+  res: NextApiResponse,
+  opts: WithBlockScopeOpts
 ): Promise<'handled' | 'fallthrough'> {
   const origin = req.headers.origin;
   const isAllowed = await originAllowed(origin);
@@ -248,6 +275,25 @@ async function setBlockCors(
     // civitai session cookies (cross-origin), and emitting "false" is a no-op
     // per the CORS spec. Setting "true" would require Allow-Origin to never
     // be "*", and we want that flexibility on the wrapped handler's path.
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return 'handled';
+    }
+    return 'fallthrough';
+  }
+
+  // Opaque-origin (`Origin: null`) opt-in — CATALOG endpoints only (see
+  // WithBlockScopeOpts.allowOpaqueOrigin). Unverified blocks run sandboxed
+  // without `allow-same-origin` → opaque origin → `Origin: null`, which can
+  // never be in the allowlist above. We echo `ACAO: null` ONLY when the
+  // endpoint opted in. Allow-Credentials stays omitted (no cookies ride a
+  // null-origin request anyway), and the real GET still requires a valid block
+  // JWT — the preflight is policy only, the token is the gate.
+  if (opts.allowOpaqueOrigin && origin === 'null') {
+    res.setHeader('Access-Control-Allow-Origin', 'null');
+    res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') {
@@ -537,7 +583,7 @@ export function withBlockScope(
   opts: WithBlockScopeOpts
 ): NextApiHandler {
   return async (req, res) => {
-    const cors = await setBlockCors(req, res);
+    const cors = await setBlockCors(req, res, opts);
     if (cors === 'handled') return;
 
     const authHeader = req.headers.authorization ?? '';

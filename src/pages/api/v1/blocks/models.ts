@@ -179,5 +179,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
 // No requiredScope: any valid block token is accepted (see doc above). The
 // maturity clamp (resolveCatalogBrowsingLevel) remains the whole authority
-// surface.
-export default withBlockScope(baseHandler, {});
+// surface. allowOpaqueOrigin: an UNVERIFIED block runs at an opaque origin
+// (`Origin: null`) so its direct catalog fetch needs `ACAO: null` to clear the
+// CORS preflight; safe here (public maturity-clamped data, no credentials,
+// still token-gated) — see WithBlockScopeOpts.allowOpaqueOrigin.
+export default withBlockScope(baseHandler, { allowOpaqueOrigin: true });

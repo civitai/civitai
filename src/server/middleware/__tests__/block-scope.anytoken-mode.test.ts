@@ -119,6 +119,23 @@ function makeReq(authHeader?: string): NextApiRequest {
   } as unknown as NextApiRequest;
 }
 
+function makeReqWith(opts: {
+  method?: string;
+  origin?: string;
+  authHeader?: string;
+}): NextApiRequest {
+  const headers: Record<string, string> = {};
+  if (opts.origin !== undefined) headers.origin = opts.origin;
+  if (opts.authHeader) headers.authorization = opts.authHeader;
+  return {
+    method: opts.method ?? 'GET',
+    headers,
+    query: {},
+    url: '/api/v1/blocks/models',
+    socket: { remoteAddress: '127.0.0.1' },
+  } as unknown as NextApiRequest;
+}
+
 beforeEach(() => {
   isFliptMock.mockClear();
   isRevokedMock.mockClear();
@@ -189,5 +206,93 @@ describe('withBlockScope — "any valid block token" mode (no requiredScope)', (
 
     expect(wrapped).toHaveBeenCalledTimes(1);
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('withBlockScope — opaque-origin CORS (allowOpaqueOrigin, catalog endpoints)', () => {
+  it('answers the `Origin: null` PREFLIGHT with 204 + ACAO:null when opted in', async () => {
+    // Unverified blocks run sandboxed without allow-same-origin → opaque origin
+    // → the browser preflight carries `Origin: null`. The catalog endpoints opt
+    // in, so the preflight is fully handled here (the wrapped handler — which
+    // would 405 a non-GET — is never reached).
+    const wrapped = vi.fn();
+    const route = withBlockScope(wrapped as never, { allowOpaqueOrigin: true });
+
+    const res = makeRes();
+    await route(
+      makeReqWith({ method: 'OPTIONS', origin: 'null' }) as never,
+      res as never
+    );
+
+    expect(res.statusCode).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe('null');
+    expect(String(res.headers['access-control-allow-methods'])).toContain('GET');
+    expect(wrapped).not.toHaveBeenCalled();
+  });
+
+  it('the actual GET from `Origin: null` carries ACAO:null + still requires a valid token', async () => {
+    const token = await mintToken([]);
+    const wrapped = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+      res.status(200).json({ via: 'block' });
+    });
+    const route = withBlockScope(wrapped as never, { allowOpaqueOrigin: true });
+
+    const res = makeRes();
+    await route(
+      makeReqWith({ method: 'GET', origin: 'null', authHeader: `Bearer ${token}` }) as never,
+      res as never
+    );
+
+    // The GET ran (token validated) AND the response is readable cross-origin.
+    expect(wrapped).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBe('null');
+  });
+
+  it('a `Origin: null` GET with NO/invalid token is still 401 — the preflight is policy, the token is the gate', async () => {
+    const wrapped = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+      res.status(401).json({ error: 'Block token required' });
+    });
+    const route = withBlockScope(wrapped as never, { allowOpaqueOrigin: true });
+
+    const res = makeRes();
+    // No Authorization header → falls through to the wrapped handler's 401 guard.
+    await route(makeReqWith({ method: 'GET', origin: 'null' }) as never, res as never);
+
+    expect(res.statusCode).toBe(401);
+    // ACAO:null is still set so the browser can READ the 401 (not a CORS error).
+    expect(res.headers['access-control-allow-origin']).toBe('null');
+  });
+
+  it('does NOT honor `Origin: null` when the endpoint did NOT opt in (scoped/credentialed routes)', async () => {
+    // A scoped route (or any route without allowOpaqueOrigin) must NEVER echo
+    // ACAO:null — that would let any sandboxed page read a per-user response.
+    const wrapped = vi.fn();
+    const route = withBlockScope(wrapped as never, { requiredScope: 'models:read:self' });
+
+    const res = makeRes();
+    await route(
+      makeReqWith({ method: 'OPTIONS', origin: 'null' }) as never,
+      res as never
+    );
+
+    // setBlockCors returned 'fallthrough' (no ACAO set); the preflight was NOT
+    // answered here. The wrapped handler (real catalog/route) would 405 it.
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('the opt-in does NOT widen to arbitrary real origins — only the literal `null` is special-cased', async () => {
+    const wrapped = vi.fn();
+    const route = withBlockScope(wrapped as never, { allowOpaqueOrigin: true });
+
+    const res = makeRes();
+    await route(
+      makeReqWith({ method: 'OPTIONS', origin: 'https://evil.example' }) as never,
+      res as never
+    );
+
+    // A non-allowlisted, non-null origin gets no ACAO — opaque handling is
+    // strictly scoped to `Origin: null`.
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
   });
 });
