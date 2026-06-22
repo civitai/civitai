@@ -22,6 +22,7 @@ import {
   allBrowsingLevelsFlag,
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
+import { canViewModel3d } from '~/server/services/model3d.visibility';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -1104,9 +1105,7 @@ export const getModel3DByThumbnailImageId = async ({
 // "Posted to 3D Model" chip on the image viewers and the post-create page.
 // Returns the minimal card payload (id + name + thumbnail) or null when the
 // post isn't linked OR the viewer can't see the Model3D. The chip silently
-// hides on null instead of surfacing a 404. Visibility mirrors
-// `getModel3DById`: mods see everything, owner sees their own (any status),
-// public sees Published + not-Deleted. Inlined here rather than calling
+// hides on null instead of surfacing a 404. Inlined here rather than calling
 // `getModel3DById` so this service takes primitives (userId/isModerator)
 // instead of a full session user.
 export const getModel3DByPostId = async ({
@@ -1132,17 +1131,58 @@ export const getModel3DByPostId = async ({
   const model3d = post?.model3d;
   if (!model3d) return null;
 
-  const isOwner = !!userId && model3d.userId === userId;
-  if (!isModerator && !isOwner) {
-    if (model3d.status !== Model3DStatus.Published) return null;
-    if (model3d.deletedAt) return null;
-  }
+  if (
+    !canViewModel3d({
+      status: model3d.status,
+      deletedAt: model3d.deletedAt,
+      ownerId: model3d.userId,
+      userId,
+      isModerator,
+    })
+  )
+    return null;
 
   return {
     id: model3d.id,
     name: model3d.name,
     thumbnailImage: model3d.thumbnailImage,
   };
+};
+
+// Durable replacement for the ambient `model3d.getByPostId` chip call: resolve
+// JUST the linked Model3D id for a post, applying the SAME visibility rule, so
+// the image-detail payload (`image.get`) can carry `model3dId` and the chip
+// renders from the prop without firing a per-image tRPC query. Returns the id
+// when the viewer may see the Model3D, else null (no link / hidden draft /
+// deleted) — never leaks a hidden model's existence as a clickable chip.
+export const getVisibleModel3DIdForPost = async ({
+  postId,
+  userId,
+  isModerator = false,
+}: {
+  postId: number;
+  userId?: number;
+  isModerator?: boolean;
+}): Promise<number | null> => {
+  const post = await dbRead.post.findUnique({
+    where: { id: postId },
+    select: {
+      model3d: { select: { id: true, userId: true, status: true, deletedAt: true } },
+    },
+  });
+  const model3d = post?.model3d;
+  if (!model3d) return null;
+  if (
+    !canViewModel3d({
+      status: model3d.status,
+      deletedAt: model3d.deletedAt,
+      ownerId: model3d.userId,
+      userId,
+      isModerator,
+    })
+  )
+    return null;
+  return model3d.id;
 };
 
 // ---------------------------------------------------------------------------

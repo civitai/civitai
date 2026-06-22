@@ -131,6 +131,7 @@ import {
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { getVisibleModel3DIdForPost } from '~/server/services/model3d.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
 import {
@@ -4720,8 +4721,20 @@ export const getImage = async ({
     entity: 'Image',
   });
 
+  // Durable replacement for the ambient `model3d.getByPostId` chip call: carry
+  // the visibility-checked linked Model3D id on this payload (the image
+  // viewers already fetch it) so the "Posted to 3D Model" chip renders from a
+  // prop instead of firing a per-image tRPC query for every image (~36/s,
+  // mostly null). Resolves the SAME visibility predicate the chip lookup used,
+  // so a hidden draft/deleted Model3D yields null here too. Null when the post
+  // isn't linked, isn't visible, or there's no postId at all.
+  const model3dId = firstRawImage.postId
+    ? await getVisibleModel3DIdForPost({ postId: firstRawImage.postId, userId, isModerator })
+    : null;
+
   const image = {
     ...firstRawImage,
+    model3dId,
     cosmetic: imageCosmetics?.[firstRawImage.id] ?? null,
     user: {
       id: creatorId,
