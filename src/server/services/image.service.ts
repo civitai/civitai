@@ -137,6 +137,7 @@ import {
 } from '~/server/services/model3d.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
+import { parseScannerFlag } from '~/server/services/image-scanner-flag';
 import {
   deleteImagTagsForReviewByImageIds,
   getImagTagsForReviewByImageIds,
@@ -784,9 +785,15 @@ export const getImageById = async ({ id }: GetByIdInput) => {
  * Operators set the key to '1' to enable.
  */
 async function isImageScannerNewEnabled(): Promise<boolean> {
-  const value = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW);
-  if (value === '1' || value === 'true') return true;
-  if (value === '0' || value === 'false') return false;
+  // The HA/Sentinel sysRedis returns a Buffer for BLOB_STRING replies, which
+  // matched none of the literals pre-fix → fell through and destructively
+  // overwrote the operator's '1' with 'false'. parseScannerFlag coerces the
+  // Buffer first and returns null ONLY for a genuinely-unset/unknown key, so
+  // the seed below now fires only in its intended default-seeding case.
+  // See PR #2697/#2700 for the canonical Buffer-vs-string regression.
+  const raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW);
+  const parsed = parseScannerFlag(raw);
+  if (parsed !== null) return parsed;
   await sysRedis.set(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW, 'false');
   return false;
 }
