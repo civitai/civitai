@@ -58,6 +58,7 @@ import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
+import type { MultipliersSeed } from '~/providers/multipliers-seed';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
@@ -105,6 +106,7 @@ type CustomAppProps = {
   tosMeta?: TosMeta;
   announcements?: AnnouncementsSeed;
   following?: number[];
+  userMultipliers?: MultipliersSeed;
   seed: number;
   settings: UserContentSettings;
   browsingSettingsAddons: BrowsingSettingsAddon[];
@@ -131,6 +133,7 @@ function MyApp(props: CustomAppProps) {
       tosMeta,
       announcements,
       following,
+      userMultipliers,
       seed = Date.now(),
       canIndex,
       hasAuthCookie,
@@ -189,6 +192,7 @@ function MyApp(props: CustomAppProps) {
       tosMeta={tosMeta}
       announcements={announcements}
       following={following}
+      userMultipliers={userMultipliers}
       liveNow={liveNow}
       region={region}
       domain={domain}
@@ -382,6 +386,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     tosMeta?: TosMeta;
     announcements?: AnnouncementsSeed;
     following?: number[];
+    userMultipliers?: MultipliersSeed;
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
@@ -434,10 +439,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       tosMeta: undefined,
       announcements: undefined,
       following: undefined,
+      userMultipliers: undefined,
       session: null,
     };
   }
-  const { settings, session, tosMeta, announcements, following } = settingsBootstrap;
+  const { settings, session, tosMeta, announcements, following, userMultipliers } =
+    settingsBootstrap;
   // Pass these via the request so we can use them in SSR. Resolve the per-user
   // feature flags and the global (redis-cached, identical-for-all-users) browsing
   // setting addons in PARALLEL — neither depends on the other and both sit on
@@ -531,6 +538,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       tosMeta,
       announcements,
       following,
+      userMultipliers,
       seed: Date.now(),
       hasAuthCookie,
       region,

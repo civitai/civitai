@@ -44,6 +44,7 @@ const TOS_PROCEDURE = 'content.checkTosUpdate';
 const ANNOUNCEMENTS_PROCEDURE = 'announcement.getAnnouncements';
 const FOLLOWING_PROCEDURE = 'user.getFollowingUsers';
 const LIVE_NOW_PROCEDURE = 'system.getLiveNow';
+const USER_MULTIPLIERS_PROCEDURE = 'buzz.getUserMultipliers';
 
 // A core page a gate-passing user lands on directly (no /login bounce). Both
 // procedures fire on every logged-in bootstrap regardless of which page, so
@@ -468,6 +469,77 @@ test.describe('SSR-injected getLiveNow (anonymous)', () => {
         '\n'
       )}`
     ).toHaveLength(0);
+  });
+});
+
+/**
+ * Regression guard for the SSR-inject of `buzz.getUserMultipliers` (~27/s on
+ * api-primary). AUTH-GATED: it is a `protectedProcedure` (buzz flag), and the
+ * client `useUserMultipliers` hook fires only when `!!currentUser && features.buzz`
+ * — so it never fires anonymously (no anon block, like getFeatureFlags/following).
+ * SSR-computed in `_app.getInitialProps` for a logged-in, buzz-enabled user
+ * (fail-open: dropped on error) and seeded in AppProvider on the fixed `undefined`
+ * key.
+ *
+ * BYTE-EQUALITY: the payload is mostly numbers/booleans/null; its only Date
+ * fields are the nested `rewardsBonusEvent.startsAt`/`.endsAt` (and only when a
+ * bonus event is active — `null` otherwise). The seed travels in pageProps as
+ * JSON (Dates → ISO strings) and `fetchTrpcQueryJson` returns the LIVE fetch's
+ * `result.data.json` (also pre-superjson-revival JSON, Dates → ISO strings), so
+ * both sides are ISO strings and `toEqual` compares them directly — no revival
+ * needed in the test (revival happens at runtime in AppProvider via
+ * `reviveMultipliersSeed`, unit-tested separately). The seed can legitimately
+ * have `rewardsBonusEvent: null` (no active event); that is still a valid,
+ * present seed and the byte-equality holds.
+ */
+test.describe('SSR-injected getUserMultipliers (logged-in)', () => {
+  test.use({ storageState: storageStatePath('mod') });
+
+  test('getUserMultipliers is seeded into __NEXT_DATA__ and not fetched on bootstrap', async ({
+    page,
+  }) => {
+    const trpcUrls = await collectTrpcRequests(page, AUTHED_LANDING);
+
+    const seed = await readPageProp(page, 'userMultipliers');
+    expect(seed.present, 'userMultipliers present in __NEXT_DATA__ pageProps').toBe(true);
+    expect(
+      typeof seed.value === 'object' && seed.value !== null,
+      'userMultipliers seed is an object'
+    ).toBe(true);
+    // The multiplier fields are always present numbers (default 1).
+    const m = seed.value as Record<string, unknown>;
+    expect(typeof m.rewardsMultiplier, 'rewardsMultiplier is a number').toBe('number');
+    expect(typeof m.purchasesMultiplier, 'purchasesMultiplier is a number').toBe('number');
+
+    const multiplierRequests = trpcUrls.filter((u) => u.includes(USER_MULTIPLIERS_PROCEDURE));
+    expect(
+      multiplierRequests,
+      `no ${USER_MULTIPLIERS_PROCEDURE} tRPC request should fire on bootstrap (it is SSR-injected); saw:\n${multiplierRequests.join(
+        '\n'
+      )}`
+    ).toHaveLength(0);
+  });
+
+  test('SSR seed byte-equals a live fetch', async ({ page }) => {
+    await page.goto(AUTHED_LANDING, { waitUntil: 'domcontentloaded' });
+
+    const seed = await readPageProp(page, 'userMultipliers');
+    expect(seed.present, 'userMultipliers seed present in __NEXT_DATA__').toBe(true);
+
+    const live = await fetchTrpcQueryJson(page, USER_MULTIPLIERS_PROCEDURE);
+    expect(
+      seed.value,
+      'buzz.getUserMultipliers SSR seed must byte-equal a live resolver fetch'
+    ).toEqual(live);
+
+    // Surface whether a bonus event was active during the run, so a green run
+    // that exercised the Date-carrying branch is distinguishable from the common
+    // null-event branch.
+    const event = (seed.value as { rewardsBonusEvent?: unknown }).rewardsBonusEvent;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[ssr-inject] userMultipliers rewardsBonusEvent active: ${event != null ? 'yes' : 'no'}`
+    );
   });
 });
 

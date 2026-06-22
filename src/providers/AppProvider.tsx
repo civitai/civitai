@@ -8,6 +8,8 @@ import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
+import type { MultipliersSeed } from '~/providers/multipliers-seed';
+import { reviveMultipliersSeed } from '~/providers/multipliers-seed';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -25,6 +27,12 @@ type AppProviderProps = {
   // followed userIds. Seeds the query directly (fixed `undefined` key) so the
   // ambient follow/notify buttons never fire it on bootstrap.
   following?: number[];
+  // SSR-computed `buzz.getUserMultipliers` result (logged-in + buzz-on only) —
+  // the user's purchase/reward multipliers. Seeds the ambient `useUserMultipliers`
+  // query (fixed `undefined` key) so the header-bootstrap call never fires. The
+  // nested active-event Dates are revived from the JSON pageProps snapshot before
+  // seeding so the cache shape matches a live superjson refetch.
+  userMultipliers?: MultipliersSeed;
   // SSR-computed `system.getLiveNow` global boolean (a single redis.get,
   // identical for every user). Seeds the ambient `useIsLive` query (fixed
   // `undefined` key) so it never fires on bootstrap. Public procedure → seeded
@@ -84,6 +92,7 @@ export function AppProvider({
   tosMeta,
   announcements,
   following,
+  userMultipliers,
   liveNow,
   domain,
   host,
@@ -108,6 +117,24 @@ export function AppProvider({
   trpc.user.getFollowingUsers.useQuery(undefined, {
     initialData: following,
     enabled: !!following,
+  });
+  // Seed `buzz.getUserMultipliers` from the SSR snapshot so the ambient
+  // `useUserMultipliers` consumer reads a primed cache and never fires the
+  // header-bootstrap call (~27 req/s off api-primary). Shares the fixed
+  // `undefined` query key with that hook. NO `staleTime` override — it inherits
+  // the global `staleTime: Infinity`, which is EXACTLY how the live query behaves
+  // today (it has no staleTime either): fetch once on bootstrap, then rely on the
+  // cache. Multipliers only change on a subscription/event change, which already
+  // busts the server cache (`deleteMultipliersForUserCache`) and is reflected on
+  // the next refetch/navigation — so seeding does not make freshness any stickier
+  // than the current behavior. `enabled: !!userMultipliers` skips both the seed
+  // and any self-heal fetch only when there is no snapshot (anon, buzz-off, or a
+  // failed authed snapshot) — in which case the consumer's own gated query fires
+  // its live fetch. The nested active-event Dates are revived so the seeded cache
+  // shape matches a live superjson refetch.
+  trpc.buzz.getUserMultipliers.useQuery(undefined, {
+    initialData: reviveMultipliersSeed(userMultipliers),
+    enabled: !!userMultipliers,
   });
   // Seed the global `system.getLiveNow` boolean from the SSR snapshot so the
   // ambient `useIsLive` consumers (header logo, social links, social home
