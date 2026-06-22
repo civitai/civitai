@@ -558,6 +558,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       tosMeta,
       announcements,
       following,
+      chatUnreadCount,
       seed: Date.now(),
       hasAuthCookie,
       region,
