@@ -1,14 +1,7 @@
-import { Divider, Group, Paper, Progress, Stack, Text, Tooltip } from '@mantine/core';
-import {
-  IconArticle,
-  IconCube,
-  IconFlag,
-  IconInfoCircle,
-  IconPhoto,
-  IconShieldCheck,
-  IconUsers,
-} from '@tabler/icons-react';
+import { ColorSwatch, Divider, Group, Paper, Progress, Stack, Text, Tooltip } from '@mantine/core';
+import { IconFlag, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 type Scores = {
   total?: number;
@@ -25,28 +18,24 @@ const scoreCategories = [
     key: 'models' as const,
     label: 'Models',
     color: 'blue',
-    icon: IconCube,
     tooltip: 'Based on reviews, downloads, and generations across published models',
   },
   {
     key: 'images' as const,
     label: 'Images',
     color: 'teal',
-    icon: IconPhoto,
     tooltip: 'Based on reactions and comments images receive',
   },
   {
     key: 'articles' as const,
     label: 'Articles',
     color: 'orange',
-    icon: IconArticle,
     tooltip: 'Based on views, comments, and reactions on articles',
   },
   {
     key: 'users' as const,
     label: 'Users',
     color: 'grape',
-    icon: IconUsers,
     tooltip: 'Based on follower count',
   },
 ];
@@ -85,16 +74,20 @@ export function UserScoreDisplay({
     );
   }
 
-  const categoryValues = scoreCategories.map(({ key }) => Math.abs(scores[key] ?? 0));
-  const maxCategoryValue = Math.max(...categoryValues, 1);
+  // Only positive contributions compose the bar; each segment is that category's
+  // share of the combined positive score pool, so the sections fill to 100%.
+  const categoryValues = scoreCategories.map(({ key }) => Math.max(scores[key] ?? 0, 0));
+  const categoryPool = categoryValues.reduce((sum, value) => sum + value, 0);
 
   return (
     <Paper withBorder p="md" radius="md">
       <Stack gap="md">
         <Stack gap={4} align="center">
-          <Text size="2rem" fw={700} c="green" lh={1.2}>
-            {Math.round(scores.total ?? 0).toLocaleString()}
-          </Text>
+          <Tooltip label={`${Math.round(scores.total ?? 0).toLocaleString()} points`} withArrow>
+            <Text size="2rem" fw={700} c="green" lh={1.2} style={{ cursor: 'help' }}>
+              {abbreviateNumber(scores.total ?? 0, { decimals: 1 })}
+            </Text>
+          </Tooltip>
           <Text size="sm" c="dimmed">
             User Score
           </Text>
@@ -103,24 +96,45 @@ export function UserScoreDisplay({
         <Divider />
 
         <Stack gap="sm">
-          {scoreCategories.map(({ key, label, color, icon: Icon, tooltip }) => {
-            const value = scores[key] ?? 0;
-            const percentage = (Math.abs(value) / maxCategoryValue) * 100;
-            return (
-              <ScoreRow key={key} icon={<Icon size={16} />} label={label} tooltip={tooltip}>
-                <Progress
-                  value={percentage}
-                  color={color}
-                  size="sm"
-                  style={{ flex: 1 }}
-                  radius="xl"
-                />
-                <Text size="sm" fw={600} w={50} ta="right">
-                  {Math.round(value)}
-                </Text>
-              </ScoreRow>
-            );
-          })}
+          {/* Section hover → the category amount + share. */}
+          <Progress.Root size="xl" radius="xl">
+            {scoreCategories.map(({ key, label, color }, index) => {
+              const value = categoryValues[index];
+              if (value <= 0) return null;
+              const percentage = categoryPool > 0 ? (value / categoryPool) * 100 : 0;
+              return (
+                <Tooltip
+                  key={key}
+                  label={`${label}: ${Math.round(value).toLocaleString()} (${formatPercentage(
+                    value,
+                    percentage
+                  )})`}
+                  withArrow
+                >
+                  {/* minWidth keeps a real-but-tiny category (e.g. <1%) a visible sliver;
+                      must clear the radius="xl" rounded corner (~8-10px) to show. */}
+                  <Progress.Section value={percentage} color={color} style={{ minWidth: 12 }} />
+                </Tooltip>
+              );
+            })}
+          </Progress.Root>
+
+          {/* macOS-storage-style legend: dot + label, dot hover → description. */}
+          <Group gap="md" wrap="wrap">
+            {scoreCategories.map(({ key, label, color, tooltip }) => (
+              <Group key={key} gap={6} wrap="nowrap">
+                <Tooltip label={tooltip} multiline w={220} withArrow>
+                  <ColorSwatch
+                    color={`var(--mantine-color-${color}-6)`}
+                    size={10}
+                    radius="xl"
+                    style={{ cursor: 'help' }}
+                  />
+                </Tooltip>
+                <Text size="sm">{label}</Text>
+              </Group>
+            ))}
+          </Group>
         </Stack>
 
         {showReports && (
@@ -143,6 +157,13 @@ export function UserScoreDisplay({
       </Stack>
     </Paper>
   );
+}
+
+// A real (non-zero) category whose share rounds to 0% shows "<1%" instead, so a
+// tiny-but-present category never reads as zero.
+function formatPercentage(value: number, percentage: number) {
+  if (value > 0 && percentage < 1) return '<1%';
+  return `${Math.round(percentage)}%`;
 }
 
 function ScoreRow({
