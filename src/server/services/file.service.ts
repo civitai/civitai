@@ -226,10 +226,15 @@ export const getFileForModelVersion = async ({
   const isMod = user?.isModerator;
   const userId = user?.id;
   const isOwner = !!userId && modelVersion.model.userId === userId;
+  // A deleted model must not be downloadable by its owner. The owner is normally
+  // allowed to download their own unpublished work, but for a deleted (incl.
+  // DMCA-removed) model that owner bypass keeps the file reachable to the exact
+  // person a takedown targets. Moderators retain access for investigation.
+  const modelDeleted = modelVersion.model.status === 'Deleted';
   const canDownload =
     noAuth ||
     isMod ||
-    isOwner ||
+    (isOwner && !modelDeleted) ||
     (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published');
 
   if (!canDownload) return { status: 'not-found' };
