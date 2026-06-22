@@ -39,44 +39,6 @@ const messageLimiter = createLimiter({
   refetchInterval: 60 * 60, // 1 hour window
 });
 
-/**
- * Per-chat unread tallies for a user (the header chat badge source).
- *
- * Extracted from the `chat.getUnreadCount` controller so the SSR bootstrap seed
- * (`_app.getInitialProps`) and the tRPC resolver share ONE query — the seed must
- * be byte-identical to the resolver output (#2471 gotcha) or the primed cache
- * would mismatch and force an immediate refetch.
- */
-export async function getUnreadMessagesForUser({ userId }: { userId: number }) {
-  const unread = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
-    select memb."chatId"          as "chatId",
-           count(msg.id)::integer as "cnt"
-    from "ChatMember" memb
-           left join "ChatMessage" msg
-                     on msg."chatId" = memb."chatId" and
-                        (msg.id > memb."lastViewedMessageId" or
-                         memb."lastViewedMessageId" is null
-                          )
-    where memb."userId" = ${userId}
-      and memb.status = 'Joined'
-      and memb."isMuted" is false
-      and msg."userId" != ${userId}
-    group by memb."chatId"
-  `;
-
-  const pending = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
-    select memb."chatId" as "chatId",
-           1             as "cnt"
-    from "ChatMember" memb
-    where memb."userId" = ${userId}
-      and memb.status = 'Invited'
-      and memb."isMuted" is false
-    group by memb."chatId"
-  `;
-
-  return [...unread, ...pending];
-}
-
 export const upsertChat = async ({
   userIds,
   isModerator,
