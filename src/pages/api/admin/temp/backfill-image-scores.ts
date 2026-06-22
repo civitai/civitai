@@ -27,12 +27,12 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
  * Run it (drive from the no-timeout dev server, which talks to prod; keep the
  * client connected — nohup/screen):
  *   GET /api/admin/temp/backfill-image-scores?token=$WEBHOOK_TOKEN
- *   optional: &concurrency=3 &batchSize=1000000 &skipMarked=true
+ *   optional: &concurrency=3 &batchSize=1000000 &dryRun=true
  *
- * Idempotent: rewriting an owner produces the same score. `skipMarked=true` skips
- * owners already stamped (so a re-run only fills in the rest). Run the FULL range
- * (default) — a partial start/end gives partial scores since an owner's images
- * are spread across the id space.
+ * Idempotent + resumable: owners already stamped with `imagesBackfilledAt` are
+ * always skipped, so a re-run only fills in the rest (never recomputes finished
+ * users). Run the FULL range (default) — a partial start/end gives partial scores
+ * since an owner's images are spread across the id space.
  *
  * Auth via the existing `WebhookEndpoint(?token=...)` gate.
  */
@@ -44,11 +44,6 @@ const schema = z.object({
   batchSize: z.coerce.number().min(1).optional().default(1_000_000), // entityId window per v2 scan
   start: z.coerce.number().min(0).optional().default(0),
   end: z.coerce.number().min(0).optional(),
-  // re-run helper: skip owners already stamped instead of rewriting them.
-  skipMarked: z
-    .union([z.boolean(), z.string()])
-    .optional()
-    .transform((v) => v === true || v === 'true' || v === '1'),
   // preview: scan + count owners, write nothing.
   dryRun: z
     .union([z.boolean(), z.string()])
@@ -122,21 +117,19 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const stampedAt = new Date().toISOString();
   let written = 0;
   const writeTasks = chunk([...owners], 500).map((batch) => async () => {
-    const ids = batch.map(([userId]) => userId);
+    // Always skip owners already backfilled — they're computed, and skipping makes
+    // a re-run resume (only fills in the rest) instead of redoing finished users.
+    const stamped = await pgDbRead
+      .cancellableQuery<{ id: number }>(
+        `SELECT id FROM "User" WHERE id = ANY($1::int[]) AND (meta->'scores'->>'imagesBackfilledAt') IS NOT NULL`,
+        [batch.map(([userId]) => userId)]
+      )
+      .then((q) => q.result());
+    const skip = new Set(stamped.map((s) => s.id));
+    const todo = batch.filter(([userId]) => !skip.has(userId));
+    if (!todo.length) return;
 
-    if (params.skipMarked) {
-      const stamped = await pgDbRead
-        .cancellableQuery<{ id: number }>(
-          `SELECT id FROM "User" WHERE id = ANY($1::int[]) AND (meta->'scores'->>'imagesBackfilledAt') IS NOT NULL`,
-          [ids]
-        )
-        .then((q) => q.result());
-      const skip = new Set(stamped.map((s) => s.id));
-      batch = batch.filter(([userId]) => !skip.has(userId));
-      if (!batch.length) return;
-    }
-
-    const records = batch.map(
+    const records = todo.map(
       ([userId, { reactions, comments }]) =>
         [
           String(userId),
@@ -150,11 +143,11 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         `UPDATE "User"
          SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores,imagesBackfilledAt}', to_jsonb($1::text))
          WHERE id = ANY($2::int[])`,
-        [stampedAt, batch.map(([userId]) => userId)]
+        [stampedAt, todo.map(([userId]) => userId)]
       )
       .then((q) => q.result());
 
-    written += batch.length;
+    written += todo.length;
   });
   await limitConcurrency(writeTasks, params.concurrency);
 
