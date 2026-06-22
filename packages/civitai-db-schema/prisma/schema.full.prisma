@@ -2815,6 +2815,20 @@ model OauthConsent {
   @@unique([userId, clientId])
 }
 
+// First-party spoke domain registry for the OAuth cross-domain login flow (replaces AUTH_SPOKE_ORIGINS).
+// The hub authorizes a login host against these rows (exact `domain`, or any subdomain when
+// `includeSubdomains` — for ephemeral PR-preview hosts). Matched on the request hostname (no scheme/port),
+// so a `localhost` row authorizes any localhost:<port>. Read with a short in-memory cache.
+model TrustedSpokeDomain {
+  id                Int      @id @default(autoincrement())
+  domain            String   @unique // bare host, no scheme/port — e.g. civitai.com, civitaic.com, localhost
+  includeSubdomains Boolean  @default(false) // also match *.domain (ephemeral PR-preview subdomains)
+  label             String?
+  enabled           Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+}
+
 model AdToken {
   id        Int       @id @default(autoincrement())
   token     String    @unique

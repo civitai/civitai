@@ -3185,6 +3185,15 @@ export type Tool = {
   metadata: Generated<unknown>;
   alias: string | null;
 };
+export type TrustedSpokeDomain = {
+  id: Generated<number>;
+  domain: string;
+  includeSubdomains: Generated<boolean>;
+  label: string | null;
+  enabled: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type User = {
   id: Generated<number>;
   name: string | null;
@@ -3751,6 +3760,7 @@ export type DB = {
   Thread: Thread;
   TipConnection: TipConnection;
   Tool: Tool;
+  TrustedSpokeDomain: TrustedSpokeDomain;
   User: User;
   UserCosmetic: UserCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;

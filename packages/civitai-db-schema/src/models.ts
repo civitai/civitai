@@ -2006,6 +2006,16 @@ export interface OauthConsent {
   updatedAt: Date;
 }
 
+export interface TrustedSpokeDomain {
+  id: number;
+  domain: string;
+  includeSubdomains: boolean;
+  label: string | null;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface AdToken {
   id: number;
   token: string;
