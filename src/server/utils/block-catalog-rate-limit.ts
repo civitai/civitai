@@ -36,8 +36,9 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 // image selector paginates ~100 items/page; a user scrolling fast (or a
 // debounced search firing as they type) issues at most a handful of fetches per
 // second — well under this. The ceiling only bites a token issuing a sustained
-// burst (>~30 req/s averaged over the window), which is not legitimate selector
-// usage. Window is short so a tripped instance recovers within seconds.
+// burst (>~12 req/s averaged over the window — 120 requests / 10s, so the 121st
+// request in any 10s window trips it), which is not legitimate selector usage.
+// Window is short so a tripped instance recovers within seconds.
 export const BLOCK_CATALOG_RATE_LIMIT_MAX = 120;
 export const BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS = 10;
 
