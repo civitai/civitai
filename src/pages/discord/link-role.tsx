@@ -15,7 +15,6 @@ import {
   IconExclamationMark,
   IconHome,
 } from '@tabler/icons-react';
-import { hubLoginUrl } from '@civitai/auth/client';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { dbRead } from '~/server/db/client';
@@ -23,24 +22,20 @@ import { discord } from '~/server/integrations/discord';
 import { getUserDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { env } from '~/env/client';
 
 type Props = {
   linked: boolean;
 };
 
-// Re-authorize Discord for the CURRENT user via the hub's account-LINKING flow (auth.civitai.com/login/discord
-// ?link=true). The hub requests the `role_connections.write` scope and stores the GRANTED scope on the Account,
-// so on return this page's getServerSideProps sees it and pushes the role-connection metadata. Replaces the old
-// in-app SocialButton + handleSignIn — the hub owns OAuth + scope storage now.
+// Re-authorize Discord for the CURRENT user via the hub's account-LINKING flow, routed through the MAIN SERVER
+// (/api/auth/connect builds the hub link URL with the server's AUTH_JWT_ISSUER — no client hub env var). The hub
+// requests the `role_connections.write` scope and stores the GRANTED scope on the Account, so on return this
+// page's getServerSideProps sees it and pushes the role-connection metadata.
 function connectDiscord() {
-  const hub = env.NEXT_PUBLIC_AUTH_HUB_URL;
-  if (typeof window === 'undefined' || !hub) return;
-  window.location.href = hubLoginUrl(hub, {
-    provider: 'discord',
-    link: true,
-    returnUrl: `${window.location.origin}/discord/link-role`,
-  });
+  if (typeof window === 'undefined') return;
+  window.location.href = `/api/auth/connect?provider=discord&returnUrl=${encodeURIComponent(
+    '/discord/link-role'
+  )}`;
 }
 
 export const getServerSideProps = createServerSideProps({
