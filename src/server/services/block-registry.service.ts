@@ -171,9 +171,15 @@ function bayesianRatingSortKey(globalMean: number): Prisma.Sql {
     SELECT COUNT(DISTINCT bus.user_id) FROM block_user_subscriptions bus
     WHERE bus.app_block_id = ab.id
   )`;
+  // NB: cast the pad-length args to ::int. Prisma binds the JS number
+  // constants as bigint, and `lpad(text, bigint, unknown)` has no overload
+  // (the signature is `lpad(text, integer, text)`) → the whole query 500s at
+  // runtime with `function lpad(text, bigint, unknown) does not exist`. The
+  // unit tests only assert the SQL string shape (/lpad/), so this slipped past
+  // them and was caught by the preview smoke test hitting a real database.
   return Prisma.sql`(
-    lpad(round(${score} * ${BAYES_SCORE_SCALE})::bigint::text, ${BAYES_SCORE_PAD}, '0')
-    || lpad(${installCount}::text, ${INSTALL_PAD}, '0')
+    lpad(round(${score} * ${BAYES_SCORE_SCALE})::bigint::text, ${BAYES_SCORE_PAD}::int, '0')
+    || lpad(${installCount}::text, ${INSTALL_PAD}::int, '0')
   )`;
 }
 
