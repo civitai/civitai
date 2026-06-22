@@ -9,6 +9,7 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, SignalMessages } from '~/server/common/enums';
 import type { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
+import type { UserNotificationCounts } from '~/server/services/notification.service';
 import type { NotificationGetAll, NotificationGetAllItem } from '~/types/router';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -136,7 +137,10 @@ export const useMarkReadNotification = () => {
           if (newCounts[key] < 0) newCounts[key] = 0;
         }
 
-        return newCounts;
+        // newCounts is built from `...old` (UserNotificationCounts) plus a guaranteed
+        // `all`, then only mutated numerically — it satisfies the count shape. The
+        // `Record<string, number>` buffer above is only to allow dynamic-key indexing.
+        return newCounts as UserNotificationCounts;
       });
 
       // Mark as read in notification feed
@@ -213,7 +217,8 @@ export const useNotificationSignal = () => {
           (newCounts[updated.category.toLowerCase()] ?? 0) + 1;
         newCounts['all']++;
 
-        return newCounts;
+        // See the mark-read updater: numeric buffer that satisfies the count shape.
+        return newCounts as UserNotificationCounts;
       });
     },
     [queryClient, queryUtils]
