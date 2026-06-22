@@ -12,6 +12,7 @@ import { resolveRequestSignIn } from './requestSignInGate';
 import { resolveRequestConsent } from './requestConsentGate';
 import { hideBlock } from './hiddenBlocks';
 import { sanitizeAppChromeName } from './appChromeName';
+import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
   projectBlockInitContext,
@@ -254,6 +255,24 @@ export function IframeHost({
   // the controller started — the next tick picks up the new payload) without
   // re-creating the controller and resetting its timers.
   const buildInitPayloadRef = useRef<() => BlockInitPayload>();
+  // Analytics Phase 2: emit-once guard for the block-render beacon (see the
+  // BLOCK_READY effect). The 'loading' → 'ready' transition is the primary
+  // dedup; this ref makes the per-mount emit deterministic even if duplicate
+  // BLOCK_READY acks land before React commits the 'ready' state.
+  const blockRenderEmittedRef = useRef<boolean>(false);
+
+  // App Blocks Analytics Phase 2 — fire-and-forget block render/impression,
+  // emitted exactly once per mount at the BLOCK_READY transition (see the
+  // BLOCK_READY effect below) via the lightweight /api/track/block-render beacon
+  // (NOT a tRPC mutation — this fires per model-page-with-a-block view, so at GA
+  // it must skip the full tRPC middleware chain; mirrors the #2680 addView ->
+  // beacon move). The client passes only the three identifiers; `isAnon`/`userId`
+  // are derived/stamped server-side in the route. This host only mounts via the
+  // `appBlocks`-flag-gated BlockSlot → BlockSlotClient → BlockHost path, so the
+  // event is dark behind the same flag as the rest of App Blocks.
+  // Slot the block rendered in (e.g. 'model.sidebar_top'). Mirrors the default
+  // used everywhere else modelCtx.slotId is read in this component.
+  const slotId = modelCtx.slotId ?? 'model.sidebar_top';
 
   const iframeSrc = install.manifest.iframe?.src ?? '';
   const expectedOrigin = useMemo(() => {
@@ -559,10 +578,24 @@ export function IframeHost({
         // (the block dedupes init), but we must not keep spamming.
         controllerRef.current?.notifyReady();
         applyHeight(payload.height);
+        // Analytics Phase 2: one render/impression per mount. `appliedReady`
+        // flips on the loading→ready transition; the emit-once ref makes it
+        // deterministic even if duplicate acks land before React commits 'ready'
+        // (so it fires exactly once per mount and never on re-render).
+        // Fire-and-forget beacon — failures are a no-op (and a harmless no-op
+        // until the `blockRenders` ClickHouse table exists; see PR body).
+        if (!blockRenderEmittedRef.current) {
+          blockRenderEmittedRef.current = true;
+          sendBlockRender({
+            appBlockId: install.appBlockId,
+            blockInstanceId: install.blockInstanceId,
+            slotId,
+          });
+        }
       }
     });
     return off;
-  }, [onMessage, applyHeight]);
+  }, [onMessage, applyHeight, install.appBlockId, install.blockInstanceId, slotId]);
 
   useEffect(() => {
     const off = onMessage<unknown>('RESIZE_IFRAME', (raw) => {

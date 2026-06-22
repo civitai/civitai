@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState } from 'react';
 import type { UserContentSettings } from '~/server/schema/user.schema';
+import type { UserSettingsChat } from '~/server/schema/chat.schema';
 import type { TosMeta } from '~/server/services/content.service';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
@@ -11,6 +12,7 @@ import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
 import type { RouterOutput } from '~/types/router';
 
 type ChatUnreadCount = RouterOutput['chat']['getUnreadCount'];
+import type { UserNotificationCounts } from '~/server/services/notification.service';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -28,6 +30,14 @@ type AppProviderProps = {
   // followed userIds. Seeds the query directly (fixed `undefined` key) so the
   // ambient follow/notify buttons never fire it on bootstrap.
   following?: number[];
+  // SSR-computed `user.checkNotifications` result (logged-in only) — the header
+  // bell unread count, reduced to { all, <category>: count }. Seeds the ambient
+  // `useQueryNotificationsCount` query (fixed `undefined` key) so it never fires
+  // on bootstrap. It's a LIVE count: the existing freshness path (the
+  // `NotificationNew` signal + mark-read optimistic `setData`) applies ON TOP of
+  // the seed, so it stays current without a refetch — the seed only replaces the
+  // one-shot bootstrap fetch.
+  notificationCounts?: UserNotificationCounts;
   // SSR-computed `system.getLiveNow` global boolean (a single redis.get,
   // identical for every user). Seeds the ambient `useIsLive` query (fixed
   // `undefined` key) so it never fires on bootstrap. Public procedure → seeded
@@ -38,6 +48,12 @@ type AppProviderProps = {
   // `undefined` key) so the badge never fires it on bootstrap. Absent for anon
   // and on the fail-open path (the consumers' own live fetch takes over).
   chatUnreadCount?: ChatUnreadCount;
+  // SSR-computed `chat.getUserSettings` (logged-in only) — the per-user chat
+  // settings (mute sounds / bad-word filter / acknowledged). Seeds the ambient
+  // query (fixed `undefined` key) so the chat widget never fires it on
+  // bootstrap. Static per user (only the user's own `setUserSettings` mutates
+  // it, which patches the cache). Absent for anon / fail-open path.
+  chatSettings?: UserSettingsChat;
   seed: number;
   canIndex: boolean;
   region: RegionInfo;
@@ -92,8 +108,10 @@ export function AppProvider({
   tosMeta,
   announcements,
   following,
+  notificationCounts,
   liveNow,
   chatUnreadCount,
+  chatSettings,
   domain,
   host,
   serverDomains,
@@ -117,6 +135,25 @@ export function AppProvider({
   trpc.user.getFollowingUsers.useQuery(undefined, {
     initialData: following,
     enabled: !!following,
+  });
+  // Seed `user.checkNotifications` (the header bell unread count) from the SSR
+  // snapshot so `useQueryNotificationsCount` reads a primed cache and never
+  // fires the query on bootstrap (~21 req/s off api-primary). Shares the fixed
+  // `undefined` query key with that hook. It IS a live count, but freshness
+  // does NOT come from a poll — it comes from the `NotificationNew` signal +
+  // mark-read optimistic `setData`, both of which apply on top of whatever is in
+  // the cache (seed or fetched). The consumer hook sets `staleTime: Infinity`
+  // (no time-based refetch today either), so seeding here is behavior-identical:
+  // it replaces the single bootstrap fetch and the count self-corrects via the
+  // same signal/mutation path as before. Match that `staleTime: Infinity` so the
+  // seed counts as fresh and no self-heal fetch fires. `enabled: !!notificationCounts`
+  // skips the seed (and any fetch from this provider) when there's no snapshot
+  // (anon never fires this protectedProcedure; a failed authed snapshot falls
+  // back to the consumer's own live bootstrap fetch).
+  trpc.user.checkNotifications.useQuery(undefined, {
+    initialData: notificationCounts,
+    enabled: !!notificationCounts,
+    staleTime: Infinity,
   });
   // Seed the global `system.getLiveNow` boolean from the SSR snapshot so the
   // ambient `useIsLive` consumers (header logo, social links, social home
@@ -142,6 +179,20 @@ export function AppProvider({
   trpc.chat.getUnreadCount.useQuery(undefined, {
     initialData: chatUnreadCount,
     enabled: !!chatUnreadCount,
+  });
+  // Seed `chat.getUserSettings` (per-user chat settings) from the SSR snapshot
+  // so the chat widget reads a primed cache and never fires the query on
+  // bootstrap (~19 req/s off api-primary). Shares the fixed `undefined` query
+  // key with `ChatButton`/`ExistingChat`'s `trpc.chat.getUserSettings.useQuery`.
+  // Settings are static per user — only the user's own `setUserSettings`
+  // mutation changes them, and it patches the cache via `setData` — so the
+  // global `staleTime: Infinity` default is correct (no external churn to poll
+  // for). `enabled: !!chatSettings` skips the seed (and any self-heal fetch)
+  // only when there's no snapshot: anon never fires this protected query, and a
+  // failed/degraded authed snapshot falls back to the widget's own live fetch.
+  trpc.chat.getUserSettings.useQuery(undefined, {
+    initialData: chatSettings,
+    enabled: !!chatSettings,
   });
   // Populate the module-level server domain map so `syncAccount(url)` can
   // resolve hosts to colors without pulling from React context.

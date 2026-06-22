@@ -68,7 +68,13 @@ vi.mock('~/server/redis/client', () => ({
   redis: mockRedis,
   REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'rl' } },
 }));
-vi.mock('~/server/utils/server-domain', () => ({ getAllServerHosts: () => ['civitai.com'] }));
+vi.mock('~/server/utils/server-domain', () => ({
+  getAllServerHosts: () => ['civitai.com'],
+  // #2670 (color-domain maturity) added a getRequestDomainColor(req) call to the
+  // mint. The test reqs carry no `host` header, so the real impl returns
+  // undefined → SFW ceiling; mirror that here so the module mock stays complete.
+  getRequestDomainColor: () => undefined,
+}));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: vi.fn(async () => true),
 }));

@@ -18,6 +18,7 @@ import type {
   UpdateMessageInput,
   UserSettingsChat,
 } from '~/server/schema/chat.schema';
+import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import {
@@ -44,10 +45,10 @@ import type { ChatCreateChat } from '~/types/router';
 export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     const { id: userId } = ctx.user;
-    const { chat = { muteSounds: false, replaceBadWords: false, acknowledged: false } } =
-      await getUserSettings(userId);
-
-    return chat;
+    const { chat } = await getUserSettings(userId);
+    // Shared resolve helper guarantees the SSR seed (_app) and this resolver
+    // produce byte-identical output when `chat` is absent (#2471).
+    return resolveChatSettings(chat);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -5,7 +5,6 @@ import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
 import { constants } from '~/server/common/constants';
-import type { NotificationCategory } from '~/server/common/enums';
 import {
   OnboardingComplete,
   OnboardingSteps,
@@ -53,7 +52,7 @@ import type {
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { getUserNotificationCount } from '~/server/services/notification.service';
+import { getUserNotificationCounts } from '~/server/services/notification.service';
 import {
   getResourceReviewsByUserId,
   getUserResourceReview,
@@ -253,21 +252,9 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   const { id } = ctx.user;
 
   try {
-    const unreadCount = await getUserNotificationCount({
-      userId: id,
-      unread: true,
-    });
-
-    const reduced = unreadCount.reduce(
-      (acc, { category, count }) => {
-        const key = category.toLowerCase() as Lowercase<NotificationCategory>;
-        acc[key] = Number(count);
-        acc['all'] += Number(count);
-        return acc;
-      },
-      { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>
-    );
-    return reduced;
+    // Shared reduce so the SSR-seed path (`/api/user/settings`) returns a
+    // byte-identical object to this resolver — see getUserNotificationCounts.
+    return await getUserNotificationCounts({ userId: id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

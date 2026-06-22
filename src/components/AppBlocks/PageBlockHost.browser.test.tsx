@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
@@ -200,5 +201,115 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
 
     await new Promise((r) => setTimeout(r, 150));
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+});
+
+describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
+  // Analytics Phase 2 now emits via the /api/track/block-render BEACON
+  // (sendBlockRender → fetch), not a tRPC mutation. Spy on global fetch and
+  // assert the beacon fires exactly once at BLOCK_READY (and never on re-render).
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  // Only the block-render beacon goes through fetch in this test; resolve OK.
+  function isBeacon(call: unknown[]) {
+    return typeof call[0] === 'string' && (call[0] as string).includes('/api/track/block-render');
+  }
+  function beaconCalls() {
+    return fetchSpy.mock.calls.filter(isBeacon);
+  }
+
+  beforeEach(() => {
+    // vi.spyOn dedupes to the same mock when fetch is already spied, so its
+    // .mock.calls would accumulate across tests — clear it each time.
+    fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    fetchSpy.mockClear();
+  });
+
+  test('emits the block-render beacon exactly once at BLOCK_READY with the page identifiers', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    // Not emitted before the handshake completes.
+    expect(beaconCalls()).toHaveLength(0);
+
+    await driveToReady();
+
+    await vi.waitFor(() => {
+      expect(beaconCalls()).toHaveLength(1);
+    });
+
+    const [url, init] = beaconCalls()[0];
+    expect(url).toBe('/api/track/block-render');
+    expect((init as RequestInit | undefined)?.method).toBe('POST');
+    // keepalive so the beacon survives a page unload/navigation.
+    expect((init as RequestInit | undefined)?.keepalive).toBe(true);
+    const body = JSON.parse(String((init as RequestInit).body));
+    expect(body).toEqual({
+      appBlockId: 'apb_test',
+      blockInstanceId: 'page_apb_test',
+      slotId: 'app.page',
+    });
+    // No isAnon/userId from the client — those are server-derived in the route.
+    expect(body).not.toHaveProperty('isAnon');
+    expect(body).not.toHaveProperty('userId');
+  });
+
+  test('does NOT re-emit on a late/duplicate BLOCK_READY (status no longer loading)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    await driveToReady();
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+
+    // A second BLOCK_READY (block re-ack, or a re-render re-running listeners)
+    // finds status === 'ready', so the `acked` gate stays false → no re-emit.
+    postFromBlock('BLOCK_READY', {});
+    postFromBlock('BLOCK_READY', {});
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(beaconCalls()).toHaveLength(1);
+  });
+
+  // Per-mount semantics guard: a GENUINE remount (the host re-mounted under a
+  // CHANGED key — what happens on model navigation / tab switch) must create a
+  // FRESH emit-once ref and therefore emit AGAIN. Without this assertion a
+  // future change that makes `blockRenderEmittedRef` persistent (e.g. hoisting
+  // it to a module/global) would silently UNDER-count impressions and no test
+  // would catch it. We bump a React-state key around the host (a real unmount +
+  // remount, not a re-render) and assert a 2nd beacon.
+  function RemountHarness({ onSetKey }: { onSetKey: (set: (k: number) => void) => void }) {
+    const [k, setK] = useState(0);
+    onSetKey(setK);
+    // The key is on PageBlockHost so changing it unmounts+remounts ONLY the host
+    // (fresh refs/effects) while the surrounding providers/QueryClient persist —
+    // exactly a model-navigation remount.
+    return <PageBlockHost key={k} {...baseProps} onConsentGranted={vi.fn()} />;
+  }
+
+  test('re-emits on a genuine remount under a new key (fresh emit-once ref)', async () => {
+    let bumpKey: (k: number) => void = () => undefined;
+    renderWithProviders(<RemountHarness onSetKey={(set) => (bumpKey = set)} />);
+
+    // First mount → exactly one beacon.
+    await driveToReady();
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+
+    // Remount under a NEW key — tears down the host and mounts a fresh instance
+    // with a brand-new `blockRenderEmittedRef`.
+    bumpKey(1);
+
+    // The fresh mount starts in 'loading' (data-block-ready='false'). Wait for
+    // that reset so driveToReady() drives the NEW instance, not a stale 'true'
+    // node from the prior mount.
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (el.getAttribute('data-block-ready') !== 'false') throw new Error('not reset yet');
+    });
+
+    // The fresh instance re-runs the whole handshake; ack BLOCK_READY again.
+    await driveToReady();
+
+    // The new mount emitted a 2nd, independent impression → total 2.
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(2));
   });
 });

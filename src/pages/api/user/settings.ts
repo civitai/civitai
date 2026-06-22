@@ -5,6 +5,7 @@ import { getTosMeta } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import { getUserFollows } from '~/server/redis/caches';
 import { getUnreadMessagesForUser } from '~/server/services/chat.service';
+import { getUserNotificationCounts } from '~/server/services/notification.service';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 
 export default PublicEndpoint(
@@ -20,7 +21,8 @@ export default PublicEndpoint(
       // and drop the critical settings/session payload; tosMeta (static, no user
       // input) can still throw to the outer catch (preserving prior behaviour).
       const domainColor = getRequestDomainColor(req);
-      const [tosMeta, announcements, following, chatUnreadCount] = await Promise.all([
+      const [tosMeta, announcements, following, chatUnreadCount, notificationCounts] =
+        await Promise.all([
         // Resolve the static per-domain ToS metadata here (server-only API route)
         // so `_app` getInitialProps can deliver it WITHOUT importing
         // `content.service` — which pulls `fs/promises` into `_app`'s client-bundled
@@ -62,6 +64,18 @@ export default PublicEndpoint(
         session?.user
           ? getUnreadMessagesForUser({ userId: session.user.id }).catch(() => undefined)
           : Promise.resolve(undefined),
+        // SSR-seed the ambient, auth-gated `user.checkNotifications` query (the
+        // header bell unread count, fires on every logged-in bootstrap). Uses
+        // the SAME shared `getUserNotificationCounts` reduce the resolver uses,
+        // so the seed is byte-identical to a live fetch (plain { all, <cat> }
+        // object of numbers — no superjson Date/array divergence). Anon never
+        // fires this query (protectedProcedure + `enabled: !!currentUser`), so
+        // seed authed-only. `.catch(undefined)` so a redis/DB blip degrades to
+        // no-seed (client self-heals on bootstrap) and can never reject the
+        // Promise.all and drop the critical settings/session payload.
+        session?.user
+          ? getUserNotificationCounts({ userId: session.user.id }).catch(() => undefined)
+          : Promise.resolve(undefined),
       ]);
       res.status(200).json({
         settings,
@@ -69,6 +83,7 @@ export default PublicEndpoint(
         announcements,
         following,
         chatUnreadCount,
+        notificationCounts,
         session: session?.user && Object.keys(session.user).length > 0 ? session : null,
       });
     } catch (e) {
