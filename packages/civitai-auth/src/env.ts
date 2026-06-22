@@ -25,8 +25,6 @@ const schema = z.object({
   AUTH_JWT_PUBLIC_KEY: z.string().optional(), // SPKI PEM, exported as a JWK at the endpoint
   AUTH_JWT_KID: z.string().optional(),
   AUTH_SESSION_MAX_AGE: z.coerce.number().default(30 * 24 * 60 * 60), // 30d, matches today
-  // Cross-root swap transport token (replaces the AES civ-token). Short-lived, single-use.
-  AUTH_SWAP_MAX_AGE: z.coerce.number().default(60), // 60s
 });
 
 function buildEnv() {

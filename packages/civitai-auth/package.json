@@ -6,7 +6,9 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/client.ts"
+    "./client": "./src/client.ts",
+    "./token-scope": "./src/token-scope.ts",
+    "./secret-hash": "./src/secret-hash.ts"
   },
   "scripts": {
     "test": "vitest run",

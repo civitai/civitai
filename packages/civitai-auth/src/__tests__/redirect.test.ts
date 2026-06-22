@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { readReturnUrl, readSync, isSafeReturnTarget, buildPostLoginRedirect } from '../redirect';
+import {
+  readReturnUrl,
+  readSync,
+  isSafeReturnTarget,
+  isCivitaiOrigin,
+  buildPostLoginRedirect,
+} from '../redirect';
 
 const u = (qs: string) => new URL(`https://auth.civitai.com/login${qs}`);
 const civitai = { isAllowedOrigin: (o: string) => o.includes('civitai') };
@@ -21,6 +27,25 @@ describe('readSync', () => {
     expect(readSync(u('?sync-account=red'))).toBe('red');
     expect(readSync(u('?sync=green'))).toBeNull(); // the old `sync` alias is gone
     expect(readSync(u(''))).toBeNull();
+  });
+});
+
+describe('isCivitaiOrigin', () => {
+  it('allows owned eTLD+1s and their subdomains', () => {
+    expect(isCivitaiOrigin('https://civitai.com')).toBe(true);
+    expect(isCivitaiOrigin('https://civitai.red')).toBe(true);
+    expect(isCivitaiOrigin('https://pr-2468.civitaic.com')).toBe(true); // preview host
+    expect(isCivitaiOrigin('https://moderator.civitai.com')).toBe(true);
+  });
+  it('rejects the B1 open-redirect look-alikes (substring test would accept these)', () => {
+    expect(isCivitaiOrigin('https://civitai.evil.com')).toBe(false);
+    expect(isCivitaiOrigin('https://evil-civitai.com')).toBe(false);
+    expect(isCivitaiOrigin('https://civitai.com.attacker.io')).toBe(false);
+    expect(isCivitaiOrigin('https://xcivitai.com')).toBe(false);
+    expect(isCivitaiOrigin('https://notcivitai.red')).toBe(false);
+  });
+  it('returns false for an unparseable origin', () => {
+    expect(isCivitaiOrigin('not a url')).toBe(false);
   });
 });
 

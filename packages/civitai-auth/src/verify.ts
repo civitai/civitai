@@ -55,12 +55,6 @@ export interface AuthVerifier {
     cookies: string | Record<string, string | undefined>,
     callbackUrl: string
   ): Promise<{ session: SessionClaims } | { redirect: string }>;
-  /**
-   * Verify a cross-root SWAP transport token (minted by the hub's mintSwapToken). Returns the userId + the
-   * token's `jti` (so the hub can burn it for single-use) or null. Used by the cross-domain exchange to
-   * establish a local session on a different root domain — no shared secret, JWKS only.
-   */
-  verifySwapToken(token: string): Promise<{ userId: number; jti: string } | null>;
 }
 
 export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifier {
@@ -130,8 +124,8 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     }
 
     if (!claims) return null;
-    // A SWAP transport token must NEVER be accepted as a session token (it shares iss/aud/kid with one) — the
-    // exchange flow redeems it via verifySwapToken, not here.
+    // Defense-in-depth: never accept a token carrying `purpose: 'swap'` as a session token. The swap bridge
+    // is removed, but this guard cheaply rejects any stray legacy swap-shaped token.
     if ((claims as { purpose?: unknown }).purpose === 'swap') return null;
     if (cfg.isRevoked && (await cfg.isRevoked(claims))) return null;
     return claims;
@@ -155,25 +149,7 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     return { redirect };
   }
 
-  async function verifySwapToken(token: string): Promise<{ userId: number; jti: string } | null> {
-    if (!canVerify())
-      throw new Error(
-        '[@civitai/auth] no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI configured for swap verification'
-      );
-    try {
-      const { payload } = await verifyAsymmetric(token);
-      if (payload.purpose !== 'swap') return null;
-      const userId = Number(payload.sub);
-      // `jti` lets the exchange enforce single-use (the hub burns it after redeeming).
-      return Number.isFinite(userId) && typeof payload.jti === 'string'
-        ? { userId, jti: payload.jti }
-        : null;
-    } catch {
-      return null;
-    }
-  }
-
-  return { verifyToken, getSession, requireAuth, verifySwapToken };
+  return { verifyToken, getSession, requireAuth };
 }
 
 function readCookie(

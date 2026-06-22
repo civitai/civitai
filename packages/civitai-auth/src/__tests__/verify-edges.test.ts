@@ -20,10 +20,9 @@ vi.mock('jose', async (importOriginal) => {
   };
 });
 
-// Complements verify.test.ts with edges it doesn't cover: the "no verification key configured"
-// guards (verifyToken + verifySwapToken both throw), a valid ES256 token verified against the WRONG
-// public key → null, swap-token issuer/audience mismatch → null, and getSession on an unparseable
-// cookie header.
+// Complements verify.test.ts with edges it doesn't cover: the "no verification key configured" guard
+// (verifyToken throws), a valid ES256 token verified against the WRONG public key → null, and
+// getSession on an unparseable cookie header.
 const issuer = 'https://auth.test';
 const audience = 'spokes';
 let signer: SessionSigner;
@@ -57,13 +56,6 @@ describe('createAuthVerifier — no key configured', () => {
     const verifier = createAuthVerifier({ issuer, audience }); // no publicKeyPem, no jwksUri
     await expect(verifier.verifyToken(token)).rejects.toThrow(/no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI/);
   });
-
-  it('verifySwapToken throws when neither public key nor JWKS is set', async () => {
-    const verifier = createAuthVerifier({ issuer, audience });
-    await expect(verifier.verifySwapToken('any.token.here')).rejects.toThrow(
-      /no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI/
-    );
-  });
 });
 
 describe('createAuthVerifier — wrong key / mismatched claims', () => {
@@ -76,27 +68,6 @@ describe('createAuthVerifier — wrong key / mismatched claims', () => {
   it('returns null (not throw) for a non-JWT string in the ES256 branch with a local key', async () => {
     const verifier = createAuthVerifier({ issuer, audience, publicKeyPem });
     expect(await verifier.verifyToken('garbage')).toBeNull();
-  });
-
-  it('verifySwapToken rejects a swap token whose issuer does not match', async () => {
-    const token = await signer.mintSwapToken(7);
-    const verifier = createAuthVerifier({ issuer: 'https://other.test', audience, publicKeyPem });
-    expect(await verifier.verifySwapToken(token)).toBeNull();
-  });
-
-  it('verifySwapToken rejects a swap token whose audience does not match', async () => {
-    const token = await signer.mintSwapToken(7);
-    const verifier = createAuthVerifier({ issuer, audience: 'someone-else', publicKeyPem });
-    expect(await verifier.verifySwapToken(token)).toBeNull();
-  });
-
-  it('verifySwapToken extracts the userId on a fully-matching swap token', async () => {
-    const token = await signer.mintSwapToken(7);
-    const verifier = createAuthVerifier({ issuer, audience, publicKeyPem });
-    // verifySwapToken returns the single-use jti alongside the userId.
-    const result = await verifier.verifySwapToken(token);
-    expect(result).toMatchObject({ userId: 7 });
-    expect(typeof result?.jti).toBe('string');
   });
 });
 
@@ -123,14 +94,6 @@ describe('createAuthVerifier — ES256 alg pin (B3)', () => {
     // the key type. Assert the option is threaded through.
     const token = await signer.mintSessionToken({ user: { id: 1 } });
     await createAuthVerifier({ issuer, audience, publicKeyPem }).verifyToken(token);
-    expect(jwtVerifyCalls.length).toBeGreaterThan(0);
-    const opts = jwtVerifyCalls[0][2] as { algorithms?: string[] };
-    expect(opts.algorithms).toEqual(['ES256']);
-  });
-
-  it('pins algorithms: ["ES256"] on the swap verify call too', async () => {
-    const token = await signer.mintSwapToken(7);
-    await createAuthVerifier({ issuer, audience, publicKeyPem }).verifySwapToken(token);
     expect(jwtVerifyCalls.length).toBeGreaterThan(0);
     const opts = jwtVerifyCalls[0][2] as { algorithms?: string[] };
     expect(opts.algorithms).toEqual(['ES256']);
@@ -164,19 +127,6 @@ describe('createAuthVerifier — alg-confusion rejection, end to end (B3)', () =
       .encode();
     const verifier = createAuthVerifier({ issuer, audience, publicKeyPem, legacySecret: LEGACY_SECRET });
     expect(await verifier.verifyToken(forged)).toBeNull();
-  });
-
-  it('rejects an HS256 swap-shaped token on the swap path (pin covers verifySwapToken too)', async () => {
-    const hmac = createSecretKey(Buffer.from(publicKeyPem, 'utf8'));
-    const forged = await new SignJWT({ purpose: 'swap', sub: '5', jti: 'x' })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuer(issuer)
-      .setAudience(audience)
-      .setIssuedAt()
-      .setExpirationTime('1h')
-      .sign(hmac);
-    const verifier = createAuthVerifier({ issuer, audience, publicKeyPem });
-    expect(await verifier.verifySwapToken(forged)).toBeNull();
   });
 });
 

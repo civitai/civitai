@@ -122,26 +122,6 @@ describe('createAuthVerifier', () => {
     expect(await verifier.getSession('unrelated=1; other=2')).toBeNull();
   });
 
-  it('verifies a swap token and extracts the userId + jti (for single-use)', async () => {
-    stubJwks();
-    const token = await signer.mintSwapToken(99);
-    const result = await createAuthVerifier(cfg).verifySwapToken(token);
-    expect(result).toMatchObject({ userId: 99 });
-    expect(typeof result?.jti).toBe('string');
-  });
-
-  it('rejects a session token used as a swap token (purpose mismatch)', async () => {
-    stubJwks();
-    const token = await signer.mintSessionToken({ user: { id: 7 }, id: 't7' });
-    expect(await createAuthVerifier(cfg).verifySwapToken(token)).toBeNull();
-  });
-
-  it('rejects a SWAP token used as a session token (verifyToken bars purpose:swap)', async () => {
-    stubJwks();
-    const swap = await signer.mintSwapToken(7);
-    expect(await createAuthVerifier(cfg).verifyToken(swap)).toBeNull();
-  });
-
   it('getSession reads the token out of a cookie header', async () => {
     stubJwks();
     const token = await signer.mintSessionToken({ user: { id: 7 }, id: 't7' });

@@ -21,9 +21,7 @@ export type { DeviceAccountClient, DeviceAccount } from './device-client';
 export { createSessionTokenClient } from './session-token-client'; // rolling refresh + revoke
 export type { SessionTokenClient } from './session-token-client';
 export { createImpersonationClient } from './impersonation-client'; // moderator impersonate / exit
-export type { ImpersonationClient } from './impersonation-client';
-export { createExchangeClient } from './exchange-client'; // cross-domain swap-token → civ-token
-export type { ExchangeClient } from './exchange-client';
+export type { ImpersonationClient, ImpersonationResult } from './impersonation-client';
 export { createSessionSigner, maybeCreateSessionSigner } from './sign';
 export type { SessionSigner, SessionSignerConfig } from './sign';
 export { createAuthMiddleware } from './middleware';
@@ -47,9 +45,17 @@ export {
   readReturnUrl,
   readSync,
   isSafeReturnTarget,
+  isCivitaiOrigin,
   buildPostLoginRedirect,
   type ReturnTargetOptions,
 } from './redirect';
+export {
+  createTrustedDomainRegistry,
+  type TrustedDomain,
+  type TrustedDomainRegistry,
+  type TrustedDomainRegistryConfig,
+} from './trusted-domains';
 export * from './constants';
+export { firstPartyClientId, FIRST_PARTY_ID_PREFIX, SPOKE_CALLBACK_PATH } from './first-party'; // shared first-party client-id contract (hub + spoke; pure, browser-safe)
 export { hubLoginUrl, type ProviderId, type HubLoginUrlOptions } from './providers';
 export type { SessionUser, SessionClaims } from './types';

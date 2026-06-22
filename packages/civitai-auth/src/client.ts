@@ -69,7 +69,10 @@ export function createAuthBrowserClient(hubBase: string): AuthBrowserClient {
       if (!res.ok) throw new Error(await errorMessage(res, 'Could not impersonate'));
     },
     async exitImpersonation() {
-      const res = await hub('/api/auth/impersonate', { method: 'DELETE' });
+      // POST /api/auth/impersonate/exit — the hub serves exit at its own route (the /impersonate route is
+      // POST-only). Must match createImpersonationClient.exit() so the same-site browser path and the
+      // cross-site proxy path hit ONE hub contract.
+      const res = await hub('/api/auth/impersonate/exit', { method: 'POST' });
       if (!res.ok) throw new Error(await errorMessage(res, 'Could not exit impersonation'));
     },
   };

@@ -19,6 +19,8 @@ export interface HubLoginUrlOptions {
   /** Why the user was sent to log in (e.g. `image-gen`). The hub tracks tracked reasons as a `LoginRedirect`
    *  event — the same login-funnel analytics the main app's in-page login used to emit. */
   reason?: string;
+  /** An error code to surface on the hub login page (e.g. `OAuthAccountNotLinked`). */
+  error?: string;
 }
 
 /** Build a hub login URL. `hubBase` is the hub origin (the main app passes `NEXT_PUBLIC_AUTH_HUB_URL`). */
@@ -28,5 +30,6 @@ export function hubLoginUrl(hubBase: string, opts: HubLoginUrlOptions = {}): str
   if (opts.link) url.searchParams.set('link', 'true');
   if (opts.prompt) url.searchParams.set('prompt', opts.prompt);
   if (opts.reason) url.searchParams.set('reason', opts.reason);
+  if (opts.error) url.searchParams.set('error', opts.error);
   return url.toString();
 }

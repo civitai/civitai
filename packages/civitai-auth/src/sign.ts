@@ -2,7 +2,7 @@
 // the public key (see verify.ts) — no shared secret leaves the hub.
 //
 // The hub (apps/auth, SvelteKit) mints the session cookie directly via `mintSessionToken` after
-// login. `mintSwapToken` / `mintIdToken` cover the cross-root handoff and OIDC id_token.
+// login. `mintIdToken` covers the OIDC id_token for third-party "Sign in with Civitai".
 import { randomUUID } from 'crypto';
 import { importPKCS8, importSPKI, exportJWK, SignJWT, type CryptoKey } from 'jose';
 import { loadAuthEnv } from './env';
@@ -54,12 +54,6 @@ export interface SessionSigner {
   maxAge: number;
   /** Serve at GET /.well-known/jwks.json — public keys only. */
   publicJwks: () => Promise<{ keys: Record<string, unknown>[] }>;
-  /**
-   * Mint a short-lived, single-use SWAP transport token for the cross-root handoff
-   * (replaces the AES civ-token). Signed with the same key → the receiving root verifies
-   * it via JWKS with no shared secret. Served from /api/auth/sync.
-   */
-  mintSwapToken: (userId: number) => Promise<string>;
   /**
    * Framework-agnostic session minter: sign an ES256 session JWT from a claims object
    * (e.g. `{ user, id, signedAt }`). Used by non-next-auth hubs (the SvelteKit login app)
@@ -141,18 +135,6 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
     return { keys: [{ ...jwk, kid: cfg.kid, use: 'sig', alg: ALG }] };
   }
 
-  async function mintSwapToken(userId: number): Promise<string> {
-    const builder = new SignJWT({ purpose: 'swap' })
-      .setProtectedHeader({ alg: ALG, kid: cfg.kid, typ: 'JWT' })
-      .setSubject(String(userId))
-      .setIssuedAt()
-      .setExpirationTime(Math.floor(Date.now() / 1000) + (env.AUTH_SWAP_MAX_AGE ?? 60))
-      .setJti(randomUUID())
-      .setIssuer(cfg.issuer ?? '');
-    if (cfg.audience) builder.setAudience(cfg.audience);
-    return builder.sign(await privateKey());
-  }
-
   async function mintIdToken(params: {
     sub: string | number;
     aud: string;
@@ -181,7 +163,6 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
   return {
     maxAge: cfg.maxAge,
     publicJwks,
-    mintSwapToken,
     mintSessionToken,
     mintIdToken,
   };

@@ -62,11 +62,11 @@ describe('createAuthBrowserClient (browser → hub, credentials)', () => {
     await expect(client().impersonate(9)).resolves.toBeUndefined();
   });
 
-  it('exitImpersonation DELETEs the hub impersonate route', async () => {
+  it('exitImpersonation POSTs the hub impersonate/exit route', async () => {
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => ({}) }));
     await client().exitImpersonation();
     const [url, init] = fetch.mock.calls[0];
-    expect(url).toBe('https://auth.test/api/auth/impersonate');
-    expect(init.method).toBe('DELETE');
+    expect(url).toBe('https://auth.test/api/auth/impersonate/exit');
+    expect(init.method).toBe('POST');
   });
 });
