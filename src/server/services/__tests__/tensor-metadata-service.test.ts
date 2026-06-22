@@ -140,9 +140,9 @@ describe('tensor-metadata.service decoded-analysis LRU', () => {
 
   it('respects the byte cap (maxSize) when item cap is generous', async () => {
     process.env.TENSOR_METADATA_LRU_MAX_ITEMS = '1000';
-    // Base 4096 + 256/tensor. A 10-tensor analysis ~= 4096 + 2560 = 6656 bytes.
-    // Cap at ~9000 bytes => only one such entry fits at a time.
-    process.env.TENSOR_METADATA_LRU_MAX_SIZE_BYTES = '9000';
+    // Base 4096 + 640/tensor. A 10-tensor analysis ~= 4096 + 6400 = 10496 bytes.
+    // Cap at 16000 bytes => one such entry fits, a second pushes over and evicts the first.
+    process.env.TENSOR_METADATA_LRU_MAX_SIZE_BYTES = '16000';
     const { getFullTensorAnalysisCached, __tensorMetadataLruInternals } = await load();
     __tensorMetadataLruInternals.clear();
 
@@ -154,5 +154,70 @@ describe('tensor-metadata.service decoded-analysis LRU', () => {
 
     expect(__tensorMetadataLruInternals.has(2)).toBe(true);
     expect(__tensorMetadataLruInternals.has(1)).toBe(false);
+  });
+
+  it('SINGLE-FLIGHTS concurrent cold misses for the same id (decode runs once)', async () => {
+    const { getFullTensorAnalysisCached, __tensorMetadataLruInternals } = await load();
+    __tensorMetadataLruInternals.clear();
+
+    const analysis = makeAnalysis(4, 'concurrent');
+    // A fetcher that resolves on the next microtask tick so all callers overlap before
+    // the first `.set` lands — the cold-burst window the in-flight map must collapse.
+    let resolve!: (v: ModelTensorAnalysis) => void;
+    const gate = new Promise<ModelTensorAnalysis>((r) => (resolve = r));
+    const fetcher = vi.fn(() => gate);
+
+    const p1 = getFullTensorAnalysisCached(7, fetcher);
+    const p2 = getFullTensorAnalysisCached(7, fetcher);
+    const p3 = getFullTensorAnalysisCached(7, fetcher);
+    expect(__tensorMetadataLruInternals.inFlightSize).toBe(1);
+    resolve(analysis);
+    const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+
+    // Three concurrent misses → exactly ONE decode (the herd is collapsed).
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(r1).toBe(analysis);
+    expect(r2).toBe(analysis);
+    expect(r3).toBe(analysis);
+    // In-flight entry cleared after settle; result is now a warm hit.
+    expect(__tensorMetadataLruInternals.inFlightSize).toBe(0);
+    expect(__tensorMetadataLruInternals.has(7)).toBe(true);
+  });
+
+  it('does NOT cache a rejected decode, and clears the in-flight entry (next read retries)', async () => {
+    const { getFullTensorAnalysisCached, __tensorMetadataLruInternals } = await load();
+    __tensorMetadataLruInternals.clear();
+
+    const boom = new Error('decode failed');
+    const failing = vi.fn(async () => {
+      throw boom;
+    });
+    await expect(getFullTensorAnalysisCached(9, failing)).rejects.toThrow('decode failed');
+    // Nothing cached, no wedged in-flight entry.
+    expect(__tensorMetadataLruInternals.has(9)).toBe(false);
+    expect(__tensorMetadataLruInternals.inFlightSize).toBe(0);
+
+    // A subsequent read RETRIES the fetcher (the failure was not memoized).
+    const ok = makeAnalysis(2, 'recovered');
+    const succeeding = vi.fn(async () => ok);
+    const result = await getFullTensorAnalysisCached(9, succeeding);
+    expect(result).toBe(ok);
+    expect(succeeding).toHaveBeenCalledTimes(1);
+  });
+
+  it('bustFullTensorAnalysis evicts a warm entry, forcing a re-decode', async () => {
+    const { getFullTensorAnalysisCached, bustFullTensorAnalysis, __tensorMetadataLruInternals } =
+      await load();
+    __tensorMetadataLruInternals.clear();
+
+    const fetcher = vi.fn(async () => makeAnalysis(3, 'bustable'));
+    await getFullTensorAnalysisCached(11, fetcher);
+    expect(__tensorMetadataLruInternals.has(11)).toBe(true);
+
+    bustFullTensorAnalysis(11);
+    expect(__tensorMetadataLruInternals.has(11)).toBe(false);
+
+    await getFullTensorAnalysisCached(11, fetcher);
+    expect(fetcher).toHaveBeenCalledTimes(2); // re-decoded after bust
   });
 });
