@@ -8,6 +8,7 @@ import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
+import type { UserNotificationCounts } from '~/server/services/notification.service';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -25,6 +26,14 @@ type AppProviderProps = {
   // followed userIds. Seeds the query directly (fixed `undefined` key) so the
   // ambient follow/notify buttons never fire it on bootstrap.
   following?: number[];
+  // SSR-computed `user.checkNotifications` result (logged-in only) — the header
+  // bell unread count, reduced to { all, <category>: count }. Seeds the ambient
+  // `useQueryNotificationsCount` query (fixed `undefined` key) so it never fires
+  // on bootstrap. It's a LIVE count: the existing freshness path (the
+  // `NotificationNew` signal + mark-read optimistic `setData`) applies ON TOP of
+  // the seed, so it stays current without a refetch — the seed only replaces the
+  // one-shot bootstrap fetch.
+  notificationCounts?: UserNotificationCounts;
   // SSR-computed `system.getLiveNow` global boolean (a single redis.get,
   // identical for every user). Seeds the ambient `useIsLive` query (fixed
   // `undefined` key) so it never fires on bootstrap. Public procedure → seeded
@@ -84,6 +93,7 @@ export function AppProvider({
   tosMeta,
   announcements,
   following,
+  notificationCounts,
   liveNow,
   domain,
   host,
@@ -108,6 +118,25 @@ export function AppProvider({
   trpc.user.getFollowingUsers.useQuery(undefined, {
     initialData: following,
     enabled: !!following,
+  });
+  // Seed `user.checkNotifications` (the header bell unread count) from the SSR
+  // snapshot so `useQueryNotificationsCount` reads a primed cache and never
+  // fires the query on bootstrap (~21 req/s off api-primary). Shares the fixed
+  // `undefined` query key with that hook. It IS a live count, but freshness
+  // does NOT come from a poll — it comes from the `NotificationNew` signal +
+  // mark-read optimistic `setData`, both of which apply on top of whatever is in
+  // the cache (seed or fetched). The consumer hook sets `staleTime: Infinity`
+  // (no time-based refetch today either), so seeding here is behavior-identical:
+  // it replaces the single bootstrap fetch and the count self-corrects via the
+  // same signal/mutation path as before. Match that `staleTime: Infinity` so the
+  // seed counts as fresh and no self-heal fetch fires. `enabled: !!notificationCounts`
+  // skips the seed (and any fetch from this provider) when there's no snapshot
+  // (anon never fires this protectedProcedure; a failed authed snapshot falls
+  // back to the consumer's own live bootstrap fetch).
+  trpc.user.checkNotifications.useQuery(undefined, {
+    initialData: notificationCounts,
+    enabled: !!notificationCounts,
+    staleTime: Infinity,
   });
   // Seed the global `system.getLiveNow` boolean from the SSR snapshot so the
   // ambient `useIsLive` consumers (header logo, social links, social home

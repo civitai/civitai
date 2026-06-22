@@ -44,6 +44,7 @@ const TOS_PROCEDURE = 'content.checkTosUpdate';
 const ANNOUNCEMENTS_PROCEDURE = 'announcement.getAnnouncements';
 const FOLLOWING_PROCEDURE = 'user.getFollowingUsers';
 const LIVE_NOW_PROCEDURE = 'system.getLiveNow';
+const CHECK_NOTIFICATIONS_PROCEDURE = 'user.checkNotifications';
 
 // A core page a gate-passing user lands on directly (no /login bounce). Both
 // procedures fire on every logged-in bootstrap regardless of which page, so
@@ -468,6 +469,84 @@ test.describe('SSR-injected getLiveNow (anonymous)', () => {
         '\n'
       )}`
     ).toHaveLength(0);
+  });
+});
+
+/**
+ * Regression guard for the SSR-inject of `user.checkNotifications` (~21/s on
+ * api-primary) — the header notification-bell unread count. It is a
+ * `protectedProcedure` consumed by the ambient `useQueryNotificationsCount`
+ * hook, so it fires on every LOGGED-IN bootstrap (never anon → no anon block,
+ * same as getFollowingUsers). SSR-computed in the `/api/user/settings`
+ * self-fetch that `_app` already makes (so NO server-only module is pulled into
+ * `_app`'s client bundle) via the SAME shared `getUserNotificationCounts` reduce
+ * the resolver uses, then seeded in AppProvider on the fixed `undefined` key.
+ *
+ * Byte-equality: the payload is a plain `{ all, <category>: count }` object of
+ * numbers — no Date/array/`undefined` field, so the JSON seed and the live
+ * `result.data.json` compare directly with no superjson `undefined`→`null`
+ * divergence. (`buzz` is `0` not absent when there are no buzz notifications:
+ * the resolver only emits categories the SQL GROUP BY returns, so an absent
+ * category is absent on BOTH the seed and the live fetch — they still `toEqual`.)
+ *
+ * FRESHNESS (the live-count requirement): this seed REPLACES the one-shot
+ * bootstrap fetch only — it does NOT make the count stickier. The consumer hook
+ * already uses `staleTime: Infinity` (no time-poll today either); the count is
+ * kept live by the `NotificationNew` SignalR push + the mark-read optimistic
+ * `setData`, both of which apply on top of the cache (seed or fetched) exactly
+ * as before. So "seed-then-(signal-driven)-refresh" is preserved.
+ */
+test.describe('SSR-injected checkNotifications (logged-in)', () => {
+  test.use({ storageState: storageStatePath('mod') });
+
+  test('checkNotifications is seeded into __NEXT_DATA__ and not fetched on bootstrap', async ({
+    page,
+  }) => {
+    const trpcUrls = await collectTrpcRequests(page, AUTHED_LANDING);
+
+    const counts = await readPageProp(page, 'notificationCounts');
+    expect(counts.present, 'notificationCounts present in __NEXT_DATA__ pageProps').toBe(true);
+    expect(
+      counts.value && typeof counts.value === 'object' && !Array.isArray(counts.value),
+      'notificationCounts seed is a plain object'
+    ).toBe(true);
+    // The reduced shape always carries an `all` total (the reduce seeds it to 0).
+    expect(typeof (counts.value as Record<string, unknown>)?.all, 'seed.all is a number').toBe(
+      'number'
+    );
+
+    const requests = trpcUrls.filter((u) => u.includes(CHECK_NOTIFICATIONS_PROCEDURE));
+    expect(
+      requests,
+      `no ${CHECK_NOTIFICATIONS_PROCEDURE} tRPC request should fire on bootstrap (it is SSR-injected); saw:\n${requests.join(
+        '\n'
+      )}`
+    ).toHaveLength(0);
+  });
+
+  test('SSR seed byte-equals a live fetch', async ({ page }) => {
+    await page.goto(AUTHED_LANDING, { waitUntil: 'domcontentloaded' });
+
+    const seed = await readPageProp(page, 'notificationCounts');
+    expect(seed.present, 'notificationCounts seed present in __NEXT_DATA__').toBe(true);
+
+    const live = await fetchTrpcQueryJson(page, CHECK_NOTIFICATIONS_PROCEDURE);
+    // The shared `getUserNotificationCounts` reduce backs both the seed and the
+    // resolver, so they must be deep-equal. A wrong initial count is worse than
+    // not seeding (the bell would render stale on first paint) — this is the gate.
+    expect(
+      seed.value,
+      'user.checkNotifications SSR seed must byte-equal a live resolver fetch'
+    ).toEqual(live);
+
+    // Surface the totals so an all-zero run (no unread notifications) is visible
+    // rather than a silent trivial pass, and assert every value is a number.
+    const obj = (seed.value ?? {}) as Record<string, unknown>;
+    // eslint-disable-next-line no-console
+    console.log(`[ssr-inject] checkNotifications seed: ${JSON.stringify(obj)}`);
+    for (const [k, v] of Object.entries(obj)) {
+      expect(typeof v, `checkNotifications.${k} is a number`).toBe('number');
+    }
   });
 });
 
