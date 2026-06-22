@@ -247,6 +247,14 @@ export const serverSchema = z.object({
   // in behavior beyond the existing 15s deadline). Default 1500ms (1.5s) — ~65× the
   // ~23ms healthy p99, so it never clips a healthy write, but bounds a wedged one.
   REDIS_METRIC_WRITE_TIMEOUT_MS: z.coerce.number().default(1500),
+  // Upper bound (ms) on a single ClickHouse image-metrics read in the feed/SSR
+  // hot path (getImageMetricsObject). The @clickhouse/client default
+  // request_timeout is 30000ms, so a saturated/cold-cache-miss metric read would
+  // otherwise park ~30s and blow the SSR deadline (the surrounding try/catch
+  // CANNOT catch a hang). On timeout we fail SOFT to empty metrics — callers
+  // already treat missing ids as null metrics. Applied UNCONDITIONALLY on both
+  // clusters; this is a safety guard, not a cache-TTL change. Default 2500ms.
+  CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().default(2500),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
