@@ -1,7 +1,8 @@
-// On-demand V8 CPU profiler, triggered by a process signal.
+// On-demand V8 CPU profiler — triggered by a process signal OR self-armed by
+// the app's own rising event-loop lag.
 //
 // WHY: civitai-dp-prod API pods periodically CPU-saturate the single Node
-// thread (p95 pod CPU = 1.0 core) during traffic waves, starving the event
+// thread (p95 pod CPU = 1.0 core) during traffic "504 waves", starving the event
 // loop until liveness probes fail and the pod is SIGKILLed. The CPU consumer
 // is not visible in any instrumented span. A real V8 CPU profile from a
 // saturated pod is the only way to see which JS functions burn the CPU.
@@ -20,9 +21,25 @@
 // server process that Kubernetes never sends — and the signal is overridable
 // via CPU_PROFILE_SIGNAL for operators who know what they are doing.
 //
-// Server-side (nodejs runtime) only. Never imported on the edge/client.
+// THE SIGWINCH BLACK-HOLE (why we ALSO need a self-trigger): an EXTERNAL signal
+// cannot be delivered to JS while the loop is fully pinned. SIGWINCH-on-pin
+// reliably FAILS: the pegged loop never runs the handler (so 0 profiles), or by
+// the time the handler runs the pod has already recovered (so only idle
+// profiles). Proven empirically 2026-06-22. The fix below is an INTERNALLY-ARMED
+// self-trigger: a lag watchdog starts the profiler the moment the app detects
+// its OWN event-loop lag rising. Once `Profiler.start` is issued, V8's sampling
+// runs on a SEPARATE thread and keeps sampling the pinned main thread even while
+// JS blocks; the profile is written on recovery. That separate-thread sampling is
+// the one mechanism that beats the black-hole. See registerEventLoopStallProfiler.
+//
+// Server-side (nodejs runtime) only. Never imported on the edge/client. It
+// pulls in node:inspector and node:perf_hooks — both server-only natives that
+// MUST NEVER reach the client bundle. The single import site is
+// src/instrumentation.node.ts (nodejs runtime). Do not import this file from any
+// client-reachable module.
 
 import inspector from 'node:inspector';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
@@ -31,6 +48,27 @@ const DEFAULT_SIGNAL = 'SIGWINCH';
 const DEFAULT_DURATION_SECONDS = 25;
 const MAX_DURATION_SECONDS = 120;
 const DEFAULT_OUTPUT_DIR = '/tmp';
+
+// --- Event-loop stall self-trigger (default OFF) --------------------------
+// The watchdog is DISARMED unless CPU_PROFILE_LAG_TRIGGER_MS is set to a
+// positive number. When unset/0/invalid the watchdog is never installed → zero
+// steady-state overhead (no extra timer, no histogram). When armed it adds one
+// unref'd setInterval + a libuv-internal lag histogram (C++-measured, no
+// per-event JS cost).
+//
+// Suggested production value: 1000 (a 1s+ event-loop stall). Normal lag is
+// <50ms; a 1s stall already means the pod is well into a pin. Lower the trigger
+// to catch the rising edge of a wave earlier (see the mechanism note on
+// registerEventLoopStallProfiler).
+const DEFAULT_LAG_CHECK_MS = 500;
+const MIN_LAG_CHECK_MS = 50;
+// Floor on the trigger threshold so a fat-fingered tiny value (e.g. 5) doesn't
+// arm a profile on every ordinary GC pause / normal lag spike.
+const MIN_LAG_TRIGGER_MS = 100;
+const DEFAULT_LAG_COOLDOWN_MS = 60_000;
+// monitorEventLoopDelay sampling resolution (ms). 20ms is fine-grained enough to
+// see a building stall without measurable cost.
+const LAG_HISTOGRAM_RESOLUTION_MS = 20;
 
 // Known Node.js signal names that can be the target of a userland process.on
 // listener. A bogus CPU_PROFILE_SIGNAL must not throw ERR_UNKNOWN_SIGNAL at
@@ -94,6 +132,34 @@ function resolveOutputDir(): string {
   return (process.env.CPU_PROFILE_DIR || DEFAULT_OUTPUT_DIR).trim();
 }
 
+/**
+ * Resolve the event-loop-stall trigger threshold in ms. The watchdog is the
+ * thing that beats the SIGWINCH black-hole, but it stays DISARMED unless this is
+ * an explicit positive number — so it is zero-overhead by default. Unset / 0 /
+ * non-numeric → 0 (do not arm). A positive value below MIN_LAG_TRIGGER_MS is
+ * clamped UP to the floor (don't throw) so a fat-fingered tiny value can't
+ * profile on every ordinary lag spike.
+ */
+function resolveLagTriggerMs(): number {
+  const raw = process.env.CPU_PROFILE_LAG_TRIGGER_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.max(parsed, MIN_LAG_TRIGGER_MS);
+}
+
+/** How often the watchdog reads + resets the lag histogram. Clamped to a floor. */
+function resolveLagCheckMs(): number {
+  const parsed = Number.parseInt(process.env.CPU_PROFILE_LAG_CHECK_MS ?? '', 10);
+  const ms = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LAG_CHECK_MS;
+  return Math.max(ms, MIN_LAG_CHECK_MS);
+}
+
+/** Suppress re-triggering for this long after a capture completes. */
+function resolveLagCooldownMs(): number {
+  const parsed = Number.parseInt(process.env.CPU_PROFILE_LAG_COOLDOWN_MS ?? '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_LAG_COOLDOWN_MS;
+}
+
 function delay(ms: number): { promise: Promise<void>; timer: NodeJS.Timeout } {
   let timer!: NodeJS.Timeout;
   const promise = new Promise<void>((resolve) => {
@@ -107,17 +173,60 @@ function delay(ms: number): { promise: Promise<void>; timer: NodeJS.Timeout } {
   return { promise, timer };
 }
 
+// ---------------------------------------------------------------------------
+// Lag-trigger decision (pure, unit-testable)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure decision: given a max-lag reading + the resolved config + the current
+ * capture/cooldown state, should the watchdog fire an auto-capture right now?
+ *
+ * Factored out of the timer so the trigger logic is testable WITHOUT a real
+ * inspector, real timers, or perf_hooks. The watchdog timer simply reads the
+ * libuv histogram's `max`, converts ns→ms, and feeds it here.
+ *
+ * Order of the gates matters for clarity but not correctness (all must pass):
+ *   - triggerMs <= 0          → watchdog disabled (defensive; we don't install
+ *                               the timer at all when disabled, but keep the
+ *                               guard so the function is self-contained).
+ *   - capturing               → a capture (signal OR a prior auto-fire) is in
+ *                               flight; never overlap (mirrors the SIGWINCH guard).
+ *   - now < cooldownUntil     → inside the post-capture cooldown; a sustained
+ *                               wave must not back-to-back profile.
+ *   - maxLagMs < triggerMs    → lag below threshold; nothing to capture.
+ */
+export function shouldTriggerLagCapture(args: {
+  maxLagMs: number;
+  triggerMs: number;
+  capturing: boolean;
+  nowMs: number;
+  cooldownUntilMs: number;
+}): boolean {
+  const { maxLagMs, triggerMs, capturing, nowMs, cooldownUntilMs } = args;
+  if (triggerMs <= 0) return false;
+  if (capturing) return false;
+  if (nowMs < cooldownUntilMs) return false;
+  return maxLagMs >= triggerMs;
+}
+
 /**
  * Run a single CPU profile capture using an in-process inspector Session.
  * Resolves once the .cpuprofile has been written (or rejects on failure).
  * Does NOT need the inspector port (:9229) to be open.
+ *
+ * @param labelSegment optional filename segment that distinguishes the trigger
+ *   source. The signal path passes nothing → `cpu-<pod>-<iso>.cpuprofile`. The
+ *   lag watchdog passes `loopstall-<lagMs>ms` → `cpu-loopstall-<lagMs>ms-<pod>-
+ *   <iso>.cpuprofile`, so operators can tell auto-captures apart and read the
+ *   trigger lag straight off the filename.
  */
-async function captureProfile(): Promise<string> {
+async function captureProfile(labelSegment?: string): Promise<string> {
   const durationMs = resolveDurationMs();
   const outputDir = resolveOutputDir();
   const pod = resolvePodName();
   const iso = new Date().toISOString().replace(/[:.]/g, '-');
-  const filePath = path.join(outputDir, `cpu-${pod}-${iso}.cpuprofile`);
+  const prefix = labelSegment ? `cpu-${labelSegment}-` : 'cpu-';
+  const filePath = path.join(outputDir, `${prefix}${pod}-${iso}.cpuprofile`);
 
   const session = new inspector.Session();
   // Track whether we actually wrote a profile so an interrupted capture
@@ -242,4 +351,128 @@ export function registerCpuProfiler(): void {
   } catch (err) {
     console.error('[cpu-profiler] failed to arm; continuing without CPU profiler:', err);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Event-loop stall self-trigger watchdog
+// ---------------------------------------------------------------------------
+
+// End-of-cooldown timestamp (epoch ms). Until `Date.now()` passes this, a
+// completed auto-capture suppresses re-triggering so a sustained wave doesn't
+// back-to-back profile. Shared with the watchdog timer below.
+let lagCooldownUntil = 0;
+
+/**
+ * Register the event-loop-stall self-trigger watchdog.
+ *
+ * THE MECHANISM (and why it beats the SIGWINCH black-hole — see the file header):
+ * an external signal can't be delivered to a pinned loop, but the app can watch
+ * its OWN lag and arm V8's profiler before/while it pins. We enable a
+ * `monitorEventLoopDelay` histogram (libuv-internal, C++-measured — no per-event
+ * JS cost) and read its `max` every CPU_PROFILE_LAG_CHECK_MS. When max lag crosses
+ * the threshold we call the SAME captureProfile() the signal path uses, under the
+ * SAME `capturing` guard, so the two trigger sources never overlap.
+ *
+ * SUSTAINED-WAVE NUANCE: if the loop is ALREADY fully pinned, the check timer
+ * itself can't fire mid-block — but `monitorEventLoopDelay` ACCUMULATES the max
+ * across blocks, so the check fires right AFTER a block ends and reads the high
+ * max → starts the profiler → which then samples SUBSEQUENT bursts of the same
+ * wave on its separate thread. The 504 waves last minutes / recur in bursts, so a
+ * capture armed one block late still lands squarely on the pin we care about.
+ * Lowering CPU_PROFILE_LAG_TRIGGER_MS catches the rising edge earlier (more lead
+ * time before a full peg) at the cost of more false-positive captures.
+ *
+ * DEFAULT OFF: no-op (nothing installed, zero overhead) unless
+ * CPU_PROFILE_LAG_TRIGGER_MS is a positive number. Like registerCpuProfiler, an
+ * arm-time failure must never reject the caller (OTEL register()), so the whole
+ * body is wrapped.
+ */
+export function registerEventLoopStallProfiler(): void {
+  try {
+    if (process.env.NEXT_RUNTIME && process.env.NEXT_RUNTIME !== 'nodejs') {
+      return;
+    }
+
+    const triggerMs = resolveLagTriggerMs();
+    if (triggerMs <= 0) {
+      // DISARMED (the default). Nothing installed — no timer, no histogram.
+      return;
+    }
+
+    const checkMs = resolveLagCheckMs();
+    const cooldownMs = resolveLagCooldownMs();
+
+    // libuv-internal lag histogram. .enable() starts accumulating; we read .max
+    // (ns) and .reset() each tick so each window is independent.
+    const h = monitorEventLoopDelay({ resolution: LAG_HISTOGRAM_RESOLUTION_MS });
+    h.enable();
+
+    const timer = setInterval(() => {
+      let maxLagMs = 0;
+      try {
+        const maxNs = h.max;
+        maxLagMs = Number.isFinite(maxNs) ? maxNs / 1e6 : 0;
+        h.reset();
+      } catch {
+        // Reading/resetting the histogram must never crash the watchdog.
+        return;
+      }
+
+      if (
+        !shouldTriggerLagCapture({
+          maxLagMs,
+          triggerMs,
+          capturing,
+          nowMs: Date.now(),
+          cooldownUntilMs: lagCooldownUntil,
+        })
+      ) {
+        return;
+      }
+
+      const lagRounded = Math.round(maxLagMs);
+      console.log(
+        `[cpu-profiler] event-loop stall ${lagRounded}ms >= threshold ${triggerMs}ms — ` +
+          `starting auto-capture`
+      );
+
+      capturing = true;
+      captureProfile(`loopstall-${lagRounded}ms`)
+        .catch((err) => {
+          // A profiling failure must never crash the process.
+          console.error('[cpu-profiler] auto-capture failed:', err);
+        })
+        .finally(() => {
+          capturing = false;
+          // Start the cooldown AFTER the capture completes, so a sustained wave
+          // doesn't immediately re-fire the moment the profile is written.
+          lagCooldownUntil = Date.now() + cooldownMs;
+        });
+    }, checkMs);
+
+    // Don't keep the process alive solely for this watchdog timer (shutdown).
+    timer.unref();
+
+    console.log(
+      `[cpu-profiler] event-loop stall self-trigger armed: trigger=${triggerMs}ms ` +
+        `check=${checkMs}ms cooldown=${cooldownMs}ms (auto-captures a ` +
+        `${resolveDurationMs() / 1000}s profile to ${resolveOutputDir()} when loop lag ` +
+        `crosses the threshold; override with CPU_PROFILE_LAG_TRIGGER_MS / ` +
+        `CPU_PROFILE_LAG_CHECK_MS / CPU_PROFILE_LAG_COOLDOWN_MS)`
+    );
+  } catch (err) {
+    console.error(
+      '[cpu-profiler] failed to arm event-loop stall self-trigger; continuing without it:',
+      err
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test-only hooks (not for production use)
+// ---------------------------------------------------------------------------
+
+/** Test-only: reset the shared cooldown timestamp between cases. */
+export function __resetLagCooldownForTests(): void {
+  lagCooldownUntil = 0;
 }
