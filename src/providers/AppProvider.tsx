@@ -8,6 +8,7 @@ import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
 import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
+import type { RouterOutput } from '~/types/router';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -25,6 +26,12 @@ type AppProviderProps = {
   // followed userIds. Seeds the query directly (fixed `undefined` key) so the
   // ambient follow/notify buttons never fire it on bootstrap.
   following?: number[];
+  // SSR-computed `buzz.getBuzzAccount` result (logged-in only) — the user's buzz
+  // account balances (a flat `Record<BuzzSpendType, number>`). Seeds the ambient
+  // `useQueryBuzz` query (fixed `undefined` key) so the header buzz pill never
+  // fires the bootstrap call. All-numeric payload → no Date/undefined revival
+  // needed (JSON and superjson agree).
+  buzzAccount?: RouterOutput['buzz']['getBuzzAccount'];
   // SSR-computed `system.getLiveNow` global boolean (a single redis.get,
   // identical for every user). Seeds the ambient `useIsLive` query (fixed
   // `undefined` key) so it never fires on bootstrap. Public procedure → seeded
@@ -84,6 +91,7 @@ export function AppProvider({
   tosMeta,
   announcements,
   following,
+  buzzAccount,
   liveNow,
   domain,
   host,
@@ -108,6 +116,25 @@ export function AppProvider({
   trpc.user.getFollowingUsers.useQuery(undefined, {
     initialData: following,
     enabled: !!following,
+  });
+  // Seed `buzz.getBuzzAccount` from the SSR snapshot so the ambient
+  // `useQueryBuzz` consumer (header buzz pill) reads a primed cache and never
+  // fires the bootstrap call (~35 req/s off api-primary). Shares the fixed
+  // `undefined` query key with that hook. NO `staleTime` override — it inherits
+  // the global `staleTime: Infinity`, which is EXACTLY how the live query behaves
+  // today (it sets no staleTime): the balance is kept current NOT by polling but
+  // by the `BuzzUpdate` SignalR push (`useBuzzSignalUpdate` patches the cache via
+  // `setData`) plus an explicit `invalidate()` after a purchase. So a stale
+  // first-paint balance self-corrects on the next balance-changing signal /
+  // navigation, identical to the pre-seed behavior — seeding does not make it any
+  // stickier. `enabled: !!buzzAccount` skips both the seed and any self-heal fetch
+  // only when there is no snapshot (anon, or a failed/timed-out buzz-service
+  // snapshot) — in which case the consumer's own `!!currentUser`-gated query fires
+  // its live fetch. The payload is a flat all-number record, so the seeded cache
+  // shape already matches a live superjson refetch (no revival needed).
+  trpc.buzz.getBuzzAccount.useQuery(undefined, {
+    initialData: buzzAccount,
+    enabled: !!buzzAccount,
   });
   // Seed the global `system.getLiveNow` boolean from the SSR snapshot so the
   // ambient `useIsLive` consumers (header logo, social links, social home

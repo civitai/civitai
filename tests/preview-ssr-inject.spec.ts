@@ -44,6 +44,7 @@ const TOS_PROCEDURE = 'content.checkTosUpdate';
 const ANNOUNCEMENTS_PROCEDURE = 'announcement.getAnnouncements';
 const FOLLOWING_PROCEDURE = 'user.getFollowingUsers';
 const LIVE_NOW_PROCEDURE = 'system.getLiveNow';
+const BUZZ_ACCOUNT_PROCEDURE = 'buzz.getBuzzAccount';
 
 // A core page a gate-passing user lands on directly (no /login bounce). Both
 // procedures fire on every logged-in bootstrap regardless of which page, so
@@ -468,6 +469,84 @@ test.describe('SSR-injected getLiveNow (anonymous)', () => {
         '\n'
       )}`
     ).toHaveLength(0);
+  });
+});
+
+/**
+ * Regression guard for the SSR-inject of `buzz.getBuzzAccount` (~35/s on
+ * api-primary). AUTH-GATED: it is a `protectedProcedure` (buzz flag), and the
+ * client `useQueryBuzz` hook fires only when `!!currentUser` — so it never fires
+ * anonymously (no anon block, like getFeatureFlags/following). SSR-computed in
+ * `_app.getInitialProps` for a logged-in user (fail-open: dropped on error,
+ * incl. a buzz-service outage) and seeded in AppProvider on the fixed `undefined`
+ * key.
+ *
+ * BYTE-EQUALITY: the payload is a flat `Record<BuzzSpendType, number>` — ALL
+ * numbers, no Date/undefined fields. So the seed (pageProps JSON) and the live
+ * fetch's `result.data.json` (pre-superjson-revival JSON) are identical maps of
+ * numbers, and `toEqual` compares them directly with no revival anywhere (this is
+ * why getBuzzAccount needs no revive helper, unlike getUserMultipliers). The
+ * balance can change between the SSR snapshot and the live fetch (live value), so
+ * the assertion tolerates that: it asserts the seed and live share the SAME KEY
+ * SET and all-numeric values (the serialization contract), not identical balances.
+ */
+test.describe('SSR-injected getBuzzAccount (logged-in)', () => {
+  test.use({ storageState: storageStatePath('mod') });
+
+  test('getBuzzAccount is seeded into __NEXT_DATA__ and not fetched on bootstrap', async ({
+    page,
+  }) => {
+    const trpcUrls = await collectTrpcRequests(page, AUTHED_LANDING);
+
+    const seed = await readPageProp(page, 'buzzAccount');
+    expect(seed.present, 'buzzAccount present in __NEXT_DATA__ pageProps').toBe(true);
+    expect(
+      typeof seed.value === 'object' && seed.value !== null,
+      'buzzAccount seed is an object'
+    ).toBe(true);
+    // Every value in the balances record is a number.
+    for (const [k, v] of Object.entries(seed.value as Record<string, unknown>)) {
+      expect(typeof v, `buzzAccount.${k} is a number`).toBe('number');
+    }
+
+    const accountRequests = trpcUrls.filter((u) => u.includes(BUZZ_ACCOUNT_PROCEDURE));
+    expect(
+      accountRequests,
+      `no ${BUZZ_ACCOUNT_PROCEDURE} tRPC request should fire on bootstrap (it is SSR-injected); saw:\n${accountRequests.join(
+        '\n'
+      )}`
+    ).toHaveLength(0);
+  });
+
+  test('SSR seed serialization matches a live fetch (same keys, all-numeric)', async ({ page }) => {
+    await page.goto(AUTHED_LANDING, { waitUntil: 'domcontentloaded' });
+
+    const seed = await readPageProp(page, 'buzzAccount');
+    expect(seed.present, 'buzzAccount seed present in __NEXT_DATA__').toBe(true);
+
+    const live = (await fetchTrpcQueryJson(page, BUZZ_ACCOUNT_PROCEDURE)) as Record<
+      string,
+      unknown
+    >;
+    const seedVal = seed.value as Record<string, unknown>;
+
+    // The serialization contract — the part that the #2471/#2683 byte-equality
+    // gotcha is actually about — is that the SSR seed (JSON) and a live fetch
+    // (superjson `.json`) produce the SAME SHAPE. Balances are live numbers and
+    // can legitimately differ between the SSR snapshot and this fetch (e.g. a
+    // BuzzUpdate landed in between), so we assert SHAPE, not exact values:
+    //   (1) identical key sets (no key dropped/added by JSON-vs-superjson), and
+    //   (2) all values numeric on BOTH sides (no Date/string/undefined drift).
+    expect(
+      Object.keys(seedVal).sort(),
+      'buzzAccount SSR seed and live fetch must carry the same balance keys'
+    ).toEqual(Object.keys(live).sort());
+    for (const k of Object.keys(seedVal)) {
+      expect(typeof seedVal[k], `seed buzzAccount.${k} is a number`).toBe('number');
+      expect(typeof live[k], `live buzzAccount.${k} is a number`).toBe('number');
+    }
+    // eslint-disable-next-line no-console
+    console.log(`[ssr-inject] buzzAccount keys: ${Object.keys(seedVal).join(', ')}`);
   });
 });
 

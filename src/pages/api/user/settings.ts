@@ -4,6 +4,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getTosMeta } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import { getUserFollows } from '~/server/redis/caches';
+import { getUserBuzzAccounts } from '~/server/services/buzz.service';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 
 export default PublicEndpoint(
@@ -19,7 +20,7 @@ export default PublicEndpoint(
       // and drop the critical settings/session payload; tosMeta (static, no user
       // input) can still throw to the outer catch (preserving prior behaviour).
       const domainColor = getRequestDomainColor(req);
-      const [tosMeta, announcements, following] = await Promise.all([
+      const [tosMeta, announcements, following, buzzAccount] = await Promise.all([
         // Resolve the static per-domain ToS metadata here (server-only API route)
         // so `_app` getInitialProps can deliver it WITHOUT importing
         // `content.service` — which pulls `fs/promises` into `_app`'s client-bundled
@@ -47,12 +48,26 @@ export default PublicEndpoint(
         session?.user
           ? getUserFollows(session.user.id).catch(() => undefined)
           : Promise.resolve(undefined),
+        // SSR-seed the ambient, auth-gated `buzz.getBuzzAccount` query (~35 req/s
+        // on api-primary; header buzz pill, `enabled: !!currentUser`). Computed
+        // here — NOT in `_app` getInitialProps — because `buzz.service` is
+        // server-only and importing it into `_app` leaks Node built-ins
+        // (`node:fs` via the errorHandling import chain) into the client bundle
+        // and breaks the build. `getUserBuzzAccounts` is the same fn the resolver
+        // runs, so the seed is byte-identical (a flat `Record<BuzzSpendType,
+        // number>`). Anon never fires this query, so seed authed-only; on a
+        // buzz-service error fall back to undefined and let the client self-heal
+        // via its own live fetch.
+        session?.user
+          ? getUserBuzzAccounts({ userId: session.user.id }).catch(() => undefined)
+          : Promise.resolve(undefined),
       ]);
       res.status(200).json({
         settings,
         tosMeta,
         announcements,
         following,
+        buzzAccount,
         session: session?.user && Object.keys(session.user).length > 0 ? session : null,
       });
     } catch (e) {
