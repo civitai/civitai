@@ -59,6 +59,10 @@ Both the hub and the main app must use the **same** hashing and scope definition
 
 For each: build the library's `Request`/`Response` from SvelteKit `request` (method, headers, parsed body, `url.searchParams`); preserve CORS (per-origin for public clients, wildcard for confidential), rate-limit, and audit events.
 
+> **§D STATUS — IMPLEMENTED & REVIEWED 2026-06-19.** All 9 endpoints + discovery built under `apps/auth/src/routes/api/auth/oauth/*` and `apps/auth/src/routes/.well-known/openid-configuration/`, on a shared adapter (`lib/server/oauth/http.ts` — SvelteKit↔@node-oauth Request/Response + body parse + CORS) and app-block guard (`lib/server/oauth/block-guard.ts`). `svelte-check` clean; 134 hub + 130 pkg tests pass. A 4-agent review (clean-eyes / OAuth-OIDC standards / Prisma→Kysely parity / SvelteKit-framework) confirmed all §D.x requirements enforced, the port parity-faithful, and the resolved decisions applied — **no blockers**. Fixes applied from review: `/token` forces `content-type`+`content-length` on the library carrier (proxy-robustness); `device-token` fails closed on a deleted client; `device-approve` re-applies the field TTL the HSET drops.
+>
+> **Deferred (tracked, not bugs):** buzz spend-limit at consent (§E fast-follow); the consent + device-verify Svelte *pages* (§E — the `/authorize` consent bounce currently redirects to a not-yet-built `/login/oauth/authorize`); CORS-ownership consolidation between these endpoints and `hooks.server.ts` (revisit at Phase 3 when a first-party allowlisted origin first calls `/token`).
+
 - [ ] `/api/auth/oauth/authorize/+server.ts` — GET returns client+scope data for the page; POST issues the code. Gate on `event.locals.user`; redirect to `/login?callbackUrl=<self>` on miss. Upsert `OauthConsent` on "remember" (Kysely). Store OIDC nonce/auth_time.
 - [ ] `/api/auth/oauth/token/+server.ts` — code & refresh grants. On `authorization_code` + `UserRead`, mint `id_token` via the hub signer's `mintIdToken()` (pull nonce from Redis). Per-origin CORS for public clients.
 - [ ] `/api/auth/oauth/userinfo/+server.ts` — bearer → `ApiKey` lookup → claims (sub/username/name/picture/email…), gated on `UserRead`.
@@ -69,18 +73,36 @@ For each: build the library's `Request`/`Response` from SvelteKit `request` (met
 - [ ] `/api/auth/oauth/device-token/+server.ts` — poll → issue token pair on approval.
 - [ ] `/.well-known/openid-configuration/+server.ts` — authoritative discovery with hub URLs + `jwks_uri` → hub JWKS. (OIDC is on by default here since keys always present — confirm intended.)
 
+### D.x — Security requirements carried forward from the §B review (2026-06-18)
+
+A three-reviewer pass (clean-eyes + OAuth/OIDC standards + Prisma→Kysely parity) on the §B core libs found the port **parity-faithful and ship-safe**, and flagged the following properties that the **library + model do NOT enforce on their own** — they MUST be enforced when these endpoints are built, or a security property silently disappears. (The main app enforces each at its own endpoint today — port that behavior, don't re-derive it.)
+
+- [ ] **PKCE required + S256-only on `/authorize`** (RFC 7636 / RFC 9700 §2.1.1). `@node-oauth/oauth2-server` only *verifies* a challenge if one was stored; it never *requires* one. A public client (no secret) that omits `code_challenge` would otherwise get a bare, interceptable code. The main app does this at [src/pages/api/auth/oauth/authorize.ts:91-101](../../src/pages/api/auth/oauth/authorize.ts#L91-L101) — reject missing `code_challenge`/`code_challenge_method` and any method ≠ `S256`. (Optional belt-and-suspenders: also throw in `saveAuthorizationCode` when `!client.isConfidential && !code.codeChallenge`.) Never set `enablePlainPKCE: true` on the `OAuth2Server`.
+- [ ] **Refresh-grant scope handling** (RFC 6749 §6). Scope is a bitmask encoded as a single decimal-string element; the library's refresh downgrade check does a *string-array* `.includes()` subset test, which is meaningless for a bitmask (`["7"].includes("3")` is false). Safest: the `/token` refresh path must NOT forward a `scope` param to the library (so the original scope passes through unchanged — no escalation). If scope-narrowing-on-refresh is ever wanted, validate the bitmask subset yourself before calling the library. Add a parity test for "refresh with a narrower bitmask".
+- [ ] **CORS response-origin echo must re-validate** (RFC 9700 §4.16). The per-origin `Access-Control-Allow-Origin` the `/token` & `/revoke` handlers emit for public clients must be re-checked against the client's `allowedOrigins` and never reflect an arbitrary `Origin`. The model's origin allowlist (`getClient`) is request-side only and is defense-in-depth — it sits BEHIND enforced PKCE, not in front of it.
+- [ ] **`/revoke` always-200 + dual auth** (RFC 7009). Return 200 even for an unknown/expired token; accept session-cookie OR client-secret auth; reuse the model's cascade semantics. (`revokeToken` returns a boolean; the always-200 contract lives in the handler.)
+- [ ] **OIDC `id_token` claim gating + single-use nonce.** Gate `nonce`/`auth_time`/profile claims on the `UserRead` bit; call `consumeOidcContext(code)` exactly once, before responding. Also make `storeOidcContext` atomic (reuse `hSetWithTTL`) so a crash can't leave a no-TTL nonce field — the auth-code store was already hardened this way, the nonce store wasn't.
+
+**Open design decisions — RESOLVED 2026-06-19 (briant).** Guiding principle: the hub must keep the **same capabilities** but realize them on **OAuth** instead of the current bespoke strategy, and the whole hub + 1st-party interaction must be **measurably simpler** than today (swap bridge + main-app provider removed at cutover — bind to a code-reduction ledger). Capabilities are preserved; incidental bespoke mechanisms are replaced by standard OAuth. Where today's behavior is just an implementation quirk, do the simpler standard-OAuth thing; where it's a real capability, keep it.
+
+- [x] **Refresh cascade scope → do the standard thing** (it's a quirk, not a capability). Routine refresh rotation retires only the *old refresh token*; already-issued access tokens age out on their 1h TTL. The broad "revoke all of a (user, client)'s tokens" *capability* is preserved but moves to the explicit `/revoke` endpoint + account-management path, where it's the *intended* action — not a side effect of routine rotation. Removes the surprising "refresh on one device logs out another" behavior; simpler and standard. So `model.revokeToken` (called by the library on rotation) must NOT cascade; the cascade lives in the `/revoke` handler. (Token-family reuse-detection per RFC 9700 §4.14.2 remains deferred; record if added.)
+- [x] **`client_credentials` grant → keep it** (it's a real existing capability; "same capabilities" governs). Port `getUserFromClient` faithfully. Moderator user-impersonation is a SEPARATE, audited, permission-gated capability via the hub's `/api/auth/impersonate` session mint — unaffected by this grant.
+
 ## E. Consent + device pages (Svelte)
 
 - [ ] `/login/oauth/authorize/+page.svelte` (+ `+page.server.ts`) — client name/logo (`@civitai/brand`), scope list from shared `tokenScopeLabels`, "remember my decision", Authorize/Deny via form action (replace the React `document.createElement('form')`).
 - [ ] `/login/oauth/device/+page.svelte` (+ `+page.server.ts`) — code entry → review → approve, calling the hub device endpoints.
 - [ ] **Buzz spend-limit control** (shown for `AIServicesWrite`) — *fast-follow, optional for first cutover.* Needs `buzzLimitSchema` + `simpleBuzzLimitToBudgets` ([src/server/schema/api-key.schema.ts](../../src/server/schema/api-key.schema.ts)) and orchestrator calls `bustBuzzLimitCache`/`deleteAuthSubject` ([src/server/http/orchestrator/api-key-spend.ts](../../src/server/http/orchestrator/api-key-spend.ts)) — pure HTTP, portable; needs `ORCHESTRATOR_ENDPOINT`/`ORCHESTRATOR_ACCESS_TOKEN` in the hub env.
 
-## F. Redirect / proxy the old main-app routes
+## F. Redirect / proxy the old main-app routes — ~~N/A~~ **SUPERSEDED (2026-06-21): deleted outright, no proxy.**
 
-- [ ] **User pages** `/login/oauth/authorize`, `/login/oauth/device` → `308`/`307` redirect to the hub, preserving query string.
-- [ ] **Machine endpoints** `token`, `userinfo`, `revoke`, `device*` → **thin server-side proxy** to the hub (do NOT 302 — clients won't re-POST bodies cross-origin). Preserve method/headers/body + relay response & CORS.
-- [ ] **Discovery** `/.well-known/openid-configuration` (main app) → redirect to hub's, or serve hub URLs so new clients self-route.
-- [ ] Keep proxies until proxy-hit telemetry ≈ 0.
+> The entire proxy/redirect-during-deprecation approach assumed the old routes were live in production and needed a graceful hand-off. Per the shipping-status correction (nothing in this worktree shipped), there are no live clients to hand off — so the main-app protocol surface was **deleted**, not proxied:
+> - `src/pages/api/auth/oauth/{authorize,token,userinfo,revoke,device,device-info,device-approve,device-token}.ts`
+> - `src/pages/api/.well-known/openid-configuration.ts`
+> - `src/pages/login/oauth/{authorize,device}.tsx` (the React consent/device pages — the hub gets Svelte versions in §E)
+> - `src/server/oauth/{model,server,token-helpers,rate-limit,oidc-nonce,errors,constants}.ts` + `__tests__/{model,token-endpoint}.test.ts`
+>
+> **Kept:** `src/server/oauth/audit-log.ts` — the only provider module the staying §G routers still import (`logOAuthEvent`). Main-app `tsc --noEmit` is clean after the deletion. (Stale historical comments referencing the deleted files remain in `src/server/redis/atomic.ts` and `src/server/prom/__tests__/http-errors.test.ts` — harmless string/comment refs, not imports.)
 
 ## G. Management surface (defer)
 
@@ -89,12 +111,14 @@ For each: build the library's `Request`/`Response` from SvelteKit `request` (met
 ## H. Cutover
 
 - [ ] Update provider/app consoles + OAuth client registry: new authorize/token URLs → `auth.civitai.com`.
-- [ ] Watch `origin.rejected` / proxy-hit audit logs during the deprecation window.
-- [ ] Remove `src/pages/login/oauth/*`, `src/pages/api/auth/oauth/*`, `src/server/oauth/*` from the main app once proxy traffic ≈ 0.
+- [x] **Remove the main-app protocol surface** (`src/pages/login/oauth/*`, `src/pages/api/auth/oauth/*`, the protocol-only `src/server/oauth/*`) — **done 2026-06-21** (deleted outright per §F, since unshipped). `audit-log.ts` kept for §G routers.
+- ~~Watch `origin.rejected` / proxy-hit audit logs during the deprecation window~~ — N/A (no proxy, nothing shipped).
 
 ---
 
 ## I. First-party cross-domain bridge → OIDC (do at migration, after §A–§H land)
+
+> **§I STATUS — DONE 2026-06-21 (Phases 2 + 3 + swap deletion).** First-party clients resolve through a `FirstPartyClientSource` seam (`apps/auth/.../oauth/first-party.ts`) — env-backed now (existing `AUTH_SPOKE_ORIGINS`, no seed SQL), DB-backed swap ready in one line. Hub mints the session at the dedicated `/api/auth/oauth/session` exchange (code + PKCE → civ-token session, first-party-only; security-reviewed, atomic single-use consume). Spoke (main app) `/api/auth/authorize` + `/api/auth/callback` replace `sync.ts`; `useDomainSync` retriggers the auth-code flow. The **swap bridge is deleted** (routes, `createExchangeClient`, `mint/verify/consumeSwapToken`, `AUTH_SWAP_MAX_AGE`, swap tests). **Kept:** `SYNC_PARAM`/`syncAccount`/`useDomainSync` (the trigger) and `AUTH_SPOKE_ORIGINS` (now the first-party registry source). Green: main-app `tsc` clean, hub 0 errors + 121 tests, pkg 116 tests. **Remaining:** Phase 4 (unify same-site `.com` onto the same path) + first-party-flow telemetry.
 
 **Companion:** [../auth-login-simplification.md](./auth-login-simplification.md) (rationale, swap-vs-auth-code
 mapping, latency, cookie-safety analysis).

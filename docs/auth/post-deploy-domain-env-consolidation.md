@@ -90,6 +90,12 @@ this deploy serves and their canonical primaries. Everything origin-shaped shoul
   origins. It could be **derived** from the shared `domain.constants` so adding a host in one place
   flows through, instead of a parallel list that drifts (this is what bit the `test-auth.*` env: the
   host was live but not in the allowlist).
+  - **Now also the source of the first-party OAuth client registry** (`apps/auth/.../oauth/first-party.ts`):
+    the spoke derives its `client_id`/`redirect_uri` from each color's PRIMARY origin, so if a color's
+    primary isn't in `AUTH_SPOKE_ORIGINS` the hub returns `invalid_client` and that color's login silently
+    fails (review finding **F5**, 2026-06-22). Deriving the list from `domain.constants` fixes this at the
+    root; until then, a cheap stopgap is a **boot-time assertion** that `AUTH_SPOKE_ORIGINS` ⊇ the
+    configured color primaries (fail fast instead of a silent per-color login break).
 - **`AUTH_COOKIE_DOMAIN`** now has a sane default; a fuller version could derive the parent domain from
   the hub's `ORIGIN` registrable domain rather than the hardcoded `.civitai.com`.
 
