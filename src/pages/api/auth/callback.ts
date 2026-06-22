@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { setSessionCookie } from '~/server/auth/civ-cookie';
+import { setSessionCookie, postLoginMarkerCookie } from '~/server/auth/civ-cookie';
 import {
   resolveSelfOrigin,
   completeFirstPartyCallback,
@@ -47,5 +47,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Set THIS domain's civ-token cookie (Domain derived from the serving host) and continue.
   setSessionCookie(res, result.token, { host: req.headers.host });
+  // One-shot marker so /api/auth/authorize can detect a session cookie that DIDN'T stick (loop recovery).
+  const existing = res.getHeader('Set-Cookie');
+  const all = Array.isArray(existing)
+    ? existing.map(String)
+    : existing != null
+    ? [String(existing)]
+    : [];
+  all.push(postLoginMarkerCookie());
+  res.setHeader('Set-Cookie', all);
   res.redirect(302, result.returnUrl);
 }
