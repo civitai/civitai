@@ -134,4 +134,28 @@ describe('PostingToModel3DCard — durable data-gate', () => {
     expect(enabledOf(mocks.byPostIdCalls)).toBe(false);
     expect(enabledOf(mocks.byIdCalls)).toBe(false);
   });
+
+  // FEED-MODAL path: an item opened from the feed/grid now carries the
+  // visibility-checked `model3dId` from getAllImages / getAllImagesIndex (this
+  // PR). The chip MUST render from that prop and MUST NOT fire the ambient
+  // `getByPostId` — that is what makes the #2682 model3dFeed flag-gate redundant
+  // on this path (it no longer protects an ambient call that doesn't fire).
+  test('feed-modal item with a threaded model3dId renders via prop, no getByPostId', async () => {
+    mocks.byIdData = { id: 4242, name: 'Feed Cube', thumbnailImage: null };
+    // Mimic the leak-trap: a stale getByPostId result must never be read.
+    mocks.byPostIdData = { id: 8888, name: 'LEAKED', thumbnailImage: null };
+
+    renderWithProviders(
+      <PostingToModel3DCard model3dId={4242} postId={321} label="Posted to 3D Model" />
+    );
+
+    await expect.element(page.getByText('Feed Cube')).toBeInTheDocument();
+    expect(document.querySelector('a[href="/3d-models/4242"]')).not.toBeNull();
+    expect(document.body.textContent).not.toContain('LEAKED');
+
+    // getByPostId never enabled even though postId was passed → the ambient call
+    // is eliminated on the feed-modal path, not merely flag-gated.
+    expect(enabledOf(mocks.byPostIdCalls)).toBe(false);
+    expect(mocks.byIdCalls.some((c) => c.id === 4242 && c.enabled)).toBe(true);
+  });
 });

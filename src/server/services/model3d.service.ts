@@ -1185,6 +1185,46 @@ export const getVisibleModel3DIdForPost = async ({
   return model3d.id;
 };
 
+// Batched sibling of `getVisibleModel3DIdForPost` for the image FEED path.
+// The feed payload (`getAllImages` / `getAllImagesIndex`) already carries a RAW
+// `Post.model3dId` (selected from SQL or read from the Meili doc) that is NOT
+// visibility-checked — a hidden Draft / deleted Model3D's id would otherwise
+// leak to the client as a clickable chip. Most feed images aren't linked to a
+// Model3D at all (model3dId is null), so callers pass ONLY the handful of
+// non-null ids per page; this resolves them in ONE query (no per-image N+1) and
+// returns the set the viewer may see. Applies the SAME `canViewModel3d`
+// predicate as the single-post lookup, so a hidden model is nulled identically.
+export const getVisibleModel3DIds = async ({
+  model3dIds,
+  userId,
+  isModerator = false,
+}: {
+  model3dIds: number[];
+  userId?: number;
+  isModerator?: boolean;
+}): Promise<Set<number>> => {
+  const ids = [...new Set(model3dIds)];
+  if (!ids.length) return new Set();
+  const rows = await dbRead.model3D.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, userId: true, status: true, deletedAt: true },
+  });
+  const visible = new Set<number>();
+  for (const row of rows) {
+    if (
+      canViewModel3d({
+        status: row.status,
+        deletedAt: row.deletedAt,
+        ownerId: row.userId,
+        userId,
+        isModerator,
+      })
+    )
+      visible.add(row.id);
+  }
+  return visible;
+};
+
 // ---------------------------------------------------------------------------
 // Per-Model3D gallery moderation. Mirrors `model.gallerySettings` minus
 // `pinnedPosts` + `level` (no version dimension, no level override for v1).
