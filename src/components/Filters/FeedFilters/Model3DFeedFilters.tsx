@@ -49,7 +49,6 @@ const periodOptions = (Object.values(MetricTimeframe) as MetricTimeframe[]).map(
 
 type Model3DFilterState = {
   period: MetricTimeframe;
-  rigged: boolean;
   animated: boolean;
 };
 
@@ -69,7 +68,6 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
     return raw && PERIOD_VALUES.has(raw) ? (raw as MetricTimeframe) : MetricTimeframe.AllTime;
   }, [query.period]);
 
-  const rigged = query.rigged === 'true';
   const animated = query.animated === 'true';
 
   const setQuery = useCallback(
@@ -85,23 +83,26 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
 
   // Committed = URL-backed state. Apply writes back to URL via setQuery.
   const committed: Model3DFilterState = useMemo(
-    () => ({ period, rigged, animated }),
-    [period, rigged, animated]
+    () => ({ period, animated }),
+    [period, animated]
   );
 
   const handleApply = useCallback(
     (next: Model3DFilterState) => {
       setQuery({
         period: next.period === MetricTimeframe.AllTime ? undefined : next.period,
-        rigged: next.rigged ? 'true' : undefined,
         animated: next.animated ? 'true' : undefined,
+        // Clear any legacy `?rigged=` left in the URL from before the
+        // rigging filter was removed (the Meshy API now binds rigging
+        // to animation, so the filter is no longer meaningful).
+        rigged: undefined,
       });
     },
     [setQuery]
   );
 
   const handleClear = useCallback(() => {
-    setQuery({ period: undefined, rigged: undefined, animated: undefined });
+    setQuery({ period: undefined, animated: undefined, rigged: undefined });
   }, [setQuery]);
 
   const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
@@ -113,7 +114,6 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
 
   const filterLength =
     (mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
-    (mergedFilters.rigged ? 1 : 0) +
     (mergedFilters.animated ? 1 : 0);
 
   const target = (
@@ -156,12 +156,6 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
       <Stack gap="md">
         <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
         <div className="flex flex-wrap gap-2">
-          <FilterChip
-            checked={mergedFilters.rigged}
-            onChange={(checked) => patchPending({ rigged: checked })}
-          >
-            <span>Rigged</span>
-          </FilterChip>
           <FilterChip
             checked={mergedFilters.animated}
             onChange={(checked) => patchPending({ animated: checked })}
