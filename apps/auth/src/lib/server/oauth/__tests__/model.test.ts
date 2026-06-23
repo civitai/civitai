@@ -72,7 +72,8 @@ vi.mock('@civitai/auth/secret-hash', () => ({
   generateKey: () => 'k'.repeat(36),
 }));
 
-import { oauthModel } from '../model';
+import { oauthModel, resolveClientLite } from '../model';
+import { invalidateDomainCache } from '../first-party';
 
 const baseClient = {
   id: 'pub-1',
@@ -311,5 +312,30 @@ describe('oauthModel.revokeToken — routine rotation does NOT cascade (resolved
     h.deleteResults.push({ numDeletedRows: 0n });
     const ok = await oauthModel.revokeToken({ refreshToken: 'nope', client: {}, user: {} } as any);
     expect(ok).toBe(false);
+  });
+});
+
+describe('resolveClientLite — first-party is client IDENTITY, not redirect origin (H1)', () => {
+  const TRUSTED_REDIRECT = 'https://civitai.red/api/auth/callback';
+
+  it('a REGISTERED (DB-row) client is NOT first-party, even at a trusted spoke origin', async () => {
+    // The H1 hole: a third-party that registers redirect_uri at an owned domain must still be third-party.
+    // The OauthClient row is the discriminator — resolution returns here BEFORE the origin is ever consulted,
+    // so consent-skip + /session session-minting (which gate on isFirstParty) can never apply to it.
+    h.selectResults.push({
+      id: 'pub-1',
+      grants: ['authorization_code'],
+      redirectUris: [TRUSTED_REDIRECT],
+    });
+    const client = await resolveClientLite('pub-1', TRUSTED_REDIRECT);
+    expect(client?.isFirstParty).toBe(false);
+  });
+
+  it('a SYNTHESIZED client (no DB row) at a registered spoke domain IS first-party', async () => {
+    invalidateDomainCache(); // force a fresh registry read for this test
+    h.selectResults.push(undefined); // no OauthClient row → falls through to origin synthesis
+    h.selectResults.push({ domain: 'civitai.red', includeSubdomains: false }); // TrustedSpokeDomain registry
+    const client = await resolveClientLite('firstparty-civitai_red', TRUSTED_REDIRECT);
+    expect(client?.isFirstParty).toBe(true);
   });
 });

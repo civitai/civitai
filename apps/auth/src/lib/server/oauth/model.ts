@@ -387,21 +387,34 @@ export const oauthModel = {
 export async function resolveClientLite(
   clientId: string,
   redirectUri?: string
-): Promise<{ id: string; grants: string[]; redirectUris: string[] } | undefined> {
+): Promise<
+  { id: string; grants: string[]; redirectUris: string[]; isFirstParty: boolean } | undefined
+> {
   const dbClient = await db
     .selectFrom('OauthClient')
     .select(['id', 'grants', 'redirectUris'])
     .where('id', '=', clientId)
     .executeTakeFirst();
   if (dbClient) {
-    return { id: dbClient.id, grants: dbClient.grants, redirectUris: dbClient.redirectUris };
+    // A REGISTERED client (it has an OauthClient row) is third-party BY DEFINITION — `isFirstParty: false`
+    // even if its redirect_uri origin is a trusted spoke domain. First-party-ness is a client IDENTITY (a
+    // hub-synthesized client with no DB row), never a property of the redirect host, which a third-party
+    // picks freely at registration. The /authorize consent-skip and /session session-mint gate on THIS flag,
+    // so a third-party can never inherit first-party privileges by claiming an owned redirect origin.
+    return {
+      id: dbClient.id,
+      grants: dbClient.grants,
+      redirectUris: dbClient.redirectUris,
+      isFirstParty: false,
+    };
   }
-  // First-party: resolve by the redirect_uri ORIGIN (host checked against the registry), requiring the
-  // client_id to be the one derived from that origin.
+  // First-party: NO DB row, resolved purely from the redirect_uri ORIGIN (host checked against the registry),
+  // requiring the client_id to be the one derived from that origin. This synthesized path is the ONLY
+  // first-party case.
   const origin = originOf(redirectUri);
   const fp = origin ? await firstPartyClientForOrigin(origin) : undefined;
   return fp && fp.clientId === clientId
-    ? { id: fp.clientId, grants: fp.grants, redirectUris: [fp.redirectUri] }
+    ? { id: fp.clientId, grants: fp.grants, redirectUris: [fp.redirectUri], isFirstParty: true }
     : undefined;
 }
 

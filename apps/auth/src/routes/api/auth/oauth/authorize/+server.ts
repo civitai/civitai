@@ -8,7 +8,6 @@ import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { redirectUriMatches } from '$lib/server/oauth/redirect-uri';
 import { hasScope } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
-import { isFirstPartyOrigin, originOf } from '$lib/server/oauth/first-party';
 import { resolveClientLite, authorizeRedirectUriStore } from '$lib/server/oauth/model';
 import { parseBody, toOAuthRequest, newOAuthResponse } from '$lib/server/oauth/http';
 
@@ -100,7 +99,10 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
 
   // Consent — approval MUST arrive via POST (prevents a GET-param CSRF bypass). First-party (trusted)
   // spoke clients SKIP the consent screen entirely (Phase 2): they're our own apps, so we never prompt.
-  const isFirstParty = await isFirstPartyOrigin(originOf(redirectUri));
+  // First-party-ness is the resolved client's IDENTITY (a hub-synthesized client with no OauthClient row),
+  // NOT the redirect origin — so a registered third-party client can't skip consent by claiming an owned
+  // redirect host (it has a DB row → isFirstParty=false). See resolveClientLite.
+  const isFirstParty = client.isFirstParty;
   const isApproval = method === 'POST' && params.approved === 'true';
   const existingConsent = isFirstParty
     ? undefined

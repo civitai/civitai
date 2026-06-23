@@ -1,10 +1,10 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { createHash, timingSafeEqual } from 'crypto';
 import { oauthModel } from '$lib/server/oauth/model';
-import { isFirstPartyOrigin, originOf } from '$lib/server/oauth/first-party';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { mintUserSession } from '$lib/server/auth/session';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
+import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { parseBody } from '$lib/server/oauth/http';
 
 // POST /api/auth/oauth/session — FIRST-PARTY session exchange (BFF, Phase 3).
@@ -36,16 +36,24 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
     return bad('invalid_request', 'Missing code or code_verifier');
   }
 
+  // Generous per-IP flood-guard (the caller is the spoke server, not the user — see rate-limit.ts). Keeps
+  // this unauthenticated endpoint from being hammered before it does any redis/crypto/DB work.
+  if (!(await checkOAuthRateLimit('session', ip))) {
+    return bad('rate_limited', 'Too many session requests', 429);
+  }
+
   // The code must exist, be unexpired, and belong to THIS client.
   const authCode = await oauthModel.getAuthorizationCode(code);
   if (!authCode || !authCode.client || authCode.client.id !== clientId) {
     return bad('invalid_grant', 'Invalid authorization code');
   }
 
-  // Only a FIRST-PARTY code (its callback host is a trusted spoke domain) may be exchanged for a SESSION.
-  // A third-party code's callback origin isn't in the registry → rejected here, so /token stays the only
-  // path for third-party tokens and /session can never mint a session for a third-party app.
-  if (!(await isFirstPartyOrigin(originOf(authCode.redirectUri)))) {
+  // Only a FIRST-PARTY code may be exchanged for a SESSION. First-party-ness is the resolved client's
+  // IDENTITY — a hub-SYNTHESIZED client (no OauthClient row), surfaced as `isFirstParty` by resolveClientLite
+  // (which getAuthorizationCode runs). A REGISTERED (DB-row) third-party client is `isFirstParty: false`
+  // EVEN IF its redirect_uri origin is a trusted spoke domain it claimed at registration — so /token stays
+  // the only path for third-party tokens and /session can never mint a session for a third-party app.
+  if (!(authCode.client as { isFirstParty?: boolean }).isFirstParty) {
     return bad('invalid_client', 'Not a first-party client', 401);
   }
 

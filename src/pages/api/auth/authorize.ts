@@ -6,8 +6,8 @@ import {
   clearBridgeCookie,
   HUB_BASE_URL,
 } from '~/server/auth/oauth-bridge';
+import { sessionCookieName } from '@civitai/auth';
 import { clearAllSessionCookies, POST_LOGIN_MARKER } from '~/server/auth/civ-cookie';
-import { getHubSession } from '~/server/auth/session-client';
 
 // GET /api/auth/authorize — INITIATE first-party cross-domain login. A spoke on a different registrable domain
 // (civitai.red / a test host / localhost) can't read the hub's `.civitai.com` cookie, so it runs the OAuth
@@ -15,7 +15,7 @@ import { getHubSession } from '~/server/auth/session-client';
 // the package bridge builds the hub /authorize URL (first-party client_id + exact redirect_uri + state + S256
 // challenge) and the bridge cookie (PKCE verifier + state + returnUrl, for /api/auth/callback). The bridge core
 // lives in @civitai/auth (first-party-bridge) — shared with every spoke + unit-tested there.
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (!HUB_BASE_URL) {
     res.status(500).json({ error: 'hub not configured' });
     return;
@@ -27,11 +27,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // Loop recovery: /api/auth/callback sets a one-shot marker right after minting a session. If that marker is
-  // present but there's STILL no resolvable session, the session cookie the callback set didn't stick — a
-  // cross-domain Domain/Secure misconfig that would otherwise be an infinite login redirect loop. (We confirm
-  // there's no session so the add-account flow, which re-enters /authorize while logged in, isn't affected.)
-  // Clear the wedged cookies across every scope and stop with a terminal error instead of bouncing to the hub.
-  if (req.cookies[POST_LOGIN_MARKER] && !(await getHubSession(req).catch(() => null))) {
+  // present but the session COOKIE is ABSENT on this request, the cookie the callback set didn't stick — a
+  // cross-domain Domain/Secure misconfig that would otherwise be an infinite login redirect loop. We test
+  // cookie PRESENCE (purely local — no verify, no hub fetch): a cookie that DID stick is sent back regardless,
+  // so a transient hub/identity-fetch blip on a good session can't false-trigger this, and the add-account
+  // flow (which re-enters /authorize while logged in, cookie present) is unaffected. Clear the wedged cookies
+  // across every scope and stop with a terminal error instead of bouncing to the hub.
+  if (req.cookies[POST_LOGIN_MARKER] && !req.cookies[sessionCookieName()]) {
     res.setHeader('Set-Cookie', [...clearAllSessionCookies(req.headers.host), clearBridgeCookie()]);
     res.status(400).setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(

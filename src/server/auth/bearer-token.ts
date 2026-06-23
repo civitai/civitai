@@ -33,6 +33,12 @@ export async function getSessionFromBearerToken(key: string) {
   const user = (await getSessionUser({ userId: apiKey.userId })) as Session['user'];
   if (!user) return null;
 
+  // Banned users get NO API/bearer access. Deleted users are already excluded by getSessionUser's query, but a
+  // ban leaves the row intact (so the SESSION/cookie path can still render a "you're banned" page) — the
+  // bearer/API path must reject it CENTRALLY here, mirroring tRPC's isAuthed ban check, so a banned user's
+  // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
+  if (user.bannedAt) return null;
+
   // Resolve subject + buzzLimit. OAuth-issued tokens use the consent
   // (userId + clientId) as the stable identifier across access-token rotations
   // and read their limit from OauthConsent. User-type API keys use the
