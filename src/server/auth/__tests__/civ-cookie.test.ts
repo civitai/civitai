@@ -3,6 +3,7 @@ import {
   cookieDomainForHost,
   postLoginMarkerCookie,
   clearAllSessionCookies,
+  clearLegacyNextAuthCookies,
   POST_LOGIN_MARKER,
 } from '../civ-cookie';
 
@@ -89,5 +90,71 @@ describe('clearAllSessionCookies — cross-scope session-cookie wipe', () => {
     expect(cleared.some((c) => c.startsWith('civ-token='))).toBe(true);
     expect(cleared.some((c) => c.startsWith('__Secure-civ-token='))).toBe(true);
     expect(cleared.some((c) => c.startsWith(`${POST_LOGIN_MARKER}=`))).toBe(true);
+  });
+});
+
+describe('clearLegacyNextAuthCookies — ancillary next-auth de-crud', () => {
+  const cleared = clearLegacyNextAuthCookies('civitai.com');
+  const startsWith = (name: string) => cleared.filter((c) => c.startsWith(`${name}=;`));
+
+  it('expires every ancillary next-auth cookie (CSRF / callback-url / state / pkce / nonce, both prefixes)', () => {
+    for (const name of [
+      'next-auth.csrf-token',
+      '__Host-next-auth.csrf-token',
+      'next-auth.callback-url',
+      '__Secure-next-auth.callback-url',
+      'next-auth.state',
+      '__Secure-next-auth.state',
+      'next-auth.pkce.code_verifier',
+      '__Secure-next-auth.pkce.code_verifier',
+      'next-auth.nonce',
+      '__Secure-next-auth.nonce',
+    ]) {
+      expect(startsWith(name).length).toBeGreaterThan(0);
+    }
+    // Every entry is an expiry.
+    expect(cleared.every((c) => has(c, 'Max-Age=0'))).toBe(true);
+  });
+
+  it('does NOT clear the legacy SESSION cookie (that is clearLegacySessionCookies job)', () => {
+    expect(cleared.some((c) => c.startsWith('civitai-token='))).toBe(false);
+    expect(cleared.some((c) => c.startsWith('__Secure-civitai-token='))).toBe(false);
+  });
+
+  it('emits the `__Host-` CSRF clear host-only (no Domain) WITH Secure — else the browser rejects it', () => {
+    const host = startsWith('__Host-next-auth.csrf-token');
+    expect(host.length).toBe(1); // host-only only — never Domain-scoped
+    expect(host.every((c) => domainOf(c) === undefined)).toBe(true);
+    expect(host.every((c) => has(c, 'Secure'))).toBe(true);
+  });
+
+  it('clears the CSRF cookie host-only under both prefixes (next-auth set it host-only)', () => {
+    expect(startsWith('next-auth.csrf-token').every((c) => domainOf(c) === undefined)).toBe(true);
+  });
+
+  it('every `__Secure-`/`__Host-` prefixed clear carries Secure; bare names never do', () => {
+    for (const c of cleared) {
+      const isPrefixed = c.startsWith('__Secure-') || c.startsWith('__Host-');
+      expect(has(c, 'Secure')).toBe(isPrefixed);
+    }
+  });
+
+  it('clears callback-url/state/pkce/nonce across host-only AND the registrable domain', () => {
+    for (const name of [
+      '__Secure-next-auth.callback-url',
+      '__Secure-next-auth.state',
+      '__Secure-next-auth.pkce.code_verifier',
+      '__Secure-next-auth.nonce',
+    ]) {
+      const entries = startsWith(name);
+      expect(entries.some((c) => domainOf(c) === undefined)).toBe(true); // host-only
+      expect(entries.some((c) => domainOf(c) === '.civitai.com')).toBe(true); // `.{host}` parent
+    }
+  });
+
+  it('on localhost emits only host-only clears (no Domain)', () => {
+    expect(clearLegacyNextAuthCookies('localhost').every((c) => domainOf(c) === undefined)).toBe(
+      true
+    );
   });
 });

@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { sessionCookieName, deviceCookieName, createSessionTokenClient } from '@civitai/auth';
-import { cookieDomainForHost } from '~/server/auth/civ-cookie';
+import { cookieDomainForHost, clearLegacyNextAuthCookies } from '~/server/auth/civ-cookie';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
 // Main-app logout for the hub flow. Clears BOTH the hub's civ-token AND the legacy next-auth session cookie
@@ -65,6 +65,9 @@ export function buildLogoutCookies(host: string | undefined): string[] {
     // legacy next-auth session cookie (hybrid fallback reads it)
     ...clearCookie('civitai-token', false, legacyDomains),
     ...clearCookie('__Secure-civitai-token', true, legacyDomains),
+    // ancillary next-auth cruft (CSRF / callback-url / OAuth state + PKCE) — none authenticate, but fully
+    // de-crud the browser on logout so nothing next-auth lingers post-cutover.
+    ...clearLegacyNextAuthCookies(host),
     // orchestrator service-auth cookie (host-only)
     `${generationServiceCookie.name}=; Path=/; Max-Age=0; SameSite=Lax`,
   ];

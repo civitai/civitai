@@ -56,6 +56,22 @@ describe('buildLogoutCookies', () => {
     expect(headers.some((h) => /Max-Age=0/i.test(h) && h.includes('=;'))).toBe(true);
   });
 
+  it('also de-cruds the ancillary next-auth cookies (CSRF / callback-url / state / pkce / nonce)', async () => {
+    const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
+    const headers = buildLogoutCookies(undefined);
+
+    // None authenticate, but logout should fully de-crud the browser. Both dev + secure-prefixed names.
+    for (const name of [
+      '__Host-next-auth.csrf-token',
+      '__Secure-next-auth.callback-url',
+      '__Secure-next-auth.state',
+      '__Secure-next-auth.pkce.code_verifier',
+      '__Secure-next-auth.nonce',
+    ]) {
+      expect(clears(headers, name)).toBe(true);
+    }
+  });
+
   // Regression for the preview/staging logout bug: on a SUBDOMAIN host (e.g. stage.civitai.com) the spoke sets
   // civ-token/civ-device with Domain=civitai.com (the REGISTRABLE domain, via cookieDomainForHost). The old
   // logout cleared over `.{full-host}` (`.stage.civitai.com`) — which does NOT match `civitai.com` — so the

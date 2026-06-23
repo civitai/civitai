@@ -102,6 +102,51 @@ function clearLegacySessionCookies(host?: string): string[] {
 }
 
 /**
+ * Clear the ANCILLARY next-auth cookies left over from the pre-migration next-auth: the CSRF token, the
+ * callback-url, and the transient OIDC/OAuth `state`, PKCE `code_verifier`, and `nonce` (the last set by the
+ * Google OIDC flow). NONE of these authenticate a user — the session cookie was `civitai-token` (handled by
+ * clearLegacySessionCookies) — so they're harmless cruft, but we expire them on logout AND on the legacy->civ
+ * login so a returning user's browser is fully de-crudded. Names are the next-auth defaults (dev: `next-auth.<x>`;
+ * prod: secure-prefixed). The CSRF cookie carries the `__Host-` prefix (browser-enforced host-only, NO Domain)
+ * so it can only be cleared host-only; the others are cleared across every scope next-auth could have set them
+ * on (host-only + NEXTAUTH_COOKIE_DOMAIN + `.{host}`). Remove this whole helper once pre-cutover sessions have
+ * aged out.
+ */
+export function clearLegacyNextAuthCookies(host?: string): string[] {
+  const h = (host ?? '').split(':')[0].toLowerCase();
+  const parent = h && h !== 'localhost' && !/^\d+\.\d+\.\d+\.\d+$/.test(h) ? `.${h}` : undefined;
+  const scopes = [
+    ...new Set<string | undefined>([
+      undefined,
+      process.env.NEXTAUTH_COOKIE_DOMAIN || undefined,
+      parent,
+    ]),
+  ];
+  const expire = (name: string, secure: boolean, domain?: string) =>
+    `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}${
+      domain ? `; Domain=${domain}` : ''
+    }`;
+  const out: string[] = [
+    // CSRF — host-only only (the `__Host-` prefix forbids a Domain attribute).
+    expire('next-auth.csrf-token', false),
+    expire('__Host-next-auth.csrf-token', true),
+  ];
+  // callback-url + the transient OIDC/OAuth state / PKCE verifier / nonce — clear across every scope they could
+  // be set on (next-auth Domain-scoped state/pkce when NEXTAUTH_COOKIE_DOMAIN was set; the rest host-only).
+  for (const d of scopes) {
+    out.push(expire('next-auth.callback-url', false, d));
+    out.push(expire('__Secure-next-auth.callback-url', true, d));
+    out.push(expire('next-auth.state', false, d));
+    out.push(expire('__Secure-next-auth.state', true, d));
+    out.push(expire('next-auth.pkce.code_verifier', false, d));
+    out.push(expire('__Secure-next-auth.pkce.code_verifier', true, d));
+    out.push(expire('next-auth.nonce', false, d));
+    out.push(expire('__Secure-next-auth.nonce', true, d));
+  }
+  return out;
+}
+
+/**
  * Set the civ-token session cookie from a hub-minted token (Max-Age derived from the token's `exp`). Appends to
  * any Set-Cookie already on the response. Pass `host` (the request's `Host` header) so the cookie Domain matches
  * the serving color; omit it only where there's no request (then the cookie is host-only). Pass `deviceCookie`

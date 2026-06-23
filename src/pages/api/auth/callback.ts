@@ -1,5 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { setSessionCookie, postLoginMarkerCookie } from '~/server/auth/civ-cookie';
+import {
+  setSessionCookie,
+  postLoginMarkerCookie,
+  clearLegacyNextAuthCookies,
+} from '~/server/auth/civ-cookie';
 import {
   resolveSelfOrigin,
   completeFirstPartyCallback,
@@ -55,6 +59,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     ? [String(existing)]
     : [];
   all.push(postLoginMarkerCookie());
+  // De-crud the browser at the legacy->civ-token transition: expire the leftover next-auth ancillary cookies
+  // (CSRF / callback-url / OAuth state + PKCE). setSessionCookie already cleared the legacy SESSION cookie.
+  all.push(...clearLegacyNextAuthCookies(req.headers.host));
   res.setHeader('Set-Cookie', all);
   res.redirect(302, result.returnUrl);
 }
