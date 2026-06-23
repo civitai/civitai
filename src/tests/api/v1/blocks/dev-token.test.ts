@@ -292,6 +292,8 @@ describe('POST /api/v1/blocks/dev-token', () => {
     await handler(req as never, res as never);
 
     expect(res._getStatusCode()).toBe(200);
+    // The bearer-JWT body must never be cached by an intermediary.
+    expect(res._getHeaders()['Cache-Control']).toBe('no-store');
     expect(mockSign).toHaveBeenCalledTimes(1);
     const arg = mockSign.mock.calls[0][0];
     // Self-bound subject.

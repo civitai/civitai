@@ -346,6 +346,8 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     maxBrowsingLevel: FORCED_SFW_CEILING,
   });
 
+  // The body carries a bearer JWT — never let an intermediary cache it.
+  res.setHeader('Cache-Control', 'no-store');
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
