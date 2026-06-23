@@ -344,12 +344,38 @@ const perAgeRegexes = ages.map((ageEntry) => {
     // edge" ≡ "not preceded/followed by an alnum") but, being zero-width, there is
     // nothing for the engine to backtrack over a long non-Latin (CJK) run — this
     // collapses the O(regexes × n²) catastrophic backtracking to linear. See
-    // audit-base.ts prepareWordRegex + audit-redos.test.ts for the incident.
+    // audit-base.ts prepareWordRegex + audit-cjk-redos.test.ts for the incident.
     regexStr = `(?<![a-zA-Z0-9])0*` + regexStr + `(?![a-zA-Z0-9])`;
     return new RegExp(regexStr, 'i');
   });
   return { age: ageEntry.age, regexes };
 });
+
+// TEST-ONLY. Reconstructs the per-age regexes EXACTLY as `perAgeRegexes` above but
+// with the PRE-#2722 *consuming* boundary groups (`([^a-zA-Z0-9]+|^)0*…([^a-zA-Z0-9]+|$)`)
+// instead of the zero-width assertions. It deliberately reuses the SAME in-module
+// building blocks (the post-teen-expansion `ages`, `templates`, `buildAgePattern`,
+// `yearsPattern`, `oldPattern`) so the equivalence oracle in
+// `__tests__/audit-matching-equivalence.test.ts` is a faithful old-vs-new comparison
+// that can never drift from the live construction (no copy-pasted data to rot).
+// Not used by any runtime path — exported solely so the test can prove the #2722
+// boundary refactor preserved age matching. Do NOT call from production code.
+export function __buildOldAgeRegexesForTest() {
+  return ages.map((ageEntry) => {
+    const agePattern = buildAgePattern(ageEntry.matches);
+    const regexes = templates.map((template) => {
+      let regexStr = template;
+      regexStr = regexStr.replace('{age}', `(${agePattern})`);
+      regexStr = regexStr.replace('{years}', `(${yearsPattern})`);
+      regexStr = regexStr.replace('{old}', `(${oldPattern})`);
+      regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
+      // Pre-#2722 consuming boundaries (the only intended difference vs perAgeRegexes).
+      regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
+      return new RegExp(regexStr, 'i');
+    });
+    return { age: ageEntry.age, regexes };
+  });
+}
 
 // Legacy: Keep ageRegexes for debugAuditPrompt and highlightMinor (which iterate all templates)
 // These use the combined pattern for detailed match info
