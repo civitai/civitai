@@ -1,6 +1,6 @@
 import type { Session } from '~/types/session';
 import { createSessionClient, createSessionTokenClient, sessionCookieName } from '@civitai/auth';
-import { setSessionCookie, type CookieWritable } from './civ-cookie';
+import { setSessionCookie, clearLegacyNextAuthCookies, type CookieWritable } from './civ-cookie';
 import { isRevoked } from './session-verifier';
 import { decodeTokenClaim } from './token-claims';
 
@@ -67,5 +67,40 @@ export async function maybeRollHubCookie(
     setSessionCookie(res, fresh, { deviceCookie, host });
   } catch {
     // best-effort — the current token is still valid; the user is unaffected
+  }
+}
+
+/**
+ * Upgrade-on-read (migration window): when a request authenticated via the LEGACY next-auth cookie, ask the hub
+ * to exchange that cookie for a fresh civ-token and set it on this response — so the legacy user migrates to the
+ * thin-session model, and the browser gets fully de-crudded of next-auth cookies, just by browsing (no need to
+ * wait for a re-login/logout). The main app stays a pure consumer: it hands the hub the legacy cookie and gets a
+ * civ-token back (only the hub can sign). Best-effort + fire-safe: any hub blip leaves the legacy cookie in place
+ * (the user already has a resolved session THIS request) and the next request retries. `setSessionCookie` clears
+ * the legacy SESSION cookie; `clearLegacyNextAuthCookies` clears the ancillary next-auth cruft. Drop alongside
+ * the legacy decode once the old cookies age out.
+ */
+export async function maybeUpgradeLegacySession(
+  legacyToken: string | undefined,
+  res: CookieWritable,
+  host?: string
+): Promise<void> {
+  if (!HUB_ORIGIN || !legacyToken || typeof res.setHeader !== 'function') return;
+  try {
+    const fresh = (await sessionTokenClient.exchangeLegacy(legacyToken))?.token;
+    if (!fresh) return;
+    // Set the civ-token (this also clears the legacy SESSION cookie) …
+    setSessionCookie(res, fresh, { host });
+    // … then de-crud the ancillary next-auth cookies (CSRF / callback-url / state / PKCE) on the same response.
+    const existing = res.getHeader?.('Set-Cookie');
+    const all = Array.isArray(existing)
+      ? existing.map(String)
+      : existing != null
+      ? [String(existing)]
+      : [];
+    all.push(...clearLegacyNextAuthCookies(host));
+    res.setHeader('Set-Cookie', all);
+  } catch {
+    // best-effort — the legacy session is still valid; the user is unaffected and the next request retries
   }
 }

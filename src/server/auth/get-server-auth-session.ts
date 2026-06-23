@@ -11,7 +11,7 @@ import {
 import { env } from '~/env/server';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
-import { getHubSession, maybeRollHubCookie } from './session-client';
+import { getHubSession, maybeRollHubCookie, maybeUpgradeLegacySession } from './session-client';
 import { getSessionUser } from './session-user';
 
 type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
@@ -82,5 +82,11 @@ export const getServerAuthSession = async ({
   // 2. Legacy next-auth cookie (jose decode → fresh user). Sunsets as the old cookies age out.
   const legacy = await getLegacySession(req).catch(() => null);
   req.context.session = legacy;
+  // Upgrade-on-read: migrate this legacy user to a civ-token (+ de-crud the next-auth cookies) for next time.
+  // Best-effort; this request is still served from the legacy decode above.
+  if (legacy) {
+    const legacyToken = req.cookies?.[legacySessionCookieName()];
+    await maybeUpgradeLegacySession(legacyToken, res, req.headers.host).catch(() => {});
+  }
   return legacy;
 };
