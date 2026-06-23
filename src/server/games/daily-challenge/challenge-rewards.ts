@@ -1,10 +1,18 @@
 import { Prisma } from '@prisma/client';
+import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
 import { withRetries } from '~/utils/errorHandling';
+import { getChallengeById } from '~/server/games/daily-challenge/challenge-helpers';
+import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
+import {
+  getJudgingConfig,
+  type DailyChallengeDetails,
+  type ChallengeConfig,
+} from '~/server/games/daily-challenge/daily-challenge.utils';
 
 export function selectPayableUsers(qualifierIds: number[], excludeUserIds: number[]): number[] {
   const exclude = new Set(excludeUserIds);
@@ -117,4 +125,71 @@ export async function distributeParticipationPrizes(args: {
   });
 
   return payUserIds;
+}
+
+export async function reconcileCompletedChallenge(
+  challenge: DailyChallengeDetails,
+  config: ChallengeConfig
+): Promise<{ promoted: number; paid: number }> {
+  const record = await getChallengeById(challenge.challengeId);
+  const allowedNsfwLevel = record?.allowedNsfwLevel ?? 1;
+
+  // Resolve judge — avoid importing from daily-challenge-processing.ts (circular dep)
+  const judgeId = record?.judgeId ?? config.defaultJudgeId;
+  if (!judgeId) throw new Error('No judge assigned and no defaultJudgeId configured');
+  const judgingConfig = await getJudgingConfig(judgeId, record?.judgingPrompt);
+
+  // 1. Promote any now-scanned REVIEW entries (skips nsfwLevel = 0)
+  const promoted = await promoteChallengeEntries({
+    collectionId: challenge.collectionId,
+    allowedNsfwLevel,
+    modelVersionIds: challenge.modelVersionIds,
+    challengeDate: challenge.date,
+    reviewerId: judgingConfig.userId,
+  });
+
+  // 2. Winners + already-paid are excluded from participation back-pay
+  const winners = await dbRead.$queryRaw<{ userId: number }[]>`
+    SELECT "userId" FROM "ChallengeWinner" WHERE "challengeId" = ${challenge.challengeId}
+  `;
+  const metadata = parseChallengeMetadata(record?.metadata);
+  const alreadyPaid = metadata.reconciliation?.paidUserIds ?? [];
+  const excludeUserIds = [...winners.map((w) => w.userId), ...alreadyPaid];
+
+  // 3. Pay newly-eligible users (idempotent), hour-bucketed notification key
+  const hourBucket = dayjs().utc().format('YYYY-MM-DD-HH');
+  const paid = await distributeParticipationPrizes({
+    challengeId: challenge.challengeId,
+    collectionId: challenge.collectionId,
+    title: challenge.title,
+    entryPrize: challenge.entryPrize,
+    entryPrizeRequirement: challenge.entryPrizeRequirement,
+    excludeUserIds,
+    notificationKey: `challenge-participation:${challenge.challengeId}:reconcile:${hourBucket}`,
+  });
+
+  // 4. Count remaining REVIEW items to determine if the queue has drained
+  const remainingReview = await dbRead.$queryRaw<{ count: bigint }[]>`
+    SELECT COUNT(*)::bigint as count FROM "CollectionItem"
+    WHERE "collectionId" = ${challenge.collectionId} AND status = 'REVIEW'
+  `;
+  const done = Number(remainingReview[0]?.count ?? 0) === 0;
+
+  // 5. Persist bookkeeping in challenge metadata
+  await dbWrite.challenge.update({
+    where: { id: challenge.challengeId },
+    data: {
+      metadata: {
+        ...metadata,
+        reconciliation: {
+          ...(metadata.reconciliation ?? {}),
+          paidUserIds: Array.from(new Set([...alreadyPaid, ...paid])),
+          lastRunAt: new Date().toISOString(),
+          done,
+        },
+      },
+    },
+  });
+
+  return { promoted, paid: paid.length };
 }
