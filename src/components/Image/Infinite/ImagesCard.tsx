@@ -169,7 +169,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                         POI
                       </Badge>
                     )}
-                    {shouldShowPendingReviewBadge(image, currentUser?.id) && (
+                    {shouldShowPendingReviewBadge(data, currentUser?.id) && (
                       <Tooltip label="Still being reviewed — not yet eligible for judging" withinPortal>
                         <Badge variant="filled" radius="xl" h={26} color="yellow">
                           Pending review
