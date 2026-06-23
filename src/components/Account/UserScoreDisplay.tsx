@@ -46,14 +46,14 @@ const reportCategories = [
     label: 'Against',
     color: 'red',
     icon: IconFlag,
-    tooltip: 'Number of reports filed against this user',
+    tooltip: 'Points deducted for content this user posted that was removed for Terms of Service violations',
   },
   {
     key: 'reportsActioned' as const,
     label: 'Actioned',
     color: 'green',
     icon: IconShieldCheck,
-    tooltip: 'Number of reports this user filed that were actioned',
+    tooltip: 'Points earned for reports this user filed that moderators actioned',
   },
 ];
 
@@ -79,13 +79,25 @@ export function UserScoreDisplay({
   const categoryValues = scoreCategories.map(({ key }) => Math.max(scores[key] ?? 0, 0));
   const categoryPool = categoryValues.reduce((sum, value) => sum + value, 0);
 
+  // `total` can be negative: reportsAgainst is stored as points (violations × a
+  // negative multiplier) and can outweigh the positive categories. That value is
+  // what pulls the score below zero, so it's the thing the user needs to see.
+  const total = scores.total ?? 0;
+  const reportsAgainstScore = scores.reportsAgainst ?? 0;
+
   return (
     <Paper withBorder p="md" radius="md">
       <Stack gap="md">
         <Stack gap={4} align="center">
-          <Tooltip label={`${Math.round(scores.total ?? 0).toLocaleString()} points`} withArrow>
-            <Text size="2rem" fw={700} c="green" lh={1.2} style={{ cursor: 'help' }}>
-              {abbreviateNumber(scores.total ?? 0, { decimals: 1 })}
+          <Tooltip label={`${Math.round(total).toLocaleString()} points`} withArrow>
+            <Text
+              size="2rem"
+              fw={700}
+              c={total < 0 ? 'red' : 'green'}
+              lh={1.2}
+              style={{ cursor: 'help' }}
+            >
+              {abbreviateNumber(total, { decimals: 1 })}
             </Text>
           </Tooltip>
           <Text size="sm" c="dimmed">
@@ -137,6 +149,23 @@ export function UserScoreDisplay({
           </Group>
         </Stack>
 
+        {/* Non-moderators don't get the full Reports block, but a negative score
+            still needs a cause — surface the deduction that drove it below zero. */}
+        {!showReports && reportsAgainstScore < 0 && (
+          <>
+            <Divider />
+            <ScoreRow
+              icon={<IconFlag size={16} color="var(--mantine-color-red-6)" />}
+              label="Reports"
+              tooltip="Content you posted that was reported and removed for Terms of Service violations reduces your score."
+            >
+              <Text size="sm" fw={600} c="red">
+                {Math.round(reportsAgainstScore).toLocaleString()} pts
+              </Text>
+            </ScoreRow>
+          </>
+        )}
+
         {showReports && (
           <>
             <Divider label="Reports" labelPosition="left" />
@@ -146,7 +175,7 @@ export function UserScoreDisplay({
                 return (
                   <ScoreRow key={key} icon={<Icon size={16} />} label={label} tooltip={tooltip}>
                     <Text size="sm" fw={600} c={color}>
-                      {Math.round(value)}
+                      {Math.round(value).toLocaleString()} pts
                     </Text>
                   </ScoreRow>
                 );
