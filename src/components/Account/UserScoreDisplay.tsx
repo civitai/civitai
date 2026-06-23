@@ -101,69 +101,112 @@ export function UserScoreDisplay({
             </Text>
           </Tooltip>
           <Text size="sm" c="dimmed">
-            User Score
+            Creator Score
+          </Text>
+          {/* Spell out that this is a reputation axis (content earned minus content
+              removed), distinct from the strike-based Account Standing badge above —
+              the two can legitimately disagree (negative score, no active strikes). */}
+          <Text size="xs" c="dimmed" ta="center" maw={260}>
+            Reputation from your content, minus content removed for violations
           </Text>
         </Stack>
 
         <Divider />
 
         <Stack gap="sm">
-          {/* Section hover → the category amount + share. */}
-          <Progress.Root size="xl" radius="xl">
-            {scoreCategories.map(({ key, label, color }, index) => {
-              const value = categoryValues[index];
-              if (value <= 0) return null;
-              const percentage = categoryPool > 0 ? (value / categoryPool) * 100 : 0;
-              return (
-                <Tooltip
-                  key={key}
-                  label={`${label}: ${Math.round(value).toLocaleString()} (${formatPercentage(
-                    value,
-                    percentage
-                  )})`}
-                  withArrow
-                >
-                  {/* minWidth keeps a real-but-tiny category (e.g. <1%) a visible sliver;
-                      must clear the radius="xl" rounded corner (~8-10px) to show. */}
-                  <Progress.Section value={percentage} color={color} style={{ minWidth: 12 }} />
-                </Tooltip>
-              );
-            })}
-          </Progress.Root>
+          {categoryPool > 0 ? (
+            <>
+              {/* Section hover → the category amount + share. */}
+              <Progress.Root size="xl" radius="xl">
+                {scoreCategories.map(({ key, label, color }, index) => {
+                  const value = categoryValues[index];
+                  if (value <= 0) return null;
+                  const percentage = (value / categoryPool) * 100;
+                  return (
+                    <Tooltip
+                      key={key}
+                      label={`${label}: ${Math.round(value).toLocaleString()} (${formatPercentage(
+                        value,
+                        percentage
+                      )})`}
+                      withArrow
+                    >
+                      {/* minWidth keeps a real-but-tiny category (e.g. <1%) a visible sliver;
+                          must clear the radius="xl" rounded corner (~8-10px) to show. */}
+                      <Progress.Section value={percentage} color={color} style={{ minWidth: 12 }} />
+                    </Tooltip>
+                  );
+                })}
+              </Progress.Root>
 
-          {/* macOS-storage-style legend: dot + label, dot hover → description. */}
-          <Group gap="md" wrap="wrap">
-            {scoreCategories.map(({ key, label, color, tooltip }) => (
-              <Group key={key} gap={6} wrap="nowrap">
-                <Tooltip label={tooltip} multiline w={220} withArrow>
-                  <ColorSwatch
-                    color={`var(--mantine-color-${color}-6)`}
-                    size={10}
-                    radius="xl"
-                    style={{ cursor: 'help' }}
-                  />
-                </Tooltip>
-                <Text size="sm">{label}</Text>
+              {/* macOS-storage-style legend: dot + label, dot hover → description. Only
+                  categories the user actually has (value > 0) appear, matching the bar —
+                  no orphan dot for a category with no segment. */}
+              <Group gap="md" wrap="wrap">
+                {scoreCategories.map(({ key, label, color, tooltip }, index) => {
+                  if (categoryValues[index] <= 0) return null;
+                  return (
+                    <Group key={key} gap={6} wrap="nowrap">
+                      <Tooltip label={tooltip} multiline w={220} withArrow>
+                        <ColorSwatch
+                          color={`var(--mantine-color-${color}-6)`}
+                          size={10}
+                          radius="xl"
+                          style={{ cursor: 'help' }}
+                        />
+                      </Tooltip>
+                      <Text size="sm">{label}</Text>
+                    </Group>
+                  );
+                })}
               </Group>
-            ))}
-          </Group>
+            </>
+          ) : (
+            <Text size="sm" c="dimmed" ta="center">
+              No positive score contributions yet
+            </Text>
+          )}
         </Stack>
 
         {/* Non-moderators don't get the full Reports block, but a negative score
-            still needs a cause — surface the deduction that drove it below zero. */}
+            still needs a cause — surface the deduction as a distinct tinted penalty
+            callout (not a plain list row) so it reads as the thing pulling the score
+            down rather than another contributing category. */}
         {!showReports && reportsAgainstScore < 0 && (
-          <>
-            <Divider />
-            <ScoreRow
-              icon={<IconFlag size={16} color="var(--mantine-color-red-6)" />}
-              label="Reports"
-              tooltip="Content you posted that was reported and removed for Terms of Service violations reduces your score."
-            >
-              <Text size="sm" fw={600} c="red">
-                {Math.round(reportsAgainstScore).toLocaleString()} pts
+          <Group
+            justify="space-between"
+            wrap="nowrap"
+            gap="sm"
+            px="sm"
+            py={8}
+            style={{
+              backgroundColor: 'var(--mantine-color-red-light)',
+              borderRadius: 'var(--mantine-radius-md)',
+            }}
+          >
+            <Group gap={8} wrap="nowrap">
+              <IconFlag size={16} color="var(--mantine-color-red-6)" style={{ flexShrink: 0 }} />
+              <Text size="sm">Reports against</Text>
+              <Tooltip
+                label="Content you posted that was reported and removed for Terms of Service violations reduces your score."
+                multiline
+                w={240}
+                withArrow
+              >
+                <IconInfoCircle
+                  size={14}
+                  style={{ flexShrink: 0, cursor: 'help' }}
+                  color="var(--mantine-color-dimmed)"
+                />
+              </Tooltip>
+            </Group>
+            {/* Abbreviated to match the headline's scale; exact value in the tooltip. */}
+            <Tooltip label={`${Math.round(reportsAgainstScore).toLocaleString()} points`} withArrow>
+              <Text size="sm" fw={700} c="red" style={{ whiteSpace: 'nowrap', cursor: 'help' }}>
+                {abbreviateNumber(reportsAgainstScore, { decimals: 1 })} pts
               </Text>
-            </ScoreRow>
-          </>
+            </Tooltip>
+          </Group>
         )}
 
         {showReports && (
