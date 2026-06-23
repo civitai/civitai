@@ -52,6 +52,12 @@ Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 clea
   against. If you hit the terminal "We couldn't sign you in" page, the cookie's `Domain`/`Secure` is wrong
   for that host — check `cookieDomainForHost` / `AUTH_COOKIE_DOMAIN`.
 - [ ] 🧪 **Add-account / account switch** (the device-set flow).
+- [ ] 🧪 **Cross-site shared device set** — log in on `civitai.com`, then open `civitai.red` (it auto-SSOs via
+  the bridge). Confirm BOTH hosts carry the **same `civ-device` value** (devtools → Application → Cookies) and
+  the account switcher shows the **identical account set** on each. A `.red` `civ-token` present but a missing
+  or *different* `civ-device` means the bridge isn't propagating the hub's shared device id — the
+  authorize→callback→`/session` path stashes it at `/authorize` and returns it from `/session`
+  (`setSessionCookie(..., { deviceCookie })`). Verify the reverse too (sign in first on `.red`).
 - [ ] 🧪 **Moderator impersonate → then EXIT impersonation** (the browser-client exit path — recently fixed to
   `POST /api/auth/impersonate/exit`).
 - [ ] 🧪 **Connected accounts** (`/user/account`): link + unlink each provider (Discord/Google/GitHub/Reddit)
