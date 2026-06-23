@@ -11,6 +11,7 @@ import youngWords from './lists/words-young.json';
 import { harmfulCombinations } from './lists/harmful-combinations';
 import { blockedNSFWRegexLazy, blockedRegexLazy } from '~/utils/metadata/audit-base';
 import { createProfanityFilter } from '~/libs/profanity-simple';
+import { AuditTimer } from '~/utils/metadata/audit-slow-log';
 
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
 
@@ -73,13 +74,25 @@ export const auditPromptEnriched = (
   checkProfanity?: boolean
 ): EnrichedAuditResult => {
   if (!prompt.trim().length) return { blockedFor: [], triggers: [], success: true };
-  prompt = normalizeText(prompt);
-  negativePrompt = normalizeText(negativePrompt);
+
+  // Per-sub-check timing instrumentation. Always-on but threshold-gated: below
+  // AUDIT_SLOW_LOG_MS it costs only a handful of `performance.now()` deltas and
+  // emits nothing. On the pathological 11-47s CPU-pin (the "504 wave" DoS) it logs
+  // ONE structured line naming the slowest sub-check + an input fingerprint. The
+  // timer NEVER alters the audit result and `finish()` can never throw — it is
+  // called on every return path below with the (normalized) prompts. The raw text
+  // passed to finish() is what was audited; logging it is privacy-gated (see
+  // audit-slow-log.ts). See that module's header for the full incident writeup.
+  const timer = new AuditTimer();
+
+  prompt = timer.time('normalize', () => normalizeText(prompt));
+  negativePrompt = timer.time('normalize', () => normalizeText(negativePrompt));
 
   // 1. Minor age check
-  const { found, age } = includesMinorAge(prompt);
+  const { found, age } = timer.time('minor_age', () => includesMinorAge(prompt));
   if (found && age != null) {
     const message = `${age} year old`;
+    timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
       triggers: [{ category: 'minor_age', message, matchedWord: String(age) }],
@@ -88,9 +101,10 @@ export const auditPromptEnriched = (
   }
 
   // 2. POI check
-  const poiMatch = includesPoi(prompt);
+  const poiMatch = timer.time('poi', () => includesPoi(prompt));
   if (poiMatch) {
     const message = 'Prompt cannot include celebrity names';
+    timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
       triggers: [
@@ -103,9 +117,10 @@ export const auditPromptEnriched = (
       success: false,
     };
   }
-  const negPoiMatch = includesPoi(negativePrompt);
+  const negPoiMatch = timer.time('poi', () => includesPoi(negativePrompt));
   if (negPoiMatch) {
     const message = 'Negative prompt cannot include celebrity names';
+    timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
       triggers: [
@@ -120,7 +135,9 @@ export const auditPromptEnriched = (
   }
 
   // 3. Inappropriate content check (with matched word capture)
-  const inappropriateResult = includesInappropriateEnriched({ prompt, negativePrompt });
+  const inappropriateResult = timer.time('inappropriate', () =>
+    includesInappropriateEnriched({ prompt, negativePrompt })
+  );
   if (inappropriateResult) {
     const message =
       inappropriateResult.type === 'minor'
@@ -128,6 +145,7 @@ export const auditPromptEnriched = (
         : 'Inappropriate real person content';
     const category: PromptTriggerCategory =
       inappropriateResult.type === 'minor' ? 'inappropriate_minor' : 'inappropriate_poi';
+    timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
       triggers: [{ category, message, matchedWord: inappropriateResult.matchedWord }],
@@ -136,21 +154,29 @@ export const auditPromptEnriched = (
   }
 
   // 4. NSFW blocklist check
-  for (const { word, regex } of blockedNSFWRegexLazy()) {
-    if (regex.test(prompt)) {
-      return {
-        blockedFor: [word],
-        triggers: [{ category: 'nsfw_blocklist', message: word, matchedWord: word }],
-        success: false,
-      };
+  const nsfwBlock = timer.time('nsfw_blocklist', () => {
+    for (const { word, regex } of blockedNSFWRegexLazy()) {
+      if (regex.test(prompt)) return word;
     }
+    return undefined;
+  });
+  if (nsfwBlock != null) {
+    timer.finish(prompt, negativePrompt);
+    return {
+      blockedFor: [nsfwBlock],
+      triggers: [{ category: 'nsfw_blocklist', message: nsfwBlock, matchedWord: nsfwBlock }],
+      success: false,
+    };
   }
 
   // 5. Profanity check (green domain only)
   if (checkProfanity) {
-    const profanityFilter = createProfanityFilter();
-    const profanityResults = profanityFilter.analyze(prompt);
+    const profanityResults = timer.time('profanity', () => {
+      const profanityFilter = createProfanityFilter();
+      return profanityFilter.analyze(prompt);
+    });
     if (profanityResults.isProfane) {
+      timer.finish(prompt, negativePrompt);
       return {
         blockedFor: profanityResults.matches,
         triggers: profanityResults.matches.map((word: string) => ({
@@ -163,6 +189,7 @@ export const auditPromptEnriched = (
     }
   }
 
+  timer.finish(prompt, negativePrompt);
   return { blockedFor: [], triggers: [], success: true };
 };
 // #endregion [enriched audit]
