@@ -3,6 +3,8 @@ import { createHash, timingSafeEqual } from 'crypto';
 import { oauthModel } from '$lib/server/oauth/model';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { mintUserSession } from '$lib/server/auth/session';
+import { touchAccount } from '$lib/server/auth/device';
+import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { parseBody } from '$lib/server/oauth/http';
@@ -91,6 +93,13 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
 
   const token = await mintUserSession(user);
 
+  // Device set (account switcher): the hub stashed its shared `.civitai.com` device id with the code at
+  // /authorize. Register this account under it and hand the SAME id back so the spoke writes it as its own
+  // civ-device — so e.g. civitai.red joins the SAME device set as civitai.com and the switcher matches across
+  // domains. Best-effort: a missing/redis-less device id just means no switcher entry, never a failed login.
+  const { deviceId } = await consumeOidcContext(code);
+  if (deviceId) await touchAccount(deviceId, userId);
+
   logOAuthEvent({
     type: 'token.issued',
     userId,
@@ -99,7 +108,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
     metadata: { grant_type: 'first_party_session' },
   });
 
-  // The spoke sets this as its session cookie via the existing setSessionCookie() — same civ-token shape
-  // the swap exchange produced, so existing sessions/format are unaffected.
-  return json({ token });
+  // The spoke sets `token` as its session cookie and `deviceId` as its civ-device (via setSessionCookie), so
+  // its session + device set match the rest of the family. Same civ-token shape the swap exchange produced.
+  return json({ token, deviceId });
 };

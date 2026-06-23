@@ -5,6 +5,7 @@ import { oauthServer } from '$lib/server/oauth/server';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
+import { getOrCreateDeviceId } from '$lib/server/auth/device';
 import { redirectUriMatches } from '$lib/server/oauth/redirect-uri';
 import { hasScope } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
@@ -23,7 +24,7 @@ const oauthError = (status: number, error: string, description?: string) =>
   json({ error, ...(description ? { error_description: description } : {}) }, { status });
 
 async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
-  const { request, url, locals, getClientAddress } = event;
+  const { request, url, locals, getClientAddress, cookies } = event;
   const method = request.method;
 
   const params: Record<string, string> =
@@ -162,11 +163,16 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
     return oauthError(status, (err as Error).name || 'server_error', (err as Error).message);
   }
 
-  // OIDC: stash nonce + auth_time keyed by the code so /token can mint the id_token. No-op unless the
-  // request carried a `nonce` (an OIDC "Sign in with Civitai" request).
+  // Stash code-keyed context for the exchange:
+  //  - OIDC nonce + auth_time → /token mints the id_token (no-op unless the request carried a `nonce`).
+  //  - FIRST-PARTY device id → /session hands the SAME hub `.civitai.com` device id to the spoke so its
+  //    civ-device joins ONE shared device set (the spoke can't read the `.civitai.com` cookie itself, and the
+  //    server-to-server /session can't see it either — so it has to ride the code from here). `getOrCreateDeviceId`
+  //    reads/rolls the hub's own device cookie on this browser nav. Third-party clients never touch the device set.
   await storeOidcContext(code.authorizationCode, {
     nonce: typeof params.nonce === 'string' ? params.nonce : undefined,
     authTime: Math.floor(Date.now() / 1000),
+    deviceId: isFirstParty ? getOrCreateDeviceId(cookies) : undefined,
   });
 
   logOAuthEvent({

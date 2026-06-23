@@ -14,12 +14,17 @@ import { hSetWithTTL, type EvalCapableClient } from './redis-atomic';
 // Mirrors the authorization-code storage in model.ts: a packed hash with sha256(code) as the field, so
 // raw codes never sit in Redis.
 
-type OidcCodeContext = { nonce?: string; authTime?: number };
+// `deviceId` rides the SAME code-keyed context (single-use, same TTL) for the FIRST-PARTY bridge: /authorize
+// (a browser nav that CAN read the hub's shared `.civitai.com` civ-device) stashes the family device id here,
+// and /session (a server-to-server call that CANNOT see that cookie) reads it back to register the account +
+// hand the SAME id to the spoke — so every domain shares one device set. First-party codes carry only
+// `deviceId` (no OIDC nonce); third-party OIDC codes carry nonce/authTime — the two flows never overlap.
+type OidcCodeContext = { nonce?: string; authTime?: number; deviceId?: string };
 
 const field = (code: string) => createHash('sha256').update(code).digest('hex');
 
 export async function storeOidcContext(code: string, ctx: OidcCodeContext): Promise<void> {
-  if (!ctx.nonce && !ctx.authTime) return;
+  if (!ctx.nonce && !ctx.authTime && !ctx.deviceId) return;
   const redis = getRedis();
   if (!redis) return;
   try {

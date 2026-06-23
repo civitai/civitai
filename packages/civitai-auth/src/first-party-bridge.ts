@@ -103,8 +103,10 @@ export function buildAuthorizeRedirect(opts: {
 }
 
 export type FirstPartyCallbackResult =
-  /** Success — set `token` as the session cookie and continue to `returnUrl`. */
-  | { token: string; returnUrl: string }
+  /** Success — set `token` as the session cookie and continue to `returnUrl`. `deviceId` (when the hub returns
+   * one) is the SHARED family device id; set it as the spoke's civ-device so its account switcher matches the
+   * rest of the family. */
+  | { token: string; returnUrl: string; deviceId?: string }
   /** Failure — redirect to `/login?error=<error>` (e.g. `oauth_state`, `oauth_exchange`, or the hub's error). */
   | { error: string; returnUrl: string };
 
@@ -148,8 +150,8 @@ export async function completeFirstPartyCallback(opts: {
       body: JSON.stringify({ code, code_verifier: stash.v, client_id: firstPartyClientId(origin) }),
     });
     if (res.ok) {
-      const data = (await res.json()) as { token?: string };
-      if (data.token) return { token: data.token, returnUrl };
+      const data = (await res.json()) as { token?: string; deviceId?: string };
+      if (data.token) return { token: data.token, returnUrl, deviceId: data.deviceId };
     }
   } catch {
     // network/hub error — fall through to the error result

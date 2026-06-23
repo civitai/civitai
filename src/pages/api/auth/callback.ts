@@ -50,7 +50,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // Set THIS domain's civ-token cookie (Domain derived from the serving host) and continue.
-  setSessionCookie(res, result.token, { host: req.headers.host });
+  // Set THIS domain's civ-token + civ-device (the shared family device id from the hub) so its session AND
+  // account switcher match the rest of the family. deviceCookie no-ops if the hub returned no id.
+  setSessionCookie(res, result.token, { host: req.headers.host, deviceCookie: result.deviceId });
   // One-shot marker so /api/auth/authorize can detect a session cookie that DIDN'T stick (loop recovery).
   const existing = res.getHeader('Set-Cookie');
   const all = Array.isArray(existing)

@@ -74,10 +74,10 @@ describe('buildAuthorizeRedirect', () => {
 describe('completeFirstPartyCallback', () => {
   const stashCookie = (v: string, s: string, r = '/dash') => JSON.stringify({ v, s, r });
 
-  it('exchanges the code at the hub /session endpoint and returns the token + returnUrl', async () => {
+  it('exchanges the code at the hub /session endpoint and returns the token + returnUrl + deviceId', async () => {
     const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
       ok: true,
-      json: async () => ({ token: 'civ.jwt' }),
+      json: async () => ({ token: 'civ.jwt', deviceId: 'dev-123' }),
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -86,7 +86,8 @@ describe('completeFirstPartyCallback', () => {
       query: { code: 'abc', state: 'st8' },
       bridgeCookieValue: stashCookie('verif', 'st8', '/dash'),
     });
-    expect(result).toEqual({ token: 'civ.jwt', returnUrl: '/dash' });
+    // deviceId rides back so the spoke can set the SHARED family device id as its own civ-device.
+    expect(result).toEqual({ token: 'civ.jwt', returnUrl: '/dash', deviceId: 'dev-123' });
 
     const [calledUrl, init] = fetchMock.mock.calls[0];
     expect(calledUrl).toBe(`${HUB}/api/auth/oauth/session`);
