@@ -858,13 +858,23 @@ describe('blocks.submitWorkflow', () => {
     expect(mockSubmitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('rejects when the App Blocks flag is disabled', async () => {
-    mockIsAppBlocksEnabled.mockResolvedValueOnce(false);
+  it('rejects when the App Blocks flag is disabled (kill-switch, even for a mod token)', async () => {
+    // The flag is now evaluated IN-BODY against the TOKEN subject (not the
+    // `enforceAppBlocksFlag` middleware's ctx.user), so it runs AFTER
+    // verifyBlockToken — but it is still a real kill-switch. Even with a valid
+    // MOD token, flag=off → UNAUTHORIZED "App Blocks not enabled", and the real
+    // submit never fires.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expect(mockVerifyBlockToken).not.toHaveBeenCalled();
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+    // The token IS verified (the flag gate is in-body now), but no spend/submit.
+    expect(mockVerifyBlockToken).toHaveBeenCalled();
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid body shape (zod validation)', async () => {
@@ -876,6 +886,166 @@ describe('blocks.submitWorkflow', () => {
         body: { kind: 'unknown', modelId: 7 } as never,
       })
     ).rejects.toThrow();
+  });
+
+  // ---- App-Blocks flag evaluated against the TOKEN subject (dev:live fix) ----
+  //
+  // ROOT CAUSE this proves fixed: `enforceAppBlocksFlag` evaluated the flag
+  // against `ctx.user` (the SESSION user). A dev:live / localhost call is
+  // block-token-authed with NO session cookie → `ctx.user` is undefined → the
+  // mod-segmented `app-blocks-enabled` flag global-evals false → 401, even when
+  // the token's subject is a moderator. fakeCtx() has `user: undefined`,
+  // reproducing exactly that path. With the fix the flag is evaluated against
+  // the TOKEN subject (resolved via getUserById), so a mod subject passes and a
+  // non-mod/anon subject is still blocked (no-widening).
+  //
+  // The mock here is FAITHFUL: it mirrors the live mod-segmented flag — ON iff
+  // the supplied user is a moderator; no user (global eval) → false.
+  describe('flag is evaluated against the block-token subject (no session)', () => {
+    function faithfulModSegmentedFlag() {
+      mockIsAppBlocksEnabled.mockImplementation(async (opts?: { user?: { isModerator?: boolean } }) =>
+        !!opts?.user?.isModerator
+      );
+    }
+
+    it('INVARIANT 1a — MOD token + flag-on: estimate passes the gate (reaches the cost step)', async () => {
+      faithfulModSegmentedFlag();
+      // ctx.user is undefined (dev:live), but the TOKEN subject (42) is a mod.
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      mockGetUserById.mockResolvedValue({
+        id: 42,
+        isModerator: true,
+        tier: 'free',
+        email: 'u@example.com',
+        username: 'u',
+      });
+      happyVersionLookup();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 12 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      // Got past the flag gate → the orchestrator whatif ran and produced a cost.
+      expect(result.snapshot.cost).toEqual({ total: 12 });
+      // The flag was evaluated against the TOKEN subject ({ user: <mod row> }),
+      // NOT ctx.user (undefined) — the dev:live fix.
+      expect(mockIsAppBlocksEnabled).toHaveBeenCalledWith({
+        user: expect.objectContaining({ id: 42, isModerator: true }),
+      });
+    });
+
+    it('INVARIANT 1a — MOD token + flag-on: submit passes the gate (real submit fires)', async () => {
+      faithfulModSegmentedFlag();
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      mockGetUserById.mockResolvedValue({
+        id: 42,
+        isModerator: true,
+        tier: 'free',
+        email: 'u@example.com',
+        username: 'u',
+      });
+      happyVersionLookup();
+      mockSysRedis.incrBy.mockResolvedValue(125);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+    });
+
+    it('INVARIANT 1b — NON-MOD token: flag false → 401, no submit (stays mod-only pre-GA)', async () => {
+      faithfulModSegmentedFlag();
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      // TOKEN subject resolves to a NON-mod user → flag false.
+      mockGetUserById.mockResolvedValue({
+        id: 42,
+        isModerator: false,
+        tier: 'free',
+        email: 'u@example.com',
+        username: 'u',
+      });
+      happyVersionLookup();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('INVARIANT 1c — ANON token (sub:anon): rejected before the flag, no submit', async () => {
+      faithfulModSegmentedFlag();
+      // sub:'anon' → parseSubjectUserId returns null → UNAUTHORIZED before the
+      // flag/mod resolve even runs (there is no resolvable user to evaluate).
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon', buzzBudget: 1000 }));
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      // Never resolved a user / evaluated the flag against one, never submitted.
+      expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('INVARIANT 4 — invalid token rejected before any flag/mod check', async () => {
+      faithfulModSegmentedFlag();
+      mockVerifyBlockToken.mockResolvedValue(null);
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('INVARIANT 2 — page-host path (session=mod AND token=mod): unaffected, still passes', async () => {
+      faithfulModSegmentedFlag();
+      // A real page-host call carries BOTH a session AND the token, same mod.
+      // After the change the gate uses the TOKEN subject (= the same mod) → pass.
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      mockGetUserById.mockResolvedValue({
+        id: 42,
+        isModerator: true,
+        tier: 'free',
+        email: 'u@example.com',
+        username: 'u',
+      });
+      happyVersionLookup();
+      mockSysRedis.incrBy.mockResolvedValue(125);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      // Session user present (page-host), same mod as the token subject.
+      const ctxWithSession = {
+        ...fakeCtx(),
+        user: { id: 42, isModerator: true, tier: 'free', username: 'u' },
+      };
+      const caller = blocksRouter.createCaller(ctxWithSession as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      // Gate used the TOKEN subject, not the session ctx.user.
+      expect(mockIsAppBlocksEnabled).toHaveBeenCalledWith({
+        user: expect.objectContaining({ id: 42, isModerator: true }),
+      });
+    });
+
+    it('pollWorkflow: MOD token + flag-on passes; non-mod token → 401', async () => {
+      faithfulModSegmentedFlag();
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      mockGetUserById.mockResolvedValue({ id: 42, isModerator: true });
+      mockGetWorkflow.mockResolvedValue({ id: 'wf_1', status: 'succeeded', cost: { total: 0 }, steps: [] });
+      let caller = blocksRouter.createCaller(fakeCtx() as never);
+      const ok = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+      expect(ok.snapshot.workflowId).toBe('wf_1');
+
+      // Non-mod subject → flag false → 401, orchestrator never read.
+      mockGetWorkflow.mockClear();
+      mockGetUserById.mockResolvedValue({ id: 42, isModerator: false });
+      caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+      expect(mockGetWorkflow).not.toHaveBeenCalled();
+    });
   });
 
   // ---- W3 flow A — buzz SPEND attribution wire-in ------------------------

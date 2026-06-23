@@ -156,6 +156,43 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
   }
 }
 
+/**
+ * App-Blocks flag gate for the BLOCK-TOKEN-authed runtime procs
+ * (estimate/submit/poll/cancelWorkflow, updateUserSettings).
+ *
+ * WHY THIS EXISTS — `enforceAppBlocksFlag` (the middleware) evaluates the flag
+ * against `ctx.user` (the request's SESSION user). These procs are
+ * `publicProcedure` authenticated by a BLOCK JWT, NOT a civitai.com session: a
+ * page-host call carries a session, but a `dev:live` (localhost) call is
+ * block-token-only and has NO session cookie → `ctx.user` is `undefined`. The
+ * live `app-blocks-enabled` flag is base-`false` with a `moderators` segment, so
+ * a no-user (global) eval can never match the segment → resolves `false` →
+ * UNAUTHORIZED "App Blocks not enabled", even when the token's subject IS a
+ * moderator. The flag must therefore be evaluated against the TOKEN's subject
+ * user, not `ctx.user`.
+ *
+ * The flag stays a real kill-switch (a flip still shuts these procs down) — we
+ * only fix the IDENTITY it's evaluated against. This does NOT widen access: the
+ * mod-segmented flag resolves `true` only for a moderator subject; a non-mod or
+ * anon (`sub:'anon'` → no resolvable user) subject still resolves `false` →
+ * blocked. `verifyBlockToken` (caller) already rejected invalid/expired/revoked
+ * tokens before this runs, and `assertViewerIsModerator` + every other belt
+ * (budget cap, daily Buzz cap, reserveBlockBuzzSpend, getOrchestratorToken,
+ * forced-SFW) are unchanged — this only swaps which identity the FLAG sees.
+ *
+ * Reads `isModerator` from the DB (the server-side user row), never a
+ * client-supplied value, so the segment match can't be spoofed.
+ */
+async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void> {
+  const row = await getUserById({ id: userId, select: { id: true, isModerator: true } });
+  // A vanished user → no SessionUser → global eval → flag false → blocked
+  // (fail-closed; the subsequent assertViewerIsModerator would also reject).
+  const user = row ? (row as unknown as SessionUser) : undefined;
+  if (!(await isAppBlocksEnabled({ user }))) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+  }
+}
+
 // ---- W10 page generation spend --------------------------------------------
 //
 // A model-slot token's ctx is `{ modelId, slotId }` (the install binds the
@@ -1786,7 +1823,9 @@ export const blocksRouter = router({
    * That's the gate — we don't need a second client-side ownership check.
    */
   pollWorkflow: publicProcedure
-    .use(enforceAppBlocksFlag)
+    // No `enforceAppBlocksFlag` middleware here: block-token procs are
+    // block-JWT-authed (no session for dev:live/localhost), so the flag must be
+    // evaluated against the TOKEN subject — see assertAppBlocksEnabledForTokenUser.
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -1806,6 +1845,8 @@ export const blocksRouter = router({
           message: 'workflow poll requires authenticated viewer',
         });
       }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsModerator(userId);
       const token = await getOrchestratorToken(userId, ctx);
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
@@ -1826,7 +1867,8 @@ export const blocksRouter = router({
    * still clears its card.
    */
   cancelWorkflow: publicProcedure
-    .use(enforceAppBlocksFlag)
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -1846,6 +1888,8 @@ export const blocksRouter = router({
           message: 'workflow cancel requires authenticated viewer',
         });
       }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsModerator(userId);
       const token = await getOrchestratorToken(userId, ctx);
       await cancelWorkflow({ workflowId: input.workflowId, token });
@@ -1860,7 +1904,8 @@ export const blocksRouter = router({
    * discovers whether budget is sufficient.
    */
   estimateWorkflow: publicProcedure
-    .use(enforceAppBlocksFlag)
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
     .mutation(async ({ ctx, input }) => {
       const claims = await verifyBlockToken(input.blockToken);
@@ -1905,6 +1950,8 @@ export const blocksRouter = router({
           message: 'estimate requires authenticated viewer',
         });
       }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsModerator(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
@@ -1997,7 +2044,8 @@ export const blocksRouter = router({
    * outcomes the block can recover from (e.g. by opening BuyBuzzModal).
    */
   submitWorkflow: publicProcedure
-    .use(enforceAppBlocksFlag)
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
     .mutation(async ({ ctx, input }) => {
       const claims = await verifyBlockToken(input.blockToken);
@@ -2046,6 +2094,8 @@ export const blocksRouter = router({
           message: 'workflow submit requires authenticated viewer',
         });
       }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsModerator(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
@@ -2446,7 +2496,8 @@ export const blocksRouter = router({
    * a "your saved override is invalid" failure at next generate.
    */
   updateUserSettings: publicProcedure
-    .use(enforceAppBlocksFlag)
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -2467,6 +2518,8 @@ export const blocksRouter = router({
           message: 'anon viewers cannot persist block settings',
         });
       }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsModerator(userId);
       const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
       if (!Number.isInteger(ctxModelId)) {
