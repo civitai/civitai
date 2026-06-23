@@ -459,36 +459,44 @@ describe('POST /api/v1/blocks/dev-token', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
     const arg = mockSign.mock.calls[0][0];
-    expect(arg.scopes).toEqual(['apps:storage:write', 'models:read:self']);
+    // user:read:self is FORCE-GRANTED post-clamp (dev:live viewer identity).
+    expect(arg.scopes).toEqual(['apps:storage:write', 'models:read:self', 'user:read:self']);
     expect(arg.scopes).not.toContain('social:tip:self');
     expect(arg.scopes).not.toContain('block:settings:read');
   });
 
-  it('STRIPS a requested scope that is NOT in the app approved set', async () => {
+  it('STRIPS a requested OTHER scope that is NOT in the app approved set (user:read:self is force-granted)', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
-    // App approves only models:read:self; the body requests user:read:self too.
+    // App approves only models:read:self; the body requests ai:write:budgeted too
+    // (which is NOT approved → stripped). user:read:self is force-granted post-
+    // clamp regardless of approval, so it is present even though the app did not
+    // approve it.
     mockAppBlockFindUnique.mockResolvedValueOnce(
       pageApp({ approvedScopes: ['models:read:self'] })
     );
     const { req, res } = authPost({
       appBlockId: 'apb_abc',
-      scopes: ['models:read:self', 'user:read:self'],
+      scopes: ['models:read:self', 'ai:write:budgeted'],
     });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
     const arg = mockSign.mock.calls[0][0];
-    expect(arg.scopes).toEqual(['models:read:self']);
+    // ai:write:budgeted stripped (not approved); user:read:self force-granted.
+    expect(arg.scopes).toEqual(['models:read:self', 'user:read:self']);
+    expect(arg.scopes).not.toContain('ai:write:budgeted');
   });
 
-  it('narrows scopes to the requested subset', async () => {
+  it('narrows scopes to the requested subset, but user:read:self is force-granted regardless of body narrowing', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     const { req, res } = authPost({
       appBlockId: 'apb_abc',
-      scopes: ['models:read:self'], // subset of approved
+      scopes: ['models:read:self'], // subset of approved — excludes user:read:self
     });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
-    expect(mockSign.mock.calls[0][0].scopes).toEqual(['models:read:self']);
+    // Body narrowing dropped everything but models:read:self; user:read:self is
+    // force-granted POST-clamp, so it survives the narrowing.
+    expect(mockSign.mock.calls[0][0].scopes).toEqual(['models:read:self', 'user:read:self']);
   });
 
   it('CAPS an over-cap requested budget to the dev cap', async () => {
@@ -523,7 +531,10 @@ describe('POST /api/v1/blocks/dev-token', () => {
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
-    expect(mockSign.mock.calls[0][0].scopes).toEqual(['apps:storage:read']);
+    // models:read:self dropped by the 0 OAuth ceiling; apps:storage:read survives
+    // (SKIP_OAUTH_CHECK); user:read:self is force-granted POST-clamp so it is
+    // present even though the ceiling would otherwise drop it.
+    expect(mockSign.mock.calls[0][0].scopes).toEqual(['apps:storage:read', 'user:read:self']);
   });
 
   it('STRIPS ai:write:budgeted when the personal key lacks AIServicesWrite', async () => {
@@ -540,5 +551,46 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(arg.buzzBudget).toBeUndefined();
     const out = res._getJSONData() as Record<string, unknown>;
     expect(out.buzzBudget).toBeUndefined();
+  });
+
+  it('PAGE-MONEY case: OAuth dev token for an app that approves ONLY ai:write:budgeted, with a credential lacking AIServicesWrite, still mints user:read:self', async () => {
+    // The exact root-cause scenario: the page-money scaffold manifest declares
+    // ONLY ai:write:budgeted, so user:read:self is never in approvedScopes and
+    // would never be minted by the clamp → /blocks/me 403 → dev:live falls back
+    // to an anonymous viewer. The OAuth credential here also lacks AIServicesWrite,
+    // so ai:write:budgeted is stripped by the spend ceiling. The token therefore
+    // carries NO spend scope, but user:read:self IS present (force-granted) so the
+    // harness can resolve the viewer identity.
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_NOSPEND_SESSION);
+    mockAppBlockFindUnique.mockResolvedValueOnce(
+      pageApp({ approvedScopes: ['ai:write:budgeted'] })
+    );
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const arg = mockSign.mock.calls[0][0];
+    // Identity present; no spend (credential lacked AIServicesWrite).
+    expect(arg.scopes).toEqual(['user:read:self']);
+    expect(arg.scopes).not.toContain('ai:write:budgeted');
+    expect(arg.buzzBudget).toBeUndefined();
+    // Self-bound subject = the caller — so /blocks/me only ever returns this user.
+    expect(arg.userId).toBe(OWNER_ID);
+    const out = res._getJSONData() as Record<string, unknown>;
+    expect(out.scopes).toEqual(['user:read:self']);
+  });
+
+  it('FORCE-GRANTS user:read:self even when the app approves ONLY ai:write:budgeted (personal-key page-money app)', async () => {
+    // Same page-money manifest, but via a personal key that CAN spend
+    // (AIServicesWrite). user:read:self is added regardless, alongside the spend
+    // scope the app approved.
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockAppBlockFindUnique.mockResolvedValueOnce(
+      pageApp({ approvedScopes: ['ai:write:budgeted'] })
+    );
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const arg = mockSign.mock.calls[0][0];
+    expect(arg.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
   });
 });
