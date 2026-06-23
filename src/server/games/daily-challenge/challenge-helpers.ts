@@ -210,6 +210,27 @@ export async function getEndedActiveChallengesFromDb(): Promise<ChallengeDetails
 }
 
 /**
+ * Gets recently-completed challenges that still have stuck REVIEW CollectionItems.
+ * Used by the reconciliation pass to re-process challenges that weren't fully settled.
+ * Returns challenges whose endsAt is within the last windowHours hours.
+ */
+export async function getChallengesToReconcileFromDb(windowHours = 48): Promise<ChallengeDetails[]> {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT c.id
+    FROM "Challenge" c
+    WHERE c.status = ${ChallengeStatus.Completed}::"ChallengeStatus"
+    AND c."endsAt" > now() - (${windowHours} || ' hours')::interval
+    AND EXISTS (
+      SELECT 1 FROM "CollectionItem" ci
+      WHERE ci."collectionId" = c."collectionId" AND ci.status = 'REVIEW'
+    )
+    ORDER BY c."endsAt" ASC
+  `;
+  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
+  return challenges.filter((c): c is ChallengeDetails => c !== null);
+}
+
+/**
  * Gets scheduled challenges that are ready to START (startsAt <= now).
  * These challenges should be activated.
  * Returns challenges ordered by startsAt ASC (oldest first).
