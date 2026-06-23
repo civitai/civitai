@@ -79,19 +79,24 @@ export function abbreviateNumber(
   const suffixes = ['', 'k', 'm', 'b', 't'];
   let index = 0;
 
-  while (value >= 1000 && index < suffixes.length - 1) {
-    value /= 1000;
+  // Abbreviate on magnitude, then re-apply the sign — negative scores (e.g. a
+  // reportsAgainst-heavy user) are valid and must abbreviate like positives.
+  const sign = value < 0 ? '-' : '';
+  let magnitude = Math.abs(value);
+
+  while (magnitude >= 1000 && index < suffixes.length - 1) {
+    magnitude /= 1000;
     index++;
   }
 
   if (floor) {
-    value = Math.floor(value);
+    magnitude = Math.floor(magnitude);
   }
 
   const formattedValue =
-    Math.round(value * Math.pow(10, decimals ?? 0)) / Math.pow(10, decimals ?? 0);
+    Math.round(magnitude * Math.pow(10, decimals ?? 0)) / Math.pow(10, decimals ?? 0);
 
-  return `${formattedValue}${suffixes[index]}`;
+  return `${sign}${formattedValue}${suffixes[index]}`;
 }
 
 export function getRandomInt(min: number, max: number) {

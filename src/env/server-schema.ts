@@ -247,6 +247,21 @@ export const serverSchema = z.object({
   // in behavior beyond the existing 15s deadline). Default 1500ms (1.5s) — ~65× the
   // ~23ms healthy p99, so it never clips a healthy write, but bounds a wedged one.
   REDIS_METRIC_WRITE_TIMEOUT_MS: z.coerce.number().default(1500),
+  // Upper bound (ms) on a single ClickHouse image-metrics read in the feed/SSR
+  // hot path (getImageMetricsObject). The @clickhouse/client default
+  // request_timeout is 30000ms, so a saturated/cold-cache-miss metric read would
+  // otherwise park ~30s and blow the SSR deadline (the surrounding try/catch
+  // CANNOT catch a hang). The CH metric query (entityMetricDailyAgg_v2) is
+  // genuinely slow — ~4.6s p50 / ~11s p99 — so on a cold cache miss the timeout
+  // fires and we fail SOFT to empty metrics, yielding TRANSIENT zeros. That
+  // self-heals: the un-aborted background fetch fills Redis ~4.6s later, so the
+  // next render serves real numbers. Callers already treat missing ids as null
+  // metrics. The durable fix is the slow CH query itself (out of scope here).
+  // Default 3000ms — snappy SSR over correctness on the first cold render.
+  // .int().positive() so a misconfigured 0 / negative fails fast at BOOT instead
+  // of silently disabling the guard (withTimeoutFallback passes through unbounded
+  // when ms<=0 → the exact ~30s hang this exists to prevent, with no signal).
+  CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
