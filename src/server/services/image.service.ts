@@ -2052,6 +2052,7 @@ export const getAllImages = async (
         // Visibility-gated linked-Model3D id (or null) for the "Posted to 3D
         // Model" chip on the feed-modal path. See the model3dId override below.
         model3dId?: number | null;
+        collectionItemStatus?: CollectionItemStatus | null;
       }
     > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, collectionItemNote, ...i }) => {
       const judgeScore = parseJudgeScore(collectionItemNote ?? null);

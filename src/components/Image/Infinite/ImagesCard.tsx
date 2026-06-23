@@ -168,7 +168,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                         POI
                       </Badge>
                     )}
-                    {(currentUser?.id === data.userId || isModerator) &&
+                    {(currentUser?.id === data.user.id || isModerator) &&
                       data.collectionItemStatus === CollectionItemStatus.REVIEW && (
                       <Tooltip label="Still being reviewed — not yet eligible for judging" withinPortal>
                         <Badge variant="filled" radius="xl" h={26} color="yellow">
