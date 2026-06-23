@@ -108,6 +108,28 @@ Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 clea
 - [ ] 🧹 **Drop the whole legacy-cookie path together once old cookies have aged out** (≥30d past cutover, when
   the legacy-auth count from Phase 4 hits ~zero): the hub `legacy-exchange` route + `legacy-cookie.ts` decode,
   the main app's `getLegacySession` / `maybeUpgradeLegacySession`, and the `clearLegacy*` cookie helpers.
+- [x] 🧹 **Deleted the dead `civ-token` AES endpoint** (`src/server/auth/civ-token.ts` +
+  `src/pages/api/auth/civ-token.ts`) — caller-less legacy swap helper. Kept `civToken.schema.ts`
+  (`EncryptedDataSchema` is still type-referenced by `AccountProvider.tsx`). `NEXTAUTH_SECRET` stays — it's the
+  active token-hash salt, not legacy-only (see H2).
+
+## Auth-authority consolidation (post-release architectural follow-ups)
+
+From the main-app audit — the same class as the dropped `getSessionUser` (auth-authority work the hub should
+own, currently in the main app). All **work today** (shared DB), so these are *relocations for ownership
+clarity*, not correctness fixes. Each mixes hub-authority writes with main-app side-effects (orchestrator cache
+busts, analytics), so the pattern is "move the write behind a hub endpoint; keep/emit the side-effect."
+
+- [ ] ⏭️ **OAuth client management → hub.** `src/server/routers/oauth-client.router.ts`
+  `create`/`update`/`rotateSecret`/`delete` write the shared `OauthClient` table (generate + hash client
+  secrets, cascade-revoke tokens) — and the hub has **no** client-management endpoints. The hub is the OAuth
+  provider; its client registry is provider authority. Reads (`getAll`/`getById`) + `OAuthAppsCard` UI stay.
+- [ ] ⏭️ **OAuth consent lifecycle → hub.** `oauth-consent.router.ts` `revokeApp` (deletes a user's tokens +
+  `OauthConsent` row) is grant-revocation authority. `setBuzzLimit` writes the hub-owned `OauthConsent` row — a
+  *buzz* concern living on hub state (layering smell either way).
+- [ ] ⏭️ **`VerificationToken` cleanup → hub.** `src/server/jobs/next-auth-cleanup.ts` cron deletes expired
+  `verificationToken` rows — a table the **hub** now owns (it creates them for email-login). Move the sweep to
+  the hub (or delete if the hub adds its own). Minor: its `deleteMany` is also not `await`ed.
 
 ## Deferred hardening (post-deploy, not blockers — see oauth-security-review-2026-06-22.md)
 
