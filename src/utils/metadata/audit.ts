@@ -339,7 +339,13 @@ const perAgeRegexes = ages.map((ageEntry) => {
     regexStr = regexStr.replace('{old}', `(${oldPattern})`);
     // Limit to 0-3 non-alphanumeric chars between parts
     regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
-    regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
+    // Zero-width word boundaries instead of consuming non-alnum runs. Logically
+    // equivalent for the boolean match ("preceded/followed by non-alnum or string
+    // edge" ≡ "not preceded/followed by an alnum") but, being zero-width, there is
+    // nothing for the engine to backtrack over a long non-Latin (CJK) run — this
+    // collapses the O(regexes × n²) catastrophic backtracking to linear. See
+    // audit-base.ts prepareWordRegex + audit-redos.test.ts for the incident.
+    regexStr = `(?<![a-zA-Z0-9])0*` + regexStr + `(?![a-zA-Z0-9])`;
     return new RegExp(regexStr, 'i');
   });
   return { age: ageEntry.age, regexes };
@@ -355,7 +361,8 @@ const ageRegexes = templates.map((template) => {
   regexStr = regexStr.replace('{years}', `(?<years>${yearsPattern})`);
   regexStr = regexStr.replace('{old}', `(?<old>${oldPattern})`);
   regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
-  regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
+  // Zero-width boundaries — see the perAgeRegexes note above (same ReDoS fix).
+  regexStr = `(?<![a-zA-Z0-9])0*` + regexStr + `(?![a-zA-Z0-9])`;
   return new RegExp(regexStr, 'i');
 });
 
@@ -411,7 +418,19 @@ function prepareWordRegexBody(word: string, pluralize = false, leet = true) {
 
 function prepareWordRegex(word: string, pluralize = false, leet = true) {
   const body = prepareWordRegexBody(word, pluralize, leet);
-  const regexStr = `([^a-zA-Z0-9]+|^)` + body + `([^a-zA-Z0-9]+|$)`;
+  // Zero-width word boundaries instead of CONSUMING non-alnum runs. The old form
+  // `([^a-zA-Z0-9]+|^)…([^a-zA-Z0-9]+|$)` had a greedy `[^a-zA-Z0-9]+` group on each
+  // side; run UNANCHORED over a long non-Latin (CJK/Japanese/…) prompt — one giant
+  // `[^a-zA-Z0-9]` run — across hundreds of word regexes, the leading group
+  // backtracks at every position → O(regexes × n²) → seconds of synchronous CPU
+  // (proven 1.6s–84s prod api event-loop pin = user-triggerable DoS / "504 wave").
+  // The lookbehind/lookahead are LOGICALLY EQUIVALENT for the boolean match
+  // ("preceded/followed by non-alnum or string edge" ≡ "not preceded/followed by an
+  // alnum") but, being zero-width, have nothing to backtrack over → linear. The
+  // proof is audit-matching-equivalence.test.ts (brute-force oracle, unchanged).
+  // NOTE: match[0] no longer includes the boundary char(s); callers run it through
+  // trimNonAlphanumeric (now a near-no-op) so the highlight path is unaffected.
+  const regexStr = `(?<![a-zA-Z0-9])` + body + `(?![a-zA-Z0-9])`;
   const regex = new RegExp(regexStr, 'i');
   return regex;
 }
