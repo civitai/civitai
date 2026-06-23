@@ -133,11 +133,29 @@ const NONMOD_SESSION = {
   subject: { type: 'apiKey', id: 43 },
   tokenScope: TokenScope.Full,
 };
+// OAuth token WITHOUT AppBlocksSubmit. `TokenScope.Full` deliberately EXCLUDES
+// AppBlocksSubmit (bit 25), so a "full" OAuth consent still fails the mint gate.
 const OAUTH_MOD_SESSION = {
   user: { id: OWNER_ID, isModerator: true },
   apiKeyId: 99,
   subject: { type: 'oauth', id: 'client_abc' },
   tokenScope: TokenScope.Full,
+};
+// OAuth token WITH AppBlocksSubmit + AIServicesWrite (the civitai-cli client
+// provisioned with both): mints AND keeps the budgeted-spend scope.
+const OAUTH_SUBMIT_SPEND_SESSION = {
+  user: { id: OWNER_ID, isModerator: true },
+  apiKeyId: 100,
+  subject: { type: 'oauth', id: 'civitai-cli' },
+  tokenScope: TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AIServicesWrite,
+};
+// OAuth token WITH AppBlocksSubmit but WITHOUT AIServicesWrite: mints (read/
+// estimate dev token) but the uniform spend ceiling STRIPS ai:write:budgeted.
+const OAUTH_SUBMIT_NOSPEND_SESSION = {
+  user: { id: OWNER_ID, isModerator: true },
+  apiKeyId: 101,
+  subject: { type: 'oauth', id: 'civitai-cli' },
+  tokenScope: TokenScope.UserRead | TokenScope.AppBlocksSubmit,
 };
 // A personal key deliberately scoped WITHOUT AIServicesWrite (e.g. read-only).
 const READONLY_MOD_SESSION = {
@@ -206,16 +224,56 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(mockSign).not.toHaveBeenCalled();
   });
 
-  it('403 when the key is OAuth-client-issued (personal key only)', async () => {
+  it('403 when an OAuth token LACKS the AppBlocksSubmit scope', async () => {
+    // TokenScope.Full excludes AppBlocksSubmit, so even a "full" OAuth consent
+    // is rejected at the mint gate (mirrors submit-version's OAuth gate).
     mockGetSession.mockResolvedValueOnce(OAUTH_MOD_SESSION);
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
-    expect((res._getJSONData() as { message: string }).message).toContain('personal API key');
+    const msg = (res._getJSONData() as { message: string }).message;
+    // Actionable: tells the dev both how to fix it (personal key) and the OAuth path.
+    expect(msg).toContain('personal API key');
+    expect(msg).toContain('App Blocks submit scope');
     expect(mockSign).not.toHaveBeenCalled();
     // Rejected before flag / db / sign — no leak.
     expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
     expect(mockAppBlockFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('200: OAuth token WITH AppBlocksSubmit + AIServicesWrite mints a spend-capable dev token (self-bound sub)', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_SPEND_SESSION);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign).toHaveBeenCalledTimes(1);
+    const arg = mockSign.mock.calls[0][0];
+    // Self-bound subject = the OAuth user (never settable from the body).
+    expect(arg.userId).toBe(OWNER_ID);
+    // AppBlocksSubmit gated the MINT; AIServicesWrite kept the spend scope.
+    expect(arg.scopes).toContain('ai:write:budgeted');
+    expect(arg.buzzBudget).toBe(50);
+    // Every other belt unchanged: forced SFW + page ctx.
+    expect(arg.maxBrowsingLevel).toBe(SFW);
+    expect(arg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
+  });
+
+  it('200: OAuth token WITH AppBlocksSubmit but WITHOUT AIServicesWrite mints, but the uniform spend ceiling STRIPS ai:write:budgeted', async () => {
+    // Proves AppBlocksSubmit is the MINT gate, NOT a spend grant — spend stays
+    // uniformly gated by AIServicesWrite for OAuth exactly as for personal keys.
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_NOSPEND_SESSION);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const arg = mockSign.mock.calls[0][0];
+    expect(arg.userId).toBe(OWNER_ID);
+    // Read/catalog/storage scopes survive; the budgeted-spend scope is gone.
+    expect(arg.scopes).toEqual(['apps:storage:read', 'models:read:self', 'user:read:self']);
+    expect(arg.scopes).not.toContain('ai:write:budgeted');
+    // No spend scope → no budget claim.
+    expect(arg.buzzBudget).toBeUndefined();
+    const out = res._getJSONData() as Record<string, unknown>;
+    expect(out.buzzBudget).toBeUndefined();
   });
 
   it('403 when the resolved user is NOT a moderator', async () => {
