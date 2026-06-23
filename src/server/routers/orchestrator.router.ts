@@ -7,6 +7,7 @@ import {
   generateFromGraph,
   getWorkflowStatusUpdate,
   queryGeneratedImageWorkflows2,
+  updateWorkflow,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { getWorkflow as clientGetWorkflow } from '@civitai/client';
@@ -29,7 +30,6 @@ import {
   workflowQuerySchema,
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import { updateWorkflow } from '~/server/services/orchestrator/common';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import {
@@ -44,7 +44,6 @@ import {
   patchWorkflows,
   patchWorkflowTags,
   queryWorkflows,
-  submitWorkflow,
 } from '~/server/services/orchestrator/workflows';
 import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
 import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
@@ -61,18 +60,13 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import {
-  createImageGen,
-  createImageGenStep,
-} from '~/server/services/orchestrator/imageGen/imageGen';
+  getPresetModelConfig,
+  pickAspectRatioSize,
+  submitPresetImageGen,
+  whatIfPresetImageGen,
+} from '~/server/services/orchestrator/preset-image-gen.service';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
-import {
-  commonAspectRatios,
-  nanoBananaProSizes,
-  seedreamSizes,
-  qwenSizes,
-  grokSizes,
-} from '~/server/common/constants';
 import type { SessionUser } from 'next-auth';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
@@ -166,66 +160,9 @@ const orchestratorGuardedProcedure = guardedProcedure
   .use(enforceGenerationVersion);
 const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
 
-// Model config for generic iterative generation (mirrors comics config)
-const ITERATE_MODEL_CONFIG: Record<
-  string,
-  {
-    engine: string;
-    baseModel: string;
-    versionId: number;
-    img2imgVersionId?: number;
-    maxReferenceImages: number;
-    sizes: { label: string; width: number; height: number }[];
-  }
-> = {
-  NanoBanana: {
-    engine: 'gemini',
-    baseModel: 'NanoBanana',
-    versionId: 2436219,
-    maxReferenceImages: 7,
-    sizes: nanoBananaProSizes,
-  },
-  Flux2: {
-    engine: 'flux2',
-    baseModel: 'Flux.2 D',
-    versionId: 2439067,
-    maxReferenceImages: 7,
-    sizes: commonAspectRatios,
-  },
-  Seedream: {
-    engine: 'seedream',
-    baseModel: 'Seedream',
-    versionId: 2470991,
-    maxReferenceImages: 7,
-    sizes: seedreamSizes,
-  },
-  OpenAI: {
-    engine: 'openai',
-    baseModel: 'OpenAI',
-    versionId: 2512167,
-    maxReferenceImages: 7,
-    sizes: [
-      { label: '1:1', width: 1024, height: 1024 },
-      { label: '3:2', width: 1536, height: 1024 },
-      { label: '2:3', width: 1024, height: 1536 },
-    ],
-  },
-  Qwen: {
-    engine: 'qwen',
-    baseModel: 'Qwen',
-    versionId: 2552908,
-    img2imgVersionId: 2558804,
-    maxReferenceImages: 3,
-    sizes: qwenSizes,
-  },
-  Grok: {
-    engine: 'grok',
-    baseModel: 'Grok',
-    versionId: 2738377,
-    maxReferenceImages: 7,
-    sizes: grokSizes,
-  },
-};
+// The iterative editor's default preset model. The model registry itself lives
+// in `preset-image-gen.service.ts` (shared with comics + the enqueued-panels job).
+const DEFAULT_ITERATE_MODEL = 'NanoBanana';
 
 export const orchestratorRouter = router({
   getVideoMetadata: orchestratorProcedure
@@ -662,19 +599,18 @@ export const orchestratorRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const modelConfig =
-        ITERATE_MODEL_CONFIG[input.baseModel ?? 'NanoBanana'] ?? ITERATE_MODEL_CONFIG.NanoBanana;
+      const modelConfig = getPresetModelConfig(input.baseModel, DEFAULT_ITERATE_MODEL);
       const effectiveVersionId =
         input.sourceImageUrl && modelConfig.img2imgVersionId
           ? modelConfig.img2imgVersionId
           : modelConfig.versionId;
 
-      const sizes = modelConfig.sizes;
-      const match =
-        sizes.find((s) => s.label === input.aspectRatio) ??
-        sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ??
-        sizes[0];
-      const { width: panelWidth, height: panelHeight } = match;
+      // Dimensions are returned to the client for the iteration UI; the graph
+      // derives the submitted dimensions from the aspect-ratio string.
+      const { width: panelWidth, height: panelHeight } = pickAspectRatioSize(
+        input.aspectRatio,
+        modelConfig.sizes
+      );
 
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
 
@@ -708,40 +644,21 @@ export const orchestratorRouter = router({
         }
       }
 
-      const cappedImages =
-        allImages.length <= modelConfig.maxReferenceImages
-          ? allImages
-          : allImages.slice(0, modelConfig.maxReferenceImages);
-
-      const tags = ctx.domain === 'green' ? ['iterate', 'green'] : ['iterate'];
-
-      const result = await createImageGen({
-        params: {
-          prompt: fullPrompt || '',
-          negativePrompt: '',
-          engine: modelConfig.engine,
-          baseModel: modelConfig.baseModel as any,
-          width: panelWidth,
-          height: panelHeight,
-          aspectRatio: input.aspectRatio,
-          workflow: 'txt2img',
-          sampler: 'Euler',
-          steps: 25,
-          quantity: input.quantity,
-          draft: false,
-          disablePoi: false,
-          priority: 'low',
-          sourceImage: null,
-          images: cappedImages,
-        },
-        resources: [{ id: effectiveVersionId, strength: 1 }],
-        tags,
-        tips: { creators: 0, civitai: 0 },
+      const result = await submitPresetImageGen({
+        prompt: fullPrompt || undefined,
+        aspectRatio: input.aspectRatio,
+        quantity: input.quantity,
+        images: allImages,
+        modelConfig,
+        versionIdOverride: effectiveVersionId,
         user: ctx.user! as SessionUser,
         token,
+        flags: ctx.features,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+        tags: ctx.domain === 'green' ? ['iterate', 'green'] : ['iterate'],
         isGreen: ctx.features.isGreen,
         allowMatureContent: ctx.domain === 'green' ? false : undefined,
-        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+        track: ctx.track,
       });
 
       return {
@@ -781,19 +698,11 @@ export const orchestratorRouter = router({
     .query(async ({ ctx, input }) => {
       try {
         const token = await getOrchestratorToken(ctx.user!.id, ctx);
-        const modelConfig =
-          ITERATE_MODEL_CONFIG[input.baseModel ?? 'NanoBanana'] ?? ITERATE_MODEL_CONFIG.NanoBanana;
-        const hasSourceImage = !!input.sourceImage;
+        const modelConfig = getPresetModelConfig(input.baseModel, DEFAULT_ITERATE_MODEL);
         const effectiveVersionId =
-          hasSourceImage && modelConfig.img2imgVersionId
+          input.sourceImage && modelConfig.img2imgVersionId
             ? modelConfig.img2imgVersionId
             : modelConfig.versionId;
-        const sizes = modelConfig.sizes;
-        const match =
-          sizes.find((s) => s.label === input.aspectRatio) ??
-          sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ??
-          sizes[0];
-        const { width, height } = match;
 
         // Build real images array for accurate pricing
         const images: { url: string; width: number; height: number }[] = [];
@@ -811,47 +720,18 @@ export const orchestratorRouter = router({
             images.push({ url: refEdgeUrl, width: ref.width, height: ref.height });
           }
         }
-        const cappedImages =
-          images.length <= modelConfig.maxReferenceImages
-            ? images
-            : images.slice(0, modelConfig.maxReferenceImages);
 
-        const step = await createImageGenStep({
-          params: {
-            prompt: '',
-            negativePrompt: '',
-            engine: modelConfig.engine,
-            baseModel: modelConfig.baseModel as any,
-            width,
-            height,
-            aspectRatio: input.aspectRatio,
-            workflow: 'txt2img',
-            sampler: 'Euler',
-            steps: 25,
-            quantity: input.quantity,
-            draft: false,
-            disablePoi: false,
-            priority: 'low',
-            sourceImage: null,
-            images: cappedImages,
-          },
-          resources: [{ id: effectiveVersionId, strength: 1 }],
-          tags: ctx.domain === 'green' ? ['iterate', 'green'] : ['iterate'],
-          tips: { creators: 0, civitai: 0 },
-          whatIf: true,
+        return await whatIfPresetImageGen({
+          aspectRatio: input.aspectRatio,
+          quantity: input.quantity,
+          images,
+          modelConfig,
+          versionIdOverride: effectiveVersionId,
           user: ctx.user! as SessionUser,
-        });
-
-        const workflow = await submitWorkflow({
           token,
-          body: {
-            steps: [step],
-            currencies: getAllowedAccountTypes(ctx.features, ['blue']) as any,
-          },
-          query: { whatif: true },
+          flags: ctx.features,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         });
-
-        return { cost: workflow.cost?.total ?? 0, ready: true };
       } catch (error) {
         console.error('Orchestrator getIterateCostEstimate failed:', error);
         return { cost: 0, ready: false };

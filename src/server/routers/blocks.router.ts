@@ -90,7 +90,10 @@ import { BuzzTypes } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
-import { createTextToImageStep } from '~/server/services/orchestrator/textToImage/textToImage';
+import {
+  buildGenerationContext,
+  createWorkflowStepsFromGraphInput,
+} from '~/server/services/orchestrator/orchestration-new.service';
 import { getUserById } from '~/server/services/user.service';
 import {
   guardedProcedure,
@@ -604,6 +607,47 @@ async function resolveModelIdFromBlockInstance(blockInstanceId: string): Promise
   const modelId = row.targetModelIds?.[0];
   if (!modelId) throw throwNotFoundError('Block install not found');
   return modelId;
+}
+
+// Replacement for the deleted legacy `createTextToImageStep`. Builds the single
+// txt2img workflow step from the block's generation-graph `input` (produced by
+// `buildTextToImageInput`) via the new generation-graph pipeline, WITHOUT
+// submitting — the router keeps driving its own `submitWorkflow` calls so the
+// App-Blocks belts (per-call buzz budget, cumulative daily Buzz cap, token-
+// derived maturity clamp, daily-boost autoclaim) wrap submit unchanged.
+//
+// Flags are intentionally NOT threaded into `buildGenerationContext` (passed
+// `undefined`): the legacy step never applied flag-driven adjustments (e.g. the
+// SDCPP 2-for-1 quantity bonus) either, so omitting them keeps the block's cost
+// profile identical to before. The resource entitlement belt still runs.
+async function createBlockTextToImageStep(opts: {
+  input: Record<string, unknown>;
+  user: SessionUser;
+  whatIf?: boolean;
+  isGreen?: boolean;
+}) {
+  const { externalCtx } = await buildGenerationContext(opts.user.tier ?? 'free', undefined, {
+    id: opts.user.id,
+    isModerator: opts.user.isModerator,
+  });
+  const steps = await createWorkflowStepsFromGraphInput({
+    input: opts.input,
+    externalCtx,
+    user: { id: opts.user.id, isModerator: opts.user.isModerator },
+    isWhatIf: opts.whatIf,
+    isGreen: opts.isGreen,
+  });
+  // The block path is plain txt2img with no snippet fan-out, so the graph
+  // always yields exactly one step. Fail closed if that invariant breaks rather
+  // than silently submitting a partial / multi-step workflow.
+  const step = steps[0];
+  if (!step || steps.length !== 1) {
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'expected a single generation step',
+    });
+  }
+  return step;
 }
 
 export const blocksRouter = router({
@@ -1929,8 +1973,9 @@ export const blocksRouter = router({
       const generateInput = buildTextToImageInput(input.body, {
         ...resolved,
         checkpointVersionId: checkpoint.versionId,
+        checkpointBaseModel: checkpoint.baseModel,
       });
-      const step = await createTextToImageStep({ ...generateInput, user, whatIf: true });
+      const step = await createBlockTextToImageStep({ input: generateInput, user, whatIf: true });
       const workflow = await submitWorkflow({
         token,
         body: {
@@ -2078,14 +2123,16 @@ export const blocksRouter = router({
       const generateInput = buildTextToImageInput(input.body, {
         ...resolved,
         checkpointVersionId: checkpoint.versionId,
+        checkpointBaseModel: checkpoint.baseModel,
       });
 
-      // Cost preflight. Build the step once, reuse for both whatif and submit
-      // so the orchestrator computes cost against the exact same step it'll
-      // execute. (Calling createTextToImageStep twice would risk a different
-      // seed defaulting, since the step creator fills seed via getRandomInt.)
-      const stepForCostCheck = await createTextToImageStep({
-        ...generateInput,
+      // Cost preflight. Build a whatIf step for the cost estimate, then a
+      // separate real step for submit below. Seed defaulting differs between the
+      // two (the graph fills a random seed when none is supplied), but that
+      // doesn't affect cost — the estimate is computed against the same
+      // resources/params the real submit uses.
+      const stepForCostCheck = await createBlockTextToImageStep({
+        input: generateInput,
         user,
         whatIf: true,
       });
@@ -2172,7 +2219,7 @@ export const blocksRouter = router({
           ip: ctx.ip,
         });
 
-        const step = await createTextToImageStep({ ...generateInput, user });
+        const step = await createBlockTextToImageStep({ input: generateInput, user, isGreen });
         const submitted = await submitWorkflow({
           token,
           body: {

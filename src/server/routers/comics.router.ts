@@ -33,17 +33,19 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
-import { createImageGen } from '~/server/services/orchestrator/imageGen/imageGen';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
-import {
-  getWorkflow,
-  submitWorkflow,
-  updateWorkflow,
-} from '~/server/services/orchestrator/workflows';
+import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  getPresetModelConfig,
+  pickAspectRatioSize,
+  PRESET_MODEL_CONFIG,
+  submitPresetImageGen,
+  whatIfPresetImageGen,
+  type PresetModelConfig,
+} from '~/server/services/orchestrator/preset-image-gen.service';
 import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
-import { createImageGenStep } from '~/server/services/orchestrator/imageGen/imageGen';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
@@ -61,7 +63,6 @@ import {
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
-import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
@@ -82,14 +83,7 @@ import {
   orchestratorNsfwLevelMap,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import {
-  commonAspectRatios,
-  nanoBananaProSizes,
-  seedreamSizes,
-  qwenSizes,
-  grokSizes,
-  EARLY_ACCESS_CONFIG,
-} from '~/server/common/constants';
+import { EARLY_ACCESS_CONFIG } from '~/server/common/constants';
 import { hasEntityAccess } from '~/server/services/common.service';
 import {
   createMultiAccountBuzzTransaction,
@@ -114,136 +108,34 @@ const comicProtectedProcedure = protectedProcedure.use(comicFlag);
 const comicPublicProcedure = publicProcedure.use(comicFlag);
 const comicModeratorProcedure = moderatorProcedure.use(comicFlag);
 
-// Multi-model configuration for comic panel generation
-const COMIC_MODEL_CONFIG: Record<
-  string,
-  {
-    engine: string;
-    baseModel: string;
-    versionId: number;
-    img2imgVersionId?: number;
-    maxReferenceImages: number;
-    sizes: { label: string; width: number; height: number }[];
-  }
-> = {
-  NanoBanana2: {
-    // V2 is dispatched via the ecosystem handler at
-    // `src/server/services/orchestrator/ecosystems/nano-banana.handler.ts`,
-    // which keys off the resource versionId to produce the v2 input shape.
-    engine: 'gemini',
-    baseModel: 'NanoBanana',
-    versionId: 2725610,
-    maxReferenceImages: 7,
-    sizes: nanoBananaProSizes,
-  },
-  NanoBanana: {
-    engine: 'gemini',
-    baseModel: 'NanoBanana',
-    versionId: 2436219,
-    maxReferenceImages: 7,
-    sizes: nanoBananaProSizes,
-  },
-  Flux2: {
-    engine: 'flux2',
-    baseModel: 'Flux.2 D',
-    versionId: 2439067,
-    maxReferenceImages: 7,
-    sizes: commonAspectRatios,
-  },
-  Seedream: {
-    engine: 'seedream',
-    baseModel: 'Seedream',
-    versionId: 2470991,
-    maxReferenceImages: 7,
-    sizes: seedreamSizes,
-  },
-  OpenAI: {
-    engine: 'openai',
-    baseModel: 'OpenAI',
-    versionId: 2512167,
-    maxReferenceImages: 7,
-    sizes: [
-      { label: '1:1', width: 1024, height: 1024 },
-      { label: '3:2', width: 1536, height: 1024 },
-      { label: '2:3', width: 1024, height: 1536 },
-    ],
-  },
-  OpenAI2: {
-    // gpt-image-2 — different API shape than v1/v1.5 (width/height, no
-    // background/seed). This iterate path runs through `createImageGen` →
-    // the legacy `imageGenConfig` ('openai' → openai.config.ts), NOT the
-    // ecosystem handler. The gpt-image-2 shape is resolved in
-    // `src/shared/orchestrator/ImageGen/openai.config.ts` based on the
-    // resource versionId.
-    engine: 'openai',
-    baseModel: 'OpenAI',
-    versionId: 2880272,
-    maxReferenceImages: 7,
-    sizes: [
-      { label: '1:1', width: 1024, height: 1024 },
-      { label: '3:2', width: 1536, height: 1024 },
-      { label: '2:3', width: 1024, height: 1536 },
-    ],
-  },
-  Qwen: {
-    engine: 'qwen',
-    baseModel: 'Qwen',
-    versionId: 2552908,
-    img2imgVersionId: 2558804,
-    maxReferenceImages: 3,
-    sizes: qwenSizes,
-  },
-  SeedreamLite: {
-    engine: 'seedream',
-    baseModel: 'Seedream',
-    versionId: 2720141,
-    maxReferenceImages: 7,
-    sizes: seedreamSizes,
-  },
-  Grok: {
-    engine: 'grok',
-    baseModel: 'Grok',
-    versionId: 2738377,
-    maxReferenceImages: 7,
-    sizes: grokSizes,
-  },
-};
+// Comic panel generation runs on the shared preset image-gen service
+// (`preset-image-gen.service.ts`), which owns the model registry, the
+// generation-graph input builder, and the submit/what-if wrappers. The aliases
+// and thin wrappers below keep the comics call sites reading naturally.
+const COMIC_MODEL_CONFIG = PRESET_MODEL_CONFIG;
 
 const DEFAULT_COMIC_MODEL = 'NanoBanana2';
 const DEFAULT_ASPECT_RATIO = '3:4';
 
 function getComicModelConfig(baseModel?: string | null) {
-  return (
-    COMIC_MODEL_CONFIG[baseModel ?? DEFAULT_COMIC_MODEL] ?? COMIC_MODEL_CONFIG[DEFAULT_COMIC_MODEL]
-  );
+  return getPresetModelConfig(baseModel, DEFAULT_COMIC_MODEL);
 }
 
-function getAspectRatioDimensions(
-  aspectRatio: string,
-  modelConfig?: (typeof COMIC_MODEL_CONFIG)[string]
-) {
+function getAspectRatioDimensions(aspectRatio: string, modelConfig?: PresetModelConfig) {
   const sizes = modelConfig?.sizes ?? COMIC_MODEL_CONFIG[DEFAULT_COMIC_MODEL].sizes;
-  const match = sizes.find((s) => s.label === aspectRatio);
-  return match ?? sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ?? sizes[0];
-}
-
-// Cap reference images to prevent API rejection (too many images)
-function capReferenceImages(
-  images: { url: string; width: number; height: number }[],
-  max: number
-): { url: string; width: number; height: number }[] {
-  if (images.length <= max) return images;
-  return images.slice(0, max);
+  return pickAspectRatioSize(aspectRatio, sizes);
 }
 
 /**
- * Single entry point for all comic image generation.
- * Every call to the orchestrator from the comics system should go through here.
+ * Single entry point for all comic image generation. Thin wrapper over the
+ * shared `submitPresetImageGen` that fixes the comics workflow tags and resolves
+ * currencies from the request's feature flags.
+ *
+ * `width`/`height` are accepted for call-site compatibility but unused — the
+ * graph derives dimensions from the ecosystem's aspect-ratio options.
  */
 async function submitComicGeneration({
   prompt,
-  width,
-  height,
   aspectRatio,
   quantity = 1,
   images,
@@ -262,7 +154,7 @@ async function submitComicGeneration({
   aspectRatio: string;
   quantity?: number;
   images?: { url: string; width: number; height: number }[] | null;
-  modelConfig: (typeof COMIC_MODEL_CONFIG)[string];
+  modelConfig: PresetModelConfig;
   versionIdOverride?: number;
   user: SessionUser;
   token: string;
@@ -271,48 +163,21 @@ async function submitComicGeneration({
   allowMatureContent?: boolean;
   track?: any; // Tracker class from createContext
 }) {
-  // Audit prompt before submitting to orchestrator (same as generateFromGraph)
-  await auditPromptServer({
+  return submitPresetImageGen({
     prompt,
-    negativePrompt: '',
-    userId: user.id,
-    isGreen: !!isGreen,
-    isModerator: user.isModerator,
-    track,
-  });
-
-  const versionId = versionIdOverride ?? modelConfig.versionId;
-  const cappedImages = images ? capReferenceImages(images, modelConfig.maxReferenceImages) : null;
-
-  const tags = isGreen ? ['comics', 'green'] : ['comics'];
-
-  return createImageGen({
-    params: {
-      prompt,
-      negativePrompt: '',
-      engine: modelConfig.engine,
-      baseModel: modelConfig.baseModel as any,
-      width,
-      height,
-      aspectRatio,
-      workflow: 'txt2img',
-      sampler: 'Euler',
-      steps: 25,
-      quantity,
-      draft: false,
-      disablePoi: false,
-      priority: 'low',
-      sourceImage: null,
-      images: cappedImages,
-    },
-    resources: [{ id: versionId, strength: 1 }],
-    tags,
-    tips: { creators: 0, civitai: 0 },
+    aspectRatio,
+    quantity,
+    images,
+    modelConfig,
+    versionIdOverride,
     user,
     token,
+    flags: features,
+    currencies: getAllowedAccountTypes(features, ['blue']),
+    tags: isGreen ? ['comics', 'green'] : ['comics'],
     isGreen,
     allowMatureContent,
-    currencies: getAllowedAccountTypes(features, ['blue']) as any,
+    track,
   });
 }
 
@@ -2119,8 +1984,6 @@ export const comicsRouter = router({
             ? modelConfig.img2imgVersionId
             : modelConfig.versionId;
 
-        const dims = getAspectRatioDimensions(aspectRatio, modelConfig);
-
         // Build images array for accurate pricing
         const allImages: { url: string; width: number; height: number }[] = [];
 
@@ -2170,47 +2033,19 @@ export const comicsRouter = router({
           }
         }
 
-        const cappedImages = capReferenceImages(allImages, modelConfig.maxReferenceImages);
-
-        const step = await createImageGenStep({
-          params: {
-            prompt: '',
-            negativePrompt: '',
-            engine: modelConfig.engine,
-            baseModel: modelConfig.baseModel as any,
-            width: dims.width,
-            height: dims.height,
-            aspectRatio,
-            workflow: 'txt2img',
-            sampler: 'Euler',
-            steps: 25,
-            quantity,
-            draft: false,
-            disablePoi: false,
-            priority: 'low',
-            sourceImage: null,
-            images: cappedImages.length > 0 ? cappedImages : null,
-          },
-          resources: [{ id: effectiveVersionId, strength: 1 }],
-          tags: ctx.features.isGreen ? ['comics', 'green'] : ['comics'],
-          tips: { creators: 0, civitai: 0 },
-          whatIf: true,
-          user: ctx.user! as SessionUser,
-        });
-
-        const workflow = await submitWorkflow({
+        // prompt intentionally omitted — whatIfPresetImageGen supplies a
+        // `cost-estimation` placeholder so validation passes.
+        return whatIfPresetImageGen({
+          aspectRatio,
+          quantity,
+          images: allImages.length > 0 ? allImages : null,
+          modelConfig,
+          versionIdOverride: effectiveVersionId,
+          user: ctx.user as SessionUser,
           token,
-          body: {
-            steps: [step],
-            currencies: getAllowedAccountTypes(ctx.features, ['blue']) as any,
-          },
-          query: { whatif: true },
+          flags: ctx.features,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         });
-
-        return {
-          cost: workflow.cost?.total ?? 0,
-          ready: true,
-        };
       } catch (error) {
         console.error('Comics getGenerationCostEstimate failed:', error);
         throw error;
@@ -2941,7 +2776,7 @@ export const comicsRouter = router({
       };
     }),
 
-  // Panels — generation via createImageGen (model determined by project)
+  // Panels — generation via the preset image-gen service (model determined by project)
   createPanel: comicProtectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(createPanelSchema)
