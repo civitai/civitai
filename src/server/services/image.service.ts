@@ -77,7 +77,7 @@ import {
   thumbnailCache,
   userImageVideoCountCache,
 } from '~/server/redis/caches';
-import type { RedisKeyTemplateSys } from '~/server/redis/client';
+import type { RedisKeyTemplateCache, RedisKeyTemplateSys } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
@@ -1209,6 +1209,17 @@ const imageFeedStatementTimeoutCounter = registerCounterWithLabels({
 const imageMetricsClickhouseTimeoutCounter = registerCounter({
   name: 'image_metrics_clickhouse_timeout_total',
   help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (served empty metrics)',
+});
+
+// Flag-ON (current-totals) read-path error signal. Incremented whenever the
+// point-view (`entityMetricCurrentTotals_v2`) read THROWS — distinct from the
+// timeout counter above. The flag-ON path fails soft (returns whatever Redis
+// gave us / {}), so without this a premature or broken flag flip (e.g. the
+// point view not yet created) would silently zero image counts site-wide; this
+// gives an alertable signal that PAGES instead. The Axiom log is kept too.
+const imageMetricsCurrentTotalsReadFailedCounter = registerCounter({
+  name: 'image_metrics_current_totals_read_failed_total',
+  help: 'fetchImageMetricsFromCurrentTotals point-view read threw (flag-ON path; served whatever the Redis cache had)',
 });
 
 export const getAllImages = async (
@@ -4653,23 +4664,119 @@ const IMAGE_CURRENT_TOTALS_TABLE = 'entityMetricCurrentTotals_v2';
 // Same shape MetricService.fetch('Image', ids) returns: { [imageId]: { [metricType]: total } }.
 type ImageMetricMap = Record<number, Partial<Record<string, number>>>;
 
-// Flag-ON read path: read current totals directly from the point-lookup table
-// via the civitai clickhouse client. A plain SELECT — no GROUP BY / argMax /
-// UNION at read time. Returns the SAME map shape as MetricService.fetch so the
-// shaping loop in getImageMetricsObject is identical for both paths. On ANY
-// error returns {} (fail-soft; never throws) so the caller's timeout/fallback
-// contract is preserved.
+// Cache layer shared with the flag-OFF MetricService path. We MUST mirror
+// MetricService's cache contract EXACTLY so the two paths read/write the same
+// `metrics:Image:<id>` hashes (73M live keys) and a flag flip does NOT cold-start
+// the cache. Confirmed against event-engine-common/services/metrics.ts +
+// utils/cache-keys.ts + utils/query-utils.ts:
+//   - key:   `metrics:Image:<id>`        (cacheKeys.metric)
+//   - found: hSet(key, { metricType: String(value), ... }) + expire(key, CACHE_TTL)
+//            i.e. hSetEx(key, fields, CACHE_TTL); values stored as STRINGS, read
+//            back via parseInt(value, 10).
+//   - miss:  hSet(key, { notFound: '1' }) + expire(key, MISS_CACHE_TTL).
+//            A hash whose only field is notFound:'1' = "known absent" → null.
+// MetricService is handed the raw civitai `redis` client (image.service builds
+// `new MetricService(clickhouse, redis as unknown as IRedisClient)`), so it uses
+// the RAW (plain-string) hGetAll / hSet — NOT the `redis.packed.*` helpers. We do
+// the same here (raw redis ops) so the stored bytes are byte-compatible.
+const IMAGE_METRICS_CACHE_TTL = 12 * 60 * 60; // mirrors MetricService CACHE_TTL (12h)
+const IMAGE_METRICS_MISS_CACHE_TTL = 5 * 60; // mirrors MetricService MISS_CACHE_TTL (5m)
+const imageMetricsCacheKey = (id: number) => `metrics:Image:${id}`;
+
+// Parse one `metrics:Image:<id>` hash exactly as MetricService does:
+// notFound:'1' (sole field) → null (known-absent); otherwise parseInt each field
+// (skipping notFound). An empty/absent hash ({}) → undefined (a real cache MISS).
+const parseImageMetricHash = (
+  hash: Record<string, string> | null | undefined
+): Partial<Record<string, number>> | null | undefined => {
+  if (!hash) return undefined;
+  const entries = Object.entries(hash);
+  if (entries.length === 0) return undefined; // cache miss — must hit the point view
+  if (hash.notFound === '1' && entries.length === 1) return null; // known-absent
+  const metrics: Partial<Record<string, number>> = {};
+  for (const [k, v] of entries) {
+    if (k === 'notFound') continue;
+    metrics[k] = parseInt(v, 10);
+  }
+  return metrics;
+};
+
+// Flag-ON read path: Redis read-through (shared with the flag-OFF MetricService
+// path) whose COLD-MISS backend is the cheap point-lookup table
+// `entityMetricCurrentTotals_v2` instead of the heavy aggregating view. This is
+// the whole point of the rework: when the flag flips, ~88% of reads stay served
+// from the SAME `metrics:Image:<id>` cache (no cold-start), and only the ~12%
+// cache-miss tail falls through to ClickHouse — now to the cheap point view.
+//
+// Steps mirror MetricService.fetch: (1) batch hGetAll the cache; (2) collect
+// misses — if none, ZERO ClickHouse calls; (3) query the point view for misses
+// only; (4) write the results back to the cache in MetricService's exact format
+// so the cache stays shared/compatible. Returns the SAME map shape as
+// MetricService.fetch. On ANY Redis or ClickHouse error, fails soft (returns
+// whatever was read, or {}) — never throws — preserving the caller's
+// timeout/fallback contract.
+//
+// NOTE (v1 tradeoff): no per-id stampede LOCK (MetricService heartbeats a
+// `metrics:lock:Image:<id>`). Point-view reads are cheap (a plain point lookup,
+// not the heavy GROUP BY/argMax view), so a thin read-through + write-back
+// without the lock is acceptable here; under a cache-cold burst many pods may
+// briefly re-query the SAME ids, but each query is light. Revisit if the point
+// view shows stampede pressure.
 const fetchImageMetricsFromCurrentTotals = async (ids: number[]): Promise<ImageMetricMap> => {
   if (!ids.length) return {};
-  if (!clickhouse) return {};
+  const uniqueIds = [...new Set(ids)];
+  const map: ImageMetricMap = {};
+
+  // Step 1 + 2: read `metrics:Image:<id>` from Redis; assemble hits, collect misses.
+  let cacheMisses: number[] = uniqueIds;
   try {
-    // Build via the $query tagged template's value formatting (formatSqlType):
-    // a number[] interpolates to a comma-joined list, so `IN (${ids})` is safe
-    // for our numeric ids. The metric-type list is a fixed compile-time constant
-    // (no user input) inlined as a quoted SQL literal list. Table name is a
-    // constant. No user-controlled string reaches the query text.
+    const cacheResults = await Promise.all(
+      uniqueIds.map((id) =>
+        // Raw (plain-string) hGetAll — same as MetricService. Cast: the literal
+        // `metrics:Image:<id>` key is not in REDIS_KEYS' template type (Metric
+        // service casts the whole client likewise).
+        redis.hGetAll<string>(imageMetricsCacheKey(id) as RedisKeyTemplateCache)
+      )
+    );
+    const misses: number[] = [];
+    for (let i = 0; i < uniqueIds.length; i++) {
+      const parsed = parseImageMetricHash(cacheResults[i]);
+      if (parsed === undefined) misses.push(uniqueIds[i]); // cache miss
+      else if (parsed === null) continue; // known-absent → no metrics (null)
+      else map[uniqueIds[i]] = parsed; // cache hit
+    }
+    cacheMisses = misses;
+  } catch (e) {
+    // Redis read failed — fall through and treat ALL ids as misses (the point
+    // view is the source of truth), but never throw.
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'getImageMetrics current-totals cache read failed',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'clickhouse'
+    ).catch();
+    cacheMisses = uniqueIds;
+  }
+
+  // Step 2 (cont.): nothing missed → zero ClickHouse calls (the load fix).
+  if (!cacheMisses.length) return map;
+  if (!clickhouse) return map; // fail soft to whatever the cache gave us
+
+  // Step 3: query the cheap point view for the MISSES only. A plain SELECT — no
+  // GROUP BY / argMax / UNION. SQL/shape unchanged from the original PR.
+  let rows: { entityId: number; metricType: string; total: number }[];
+  try {
+    // Build via the $query tagged template's value formatting (formatSqlType): a
+    // number[] interpolates to a comma-joined list, so `IN (${ids})` is safe for
+    // our numeric ids. The metric-type list is a fixed compile-time constant (no
+    // user input) inlined as a quoted SQL literal list. Table name is a constant.
     const metricList = IMAGE_METRIC_TYPES.map((m) => `'${m}'`).join(', ');
-    const rows = await clickhouse.$query<{
+    rows = await clickhouse.$query<{
       entityId: number;
       metricType: string;
       total: number;
@@ -4677,15 +4784,15 @@ const fetchImageMetricsFromCurrentTotals = async (ids: number[]): Promise<ImageM
       SELECT entityId, metricType, total
       FROM ${IMAGE_CURRENT_TOTALS_TABLE}
       WHERE entityType = 'Image'
-        AND entityId IN (${ids})
+        AND entityId IN (${cacheMisses})
         AND metricType IN (${metricList})
     `;
-    const map: ImageMetricMap = {};
-    for (const { entityId, metricType, total } of rows) {
-      (map[entityId] ??= {})[metricType] = total;
-    }
-    return map;
   } catch (e) {
+    // Point-view read threw — distinct error signal so a broken/premature flag
+    // flip PAGES instead of silently zeroing counts. Fail soft to whatever the
+    // cache already gave us (do NOT write notFound markers — the miss is OUR
+    // failure, not a confirmed absence).
+    imageMetricsCurrentTotalsReadFailedCounter.inc();
     const error = e as Error;
     logToAxiom(
       {
@@ -4697,8 +4804,53 @@ const fetchImageMetricsFromCurrentTotals = async (ids: number[]): Promise<ImageM
       },
       'clickhouse'
     ).catch();
-    return {};
+    return map;
   }
+
+  // Assemble the miss results from the point view.
+  const fresh: ImageMetricMap = {};
+  for (const { entityId, metricType, total } of rows) {
+    (fresh[entityId] ??= {})[metricType] = total;
+  }
+  for (const id of cacheMisses) {
+    if (fresh[id]) map[id] = fresh[id];
+  }
+
+  // Step 4: write the miss results back to the SHARED cache in MetricService's
+  // EXACT format so the flag-OFF path reuses them (found → string fields +
+  // CACHE_TTL; no rows for an id → notFound:'1' + MISS_CACHE_TTL). Best-effort:
+  // a write failure must not fail the read.
+  try {
+    await Promise.all(
+      cacheMisses.map((id) => {
+        const key = imageMetricsCacheKey(id) as RedisKeyTemplateCache;
+        if (fresh[id]) {
+          const fields: Record<string, string> = {};
+          for (const [k, v] of Object.entries(fresh[id])) fields[k] = String(v);
+          // hSetEx == hSet(fields) + expire(ttl) (see MetricService.hSetEx).
+          return Promise.all([redis.hSet(key, fields), redis.expire(key, IMAGE_METRICS_CACHE_TTL)]);
+        }
+        return Promise.all([
+          redis.hSet(key, { notFound: '1' }),
+          redis.expire(key, IMAGE_METRICS_MISS_CACHE_TTL),
+        ]);
+      })
+    );
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'getImageMetrics current-totals cache write-back failed',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'clickhouse'
+    ).catch();
+  }
+
+  return map;
 };
 
 // Image metric counts are read from the watcher-fed `metrics:*` cache via
