@@ -18,6 +18,7 @@ import {
   type RecentEntry,
   type SelectedResource,
 } from '~/server/games/daily-challenge/challenge-helpers';
+import { promoteChallengeEntries } from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
 import {
   ChallengeReviewCostType,
@@ -628,38 +629,13 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     challengeDate: currentChallenge.date,
   });
 
-  // Handle empty modelVersionIds array: empty means "allow all models" (same as client-side logic)
-  // When modelVersionIds is populated, we check if the image has a matching resource
-  // When modelVersionIds is empty, we skip the resource check entirely (allow all)
-  const hasModelVersionRestriction = currentChallenge.modelVersionIds.length > 0;
-
-  const reviewedCount = await dbWrite.$executeRaw`
-    WITH source AS (
-      SELECT
-      i.id,
-      (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 as "isSafe",
-      ${
-        hasModelVersionRestriction
-          ? Prisma.sql`EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${currentChallenge.modelVersionIds}) AND ir."imageId" = i.id)`
-          : Prisma.sql`true`
-      } as "hasResource",
-      i."createdAt" >= ${currentChallenge.date} as "isRecent"
-      FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId"
-      WHERE ci."collectionId" = ${currentChallenge.collectionId}
-      AND ci.status = 'REVIEW'
-      AND i."nsfwLevel" != 0
-    )
-    UPDATE "CollectionItem" ci SET
-      status = CASE
-        WHEN "isSafe" AND "hasResource" AND "isRecent" THEN 'ACCEPTED'::"CollectionItemStatus"
-        ELSE 'REJECTED'::"CollectionItemStatus"
-      END,
-      "reviewedAt" = now(),
-      "reviewedById" = ${judgingConfig.userId}
-    FROM source s
-    WHERE s.id = ci."imageId";
-  `;
+  const reviewedCount = await promoteChallengeEntries({
+    collectionId: currentChallenge.collectionId,
+    allowedNsfwLevel,
+    modelVersionIds: currentChallenge.modelVersionIds,
+    challengeDate: currentChallenge.date,
+    reviewerId: judgingConfig.userId,
+  });
   log('Reviewed entries:', reviewedCount);
 
   // Notify users of rejection
