@@ -163,6 +163,39 @@ describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
     expect(ingestEvents).toHaveBeenCalledTimes(1);
   });
 
+  it('SERIALIZATION GUARD: a non-serializable `data` (circular ref) does NOT throw to the caller and still attempts the Axiom dual-write', async () => {
+    const { logToAxiom, ingestEvents } = await loadClient({
+      isProd: true,
+      axiomConfigured: true,
+      datastream: 'civitai-errors',
+    });
+
+    // Circular reference → JSON.stringify throws "Converting circular structure to JSON".
+    // (A BigInt value would throw "Do not know how to serialize a BigInt" the same way.)
+    const circular: MixedObject = { name: 'payment.webhook' };
+    circular.self = circular;
+
+    // The unconditional structured-stderr stringify must be contained: logToAxiom must
+    // not throw, so the hot-path caller (tRPC 500 handler / webhook / upload) is safe.
+    await expect(logToAxiom(circular)).resolves.toBeUndefined();
+
+    // The failure is contained, NOT silent: a stringify-safe fallback line is emitted.
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const fallback = errorSpy.mock.calls[0][0] as string;
+    expect(typeof fallback).toBe('string');
+    const parsed = JSON.parse(fallback);
+    expect(parsed.name).toBe('payment.webhook');
+    expect(typeof parsed._stringifyError).toBe('string');
+
+    // The serialization failure did not abort the function — the Axiom dual-write below
+    // still ran with the original (non-serialized) object.
+    expect(ingestEvents).toHaveBeenCalledTimes(1);
+    expect(ingestEvents).toHaveBeenCalledWith(
+      'civitai-errors',
+      expect.objectContaining({ name: 'payment.webhook', pod: 'pod-test' })
+    );
+  });
+
   it('DUAL-WRITE: still ingests to Axiom AND emits the stderr line when a client + datastream are configured', async () => {
     const { logToAxiom, ingestEvents } = await loadClient({
       isProd: true,
