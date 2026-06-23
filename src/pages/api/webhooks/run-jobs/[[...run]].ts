@@ -12,12 +12,15 @@ import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processing-resource-training-v2';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
+import { reconcileVaultStorage } from '~/server/jobs/reconcile-vault-storage';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
 import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
+import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
+import { bulkPayoutBlockAttributions } from '~/server/jobs/bulk-payout-block-attributions';
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { countReviewImages } from '~/server/jobs/count-review-images';
@@ -147,6 +150,7 @@ export const jobs: Job[] = [
   applyTagRules,
   // processCreatorProgramImageGenerationRewards,
   processVaultItems,
+  reconcileVaultStorage,
   clearVaultItems,
   reconcileWildcardSetsJob,
   auditWildcardSetCategoriesJob,
@@ -158,6 +162,8 @@ export const jobs: Job[] = [
   imagesCreatedEvents,
   updateCreatorResourceCompensation,
   confirmMutes,
+  confirmPendingBlockAttributions,
+  bulkPayoutBlockAttributions,
   checkImageExistence,
   fullImageExistence,
   rewardsAdImpressions,

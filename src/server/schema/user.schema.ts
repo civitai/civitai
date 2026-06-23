@@ -281,6 +281,11 @@ export const userSettingsSchema = z.object({
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
+  // sha256 of the ToS body the user last accepted, per domain. Compared against
+  // the current body hash to decide whether to re-prompt (see useToSUpdateModal).
+  tosAcceptedHash: z.string().optional(),
+  tosGreenAcceptedHash: z.string().optional(),
+  tosRedAcceptedHash: z.string().optional(),
   preferredFiatCurrency: z.string().optional(),
 });
 
@@ -304,6 +309,9 @@ export const setUserSettingsInput = z.object({
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
+  tosAcceptedHash: z.string().optional(),
+  tosGreenAcceptedHash: z.string().optional(),
+  tosRedAcceptedHash: z.string().optional(),
   preferredFiatCurrency: z.string().optional(),
 });
 

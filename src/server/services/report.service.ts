@@ -34,9 +34,12 @@ import {
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { moderationActionEmail } from '~/server/email/templates';
+import { logToAxiom } from '~/server/logging/client';
 import { addTagVotes } from '~/server/services/tag.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { getBaseUrl } from '~/server/utils/url-helpers';
 import {
   AppealStatus,
   BuzzAccountType,
@@ -120,6 +123,8 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.BountyEntry]: 'bountyEntry',
   [ReportEntity.Chat]: 'chat',
   [ReportEntity.ComicProject]: 'comicProject',
+  [ReportEntity.Model3D]: 'model3d',
+  [ReportEntity.Model3DReview]: 'model3dReview',
 };
 
 const reportTypeConnectionMap = {
@@ -136,6 +141,8 @@ const reportTypeConnectionMap = {
   [ReportEntity.BountyEntry]: 'bountyEntryId',
   [ReportEntity.Chat]: 'chatId',
   [ReportEntity.ComicProject]: 'comicProjectId',
+  [ReportEntity.Model3D]: 'model3dId',
+  [ReportEntity.Model3DReview]: 'model3dReviewId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
@@ -246,6 +253,12 @@ export const createReport = async ({
           break;
         case ReportEntity.Post:
           await tx.post.update({ where: { id }, data: { nsfw: true } });
+          break;
+        case ReportEntity.Model3D:
+          // TODO(workstream-Q): wire Model3D tag-vote pipeline once Model3D
+          // rating-request infra exists. For now we just flip the nsfw flag
+          // mirror of Post.
+          await tx.model3D.update({ where: { id }, data: { nsfw: true } });
           break;
       }
     }
@@ -545,6 +558,21 @@ export async function createEntityAppeal({
   }
 }
 
+// Display label + (when the entity is publicly reachable) a link for an
+// appealed item, surfaced in the resolution email. Only Image is linkable today;
+// other entity types fall back to a label-only reference.
+function appealEntityLink(
+  entityType: EntityType,
+  entityId: number
+): { url?: string; label: string } {
+  switch (entityType) {
+    case EntityType.Image:
+      return { url: `${getBaseUrl()}/images/${entityId}`, label: `Image #${entityId}` };
+    default:
+      return { label: `${entityType} #${entityId}` };
+  }
+}
+
 export async function resolveEntityAppeal({
   ids,
   entityType,
@@ -575,6 +603,15 @@ export async function resolveEntityAppeal({
   });
 
   const approved = status === AppealStatus.Approved;
+
+  // Batch-fetch recipients once to avoid N+1 lookups inside the loop.
+  const recipientIds = [...new Set(appeals.map((a) => a.userId))];
+  const recipients = await dbRead.user.findMany({
+    where: { id: { in: recipientIds } },
+    select: { id: true, email: true, username: true },
+  });
+  const recipientMap = new Map(recipients.map((u) => [u.id, u]));
+
   for (const appeal of appeals) {
     switch (appeal.entityType) {
       case EntityType.Image:
@@ -655,6 +692,41 @@ export async function resolveEntityAppeal({
         resolvedMessage,
       },
     });
+
+  }
+
+  // Email each affected user once, listing every item they appealed in this
+  // resolution (linked when the entity has a public URL). Deduped by user, so a
+  // user who appealed several items at once gets a single email.
+  const appealsByUser = new Map<number, typeof appeals>();
+  for (const appeal of appeals) {
+    const list = appealsByUser.get(appeal.userId) ?? [];
+    list.push(appeal);
+    appealsByUser.set(appeal.userId, list);
+  }
+
+  for (const [recipientId, userAppeals] of appealsByUser) {
+    const recipient = recipientMap.get(recipientId);
+    if (!recipient?.email) continue;
+    try {
+      // Intentionally omit `resolvedMessage` from the email — moderator
+      // free-text is shown only in-app (notification above), never emailed,
+      // to avoid exposing potentially explicit/targeted prose. The TOS link in
+      // the email template provides the policy reference for rejected appeals.
+      await moderationActionEmail.send({
+        to: recipient.email,
+        username: recipient.username ?? 'User',
+        kind: approved ? 'appeal-approved' : 'appeal-rejected',
+        items: userAppeals.map((a) => appealEntityLink(a.entityType, a.entityId)),
+      });
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'appeal-email-failed',
+        message: (error as Error).message,
+        error,
+      });
+    }
   }
 
   return appeals;

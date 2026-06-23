@@ -62,7 +62,12 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types'
 import { isDefined } from '~/utils/type-guards';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import type { NormalizedStepMetadata } from '~/server/services/orchestrator';
-import type { BlobData } from '~/shared/orchestrator/workflow-data';
+import type {
+  AudioBlob,
+  BlobData,
+  ImageBlob,
+  VideoBlob,
+} from '~/shared/orchestrator/workflow-data';
 import clsx from 'clsx';
 
 // ---------------------------------------------------------------------------
@@ -660,7 +665,14 @@ function GeneratorTab({ challenge }: { challenge?: ChallengeDetail }) {
     useGetTextToImageRequests({ tags: [WORKFLOW_TAGS.IMAGE] }, { enabled: !!currentUser, ignoreFilters: true });
 
   const generatedMedia = useMemo(
-    () => data.flatMap((wf) => wf.succeededOutput.filter((x) => x.available)),
+    () =>
+      // Challenge submissions don't accept 3D models — strip PolyGen
+      // outputs here so the card grid stays 2D-only.
+      data.flatMap((wf) =>
+        wf.succeededOutput.filter(
+          (x): x is ImageBlob | VideoBlob | AudioBlob => x.available && x.type !== 'model3d'
+        )
+      ),
     [data]
   );
 
@@ -708,7 +720,9 @@ function GeneratorImageCard({
   image,
   challenge,
 }: {
-  image: BlobData;
+  // Challenges accept 2D submissions only; PolyGen outputs are filtered
+  // out upstream so this card never has to render a 3D model.
+  image: ImageBlob | VideoBlob | AudioBlob;
   challenge?: ChallengeDetail;
 }) {
   const stepParams = image.step.params;

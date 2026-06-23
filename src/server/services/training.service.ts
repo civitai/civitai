@@ -262,6 +262,13 @@ export async function getTrainingServiceStatus() {
   // Fail open: symmetric with the three getGenerationStatus fixes in this
   // PR. A sysRedis outage shouldn't crash the training status endpoint or
   // training submission. Falls back to the schema's '{}' default.
+  // Note on Buffer-vs-string asymmetry (see PR #2697): sysRedis.hGet is typed
+  // `string | null` but the HA/Sentinel client returns a Buffer for
+  // BLOB_STRING replies. `JSON.parse` accepts a Buffer in Node ≥18 (we run
+  // Node 20 — see Dockerfile), and the `?? '{}'` fallback only fires when
+  // `raw` is null/undefined (Buffer is truthy), so this site is correct
+  // under both client modes. The fix sweep that accompanies this comment
+  // touched the sites that did string-typed ops (=== 'true', .split, etc.).
   let raw: string | null | undefined;
   try {
     raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS);

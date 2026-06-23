@@ -130,7 +130,7 @@ export function MainContent({
           </SubNav>
         )}
         {!subNav && <RewardsBonusBanner />}
-        {announcements && <Announcements />}
+        {announcements && <Announcements className="mb-3" />}
         {announcements && <MatureContentMigrationAlert />}
         {children}
       </main>

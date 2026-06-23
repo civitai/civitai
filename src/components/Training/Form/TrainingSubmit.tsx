@@ -17,14 +17,21 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import { IconAlertTriangle, IconConfetti, IconCopy, IconPlus, IconX } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconConfetti,
+  IconCopy,
+  IconPlus,
+  IconRepeat,
+  IconX,
+} from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
 import type { TRPCDefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { capitalize, isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
@@ -86,6 +93,10 @@ import {
   trainingModelInfo,
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
+import {
+  fetchTrainingDataCaptions,
+  buildSamplePromptsFromCaptions,
+} from '~/components/Training/Form/trainingSamplePrompts';
 import { isDefined } from '~/utils/type-guards';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
@@ -137,6 +148,77 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       ? defaultRunVideo
       : defaultRun;
   const selectedRun = runs[selectedRunIndex] ?? fallbackRun;
+
+  // "Train Further": the source-epoch reference is persisted on the version because the
+  // in-memory training store doesn't survive reloads. Re-seed the run's continueFrom from
+  // it once per mount; if the user removes it afterwards, we don't re-add it.
+  const continueFromEpoch = thisTrainingDetails?.continueFromEpoch;
+  const hydratedContinueFrom = useRef(false);
+  useEffect(() => {
+    if (hydratedContinueFrom.current) return;
+    if (!features.trainingStepsPricing || !continueFromEpoch) return;
+    hydratedContinueFrom.current = true;
+    if (selectedRun.params.continueFrom !== continueFromEpoch.air) {
+      updateRun(model.id, thisMediaType, selectedRun.id, {
+        params: { continueFrom: continueFromEpoch.air },
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [continueFromEpoch]);
+
+  // Sample prompts live only in the in-memory store, so landing on Step 3 directly
+  // (refresh / deep-link, without passing through Step 2) leaves them empty. Re-seed them
+  // once per mount when the current run has none:
+  //  1. Prefer prompts already persisted on the version (a previously submitted/resumed run).
+  //  2. Otherwise pull the captions straight from the training-data zip and prefill from them
+  //     — the same source Step 2 would have used, just fetched on demand here.
+  const hydratedSamplePrompts = useRef(false);
+  useEffect(() => {
+    if (hydratedSamplePrompts.current) return;
+    const runEmpty = selectedRun.samplePrompts.every((p) => !p || p.trim() === '');
+    if (!runEmpty) return;
+
+    const persisted = thisTrainingDetails?.samplePrompts ?? [];
+    if (persisted.some((p) => p && p.trim().length > 0)) {
+      hydratedSamplePrompts.current = true;
+      updateRun(model.id, thisMediaType, selectedRun.id, {
+        samplePrompts: persisted,
+        ...(thisTrainingDetails?.samplesOverrides?.length && {
+          samplesOverrides: thisTrainingDetails.samplesOverrides,
+        }),
+        ...(thisTrainingDetails?.negativePrompt && {
+          negativePrompt: thisTrainingDetails.negativePrompt,
+        }),
+      });
+      return;
+    }
+
+    // No persisted prompts (fresh draft). If the image list is already in memory the
+    // AdvancedSettings prefill will handle it; only fetch the zip when it isn't.
+    if (imageList.length > 0 || !thisFile) return;
+    hydratedSamplePrompts.current = true;
+    fetchTrainingDataCaptions(thisModelVersion.id)
+      .then((captions) => {
+        if (!captions.length) return;
+        // Re-check by run id (not array index): the user may have started typing — or the
+        // runs list may have been reordered — while the zip downloaded.
+        const current = useTrainingImageStore
+          .getState()
+          [model.id]?.runs?.find((r) => r.id === selectedRun.id);
+        if (current && current.samplePrompts.some((p) => p && p.trim().length > 0)) return;
+        const { prompts, overrides } = buildSamplePromptsFromCaptions(captions, thisMediaType);
+        updateRun(model.id, thisMediaType, selectedRun.id, {
+          samplePrompts: prompts,
+          ...(thisMediaType === 'audio' && { samplesOverrides: overrides }),
+        });
+      })
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // "Train Further" continuation: the base model, engine, and steps are inherited from the
+  // source LoRA and can't be changed, so we hide those sections on the review page.
+  const isContinuation = !!continueFromEpoch || !!selectedRun.params.continueFrom;
 
   const allLabeled =
     thisMediaType === 'video' || thisMediaType === 'audio'
@@ -253,7 +335,19 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         flipAugmentation: selectedRun.params.flipAugmentation || false,
         shuffleTokens: selectedRun.params.shuffleCaption,
         keepTokens: selectedRun.params.keepTokens,
-        numRepeats: selectedRun.params.numRepeats,
+        // Steps-based pricing: send `steps` (primary length knob, drives pricing) +
+        // `batchSize` + sample params. Without the flag, send `numRepeats` only and let
+        // the orchestrator keep the legacy flat per-epoch pricing (epochs without steps).
+        // `continueFrom` is omitted from the quote (it doesn't affect step pricing and
+        // needs a server-side presigned URL).
+        ...(features.trainingStepsPricing
+          ? {
+              steps: selectedRun.params.targetSteps,
+              batchSize: selectedRun.params.trainBatchSize,
+              sampleCfgScale: selectedRun.params.sampleCfgScale,
+              sampleStrength: selectedRun.params.sampleStrength,
+            }
+          : { numRepeats: selectedRun.params.numRepeats }),
       } as any;
       return retData;
     }
@@ -290,6 +384,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     selectedRun.params.flipAugmentation,
     selectedRun.params.shuffleCaption,
     selectedRun.params.keepTokens,
+    selectedRun.params.targetSteps,
+    selectedRun.params.sampleCfgScale,
+    selectedRun.params.sampleStrength,
+    features.trainingStepsPricing,
   ]);
 
   const [debounced] = useDebouncedValue(whatIfData, 100);
@@ -529,6 +627,17 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 </Text>
               </Group>
             </Group>
+            {features.trainingStepsPricing &&
+              runs.some((r) => r.params.continueFrom) &&
+              continueFromEpoch && (
+                <Text size="sm" c="dimmed">
+                  This training continues from Epoch #{continueFromEpoch.epochNumber}
+                  {continueFromEpoch.sourceVersionName
+                    ? ` of ${continueFromEpoch.sourceVersionName}`
+                    : ''}{' '}
+                  instead of starting from the base model.
+                </Text>
+              )}
             <Text mt="md">Proceed?</Text>
           </Stack>
         ),
@@ -596,8 +705,18 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      // Transform params for AI Toolkit if needed
-      let finalParams: any = paramData;
+      // Transform params for AI Toolkit if needed.
+      // continueFrom / sample params are AI Toolkit-only: strip them from every other
+      // engine so they never persist into kohya/rapid/musubi trainingDetails (the run
+      // state can carry them, e.g. after switching engines on a continued training).
+      const {
+        continueFrom: _continueFrom,
+        sampleCfgScale: _sampleCfgScale,
+        sampleStrength: _sampleStrength,
+        saveEvery: _saveEvery,
+        ...legacyEngineParams
+      } = paramData;
+      let finalParams: any = legacyEngineParams;
       if (paramData.engine === 'ai-toolkit') {
         const ecosystem = getAiToolkitEcosystem(base, baseType);
         const modelVariant = getAiToolkitModelVariant(base as TrainingDetailsBaseModelList);
@@ -646,7 +765,17 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           flipAugmentation: paramData.flipAugmentation || false,
           shuffleTokens: paramData.shuffleCaption,
           keepTokens: paramData.keepTokens,
-          numRepeats: paramData.numRepeats,
+          // Steps-based pricing: persist steps/batchSize/sample params + continueFrom so the
+          // orchestrator bills per-step. Without the flag, keep numRepeats (legacy flat pricing).
+          ...(features.trainingStepsPricing
+            ? {
+                steps: paramData.targetSteps,
+                batchSize: paramData.trainBatchSize,
+                sampleCfgScale: paramData.sampleCfgScale,
+                sampleStrength: paramData.sampleStrength,
+                ...(paramData.continueFrom && { continueFrom: paramData.continueFrom }),
+              }
+            : { numRepeats: paramData.numRepeats }),
         };
       }
 
@@ -661,7 +790,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       // update the first one since it exists, or create for others
       const versionMutateData: ModelVersionUpsertInput = {
         ...(idx === 0 && { id: thisModelVersion.id }),
-        name: `V${idx + 1}`,
+        // Continued trainings keep their "(from epoch N)" name instead of the V1 rename
+        // so the source epoch stays visible in version lists.
+        name:
+          features.trainingStepsPricing && idx === 0 && paramData.continueFrom
+            ? thisModelVersion.name
+            : `V${idx + 1}`,
         modelId: model.id,
         baseModel: baseModelConvert,
         trainedWords: thisModelVersion.trainedWords ?? [],
@@ -679,6 +813,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           ...(negativePrompt && { negativePrompt }),
           staging,
           highPriority,
+          // Keep the source-epoch label honest: only persist it when this run actually
+          // continues (flag on, continueFrom set, AND the engine that supports it).
+          continueFromEpoch:
+            features.trainingStepsPricing &&
+            paramData.continueFrom &&
+            paramData.engine === 'ai-toolkit'
+              ? (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)
+                  ?.continueFromEpoch
+              : undefined,
         },
         uploadType: ModelUploadType.Trained,
       };
@@ -759,64 +902,70 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         />
       )}
       {/* )} */}
-      <Accordion
-        variant="separated"
-        defaultValue={'model-details'}
-        classNames={{
-          content: 'p-0',
-          item: 'overflow-hidden shadow-sm border-gray-3 dark:border-dark-4',
-          control: 'p-2',
-        }}
-      >
-        <Accordion.Item value="model-details">
-          <Accordion.Control>Model Details</Accordion.Control>
-          <Accordion.Panel>
-            <DescriptionTable
-              labelWidth="150px"
-              items={[
-                { label: 'Name', value: model.name },
-                { label: 'Type', value: thisTrainingDetails?.type ?? '(unknown)' },
-                {
-                  label: 'Files',
-                  value: thisNumImages || 0,
-                },
-                {
-                  label: 'Labels',
-                  value: thisMetadata?.numCaptions || 0,
-                },
-                {
-                  label: 'Label Type',
-                  value: capitalize(thisMetadata?.labelType ?? 'tag'),
-                },
-              ]}
-            />
-          </Accordion.Panel>
-        </Accordion.Item>
-      </Accordion>
+      {!isContinuation && (
+        <Accordion
+          variant="separated"
+          defaultValue={'model-details'}
+          classNames={{
+            content: 'p-0',
+            item: 'overflow-hidden shadow-sm border-gray-3 dark:border-dark-4',
+            control: 'p-2',
+          }}
+        >
+          <Accordion.Item value="model-details">
+            <Accordion.Control>Model Details</Accordion.Control>
+            <Accordion.Panel>
+              <DescriptionTable
+                labelWidth="150px"
+                items={[
+                  { label: 'Name', value: model.name },
+                  { label: 'Type', value: thisTrainingDetails?.type ?? '(unknown)' },
+                  {
+                    label: 'Files',
+                    value: thisNumImages || 0,
+                  },
+                  {
+                    label: 'Labels',
+                    value: thisMetadata?.numCaptions || 0,
+                  },
+                  {
+                    label: 'Label Type',
+                    value: capitalize(thisMetadata?.labelType ?? 'tag'),
+                  },
+                ]}
+              />
+            </Accordion.Panel>
+          </Accordion.Item>
+        </Accordion>
+      )}
 
-      <Switch
-        label={
-          <Group gap={4}>
-            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
-              Submit up to {maxRuns} training runs at once.
-              <br />
-              You can use different base models and/or parameters, all trained on the same dataset.
-              Each will be created as their own version.
-            </InfoPopover>
-            <Text inherit>Show Multi Training</Text>
-          </Group>
-        }
-        labelPosition="left"
-        checked={multiMode}
-        mt="md"
-        disabled={runs.length > 1}
-        onChange={(event) => setMultiMode(event.currentTarget.checked)}
-      />
+      {/* Multi-training doesn't apply when continuing from an existing epoch — that flow
+          extends a single specific run, so hide the toggle and the runs editor. */}
+      {!isContinuation && (
+        <Switch
+          label={
+            <Group gap={4}>
+              <InfoPopover size="xs" iconProps={{ size: 16 }}>
+                Submit up to {maxRuns} training runs at once.
+                <br />
+                You can use different base models and/or parameters, all trained on the same
+                dataset. Each will be created as their own version.
+              </InfoPopover>
+              <Text inherit>Show Multi Training</Text>
+            </Group>
+          }
+          labelPosition="left"
+          checked={multiMode}
+          mt="md"
+          disabled={runs.length > 1}
+          onChange={(event) => setMultiMode(event.currentTarget.checked)}
+        />
+      )}
 
       <Stack
         className={clsx(
           'sticky top-0 z-10 mb-[-5px] bg-white pb-[5px] dark:bg-dark-7',
-          !multiMode && 'hidden'
+          (!multiMode || isContinuation) && 'hidden'
         )}
       >
         <Group mt="md" justify="space-between" wrap="nowrap">
@@ -888,12 +1037,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <Divider />
       </Stack>
 
-      <ModelSelect
-        selectedRun={selectedRun}
-        modelId={model.id}
-        mediaType={thisMediaType}
-        numImages={thisNumImages}
-      />
+      {!isContinuation && (
+        <ModelSelect
+          selectedRun={selectedRun}
+          modelId={model.id}
+          mediaType={thisMediaType}
+          numImages={thisNumImages}
+        />
+      )}
 
       {prefersCaptions.includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'caption' &&
@@ -992,6 +1143,50 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       {formBaseModel && (
         <>
+          {features.trainingStepsPricing && !!selectedRun.params.continueFrom && (
+            <AlertWithIcon
+              icon={<IconRepeat size={16} />}
+              color="violet"
+              iconColor="violet"
+              size="md"
+              mt="sm"
+            >
+              <Group gap="sm" justify="space-between" wrap="nowrap">
+                <Text>
+                  Continuing training from{' '}
+                  <Text span fw={700}>
+                    {continueFromEpoch && continueFromEpoch.air === selectedRun.params.continueFrom
+                      ? `Epoch #${continueFromEpoch.epochNumber}${
+                          continueFromEpoch.sourceVersionName
+                            ? ` of ${continueFromEpoch.sourceVersionName}`
+                            : ''
+                        }`
+                      : selectedRun.params.continueFrom.split('/').pop()}
+                  </Text>
+                  {' — '}this run picks up from that checkpoint instead of the base model.
+                  {selectedRun.params.engine !== 'ai-toolkit' && (
+                    <Text span c="yellow.7" fw={600}>
+                      {' '}
+                      This requires the AI Toolkit engine and will be ignored with the current
+                      engine.
+                    </Text>
+                  )}
+                </Text>
+                <Button
+                  variant="subtle"
+                  color="red"
+                  size="compact-sm"
+                  onClick={() =>
+                    updateRun(model.id, thisMediaType, selectedRun.id, {
+                      params: { continueFrom: undefined },
+                    })
+                  }
+                >
+                  Remove
+                </Button>
+              </Group>
+            </AlertWithIcon>
+          )}
           <AdvancedSettings
             modelId={model.id}
             mediaType={thisMediaType}
@@ -1007,7 +1202,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <Switch
                   label={
                     <Group gap={4} wrap="nowrap">
-                      <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                      <InfoPopover size="xs" iconProps={{ size: 16 }}>
                         Jump to the front of the training queue and ensure that your training run is
                         uninterrupted.
                       </InfoPopover>
@@ -1052,7 +1247,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                   <Badge>
                     <Group gap={4} wrap="nowrap">
                       <Text inherit>Queue</Text>
-                      <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
+                      <InfoPopover size="xs" iconProps={{ size: 16 }} withinPortal>
                         <Text size="sm">How many jobs are in the queue before you</Text>
                       </InfoPopover>
                     </Group>
@@ -1073,7 +1268,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                   <Badge>
                     <Group gap={4} wrap="nowrap">
                       <Text inherit>ETA</Text>
-                      <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
+                      <InfoPopover size="xs" iconProps={{ size: 16 }} withinPortal>
                         <Text size="sm">How long your job is expected to run</Text>
                       </InfoPopover>
                     </Group>

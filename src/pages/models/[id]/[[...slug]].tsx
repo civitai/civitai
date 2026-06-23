@@ -277,6 +277,26 @@ export const getServerSideProps = createServerSideProps({
           ssg.model.getCollectionShowcase.prefetch({ id }),
           session ? ssg.user.getEngagedModelVersions.prefetch({ id }) : null,
           session ? ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id }) : null,
+          // App Blocks CLS fix: SSR-prefetch the slot's listForModel query so
+          // the client `useBlockSlot` useQuery hydrates with isLoading already
+          // false on first render — the slot reserves the right height from
+          // real data instead of flashing 0px → full frame (layout shift).
+          // The input MUST match useBlockSlot's exactly (slotId, modelId,
+          // modelType, modelNsfwLevel) or the React Query cache keys won't
+          // line up and hydration won't apply. Cheap: the blocks router gates
+          // on the appBlocks flag and returns [] when dark, and listForModel
+          // itself is the 60s-cached, indexed path. Fail-soft — a prefetch
+          // miss just falls back to the (now reserved-height) loading path.
+          model
+            ? ssg.blocks.listForModel
+                .prefetch({
+                  slotId: 'model.sidebar_top',
+                  modelId: id,
+                  modelType: model.type,
+                  modelNsfwLevel: model.nsfwLevel ?? undefined,
+                })
+                .catch(() => null)
+            : null,
         ].filter(Boolean)
       );
     }
@@ -577,9 +597,18 @@ export default function ModelDetailsV2({
     // Change the selected modelVersion based on querystring param
     if (loadingModel) return;
     const queryVersion = publishedVersions.find((v) => v.id === modelVersionId);
-    const hasSelected = publishedVersions.some((v) => v.id === selectedVersion?.id);
-    if (!hasSelected) setSelectedVersion(queryVersion ?? publishedVersions[0] ?? null);
-    if (selectedVersion && queryVersion !== selectedVersion) {
+    const current = publishedVersions.find((v) => v.id === selectedVersion?.id);
+    if (!current) {
+      // Selected version is no longer present (deep-link / removed version): fall back.
+      setSelectedVersion(queryVersion ?? publishedVersions[0] ?? null);
+    } else if (current !== selectedVersion) {
+      // Re-sync the held reference to the freshly-fetched object after a refetch. This
+      // replaces the query `onSuccess` removed in the RQ v5 migration; without it, the
+      // id-based effect below would compare a stale object ref and (with `router` in deps)
+      // loop on router.replace whenever a mod action invalidates model.getById.
+      setSelectedVersion(current);
+    }
+    if (selectedVersion && queryVersion?.id !== selectedVersion.id) {
       router.replace(
         getModelUrl({
           modelId: id,
@@ -863,7 +892,11 @@ export default function ModelDetailsV2({
                     withinPortal
                   >
                     <Menu.Target>
-                      <LegacyActionIcon className={classes.headerButton} variant="light">
+                      <LegacyActionIcon
+                        className={classes.headerButton}
+                        variant="light"
+                        aria-label="Model options"
+                      >
                         <IconDotsVertical size={20} />
                       </LegacyActionIcon>
                     </Menu.Target>
@@ -1311,16 +1344,7 @@ export default function ModelDetailsV2({
                 <AssociatedModels
                   fromId={model.id}
                   type="Suggested"
-                  versionId={selectedVersion.id}
                   ownerId={model.user.id}
-                  allowAIRecommendations={
-                    // Read from the live `model` query data (kept current by the
-                    // toggle mutation's getById cache update) rather than the
-                    // `selectedVersion` useState snapshot, so toggling AI recs on
-                    // re-enables the query without a page reload.
-                    model.modelVersions.find((v) => v.id === selectedVersion.id)?.meta
-                      ?.allowAIRecommendations ?? false
-                  }
                   label={
                     <Group gap={8} wrap="nowrap">
                       Suggested Resources{' '}

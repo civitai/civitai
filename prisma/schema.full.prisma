@@ -468,6 +468,8 @@ model User {
   articleReactions           ArticleReaction[]
   articles                   Article[]
   articleEngagements         ArticleEngagement[]
+  articleRatingReviewsSubmitted ArticleRatingReview[] @relation("ArticleRatingReviewSubmitter")
+  articleRatingReviewsResolved  ArticleRatingReview[] @relation("ArticleRatingReviewResolver")
   leaderboardResults         LeaderboardResult[]
   receivedReports            UserReport[]
   engagedImages              ImageEngagement[]
@@ -536,10 +538,34 @@ model User {
   generationPresets           GenerationPreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
 
+  // 3D Models
+  model3ds                    Model3D[]                       @relation("model3dCreator")
+  deletedModel3Ds             Model3D[]                       @relation("model3dDeletedBy")
+  model3dEngagements          Model3DEngagement[]
+  model3dReviews              Model3DReview[]
+
   // Comics
   comicProjects              ComicProject[]
   comicReferences            ComicReference[]
   comicProjectEngagements    ComicProjectEngagement[]
+
+  // App Blocks back-relations
+  blockUserSettings          BlockUserSettings[]
+  promotedPlatformBlocks     PlatformDefaultBlock[]          @relation("PlatformDefaultBlockPromoter")
+  blockUserSubscriptions     BlockUserSubscription[]
+  blockBuzzAttributionsAsPurchaser BlockBuzzAttribution[]    @relation("BlockBuzzAttributionPurchaser")
+  blockBuzzAttributionsAsAppOwner  BlockBuzzAttribution[]    @relation("BlockBuzzAttributionAppOwner")
+  blockAttributionPayouts          BlockAttributionPayout[]  @relation("BlockAttributionPayoutOwner")
+  blockSpendAttributionsAsSpender  BlockSpendAttribution[]   @relation("BlockSpendAttributionSpender")
+  blockSpendAttributionsAsAppOwner BlockSpendAttribution[]   @relation("BlockSpendAttributionAppOwner")
+  blockSubscriptionAttributionsAsPurchaser BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionPurchaser")
+  blockSubscriptionAttributionsAsAppOwner  BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppOwner")
+  publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
+  publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
+  blockScopeInvocations      BlockScopeInvocation[]
+  appUserScopeGrants         AppUserScopeGrant[]
+  appBlockReviews            AppBlockReview[]
+  appDevForgejoIdentity      AppDevForgejoIdentity?
 
   @@index([deletedAt])
 }
@@ -1324,6 +1350,8 @@ model Report {
   chat           ChatReport?
   comicProject   ComicProjectReport?
   automated      ReportAutomated?
+  model3d        Model3DReport?
+  model3dReview  Model3DReviewReport?
 }
 
 model ResourceReviewReport {
@@ -1513,6 +1541,10 @@ model Post {
   user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  model3dId      Int?
+  model3d        Model3D?      @relation(fields: [model3dId], references: [id], onDelete: SetNull)
+  model3dReviewId Int?         @unique
+  model3dReview   Model3DReview? @relation(fields: [model3dReviewId], references: [id], onDelete: SetNull)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   publishedAt    DateTime?
@@ -1539,6 +1571,7 @@ model Post {
   collectionItems CollectionItem[]
 
   @@index([modelVersionId])
+  @@index([model3dId])
   @@index([publishedAt])
 }
 
@@ -1668,6 +1701,8 @@ model Image {
   comicProjectHero        ComicProject[]         @relation("comicProjectHero")
   challengesCover     Challenge[]           @relation("ChallengeCoverImage")
   challengeWins       ChallengeWinner[]
+  model3dThumbnails   Model3D[]             @relation("model3dThumbnail")
+  model3dSources      Model3D[]             @relation("model3dSource")
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1832,6 +1867,28 @@ model ImageRatingRequest {
   @@id([imageId, userId])
 }
 
+model ArticleRatingReview {
+  id             Int          @id @default(autoincrement())
+  articleId      Int
+  article        Article      @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  userId         Int
+  user           User         @relation("ArticleRatingReviewSubmitter", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  resolvedAt     DateTime?
+  resolvedBy     Int?
+  resolver       User?        @relation("ArticleRatingReviewResolver", fields: [resolvedBy], references: [id], onDelete: SetNull)
+  currentLevel   Int
+  suggestedLevel Int
+  appliedLevel   Int?
+  userComment    String?
+  modComment     String?
+  status         ReportStatus @default(Pending)
+
+  @@index([status, createdAt])
+  @@index([userId])
+  @@index([articleId, createdAt(sort: Desc)])
+}
+
 model CollectionMetric {
   collection       Collection      @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   collectionId     Int
@@ -1858,6 +1915,7 @@ enum TagTarget {
   Article
   Bounty
   Collection
+  Model3D
 }
 
 enum TagType {
@@ -1902,6 +1960,7 @@ model Tag {
   tagsOnBounties       TagsOnBounty[]
   CollectionItem       CollectionItem[]
   tagsOnImage          TagsOnImageDetails[]
+  tagsOnModel3D        TagsOnModel3D[]
 
   @@unique([name])
 }
@@ -2177,8 +2236,620 @@ model OauthClient {
   updatedAt      DateTime       @default(now()) @updatedAt
   tokens         ApiKey[]
   consents       OauthConsent[]
+  appBlocks      AppBlock[]
+  buzzAttributions BlockBuzzAttribution[]
+  spendAttributions BlockSpendAttribution[] @relation("BlockSpendAttributionApp")
+  subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
 
   @@index([userId])
+}
+
+/// App Blocks — v1 substrate. Registry of all blocks across all apps (OauthClients).
+/// Application-generated TEXT primary key (prefixed ULID: `ab_<ulid>`).
+/// See docs/features/app-blocks.md for the architecture overview.
+model AppBlock {
+  id                 String    @id
+  appId              String    @map("app_id")
+  app                OauthClient @relation(fields: [appId], references: [id], onDelete: Cascade)
+  blockId            String    @map("block_id")
+  version            String
+  manifest           Json
+  status             String    @default("pending")
+  contentRating      String    @map("content_rating")
+  promotionEligible  Boolean   @default(false) @map("promotion_eligible")
+  healthStatus       String    @default("unknown") @map("health_status")
+  healthCheckedAt    DateTime? @map("health_checked_at") @db.Timestamptz(6)
+
+  // v2 substrate columns (NULL-safe for v1, included to avoid later migration)
+  renderMode         String    @default("iframe") @map("render_mode")
+  trustTier          String    @default("unverified") @map("trust_tier")
+  assetBundleUrl     String?   @map("asset_bundle_url")
+  assetBundleSha256  String?   @map("asset_bundle_sha256")
+
+  // H-2: scope set captured at moderator approval. Empty array = never
+  // been approved (Prisma doesn't support nullable arrays). Token issuance
+  // fails closed when the requested scope isn't in this set.
+  approvedScopes     String[]  @default([]) @map("approved_scopes")
+
+  // W2 apps-as-repos — Forgejo repo currently backing this block. Nullable
+  // because pre-W2 hackathon rows (apb_01KSD3NP23CQE4TMW14XTEFSNS) won't
+  // have these until W12 migration. Written by the git-push webhook
+  // (sha) + build-callback (deployedAt).
+  currentVersionSha         String?   @map("current_version_sha")
+  currentVersionDeployedAt  DateTime? @map("current_version_deployed_at") @db.Timestamptz(6)
+  repoUrl                   String?   @map("repo_url")
+
+  // F-E E3 marketplace browse metadata — platform-controlled, mod-assigned at
+  // review (NOT manifest/publisher fields, to avoid SEO gaming + the SDK/npm
+  // cross-repo dep). ADDITIVE + manually applied (migration
+  // 20260614120000_e3_marketplace_metadata; CNPG nvme0 does not auto-apply).
+  // NULL/false until applied — read only by the dark, mod-gated marketplace.
+  // `category` is free-text (taxonomy = MARKETPLACE_CATEGORIES const) so adding
+  // a category needs no migration.
+  category           String?   // mod-assigned marketplace category (free-text)
+  featured           Boolean   @default(false) // E4 curation: staff-pick rail
+  featuredOrder      Int?      @map("featured_order") // E4 curation: rail order
+
+  // F-E E5 marketplace screenshot gallery — publisher-supplied screenshots
+  // auto-discovered from the submitted bundle's `screenshots/` dir, validated
+  // (count/size/magic-bytes/name), uploaded to the bundle MinIO at approve, and
+  // recorded here as an array of { key, index, ext, contentType } entries.
+  // PUBLIC display data (served via the gated /api/blocks/screenshot/... route),
+  // but MOD-REVIEWED before approval. ADDITIVE + manually applied (migration
+  // 20260615120000_e5_screenshots; CNPG nvme0 does not auto-apply). NULL until
+  // applied — read ONLY by the dark, mod-gated getAppDetail (NOT listAvailable).
+  screenshots        Json?     // E5: [{ key, index, ext, contentType }]
+
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  platformDefault    PlatformDefaultBlock?
+  userSubscriptions  BlockUserSubscription[]
+  buzzAttributions   BlockBuzzAttribution[]
+  spendAttributions  BlockSpendAttribution[] @relation("BlockSpendAttributionAppBlock")
+  subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppBlock")
+  publishRequests    AppBlockPublishRequest[]
+  scopeInvocations   BlockScopeInvocation[]
+  userScopeGrants    AppUserScopeGrant[]
+  reviews            AppBlockReview[]
+
+  @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
+  // W1 audit C-3 fix: enforce one app per slug at the DB layer. The
+  // (appId, blockId) constraint above doesn't protect because each
+  // approve mints a fresh appId.
+  @@unique([blockId], map: "app_blocks_block_id_unique")
+  @@index([status], map: "app_blocks_status_idx")
+  // F-E E3 marketplace browse indexes (created by the manual E3 migration).
+  @@index([status, category], map: "app_blocks_status_category_idx")
+  @@index([featured, featuredOrder], map: "app_blocks_featured_order_idx")
+  @@map("app_blocks")
+}
+
+/// App Blocks marketplace review (F-E "marketplace" cluster). A parallel table
+/// to ResourceReview (which is hard-bound to model/version FKs) so we can carry
+/// star ratings for app blocks without bending the model-review shape.
+///
+/// 5-star rating (1..5, validated in the service). A blue-buzz reward fires
+/// ONCE per (user, app) on the first create. Self-reviews (app owner reviewing
+/// their own app) are rejected at the service layer AND excluded from the
+/// aggregate. `exclude`/`tosViolation` are moderator controls that keep abusive
+/// reviews out of the rating aggregate + the Bayesian marketplace sort.
+///
+/// ADDITIVE + MANUALLY APPLIED (CNPG nvme0 does not auto-apply; see the
+/// migration). NULL/empty until applied — read only by the dark, mod-gated
+/// marketplace + the gated review procedures.
+model AppBlockReview {
+  id           Int      @id @default(autoincrement())
+  appBlockId   String   @map("app_block_id")
+  appBlock     AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  userId       Int      @map("user_id")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating       Int // 1..5 (STARS — validated in the service)
+  recommended  Boolean  @default(true)
+  details      String?
+  exclude      Boolean  @default(false)
+  tosViolation Boolean  @default(false) @map("tos_violation")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // One review per (user, app).
+  @@unique([appBlockId, userId], map: "app_block_reviews_app_user_uniq")
+  // Aggregate read path (AVG/COUNT WHERE NOT exclude).
+  @@index([appBlockId, exclude], map: "app_block_reviews_app_agg_idx")
+  @@map("app_block_reviews")
+}
+
+/// W1 v0 publish request — every version of every app goes through the
+/// moderator review queue. The dev uploads a ZIP via /apps/submit (first
+/// version) or /apps/<slug>/submit-version (subsequent). civitai-web
+/// stores the bundle on ssd-minio-backups MinIO, extracts + validates the
+/// manifest, computes diff summaries, and inserts a row here in
+/// status='pending'. A mod approves or rejects via /apps/review.
+///
+/// On approve the platform (a) auto-creates the OauthClient if first
+/// version, (b) inserts/updates the app_blocks row, (c) commits the
+/// bundle contents to the Forgejo repo, which triggers the existing
+/// Tekton build → callback → apply chain.
+///
+/// Forgejo is invisible to developers at every step.
+model AppBlockPublishRequest {
+  id                    String    @id                                                       // pubreq_<ULID>
+  appBlockId            String?   @map("app_block_id")                                      // NULL while first request pending; FK on approve
+  appBlock              AppBlock? @relation(fields: [appBlockId], references: [id], onDelete: SetNull)
+  slug                  String                                                              // app slug; carries identity across the first-request lifecycle
+  submittedByUserId     Int       @map("submitted_by_user_id")
+  submittedBy           User      @relation("PublishRequestSubmitter", fields: [submittedByUserId], references: [id], onDelete: Cascade)
+  submittedAt           DateTime  @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  version               String                                                              // semver, e.g. "0.1.0"
+  manifest              Json                                                                // parsed block.manifest.json from the ZIP
+  bundleKey             String    @map("bundle_key")                                        // S3 key: app-block-bundles/<sha256>.zip
+  bundleSha256          String    @map("bundle_sha256")                                     // for integrity + dedup
+  bundleSizeBytes       BigInt    @map("bundle_size_bytes")
+  fileSummary           Json      @map("file_summary")                                      // { added, removed, changed } vs previous approved version
+  manifestDiffSummary   Json      @map("manifest_diff_summary")                             // field-level diff
+  status                String                                                              // 'pending' | 'approved' | 'rejected' | 'withdrawn'
+  reviewedByUserId      Int?      @map("reviewed_by_user_id")
+  reviewedBy            User?     @relation("PublishRequestReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  reviewedAt            DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  rejectionReason       String?   @map("rejection_reason")
+  approvalNotes         String?   @map("approval_notes")
+  forgejoCommitSha      String?   @map("forgejo_commit_sha")                                // populated on approve after Forgejo commit succeeds
+  deployState           String?   @map("deploy_state")                                      // Phase 2 build/deploy lifecycle (approved requests): building|deploying|live|failed
+  deployDetail          String?   @map("deploy_detail")                                      // human-readable detail, primarily the failure reason
+  deployUpdatedAt       DateTime? @map("deploy_updated_at") @db.Timestamptz(6)              // last deploy_state transition
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, submittedAt(sort: Desc)], map: "app_block_publish_requests_queue_idx")  // mod queue
+  @@index([appBlockId, submittedAt(sort: Desc)], map: "app_block_publish_requests_app_history_idx")
+  @@index([submittedByUserId, status], map: "app_block_publish_requests_my_submissions_idx")
+  @@index([slug, status], map: "app_block_publish_requests_slug_idx")
+  @@map("app_block_publish_requests")
+}
+
+/// Per-block-instance, per-user settings (viewer preferences).
+/// FK CASCADE on subscription deletion and GDPR-user-delete.
+///
+/// The FK points at BlockUserSubscription.block_instance_id which is a
+/// nullable + UNIQUE column populated for migrated per-model installs
+/// (preserves the historical `bki_*` id). Future per-model pinned
+/// subscriptions get a fresh `bki_*` id at upsert time. Blanket
+/// subscriptions have NULL block_instance_id; their viewer overrides
+/// aren't currently a thing (no UI surface), but if added later they'd
+/// allocate a block_instance_id on first override write.
+model BlockUserSettings {
+  blockInstanceId String                @map("block_instance_id")
+  subscription    BlockUserSubscription @relation(fields: [blockInstanceId], references: [blockInstanceId], onDelete: Cascade)
+  userId          Int                   @map("user_id")
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  settings        Json                  @default("{}")
+  updatedAt       DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@id([blockInstanceId, userId])
+  @@index([userId], map: "block_user_settings_user_idx")
+  @@map("block_user_settings")
+}
+
+/// Platform-default blocks (promoted to render on all eligible model pages).
+model PlatformDefaultBlock {
+  appBlockId        String   @id @map("app_block_id")
+  appBlock          AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Restrict)
+  slotId            String   @map("slot_id")
+  targetModelTypes  String[] @map("target_model_types")
+  minContentRating  String?  @map("min_content_rating")
+  maxContentRating  String?  @map("max_content_rating")
+  priority          Int      @default(500)
+  enabled           Boolean  @default(true)
+  promotedAt        DateTime @default(now()) @map("promoted_at") @db.Timestamptz(6)
+  promotedBy        Int?     @map("promoted_by")
+  promoter          User?    @relation("PlatformDefaultBlockPromoter", fields: [promotedBy], references: [id], onDelete: SetNull)
+
+  @@index([slotId, enabled], map: "platform_default_blocks_slot_enabled_idx")
+  @@index([slotId, priority], map: "platform_default_blocks_slot_priority_idx")
+  @@index([promotedBy], map: "platform_default_blocks_promoted_by_idx")
+  @@map("platform_default_blocks")
+}
+
+/// User-controlled install row — the ONE install primitive (since the
+/// 2026-05-30 kill_per_model_installs migration absorbed model_block
+/// _installs into this table).
+///
+/// Two scopes:
+///   - 'publisher_all_my_models': model owner. Joins on Model.userId
+///     at listForModel time. Can be blanket (target_model_ids=[]) or
+///     pinned to specific models (target_model_ids=[X,Y,...]).
+///   - 'viewer_personal': any viewer. Joins on the current viewer's
+///     userId. Always blanket in v0; per-model pinning UI is publisher
+///     -only by design.
+///
+/// Pinning shape:
+///   - blanket subscription:  slot_id=NULL, target_model_ids=[]
+///   - pinned subscription:   slot_id=<slot>, target_model_ids=[X]
+///   The pinned shape replaces what model_block_installs did — one row
+///   per (user, app, scope, slot, model) tuple.
+///
+/// block_instance_id is NULL for blanket subs (listForModel synthesises
+/// `bus_pub_<id>` / `bus_view_<id>` at SELECT time); non-NULL for the
+/// pinned shape (the migration preserved the historical `bki_*` id, and
+/// future pinned installs allocate a fresh one). Downstream tables
+/// (block_buzz_attribution, block_scope_invocations, block_user_settings)
+/// look up by this column.
+///
+/// Application-generated id (`bus_<ulid>`).
+model BlockUserSubscription {
+  id                 String   @id
+  userId             Int      @map("user_id")
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appBlockId         String   @map("app_block_id")
+  appBlock           AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  scope              String
+  targetModelTypes   String[] @map("target_model_types")
+  targetBaseModels   String[] @map("target_base_models")
+  /// NEW (kill_per_model_installs): pin this subscription to specific model
+  /// ids. Empty = blanket (applies to every model that passes the type +
+  /// base-model filters). Non-empty + non-NULL slot_id = the per-model
+  /// install path that model_block_installs used to carry.
+  targetModelIds     Int[]    @default([]) @map("target_model_ids")
+  /// NEW (kill_per_model_installs): when set, this subscription targets a
+  /// specific slot id (e.g. "model.sidebar_top"). When NULL, it applies to
+  /// every slot the manifest declares (the blanket-subscription shape).
+  slotId             String?  @map("slot_id")
+  /// NEW (kill_per_model_installs): copied from model_block_installs.pinned
+  /// _version. NULL = use the AppBlock's current approved manifest; semver
+  /// string = use that version's manifest from app_block_publish_requests.
+  pinnedVersion      String?  @map("pinned_version")
+  /// NEW (kill_per_model_installs): preserves the bki_* id from the migrated
+  /// install row so block_buzz_attribution, block_scope_invocations, and
+  /// block_user_settings continue to resolve. NULL for blanket
+  /// subscriptions (which synthesise bus_pub_* / bus_view_* on read).
+  blockInstanceId    String?  @unique @map("block_instance_id")
+  /// NEW (kill_per_model_installs): mirrors model_block_installs.installed
+  /// _by_user_id. For migrated rows this equals user_id by construction;
+  /// kept as a separate column so future "installed by mod / installed via
+  /// admin tooling" cases are expressible without schema change.
+  installedByUserId  Int?     @map("installed_by_user_id")
+  settings           Json     @default("{}")
+  enabled            Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  viewerSettings     BlockUserSettings[]
+
+  // Partial uniqueness — declared in the migration SQL (Prisma can't
+  // express partial unique indexes with array expressions inline). One
+  // blanket sub per (user, app, scope); one pinned sub per
+  // (user, app, scope, slot, target_model_ids[1]).
+
+  // Phase 0 author analytics: installs-over-time for an owned app block
+  // (app_block_id equality + created_at range). See migration
+  // 20260621120000_bus_app_block_created_analytics_idx.
+  @@index([appBlockId, createdAt(sort: Desc)], map: "bus_app_block_created_idx")
+  @@map("block_user_subscriptions")
+}
+
+/// Buzz purchase originated from inside an App Block. One row per
+/// (payment_transaction_id, app_block_id). Drives publisher revenue
+/// share — `app_owner_share_cents` is paid out to `app_owner_user_id`
+/// once `status` reaches `paid_out`. Rate card snapshot stored on the
+/// row (`rate_card_version`) so past attributions pay out under their
+/// own terms even if the active rate card later changes.
+///
+/// `blockInstanceId` is intentionally not an FK — see migration
+/// comments. Resolve via BlockRegistry.resolveBlockInstance.
+///
+/// Application-generated id (`bba_<ulid>`).
+model BlockBuzzAttribution {
+  id                     String   @id
+  userId                 Int      @map("user_id")
+  user                   User     @relation("BlockBuzzAttributionPurchaser", fields: [userId], references: [id], onDelete: Restrict)
+  buzzAmount             Int      @map("buzz_amount")
+  usdAmountCents         Int      @map("usd_amount_cents")
+  buzzType               String   @default("yellow") @map("buzz_type")
+
+  paymentProvider        String   @map("payment_provider")
+  paymentTransactionId   String   @map("payment_transaction_id")
+  buzzTransactionId      String?  @map("buzz_transaction_id")
+
+  appId                  String   @map("app_id")
+  app                    OauthClient @relation(fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId             String   @map("app_block_id")
+  appBlock               AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Restrict)
+  blockInstanceId        String   @map("block_instance_id")
+  scope                  String
+  modelId                Int?     @map("model_id")
+
+  rateCardVersion        String   @map("rate_card_version")
+  appOwnerShareCents     Int      @map("app_owner_share_cents")
+  platformShareCents     Int      @map("platform_share_cents")
+  providerFeeCents       Int      @map("provider_fee_cents")
+  appOwnerUserId         Int      @map("app_owner_user_id")
+  appOwner               User     @relation("BlockBuzzAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+
+  status                 String   @default("pending")
+  voidedReason           String?  @map("voided_reason")
+  // 'velocity' (or future triggers) — set when the confirm-pending cron
+  // parks a row in status='held' for manual review instead of confirming
+  // it. NULL on every non-held row.
+  holdReason             String?  @map("hold_reason")
+  heldAt                 DateTime? @map("held_at") @db.Timestamptz(6)
+  // 'purchase' (the normal forward attribution) or 'clawback' (a negative
+  // carry-forward row written when a refund lands AFTER the original was
+  // paid out). Clawback rows carry negative app_owner_share_cents /
+  // usd_amount_cents so the payout aggregator nets them out automatically.
+  entryType              String   @default("purchase") @map("entry_type")
+  attributedAt           DateTime @default(now()) @map("attributed_at") @db.Timestamptz(6)
+  confirmedAt            DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  voidedAt               DateTime? @map("voided_at") @db.Timestamptz(6)
+  paidOutAt              DateTime? @map("paid_out_at") @db.Timestamptz(6)
+  payoutId               String?  @map("payout_id")
+
+  @@unique([paymentTransactionId, appBlockId], map: "block_buzz_attribution_payment_app_uniq")
+  @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bba_publisher_dashboard_idx")
+  @@index([appBlockId, attributedAt(sort: Desc)], map: "bba_app_block_dashboard_idx")
+  @@index([paymentProvider, paymentTransactionId], map: "bba_payment_tx_idx")
+  @@map("block_buzz_attribution")
+}
+
+/// Idempotency ledger for publisher revenue-share payouts. One row per
+/// (app_owner_user_id, period_key) — a publisher is paid at most once per
+/// period. mintPayoutForOwner inserts here inside the same transaction
+/// that flips the contributing block_buzz_attribution rows to paid_out;
+/// the UNIQUE on (app_owner_user_id, period_key) is the no-double-pay
+/// guard (a racing/retried mint hits P2002 and no-ops).
+///
+/// This row records that the ledger was minted — it does NOT mean money
+/// moved. Actual disbursement (Tipalti / creator-program cash bank) is a
+/// separate, leadership-gated step that reads these rows.
+///
+/// Application-generated id (`bba_payout_<ulid>`).
+model BlockAttributionPayout {
+  id             String   @id
+  appOwnerUserId Int      @map("app_owner_user_id")
+  appOwner       User     @relation("BlockAttributionPayoutOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+  /// Caller-supplied period bucket, e.g. ISO week '2026-W22'. The
+  /// (owner, period) pair is the idempotency key.
+  periodKey      String   @map("period_key")
+  /// Net publisher share minted for this period (sum of contributing
+  /// confirmed rows' app_owner_share_cents, after clawbacks net out).
+  totalCents     Int      @map("total_cents")
+  /// Number of block_buzz_attribution rows flipped to paid_out by this mint.
+  rowCount       Int      @map("row_count")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([appOwnerUserId, periodKey], map: "block_attribution_payout_owner_period_uniq")
+  @@index([appOwnerUserId, createdAt(sort: Desc)], map: "bap_owner_created_idx")
+  @@map("block_attribution_payout")
+}
+
+/// W3 flow A — App Blocks buzz SPEND attribution (author bounty).
+///
+/// One row per block-initiated generation that spends the VIEWER's own
+/// Buzz balance. Distinct from BlockBuzzAttribution (which covers card
+/// PURCHASES from inside a block): a spend has no payment provider, no
+/// provider fee, no refund/clawback lifecycle.
+///
+/// ACCOUNTING: the author share is a PLATFORM-FUNDED BOUNTY paid on top
+/// of the spend, NOT a slice carved out of the viewer's Buzz. The viewer
+/// burned 100% of their Buzz on the generation (platform revenue); the
+/// author bounty is a separate platform expense sized as a percentage of
+/// the spend's USD value. There is therefore NO three-way conservation
+/// invariant (unlike the purchase table) — see the migration for detail.
+///
+/// Idempotent on (workflow_id, app_block_id): a re-poll / retry /
+/// re-submit of the same workflow is a no-op.
+///
+/// Application-generated id (`bsa_<ulid>`).
+model BlockSpendAttribution {
+  id                 String   @id
+  userId             Int      @map("user_id")
+  user               User     @relation("BlockSpendAttributionSpender", fields: [userId], references: [id], onDelete: Restrict)
+  buzzAmount         Int      @map("buzz_amount")
+  buzzType           String   @default("yellow") @map("buzz_type")
+  /// USD value of the Buzz burned (buzzDollarRatio 1000:1 -> cents).
+  /// Recorded for reporting — it is platform revenue, NOT a split pool.
+  grossValueCents    Int      @map("gross_value_cents")
+
+  /// Orchestrator workflow id — the idempotency anchor.
+  workflowId         String   @map("workflow_id")
+
+  appId              String   @map("app_id")
+  app                OauthClient @relation("BlockSpendAttributionApp", fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId         String   @map("app_block_id")
+  appBlock           AppBlock @relation("BlockSpendAttributionAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+  blockInstanceId    String   @map("block_instance_id")
+  modelId            Int?     @map("model_id")
+
+  /// TRACK-ONLY: no rate applied at write time. 'unrated' sentinel until the
+  /// payout-time backpay stamps the signed-off version.
+  rateCardVersion    String   @default("unrated") @map("rate_card_version")
+  /// 0 at write time; the payout-time backpay computes the real bounty.
+  spendSharePct      Int      @default(0) @map("spend_share_pct")
+  appOwnerShareCents Int      @default(0) @map("app_owner_share_cents")
+  appOwnerUserId     Int      @map("app_owner_user_id")
+  appOwner           User     @relation("BlockSpendAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+
+  /// 'tracked' (track-only event) | pending | confirmed | voided | paid_out | held.
+  status             String   @default("tracked")
+  /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
+  /// refund path, so this is never 'refund'/'chargeback'.
+  voidedReason       String?  @map("voided_reason")
+  attributedAt       DateTime @default(now()) @map("attributed_at") @db.Timestamptz(6)
+  confirmedAt        DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  voidedAt           DateTime? @map("voided_at") @db.Timestamptz(6)
+  paidOutAt          DateTime? @map("paid_out_at") @db.Timestamptz(6)
+  payoutId           String?  @map("payout_id")
+
+  @@unique([workflowId, appBlockId], map: "block_spend_attribution_workflow_app_uniq")
+  @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bsa_publisher_dashboard_idx")
+  @@index([appBlockId, attributedAt(sort: Desc)], map: "bsa_app_block_dashboard_idx")
+  @@map("block_spend_attribution")
+}
+
+/// W3 flow C — App Blocks MEMBERSHIP / subscription attribution.
+///
+/// One row PER PAID INVOICE per app block: a block-initiated membership
+/// (recurring subscription) purchase credits the app author a revenue
+/// share on each paid invoice. The recurring-revenue sibling of
+/// BlockBuzzAttribution (one-shot card purchase) and BlockSpendAttribution
+/// (internal Buzz burn).
+///
+/// ACCOUNTING: a membership payment IS a real card transaction (gross USD,
+/// real provider fee), so it uses the SAME three-way split as
+/// BlockBuzzAttribution — author share is carved out of the net per the
+/// active rate card's subscription percentage. The three-way conservation
+/// invariant holds for entry_type='charge' rows (see the migration CHECK).
+///
+/// RENEWALS-PAY: one row per invoice_id means each renewal
+/// (subscription_cycle) accrues a share by default. The service can gate
+/// the write to billing_reason='subscription_create' for a first-only
+/// policy without a schema change. ⚠️ FLAGGED for monetization sign-off.
+///
+/// Clawback (entry_type='clawback') carries negative shares for a refund /
+/// proration of a previously paid-out period; nets out in the payout
+/// aggregate (mirrors BlockBuzzAttribution's clawback carry-forward).
+///
+/// Idempotent on (invoice_id, app_block_id): a webhook retry for the same
+/// invoice is a no-op.
+///
+/// Application-generated id (`bsu_<ulid>`).
+model BlockSubscriptionAttribution {
+  id                   String   @id
+  userId               Int      @map("user_id")
+  user                 User     @relation("BlockSubscriptionAttributionPurchaser", fields: [userId], references: [id], onDelete: Restrict)
+  buzzAmount           Int      @default(0) @map("buzz_amount")
+  buzzType             String   @default("yellow") @map("buzz_type")
+  /// Gross USD value of the invoice, in cents.
+  grossValueCents      Int      @map("gross_value_cents")
+
+  paymentProvider      String   @map("payment_provider")
+  /// Per-period idempotency anchor — each renewal has its own invoice_id.
+  invoiceId            String   @map("invoice_id")
+  /// Groups the periods of one subscription.
+  subscriptionId       String?  @map("subscription_id")
+  /// subscription_create | subscription_cycle | subscription_update.
+  billingReason        String?  @map("billing_reason")
+  periodStart          DateTime? @map("period_start") @db.Timestamptz(6)
+  periodEnd            DateTime? @map("period_end") @db.Timestamptz(6)
+
+  appId                String   @map("app_id")
+  app                  OauthClient @relation("BlockSubscriptionAttributionApp", fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId           String   @map("app_block_id")
+  appBlock             AppBlock @relation("BlockSubscriptionAttributionAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+  blockInstanceId      String   @map("block_instance_id")
+  scope                String
+  modelId              Int?     @map("model_id")
+  tier                 String?
+
+  /// TRACK-ONLY (#2629): no rate applied at write time. 'unrated' sentinel
+  /// until the payout-time backpay stamps the signed-off version.
+  rateCardVersion      String   @default("unrated") @map("rate_card_version")
+  /// 0 at write time; the payout-time backpay computes the real share.
+  subscriptionSharePct Int      @default(0) @map("subscription_share_pct")
+  appOwnerShareCents   Int      @default(0) @map("app_owner_share_cents")
+  platformShareCents   Int      @map("platform_share_cents")
+  providerFeeCents     Int      @map("provider_fee_cents")
+  appOwnerUserId       Int      @map("app_owner_user_id")
+  appOwner             User     @relation("BlockSubscriptionAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+
+  /// 'tracked' (track-only event) | pending | confirmed | voided | paid_out | held.
+  status               String   @default("tracked")
+  /// 'charge' (forward) | 'clawback' (negative carry-forward on refund/proration).
+  entryType            String   @default("charge") @map("entry_type")
+  /// 'refund' / 'chargeback' / 'proration' / 'self_purchase' / 'internal_owner' / 'manual_review'.
+  voidedReason         String?  @map("voided_reason")
+  attributedAt         DateTime @default(now()) @map("attributed_at") @db.Timestamptz(6)
+  confirmedAt          DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  voidedAt             DateTime? @map("voided_at") @db.Timestamptz(6)
+  paidOutAt            DateTime? @map("paid_out_at") @db.Timestamptz(6)
+  payoutId             String?  @map("payout_id")
+
+  @@unique([invoiceId, appBlockId], map: "block_subscription_attribution_invoice_app_uniq")
+  @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bsu_publisher_dashboard_idx")
+  @@index([appBlockId, attributedAt(sort: Desc)], map: "bsu_app_block_dashboard_idx")
+  @@index([subscriptionId], map: "bsu_subscription_idx")
+  @@index([paymentProvider, invoiceId], map: "bsu_invoice_idx")
+  @@map("block_subscription_attribution")
+}
+
+/// W5 v0.5 audit log — one row per successful scope-gated API call from
+/// block-scope.middleware.ts. Surfaced on /apps/installed Activity tab,
+/// interleaved with BlockBuzzAttribution rows so the user sees paid and
+/// free actions on one timeline.
+///
+/// `blockInstanceId` is NOT an FK on purpose — synthetic ids (pdb_*,
+/// bus_pub_*, bus_view_*) have no model_block_installs row. Same
+/// pattern as BlockBuzzAttribution; resolve at read time via
+/// BlockRegistry.resolveBlockInstance.
+model BlockScopeInvocation {
+  id               BigInt   @id @default(autoincrement())
+  userId           Int      @map("user_id")
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appBlockId       String   @map("app_block_id")
+  appBlock         AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  blockInstanceId  String   @map("block_instance_id")
+  scope            String
+  endpoint         String
+  statusCode       Int      @map("status_code") @db.SmallInt
+  invokedAt        DateTime @default(now()) @map("invoked_at") @db.Timestamptz(6)
+
+  @@index([userId, invokedAt(sort: Desc), id(sort: Desc)], map: "bsi_user_invoked_idx")
+  @@index([appBlockId, invokedAt(sort: Desc)], map: "bsi_app_block_invoked_idx")
+  @@map("block_scope_invocations")
+}
+
+/// A6 (audit HIGH / design-gaps C2) — per-user scope-grant consent ledger.
+///
+/// One row per (user, app_block). `granted_scopes` is the set of block-scope
+/// strings the user has consented to for this app (same vocabulary as
+/// app_blocks.approved_scopes / manifest.scopes). Token issuance intersects the
+/// manifest/approved scope set with this row; any scope the app requests but
+/// the user has NOT granted is withheld from the minted token and surfaced as a
+/// `needs_consent` signal. Without this layer a version-bump that adds a scope
+/// silently escalated every existing install (the C2 gap A6 closes).
+///
+/// A grant is written at install / subscribe time (implicit first-consent) and
+/// extended on re-consent. `version` records the app version the grant was last
+/// taken against (informational). `revoked_at` (NULL = active) lets a future
+/// per-scope revoke flip the grant off without losing the audit row — a
+/// non-NULL revoked_at makes the mint path treat granted_scopes as empty.
+///
+/// Application-generated id (`augr_<ulid>`).
+model AppUserScopeGrant {
+  id             String    @id
+  userId         Int       @map("user_id")
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appBlockId     String    @map("app_block_id")
+  appBlock       AppBlock  @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  version        String
+  grantedScopes  String[]  @default([]) @map("granted_scopes")
+  grantedAt      DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  @@unique([userId, appBlockId], map: "app_user_scope_grants_user_app_uniq")
+  @@map("app_user_scope_grants")
+}
+
+/// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
+/// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
+/// first time a developer requests git access to one of their apps.
+///
+/// The Forgejo user is `restricted:true` and granted `write` ONLY on its own
+/// civitai-apps/<slug> repo(s), so a push parks a pending review request but can
+/// NEVER deploy without mod approval (the no-trust-on-push gate is unchanged).
+///
+/// `forgejo_token_encrypted` holds the user's own Forgejo PAT (sha1, scope
+/// `write:repository`), AES-256-GCM-encrypted at rest keyed on NEXTAUTH_SECRET.
+/// It is the SOURCE OF TRUTH for the token: Forgejo can't recover a user's
+/// password, so the token is minted once at provision and re-read thereafter,
+/// never re-minted. A GDPR delete of the User cascades this row away.
+model AppDevForgejoIdentity {
+  userId                Int      @id @map("user_id")
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  forgejoUsername       String   @map("forgejo_username")
+  forgejoTokenEncrypted String   @map("forgejo_token_encrypted")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("app_dev_forgejo_identity")
 }
 
 model OauthConsent {
@@ -2394,6 +3065,10 @@ model Thread {
   comicChapter         ComicChapter? @relation(fields: [comicProjectId, comicChapterPosition], references: [projectId, position], onDelete: SetNull, onUpdate: Cascade)
   challengeId   Int?            @unique
   challenge     Challenge?      @relation(fields: [challengeId], references: [id], onDelete: SetNull)
+  model3dId        Int?            @unique
+  model3d          Model3D?        @relation(fields: [model3dId], references: [id], onDelete: SetNull)
+  model3dReviewId  Int?            @unique
+  model3dReview    Model3DReview?  @relation(fields: [model3dReviewId], references: [id], onDelete: SetNull)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -2592,6 +3267,7 @@ enum CosmeticEntity {
   Image
   Article
   Post
+  Model3D
 }
 
 model UserCosmetic {
@@ -2730,6 +3406,12 @@ model Article {
   nsfwLevel        Int           @default(0)
   userNsfwLevel    Int           @default(0)
   moderatorNsfwLevel Int?
+  // Snapshot of the content-derived NSFW level (images + moderation floor) at
+  // the moment `moderatorNsfwLevel` was set. Lets the auto-approve gate tell
+  // "content genuinely dropped since the override" from "override was always
+  // above the images" — only the former may be auto-cleared. Null when no
+  // override is active (or a legacy override predating this column).
+  moderatorNsfwLevelBasis Int?
   lockedProperties String[]      @default([])
   status           ArticleStatus @default(Draft)
 
@@ -2744,6 +3426,7 @@ model Article {
   associations       ModelAssociations[]
   collectionItems    CollectionItem[]
   rewardsBonusEvents RewardsBonusEvent[]
+  ratingReviews      ArticleRatingReview[]
 
   @@index([status, ingestion, nsfwLevel])
 }
@@ -2879,6 +3562,7 @@ enum CollectionType {
   Article
   Post
   Image
+  Model3D
 }
 
 enum CollectionMode {
@@ -2940,6 +3624,8 @@ model CollectionItem {
   image        Image?                @relation(fields: [imageId], references: [id], onDelete: Cascade)
   modelId      Int?
   model        Model?                @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model3dId    Int?
+  model3d      Model3D?              @relation(fields: [model3dId], references: [id], onDelete: Cascade)
   addedById    Int?
   addedBy      User?                 @relation(fields: [addedById], references: [id], onDelete: SetNull)
   reviewedById Int?
@@ -2951,10 +3637,11 @@ model CollectionItem {
   tag          Tag?                  @relation(fields: [tagId], references: [id], onDelete: SetNull)
   scores       CollectionItemScore[]
 
-  @@unique([collectionId, articleId, postId, imageId, modelId])
+  @@unique([collectionId, articleId, postId, imageId, modelId, model3dId])
   @@index([addedById], type: Hash)
   @@index([imageId], type: Hash)
   @@index([modelId], type: Hash)
+  @@index([model3dId], type: Hash)
   @@index([collectionId], type: Hash)
 }
 
@@ -3223,6 +3910,7 @@ enum CsamReportType {
   Image
   TrainingData
   GeneratedImage
+  ExternalLink
 }
 
 model CsamReport {
@@ -3609,6 +4297,7 @@ enum EntityType {
   UserProfile
   ResourceReview
   ChatMessage
+  Model3D
 }
 
 enum JobQueueType {
@@ -3699,6 +4388,8 @@ model RedeemableCode {
   metadata      Json?
   priceId       String?
   price         Price?             @relation(fields: [priceId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 enum ToolType {
@@ -5714,4 +6405,214 @@ model ScannerContentSnapshot {
   createdAt   DateTime @default(now())
 
   @@index([scanner])
+}
+
+// ============================================================
+// 3D Models — see docs/3d-models-plan.md (rev 9)
+// v1 source = orchestrator PolyGen generation (Meshy via Fal).
+// Schema is upload-ready so a future user-upload flow can write
+// rows with workflowId = NULL.
+// No versioning. No reactions on Model3D (react on thumbnail Image
+// instead). No DownloadHistory in Postgres (ClickHouse events).
+// Reviews own an optional Post for image attachments.
+// ============================================================
+
+enum Model3DStatus {
+  Draft
+  Published
+  Unpublished
+  Deleted
+}
+
+enum Model3DEngagementType {
+  Favorite
+  Hide
+  Notify
+}
+
+model Model3DLicense {
+  id                  Int      @id @default(autoincrement())
+  name                String   @unique
+  description         String
+  allowCommercialUse  Boolean  @default(false)
+  allowPrintFarm      Boolean  @default(false)
+  allowDerivatives    Boolean  @default(true)
+  allowRedistribution Boolean  @default(false)
+  requireAttribution  Boolean  @default(true)
+  isCustom            Boolean  @default(false)
+  createdAt           DateTime @default(now())
+
+  models Model3D[]
+}
+
+model Model3D {
+  id               Int            @id @default(autoincrement())
+  name             String         @db.Citext
+  description      String?
+  userId           Int
+  user             User           @relation("model3dCreator", fields: [userId], references: [id])
+  thumbnailImageId Int?           @unique
+  thumbnailImage   Image?         @relation("model3dThumbnail", fields: [thumbnailImageId], references: [id], onDelete: SetNull)
+  licenseId        Int
+  license          Model3DLicense @relation(fields: [licenseId], references: [id])
+  licenseDetails   String?
+
+  // Generation provenance — NULL for future user-uploaded rows.
+  workflowId       String?        @unique
+  sourceImageId    Int?
+  sourceImage      Image?         @relation("model3dSource", fields: [sourceImageId], references: [id], onDelete: SetNull)
+  generationParams Json?
+
+  status           Model3DStatus  @default(Draft)
+  nsfw             Boolean        @default(false)
+  tosViolation     Boolean        @default(false)
+  poi              Boolean        @default(false)
+  minor            Boolean        @default(false)
+  unlisted         Boolean        @default(false)
+  lockedProperties String[]       @default([])
+  availability     Availability   @default(Public)
+  nsfwLevel        Int            @default(0)
+  meta             Json           @default("{}")
+  // Per-Model3D gallery moderation (creator/mod hide image/user/tag). No
+  // version dimension — `images` is a flat list of hidden image ids.
+  gallerySettings  Json           @default("{\"users\":[],\"tags\":[],\"images\":[]}")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  publishedAt      DateTime?
+  deletedAt        DateTime?
+  deletedBy        Int?
+  deletedByUser    User?          @relation("model3dDeletedBy", fields: [deletedBy], references: [id], onDelete: SetNull)
+
+  files           Model3DFile[]
+  posts           Post[]
+  tags            TagsOnModel3D[]
+  engagements     Model3DEngagement[]
+  reports         Model3DReport[]
+  reviews         Model3DReview[]
+  threads         Thread[]
+  collectionItems CollectionItem[]
+  metric          Model3DMetric?
+
+  @@index([userId, status, publishedAt(sort: Desc)])
+  @@index([status, publishedAt(sort: Desc)])
+  @@index([status, nsfwLevel, publishedAt(sort: Desc)])
+  @@index([name])
+  @@index([licenseId], type: Hash)
+  @@index([sourceImageId], type: Hash)
+}
+
+model Model3DFile {
+  id                Int            @id @default(autoincrement())
+  model3dId         Int
+  model3d           Model3D        @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  name              String
+  url               String
+  sizeKB            Float
+  format            String
+  // Variant discriminator. Lets a single Model3D carry multiple glb/fbx
+  // exports for the same generation — base, rigged, animated, walking
+  // (with armature sibling), running (with armature sibling). Defaults to
+  // "primary" so existing rows + non-PolyGen ingest paths are unaffected.
+  variant           String         @default("primary")
+  isPrimary         Boolean        @default(false)
+  metadata          Json?
+  virusScanResult   ScanResultCode @default(Success)
+  virusScanMessage  String?
+  rawScanResult     Json?
+  scannedAt         DateTime?
+  scanRequestedAt   DateTime?
+  exists            Boolean?
+  createdAt         DateTime       @default(now())
+
+  @@unique([model3dId, format, variant])
+  @@index([model3dId], type: Hash)
+}
+
+model TagsOnModel3D {
+  model3dId Int
+  model3d   Model3D  @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  tagId     Int
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([model3dId, tagId])
+  @@index([model3dId], type: Hash)
+  @@index([tagId], type: Hash)
+}
+
+model Model3DEngagement {
+  userId    Int
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  model3dId Int
+  model3d   Model3D               @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  type      Model3DEngagementType
+  createdAt DateTime              @default(now())
+
+  @@id([userId, model3dId])
+  @@index([model3dId], type: Hash)
+}
+
+model Model3DReport {
+  model3dId Int
+  model3d   Model3D @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  reportId  Int     @unique
+  report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, model3dId])
+  @@index([model3dId], type: Hash)
+}
+
+model Model3DReview {
+  id           Int      @id @default(autoincrement())
+  model3dId    Int
+  model3d      Model3D  @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recommended  Boolean  @default(true)
+  details      String?
+  nsfw         Boolean  @default(false)
+  tosViolation Boolean  @default(false)
+  exclude      Boolean  @default(false)
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  thread       Thread?
+  post         Post?
+  reports      Model3DReviewReport[]
+
+  @@unique([model3dId, userId])
+  @@index([model3dId], type: Hash)
+  @@index([userId], type: Hash)
+}
+
+model Model3DReviewReport {
+  model3dReviewId Int
+  model3dReview   Model3DReview @relation(fields: [model3dReviewId], references: [id], onDelete: Cascade)
+  reportId        Int           @unique
+  report          Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, model3dReviewId])
+  @@index([model3dReviewId], type: Hash)
+}
+
+model Model3DMetric {
+  model3dId         Int              @id
+  model3d           Model3D          @relation(fields: [model3dId], references: [id], onDelete: Cascade)
+  downloadCount     Int              @default(0)
+  commentCount      Int              @default(0)
+  collectedCount    Int              @default(0)
+  imageCount        Int              @default(0)
+  tippedCount       Int              @default(0)
+  tippedAmountCount Int              @default(0)
+  ratingCount       Int              @default(0)
+  recommendedCount  Int              @default(0)
+  reactionCount     Int              @default(0)
+  earnedAmount      Int              @default(0)
+  updatedAt         DateTime         @default(now())
+  nsfwLevel         Int              @default(0)
+  userId            Int              @default(0)
+  status            Model3DStatus    @default(Draft)
+  availability      Availability     @default(Public)
+  poi               Boolean          @default(false)
+  minor             Boolean          @default(false)
 }

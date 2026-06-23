@@ -54,6 +54,7 @@ const featureFlags = createFeatureFlags({
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
   articles: ['public'],
   articleCreate: ['public'],
+  articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
   imageTraining: { availability: ['user'], fliptKey: 'image-training' },
@@ -78,7 +79,11 @@ const featureFlags = createFeatureFlags({
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
+  booguTraining: { availability: ['mod'], fliptKey: 'boogu-training' },
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
+  // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
+  // Public availability so it can be rolled out to a tester segment via Flipt; default off.
+  trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
   trainingAutoLabelOrchestrator: {
     availability: ['mod'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -107,6 +112,13 @@ const featureFlags = createFeatureFlags({
     description: `Show the Posts item in the main site navigation.`,
     availability: ['public'],
   },
+  eventsNavItem: {
+    toggleable: true,
+    default: false,
+    displayName: 'Events in Navigation',
+    description: `Show the Events item in the main site navigation.`,
+    availability: ['public'],
+  },
   alternateHome: ['public'],
   collections: ['public'],
   air: {
@@ -120,7 +132,6 @@ const featureFlags = createFeatureFlags({
   imageSearch: ['public'],
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
-  recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
     toggleable: true,
     default: true,
@@ -195,7 +206,7 @@ const featureFlags = createFeatureFlags({
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   licensingFee: { availability: ['user'], fliptKey: 'licensing-fee' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
-  strikes: ['dev', 'granted'],
+  strikes: ['public'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
   userPaymentConfiguration: {
     availability: ['granted'],
@@ -204,12 +215,25 @@ const featureFlags = createFeatureFlags({
   articleImageScanning: ['public'],
   generationPresets: { availability: ['public'], fliptKey: 'generation-presets' },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
+  // 3D Models — split flags: feed (view/comment/review) vs generator (create).
+  // Both mod-only at launch; Flipt key allows broadening without a code change.
+  model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
+  model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
   // in sync with the camelCase flag key here.
   retoolUpdateIdentity: ['granted'],
   retoolToggleModerator: ['granted'],
+  // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
+  // default until we ship publisher install UX + moderator approval workflow.
+  // When off, BlockSlot renders nothing and no token-issuance traffic fires.
+  appBlocks: { availability: ['mod'], fliptKey: 'app-blocks-enabled' },
+  // App Blocks W10 — full-page apps (`/apps/run/<slug>`). A SEPARATE dark flag
+  // so the page surface enables independently of the master `app-blocks-enabled`
+  // gate. The page route + page-token mint require BOTH `appBlocks` AND
+  // `appBlocksPages`. Mod-only today; widened (Flipt segment) at W10 launch.
+  appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -566,6 +590,49 @@ export const domainRestrictedToggleableKeys = new Set(
     })
     .map(([key]) => key as FeatureFlagKey)
 );
+
+export const defaultToggleableFeatures = toggleableFeatures.reduce(
+  (acc, feature) => ({ ...acc, [feature.key]: feature.default }),
+  {} as FeatureAccess
+);
+
+/**
+ * Pure computation of the per-user toggleable-feature overlay returned by
+ * `user.getFeatureFlags`. Single source of truth shared by the tRPC resolver
+ * (`getUserFeatureFlagsHandler`) and the SSR seed in `_app` getInitialProps —
+ * keeping the SSR-injected `initialData` byte-identical to a live fetch.
+ *
+ * @param userFeatures the stored `settings.features` JSON record (toggle choices)
+ * @param hostFeatures the request's already-resolved host-level FeatureAccess
+ *   (the controller's `ctx.features`) — used to enforce domain restrictions.
+ */
+export function computeUserFeatureFlagsOverlay(
+  userFeatures: Record<string, boolean> | undefined,
+  hostFeatures: FeatureAccess
+): FeatureAccess {
+  const features = userFeatures ?? {};
+
+  // filter toggleable features from user settings
+  const filteredUserFeatures = Object.keys(features).reduce(
+    (acc, key) =>
+      toggleableFeatures.some((x) => x.key === key) ? { ...acc, [key]: features[key] } : acc,
+    {} as FeatureAccess
+  );
+
+  const result = {
+    ...defaultToggleableFeatures,
+    ...filteredUserFeatures,
+  } as FeatureAccess;
+
+  // Don't let toggleable defaults override domain restrictions
+  for (const key of domainRestrictedToggleableKeys) {
+    if (key in result && !hostFeatures[key]) {
+      delete result[key];
+    }
+  }
+
+  return result;
+}
 
 type FeatureAvailability = (typeof featureAvailability)[number];
 export type FeatureFlagKey = keyof typeof featureFlags;

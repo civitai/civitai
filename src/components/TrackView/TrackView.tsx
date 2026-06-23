@@ -4,7 +4,27 @@ import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import type { AddViewSchema } from '~/server/schema/track.schema';
-import { trpc } from '~/utils/trpc';
+import { removeEmpty } from '~/utils/object-helpers';
+
+// Fire a view event at the lightweight /api/track/view beacon instead of the
+// track.addView tRPC mutation. addView was the #1 request-count source on
+// api-primary (~71 req/s) and paid the full tRPC middleware chain + superjson
+// encode per call for an empty, fire-and-forget response. The beacon route runs
+// the same Tracker.view() (same ClickHouse `views` insert, same payload shape)
+// without any of that fixed per-request cost. `keepalive: true` lets the request
+// survive a page unload/navigation (mirrors /api/page-view), so the event isn't
+// lost if the user clicks through immediately after the 1s debounce fires.
+function sendView(input: AddViewSchema) {
+  void fetch('/api/track/view', {
+    method: 'POST',
+    keepalive: true,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(removeEmpty(input)),
+  }).catch(() => {
+    // Fire-and-forget telemetry: a failed beacon must never surface to the user
+    // or throw an unhandled rejection. The server side already retries/logs.
+  });
+}
 
 export function TrackView({
   type,
@@ -14,7 +34,6 @@ export function TrackView({
   nsfw: nsfwOverride,
   nsfwLevel,
 }: AddViewSchema) {
-  const trackMutation = trpc.track.addView.useMutation();
   const observedEntityId = useRef<number | null>(null);
   const { adsEnabled, adsBlocked, useDirectAds } = useAdsContext();
 
@@ -25,7 +44,7 @@ export function TrackView({
     const timeout = setTimeout(() => {
       if (entityId !== observedEntityId.current) {
         observedEntityId.current = entityId;
-        trackMutation.mutate({
+        sendView({
           type,
           entityType,
           entityId,

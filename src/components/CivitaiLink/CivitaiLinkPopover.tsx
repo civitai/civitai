@@ -68,11 +68,7 @@ export function CivitaiLinkPopover() {
       zIndex={imageGenerationDrawerZIndex + 1}
       withinPortal
     >
-      <Popover.Target>
-        <span>
-          <LinkButton />
-        </span>
-      </Popover.Target>
+      <LinkButton />
       <Popover.Dropdown p={0}>
         <LinkDropdown />
       </Popover.Dropdown>
@@ -453,9 +449,11 @@ function LinkButton() {
   return (
     <div className="relative">
       <Indicator className="flex items-center" color={color} disabled={!color}>
-        <LegacyActionIcon variant="subtle" color="gray">
-          <IconScreenShare />
-        </LegacyActionIcon>
+        <Popover.Target>
+          <LegacyActionIcon variant="subtle" color="gray" aria-label="Civitai Link">
+            <IconScreenShare />
+          </LegacyActionIcon>
+        </Popover.Target>
       </Indicator>
       {activityProgress && activityProgress > 0 && activityProgress < 100 && (
         <Progress

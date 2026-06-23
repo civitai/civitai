@@ -1,13 +1,57 @@
 import * as z from 'zod';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
+import type { RateLimit } from '~/server/middleware.trpc';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
-import { imageMetaSchema } from '~/server/schema/image.schema';
+import { isBetweenToday } from '~/utils/date-helpers';
+import { imageMetaSchema, imageSchema } from '~/server/schema/image.schema';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray, numericStringArray } from '~/utils/zod-helpers';
+
+// Post creation was historically unthrottled (unlike comments/reactions/article
+// creation). The MCP/API "prompt-to-post" flow makes unlimited automated posting
+// trivial, so apply sane ceilings here. Moderators and dev/test are skipped by the
+// rateLimit() middleware.
+//
+// NOTE on the middleware: for a given period it keeps the HIGHEST limit among the
+// rules whose userReq passes. So a tighter cap for a sub-group can't share a period
+// with a looser base rule (the looser one would win). The new-account clamp therefore
+// lives on the `hour` period, which no base/established rule uses (mirrors
+// articleRateLimits). Daily ceilings tier UP by reputation.
+export const postRateLimits: RateLimit[] = [
+  // Newly created accounts: tight hourly clamp for the rest of the calendar day
+  // they sign up (isBetweenToday = same-day membership, matching articleRateLimits).
+  // Not overridden because no other rule uses the hour period.
+  {
+    limit: 2,
+    period: CacheTTL.hour,
+    userReq: (user) => !!user.createdAt && isBetweenToday(user.createdAt),
+    errorMessage: 'New accounts have a lower hourly posting limit on their first day.',
+  },
+  // Base daily ceiling (all users, incl. new + low-reputation).
+  {
+    limit: 20,
+    period: CacheTTL.day,
+    errorMessage: "You've reached your daily limit for new posts. Please try again tomorrow.",
+  },
+  // Established accounts.
+  {
+    limit: 60,
+    period: CacheTTL.day,
+    userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000,
+    errorMessage: "You've reached your daily limit for new posts. Please try again tomorrow.",
+  },
+  // High-reputation accounts.
+  {
+    limit: 150,
+    period: CacheTTL.day,
+    userReq: (user) => (user.meta?.scores?.total ?? 0) >= 5000,
+    errorMessage: "You've reached your daily limit for new posts. Please try again tomorrow.",
+  },
+];
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
@@ -52,6 +96,10 @@ export const postsQuerySchema = baseQuerySchema.merge(
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
   modelVersionId: z.number().nullish(),
+  // Optional Model3D link — set by the queue-card "Post from Generation" flow
+  // so the Post is bound to the draft Model3D on create. Validated server-side
+  // (must be owner or moderator) inside `createPost`.
+  model3dId: z.number().int().positive().nullish(),
   title: z.string().trim().nullish(),
   detail: z.string().nullish(),
   tag: z.number().nullish(),
@@ -68,6 +116,30 @@ export const postUpdateSchema = z.object({
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
   collectionTagId: z.number().nullish(),
+});
+
+// Composite create-with-images input for headless/agent (MCP) use. Each image
+// reuses the shared imageSchema shape (without postId — the server fills it in
+// after creating the post) and requires an explicit ordering index. The post is
+// created, images are attached in order, and the post is optionally published in
+// a single server-side round-trip.
+export type CreatePostWithImagesInput = z.infer<typeof createPostWithImagesSchema>;
+export const createPostWithImagesSchema = z.object({
+  title: z.string().trim().nullish(),
+  detail: z.string().nullish(),
+  modelVersionId: z.number().nullish(),
+  tag: z.number().nullish(),
+  tags: commaDelimitedStringArray().optional(),
+  collectionId: z.number().optional(),
+  publish: z.boolean().optional(),
+  images: z
+    .array(
+      // Omit `id` as well: this is a create path, so a caller-supplied Image PK
+      // would be forwarded into createImage and fail (or clobber). The server
+      // fills postId, and index is required for explicit ordering.
+      imageSchema.omit({ postId: true, index: true, id: true }).extend({ index: z.number().min(0) })
+    )
+    .min(1, 'At least one image must be provided'),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;
@@ -148,6 +220,7 @@ export const postEditQuerySchema = z.object({
   postId: z.coerce.number().optional(),
   modelId: z.coerce.number().optional(),
   modelVersionId: z.coerce.number().nullish(),
+  model3dId: z.coerce.number().optional(),
   tag: z.coerce.number().optional(),
   video: z.coerce.boolean().optional(),
   returnUrl: z.string().optional(),

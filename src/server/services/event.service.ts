@@ -1,9 +1,11 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
+import { pack } from 'msgpackr';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { cosmeticCache, profilePictureCache, userBasicCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
+import { hSetWithTTL } from '~/server/redis/atomic';
 import type { EventInput, TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
 import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.service';
@@ -55,10 +57,14 @@ export async function getEventCosmetic({ event, userId }: EventInput & { userId:
 
       const status = await cosmeticStatus({ id: cosmeticId, userId });
       userStatus = { ...status, cosmeticId };
-      await Promise.all([
-        redis.packed.hSet(key, userId.toString(), userStatus),
-        redis.hExpire(key, userId.toString(), CacheTTL.hour),
-      ]);
+      // Atomic packed-write: single EVAL replaces racy Promise.all([hSet, hExpire]).
+      await hSetWithTTL(
+        redis,
+        key,
+        userId.toString(),
+        pack(userStatus),
+        CacheTTL.hour * 1000
+      );
     }
 
     const { cosmeticId } = userStatus;
@@ -98,17 +104,20 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
     const cacheKey =
       `${REDIS_KEYS.EVENT.CACHE}:${event}:${REDIS_SUB_KEYS.EVENT.COSMETICS}` as const;
 
-    // Update cache
-    await Promise.all([
-      redis.packed.hSet(cacheKey, userId.toString(), {
+    // Update cache — atomic packed-write replaces racy Promise.all([hSet, hExpire]).
+    await hSetWithTTL(
+      redis,
+      cacheKey,
+      userId.toString(),
+      pack({
         equipped: true,
         available: true,
         obtained: true,
         data,
         cosmeticId,
       }),
-      redis.hExpire(cacheKey, userId.toString(), CacheTTL.hour),
-    ]);
+      CacheTTL.hour * 1000
+    );
 
     // Queue adding to role
     await eventEngine.queueAddRole({ event, team, userId });

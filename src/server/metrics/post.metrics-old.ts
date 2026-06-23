@@ -146,7 +146,7 @@ async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
   const affectedImages = await ctx.ch.$query<{ imageId: number }>`
       SELECT DISTINCT entityId as imageId
-      FROM entityMetricEvents
+      FROM entityMetricEvents_month
       WHERE entityType = 'Image'
         AND entityId IS NOT NULL
         AND createdAt > ${ctx.lastUpdate}

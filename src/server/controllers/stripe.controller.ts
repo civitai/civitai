@@ -56,7 +56,7 @@ export const createDonateSessionHandler = async ({
 };
 
 export const createSubscriptionSessionHandler = async ({
-  input: { priceId, refCode },
+  input: { priceId, refCode, blockAttribution },
   ctx,
 }: {
   input: Schema.CreateSubscribeSessionInput;
@@ -67,6 +67,9 @@ export const createSubscriptionSessionHandler = async ({
   const result = await createSubscribeSession({
     priceId,
     refCode,
+    // FIN-1 re-derivation happens inside createSubscribeSession, which has
+    // the authenticated buyer id. The client value is untrusted.
+    blockAttribution,
     customerId,
     user: { id, email },
   });

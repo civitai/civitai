@@ -53,6 +53,7 @@ import { openReportModal } from '~/components/Dialog/triggers/report';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
+import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
@@ -474,6 +475,24 @@ export function ImageDetail2() {
                           withActions: true,
                           tipsEnabled: !image.poi,
                         }}
+                      />
+                    )}
+                    {image.postId && (
+                      // Durable data-gate: BOTH the `image.get` payload (direct
+                      // image-page path) AND the feed payloads (getAllImages /
+                      // getAllImagesIndex, the feed-modal path) now carry the
+                      // visibility-checked `model3dId`, so the chip renders from
+                      // the prop and never fires the ambient
+                      // `model3d.getByPostId` query. A Meili-sourced feed item
+                      // with no link resolves to `null` (chip hidden, no
+                      // fallback). The only residual fallback is BitDex-sourced
+                      // items (model3dId not indexed → `undefined`), which
+                      // self-heal as the index gains the field — the #2682
+                      // model3dFeed flag-gate is otherwise redundant now.
+                      <PostingToModel3DCard
+                        model3dId={(image as { model3dId?: number | null }).model3dId}
+                        postId={image.postId}
+                        label="Posted to 3D Model"
                       />
                     )}
                     {image.needsReview && isOwner && (

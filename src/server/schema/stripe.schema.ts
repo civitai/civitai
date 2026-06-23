@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
+import { blockAttributionSchema } from '~/server/schema/blocks/attribution.schema';
 
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 export const createCustomerSchema = z.object({ id: z.number(), email: z.string().email() });
@@ -10,6 +11,15 @@ export type CreateSubscribeSessionInput = z.infer<typeof createSubscribeSessionS
 export const createSubscribeSessionSchema = z.object({
   priceId: z.string(),
   refCode: z.string().optional(),
+  // W3 flow C — App Blocks MEMBERSHIP attribution. Populated only when the
+  // membership purchase was initiated from inside a block (the block's
+  // "Buy membership" CTA). UNTRUSTED client input: the server re-derives
+  // every field server-side (FIN-1) in createSubscribeSession before
+  // stamping it onto the Stripe subscription metadata. A forged appId/scope
+  // is corrected or stripped; an instance that doesn't resolve for the
+  // buyer is dropped (purchase proceeds un-attributed). Never trusted to
+  // mint earnings.
+  blockAttribution: blockAttributionSchema.optional(),
 });
 
 export type CreateDonateSessionInput = z.infer<typeof createDonateSessionSchema>;
@@ -38,6 +48,19 @@ const buzzPurchaseMetadataSchema = z
     buzzType: z.enum(['green', 'yellow', 'blue', 'red']).default('yellow').optional(),
     blueBuzzGranted: z.coerce.boolean().optional(),
     cosmeticsGranted: z.coerce.boolean().optional(),
+    // App Blocks attribution — populated only when the buzz purchase
+    // was initiated from inside a block iframe. See
+    // src/server/schema/blocks/attribution.schema.ts. The .passthrough()
+    // below already lets these flow through unmodified, but listing
+    // them explicitly gives downstream metadata-builders a typed shape.
+    blockAppId: z.string().optional(),
+    blockAppBlockId: z.string().optional(),
+    blockInstanceId: z.string().optional(),
+    blockScope: z.string().optional(),
+    blockModelId: z.coerce.number().int().positive().optional(),
+    // Slot id carried for FIN-1 server-side re-validation. Untrusted; the
+    // server re-derives every block field from the resolved install row.
+    blockSlotId: z.string().optional(),
   })
   .passthrough();
 

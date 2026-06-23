@@ -67,6 +67,7 @@ export default defineNextConfig(
     // emits those warnings — an empty config just acknowledges we're on Turbopack
     // and silences Next's "webpack config with no turbopack config" build error.
     turbopack: {},
+    allowedDevOrigins: ['civitai-dev.green', 'civitai-dev.blue', 'civitai-dev.red'],
     // Retained for the `next build --webpack` fallback path; ignored under Turbopack.
     webpack: (config) => {
       config.ignoreWarnings = [
@@ -76,10 +77,29 @@ export default defineNextConfig(
       return config;
     },
     reactStrictMode: true,
-    // TEST: re-enabled to evaluate Turbopack source-map output (server + client).
-    // Safe now that the typed-scss-modules `*.module.scss.d.ts` files are removed
-    // (they previously crashed source-map generation). Note: Turbopack ignores
-    // `experimental.serverSourceMaps` (webpack-only); this is the only map lever it reads.
+    // Source maps for prod CPU-profile de-minification.
+    //
+    // Under Turbopack (our prod bundler, Next 16), the ONLY source-map lever is the
+    // experimental `turbopackSourceMaps` flag, whose build-time default IS
+    // `productionBrowserSourceMaps`. So setting this `true` turns on map emission for
+    // BOTH client (`.next/static/**/*.js.map`) and server (`.next/server/**/*.js.map`)
+    // chunks. Turbopack ignores `experimental.serverSourceMaps` (webpack-only) — that
+    // flag below only matters for the `next build --webpack` fallback path.
+    //
+    // Maps are inert at runtime: the Node server never loads a `.js.map` unless an
+    // inspector / error-stack resolver reads it, so there is NO
+    //  request-path perf cost.
+    // They are NOT served to browsers for server chunks (those live in `.next/server`,
+    // which is not a static-served directory). Cost is build time + image size only.
+    //
+    // IMPORTANT: `output:'standalone'` traces required files via @vercel/nft, which
+    // follows `import`/`require`/`fs` — it does NOT trace sibling `.js.map` files, so
+    // the server maps are emitted to `.next/server` but DROPPED from `.next/standalone`.
+    // The runtime image does NOT ship these maps (the RUNNER stage copies only
+    // standalone + static). The build instead publishes them as a separate
+    // `civitai-web-maps:<tag>` artifact (Dockerfile `maps` target + the pipeline),
+    // fetched on demand by `scripts/resolve-cpuprofile.mjs --image <tag>` to
+    // de-minify a captured profile — keeping the runtime image lean.
     productionBrowserSourceMaps: true,
     // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
     i18n: {
@@ -130,6 +150,22 @@ export default defineNextConfig(
       '/content/[[...slug]]': ['./src/static-content/**/*'],
       '/api/trpc/[trpc]': ['./src/static-content/**/*'],
       '/api/v1/content/[[...slug]]': ['./src/static-content/**/*'],
+      // /api/og uses next/og's `ImageResponse`, which on the nodejs runtime
+      // lazily require()s `next/dist/compiled/@vercel/og/index.node.js` (plus its
+      // resvg/yoga WASM + fonts). @vercel/nft cannot follow that dynamic require,
+      // so with output:'standalone' the file is DROPPED from the image and every
+      // origin (cache-miss) /api/og render throws `Cannot find module ...
+      // index.node.js` -> 500. This became the dominant app-500 source (~1.9/s)
+      // after the Next 16.2.7 upgrade; Cloudflare edge-caching of OG images masks
+      // it for popular entities. Force-include the whole compiled @vercel/og dir
+      // (entry + WASM + fonts) for this route. Two version-agnostic globs (no
+      // hardcoded next@<hash>): the symlinked path, plus the real pnpm path with a
+      // `next@*` wildcard in case globby doesn't follow the node_modules/next
+      // symlink. Whichever matches copies the files; a non-matching glob is a no-op.
+      '/api/og': [
+        './node_modules/next/dist/compiled/@vercel/og/**/*',
+        './node_modules/.pnpm/next@*/node_modules/next/dist/compiled/@vercel/og/**/*',
+      ],
     },
     experimental: {
       // scrollRestoration: true,

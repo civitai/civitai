@@ -322,7 +322,7 @@ export const getModelsRaw = async ({
     } catch (err) {
       if (err instanceof MeiliCallTimeoutError) {
         throw new TRPCError({
-          code: 'TIMEOUT',
+          code: 'SERVICE_UNAVAILABLE',
           message: 'Model search is temporarily overloaded — please retry.',
           cause: err,
         });
@@ -468,7 +468,7 @@ export const getModelsRaw = async ({
     const targetUser =
       (await dbRead.user.findUnique(userFindArgs)) ?? (await dbWrite.user.findUnique(userFindArgs));
 
-    if (!targetUser) throw new Error('User not found');
+    if (!targetUser) throw throwNotFoundError('User not found');
 
     AND.push(Prisma.sql`mm."userId" = ${targetUser.id}`);
   }
@@ -2506,6 +2506,13 @@ export const getRecentlyManuallyAdded = async ({
     where: {
       detected: false,
       image: { userId },
+      // ImageResourceNew.modelVersion is a required relation, but orphaned rows
+      // exist in prod (modelVersionId pointing at a hard-deleted ModelVersion).
+      // Selecting the required relation on such a row makes Prisma throw
+      // "Inconsistent query result: Field modelVersion is required ... got null"
+      // → HTTP 500. Filtering on relation existence excludes the orphans so the
+      // query degrades gracefully (returns the resolvable rows) instead.
+      modelVersion: { is: {} },
     },
     orderBy: { image: { createdAt: 'desc' } },
     take,
@@ -3744,9 +3751,20 @@ export const publishPrivateModel = async ({
       },
     });
     if (publishVersions) {
+      // Write-once-on-republish: honor the prevPublishedAt stash if it
+      // exists (e.g. post was previously public, unpublished via parent,
+      // then the model went through a Private cycle). Strips the stash on
+      // success. Mirrors the CASE pattern used by publishModelVersionById
+      // and publishModelById.
       await tx.$executeRaw`
         UPDATE "Post"
-        SET "publishedAt" = ${now}
+        SET
+          "publishedAt" = CASE
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
+            THEN ("metadata"->>'prevPublishedAt')::timestamptz
+            ELSE ${now}
+          END,
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
         WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
       `;

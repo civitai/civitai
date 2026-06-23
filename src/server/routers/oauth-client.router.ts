@@ -4,6 +4,7 @@ import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
+import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import {
   createOauthClientSchema,
   deleteOauthClientSchema,
@@ -13,6 +14,25 @@ import {
   updateOauthClientSchema,
 } from '~/server/schema/oauth-client.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
+
+/**
+ * SECURITY (audit A1/A2): App-Blocks-provisioned OauthClients (`appblk-<slug>`)
+ * are managed exclusively by the App-Blocks publish-request flow. The generic
+ * OAuth-client router must NEVER mutate them — most importantly `update` must
+ * not be able to add a `redirectUri` (which would convert the otherwise-inert
+ * `redirectUris:[]` app-block client into a working interactive phishing
+ * client) or widen `allowedScopes`. This guard is scoped to `appblk-` ids
+ * ONLY; the legitimate OAuth-apps feature (uuid-id clients) is unaffected.
+ */
+function rejectAppBlockClient(clientId: string): void {
+  if (isAppBlockOauthClientId(clientId)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'App Block clients are managed by the App Blocks platform and cannot be modified here',
+    });
+  }
+}
 
 export const oauthClientRouter = router({
   // Public: get client info by ID (used by consent page)
@@ -104,6 +124,7 @@ export const oauthClientRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(updateOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
+      rejectAppBlockClient(input.id);
       const client = await dbWrite.oauthClient.findFirst({
         where: { id: input.id, userId: ctx.user.id },
       });
@@ -120,6 +141,7 @@ export const oauthClientRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(rotateOauthClientSecretSchema)
     .mutation(async ({ ctx, input }) => {
+      rejectAppBlockClient(input.id);
       const client = await dbWrite.oauthClient.findFirst({
         where: { id: input.id, userId: ctx.user.id, isConfidential: true },
       });
@@ -143,15 +165,34 @@ export const oauthClientRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(deleteOauthClientSchema)
     .mutation(async ({ ctx, input }) => {
+      rejectAppBlockClient(input.id);
       const client = await dbWrite.oauthClient.findFirst({
         where: { id: input.id, userId: ctx.user.id },
       });
       if (!client) throw new TRPCError({ code: 'NOT_FOUND' });
 
+      // Collect every user who holds a token under this client BEFORE the
+      // cascade wipes the rows — we need their ids to expire the orchestrator's
+      // auth cache below. A client can be authorized by many users, not just
+      // the owner.
+      const tokenHolders = await dbWrite.apiKey.findMany({
+        where: { clientId: input.id },
+        select: { userId: true },
+        distinct: ['userId'],
+      });
+
       // Cascade delete handles tokens and consents
       await dbWrite.oauthClient.delete({ where: { id: input.id } });
 
       logOAuthEvent({ type: 'client.deleted', userId: ctx.user.id, clientId: input.id });
+
+      // The DB cascade revokes the tokens, but the orchestrator caches them
+      // for auth and would keep honoring the deleted tokens until TTL. Expire
+      // each affected user's cache so revocation takes effect immediately.
+      // Best-effort: invalidateCivitaiUser swallows its own errors.
+      await Promise.all(
+        tokenHolders.map(({ userId }) => invalidateCivitaiUser({ userId }))
+      );
 
       return { success: true };
     }),

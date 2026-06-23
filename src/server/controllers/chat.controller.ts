@@ -13,10 +13,12 @@ import type {
   GetMessageByIdInput,
   IsTypingInput,
   isTypingOutput,
+  MarkChatReadInput,
   ModifyUserInput,
   UpdateMessageInput,
   UserSettingsChat,
 } from '~/server/schema/chat.schema';
+import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
@@ -38,10 +40,10 @@ import type { ChatCreateChat } from '~/types/router';
 export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     const { id: userId } = ctx.user;
-    const { chat = { muteSounds: false, replaceBadWords: false, acknowledged: false } } =
-      await getUserSettings(userId);
-
-    return chat;
+    const { chat } = await getUserSettings(userId);
+    // Shared resolve helper guarantees the SSR seed (_app) and this resolver
+    // produce byte-identical output when `chat` is absent (#2471).
+    return resolveChatSettings(chat);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -443,6 +445,52 @@ export const markAllAsReadHandler = async ({ ctx }: { ctx: ProtectedContext }) =
       where "ChatMember".id = data.id
       returning "chatId", "lastViewedMessageId"
     `;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+/**
+ * Mark a single chat as read for the calling user. Resolves the caller's
+ * chatMember + the chat's latest message id server-side, then advances
+ * lastViewedMessageId. Gives per-chat read precision for headless/agent (MCP)
+ * callers (the website only exposes blanket markAllAsRead).
+ */
+export const markChatReadHandler = async ({
+  input,
+  ctx,
+}: {
+  input: MarkChatReadInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const { chatId } = input;
+
+    const member = await dbWrite.chatMember.findFirst({
+      where: { chatId, userId, status: ChatMemberStatus.Joined },
+      select: { id: true, lastViewedMessageId: true },
+    });
+    if (!member) throw throwNotFoundError(`You are not a member of this chat`);
+
+    const latestMessage = await dbWrite.chatMessage.findFirst({
+      where: { chatId },
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+
+    // No messages yet, or already up to date — nothing to advance.
+    if (!latestMessage || member.lastViewedMessageId === latestMessage.id) {
+      return { chatId, lastViewedMessageId: member.lastViewedMessageId ?? null };
+    }
+
+    await dbWrite.chatMember.update({
+      where: { id: member.id },
+      data: { lastViewedMessageId: latestMessage.id },
+    });
+
+    return { chatId, lastViewedMessageId: latestMessage.id };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

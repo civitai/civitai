@@ -1,6 +1,12 @@
 import type { JWT } from 'next-auth/jwt';
 import { v4 as uuid } from 'uuid';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getSessionUser } from './session-user';
 import type { User } from '~/shared/utils/prisma/models';
@@ -57,7 +63,11 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
     pipeline.hGet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId); // [0] Check token state
     pipeline.hExists(userTokenKey as any, tokenId); // [1] Check if token exists in tracking
     pipeline.get(REDIS_SYS_KEYS.SESSION.ALL); // [2] Check global invalidation date
-    results = await pipeline.exec();
+    // Wall-clock guard: a silent sysRedis half-open would otherwise park this exec()
+    // for minutes (OS-keepalive teardown) on every authenticated request — no per-cmd
+    // timeout on pipelines, no socketTimeout on the sys client. On timeout this throws
+    // → fail open below.
+    results = await withSysReadDeadline(pipeline.exec());
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'refreshToken pipeline', err, {
       userId: user.id,
@@ -201,8 +211,16 @@ async function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUs
   if (session.id) {
     const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${session.id}`;
     try {
-      await sysRedis.hSet(key as any, tokenId, Date.now());
-      await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
+      // Atomic single-EVAL set+TTL — closes the orphaned-entry accumulation
+      // window described above (hSet succeeds, hExpire fails → no-TTL field
+      // sticks around until the next explicit hDel / full invalidation).
+      await hSetWithTTL(
+        sysRedis,
+        key,
+        tokenId,
+        Date.now(),
+        DEFAULT_EXPIRATION * 1000
+      );
     } catch (err) {
       logSysRedisFailOpen('tracking-write-cliff', 'setToken', err, {
         userId: session.id,

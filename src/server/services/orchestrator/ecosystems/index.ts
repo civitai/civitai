@@ -46,12 +46,16 @@ import { createLensInput } from './lens.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createMAIInput } from './mai.handler';
 import { createZImageInput } from './z-image.handler';
+import { createBooguInput } from './boogu.handler';
 import { createHiDreamInput } from './hi-dream.handler';
 import { createHiDreamO1Input } from './hi-dream-o1.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 
 // Audio ecosystem handlers
 import { createAceAudioInput } from './ace-audio.handler';
+
+// 3D model ecosystem handlers
+import { createPolyGenInput } from './polygen-graph.handler';
 
 // Video ecosystem handlers
 import { createWanSteps } from './wan.handler';
@@ -126,6 +130,9 @@ export type ChromaCtx = EcosystemGraphOutput & { ecosystem: 'Chroma' };
 
 /** ZImage context (ZImageTurbo and ZImageBase) */
 export type ZImageCtx = EcosystemGraphOutput & { ecosystem: 'ZImageTurbo' | 'ZImageBase' };
+
+/** Boogu context */
+export type BooguCtx = EcosystemGraphOutput & { ecosystem: 'Boogu' };
 
 /** HiDream context */
 export type HiDreamCtx = EcosystemGraphOutput & { ecosystem: 'HiDream' };
@@ -217,6 +224,7 @@ export { createNanoBananaInput } from './nano-banana.handler';
 export { createAnimaInput } from './anima.handler';
 export { createChromaInput } from './chroma.handler';
 export { createZImageInput } from './z-image.handler';
+export { createBooguInput } from './boogu.handler';
 export { createHiDreamInput } from './hi-dream.handler';
 export { createHiDreamO1Input } from './hi-dream-o1.handler';
 export { createPonyV7Input } from './pony-v7.handler';
@@ -227,6 +235,9 @@ export { createMAIInput } from './mai.handler';
 
 // Audio ecosystems
 export { createAceAudioInput } from './ace-audio.handler';
+
+// 3D model ecosystems
+export { createPolyGenInput } from './polygen-graph.handler';
 
 // Video ecosystems
 export { createWanSteps } from './wan.handler';
@@ -263,10 +274,14 @@ export async function createEcosystemStepInput(
   data: EcosystemGraphOutput,
   handlerCtx: GenerationHandlerCtx
 ): Promise<StepInput[]> {
-  // Normalize seed - generate random if not provided
+  // Normalize seed - generate random if not provided.
+  // Some ecosystems (e.g. PolyGen / 3D models) don't expose a `seed` node and
+  // route their submission outside this dispatcher entirely, so the field is
+  // absent from their graph branch — read defensively.
+  const dataSeed = 'seed' in data ? (data as { seed?: number }).seed : undefined;
   const normalizedData = {
     ...data,
-    seed: data.seed ?? Math.floor(Math.random() * maxRandomSeed),
+    seed: dataSeed ?? Math.floor(Math.random() * maxRandomSeed),
   };
 
   const steps = await createEcosystemStep(normalizedData, handlerCtx);
@@ -320,6 +335,10 @@ async function createEcosystemStep(
     case 'ZImageTurbo':
     case 'ZImageBase':
       return createZImageInput(normalizedData, handlerCtx);
+
+    // Boogu
+    case 'Boogu':
+      return createBooguInput(normalizedData, handlerCtx);
 
     // HiDream
     case 'HiDream':
@@ -461,6 +480,13 @@ async function createEcosystemStep(
 
     case 'Ace':
       return createAceAudioInput(normalizedData, handlerCtx);
+
+    // =========================================================================
+    // 3D Model Ecosystems — polyGen step (Meshy via Fal)
+    // =========================================================================
+
+    case 'PolyGen':
+      return createPolyGenInput(normalizedData, handlerCtx);
 
     default:
       throw new Error(`Unknown ecosystem: ${ecosystem}`);

@@ -1,4 +1,4 @@
-import { ArticleStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { ArticleStatus, MetricTimeframe, ReportStatus } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 
 import { CacheTTL, constants } from '~/server/common/constants';
@@ -29,16 +29,21 @@ export const articleRateLimits: RateLimit[] = [
     errorMessage: 'You need to wait 24 hours after creating your account to create articles.',
   },
   {
-    limit: 1,
+    limit: 3,
     period: CacheTTL.day,
   },
   {
-    limit: 2,
+    limit: 5,
     period: CacheTTL.day,
     userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 1000,
   },
   {
     limit: 10,
+    period: CacheTTL.day,
+    userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 5000,
+  },
+  {
+    limit: 20,
     period: CacheTTL.day,
     userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 10000,
   },
@@ -143,3 +148,37 @@ export const getModeratorArticlesSchema = infiniteQuerySchema.extend({
 });
 
 export type GetModeratorArticlesSchema = z.infer<typeof getModeratorArticlesSchema>;
+
+// --- Article rating review / dispute ---
+
+export type CreateArticleRatingReviewInput = z.infer<typeof createArticleRatingReviewSchema>;
+export const createArticleRatingReviewSchema = z.object({
+  articleId: z.number(),
+  suggestedLevel: z.number().int().positive(),
+  userComment: z.string().max(500).optional(),
+});
+
+export type GetArticleRatingReviewsInput = z.infer<typeof getArticleRatingReviewsSchema>;
+export const getArticleRatingReviewsSchema = z.object({
+  limit: z.number().min(1).max(100).default(50),
+  cursor: z.number().optional(),
+  status: z.nativeEnum(ReportStatus).default(ReportStatus.Pending),
+});
+
+export type ResolveArticleRatingReviewInput = z.infer<typeof resolveArticleRatingReviewSchema>;
+export const resolveArticleRatingReviewSchema = z
+  .object({
+    reviewId: z.number(),
+    status: z.enum(['Actioned', 'Unactioned']),
+    appliedLevel: z.number().int().positive().optional(),
+    modComment: z.string().max(1000).optional(),
+  })
+  .refine((data) => data.status !== 'Actioned' || data.appliedLevel != null, {
+    message: 'appliedLevel is required when actioning a review',
+    path: ['appliedLevel'],
+  });
+
+export type GetMyArticleRatingReviewInput = z.infer<typeof getMyArticleRatingReviewSchema>;
+export const getMyArticleRatingReviewSchema = z.object({
+  articleId: z.number(),
+});

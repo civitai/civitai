@@ -1,12 +1,19 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { randomBytes, randomInt } from 'crypto';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { dbRead } from '~/server/db/client';
 import { addCorsHeaders } from '~/server/utils/endpoint-helpers';
 import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-limit';
 import { DEVICE_CODE_TTL, DEVICE_POLL_INTERVAL } from '~/server/oauth/constants';
+import {
+  USER_CODE_CHARSET,
+  USER_CODE_GROUP_SIZE,
+  USER_CODE_LENGTH,
+} from '~/server/oauth/user-code';
 import { Flags } from '~/shared/utils/flags';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { TokenScope, ALL_SCOPES } from '~/shared/constants/token-scope.constants';
+import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 import { env } from '~/env/server';
 
 const DEVICE_CODE_KEY = REDIS_KEYS.OAUTH.DEVICE_CODES;
@@ -18,15 +25,18 @@ function generateUserCode(): string {
   // randomInt does rejection sampling internally. Today the alphabet is 32
   // chars (a power of 2, so a plain modulo would also be unbiased), but the
   // rejection-sampling path is robust if the alphabet ever changes.
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No I/O/0/1 to avoid confusion
+  const chars = USER_CODE_CHARSET;
   let code = '';
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < USER_CODE_LENGTH; i++) {
     code += chars[randomInt(chars.length)];
   }
-  return `${code.slice(0, 4)}-${code.slice(4)}`;
+  return `${code.slice(0, USER_CODE_GROUP_SIZE)}-${code.slice(USER_CODE_GROUP_SIZE)}`;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   const shouldStop = addCorsHeaders(req, res, ['POST']);
   if (shouldStop) return;
 
@@ -40,6 +50,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res
       .status(400)
       .json({ error: 'invalid_request', error_description: 'Missing client_id' });
+  }
+
+  // SECURITY (audit A1): App-Blocks-provisioned OauthClients (`appblk-<slug>`)
+  // are block-token-only. They carry grants:[] so the device-flow grant check
+  // below already rejects them, but reject explicitly here too (and before the
+  // DB lookup) so the boundary is unambiguous and defense-in-depth. Scoped to
+  // `appblk-` ids only — genuine OAuth-apps clients are unaffected.
+  if (isAppBlockOauthClientId(client_id)) {
+    return res.status(400).json({
+      error: 'invalid_client',
+      error_description: 'This client cannot be used for the device flow',
+    });
   }
 
   // Rate limit
@@ -62,7 +84,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Validate scope early (also validated at token exchange, but fail fast for UX)
   const rawScope = parseInt(scope as string, 10) || 0;
-  if (rawScope < 0 || rawScope > TokenScope.Full) {
+  // Bound against ALL_SCOPES (every defined bit, incl. opt-in AppBlocksSubmit),
+  // NOT `Full` — `Full` excludes opt-in bits, so a client legitimately
+  // requesting AppBlocksSubmit (e.g. civitai-cli) would be rejected here.
+  if (rawScope < 0 || rawScope > ALL_SCOPES) {
     return res.status(400).json({ error: 'invalid_scope' });
   }
   // UserRead is a mandatory baseline on every grant — force it on and treat it

@@ -44,8 +44,13 @@ export const routeGuardsMiddleware = createMiddleware({
       if (!routeGuard.isMatch(pathname)) continue;
       if (routeGuard.canAccess({ user, request })) continue;
 
-      // Can't access, redirect to login
-      return redirect(routeGuard.redirect ?? `/login?returnUrl=${pathname}`);
+      // Can't access. Sending an already-authenticated user to /login can't grant the
+      // missing permission, and login redirects a logged-in user straight back to
+      // returnUrl → infinite /moderator/... ⇄ /login loop. So only unauthenticated
+      // users go to login; logged-in-but-unauthorized users go home (or the guard's
+      // explicit redirect, if set).
+      if (routeGuard.redirect) return redirect(routeGuard.redirect);
+      return redirect(user ? '/' : `/login?returnUrl=${pathname}`);
     }
   },
 });

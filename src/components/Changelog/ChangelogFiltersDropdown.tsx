@@ -1,19 +1,11 @@
-import {
-  Button,
-  Chip,
-  Divider,
-  Drawer,
-  Group,
-  Indicator,
-  Popover,
-  Stack,
-  useComputedColorScheme,
-} from '@mantine/core';
+import { Chip, Divider, Drawer, Group, Indicator, Popover, Stack } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
 import { IconFilter } from '@tabler/icons-react';
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
+import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
+import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { MultiSelectWrapper } from '~/libs/form/components/MultiSelectWrapper';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -46,21 +38,13 @@ const ChangelogTagSelect = ({
 
 export function ChangelogFiltersDropdown() {
   const mobile = useIsMobile();
-  const [opened, setOpened] = useState(false);
-  const colorScheme = useComputedColorScheme('dark');
 
-  const { filters, setFilters } = useFiltersContext((state) => ({
+  const { filters: committedFilters, setFilters } = useFiltersContext((state) => ({
     filters: state.changelogs,
     setFilters: state.setChangelogFilters,
   }));
 
-  const filterLength =
-    (filters.types?.length ? 1 : 0) +
-    (filters.tags?.length ? 1 : 0) +
-    (filters.dateBefore ? 1 : 0) +
-    (filters.dateAfter ? 1 : 0);
-
-  const clearFilters = useCallback(
+  const handleClear = useCallback(
     () =>
       setFilters({
         types: undefined,
@@ -71,6 +55,19 @@ export function ChangelogFiltersDropdown() {
     [setFilters]
   );
 
+  const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
+    useStagedFilters({
+      committed: committedFilters,
+      onApply: setFilters,
+      onClear: handleClear,
+    });
+
+  const filterLength =
+    (mergedFilters.types?.length ? 1 : 0) +
+    (mergedFilters.tags?.length ? 1 : 0) +
+    (mergedFilters.dateBefore ? 1 : 0) +
+    (mergedFilters.dateAfter ? 1 : 0);
+
   const target = (
     <Indicator
       offset={4}
@@ -80,30 +77,20 @@ export function ChangelogFiltersDropdown() {
       disabled={!filterLength}
       inline
     >
-      <FilterButton
-        icon={IconFilter}
-        size="md"
-        onClick={() => setOpened((o) => !o)}
-        active={opened}
-      >
+      <FilterButton icon={IconFilter} size="md" onClick={toggle} active={opened}>
         Filters
       </FilterButton>
     </Indicator>
   );
 
-  const dropdown = (
-    <Stack gap="lg">
+  const dropdownBody = (
+    <Stack gap="lg" p="md">
       <Stack gap="md">
         <Divider label="Types" className="text-sm font-bold" />
         <Chip.Group
           multiple
-          value={filters.types ?? []}
-          onChange={(types) => {
-            setFilters({
-              ...filters,
-              types: types as ChangelogType[],
-            });
-          }}
+          value={mergedFilters.types ?? []}
+          onChange={(types) => patchPending({ types: types as ChangelogType[] })}
         >
           <Group gap={8}>
             {Object.values(ChangelogType).map((type, index) => (
@@ -117,21 +104,16 @@ export function ChangelogFiltersDropdown() {
       <Stack gap="md">
         <Divider label="Tags" className="text-sm font-bold" />
         <ChangelogTagSelect
-          value={filters.tags ?? []}
-          onChange={(tags) => setFilters({ ...filters, tags })}
+          value={mergedFilters.tags ?? []}
+          onChange={(tags) => patchPending({ tags })}
         />
       </Stack>
       <Stack gap="md">
         <Divider label="Before" className="text-sm font-bold" />
         <DatePickerInput
           placeholder="Choose a date..."
-          value={filters.dateBefore ?? null}
-          onChange={(x) => {
-            setFilters({
-              ...filters,
-              dateBefore: x ?? undefined,
-            });
-          }}
+          value={mergedFilters.dateBefore ?? null}
+          onChange={(x) => patchPending({ dateBefore: x ?? undefined })}
           clearable
         />
       </Stack>
@@ -139,27 +121,22 @@ export function ChangelogFiltersDropdown() {
         <Divider label="After" className="text-sm font-bold" />
         <DatePickerInput
           placeholder="Choose a date..."
-          value={filters.dateAfter ?? null}
-          onChange={(x) => {
-            setFilters({
-              ...filters,
-              dateAfter: x ?? undefined,
-            });
-          }}
+          value={mergedFilters.dateAfter ?? null}
+          onChange={(x) => patchPending({ dateAfter: x ?? undefined })}
           clearable
         />
       </Stack>
-      {filterLength > 0 && (
-        <Button
-          color="gray"
-          variant={colorScheme === 'dark' ? 'filled' : 'light'}
-          onClick={clearFilters}
-          fullWidth
-        >
-          Clear all
-        </Button>
-      )}
     </Stack>
+  );
+
+  const dropdownFooter = (
+    <StagedFiltersFooter
+      isDirty={isDirty}
+      onApply={apply}
+      onReset={reset}
+      filterLength={filterLength}
+      onClear={clearAndClose}
+    />
   );
 
   if (mobile)
@@ -168,21 +145,29 @@ export function ChangelogFiltersDropdown() {
         {target}
         <Drawer
           opened={opened}
-          onClose={() => setOpened(false)}
+          onClose={close}
           size="90%"
           position="bottom"
           styles={{
             content: {
-              height: 'auto',
               maxHeight: 'calc(100dvh - var(--header-height))',
-              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
             },
-            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
+            body: {
+              padding: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              flex: 1,
+              minHeight: 0,
+            },
             header: { padding: '4px 8px' },
             close: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
         >
-          {dropdown}
+          <div className="min-h-0 flex-1 overflow-y-auto">{dropdownBody}</div>
+          {dropdownFooter}
         </Drawer>
       </>
     );
@@ -193,13 +178,15 @@ export function ChangelogFiltersDropdown() {
       position="bottom-end"
       shadow="md"
       radius={12}
-      onClose={() => setOpened(false)}
+      opened={opened}
+      onClose={close}
       middlewares={{ flip: true, shift: true }}
       trapFocus
     >
       <Popover.Target>{target}</Popover.Target>
-      <Popover.Dropdown maw={468} p="md" w="100%">
-        {dropdown}
+      <Popover.Dropdown maw={468} p={0} w="100%">
+        {dropdownBody}
+        {dropdownFooter}
       </Popover.Dropdown>
     </Popover>
   );

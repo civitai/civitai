@@ -1,15 +1,6 @@
-import {
-  Button,
-  Group,
-  HoverCard,
-  LoadingOverlay,
-  Stack,
-  Text,
-  ThemeIcon,
-  Title,
-} from '@mantine/core';
+import { Button, Group, LoadingOverlay, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
-import { IconRocketOff, IconSparkles } from '@tabler/icons-react';
+import { IconRocketOff } from '@tabler/icons-react';
 import React from 'react';
 import dynamic from 'next/dynamic';
 import { useQueryRecommendedResources } from '~/components/AssociatedModels/recommender.utils';
@@ -32,15 +23,11 @@ export function AssociatedModels({
   type,
   label,
   ownerId,
-  versionId,
-  allowAIRecommendations,
 }: {
   fromId: number;
   type: AssociationType;
   label: React.ReactNode;
   ownerId: number;
-  versionId: number;
-  allowAIRecommendations?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
@@ -48,12 +35,10 @@ export function AssociatedModels({
   const { recommendedResources, isLoading } = useQueryRecommendedResources({
     fromId,
     type,
-    modelVersionId: versionId,
-    allowAIRecommendations,
   });
 
   const handleManageClick = () => {
-    openAssociateModelsModal({ props: { fromId, type, versionId } });
+    openAssociateModelsModal({ props: { fromId, type } });
   };
 
   if (!isOwnerOrModerator && !recommendedResources.length) return null;
@@ -86,16 +71,6 @@ export function AssociatedModels({
                     data-activity="follow-suggestion:model"
                     forceInView
                   />
-                ) : data.resourceType === 'recommended' ? (
-                  <div style={{ position: 'relative' }}>
-                    <AIRecommendedIndicator />
-                    <ModelCard
-                      {...props}
-                      data={data}
-                      data-activity="follow-suggestion:model"
-                      forceInView
-                    />
-                  </div>
                 ) : (
                   <ArticleCard {...props} data={data} data-activity="follow-suggestion:article" />
                 )
@@ -115,29 +90,5 @@ export function AssociatedModels({
         </Stack>
       </MasonryContainer>
     </MasonryProvider>
-  );
-}
-
-function AIRecommendedIndicator() {
-  return (
-    <HoverCard width={300} withArrow withinPortal>
-      <HoverCard.Target>
-        <ThemeIcon
-          gradient={{ from: '#4776E6', to: '#8E54E9', deg: 90 }}
-          variant="gradient"
-          radius="xl"
-          size="md"
-          className="absolute -right-2 -top-2 z-10"
-        >
-          <IconSparkles size={16} stroke={1.5} fill="currentColor" />
-        </ThemeIcon>
-      </HoverCard.Target>
-      <HoverCard.Dropdown px="md" py={8}>
-        <Text size="sm" fw={600}>
-          AI Recommended
-        </Text>
-        <Text size="xs">This resource has been recommended by Civitai AI</Text>
-      </HoverCard.Dropdown>
-    </HoverCard>
   );
 }

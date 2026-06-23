@@ -4,6 +4,7 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types'
 import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   BountyType,
+  CommercialUse,
   Currency,
   MetricTimeframe,
   ModelStatus,
@@ -430,6 +431,10 @@ export const constants = {
   autoLabel: {
     labelTypes: ['tag', 'caption'] as const,
   },
+
+  // External URL for the article rating self-check guideline (hosted on education.civitai.com).
+  // TODO(article-nsfw-dispute): finalize the slug; this is a placeholder.
+  articleRatingGuidelineUrl: 'https://education.civitai.com/articles/article-rating-guidelines',
 } as const;
 
 export const maxOrchestratorImageFileSize = 24 * 1024 ** 2; // 24MB
@@ -468,6 +473,11 @@ export type ComponentFileType = (typeof componentFileTypes)[number];
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
 export const POST_MINIMUM_SCHEDULE_MINUTES = 60;
+// Cap on resources that can be manually credited on a single uploaded/external
+// image. This is an attribution action with no GPU cost, so it is intentionally
+// decoupled from the per-tier generation resource limits (genStatus.limits) —
+// those are throttled during GPU crunches and must not bleed into crediting.
+export const MAX_RESOURCES_PER_IMAGE = 20;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 export const MAX_ANIMATION_DURATION_SECONDS = 30;
@@ -481,7 +491,17 @@ type LicenseDetails = {
   notice?: string;
   poweredBy?: string;
   restrictedNsfwLevels?: NsfwLevel[];
+  // When true, mature content is restricted (auto-derives `restrictedNsfwLevels`
+  // to MATURE_NSFW_LEVELS). Use this instead of hand-listing levels.
+  disableMature?: boolean;
+  // When true, the license forbids commercial use. Drives both the commercial-use
+  // permission override (-> [None]) and the per-version monetization block. The set
+  // of affected base models is derived from this flag (see nonCommercialBaseModels).
+  nonCommercial?: boolean;
 };
+
+// Levels considered "mature" — restricted whenever a license sets disableMature.
+const MATURE_NSFW_LEVELS: NsfwLevel[] = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
 const baseLicenses: Record<string, LicenseDetails> = {
   openrail: {
     url: 'https://huggingface.co/spaces/CompVis/stable-diffusion-license',
@@ -618,6 +638,20 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://www.vidu.com/terms',
     name: 'Vidu Q1',
   },
+  'ideogram nc': {
+    // Public blob page — the nf4 `raw` URL is gated and 401s.
+    url: 'https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md',
+    name: 'Ideogram Non-Commercial Model Agreement',
+    // Section 3(iii) attribution wording; the URL lives on the linked license name
+    // shown above the notice, so we omit the bare URL here.
+    notice:
+      'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement. All rights reserved. Copyright © Ideogram, Inc.',
+    // License AUP bars pornographic/obscene content. `disableMature` auto-derives
+    // the restricted NSFW levels (see getRestrictedNsfwLevelsForBaseModel).
+    disableMature: true,
+    // Ideogram Non-Commercial Model Agreement forbids commercial use.
+    nonCommercial: true,
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -698,22 +732,50 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Kling: baseLicenses['kling'],
   'Vidu Q1': baseLicenses['vidu'],
   Seedance: baseLicenses['seedream'],
+  'Ideogram 4.0': baseLicenses['ideogram nc'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
 export type Sampler = (typeof constants.samplers)[number];
 
+// Resolve the restricted NSFW levels for a license, deriving from `disableMature`
+// when an explicit `restrictedNsfwLevels` array isn't provided.
+function getLicenseRestrictedNsfwLevels(license: LicenseDetails | undefined): NsfwLevel[] {
+  if (!license) return [];
+  if (license.restrictedNsfwLevels && license.restrictedNsfwLevels.length > 0)
+    return license.restrictedNsfwLevels;
+  if (license.disableMature) return MATURE_NSFW_LEVELS;
+  return [];
+}
+
 // Base models that use licenses with NSFW restrictions
 export const nsfwRestrictedBaseModels: BaseModel[] = Object.entries(baseModelLicenses)
-  .filter(
-    ([, license]) =>
-      license && license.restrictedNsfwLevels && license.restrictedNsfwLevels.length > 0
-  )
+  .filter(([, license]) => getLicenseRestrictedNsfwLevels(license).length > 0)
   .map(([baseModel]) => baseModel as BaseModel);
 
 export function getRestrictedNsfwLevelsForBaseModel(baseModel: string): NsfwLevel[] {
-  const license = baseModelLicenses[baseModel as BaseModel];
-  return license?.restrictedNsfwLevels || [];
+  return getLicenseRestrictedNsfwLevels(baseModelLicenses[baseModel as BaseModel]);
+}
+
+// Base models whose license forbids commercial use — derived from the `nonCommercial`
+// license flag (single source of truth), mirroring nsfwRestrictedBaseModels.
+export const nonCommercialBaseModels: BaseModel[] = Object.entries(baseModelLicenses)
+  .filter(([, license]) => !!license?.nonCommercial)
+  .map(([baseModel]) => baseModel as BaseModel);
+
+export function isNonCommercialBaseModel(baseModel?: string | null): boolean {
+  return !!baseModel && !!baseModelLicenses[baseModel as BaseModel]?.nonCommercial;
+}
+
+// Effective commercial-use permissions for a resource given its base model.
+// Non-commercial base models override the stored creator permission to [None] — we
+// derive this at read time rather than storing it, so it always reflects the current
+// license config and needs no migration. Use wherever commercial-use is surfaced.
+export function getEffectiveCommercialUse(
+  allowCommercialUse: CommercialUse[],
+  baseModel?: string | null
+): CommercialUse[] {
+  return isNonCommercialBaseModel(baseModel) ? [CommercialUse.None] : allowCommercialUse;
 }
 
 export function isNsfwLevelRestrictedForBaseModel(
@@ -1418,6 +1480,7 @@ export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
 export const TOOLS_SEARCH_INDEX = 'tools_v2';
 export const COMICS_SEARCH_INDEX = 'comics_v1';
+export const MODELS_3D_SEARCH_INDEX = 'models_3d_v1';
 
 // Metrics:
 export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';

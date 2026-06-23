@@ -8,13 +8,14 @@ import {
   List,
   Stack,
   Text,
-  TextInput,
   Title,
 } from '@mantine/core';
 import { IconCheck, IconDeviceMobile, IconShieldCheck, IconX } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { DeviceCodeEntry } from '~/components/Login/DeviceCodeEntry';
+import { formatUserCode } from '~/server/oauth/user-code';
 
 interface DeviceAppInfo {
   client: {
@@ -42,16 +43,20 @@ export default function DeviceAuthorizePage() {
     return null;
   }
 
-  // Step 1: Look up the code to get app info
-  const handleLookup = async () => {
-    if (!code.trim()) return;
+  // Step 1: Look up the code to get app info. `DeviceCodeEntry` passes the
+  // canonical, hyphen-formatted code (`XXXX-XXXX`) — the exact form the server
+  // stores as the reverse-lookup key.
+  const handleLookup = async (submittedCode: string) => {
+    const userCode = formatUserCode(submittedCode);
+    if (!userCode) return;
+    setCode(userCode);
     setStatus('loading');
 
     try {
       const res = await fetch('/api/auth/oauth/device-info', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_code: code.trim().toUpperCase() }),
+        body: JSON.stringify({ user_code: userCode }),
       });
 
       if (!res.ok) {
@@ -78,7 +83,7 @@ export default function DeviceAuthorizePage() {
       const res = await fetch('/api/auth/oauth/device-approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_code: code.trim().toUpperCase() }),
+        body: JSON.stringify({ user_code: formatUserCode(code) }),
       });
 
       if (!res.ok) {
@@ -122,6 +127,10 @@ export default function DeviceAuthorizePage() {
               </Text>
               <Button
                 onClick={() => {
+                  // Clear the failed code so the freshly-mounted entry field
+                  // starts empty — otherwise a complete-but-invalid code would
+                  // immediately auto-submit again on mount.
+                  setCode('');
                   setStatus('input');
                   setError('');
                   setAppInfo(null);
@@ -182,34 +191,12 @@ export default function DeviceAuthorizePage() {
               </Text>
             </>
           ) : (
-            <>
-              <IconDeviceMobile size={48} />
-              <Title order={3}>Connect a Device</Title>
-              <Text c="dimmed" ta="center">
-                Enter the code shown on your device to authorize it with your Civitai account.
-              </Text>
-              <TextInput
-                value={code}
-                onChange={(e) => setCode(e.currentTarget.value)}
-                placeholder="XXXX-XXXX"
-                size="lg"
-                w="100%"
-                styles={{
-                  input: { textAlign: 'center', letterSpacing: '0.15em', fontWeight: 600 },
-                }}
-              />
-              <Button
-                fullWidth
-                onClick={handleLookup}
-                loading={status === 'loading'}
-                disabled={!code.trim()}
-              >
-                Continue
-              </Button>
-              <Text size="xs" c="dimmed" ta="center">
-                Signed in as {currentUser.username}
-              </Text>
-            </>
+            <DeviceCodeEntry
+              initialCode={code}
+              loading={status === 'loading'}
+              username={currentUser.username}
+              onSubmit={handleLookup}
+            />
           )}
         </Stack>
       </Card>

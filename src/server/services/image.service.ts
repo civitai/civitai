@@ -42,6 +42,7 @@ import {
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan, withDetachedSpan } from '~/server/utils/otel-helpers';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
   FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
   MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
@@ -58,7 +59,11 @@ import {
   wrapMeilisearchClientWithLimiter,
 } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
-import { leakingContentCounter, registerCounterWithLabels } from '~/server/prom/client';
+import {
+  leakingContentCounter,
+  registerCounter,
+  registerCounterWithLabels,
+} from '~/server/prom/client';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import {
   getBaseModelFromResources,
@@ -75,7 +80,6 @@ import {
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -132,8 +136,13 @@ import {
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import {
+  getVisibleModel3DIdForPost,
+  getVisibleModel3DIds,
+} from '~/server/services/model3d.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
+import { parseScannerFlag } from '~/server/services/image-scanner-flag';
 import {
   deleteImagTagsForReviewByImageIds,
   getImagTagsForReviewByImageIds,
@@ -141,7 +150,10 @@ import {
 import type { ImageModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
-import { queueComicsForPanelImages } from '~/server/services/nsfwLevels.service';
+import {
+  queueComicsForPanelImages,
+  queueModel3DForThumbnailImage,
+} from '~/server/services/nsfwLevels.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { getVotableTags2 } from '~/server/services/tag.service';
@@ -253,16 +265,37 @@ const {
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
 export async function purgeResizeCache({ url }: { url: string }) {
-  // Purge from new cache bucket
-  const { items } = await getImageS3Client().listObjects({
-    bucket: env.S3_IMAGE_CACHE_BUCKET,
-    prefix: url,
-  });
-  const keys = items.map((x) => x.Key).filter(isDefined);
-  if (keys.length) {
-    await getImageS3Client().deleteManyObjects({
+  // Best-effort: purge resized variants from the image-cache bucket. This is a
+  // cache invalidation, NOT a source-of-truth write — a stale resized variant is
+  // self-healing (re-derived on next request) and must never fail the caller's
+  // mutation. The S3 client here talks to an S3-compatible proxy
+  // (S3_IMAGE_UPLOAD_ENDPOINT); when that proxy returns a non-S3 body (e.g. a
+  // plain-text "404 page not found" from the proxy front-end), the AWS SDK's
+  // deserializer throws `char '4' is not expected.:1:1` which previously
+  // surfaced as a 500 on post.updateImage (hideMeta toggle). Swallow + log so a
+  // flaky/non-conforming cache proxy can't break image edits. (The deleteImage
+  // caller already wraps this in try/catch — this makes the contract intrinsic.)
+  try {
+    const { items } = await getImageS3Client().listObjects({
       bucket: env.S3_IMAGE_CACHE_BUCKET,
-      keys,
+      prefix: url,
+    });
+    const keys = items.map((x) => x.Key).filter(isDefined);
+    if (keys.length) {
+      await getImageS3Client().deleteManyObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET,
+        keys,
+      });
+    }
+  } catch (err) {
+    logToAxiom({
+      type: 'warning',
+      name: 'purge-resize-cache',
+      message: 'resize-cache purge failed',
+      imageKey: url,
+      error: safeError(err),
+    }).catch(() => {
+      // swallow — best effort logging
     });
   }
 
@@ -757,9 +790,15 @@ export const getImageById = async ({ id }: GetByIdInput) => {
  * Operators set the key to '1' to enable.
  */
 async function isImageScannerNewEnabled(): Promise<boolean> {
-  const value = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW);
-  if (value === '1' || value === 'true') return true;
-  if (value === '0' || value === 'false') return false;
+  // The HA/Sentinel sysRedis returns a Buffer for BLOB_STRING replies, which
+  // matched none of the literals pre-fix → fell through and destructively
+  // overwrote the operator's '1' with 'false'. parseScannerFlag coerces the
+  // Buffer first and returns null ONLY for a genuinely-unset/unknown key, so
+  // the seed below now fires only in its intended default-seeding case.
+  // See PR #2697/#2700 for the canonical Buffer-vs-string regression.
+  const raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW);
+  const parsed = parseScannerFlag(raw);
+  if (parsed !== null) return parsed;
   await sysRedis.set(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW, 'false');
   return false;
 }
@@ -1106,6 +1145,11 @@ type GetAllImagesRaw = {
   postId: number | null;
   postTitle: string | null;
   modelVersionId: number | null;
+  // RAW Post.model3dId — visibility-checked into a nullable output field below
+  // (the batched `getVisibleModel3DIds` gate) before reaching the client. Drives
+  // the "Posted to 3D Model" chip on the feed-modal path without an ambient
+  // `model3d.getByPostId` lookup.
+  model3dId: number | null;
   imageId: number | null;
   publishedAt: Date | null;
   unpublishedAt?: Date | null;
@@ -1158,6 +1202,15 @@ const imageFeedStatementTimeoutCounter = registerCounterWithLabels({
   labelNames: ['dbTarget'] as const,
 });
 
+// getImageMetricsObject soft-fallback rate: incremented whenever the ClickHouse
+// image-metrics read exceeds CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and we serve
+// empty (TRANSIENT-zero) metrics. Makes the otherwise axiom-only fallback rate
+// observable in Prometheus. No label dimension — the timeout has no natural one.
+const imageMetricsClickhouseTimeoutCounter = registerCounter({
+  name: 'image_metrics_clickhouse_timeout_total',
+  help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (served empty metrics)',
+});
+
 export const getAllImages = async (
   input: GetAllImagesInput & {
     userId?: number;
@@ -1173,6 +1226,7 @@ export const getAllImages = async (
     collectionId, // TODO - call this from separate method?
     modelId,
     modelVersionId,
+    model3dId,
     imageId, // used in public API
     username,
     period,
@@ -1295,7 +1349,7 @@ export const getAllImages = async (
   }
 
   if (username && !targetUserId) {
-    if (!prefetchedTargetUser) throw new Error('User not found');
+    if (!prefetchedTargetUser) throw throwNotFoundError('User not found');
     targetUserId = prefetchedTargetUser.id;
   }
 
@@ -1394,6 +1448,17 @@ export const getAllImages = async (
       cacheTime = CacheTTL.md;
       cacheTags.push(`images-model:${modelId}`);
     }
+  }
+
+  // Model3D gallery: posts link to a Model3D via Post.model3dId (no
+  // ModelVersion / ImageResourceNew chain involved), so this is just a
+  // direct filter on the always-present Post join below. Mirrors the
+  // collection / model gallery cache shape — Model3D image uploads are
+  // captured by the same post.service bust hooks.
+  if (model3dId) {
+    AND.push(Prisma.sql`p."model3dId" = ${model3dId}`);
+    cacheTime = CacheTTL.md;
+    cacheTags.push(`images-model3d:${model3dId}`);
   }
 
   // [x] TODO remove
@@ -1543,7 +1608,7 @@ export const getAllImages = async (
     AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
-  const isGallery = modelId || modelVersionId || reviewId || userId;
+  const isGallery = modelId || modelVersionId || model3dId || reviewId || userId;
   if (postId && !modelId) {
     // a post image query won't include modelId
     orderBy = `i."index"`;
@@ -1758,6 +1823,7 @@ export const getAllImages = async (
       p."publishedAt",
       p.metadata->>'unpublishedAt' "unpublishedAt",
       p."modelVersionId",
+      p."model3dId",
       p."availability",
       i.minor,
       i.poi,
@@ -1789,7 +1855,13 @@ export const getAllImages = async (
       return rows as Row[];
     },
     'getAllImages',
-    'v1'
+    // Bumped v1 -> v2 when `p."model3dId"` was added to the SELECT. The query
+    // hash already changes with the new column (so old entries fall out of the
+    // keyspace on their own), but the explicit version bump abandons the stale
+    // keyspace immediately rather than leaving model3dId-less rows resident
+    // until their TTL — keeps the feed-modal chip from silently lacking the
+    // field on a warm cache after deploy.
+    'v2'
   );
   let rawImages: GetAllImagesRaw[];
   try {
@@ -1889,6 +1961,20 @@ export const getAllImages = async (
     ])
   );
 
+  // Visibility-check the RAW `model3dId`s carried on the feed rows before they
+  // reach the client. `p."model3dId"` is unfiltered (it reflects the link, not
+  // whether the viewer may SEE the linked Model3D), so a hidden Draft / deleted
+  // model's id would otherwise leak as a clickable chip on the feed-modal path.
+  // Most feed images aren't linked (model3dId null) so the common page skips the
+  // query entirely; the linked few resolve in ONE batched query (no N+1),
+  // applying the SAME `canViewModel3d` predicate as the single-post lookup.
+  const rawModel3dIds = [
+    ...new Set(rawImages.map((i) => i.model3dId).filter((id): id is number => id != null)),
+  ];
+  const visibleModel3DIds = rawModel3dIds.length
+    ? await getVisibleModel3DIds({ model3dIds: rawModel3dIds, userId, isModerator })
+    : undefined;
+
   const images = withSpan('image:getAllImages:transform', () => {
     // Process reactions into lookup
     let userReactions: Record<number, ReviewReactions[]> | undefined;
@@ -1953,6 +2039,9 @@ export const getAllImages = async (
         poi?: boolean;
         minor?: boolean;
         judgeScore?: JudgeScore | null;
+        // Visibility-gated linked-Model3D id (or null) for the "Posted to 3D
+        // Model" chip on the feed-modal path. See the model3dId override below.
+        model3dId?: number | null;
       }
     > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, collectionItemNote, ...i }) => {
       const judgeScore = parseJudgeScore(collectionItemNote ?? null);
@@ -1962,6 +2051,12 @@ export const getAllImages = async (
 
       return {
         ...i,
+        // Override the RAW `p."model3dId"` (spread in via `...i`) with the
+        // visibility-gated value: keep the id only when the viewer may see the
+        // linked Model3D, else null. Drives the feed-modal chip from a prop —
+        // no ambient `model3d.getByPostId`. (`null` here is the three-state
+        // "resolved-absent" the chip needs to NOT fall back.)
+        model3dId: i.model3dId != null && visibleModel3DIds?.has(i.model3dId) ? i.model3dId : null,
         meta: imageMeta?.[i.id] ?? null,
         nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
         modelVersionIds: imageResources?.[i.id]?.resources?.map((r) => r.modelVersionId) ?? [],
@@ -2109,14 +2204,29 @@ export const getAllImagesIndex = async (
     ));
   } catch (err) {
     // Meilisearch saturation / timeout on the tRPC hot path (image.getInfinite).
-    // Surface as TRPCError TIMEOUT so the client returns 408 fast instead of
-    // bleeding until Traefik's 30s router timeout — which is what backed up
-    // the event loop and tipped api-primary into kubelet SIGKILL on 2026-05-29.
-    // tRPC v10 has no SERVICE_UNAVAILABLE / 503 code; TIMEOUT is the closest
-    // semantic match.
+    // Surface as TRPCError SERVICE_UNAVAILABLE (HTTP 503) so the client gets a
+    // fast, retryable response instead of bleeding until Traefik's 30s router
+    // timeout — which is what backed up the event loop and tipped api-primary
+    // into kubelet SIGKILL on 2026-05-29. 503 is the correct code for a
+    // transient backend brownout (was TIMEOUT/408 as a tRPC-v10 stopgap; v11
+    // has SERVICE_UNAVAILABLE).
     if (err instanceof MeiliCallTimeoutError) {
       throw new TRPCError({
-        code: 'TIMEOUT',
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Image search is temporarily overloaded — please retry.',
+        cause: err,
+      });
+    }
+    // Upstream returned 408 (backend timeout) or 5xx (feeds-proxy shed /
+    // brownout). Same disposition as the timeout above — a retryable 503
+    // SERVICE_UNAVAILABLE so the client shows its retry banner with a friendly
+    // message, instead of a raw 500 ("Meilisearch fetch failed (503): ...")
+    // leaking to the UI.
+    // Mirrors the user/model search REST handlers. 4xx-other (malformed
+    // filter / auth) is NOT failfast-eligible and still bubbles as-is.
+    if (err instanceof MeilisearchFetchError && isFailfastStatus(err.status)) {
+      throw new TRPCError({
+        code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
         cause: err,
       });
@@ -2158,6 +2268,7 @@ export const getAllImagesIndex = async (
     thumbnails,
     imageMetrics,
     tagIdsVar,
+    tagsVar,
   ] = await withSpan('image:getAllImagesIndex:parallelFetch', async () =>
     Promise.all([
       // These enrichment fetches are independent (each takes pre-computed
@@ -2184,8 +2295,41 @@ export const getAllImagesIndex = async (
       // Search results from BitDex don't include tagIds (too expensive to store),
       // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
+      include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
     ])
   );
+
+  const tagsByImageId = tagsVar
+    ? tagsVar.reduce((acc, tag) => {
+        const arr = acc.get(tag.imageId);
+        if (arr) arr.push(tag);
+        else acc.set(tag.imageId, [tag]);
+        return acc;
+      }, new Map<number, typeof tagsVar>())
+    : undefined;
+
+  // Visibility-check the RAW `model3dId` carried on the search docs (indexed
+  // from `Post.model3dId`) before it reaches the client — same no-leak bar as
+  // the raw-SQL feed path and `image.get`. Meili docs carry it; BitDex docs do
+  // NOT (the field is left `undefined` there → the chip falls back to the
+  // postId lookup, the documented self-healing path). Only the non-null few
+  // are resolved, in ONE batched query (no per-image N+1).
+  const rawIndexModel3dIds = [
+    ...new Set(
+      searchResults
+        // model3dId is present on Meili docs but not on BitDex docs (which the
+        // search-result union also covers) — read it defensively.
+        .map((sr) => (sr as { model3dId?: number }).model3dId)
+        .filter((id): id is number => typeof id === 'number')
+    ),
+  ];
+  const visibleIndexModel3DIds = rawIndexModel3dIds.length
+    ? await getVisibleModel3DIds({
+        model3dIds: rawIndexModel3dIds,
+        userId: currentUserId,
+        isModerator: user?.isModerator,
+      })
+    : undefined;
 
   const mergedData = withSpan('image:getAllImagesIndex:transform', () =>
     searchResults.map(({ publishedAtUnix, ...sr }) => {
@@ -2199,8 +2343,29 @@ export const getAllImagesIndex = async (
       const nsfwLevel = Math.max(thumbnail?.nsfwLevel ?? 0, sr.nsfwLevel);
       const metrics = imageMetrics[sr.id];
 
+      // Three-state chip signal on the feed-modal path:
+      //  - linked model3d (any source)  → gated number | null (no leak)
+      //  - Meili doc, no link           → null (resolved-absent → chip renders
+      //                                   nothing AND does NOT fall back, the
+      //                                   durable elimination of getByPostId)
+      //  - BitDex doc (field not stored)→ undefined (fall back to getByPostId;
+      //                                   self-healing, the documented gap)
+      // `searchSource` is per-page (one backend serves the whole page), so an
+      // absent model3dId means "confirmed no link" on Meili but "not indexed"
+      // on BitDex — only the former is safe to assert as a resolved null.
+      const rawModel3dId = (sr as { model3dId?: number }).model3dId;
+      const model3dId =
+        typeof rawModel3dId === 'number'
+          ? visibleIndexModel3DIds?.has(rawModel3dId)
+            ? rawModel3dId
+            : null
+          : searchSource === 'bitdex'
+          ? undefined
+          : null;
+
       return {
         ...sr,
+        model3dId,
         // Override tagIds from authoritative cache when available.
         // This ensures client-side hidden-tag filtering works even when
         // the search engine (BitDex) doesn't return tagIds.
@@ -2234,7 +2399,7 @@ export const getAllImagesIndex = async (
         cosmetic: imageCosmetics?.[sr.id] ?? null,
         // TODO fix below
         availability: Availability.Public,
-        tags: [], // needed?
+        tags: tagsByImageId?.get(sr.id) ?? [],
         name: null, // leave
         scannedAt: null, // remove
         mimeType: null, // need?
@@ -2675,7 +2840,16 @@ export async function getImagesFromFeedSearch(
       new CacheService(
         redis as unknown as IRedisClient,
         pgDbWrite as IDbClient,
-        clickhouse as IClickhouseClient
+        clickhouse as IClickhouseClient,
+        undefined,
+        // Back the feed's image→tagIds lookup with civitai's own warm, actively-invalidated
+        // tagIdsForImagesCache (msgpack string) instead of the retired event-engine-common
+        // `image:tagIds` Redis hash. Same {imageId, tags[]} shape + same WD14/Rekognition +
+        // styleTags/subjectTags filter, so it's a drop-in. Relieves next-redis-cluster memory.
+        (ids: number[]) =>
+          tagIdsForImagesCache.fetch(ids) as Promise<
+            Record<number, { imageId: number; tags: number[] }>
+          >
       )
     );
 
@@ -2760,13 +2934,23 @@ export async function getImagesFromFeedSearch(
     };
   } catch (err) {
     console.error('Error in getImagesFromFeedSearch:', err);
-    // Meili saturation / timeout → fail fast as TIMEOUT (HTTP 408) so the
-    // caller gets a fast, retryable response instead of bleeding 30s while
-    // Traefik gives up. tRPC v10 has no SERVICE_UNAVAILABLE / 503 code, so
-    // TIMEOUT (the closest semantic match) is used here.
+    // Meili saturation / timeout → fail fast as SERVICE_UNAVAILABLE (HTTP 503)
+    // so the caller gets a fast, retryable response instead of bleeding 30s
+    // while Traefik gives up. 503 is the correct transient-brownout code
+    // (was TIMEOUT/408 under tRPC v10, which lacked SERVICE_UNAVAILABLE).
     if (err instanceof MeiliCallTimeoutError) {
       throw new TRPCError({
-        code: 'TIMEOUT',
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Image search is temporarily overloaded — please retry.',
+        cause: err,
+      });
+    }
+    // 408/5xx from the upstream (or feeds-proxy) → retryable 503, same as
+    // the circuit-open path above. Keeps this path symmetric with
+    // getAllImagesIndex even though it's REST-only and historically low-error.
+    if (err instanceof MeilisearchFetchError && isFailfastStatus(err.status)) {
+      throw new TRPCError({
+        code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
         cause: err,
       });
@@ -2782,6 +2966,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const {
     sort,
     modelVersionId,
+    model3dId,
     types,
     withMeta,
     fromPlatform,
@@ -2884,7 +3069,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const targetUser =
       (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
       (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
-    if (!targetUser) throw new Error('User not found');
+    if (!targetUser) throw throwNotFoundError('User not found');
     userId = targetUser.id;
 
     logToAxiom(
@@ -2959,6 +3144,14 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
+  }
+
+  // Model3D gallery filter — `model3dId` is the index analog of `postedToId`
+  // (set at index time from `Post.model3dId`). Lets the 3D-model detail page
+  // serve its gallery from Meilisearch instead of the DB feed path, which
+  // was tripping the 20s ceiling on `getAllImages` for model3d queries.
+  if (model3dId) {
+    filters.push(makeMeiliImageSearchFilter('model3dId', `= ${model3dId}`));
   }
 
   if (remixOfId) {
@@ -3648,6 +3841,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   const {
     sort,
     modelVersionId,
+    model3dId,
     types,
     withMeta,
     fromPlatform,
@@ -3738,7 +3932,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     const targetUser =
       (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
       (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
-    if (!targetUser) throw new Error('User not found');
+    if (!targetUser) throw throwNotFoundError('User not found');
     userId = targetUser.id;
 
     logToAxiom(
@@ -3812,6 +4006,14 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
+  }
+
+  // Model3D gallery filter — `model3dId` is the index analog of `postedToId`
+  // (set at index time from `Post.model3dId`). Lets the 3D-model detail page
+  // serve its gallery from Meilisearch instead of the DB feed path, which
+  // was tripping the 20s ceiling on `getAllImages` for model3d queries.
+  if (model3dId) {
+    filters.push(makeMeiliImageSearchFilter('model3dId', `= ${model3dId}`));
   }
 
   if (remixOfId) {
@@ -3980,6 +4182,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   let totalProcessed = 0;
   let consecutiveEmptyBatches = 0;
   let nextCursor: number | undefined;
+  // Set true when the iteration loop breaks because the upstream signalled
+  // unavailability (local deadline, 408/5xx, or circuit-open). Used after the
+  // loop to distinguish "feed is genuinely empty" from "we returned nothing
+  // because Meili was unhealthy" — the latter must surface as a retryable
+  // TIMEOUT, not a silent empty 200 the client renders as end-of-feed.
+  let brokeOnUpstreamFailure = false;
   const request: SearchParams = {
     filter: filters.join(' AND '),
     sort: sorts,
@@ -4049,8 +4257,10 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
           });
           // Fall out of the iteration loop with whatever's already in
           // accumulatedHits. The nextCursor / merge logic below handles the
-          // partial / empty case (nextCursor cleared when mergedHits.length
-          // <= limit).
+          // partial case; the empty case is converted to a retryable TIMEOUT
+          // after the loop (brokeOnUpstreamFailure) so the client shows its
+          // retry banner instead of a silent end-of-feed.
+          brokeOnUpstreamFailure = true;
           break;
         }
         // Upstream-side fast-fail: 408 (proxy/backend timeout) or 5xx
@@ -4062,6 +4272,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
             iteration: String(iteration),
             reason: failfastReasonForStatus(e.status),
           });
+          brokeOnUpstreamFailure = true;
           break;
         }
         // Wrapper-side fail-fast: runWithLimiter said no before the request
@@ -4083,6 +4294,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
             iteration: String(iteration),
             reason: MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
           });
+          brokeOnUpstreamFailure = true;
           break;
         }
         throw e;
@@ -4157,6 +4369,20 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       if (results.length < requestLimit) {
         break;
       }
+    }
+
+    // If the loop bailed because Meili was unhealthy AND we accumulated
+    // nothing, we have no usable page to serve. Returning an empty 200 here
+    // makes the client treat it as end-of-feed (nextCursor undefined →
+    // hasNextPage false → no retry), and during a brownout every feed does
+    // the same, so switching feeds also shows "no results". Surface a
+    // retryable 503 instead so the existing SearchRetryBanner kicks in.
+    // (A non-empty partial page still serves normally — degraded, not broken.)
+    if (brokeOnUpstreamFailure && accumulatedHits.length === 0) {
+      throw new TRPCError({
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Image search is temporarily overloaded — please retry.',
+      });
     }
 
     // Record PostFilter metrics
@@ -4380,9 +4606,83 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   }
 }
 
-const getImageMetricsObject = async (data: { id: number }[]) => {
+// Lazily-built MetricService over the watcher-fed `metrics:*` cache, reused
+// across calls (this is the hot feed path) rather than reconstructed per call.
+let _imageMetricService: MetricService | null = null;
+const getImageMetricService = () =>
+  (_imageMetricService ??= new MetricService(
+    clickhouse as IClickhouseClient,
+    redis as unknown as IRedisClient
+  ));
+
+type ImageMetricsObject = Record<
+  number,
+  {
+    imageId: number;
+    reactionLike: number | null;
+    reactionHeart: number | null;
+    reactionLaugh: number | null;
+    reactionCry: number | null;
+    comment: number | null;
+    collection: number | null;
+    buzz: number | null;
+  }
+>;
+
+// Image metric counts are read from the watcher-fed `metrics:*` cache via
+// MetricService (which now pulls from the FINAL `entityMetricDailyAgg_v2` view).
+// The legacy in-app `entitymetric:*` read path (imageMetricsCache) was retired
+// after the v2 + watcher cutover went 100% stable.
+export const getImageMetricsObject = async (
+  data: { id: number }[]
+): Promise<ImageMetricsObject> => {
   try {
-    return await imageMetricsCache.fetch(data.map((d) => d.id));
+    const ids = data.map((d) => d.id);
+
+    // The ClickHouse read has NO request-level timeout other than the
+    // @clickhouse/client 30s default, and a try/catch CANNOT catch a hang. Bound
+    // it here so a saturated/cold-miss metric read fails SOFT to empty metrics
+    // (callers treat missing ids as null) instead of parking ~30s and blowing the
+    // SSR deadline. Empty `{}` matches the existing catch fallback.
+    const timeoutMs = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS;
+    // Narrow type flows from this call (`fetch('Image', …)` → Record<number,
+    // ImageMetrics>); withTimeoutFallback infers T from it so the empty fallback
+    // is typed identically (no widening to the full metric union).
+    const fetchPromise = getImageMetricService().fetch('Image', ids);
+    type ImageMetricMap = Awaited<typeof fetchPromise>;
+    const metrics = await withTimeoutFallback(
+      fetchPromise,
+      timeoutMs,
+      {} as ImageMetricMap,
+      () => {
+        imageMetricsClickhouseTimeoutCounter.inc();
+        logToAxiom(
+          {
+            type: 'warning',
+            name: 'getImageMetrics timeout',
+            message: `ClickHouse image metrics read exceeded ${timeoutMs}ms`,
+            idCount: ids.length,
+            timeoutMs,
+          },
+          'clickhouse'
+        ).catch();
+      }
+    );
+    const result: ImageMetricsObject = {};
+    for (const id of ids) {
+      const m = metrics[id];
+      result[id] = {
+        imageId: id,
+        reactionLike: m?.Like || null,
+        reactionHeart: m?.Heart || null,
+        reactionLaugh: m?.Laugh || null,
+        reactionCry: m?.Cry || null,
+        comment: m?.commentCount || null,
+        collection: m?.Collection || null,
+        buzz: m?.tippedAmount || null,
+      };
+    }
+    return result;
   } catch (e) {
     const error = e as Error;
     logToAxiom(
@@ -4554,8 +4854,20 @@ export const getImage = async ({
     entity: 'Image',
   });
 
+  // Durable replacement for the ambient `model3d.getByPostId` chip call: carry
+  // the visibility-checked linked Model3D id on this payload (the image
+  // viewers already fetch it) so the "Posted to 3D Model" chip renders from a
+  // prop instead of firing a per-image tRPC query for every image (~36/s,
+  // mostly null). Resolves the SAME visibility predicate the chip lookup used,
+  // so a hidden draft/deleted Model3D yields null here too. Null when the post
+  // isn't linked, isn't visible, or there's no postId at all.
+  const model3dId = firstRawImage.postId
+    ? await getVisibleModel3DIdForPost({ postId: firstRawImage.postId, userId, isModerator })
+    : null;
+
   const image = {
     ...firstRawImage,
+    model3dId,
     cosmetic: imageCosmetics?.[firstRawImage.id] ?? null,
     user: {
       id: creatorId,
@@ -4844,7 +5156,7 @@ type CachedImagesForModelVersions = {
 export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
-  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
+  ttl: CacheTTL.day,
   // The lookupFn filters on async-populated columns (i.nsfwLevel != 0,
   // i.needsReview IS NULL). A read between publish and ingestion-complete
   // returns zero rows. We still cache notFound to skip the requery cost on
@@ -6368,6 +6680,13 @@ export async function updateImageNsfwLevel({
         data: { status },
       });
     }
+    // If this image is the thumbnail of a Model3D, enqueue the parent
+    // Model3D for nsfwLevel recompute. Without this, a moderator clamping
+    // the thumbnail's nsfwLevel via the image mod surface would leave
+    // `Model3D.nsfwLevel` (and the denormalized `Model3DMetric.nsfwLevel`)
+    // stale — the parent row's level is derived from the thumbnail alone
+    // (`updateModel3DNsfwLevels` in `nsfwLevels.service.ts`).
+    await queueModel3DForThumbnailImage(id);
     await trackModActivity(userId, {
       entityType: 'image',
       entityId: id,

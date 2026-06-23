@@ -2,7 +2,8 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
-import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { banReasonDetails, CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { moderationActionEmail } from '~/server/email/templates';
 import {
   BanReasonCode,
   BlockedReason,
@@ -269,13 +270,13 @@ export async function getUsersWithSearch({
       })
     );
   } catch (err) {
-    // Mirror image.getInfinite's handling: surface a fast 408 via TRPCError
-    // TIMEOUT so the client can retry instead of waiting on Traefik's 30s
-    // router timeout. tRPC v10 has no SERVICE_UNAVAILABLE / 503 code; TIMEOUT
-    // is the closest semantic match.
+    // Mirror image.getInfinite's handling: surface a fast, retryable 503 via
+    // TRPCError SERVICE_UNAVAILABLE so the client can retry instead of waiting
+    // on Traefik's 30s router timeout. (Was TIMEOUT/408 under tRPC v10, which
+    // lacked SERVICE_UNAVAILABLE; v11 has it.)
     if (err instanceof MeiliCallTimeoutError) {
       throw new TRPCError({
-        code: 'TIMEOUT',
+        code: 'SERVICE_UNAVAILABLE',
         message: 'User search is temporarily overloaded — please retry.',
         cause: err,
       });
@@ -1578,7 +1579,10 @@ export const toggleBan = async ({
   force,
 }: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
   // Get user with username for search index deletion
-  const user = await getUserById({ id, select: { bannedAt: true, meta: true, username: true } });
+  const user = await getUserById({
+    id,
+    select: { bannedAt: true, meta: true, username: true, email: true },
+  });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
@@ -1650,6 +1654,47 @@ export const toggleBan = async ({
         ),
       ]),
     ]);
+  }
+
+  // Notify the user by email of the ban/unban decision. Skip the admin
+  // force-clear/re-ban path (`force`) since that isn't a user-facing decision.
+  // Never let an email failure break the ban: isolate in try/catch -> Axiom.
+  if (!force && user.email) {
+    try {
+      if (!bannedAt) {
+        // Being banned: the email shows only the sanitized public ban-reason
+        // label (never the private label, and never the moderator's free-text
+        // `detailsExternal`). Free text is kept in `meta.banDetails` for the
+        // appeal/Retool flow but is never emailed — this avoids exposing
+        // explicit/targeted prose to the user. The TOS link in the email
+        // template provides the policy reference.
+        const publicLabel = reasonCode
+          ? banReasonDetails[reasonCode]?.publicBanReasonLabel
+          : undefined;
+        const reason = publicLabel && publicLabel.trim().length > 0 ? publicLabel : undefined;
+
+        await moderationActionEmail.send({
+          to: user.email,
+          username: user.username ?? 'User',
+          kind: 'account-banned',
+          reason,
+        });
+      } else {
+        // Being unbanned: ban details are wiped on unban, so send no reason.
+        await moderationActionEmail.send({
+          to: user.email,
+          username: user.username ?? 'User',
+          kind: 'account-unbanned',
+        });
+      }
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'ban-email-failed',
+        message: (error as Error).message,
+        error,
+      });
+    }
   }
 
   return updatedUser;
@@ -1740,13 +1785,16 @@ export const toggleBookmarkedArticle = async ({
   userId: number;
 }) => toggleBookmarked({ entityId: articleId, type: CollectionType.Article, userId });
 
-const collectionEntityProps = {
+// TODO(model3d-workstream-E): wire CollectionType.Model3D through bookmark + metrics flow
+//   once model3dMetrics exists. For now Model3D bookmarks short-circuit before reaching
+//   these maps (see toggleBookmarked below).
+const collectionEntityProps: Partial<Record<CollectionType, string>> = {
   [CollectionType.Article]: 'articleId',
   [CollectionType.Model]: 'modelId',
   [CollectionType.Image]: 'imageId',
   [CollectionType.Post]: 'postId',
 };
-const collectionEntityMetrics = {
+const collectionEntityMetrics: Partial<Record<CollectionType, typeof articleMetrics>> = {
   [CollectionType.Article]: articleMetrics,
   [CollectionType.Model]: modelMetrics,
   [CollectionType.Image]: imageMetrics,
@@ -1779,6 +1827,11 @@ export const toggleBookmarked = async ({
   }
 
   const entityProp = collectionEntityProps[type];
+  const metricsEngine = collectionEntityMetrics[type];
+  if (!entityProp || !metricsEngine) {
+    // TODO(model3d-workstream-E): Model3D bookmarks land here until model3dMetrics ships.
+    throw new Error(`toggleBookmarked: no bookmark route for CollectionType.${type}`);
+  }
   const collectionItem = await dbWrite.collectionItem.findFirst({
     where: {
       [entityProp]: entityId,
@@ -1795,7 +1848,6 @@ export const toggleBookmarked = async ({
         id: collectionItem.id,
       },
     });
-    const metricsEngine = collectionEntityMetrics[type];
     metricsEngine.queueUpdate(entityId);
   } else if (!exists && setTo !== false) {
     await dbWrite.collectionItem.create({

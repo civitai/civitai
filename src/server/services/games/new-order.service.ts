@@ -1878,11 +1878,21 @@ export async function getPlayerHistory({
     `userId = ${playerId}`,
     `createdAt >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
   ];
-  // cursor is now guaranteed to be a Date (schema coerces); safe to ISO-format.
-  if (cursor) AND.push(`createdAt < '${cursor.toISOString()}'`);
-
   const HAVING = [];
   if (status?.length) HAVING.push(`status IN ('${status.join("','")}')`);
+  // Keyset pagination on the AGGREGATE sort key (max(createdAt), imageId) via
+  // HAVING — NOT a raw-row `createdAt < cursor` in WHERE. Filtering raw rows by the
+  // cursor corrupts the per-image max(createdAt): it SKIPS a boundary image whose
+  // only rating is at the cursor second, and DUPLICATES a re-rated image whose
+  // older rows survive the prune (reappearing with a stale max). The tuple compare
+  // + matching (lastCreatedAt, imageId) ORDER BY gives gap/dup-free paging incl.
+  // same-second ties. Both cursor fields are schema-validated (Date + number) so
+  // this is injection-safe. (Cost: each page aggregates the player's window like
+  // page 1 — acceptable for a history view.)
+  if (cursor)
+    HAVING.push(
+      `(max(createdAt), imageId) < (parseDateTimeBestEffort('${cursor.createdAt.toISOString()}'), ${cursor.imageId})`
+    );
 
   const judgments = await clickhouse.$query<{
     imageId: number;
@@ -1905,13 +1915,19 @@ export async function getPlayerHistory({
     WHERE ${AND.join(' AND ')}
     GROUP BY imageId
     ${HAVING.length > 0 ? `HAVING ${HAVING.join(' AND ')}` : ''}
-    ORDER BY lastCreatedAt DESC
+    ORDER BY lastCreatedAt DESC, imageId DESC
     LIMIT ${limit + 1}
   `;
   if (judgments.length === 0) return { items: [], nextCursor: null };
 
-  let nextCursor: Date | null = null;
-  if (judgments.length > limit) nextCursor = judgments.pop()?.lastCreatedAt ?? null;
+  // Cursor = the LAST KEPT row's (createdAt, imageId), not the popped probe row —
+  // next page is HAVING (max(createdAt), imageId) < cursor, so it resumes strictly
+  // after this row with no skip/dup.
+  const hasMore = judgments.length > limit;
+  if (hasMore) judgments.pop();
+  const lastKept = judgments[judgments.length - 1];
+  const nextCursor =
+    hasMore && lastKept ? { createdAt: lastKept.lastCreatedAt, imageId: lastKept.imageId } : null;
 
   const imageIds = judgments.map((j) => j.imageId).sort();
   const images = await dbRead.image.findMany({

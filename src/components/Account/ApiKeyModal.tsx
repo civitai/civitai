@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { ModalProps } from '@mantine/core';
 import {
+  Alert,
+  Anchor,
   Box,
   Button,
   Checkbox,
@@ -161,6 +163,17 @@ export function ApiKeyModal({ ...props }: Props) {
           <Text size="xs" c="dimmed">
             {`Be sure to save this, you won't be able to see it again.`}
           </Text>
+          <Alert color="yellow" mt="sm" p="sm">
+            <Text size="xs">
+              You are responsible for everything done with this key. Anything generated, posted, or
+              published with it (including by automated agents or scripts) counts as your own action
+              under the{' '}
+              <Anchor href="/content/tos" target="_blank" rel="noopener noreferrer">
+                Terms of Service
+              </Anchor>
+              .
+            </Text>
+          </Alert>
         </Stack>
       ) : (
         <Form form={form} onSubmit={handleSaveApiKey}>

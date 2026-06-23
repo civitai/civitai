@@ -64,6 +64,7 @@ const EDIT_IMG_IDS = [
   ECO.WanImage27,
   ECO.HiDreamO1,
   ECO.MAI,
+  ECO.Boogu,
 ];
 
 /** Image ecosystems that support image:create */
@@ -103,6 +104,7 @@ const TXT2IMG_IDS = [
   ECO.Lens,
   ECO.Krea2,
   ECO.MAI,
+  ECO.Boogu,
 ];
 
 /** Video ecosystems that support video:create */
@@ -351,6 +353,39 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   // ===========================================================================
+  // 3D Model Workflows (PolyGen / Meshy via Fal)
+  // ===========================================================================
+  //
+  // Both workflows ride the unified V2 pipeline (graph → handler → submit).
+  // Field rendering lives in `GenerationForm.tsx`, gated on the PolyGen
+  // ecosystem; submission/whatif go through `generateFromGraph` /
+  // `whatIfFromGraph` like every other ecosystem. Feature-flagged behind
+  // `model3dGenerator`.
+
+  txt2model3d: {
+    label: 'Create 3D Model',
+    modeLabel: 'Text to 3D',
+    description: 'Generate a 3D model from a text prompt (PolyGen via Meshy)',
+    category: 'model3d',
+    ecosystemIds: [ECO.PolyGen],
+    featureFlag: 'model3dGenerator',
+    isNew: true,
+  },
+
+  img2model3d: {
+    // Shares the `txt2model3d` label so the in-form title row reads the
+    // same "Create 3D Model" regardless of the selected mode (mirrors the
+    // Image segment, where txt2img/img2img both title as "Create Image").
+    label: 'Create 3D Model',
+    modeLabel: 'Image to 3D',
+    description: 'Generate a 3D model from a source image (PolyGen via Meshy)',
+    category: 'model3d',
+    ecosystemIds: [ECO.PolyGen],
+    featureFlag: 'model3dGenerator',
+    isNew: true,
+  },
+
+  // ===========================================================================
   // Text Output Workflows (hidden from picker, triggered programmatically)
   // ===========================================================================
 
@@ -511,6 +546,7 @@ export const workflowCategories: { category: WorkflowCategory; label: string }[]
   { category: 'image', label: 'Image' },
   { category: 'video', label: 'Video' },
   { category: 'audio', label: 'Audio' },
+  { category: 'model3d', label: '3D Models' },
 ];
 
 /**
@@ -573,6 +609,21 @@ export function filterWorkflowsByGatedEcosystems<T extends { workflows: Workflow
       });
     }),
   }));
+}
+
+/**
+ * Returns the feature-flag name a workflow requires, or `undefined` when
+ * the workflow is universally available. Server-side request handlers
+ * (e.g. orchestrator `generateFromGraph` / `whatIfFromGraph`) MUST consult
+ * this and reject submissions that lack the flag — `filterWorkflowsByFeatureFlags`
+ * only hides the option in the picker UI, so a crafted request payload would
+ * otherwise bypass the gate.
+ */
+export function getRequiredFeatureFlagForWorkflow(
+  workflowId: string | undefined
+): string | undefined {
+  if (!workflowId) return undefined;
+  return workflowConfigByKey.get(workflowId)?.featureFlag;
 }
 
 /**
@@ -749,7 +800,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       ecoId === ECO.HiDreamO1 ||
       ecoId === ECO.Lens ||
       ecoId === ECO.Krea2 ||
-      ecoId === ECO.MAI,
+      ecoId === ECO.MAI ||
+      ecoId === ECO.Boogu,
   ],
   [
     'img2img:edit',
@@ -758,7 +810,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       ecoId === ECO.Grok ||
       ecoId === ECO.Qwen2 ||
       ecoId === ECO.WanImage27 ||
-      ecoId === ECO.HiDreamO1,
+      ecoId === ECO.HiDreamO1 ||
+      ecoId === ECO.Boogu,
   ],
 
   // Grok/LTXV23 vid2vid:edit - no legacy equivalent
@@ -769,6 +822,10 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
 
   // Audio workflows - no legacy equivalent
   ['txt2music', true],
+
+  // 3D Model workflows - no legacy equivalent
+  ['txt2model3d', true],
+  ['img2model3d', true],
 ]);
 
 /**
@@ -805,6 +862,8 @@ export const workflowGroups: WorkflowGroup[] = [
     overrides: [{ ecosystemIds: WAN_ALL_IDS, workflows: ['txt2vid', 'img2vid'] }],
   },
   { workflows: ['vid2vid:edit', 'vid2vid:extend'] },
+  // 3D Models — mirrors the Image segment's "Text to / Image to" toggle.
+  { workflows: ['txt2model3d', 'img2model3d'] },
 ];
 
 /**

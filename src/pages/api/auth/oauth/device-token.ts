@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { addCorsHeaders } from '~/server/utils/endpoint-helpers';
 import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-limit';
@@ -6,13 +7,16 @@ import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { createOAuthTokenPair } from '~/server/oauth/token-helpers';
 import { ACCESS_TOKEN_TTL } from '~/server/oauth/constants';
 import { Flags } from '~/shared/utils/flags';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { TokenScope, ALL_SCOPES } from '~/shared/constants/token-scope.constants';
 import { dbRead } from '~/server/db/client';
 import requestIp from 'request-ip';
 
 const DEVICE_CODE_KEY = REDIS_KEYS.OAUTH.DEVICE_CODES;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   const shouldStop = addCorsHeaders(req, res, ['POST']);
   if (shouldStop) return;
 
@@ -74,7 +78,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const rawScope = parseInt(data.scope, 10);
-  if (isNaN(rawScope) || rawScope < 0 || rawScope > TokenScope.Full) {
+  // Bound against ALL_SCOPES (incl. opt-in AppBlocksSubmit), NOT `Full` — the
+  // approved device code may legitimately carry AppBlocksSubmit (bit 25), which
+  // is outside `Full`. The per-client allowedScopes intersection below is the
+  // real authorization gate.
+  if (isNaN(rawScope) || rawScope < 0 || rawScope > ALL_SCOPES) {
     return res.status(400).json({ error: 'invalid_scope' });
   }
   const scope = rawScope;
@@ -84,7 +92,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     where: { id: client_id },
     select: { allowedScopes: true },
   });
-  if (client && !Flags.hasFlag(client.allowedScopes, scope)) {
+  // Fail closed: if the client row is absent (e.g. deleted between device-code
+  // creation and token exchange) the scope intersection cannot be evaluated, so
+  // reject rather than skip the gate.
+  if (!client) {
+    return res.status(400).json({ error: 'invalid_client' });
+  }
+  if (!Flags.hasFlag(client.allowedScopes, scope)) {
     return res
       .status(400)
       .json({

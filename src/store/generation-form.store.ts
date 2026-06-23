@@ -11,9 +11,17 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
+/**
+ * UI-only generation form type. Extends the persisted `MediaType` enum with
+ * `'model3d'` for the 3D Model tab — the prisma `MediaType` enum is
+ * deliberately not touched because there is no persisted 3D-media row;
+ * 3D outputs live in `Model3D`, not `Image`/`Video`.
+ */
+export type GenerationFormType = MediaType | 'model3d';
+
 interface GenerationFormState {
-  /** Selected media type (image or video) */
-  type: MediaType;
+  /** Selected generation form type (image, video, model3d) */
+  type: GenerationFormType;
   /** Selected video generation engine */
   engine?: OrchestratorEngine2;
   /** User-selected buzz type for generation (undefined = use site default) */
@@ -21,7 +29,7 @@ interface GenerationFormState {
 }
 
 interface GenerationFormStore extends GenerationFormState {
-  setType: (type: MediaType) => void;
+  setType: (type: GenerationFormType) => void;
   setEngine: (engine: OrchestratorEngine2) => void;
   setBuzzType: (buzzType: BuzzSpendType) => void;
 }
@@ -47,7 +55,7 @@ export const useGenerationFormStore = create<GenerationFormStore>()(
 
 /** Standalone accessor for use outside React components */
 export const generationFormStore = {
-  setType: (type: MediaType) => {
+  setType: (type: GenerationFormType) => {
     useGenerationFormStore.setState({ type });
   },
   setEngine: (engine: OrchestratorEngine2) => {

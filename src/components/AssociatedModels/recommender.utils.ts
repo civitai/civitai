@@ -1,20 +1,14 @@
-import produce from 'immer';
 import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GetAssociatedResourcesInput } from '~/server/schema/model.schema';
-import type { RecommendationRequest } from '~/server/schema/recommenders.schema';
-import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function useQueryRecommendedResources(
-  payload: Omit<GetAssociatedResourcesInput, 'browsingLevel'> &
-    Pick<RecommendationRequest, 'modelVersionId'> & { allowAIRecommendations?: boolean }
+  payload: Omit<GetAssociatedResourcesInput, 'browsingLevel'>
 ) {
-  const { fromId, modelVersionId, type, allowAIRecommendations } = payload;
+  const { fromId, type } = payload;
   const browsingLevel = useBrowsingLevelDebounced();
-  const features = useFeatureFlags();
 
   const {
     data: associatedModels = [],
@@ -25,41 +19,19 @@ export function useQueryRecommendedResources(
     type,
     browsingLevel,
   });
-  const {
-    data: recommendedResources = [],
-    isInitialLoading: loadingRecommended,
-    isRefetching: refetchingRecommended,
-  } = trpc.recommenders.getResourceRecommendations.useQuery(
-    { modelVersionId, browsingLevel },
-    // Mirror the server's own early-return (it returns [] when the version's
-    // meta.allowAIRecommendations is off) so we never make the round-trip for the
-    // majority of versions that have it disabled. recommenders.getResourceRecommendations
-    // was ~58% of all tRPC volume; this removes that load (+ its middleware/Flipt
-    // cost) from the main pool for the disabled case with no behavior change.
-    { enabled: !!modelVersionId && features.recommenders && !!allowAIRecommendations }
-  );
-
-  // Memoize combined data to prevent unnecessary re-renders
-  const combinedData = useMemo(
-    () => [...associatedModels, ...recommendedResources],
-    [associatedModels, recommendedResources]
-  );
 
   // Partition data by resourceType for appropriate filtering
   const modelItems = useMemo(
-    () =>
-      combinedData.filter(
-        (item) => item.resourceType === 'model' || item.resourceType === 'recommended'
-      ),
-    [combinedData]
+    () => associatedModels.filter((item) => item.resourceType === 'model'),
+    [associatedModels]
   );
 
   const articleItems = useMemo(
-    () => combinedData.filter((item) => item.resourceType === 'article'),
-    [combinedData]
+    () => associatedModels.filter((item) => item.resourceType === 'article'),
+    [associatedModels]
   );
 
-  // Apply hidden preferences to models (including 'recommended' type)
+  // Apply hidden preferences to models
   const {
     items: filteredModels,
     hiddenCount: modelsHiddenCount,
@@ -67,7 +39,7 @@ export function useQueryRecommendedResources(
   } = useApplyHiddenPreferences({
     type: 'models',
     data: modelItems,
-    isRefetching: refetchingAssociated || refetchingRecommended,
+    isRefetching: refetchingAssociated,
   });
 
   // Apply hidden preferences to articles
@@ -78,7 +50,7 @@ export function useQueryRecommendedResources(
   } = useApplyHiddenPreferences({
     type: 'articles',
     data: articleItems,
-    isRefetching: refetchingAssociated || refetchingRecommended,
+    isRefetching: refetchingAssociated,
   });
 
   // Merge filtered results
@@ -90,58 +62,6 @@ export function useQueryRecommendedResources(
   return {
     recommendedResources: filteredResources,
     hiddenCount: modelsHiddenCount + articlesHiddenCount,
-    isLoading: loadingAssociated || loadingRecommended || modelsLoading || articlesLoading,
-  };
-}
-
-export function useToggleResourceRecommendationMutation() {
-  const queryUtils = trpc.useUtils();
-  const toggleRecommenderMutation = trpc.recommenders.toggleResourceRecommendations.useMutation({
-    onSuccess: async (result) => {
-      queryUtils.model.getById.setData(
-        { id: result.modelId },
-        produce((model) => {
-          if (!model) return model;
-
-          const affectedVersion = model.modelVersions.find((v) => v.id === result.id);
-          if (!affectedVersion) return model;
-
-          if (affectedVersion.meta == null) affectedVersion.meta = {};
-          affectedVersion.meta.allowAIRecommendations = result.meta.allowAIRecommendations;
-        })
-      );
-      // Invalidate getById by { id } (partial match → also covers the model page's
-      // { id, excludeTrainingData: true } cache key, which the setData above does
-      // NOT, since React Query matches keys exactly). This refetches the page's
-      // `model` so its now-current meta.allowAIRecommendations flips the client-side
-      // recommenders gate on, making recs appear without a page reload.
-      await queryUtils.model.getById.invalidate({ id: result.modelId });
-      if (result.meta.allowAIRecommendations) {
-        // Turning ON: mark stale so the now-enabled query refetches fresh recs.
-        await queryUtils.recommenders.getResourceRecommendations.invalidate({
-          modelVersionId: result.id,
-        });
-      } else {
-        // Turning OFF: the gate disables the query, and a disabled query is not
-        // "active", so invalidate() would NOT refetch — the previously-fetched
-        // recs would linger on screen until reload. reset() clears the cached
-        // data so they disappear live.
-        await queryUtils.recommenders.getResourceRecommendations.reset({
-          modelVersionId: result.id,
-        });
-      }
-    },
-    onError: (error) => {
-      showErrorNotification({ title: 'Failed to save', error: new Error(error.message) });
-    },
-  });
-
-  const handleToggle = ({ resourceId }: { resourceId: number }) => {
-    return toggleRecommenderMutation.mutateAsync({ id: resourceId });
-  };
-
-  return {
-    toggleResourceRecommendation: handleToggle,
-    isLoading: toggleRecommenderMutation.isPending,
+    isLoading: loadingAssociated || modelsLoading || articlesLoading,
   };
 }

@@ -82,7 +82,6 @@ export const imagesQueryParamSchema = z
       .union([z.array(z.enum(MediaType)), z.enum(MediaType)])
       .transform((val) => (Array.isArray(val) ? val : [val]))
       .optional(),
-    useIndex: booleanString().nullish(),
     userId: numericString(),
     username: z.coerce.string().transform(postgresSlugify),
     view: z.enum(['categories', 'feed']),

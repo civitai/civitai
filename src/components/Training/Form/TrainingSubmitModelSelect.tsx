@@ -12,6 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
+import { openConfirmModal } from '@mantine/modals';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -29,6 +30,7 @@ import {
   trainingDetailsBaseModelsAcestep15,
   trainingDetailsBaseModelsAcestep15Xl,
   trainingDetailsBaseModelsAnima,
+  trainingDetailsBaseModelsBoogu,
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsErnie,
   trainingDetailsBaseModelsFlux,
@@ -58,6 +60,9 @@ import {
 import { getAirModelLink, stringifyAIR } from '~/shared/utils/air';
 import {
   type AudioSampleOverride,
+  AI_TOOLKIT_EPOCHS,
+  aiToolkitStepDefault,
+  aiToolkitSaveEveryDefault,
   getDefaultEngine,
   isSamplePromptsRequired,
   parseAudioCaption,
@@ -115,16 +120,7 @@ const ModelSelector = ({
         <SegmentedControl
           data={versions.map(([k, v]) => {
             return {
-              label: v.isNew ? (
-                <Group wrap="nowrap" gap={6}>
-                  <Text>{v.label}</Text>
-                  <Badge size="xs" color="green">
-                    NEW
-                  </Badge>
-                </Group>
-              ) : (
-                v.label
-              ),
+              label: v.label,
               value: k,
             };
           })}
@@ -248,10 +244,36 @@ export const ModelSelect = ({
   const { data: announcement } = trpc.training.getAnnouncement.useQuery();
 
   const { updateRun } = trainingStore;
-  const blockedModels = status.blockedModels ?? [blockedCustomModels];
+  // blockedCustomModels is already a string[]; wrapping it in another array made
+  // blockedModels a string[][], so .includes() never matched the locally-blocked models.
+  const blockedModels = status.blockedModels ?? blockedCustomModels;
+
+  // Detect whether the user has tweaked the advanced training params away from the
+  // defaults for the current base. Auto-derived length knobs (steps/checkpoints/repeats/
+  // batch) and the engine field are excluded since those are recomputed per base and
+  // would otherwise always read as "dirty".
+  const isParamsDirty = (() => {
+    if (!selectedRun.base) return false;
+    const cur = selectedRun.params as Record<string, unknown>;
+    const def = getDefaultTrainingParams(selectedRun.base, selectedRun.params.engine) as Record<
+      string,
+      unknown
+    >;
+    const skip = new Set([
+      'engine',
+      'targetSteps',
+      'saveEvery',
+      'maxTrainEpochs',
+      'numRepeats',
+      'trainBatchSize',
+      'continueFrom',
+      'optimizerArgs',
+    ]);
+    return Object.keys(def).some((k) => !skip.has(k) && cur[k] !== def[k]);
+  })();
 
   // - Apply default params with overrides and calculations upon base model selection
-  const makeDefaultParams = (data: TrainingRunUpdate) => {
+  const applyDefaultParams = (data: TrainingRunUpdate) => {
     // Determine the appropriate engine based on the base type and model
     const engineToUse =
       data.params?.engine ??
@@ -265,12 +287,24 @@ export const ModelSelect = ({
     // uses the static trainingSettings default of 'kohya' for the engine field itself)
     defaultParams.engine = engineToUse;
 
-    defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
+    if (features.trainingStepsPricing && engineToUse === 'ai-toolkit') {
+      // Steps-based pricing: steps is the primary length knob (prefilled per ecosystem),
+      // batchSize defaults to 1. "Save every" (step interval) seeds to ~10 checkpoints;
+      // maxTrainEpochs (sent as `epochs`) is derived from it in AdvancedSettings.
+      defaultParams.trainBatchSize = 1;
+      defaultParams.targetSteps = aiToolkitStepDefault(
+        (data.baseType ?? selectedRun.baseType) as TrainingBaseModelType
+      );
+      defaultParams.saveEvery = aiToolkitSaveEveryDefault(defaultParams.targetSteps);
+      defaultParams.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
+    } else {
+      defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
 
-    defaultParams.targetSteps = Math.ceil(
-      ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
-        defaultParams.trainBatchSize
-    );
+      defaultParams.targetSteps = Math.ceil(
+        ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
+          defaultParams.trainBatchSize
+      );
+    }
 
     // Pre-fill sample prompts if required (AI Toolkit mandatory models or Flux2)
     const samplePrompts = data.samplePrompts || selectedRun.samplePrompts || ['', '', ''];
@@ -339,6 +373,28 @@ export const ModelSelect = ({
       ...data,
       samplePrompts: data.samplePrompts || samplePrompts,
     });
+  };
+
+  // Selecting a different base model resets training params to that model's defaults.
+  // If the user has dirtied the params, confirm before discarding their changes.
+  const makeDefaultParams = (data: TrainingRunUpdate) => {
+    const isChangingBase = !!data.base && data.base !== selectedRun.base;
+    if (isChangingBase && isParamsDirty) {
+      openConfirmModal({
+        title: 'Change base model?',
+        children: (
+          <Text size="sm">
+            Changing the base model will reset your training parameters to the defaults for the new
+            model. Your current parameter changes will be lost.
+          </Text>
+        ),
+        labels: { confirm: 'Change base model', cancel: 'Keep current model' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => applyDefaultParams(data),
+      });
+      return;
+    }
+    applyDefaultParams(data);
   };
 
   const formBaseModel = selectedRun.base;
@@ -422,6 +478,11 @@ export const ModelSelect = ({
   const baseModelAnima =
     !!formBaseModel &&
     (trainingDetailsBaseModelsAnima as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelBoogu =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsBoogu as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
   const baseModelAcestep15 =
@@ -578,7 +639,6 @@ export const ModelSelect = ({
                       baseType="hidream-o1"
                       makeDefaultParams={makeDefaultParams}
                       isNew={new Date() < new Date('2026-06-15')}
-
                     />
                   )}
                   {features.animaTraining && (
@@ -590,6 +650,17 @@ export const ModelSelect = ({
                       baseType="anima"
                       makeDefaultParams={makeDefaultParams}
                       isNew={new Date() < new Date('2026-06-25')}
+                    />
+                  )}
+                  {features.booguTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="orange"
+                      name="Boogu"
+                      value={baseModelBoogu}
+                      baseType="boogu"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew={new Date() < new Date('2026-07-19')}
                     />
                   )}
                 </>
@@ -729,10 +800,11 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'ltx23' ||
                   selectedRun.baseType === 'hidream-o1' ||
                   selectedRun.baseType === 'anima' ||
+                  selectedRun.baseType === 'boogu' ||
                   selectedRun.baseType === 'acestep15' ||
                   selectedRun.baseType === 'acestep15xl' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
-                    Note: this is an experimental build. Pricing, default settings, and results are
+                    Note: This is an experimental build. Pricing, default settings, and results are
                     subject to change.
                   </AlertWithIcon>
                 ) : undefined}

@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { Prisma } from '@prisma/client';
 import { Request, Response } from '@node-oauth/oauth2-server';
 import requestIp from 'request-ip';
@@ -8,10 +9,15 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { addCorsHeaders } from '~/server/utils/endpoint-helpers';
 import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-limit';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { TokenScope, ALL_SCOPES } from '~/shared/constants/token-scope.constants';
 import { buzzLimitSchema } from '~/server/schema/api-key.schema';
+import { redirectUriMatches } from '~/server/schema/oauth-client.schema';
+import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
+  // counter-blind. Listener-only (res.once('finish')); no behavior change.
+  instrumentApiResponse(req, res);
   if (req.method === 'OPTIONS') {
     addCorsHeaders(req, res, ['GET', 'POST'], { allowCredentials: true });
     return;
@@ -50,6 +56,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         .json({ error: 'invalid_request', error_description: 'Missing client_id' });
     }
 
+    // SECURITY (audit A1): App-Blocks-provisioned OauthClients (`appblk-<slug>`)
+    // exist solely as the policy ceiling for block-token minting. They must
+    // NEVER drive the interactive authorization_code flow — that would let an
+    // app-block owner mint a Full account Bearer token for any user they phish
+    // into the consent screen (account takeover). Reject before the client is
+    // even loaded so no app-block id can reach the authorize machinery. This
+    // gate is scoped to `appblk-` ids only; genuine OAuth-apps clients (uuid
+    // ids) are unaffected.
+    if (isAppBlockOauthClientId(clientId)) {
+      return res.status(400).json({
+        error: 'invalid_client',
+        error_description: 'This client cannot be used for interactive authorization',
+      });
+    }
+
     const client = await dbRead.oauthClient.findUnique({ where: { id: clientId } });
     if (!client) {
       return res
@@ -57,9 +78,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         .json({ error: 'invalid_client', error_description: 'Unknown client_id' });
     }
 
-    // Validate redirect_uri against registered URIs
+    // Validate redirect_uri against registered URIs (exact, plus loopback port flexibility)
     const redirectUri = params.redirect_uri as string;
-    if (!redirectUri || !client.redirectUris.includes(redirectUri)) {
+    if (!redirectUri || !redirectUriMatches(client.redirectUris, redirectUri)) {
       return res.status(400).json({
         error: 'invalid_request',
         error_description: 'redirect_uri does not match any registered URI',
@@ -89,7 +110,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Validate and clamp scope
     const rawScope = parseInt(params.scope as string, 10);
-    if (isNaN(rawScope) || rawScope < 0 || rawScope > TokenScope.Full) {
+    // Bound against ALL_SCOPES (incl. opt-in AppBlocksSubmit), NOT `Full`, so a
+    // client may request an opt-in bit outside `Full`. The per-client
+    // allowedScopes intersection (downstream) is the real authorization gate.
+    if (isNaN(rawScope) || rawScope < 0 || rawScope > ALL_SCOPES) {
       return res
         .status(400)
         .json({ error: 'invalid_scope', error_description: 'Invalid scope value' });

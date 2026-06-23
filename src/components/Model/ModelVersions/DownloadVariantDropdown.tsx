@@ -34,6 +34,13 @@ interface DownloadVariantDropdownProps {
   isLoadingAccess?: boolean;
   archived?: boolean;
   onPurchase?: () => void;
+  /**
+   * Optional controlled selection. When `onSelectFileId` is provided the parent
+   * owns the active-file state (so other panels, e.g. the Tensors panel, can
+   * follow the same selection). Otherwise the component manages it internally.
+   */
+  selectedFileId?: number | null;
+  onSelectFileId?: (fileId: number) => void;
 }
 
 export function DownloadVariantDropdown({
@@ -46,6 +53,8 @@ export function DownloadVariantDropdown({
   isLoadingAccess,
   archived,
   onPurchase,
+  selectedFileId: controlledFileId,
+  onSelectFileId,
 }: DownloadVariantDropdownProps) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -70,7 +79,15 @@ export function DownloadVariantDropdown({
 
   // Track user's explicit selection by id only; derive the active file from
   // the current files list so a stale id from a prior version is ignored.
-  const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
+  // Supports controlled mode so a parent can share the selection with other
+  // panels (e.g. the Tensors panel) that should follow the download choice.
+  const [internalFileId, setInternalFileId] = useState<number | null>(null);
+  const isControlled = typeof onSelectFileId === 'function';
+  const selectedFileId = isControlled ? controlledFileId ?? null : internalFileId;
+  const setSelectedFileId = (fileId: number) => {
+    if (isControlled) onSelectFileId!(fileId);
+    else setInternalFileId(fileId);
+  };
   const activeFile =
     modelFiles.find((f) => f.id === selectedFileId) ?? bestMatchFile ?? modelFiles[0];
 

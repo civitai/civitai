@@ -59,6 +59,16 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   target?: string;
   isRemix?: boolean;
   explain?: boolean;
+  /**
+   * Force the corner browsing-level badge to render on every card, not just
+   * mod/owner views of safe content. Mirrors `ImageGuard2.BlurToggle`'s
+   * `alwaysVisible`. With this on, the corner slot is a static level
+   * indicator; the click-to-reveal toggle on blurred content stays on the
+   * centered "This image is rated X" overlay rendered by ImageGuard2.
+   */
+  alwaysVisibleBadge?: boolean;
+  /** Accessible fallback alt text when the image itself has no name (e.g. the card's title). */
+  alt?: string;
 } & ContentTypeProps;
 
 const IMAGE_CARD_WIDTH = 450;
@@ -80,6 +90,8 @@ export function AspectRatioImageCard<T extends DialogKey>({
   target,
   isRemix,
   explain,
+  alwaysVisibleBadge,
+  alt,
 }: AspectRatioImageCardProps<T>) {
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 
@@ -147,7 +159,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                         metadata={image.metadata as MixedObject}
                         src={image.url}
                         name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
+                        alt={image.name ?? alt ?? undefined}
                         type={image.type}
                         imageId={image.id}
                         thumbnailUrl={image.thumbnailUrl}
@@ -165,7 +177,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                       metadata={image.metadata as MixedObject}
                       src={image.url}
                       name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
+                      alt={image.name ?? alt ?? undefined}
                       type={image.type}
                       imageId={image.id}
                       thumbnailUrl={image.thumbnailUrl}
@@ -192,7 +204,10 @@ export function AspectRatioImageCard<T extends DialogKey>({
                   )}
                 </LinkOrClick>
                 <div className={cardStyles.header}>
-                  <ImageGuard2.BlurToggle className={cardStyles.chip} />
+                  <ImageGuard2.BlurToggle
+                    className={cardStyles.chip}
+                    alwaysVisible={alwaysVisibleBadge}
+                  />
                   {typeof header === 'function' ? header({ safe }) : header}
                 </div>
                 {footer && (

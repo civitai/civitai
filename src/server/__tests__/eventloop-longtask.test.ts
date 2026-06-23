@@ -5,9 +5,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // booting prom-client registries or the Axiom logger. These mocks are inert; the
 // tests here exercise the pure drift math and the disarmed-passthrough guarantee.
 // ---------------------------------------------------------------------------
+// The module-under-test registers its metrics into the cross-graph shared
+// `instrumentationRegistry`. Give it a real throwaway registry so the module imports
+// cleanly here; metric EMISSION is asserted against a real registry in the sibling
+// eventloop-longtask-metrics.test.ts. This suite focuses on drift math + the
+// disarmed-passthrough guarantee.
+const { driftTestRegistry } = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const promClient = require('prom-client');
+  return { driftTestRegistry: new promClient.Registry() };
+});
+
 vi.mock('~/server/prom/client', () => ({
   registerCounter: () => ({ inc: vi.fn() }),
   registerHistogram: () => ({ observe: vi.fn() }),
+  instrumentationRegistry: driftTestRegistry,
+  registerInstrumentationMetric: (name: string, factory: () => unknown) => {
+    const existing = driftTestRegistry.getSingleMetric(name);
+    return existing ?? factory();
+  },
 }));
 
 vi.mock('~/server/logging/client', () => ({

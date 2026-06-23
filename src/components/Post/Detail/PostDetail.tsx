@@ -19,7 +19,7 @@ import {
   EntityCollaboratorStatus,
   EntityType,
 } from '~/shared/utils/prisma/enums';
-import { IconCheck, IconTrash, IconX } from '@tabler/icons-react';
+import { IconAlertCircle, IconCheck, IconTrash, IconX } from '@tabler/icons-react';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -56,6 +56,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { toStringList } from '~/utils/array-helpers';
+import { formatDate } from '~/utils/date-helpers';
 import { getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { Fragment, useEffect } from 'react';
@@ -192,6 +193,41 @@ export function PostDetailContent({ postId }: Props) {
       >
         <div className="flex justify-center gap-8 px-3">
           <div className="flex w-full max-w-[728px] flex-col gap-3 @lg:my-3">
+            {isOwnerOrMod && post.wasPublished && !post.publishedAt && (
+              <Alert
+                color="yellow"
+                icon={<IconAlertCircle size={16} />}
+                radius="sm"
+                className="shrink-0"
+              >
+                <Stack gap="xs">
+                  <Text size="sm" fw={600}>
+                    Post unpublished
+                  </Text>
+                  {post.unpublishedAt && (
+                    <Text size="sm">
+                      Unpublished on {formatDate(post.unpublishedAt, 'MMMM D, YYYY')}.
+                    </Text>
+                  )}
+                  <Text size="sm">
+                    This post is hidden from the public because its parent model or version was
+                    unpublished. Republish the parent to bring this post back — the original
+                    publish date will be preserved.
+                  </Text>
+                  {post.parentModelId && post.modelVersionId && (
+                    <Text size="sm">
+                      <Anchor
+                        component={Link}
+                        href={`/models/${post.parentModelId}?modelVersionId=${post.modelVersionId}`}
+                      >
+                        View the parent model
+                      </Anchor>{' '}
+                      to see why it was unpublished.
+                    </Text>
+                  )}
+                </Stack>
+              </Alert>
+            )}
             <div className="flex flex-col">
               <div className="flex items-center justify-between">
                 {post.title && (
