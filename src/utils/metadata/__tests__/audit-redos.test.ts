@@ -148,9 +148,10 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
   // → O(n^2). `"young " + "a"*N` drove `words.young.nouns.inPrompt` to ~2.8s at
   // N=24000 (seconds of synchronous main-thread CPU = user-triggerable DoS). Two
   // defenses, tested independently:
-  //   (a) the per-pattern gap is now bounded ({0,40}/{1,40}) → linear regardless
+  //   (a) the per-pattern gap is now bounded ({0,200}/{1,200}) → linear regardless
   //       of length. Exercised via `includesMinor`, which is NOT length-capped.
-  //   (b) `auditPrompt` truncates to MAX_AUDIT_PROMPT_LENGTH first → blanket bound.
+  //   (b) `auditPrompt` BLOCKS input beyond MAX_AUDIT_PROMPT_LENGTH (#2727 M2) →
+  //       blanket bound + closes the truncate-then-scan evasion.
   const LATIN_RUN_MAX_MS = 100;
   describe('Latin \\w-run composed-noun quadratic (residual ReDoS lever)', () => {
     it('includesMinor is fast on a long Latin \\w run after the adjective (quantifier bound)', () => {
@@ -189,19 +190,51 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
       ).toBeLessThan(LATIN_RUN_MAX_MS);
     });
 
-    it('auditPrompt truncates input beyond MAX_AUDIT_PROMPT_LENGTH (length cap defense-in-depth)', () => {
-      // A blocked word placed strictly beyond the cap is not scanned → not flagged.
-      // (Real prompts are <=10k chars; this asserts the documented truncation contract
-      // that blanket-bounds worst-case audit cost.)
+    it('auditPrompt BLOCKS input beyond MAX_AUDIT_PROMPT_LENGTH (#2727 M2: no truncate-then-scan evasion)', () => {
+      // Pre-fix this was a truncate-then-scan: a banned phrase buried past the cap
+      // slipped through (the audit flagged it as success===true). Now an over-length
+      // prompt is refused outright, so a buried banned phrase can no longer evade.
       const blocked = '9 year old girl';
       const within = auditPrompt(blocked);
       expect(within.success, 'sanity: the marker phrase is blocked within the cap').toBe(false);
+
+      // A normal prompt UNDER the cap is unaffected (truncation contract preserved
+      // for in-cap inputs; nothing here trips the length block).
+      const normal = auditPrompt('a serene mountain landscape at sunrise');
+      expect(normal.success, 'a normal in-cap prompt is unaffected').toBe(true);
+
+      // A banned phrase buried entirely beyond the cap: the whole prompt is now
+      // blocked for over-length (instead of the phrase evading via truncation).
       const padded = 'x'.repeat(MAX_AUDIT_PROMPT_LENGTH) + ' ' + blocked;
+      expect(padded.length).toBeGreaterThan(MAX_AUDIT_PROMPT_LENGTH);
       const beyond = auditPrompt(padded);
       expect(
         beyond.success,
-        'a banned phrase placed entirely beyond the cap is truncated away (not scanned)'
-      ).toBe(true);
+        'an over-length prompt is blocked outright (banned phrase can no longer hide past the cap)'
+      ).toBe(false);
+    });
+  });
+
+  // Recall-boundary coverage for the composed young-noun gap (#2727 M1). The
+  // composed path (`young…girl`) is the ONLY way `girl`/`boy` flag; a 40-char gap
+  // missed real spaced phrasings >40 chars. With the bound widened to 200, spaced
+  // phrasings inside the window still flag and a gap clearly over the bound does
+  // not — documenting the bound explicitly (replaces the tautological oracle
+  // coverage). Any FINITE bound stays linear, so the wider window costs no perf.
+  describe('composed young-noun recall boundary ({0,200} gap)', () => {
+    it('flags a spaced "young … girl" phrasing within the 200-char window (~150 chars)', () => {
+      // 'young ' + 'word ' x30 + 'girl' ≈ 150 spaced chars, comfortably < 200.
+      const input = 'young ' + 'word '.repeat(30) + 'girl';
+      expect(input.length).toBeLessThan(200);
+      expect(input.length).toBeGreaterThan(40); // would have been MISSED at the old {0,40} bound
+      expect(includesMinor(input)).toBeTruthy();
+    });
+
+    it('does NOT match when the gap is clearly over the 200-char bound', () => {
+      // 'young ' + 'word ' x60 + 'girl' ≈ 300 spaced chars of gap → beyond {0,200}.
+      const input = 'young ' + 'word '.repeat(60) + 'girl';
+      expect(input.length).toBeGreaterThan(200 + 'young girl'.length);
+      expect(includesMinor(input)).toBeFalsy();
     });
   });
 
