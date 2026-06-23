@@ -112,13 +112,14 @@ function refGetTags(prompt: string): string[] {
 // --- Reference (pre-optimization) young.nouns matching ---
 // Mirrors audit.ts: words.young.nouns = checkable(youngWords.nouns.concat(composedNouns),
 // { pluralize: true }). leet defaults to true. The composed nouns interleave every
-// adjective with every partialNoun via the body `adj·([\s|\w]{0,40}|[^\w]{1,40})·noun`
+// adjective with every partialNoun via the body `adj·([\s|\w]{0,200}|[^\w]{1,200})·noun`
 // — the highest-risk class for alternation interaction. The gap quantifiers are
 // BOUNDED (must match audit.ts's composedNouns exactly so this stays a faithful
 // old-vs-new *boundary* comparison): the unbounded original was O(n^2) on a long
-// Latin `\w` run (the residual ReDoS lever closed alongside this oracle).
+// Latin `\w` run (the residual ReDoS lever closed alongside this oracle). Widened
+// 40→200 alongside audit.ts (#2727 M1 recall fix) — kept in lockstep here.
 const youngComposedNouns = youngWords.partialNouns.flatMap((word) =>
-  youngWords.adjectives.map((adj) => adj + '([\\s|\\w]{0,40}|[^\\w]{1,40})' + word)
+  youngWords.adjectives.map((adj) => adj + '([\\s|\\w]{0,200}|[^\\w]{1,200})' + word)
 );
 const youngNounList = youngWords.nouns.concat(youngComposedNouns);
 const youngNounRefRegexes = youngNounList.map((w) => refPrepareWordRegex(w, true, true));
