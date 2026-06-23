@@ -7,10 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * the api-primary/SSR latency tail (the gap the opt-in `trpcProcedureDuration`
  * metric + the Tempo root-span blind spot leave open). These tests assert:
  *  - it FIRES at/above TRPC_SLOW_LOG_MS and NOT below (NaN-safe),
- *  - 0/negative threshold + the enable flag behave (no firehose footgun),
- *  - the per-pod storm guard caps emits/sec and surfaces the suppressed count,
- *  - the payload names the procedure path/type/duration/ok (+ optional errorCode/userId),
- *  - it never logs the procedure INPUT (no PII leak),
+ *  - 0/negative threshold + the enable flag behave (no firehose / no accidental-off),
+ *  - the per-pod storm guard names each distinct path once/window, caps absolute
+ *    volume, and surfaces the suppressed-by-ceiling count,
+ *  - the payload names the procedure path/type/duration/ok (+ optional
+ *    errorCode/userId/droppedSinceLastLog), never the procedure INPUT,
  *  - a logging failure can never throw into the caller.
  *
  * `~/server/logging/client` is mocked so the dynamic `import()` inside emitSlowLog
@@ -93,41 +94,70 @@ describe('maybeLogTrpcSlow threshold gating', () => {
     await flush();
     expect(logToAxiom).not.toHaveBeenCalled();
   });
+});
 
-  it('does not emit at all when TRPC_SLOW_LOG_ENABLED=false', async () => {
+describe('maybeLogTrpcSlow kill-switch', () => {
+  it('does not emit when TRPC_SLOW_LOG_ENABLED=false', async () => {
     process.env.TRPC_SLOW_LOG_ENABLED = 'false';
     process.env.TRPC_SLOW_LOG_MS = '1000';
     maybeLogTrpcSlow({ path: 'a.b', type: 'query', durationMs: 99999, ok: true });
     await flush();
     expect(logToAxiom).not.toHaveBeenCalled();
   });
-});
 
-describe('maybeLogTrpcSlow per-pod storm guard (rateGate)', () => {
-  // The cap is exercised at the gate level with a DETERMINISTIC clock (injected
-  // `now`), which fully covers M1: emit up to the cap, suppress the rest, and never
-  // silently drop — carry the suppressed count onto the next emitted line. (An
-  // integration assertion on logToAxiom call-count is intentionally NOT used here:
-  // vitest dedups concurrent `await import()` of a vi.mock'd module, which would
-  // make a "N concurrent emits → K logs" assertion flaky for a test-only reason.
-  // The glue maybeLogTrpcSlow→rateGate→emit is covered by the other tests.)
-  it('emits up to the cap, suppresses the rest, and carries the dropped count into the next window', () => {
-    // cap = 2 per 1000ms window.
-    expect(__rateGateForTest(2, 1000)).toBe(0); // emit #1 (window opens)
-    expect(__rateGateForTest(2, 1000)).toBe(0); // emit #2
-    expect(__rateGateForTest(2, 1000)).toBe(-1); // suppressed (dropped=1)
-    expect(__rateGateForTest(2, 1500)).toBe(-1); // still same window, suppressed (dropped=2)
-    // New window (>=1000ms later): first emit carries the 2 suppressed lines.
-    expect(__rateGateForTest(2, 2000)).toBe(2);
-    expect(__rateGateForTest(2, 2000)).toBe(0); // emit #2 of the new window, nothing pending
-    expect(__rateGateForTest(2, 2000)).toBe(-1); // suppressed again
+  it('stays ENABLED for non-falsy values like "yes"/"on" (no accidental-off footgun)', async () => {
+    process.env.TRPC_SLOW_LOG_MS = '1000';
+    for (const v of ['yes', 'on', 'true', '1', 'enabled']) {
+      logToAxiom.mockClear();
+      __resetTrpcSlowLogRateLimit();
+      process.env.TRPC_SLOW_LOG_ENABLED = v;
+      maybeLogTrpcSlow({ path: 'a.b', type: 'query', durationMs: 9000, ok: true });
+      await flush();
+      expect(logToAxiom, `value ${v} should keep logging enabled`).toHaveBeenCalledTimes(1);
+    }
   });
 
-  it('a cap of 1 emits the first and suppresses subsequent in-window', () => {
-    expect(__rateGateForTest(1, 5000)).toBe(0); // emit
-    expect(__rateGateForTest(1, 5000)).toBe(-1); // suppressed
-    expect(__rateGateForTest(1, 5999)).toBe(-1); // suppressed (same window)
-    expect(__rateGateForTest(1, 6000)).toBe(2); // new window: emit, carries the 2 dropped
+  it('is disabled by any explicit falsy token (0/no/off)', async () => {
+    process.env.TRPC_SLOW_LOG_MS = '1000';
+    for (const v of ['0', 'no', 'off', 'FALSE']) {
+      logToAxiom.mockClear();
+      __resetTrpcSlowLogRateLimit();
+      process.env.TRPC_SLOW_LOG_ENABLED = v;
+      maybeLogTrpcSlow({ path: 'a.b', type: 'query', durationMs: 9000, ok: true });
+      await flush();
+      expect(logToAxiom, `value ${v} should disable`).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe('rateGate (per-pod, path-diverse storm guard)', () => {
+  // Deterministic clock — explicit `now`, no fake timers.
+  it('names each distinct path once per window and suppresses same-path repeats', () => {
+    expect(__rateGateForTest('a', 50, 1000)).toBe(0); // emit 'a'
+    expect(__rateGateForTest('a', 50, 1000)).toBe(-1); // same path this window → suppressed
+    expect(__rateGateForTest('b', 50, 1500)).toBe(0); // distinct → emit
+    expect(__rateGateForTest('b', 50, 1999)).toBe(-1); // dup → suppressed
+    // New window (>=1000ms after window start 1000): 'a' nameable again.
+    expect(__rateGateForTest('a', 50, 2000)).toBe(0);
+  });
+
+  it('enforces the hard ceiling across distinct paths and carries the dropped count', () => {
+    // cap = 2: two distinct paths emit; further distinct paths hit the ceiling.
+    expect(__rateGateForTest('p1', 2, 1000)).toBe(0); // emit
+    expect(__rateGateForTest('p2', 2, 1000)).toBe(0); // emit
+    expect(__rateGateForTest('p3', 2, 1000)).toBe(-1); // ceiling → dropped=1
+    expect(__rateGateForTest('p4', 2, 1500)).toBe(-1); // ceiling → dropped=2
+    // New window: first emit carries the 2 ceiling-suppressed lines.
+    expect(__rateGateForTest('p1', 2, 2000)).toBe(2);
+    expect(__rateGateForTest('p2', 2, 2000)).toBe(0); // emit, nothing pending
+  });
+
+  it('dup suppressions do NOT inflate the ceiling drop count', () => {
+    expect(__rateGateForTest('a', 1, 1000)).toBe(0); // emit
+    expect(__rateGateForTest('a', 1, 1000)).toBe(-1); // dup (not a ceiling drop)
+    expect(__rateGateForTest('a', 1, 1000)).toBe(-1); // dup
+    // New window: 'a' emits again, carry is 0 (the dups above were not "dropped").
+    expect(__rateGateForTest('a', 1, 2000)).toBe(0);
   });
 });
 
@@ -175,6 +205,30 @@ describe('maybeLogTrpcSlow payload', () => {
     expect(Object.keys(payload)).not.toContain('errorCode');
     expect(Object.keys(payload)).not.toContain('userId');
     expect(Object.keys(payload)).not.toContain('droppedSinceLastLog');
+  });
+
+  it('attaches droppedSinceLastLog to the payload after ceiling drops (end-to-end)', async () => {
+    // Fake only Date so rateGate's window can be rolled deterministically while the
+    // real setTimeout in flush() still works. The two EMITTING calls are separated
+    // by a flush, so each lands (no concurrent-import dedup).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(1_000_000));
+    process.env.TRPC_SLOW_LOG_MS = '1000';
+    process.env.TRPC_SLOW_LOG_MAX_PER_SEC = '1';
+
+    maybeLogTrpcSlow({ path: 'p1', type: 'query', durationMs: 5000, ok: true }); // emit
+    await flush();
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+
+    maybeLogTrpcSlow({ path: 'p2', type: 'query', durationMs: 5000, ok: true }); // ceiling drop
+    await flush();
+    expect(logToAxiom).toHaveBeenCalledTimes(1); // still 1
+
+    vi.setSystemTime(new Date(1_002_000)); // new window
+    maybeLogTrpcSlow({ path: 'p3', type: 'query', durationMs: 5000, ok: true }); // emit, carries 1
+    await flush();
+    expect(logToAxiom).toHaveBeenCalledTimes(2);
+    expect((logToAxiom.mock.calls[1][0] as Record<string, unknown>).droppedSinceLastLog).toBe(1);
   });
 });
 
