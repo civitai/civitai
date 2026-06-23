@@ -1254,6 +1254,22 @@ export const REDIS_SYS_KEYS = {
     // Per-API-key (fallback per-IP) rate-limit counter for the token-authed bundle-submit
     // endpoint (`/api/v1/blocks/submit-version`). On sysRedis like the retool limiter + BUZZ_CAP.
     SUBMIT_RATE_LIMIT: 'system:blocks:submit-rate-limit',
+    /**
+     * Per-user (fallback per-IP) rate-limit counter for the dev/preview
+     * block-token mint (`/api/v1/blocks/dev-token`). Same `SET NX EX` + `INCR`
+     * MULTI shape as `SUBMIT_RATE_LIMIT` (always created with its TTL), on
+     * `sysRedis`. Bounds a mod minting fresh short-lived dev tokens for their
+     * local "live" harness.
+     */
+    DEV_TOKEN_RATE_LIMIT: 'system:blocks:dev-token-rate-limit',
+    /**
+     * Per-user (fallback per-IP) rate-limit counter for the token-auth
+     * self-scoped submission-status read (`/api/v1/blocks/submissions`). Same
+     * `SET NX EX` + `INCR` MULTI shape as `SUBMIT_RATE_LIMIT` (always created
+     * with its TTL), on `sysRedis`. Bounds a dev polling their own
+     * submission/review/deploy status from `civitai app status`.
+     */
+    SUBMISSIONS_RATE_LIMIT: 'system:blocks:submissions-rate-limit',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',

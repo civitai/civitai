@@ -598,8 +598,12 @@ export const orchestratorRouter = router({
     .input(workflowQuerySchema.extend({ userId: z.number() }))
     .query(async ({ ctx, input }) => {
       const { userId, ...query } = input;
-      // Get token for the target user, not the moderator
-      const targetToken = await getOrchestratorToken(userId, ctx);
+      // Get token for the target user, not the moderator. bypassCache=true:
+      // this is a cross-user mint — populating the per-pod cache with the
+      // TARGET user's token off a MODERATOR session would leave 60s of
+      // recoverable per-target-user state on every pod a moderator touched.
+      // See orchestrator-token-cache.ts docstring (Round-5 audit H2).
+      const targetToken = await getOrchestratorToken(userId, ctx, { bypassCache: true });
       return queryGeneratedImageWorkflows2({
         ...query,
         token: targetToken,
