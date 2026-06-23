@@ -1446,7 +1446,9 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.HappyHorse,
     defaults: {
-      model: { id: 2902378 },
+      // Default to the newest version (v1.1 = 3063263); v1.0 (2902378) remains
+      // selectable via the version picker in happy-horse-graph.ts.
+      model: { id: 3063263 },
       modelLocked: true,
     },
   },
