@@ -126,11 +126,9 @@ export function PostImageDropzone({
             queryUtils.post.getEdit.setData({ id: data.id }, () => data);
             // Refresh the version's post list so re-entering the post step (e.g. via
             // the wizard's back/next) reuses this post instead of creating a new one.
-            if (modelVersionId)
-              await queryUtils.modelVersion.getById.invalidate({
-                id: modelVersionId,
-                withFiles: true,
-              });
+            if (modelVersionId) {
+              await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId, withFiles: true });
+            }
             await onCreatePost?.(data);
             upload(fileData, { postId: data.id });
           },
