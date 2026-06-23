@@ -13,18 +13,8 @@ import {
   type DailyChallengeDetails,
   type ChallengeConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-
-export function selectPayableUsers(qualifierIds: number[], excludeUserIds: number[]): number[] {
-  const exclude = new Set(excludeUserIds);
-  const seen = new Set<number>();
-  const result: number[] = [];
-  for (const id of qualifierIds) {
-    if (exclude.has(id) || seen.has(id)) continue;
-    seen.add(id);
-    result.push(id);
-  }
-  return result;
-}
+import { selectPayableUsers } from '~/server/games/daily-challenge/challenge-rewards.utils';
+export { selectPayableUsers } from '~/server/games/daily-challenge/challenge-rewards.utils';
 
 export async function promoteChallengeEntries(args: {
   collectionId: number;

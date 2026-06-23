@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
-import { selectPayableUsers } from '~/server/games/daily-challenge/challenge-rewards';
+import { selectPayableUsers } from '~/server/games/daily-challenge/challenge-rewards.utils';
 
 describe('parseChallengeMetadata reconciliation', () => {
   it('round-trips the reconciliation field', () => {
