@@ -11,8 +11,12 @@ import {
 import { env } from '~/env/server';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
-import { getHubSession, maybeRollHubCookie, maybeUpgradeLegacySession } from './session-client';
-import { getSessionUser } from './session-user';
+import {
+  getHubSession,
+  maybeRollHubCookie,
+  maybeUpgradeLegacySession,
+  sessionClient,
+} from './session-client';
 
 type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
   context?: Record<string, unknown>;
@@ -31,9 +35,9 @@ async function getLegacySession(req: AuthRequest): Promise<Session | null> {
   const claims = await decodeLegacySessionCookie(token, secret);
   const userId = Number(claims?.sub ?? (claims?.user as { id?: number } | undefined)?.id);
   if (!Number.isFinite(userId)) return null;
-  const user = await getSessionUser({ userId });
+  const user = await sessionClient.getSessionUserById(userId);
   if (!user) return null;
-  return { user } as unknown as Session;
+  return { user } as Session;
 }
 
 export const getServerAuthSession = async ({

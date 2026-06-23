@@ -32,7 +32,7 @@ export async function getHubSession(req: {
   const impersonatedBy = decodeTokenClaim(token, 'impersonatedBy');
   // The hub's @civitai/auth SessionUser is structurally the ExtendedUser the app expects, but loosely typed
   // (tier/meta/banDetails/subscriptions are widened in the package contract), so cast at this boundary.
-  return { user, ...(impersonatedBy ? { impersonatedBy } : {}) } as unknown as Session;
+  return { user, ...(impersonatedBy ? { impersonatedBy } : {}) } as Session;
 }
 
 // --- Rolling session (cutover doc section C) ---------------------------------------------------------------

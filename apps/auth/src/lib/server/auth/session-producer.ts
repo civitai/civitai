@@ -7,10 +7,10 @@ import { getRedis, getSysRedis } from '../redis';
 import { shapeSessionUser } from './session-shape';
 
 // The auth hub is the SOLE PRODUCER of session-user data (docs/thin-session-token-design.md, "LOCKED
-// ARCHITECTURE"). This is the Kysely port of the main app's src/server/auth/session-user.ts compute:
-// query the user (+ profile picture + active subscriptions) + permissions, shape the rich SessionUser
-// (the pure derivation lives in session-shape.ts), and write it to the SHARED cache
-// (session:data2:{userId}) that every consumer reads. Keep in parity with the main app's getSessionUser.
+// ARCHITECTURE"): query the user (+ profile picture + active subscriptions) + permissions, shape the rich
+// SessionUser (the pure derivation lives in session-shape.ts), and write it to the SHARED cache
+// (session:data2:{userId}) that every consumer reads. Consumers — including the main app — now only READ
+// this cache (createSessionClient); the former main-app compute (src/server/auth/session-user.ts) is gone.
 
 const SESSION_TTL = 4 * 60 * 60; // 4h — matches @civitai/auth's resolver TTL
 
@@ -46,7 +46,10 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       'User.settings',
       'User.meta',
       jsonObjectFrom(
-        eb.selectFrom('Image').select(['Image.url']).whereRef('Image.id', '=', 'User.profilePictureId')
+        eb
+          .selectFrom('Image')
+          .select(['Image.url'])
+          .whereRef('Image.id', '=', 'User.profilePictureId')
       ).as('profilePicture'),
       jsonObjectFrom(
         eb

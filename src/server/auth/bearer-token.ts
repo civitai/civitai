@@ -1,5 +1,5 @@
 import type { Session } from '~/types/session';
-import { getSessionUser } from './session-user';
+import { sessionClient } from './session-client';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { Subject } from '~/server/http/orchestrator/api-key-spend';
@@ -30,10 +30,13 @@ export async function getSessionFromBearerToken(key: string) {
     dbWrite.apiKey.update({ where: { id: apiKey.id }, data: { lastUsedAt: now } }).catch(() => {});
   }
 
-  const user = (await getSessionUser({ userId: apiKey.userId })) as Session['user'];
+  const user = (await sessionClient.getSessionUserById(
+    apiKey.userId
+  )) as Session['user'] | null;
   if (!user) return null;
 
-  // Banned users get NO API/bearer access. Deleted users are already excluded by getSessionUser's query, but a
+  // Banned users get NO API/bearer access. Deleted users are already excluded by the hub producer (deletedAt
+  // is null), but a
   // ban leaves the row intact (so the SESSION/cookie path can still render a "you're banned" page) — the
   // bearer/API path must reject it CENTRALLY here, mirroring tRPC's isAuthed ban check, so a banned user's
   // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
