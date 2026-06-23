@@ -107,8 +107,16 @@ export async function logToAxiom(data: MixedObject, datastream?: string) {
     // handle (sysRedis + Axiom both down). `_axiom: datastream` may be undefined in
     // previews (no AXIOM_DATASTREAM) — JSON.stringify drops it; the line still
     // carries message/stack/code/path.
-    if (process.env.LOG_ERRORS_TO_STDOUT === 'true')
-      console.error(JSON.stringify({ _axiom: datastream, ...sendData }));
+    //
+    // ALWAYS-ON (Phase 1 of the Axiom→Loki migration): this structured line is the
+    // durable, queryable sink — stdout/stderr → Alloy → Loki, queried by name via
+    // `{namespace="civitai-dp-prod"} | json | name="…"`. It used to be gated behind
+    // `LOG_ERRORS_TO_STDOUT==='true'` (a blunt, temporary per-deployment flag flipped
+    // on dp-prod-api to read diagnostics); the gate is removed so every event lands
+    // in Loki by default while Axiom dual-write below continues during the transition.
+    // Volume/noise control belongs in the Alloy `civitai_logs` pipeline (sample/drop
+    // stages + line-size cap), not an app-side gate.
+    console.error(JSON.stringify({ _axiom: datastream, ...sendData }));
 
     if (!axiom) return;
     if (!datastream) return;

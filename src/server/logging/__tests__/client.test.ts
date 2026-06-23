@@ -1,12 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// These pin the ordering contract of `logToAxiom`: the structured stderr line
-// (which Loki ingests — it carries message/stack/code/path) must be emitted
-// BEFORE the `if (!axiom) return` / `if (!datastream) return` guards. Previously
-// it sat after those guards, so preview environments — where the Axiom token is a
-// placeholder → `axiom` is null → the function returned early — never reached Loki
-// (confirmed: 0 `INTERNAL_SERVER_ERROR` matches across 2.2M preview log lines).
-// The same blind spot hits any Axiom outage. Axiom ingest is otherwise unchanged.
+// These pin the contract of `logToAxiom`'s structured-stderr sink:
+//
+//  1. ALWAYS-ON (Phase 1, Axiom→Loki migration): in prod the structured JSON line
+//     is emitted UNCONDITIONALLY — it is no longer gated behind
+//     `LOG_ERRORS_TO_STDOUT==='true'`. stdout/stderr → Alloy → Loki is the durable,
+//     queryable sink, so every event must land there by default.
+//  2. ORDERING: the line is emitted BEFORE the `if (!axiom) return` /
+//     `if (!datastream) return` guards AND independently of Axiom throwing. Previously
+//     it sat after those guards, so preview environments — where the Axiom token is a
+//     placeholder → `axiom` is null → the function returned early — never reached Loki
+//     (confirmed: 0 `INTERNAL_SERVER_ERROR` matches across 2.2M preview log lines).
+//     The same blind spot hits any Axiom outage. Loki must get the line regardless.
+//  3. DUAL-WRITE: Axiom ingest still fires when a client + datastream are configured
+//     (kept during the transition; removed at the cutover phase).
 //
 // The module builds its `axiom` client and reads `isProd` at import time, so each
 // case resets modules and re-mocks `~/env/other`, `~/env/server`, and
@@ -19,13 +26,17 @@ const ERR = { message: 'boom', stack: 'Error: boom\n  at x', code: 'INTERNAL_SER
 
 // Returns the mock ingestEvents spy + a loader for the real module, configured
 // for the requested env. `axiomConfigured=false` reproduces the preview/outage
-// case where the module's `axiom` ends up null.
+// case where the module's `axiom` ends up null. `ingestThrows` reproduces an Axiom
+// outage where `ingestEvents` rejects.
 async function loadClient(opts: {
   isProd: boolean;
   axiomConfigured: boolean;
   datastream?: string;
+  ingestThrows?: boolean;
 }) {
-  const ingestEvents = vi.fn().mockResolvedValue(undefined);
+  const ingestEvents = opts.ingestThrows
+    ? vi.fn().mockRejectedValue(new Error('axiom down'))
+    : vi.fn().mockResolvedValue(undefined);
 
   vi.doMock('~/env/other', () => ({
     isProd: opts.isProd,
@@ -54,24 +65,64 @@ async function loadClient(opts: {
   return { logToAxiom: mod.logToAxiom, ingestEvents };
 }
 
-describe('logToAxiom stderr-for-Loki ordering', () => {
+describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.resetModules();
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
     errorSpy.mockRestore();
+    logSpy.mockRestore();
     vi.unstubAllEnvs();
     vi.doUnmock('~/env/other');
     vi.doUnmock('~/env/server');
     vi.doUnmock('@axiomhq/axiom-node');
   });
 
-  it('REGRESSION GUARD: emits the structured stderr line in prod even when Axiom is null (preview/outage)', async () => {
-    vi.stubEnv('LOG_ERRORS_TO_STDOUT', 'true');
+  it('ALWAYS-ON: emits the structured stderr line in prod even when LOG_ERRORS_TO_STDOUT is unset', async () => {
+    // flag deliberately NOT set — the line must still be written (the gate is gone).
+    const { logToAxiom } = await loadClient({
+      isProd: true,
+      axiomConfigured: true,
+      datastream: 'civitai-errors',
+    });
+
+    await logToAxiom(ERR);
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(errorSpy.mock.calls[0][0] as string);
+    expect(parsed).toMatchObject({
+      message: ERR.message,
+      stack: ERR.stack,
+      code: ERR.code,
+      path: ERR.path,
+    });
+  });
+
+  it('ALWAYS-ON: emits the line regardless of LOG_ERRORS_TO_STDOUT value ("1", "false", etc.)', async () => {
+    for (const value of ['1', 'false', '', 'no']) {
+      errorSpy.mockClear();
+      vi.resetModules();
+      vi.stubEnv('LOG_ERRORS_TO_STDOUT', value);
+      const { logToAxiom } = await loadClient({
+        isProd: true,
+        axiomConfigured: true,
+        datastream: 'civitai-errors',
+      });
+
+      await logToAxiom(ERR);
+
+      expect(errorSpy, `LOG_ERRORS_TO_STDOUT=${JSON.stringify(value)} should still emit`).toHaveBeenCalledTimes(1);
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('ORDERING: emits the stderr line in prod even when Axiom is null (preview/outage), before the guards', async () => {
     const { logToAxiom, ingestEvents } = await loadClient({ isProd: true, axiomConfigured: false });
 
     await logToAxiom(ERR);
@@ -94,27 +145,25 @@ describe('logToAxiom stderr-for-Loki ordering', () => {
     expect(ingestEvents).not.toHaveBeenCalled();
   });
 
-  it('does NOT emit the stderr line when LOG_ERRORS_TO_STDOUT is unset (no stderr spam)', async () => {
-    // flag unset
-    const { logToAxiom, ingestEvents } = await loadClient({ isProd: true, axiomConfigured: false });
+  it('ORDERING: emits the stderr line even when Axiom ingest throws (Axiom degraded)', async () => {
+    const { logToAxiom, ingestEvents } = await loadClient({
+      isProd: true,
+      axiomConfigured: true,
+      datastream: 'civitai-errors',
+      ingestThrows: true,
+    });
 
-    await logToAxiom(ERR);
+    // The stderr line is written synchronously before the await, so it lands even
+    // though ingestEvents rejects (the rejection propagates out of logToAxiom).
+    await expect(logToAxiom(ERR)).rejects.toThrow('axiom down');
 
-    expect(errorSpy).not.toHaveBeenCalled();
-    expect(ingestEvents).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(errorSpy.mock.calls[0][0] as string);
+    expect(parsed).toMatchObject({ message: ERR.message, code: ERR.code });
+    expect(ingestEvents).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT emit the stderr line when LOG_ERRORS_TO_STDOUT is not exactly "true"', async () => {
-    vi.stubEnv('LOG_ERRORS_TO_STDOUT', '1');
-    const { logToAxiom } = await loadClient({ isProd: true, axiomConfigured: false });
-
-    await logToAxiom(ERR);
-
-    expect(errorSpy).not.toHaveBeenCalled();
-  });
-
-  it('still ingests to Axiom (existing behavior) AND emits the stderr line when configured + flag on', async () => {
-    vi.stubEnv('LOG_ERRORS_TO_STDOUT', 'true');
+  it('DUAL-WRITE: still ingests to Axiom AND emits the stderr line when a client + datastream are configured', async () => {
     const { logToAxiom, ingestEvents } = await loadClient({
       isProd: true,
       axiomConfigured: true,
@@ -135,5 +184,20 @@ describe('logToAxiom stderr-for-Loki ordering', () => {
       'civitai-errors',
       expect.objectContaining({ message: ERR.message, code: ERR.code, pod: 'pod-test' })
     );
+  });
+
+  it('NON-PROD: logs via console.log and does NOT touch the stderr/Axiom path', async () => {
+    const { logToAxiom, ingestEvents } = await loadClient({
+      isProd: false,
+      axiomConfigured: true,
+      datastream: 'civitai-errors',
+    });
+
+    await logToAxiom(ERR);
+
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    expect(logSpy).toHaveBeenCalledWith('logToAxiom', expect.objectContaining({ message: ERR.message, pod: 'pod-test' }));
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(ingestEvents).not.toHaveBeenCalled();
   });
 });
