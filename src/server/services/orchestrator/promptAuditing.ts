@@ -15,6 +15,7 @@ import {
 } from '~/utils/metadata/audit';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { externalModerationOutcomeCounter } from '~/server/prom/client';
+import { Tracker } from '~/server/clickhouse/client';
 
 // --- Blocked Prompt Store ---
 // Single Redis list stores both count (list length) and prompt data.
@@ -234,6 +235,26 @@ const RESCREEN_MAX_ATTEMPTS = 5;
 // block is traceable in ClickHouse / UserRestriction triggers while remaining an
 // external-category block (semantics identical to inline external).
 const RESCREEN_SOURCE = 'External-Deferred';
+// Per-run wall-clock budget. The job lock (createJob) expires at 300s; each
+// moderatePrompt call can take up to EXTERNAL_MODERATION_TIMEOUT_MS (~5s). The
+// drain must finish comfortably under the lock or a second runner could start
+// while this one is still draining → concurrent drains stack + an OpenAI
+// thundering herd. INVARIANT: batchSize × EXTERNAL_MODERATION_TIMEOUT_MS <
+// lockExpiration(300s); RESCREEN_BATCH_SIZE (100) keeps the typical run well
+// inside that, and this deadline is the HARD backstop for the worst case
+// (every call hits the full timeout). On deadline we re-enqueue the untouched
+// remainder and stop — a deadline is NOT a per-item failure (attempt is left
+// unchanged, the drop cap is not consumed).
+const RESCREEN_MAX_RUN_MS = 240000; // 4 min, comfortably under the 300s lock.
+// Default-ON kill-switch: only an EXPLICIT falsy token disables, so an operator
+// can stop the deferred re-screen path without a deploy. Mirrors the envDisabled
+// pattern in src/server/logging/trpc-slow-log.ts.
+function rescreenDisabled(): boolean {
+  const raw = process.env.EXTERNAL_MODERATION_RESCREEN_ENABLED;
+  if (raw == null || raw === '') return false; // unset → enabled
+  const v = raw.trim().toLowerCase();
+  return v === 'false' || v === '0' || v === 'no' || v === 'off';
+}
 
 export interface PromptRescreenPayload {
   prompt: string;
@@ -259,6 +280,9 @@ export function enqueuePromptRescreen(payload: PromptRescreenPayload): void {
   } catch {
     // metrics are best-effort
   }
+  // Kill-switch: when disabled we still recorded the `skipped` metric above (the
+  // inline skip happened regardless), we just don't enqueue for deferred re-screen.
+  if (rescreenDisabled()) return;
   // Fire-and-forget: do not await, swallow all errors. A rejected promise here is
   // explicitly caught so it can never become an unhandledRejection.
   void (async () => {
@@ -283,12 +307,20 @@ export function enqueuePromptRescreen(payload: PromptRescreenPayload): void {
  * attempt cap) on a transient re-screen failure; drops + logs at the cap.
  *
  * NEVER throws out of the whole function — a single bad item can't abort the batch.
+ * Bounded by RESCREEN_MAX_RUN_MS: on deadline the unprocessed remainder is
+ * re-enqueued (attempt preserved) so a long run can't exceed the job lock.
  * Returns a summary suitable for the job's return value.
  */
 export async function processPromptRescreenQueue(
-  batchSize = 500
+  batchSize = 100
 ): Promise<{ processed: number; flagged: number; clean: number; requeued: number; dropped: number }> {
   const summary = { processed: 0, flagged: 0, clean: 0, requeued: 0, dropped: 0 };
+
+  // Kill-switch: return the empty summary WITHOUT popping so disabling the path
+  // leaves the queue untouched (items remain, TTL-bounded, drained when re-enabled).
+  if (rescreenDisabled()) return summary;
+
+  const startedAt = Date.now();
 
   let raw: string[] | null = null;
   try {
@@ -305,7 +337,52 @@ export async function processPromptRescreenQueue(
 
   if (!raw || raw.length === 0) return summary;
 
-  for (const item of raw) {
+  for (let i = 0; i < raw.length; i++) {
+    // Wall-clock backstop (Fix M1): processPromptRescreenQueue already lPopCount'd
+    // the WHOLE batch out of Redis up front, so stopping mid-run must RE-ENQUEUE the
+    // unprocessed remainder or those items are silently lost. A deadline is NOT a
+    // failure — preserve each item's CURRENT attempt (don't increment, don't consume
+    // the drop cap), count them as `requeued`, then break.
+    if (Date.now() - startedAt > RESCREEN_MAX_RUN_MS) {
+      const remaining = raw.slice(i);
+      try {
+        for (const leftover of remaining) {
+          await sysRedis.rPush(RESCREEN_QUEUE_KEY, leftover);
+        }
+        await sysRedis.lTrim(RESCREEN_QUEUE_KEY, 0, RESCREEN_QUEUE_MAX - 1);
+        await sysRedis.expire(RESCREEN_QUEUE_KEY, RESCREEN_QUEUE_TTL_SECONDS);
+        summary.requeued += remaining.length;
+        for (let n = 0; n < remaining.length; n++) {
+          try {
+            externalModerationOutcomeCounter.inc({ outcome: 'rescreen_requeued' });
+          } catch {}
+        }
+      } catch (requeueError) {
+        // The remainder couldn't be put back — count it as dropped so the metric
+        // balances rather than silently vanishing.
+        summary.dropped += remaining.length;
+        for (let n = 0; n < remaining.length; n++) {
+          try {
+            externalModerationOutcomeCounter.inc({ outcome: 'rescreen_dropped' });
+          } catch {}
+        }
+        logToAxiom({
+          name: 'prompt-rescreen-requeue-error',
+          type: 'error',
+          message: (requeueError as Error)?.message ?? 'unknown',
+          details: { remaining: remaining.length },
+        });
+      }
+      logToAxiom({
+        name: 'prompt-rescreen-deadline',
+        type: 'warning',
+        message: `run hit ${RESCREEN_MAX_RUN_MS}ms deadline; re-enqueued remainder`,
+        details: { remaining: remaining.length },
+      });
+      break;
+    }
+
+    const item = raw[i];
     summary.processed++;
 
     let payload: PromptRescreenPayload;
@@ -364,14 +441,21 @@ export async function processPromptRescreenQueue(
 
           const count = await addBlockedPrompt(userId, blockedEntry);
 
-          // No `track` — the job has no request/tracker context. reportProhibitedRequest
-          // tolerates a missing track (ClickHouse audit-track is skipped; the mute
-          // escalation still runs off the Redis count).
+          // Build a standalone per-user Tracker (Fix M2): the job has no request
+          // context, but passing a session with the userId sets actor.userId so
+          // reportProhibitedRequest's `if (track) track.prohibitedRequest(...)` fires
+          // and writes the ClickHouse `prohibitedRequests` audit row for the REAL user.
+          // Without it the deferred CSAM block left no audit trail AND the mute count
+          // vanished on a Redis re-seed (the seed reads `prohibitedRequests`). Precedent:
+          // src/server/jobs/entity-moderation.ts builds standalone Trackers.
+          const track = new Tracker(undefined, undefined, { user: { id: userId } } as never);
+
           await reportProhibitedRequest({
             prompt,
             negativePrompt,
             userId,
             isModerator,
+            track,
             source: RESCREEN_SOURCE,
             count,
             remixOfId,
@@ -410,14 +494,33 @@ async function requeueOrDrop(
   const nextAttempt = (payload.attempt ?? 0) + 1;
   if (nextAttempt < RESCREEN_MAX_ATTEMPTS) {
     try {
-      await sysRedis.rPush(
+      // Capture the post-push list length (Fix m1 — metric honesty): rPush appends to
+      // the tail, then lTrim(0, MAX-1) keeps the head and evicts the tail. When the
+      // queue is already at cap the just-pushed item IS the evicted tail — so this is
+      // really a DROP, not a re-enqueue. Detect it via newLength > MAX and label it
+      // honestly instead of reporting a phantom requeue.
+      const newLength = await sysRedis.rPush(
         RESCREEN_QUEUE_KEY,
         JSON.stringify({ ...payload, attempt: nextAttempt })
       );
       await sysRedis.lTrim(RESCREEN_QUEUE_KEY, 0, RESCREEN_QUEUE_MAX - 1);
       await sysRedis.expire(RESCREEN_QUEUE_KEY, RESCREEN_QUEUE_TTL_SECONDS);
-      summary.requeued++;
-      externalModerationOutcomeCounter.inc({ outcome: 'rescreen_requeued' });
+      if (typeof newLength === 'number' && newLength > RESCREEN_QUEUE_MAX) {
+        // Queue at cap — the lTrim evicted the item we just pushed. It's a drop.
+        summary.dropped++;
+        try {
+          externalModerationOutcomeCounter.inc({ outcome: 'rescreen_dropped' });
+        } catch {}
+        logToAxiom({
+          name: 'prompt-rescreen-dropped',
+          type: 'warning',
+          message: 'dropped at queue cap (evicted by lTrim after rPush)',
+          details: { userId: payload.userId, attempts: nextAttempt },
+        });
+      } else {
+        summary.requeued++;
+        externalModerationOutcomeCounter.inc({ outcome: 'rescreen_requeued' });
+      }
     } catch (requeueError) {
       // Even the re-enqueue failed — count it as dropped so the metric balances.
       summary.dropped++;

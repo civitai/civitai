@@ -6,7 +6,12 @@ import { processPromptRescreenQueue } from '~/server/services/orchestrator/promp
 // Drains the sysRedis queue and re-screens each prompt when OpenAI has recovered,
 // applying the same consequence (mute escalation + audit record) as the inline path.
 // See processPromptRescreenQueue in services/orchestrator/promptAuditing.ts.
-const RESCREEN_BATCH_SIZE = 500;
+// Bounded so the worst-case run (every re-screen hits the full external-moderation
+// timeout) stays well under the 300s job lock — see RESCREEN_MAX_RUN_MS and the
+// `batchSize × EXTERNAL_MODERATION_TIMEOUT_MS < lockExpiration(300s)` invariant.
+// At ~5s/call, 100 items ≈ 500s worst case but the in-loop deadline (240s) caps it
+// and re-enqueues the remainder; in practice most calls are fast on a recovered API.
+const RESCREEN_BATCH_SIZE = 100;
 
 export const rescreenSkippedPromptModeration = createJob(
   'rescreen-skipped-prompt-moderation',

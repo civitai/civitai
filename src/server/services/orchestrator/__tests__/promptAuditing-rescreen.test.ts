@@ -57,7 +57,20 @@ vi.mock('~/server/db/client', () => ({
   dbRead: { promptAllowlist: { findMany: vi.fn(async () => []) } },
   dbWrite: { userRestriction: { create: userRestrictionCreate } },
 }));
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
+// Tracker: capture the actor passed to the constructor + the prohibitedRequest write
+// so Fix M2 (per-user audit row) can be asserted. clickhouse stays null (seed path).
+const prohibitedRequest = vi.hoisted(() => vi.fn(async () => undefined));
+const trackerCtor = vi.hoisted(() => vi.fn());
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: null,
+  Tracker: class {
+    prohibitedRequest = prohibitedRequest;
+    userActivity = vi.fn(async () => undefined);
+    constructor(...args: unknown[]) {
+      trackerCtor(...args);
+    }
+  },
+}));
 const updateUserById = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('~/server/services/user.service', () => ({ updateUserById }));
 vi.mock('~/server/services/notification.service', () => ({
@@ -331,5 +344,140 @@ describe('processPromptRescreenQueue', () => {
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'prompt-rescreen-pop-error' })
     );
+  });
+
+  // --- Fix M2: deferred flag writes the ClickHouse prohibitedRequests audit row ---
+  it('flagged item builds a per-user Tracker and writes the prohibitedRequests row', async () => {
+    sysRedis.lPopCount.mockResolvedValueOnce([
+      JSON.stringify({ prompt: 'bad', userId: 100, isModerator: false, attempt: 0 }),
+    ] as never);
+    moderatePrompt.mockResolvedValueOnce({ flagged: true, categories: ['sexual/minors'] });
+    sysRedis.exists.mockResolvedValue(1 as never);
+    sysRedis.lRange.mockResolvedValue([] as never);
+    sysRedis.lLen.mockResolvedValue(1 as never);
+
+    await processPromptRescreenQueue(500);
+
+    // Tracker constructed with the userId-bearing session (3rd ctor arg → actor.userId)
+    expect(trackerCtor).toHaveBeenCalledWith(undefined, undefined, { user: { id: 100 } });
+    // and the audit-row write fired through that tracker
+    expect(prohibitedRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'bad', source: 'External-Deferred' })
+    );
+  });
+
+  it('does NOT write the audit row when the item is clean', async () => {
+    sysRedis.lPopCount.mockResolvedValueOnce([
+      JSON.stringify({ prompt: 'good', userId: 201, attempt: 0 }),
+    ] as never);
+    moderatePrompt.mockResolvedValueOnce({ flagged: false, categories: [] });
+
+    await processPromptRescreenQueue(500);
+
+    expect(trackerCtor).not.toHaveBeenCalled();
+    expect(prohibitedRequest).not.toHaveBeenCalled();
+  });
+
+  // --- Fix m1: requeue at cap is actually a drop ---
+  it('requeue at the queue cap counts rescreen_dropped (lTrim evicts the pushed item)', async () => {
+    sysRedis.lPopCount.mockResolvedValueOnce([
+      JSON.stringify({ prompt: 'p', userId: 300, attempt: 1 }),
+    ] as never);
+    moderatePrompt.mockRejectedValueOnce(new Error('still 503'));
+    // rPush returns a length > RESCREEN_QUEUE_MAX (20000) → the pushed tail was evicted.
+    sysRedis.rPush.mockResolvedValueOnce(20001 as never);
+
+    const r = await processPromptRescreenQueue(500);
+
+    expect(r.dropped).toBe(1);
+    expect(r.requeued).toBe(0);
+    expect(outcomes()).toContain('rescreen_dropped');
+    expect(outcomes()).not.toContain('rescreen_requeued');
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'prompt-rescreen-dropped' })
+    );
+  });
+
+  it('requeue under the cap (rPush length <= MAX) still counts rescreen_requeued', async () => {
+    sysRedis.lPopCount.mockResolvedValueOnce([
+      JSON.stringify({ prompt: 'p', userId: 301, attempt: 1 }),
+    ] as never);
+    moderatePrompt.mockRejectedValueOnce(new Error('still 503'));
+    sysRedis.rPush.mockResolvedValueOnce(5 as never); // well under cap
+
+    const r = await processPromptRescreenQueue(500);
+
+    expect(r.requeued).toBe(1);
+    expect(r.dropped).toBe(0);
+    expect(outcomes()).toContain('rescreen_requeued');
+  });
+
+  // --- Fix M1: wall-clock deadline re-enqueues the unprocessed remainder ---
+  it('hitting the run deadline re-enqueues the remainder (attempt preserved) and stops', async () => {
+    // Two items. Mock Date.now so: startedAt=0, loop-check item0=0 (under deadline,
+    // processed), loop-check item1=300000 (> 240000 deadline → re-enqueue remainder).
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy
+      .mockReturnValueOnce(0) // startedAt
+      .mockReturnValueOnce(0) // item 0 deadline check
+      .mockReturnValue(300_000); // item 1 deadline check + any later calls
+
+    sysRedis.lPopCount.mockResolvedValueOnce([
+      JSON.stringify({ prompt: 'first', userId: 1, attempt: 2 }),
+      JSON.stringify({ prompt: 'second', userId: 2, attempt: 3 }),
+    ] as never);
+    moderatePrompt.mockResolvedValueOnce({ flagged: false, categories: [] }); // item 0 clean
+    sysRedis.rPush.mockResolvedValue(1 as never); // re-enqueue under cap
+
+    const r = await processPromptRescreenQueue(500);
+
+    // item 0 processed clean; item 1 NOT processed, re-enqueued instead
+    expect(r.processed).toBe(1);
+    expect(r.clean).toBe(1);
+    expect(r.requeued).toBe(1);
+    expect(moderatePrompt).toHaveBeenCalledTimes(1); // item 1 never screened
+
+    // the remainder was pushed back VERBATIM (attempt unchanged — a deadline is not a failure)
+    const requeued = JSON.parse(
+      sysRedis.rPush.mock.calls.find((c) => c[0] === QUEUE_KEY)![1] as string
+    );
+    expect(requeued).toMatchObject({ prompt: 'second', userId: 2, attempt: 3 });
+    expect(outcomes()).toContain('rescreen_requeued');
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'prompt-rescreen-deadline' })
+    );
+
+    nowSpy.mockRestore();
+  });
+});
+
+// --- Fix m3: env kill-switch (default ON) ------------------------------------
+describe('EXTERNAL_MODERATION_RESCREEN_ENABLED kill-switch', () => {
+  const original = process.env.EXTERNAL_MODERATION_RESCREEN_ENABLED;
+  afterEach(() => {
+    if (original === undefined) delete process.env.EXTERNAL_MODERATION_RESCREEN_ENABLED;
+    else process.env.EXTERNAL_MODERATION_RESCREEN_ENABLED = original;
+  });
+
+  it('enqueue does NOT push when disabled, but still records the skip metric', async () => {
+    process.env.EXTERNAL_MODERATION_RESCREEN_ENABLED = 'false';
+    enqueuePromptRescreen({ prompt: 'p', userId: 5, attempt: 0 });
+    await new Promise((r) => setImmediate(r));
+    expect(sysRedis.rPush).not.toHaveBeenCalled();
+    expect(outcomes()).toContain('skipped');
+  });
+
+  it('drain returns empty WITHOUT popping when disabled', async () => {
+    process.env.EXTERNAL_MODERATION_RESCREEN_ENABLED = '0';
+    const r = await processPromptRescreenQueue(500);
+    expect(r).toEqual({ processed: 0, flagged: 0, clean: 0, requeued: 0, dropped: 0 });
+    expect(sysRedis.lPopCount).not.toHaveBeenCalled();
+  });
+
+  it('still enqueues when set to a non-off token (e.g. "yes")', async () => {
+    process.env.EXTERNAL_MODERATION_RESCREEN_ENABLED = 'yes';
+    enqueuePromptRescreen({ prompt: 'p', userId: 5, attempt: 0 });
+    await new Promise((r) => setImmediate(r));
+    expect(sysRedis.rPush).toHaveBeenCalledWith(QUEUE_KEY, expect.any(String));
   });
 });
