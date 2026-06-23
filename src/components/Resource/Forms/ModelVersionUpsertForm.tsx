@@ -147,7 +147,7 @@ const querySchema = z.object({
   bountyId: z.coerce.number().optional(),
 });
 
-export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
+export function ModelVersionUpsertForm({ model, version, children, onSubmit, afterName }: Props) {
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -432,6 +432,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             withAsterisk
             maxLength={25}
           />
+          {afterName}
 
           {features.generationOnlyModels && (!isPrivateModel || currentUser?.isModerator) && (
             <>
@@ -1047,4 +1048,5 @@ type Props = {
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
   version?: Partial<VersionInput>;
+  afterName?: React.ReactNode;
 };
