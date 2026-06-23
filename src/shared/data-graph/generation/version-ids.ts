@@ -25,3 +25,8 @@ export const viduVersionIds = {
   q1: 2623839,
   q3: 2741273,
 } as const;
+
+export const happyHorseVersionIds = {
+  'v1.0': 2902378,
+  'v1.1': 3063263,
+} as const;
