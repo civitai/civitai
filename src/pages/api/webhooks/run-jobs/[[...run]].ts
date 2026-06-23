@@ -12,6 +12,7 @@ import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processing-resource-training-v2';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
+import { reconcileVaultStorage } from '~/server/jobs/reconcile-vault-storage';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
 import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
@@ -149,6 +150,7 @@ export const jobs: Job[] = [
   applyTagRules,
   // processCreatorProgramImageGenerationRewards,
   processVaultItems,
+  reconcileVaultStorage,
   clearVaultItems,
   reconcileWildcardSetsJob,
   auditWildcardSetCategoriesJob,
