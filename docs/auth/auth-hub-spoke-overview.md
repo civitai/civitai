@@ -74,11 +74,12 @@ dozens of call sites.
 
 ## 7. Cross-domain (`civitai.red`, and `localhost` against prod)
 
-A different registrable domain can't see the `.civitai.com` cookie. So the hub mints a short-lived **swap token**,
-redirects to the spoke with it, and the spoke **exchanges** it at the hub for its own `civ-token` (stored in its
-own cookie). `localhost` developing against the prod hub is just another such cross-domain spoke. Cookie
+A different registrable domain can't see the `.civitai.com` cookie. So the hub issues a short-lived
+**authorization code** (the OAuth auth-code + PKCE first-party bridge), redirects to the spoke with it, and the
+spoke **redeems** it server-side at the hub (`POST /api/auth/oauth/session`) for its own `civ-token` (stored in
+its own cookie). `localhost` developing against the prod hub is just another such cross-domain spoke. Cookie
 secure-ness must follow the **spoke's own** serving protocol (http localhost ⇒ non-secure cookie), not the
-issuer's. *(This exchange is implemented (pending the swap-bridge security hardening); same mechanism for `.red` and localhost.)*
+issuer's. *(Same mechanism for `.red` and localhost.)*
 
 ## 8. Security invariants (must always hold)
 

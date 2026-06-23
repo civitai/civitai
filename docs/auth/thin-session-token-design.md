@@ -207,6 +207,8 @@ uses them automatically rather than via constructor injection:
 **`SESSION.ALL` is dropped** — its only job was forcing fat snapshots to re-sync (now a cache bust), and a
 true logout-all is key rotation. (Bank the dependency: key rotation must be a real, tested runbook.)
 
+> **Correction (as shipped):** the registry **retained** the `SESSION:ALL` global-invalidation marker — `isRevoked` in `packages/civitai-auth/src/session-registry.ts` still checks it as a break-glass kill switch alongside per-`jti` tracking. The "dropped" wording in this section (and below) is stale.
+
 ---
 
 ## Field audit — lean `SessionUser` (TO FILL IN before coding the resolve)

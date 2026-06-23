@@ -1,5 +1,7 @@
 # First-party SSO → OIDC: concrete migration plan
 
+> **SUPERSEDED / HISTORICAL** — **COMPLETED.** Phases 1–5 below shipped on `feat/oauth-first-party`: the swap-token bridge and `USE_HUB_SESSION` are gone, and cross-domain login now runs on the OAuth authorization-code + PKCE first-party bridge. The spoke redeems the code server-side at the hub's **`POST /api/auth/oauth/session`** (not `/token`). See [spoke-integration-guide.md](./spoke-integration-guide.md) and [auth-hub-spoke-overview.md](./auth-hub-spoke-overview.md) for the current state.
+
 **Status:** plan (execution-ready sequencing). **Goal:** retire the bespoke swap-token cross-domain
 bridge and run **first-party** login on the hub's standard **OIDC authorization-code + PKCE** flow —
 while the *result* stays the thin `civ-token` ES256 session cookie (BFF). One login front door for
@@ -144,6 +146,8 @@ The provider exists **dormant in the main app** (`src/pages/api/auth/oauth/{auth
 - **Done when:** each spoke origin resolves to a trusted client with its exact callback registered.
 
 ### Phase 3 — spoke auth-code bridge (replace `sync.ts`)
+> **As shipped:** the spoke redeems the code server-side at the hub's **`POST /api/auth/oauth/session`** (first-party session exchange), **not** the OAuth `/token` endpoint. References to `POST hub /token` in this Phase 3 (and in the diagram / "decouple" section above) should read `/api/auth/oauth/session`. See `packages/civitai-auth/src/first-party-bridge.ts` (`completeFirstPartyCallback`) + `apps/auth/src/routes/api/auth/oauth/session/+server.ts`.
+
 Per the `§I` equivalence map:
 - [ ] **`/authorize` redirect (initiate)** — replaces `sync.ts` initiate: build hub `/authorize?client_id&
   redirect_uri&state&code_challenge`; stash PKCE `verifier` + `state` in a short-lived httpOnly cookie. Use

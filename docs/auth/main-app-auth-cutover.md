@@ -1,5 +1,7 @@
 # Main App Auth Cutover — NextAuth → centralized hub
 
+> **SUPERSEDED / HISTORICAL** — The migration shipped. The swap-token bridge and the `USE_HUB_SESSION` flag (along with `produceFallback`, `sync.ts`, and the exchange swap described below) have been removed. Cross-domain login is now the OAuth authorization-code + PKCE first-party bridge. See [spoke-integration-guide.md](./spoke-integration-guide.md) and [auth-hub-spoke-overview.md](./auth-hub-spoke-overview.md) for the current state.
+
 Status: **A–D done (server validation, client session, login/logout→hub, rolling refresh, shape parity).
 DECISION: strip NextAuth BEFORE ship (no flag-flip hybrid — see "Decision" below).** In flight: device-level
 account switching (E). Remaining: the 5-phase strip — resilient resolution, legacy `jose` decoder, E + F
