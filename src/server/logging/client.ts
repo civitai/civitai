@@ -107,8 +107,39 @@ export async function logToAxiom(data: MixedObject, datastream?: string) {
     // handle (sysRedis + Axiom both down). `_axiom: datastream` may be undefined in
     // previews (no AXIOM_DATASTREAM) — JSON.stringify drops it; the line still
     // carries message/stack/code/path.
-    if (process.env.LOG_ERRORS_TO_STDOUT === 'true')
+    //
+    // ALWAYS-ON (Phase 1 of the Axiom→Loki migration): this structured line is the
+    // durable, queryable sink — stdout/stderr → Alloy → Loki, queried by name via
+    // `{namespace="civitai-dp-prod"} | json | name="…"`. It used to be gated behind
+    // `LOG_ERRORS_TO_STDOUT==='true'` (a blunt, temporary per-deployment flag flipped
+    // on dp-prod-api to read diagnostics); the gate is removed so every event lands
+    // in Loki by default while Axiom dual-write below continues during the transition.
+    // Volume/noise control belongs in the Alloy `civitai_logs` pipeline (sample/drop
+    // stages + line-size cap), not an app-side gate.
+    //
+    // SERIALIZATION GUARD: this write is now UNCONDITIONAL and `logToAxiom` is called
+    // (often `await`ed) on hot paths — the central tRPC 500 handler, payment webhooks,
+    // upload endpoints — with arbitrary `data`/`error` objects. `JSON.stringify` THROWS
+    // on BigInt values and circular references, so an unguarded stringify here could
+    // propagate into a request path that previously never hit this line. Contain it: a
+    // serialization failure must NEVER break the caller. On failure emit a minimal,
+    // stringify-safe fallback so the event isn't silently lost; the fallback is itself
+    // wrapped so it can't throw either.
+    try {
       console.error(JSON.stringify({ _axiom: datastream, ...sendData }));
+    } catch (err) {
+      try {
+        console.error(
+          JSON.stringify({
+            _axiom: datastream,
+            name: (sendData as MixedObject)?.name,
+            _stringifyError: String(err),
+          })
+        );
+      } catch {
+        console.error('logToAxiom: failed to serialize event', (sendData as MixedObject)?.name);
+      }
+    }
 
     if (!axiom) return;
     if (!datastream) return;
