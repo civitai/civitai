@@ -6,6 +6,7 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBadge';
+import { shouldShowPendingReviewBadge } from '~/components/Image/Infinite/pending-review-badge.utils';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -167,6 +168,13 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                       <Badge variant="filled" radius="xl" h={26} color="pink.3">
                         POI
                       </Badge>
+                    )}
+                    {shouldShowPendingReviewBadge(image, currentUser?.id) && (
+                      <Tooltip label="Still being reviewed — not yet eligible for judging" withinPortal>
+                        <Badge variant="filled" radius="xl" h={26} color="yellow">
+                          Pending review
+                        </Badge>
+                      </Tooltip>
                     )}
                   </div>
                 </div>
