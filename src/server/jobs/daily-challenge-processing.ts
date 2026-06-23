@@ -18,7 +18,10 @@ import {
   type RecentEntry,
   type SelectedResource,
 } from '~/server/games/daily-challenge/challenge-helpers';
-import { promoteChallengeEntries } from '~/server/games/daily-challenge/challenge-rewards';
+import {
+  distributeParticipationPrizes,
+  promoteChallengeEntries,
+} from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
 import {
   ChallengeReviewCostType,
@@ -1193,54 +1196,17 @@ export async function pickWinnersForChallenge(
     log('Prizes sent');
 
     // 6. Distribute entry participation prizes
-    if (currentChallenge.entryPrize && currentChallenge.entryPrize.buzz > 0) {
-      const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
-        SELECT DISTINCT i."userId"
-        FROM "CollectionItem" ci
-        JOIN "Image" i ON i.id = ci."imageId"
-        WHERE ci."collectionId" = ${currentChallenge.collectionId}
-          AND ci.status = 'ACCEPTED'
-        GROUP BY i."userId"
-        HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement}
-      `;
-
-      if (earnedEntryPrizes.length > 0) {
-        const winnerUserIds = winningEntries.map((e) => e.userId);
-        const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
-
-        if (entryPrizeUsers.length > 0) {
-          await withRetries(() =>
-            createBuzzTransactionMany(
-              entryPrizeUsers.map(({ userId }) => ({
-                type: TransactionType.Reward,
-                toAccountId: userId,
-                fromAccountId: 0, // central bank
-                amount: currentChallenge.entryPrize.buzz,
-                description: `Challenge Entry Prize: ${currentChallenge.title}`,
-                externalTransactionId: `challenge-entry-prize-${currentChallenge.challengeId}-${userId}`,
-                toAccountType: 'blue',
-              }))
-            )
-          );
-          log('Entry participation prizes sent:', entryPrizeUsers.length);
-
-          // Notify entry prize recipients
-          const participationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
-          await createNotification({
-            type: 'challenge-participation',
-            category: NotificationCategory.System,
-            key: `challenge-participation:${participationKeyId}:final`,
-            userIds: entryPrizeUsers.map((e) => e.userId),
-            details: {
-              challengeId: currentChallenge.challengeId,
-              challengeName: currentChallenge.title,
-              prize: currentChallenge.entryPrize.buzz,
-            },
-          });
-          log('Entry prize users notified');
-        }
-      }
-    }
+    const participationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
+    const paidParticipants = await distributeParticipationPrizes({
+      challengeId: currentChallenge.challengeId,
+      collectionId: currentChallenge.collectionId,
+      title: currentChallenge.title,
+      entryPrize: currentChallenge.entryPrize,
+      entryPrizeRequirement: currentChallenge.entryPrizeRequirement,
+      excludeUserIds: winningEntries.map((e) => e.userId),
+      notificationKey: `challenge-participation:${participationKeyId}:final`,
+    });
+    log('Entry participation prizes sent:', paidParticipants.length);
 
     // 7. Set Completed status + store summary (AFTER all prizes distributed)
     const challengeRecord = await getChallengeById(currentChallenge.challengeId);
@@ -1254,6 +1220,15 @@ export async function pickWinnersForChallenge(
             judgingProcess: process,
             outcome: outcome,
             completedAt: new Date().toISOString(),
+          },
+          reconciliation: {
+            ...(existingMetadata.reconciliation ?? {}),
+            paidUserIds: Array.from(
+              new Set([
+                ...(existingMetadata.reconciliation?.paidUserIds ?? []),
+                ...paidParticipants,
+              ])
+            ),
           },
         },
         status: ChallengeStatus.Completed,
