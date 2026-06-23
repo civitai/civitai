@@ -29,7 +29,8 @@ import { booleanString } from '~/utils/zod-helpers';
  * actually write. Run it (drive from the no-timeout dev server, which talks to
  * prod; keep the client connected — nohup/screen):
  *   GET /api/admin/temp/backfill-image-scores?token=$WEBHOOK_TOKEN&dryRun=false
- *   optional: &concurrency=3 &batchSize=1000000  (larger entityId window = fewer v2 scans)
+ *   optional: &concurrency=3 &batchSize=1000000  (default already 1,000,000 = ~135 v2
+ *   scans; a SMALLER window means MORE/slower scans, not fewer)
  *
  * Idempotent + resumable: owners already stamped with `imageScoreRecomputedAt` are
  * always skipped, so a re-run only fills in the rest (never recomputes finished
@@ -43,7 +44,7 @@ const REACTION_TYPES = "'Like', 'Heart', 'Laugh', 'Cry'";
 
 const schema = z.object({
   concurrency: z.coerce.number().min(1).max(20).optional().default(3),
-  batchSize: z.coerce.number().min(1).optional().default(10000), // entityId window per v2 scan
+  batchSize: z.coerce.number().min(1).optional().default(1_000_000), // entityId window per v2 scan (~135 scans over the full id space; smaller = more, slower scans)
   start: z.coerce.number().min(0).optional().default(0),
   end: z.coerce.number().min(0).optional(),
   // preview: scan + count owners, write nothing.
