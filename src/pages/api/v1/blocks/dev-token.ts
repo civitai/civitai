@@ -14,6 +14,8 @@ import {
 } from '~/shared/constants/block-scope.constants';
 import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
 import { isPageSlot, PAGE_FORBIDDEN_SCOPES, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { Flags } from '~/shared/utils/flags';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -206,18 +208,35 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // CLOSED on a malformed limiter result (never silently bypass a mint).
   const rateSubject = user.id ? `u:${user.id}` : `ip:${clientIp(req)}`;
   const rateKey = `${REDIS_SYS_KEYS.BLOCKS.DEV_TOKEN_RATE_LIMIT}:${rateSubject}` as const;
-  const multiResult = await sysRedis
-    .multi()
-    .set(rateKey, '0', { NX: true, EX: RATE_LIMIT.windowSeconds })
-    .incr(rateKey)
-    .exec();
-  const count = Number(multiResult?.[1]);
+  let count: number;
+  try {
+    const multiResult = await sysRedis
+      .multi()
+      .set(rateKey, '0', { NX: true, EX: RATE_LIMIT.windowSeconds })
+      .incr(rateKey)
+      .exec();
+    count = Number(multiResult?.[1]);
+  } catch (err) {
+    // A Redis incident must NEVER silently bypass the mint — fail closed.
+    req.log?.warn('blocks/dev-token: rate limiter threw; failing closed', { rateSubject });
+    res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
+    return;
+  }
   if (!Number.isFinite(count)) {
     req.log?.warn('blocks/dev-token: rate-limit counter malformed; failing closed', {
       rateSubject,
     });
     res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
     return;
+  }
+  // Self-heal a TTL-less key: `SET NX EX` only arms the TTL on first creation, so
+  // a key left around without an expiry (a prior crash / manual SET) would make
+  // the window permanent and lock this user out forever (fail-closed, but a real
+  // footgun). Re-arm only when the TTL is actually missing, so we never extend an
+  // active window. Best-effort — mirrors block-token.service.ts:274-275.
+  if (count > 1) {
+    const ttl = await sysRedis.ttl(rateKey).catch(() => -1);
+    if (ttl < 0) await sysRedis.expire(rateKey, RATE_LIMIT.windowSeconds).catch(() => {});
   }
   if (count > RATE_LIMIT.max) {
     const retryAfter = await sysRedis.ttl(rateKey);
@@ -302,6 +321,19 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   if (requestedScopes && requestedScopes.length > 0) {
     const want = new Set(requestedScopes);
     granted = granted.filter((s: string) => want.has(s));
+  }
+
+  //   f) PERSONAL-KEY CEILING. The minted block token's spend capability must be
+  //      a SUBSET of what the dev's own personal API key authorizes — a key
+  //      lacking AIServicesWrite (e.g. a read-only key) cannot mint a
+  //      Buzz-spending dev token. Mirrors the /api/v1/me tokenScope posture
+  //      (me.ts:24). Read/catalog/storage scopes are unaffected; only the
+  //      budgeted-spend scope is gated. Keys default to Full, so this is a
+  //      no-op for a normal key and a tightening only for a deliberately-narrow
+  //      one. Strip (no error), consistent with every other clamp step.
+  const keyCanSpend = Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite);
+  if (!keyCanSpend) {
+    granted = granted.filter((s: string) => s !== 'ai:write:budgeted');
   }
 
   // Dedup, deterministic order.

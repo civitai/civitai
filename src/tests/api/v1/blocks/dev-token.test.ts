@@ -64,20 +64,31 @@ const {
   mockSysRedis,
   mockMultiIncr,
 } = vi.hoisted(() => {
-  const mockMultiIncr = { value: 1, malformedExec: false as unknown[] | null | false };
+  const mockMultiIncr = {
+    value: 1,
+    malformedExec: false as unknown[] | null | false,
+    throwExec: false,
+  };
   const multiFactory = () => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
-    exec: vi.fn().mockImplementation(async () =>
-      mockMultiIncr.malformedExec !== false ? mockMultiIncr.malformedExec : ['OK', mockMultiIncr.value]
-    ),
+    exec: vi.fn().mockImplementation(async () => {
+      if (mockMultiIncr.throwExec) throw new Error('redis down');
+      return mockMultiIncr.malformedExec !== false
+        ? mockMultiIncr.malformedExec
+        : ['OK', mockMultiIncr.value];
+    }),
   });
   return {
     mockGetSession: vi.fn(),
     mockIsAppBlocksEnabled: vi.fn(),
     mockSign: vi.fn(),
     mockAppBlockFindUnique: vi.fn(),
-    mockSysRedis: { multi: vi.fn(multiFactory), ttl: vi.fn().mockResolvedValue(60) },
+    mockSysRedis: {
+      multi: vi.fn(multiFactory),
+      ttl: vi.fn().mockResolvedValue(60),
+      expire: vi.fn().mockResolvedValue(1),
+    },
     mockMultiIncr,
   };
 });
@@ -101,26 +112,39 @@ vi.mock('~/env/server', () => ({
 
 import handler from '~/pages/api/v1/blocks/dev-token';
 import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const SFW = domainBrowsingCeiling(null);
 
 const OWNER_ID = 7;
 
-// Personal-access (user-type) key + moderator.
+// Personal-access (user-type) key + moderator. A normal personal key carries
+// the Full scope bitmask (incl. AIServicesWrite), so ai:write:budgeted survives
+// the personal-key-ceiling clamp.
 const MOD_SESSION = {
   user: { id: OWNER_ID, isModerator: true },
   apiKeyId: 42,
   subject: { type: 'apiKey', id: 42 },
+  tokenScope: TokenScope.Full,
 };
 const NONMOD_SESSION = {
   user: { id: 8, isModerator: false },
   apiKeyId: 43,
   subject: { type: 'apiKey', id: 43 },
+  tokenScope: TokenScope.Full,
 };
 const OAUTH_MOD_SESSION = {
   user: { id: OWNER_ID, isModerator: true },
   apiKeyId: 99,
   subject: { type: 'oauth', id: 'client_abc' },
+  tokenScope: TokenScope.Full,
+};
+// A personal key deliberately scoped WITHOUT AIServicesWrite (e.g. read-only).
+const READONLY_MOD_SESSION = {
+  user: { id: OWNER_ID, isModerator: true },
+  apiKeyId: 44,
+  subject: { type: 'apiKey', id: 44 },
+  tokenScope: TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.MediaRead,
 };
 
 // An approved, owned PAGE app. allowedScopes is the OAuth ceiling — set every
@@ -144,7 +168,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockMultiIncr.value = 1;
   mockMultiIncr.malformedExec = false;
+  mockMultiIncr.throwExec = false;
   mockSysRedis.ttl.mockResolvedValue(60);
+  mockSysRedis.expire.mockResolvedValue(1);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   mockAppBlockFindUnique.mockResolvedValue(pageApp());
   mockSign.mockResolvedValue({
@@ -286,6 +312,36 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(mockSign).not.toHaveBeenCalled();
   });
 
+  it('503 (fail closed) when the rate-limit exec() THROWS (redis incident)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockMultiIncr.throwExec = true;
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(503);
+    // A Redis incident must never silently bypass the mint.
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it('self-heals a TTL-less rate-limit key (re-arms expiry when ttl < 0)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockMultiIncr.value = 2; // not first hit → self-heal branch runs
+    mockSysRedis.ttl.mockResolvedValueOnce(-1); // key exists but lost its TTL
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSysRedis.expire).toHaveBeenCalledWith('system:blocks:dev-token-rate-limit:u:7', 60);
+  });
+
+  it('does NOT re-arm expiry when the window is still active (ttl >= 0)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockMultiIncr.value = 2;
+    mockSysRedis.ttl.mockResolvedValueOnce(45); // active window — must not be extended
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSysRedis.expire).not.toHaveBeenCalled();
+  });
+
   it('happy path: mod + owned page app → token with capped claims (self-sub, SFW, page ctx)', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
@@ -410,5 +466,21 @@ describe('POST /api/v1/blocks/dev-token', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
     expect(mockSign.mock.calls[0][0].scopes).toEqual(['apps:storage:read']);
+  });
+
+  it('STRIPS ai:write:budgeted when the personal key lacks AIServicesWrite', async () => {
+    // The minted token can never authorize MORE spend than the dev's own key.
+    mockGetSession.mockResolvedValueOnce(READONLY_MOD_SESSION);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const arg = mockSign.mock.calls[0][0];
+    // Read/catalog/storage scopes survive; the budgeted-spend scope is gone.
+    expect(arg.scopes).toEqual(['apps:storage:read', 'models:read:self', 'user:read:self']);
+    expect(arg.scopes).not.toContain('ai:write:budgeted');
+    // No spend scope → no budget claim.
+    expect(arg.buzzBudget).toBeUndefined();
+    const out = res._getJSONData() as Record<string, unknown>;
+    expect(out.buzzBudget).toBeUndefined();
   });
 });
