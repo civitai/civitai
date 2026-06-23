@@ -14,6 +14,7 @@ import {
   type PromptTriggerCategory,
 } from '~/utils/metadata/audit';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { externalModerationOutcomeCounter } from '~/server/prom/client';
 
 // --- Blocked Prompt Store ---
 // Single Redis list stores both count (list length) and prompt data.
@@ -200,6 +201,229 @@ function filterAllowlistedTriggers(
   });
 }
 
+// --- Deferred External-Moderation Re-Screen Queue ---
+// The inline external moderation call (OpenAI omni-moderation) is FAIL-SOFT: when
+// OpenAI is slow/down (intermittent 503/504 + >5s windows) the prompt's CSAM
+// pre-screen is silently skipped on the hot path and never recovered. This queue
+// captures those skips so the `rescreen-skipped-prompt-moderation` cron can re-screen
+// them when OpenAI recovers and apply the SAME consequence as the inline path
+// (mute escalation + audit record) — just delayed.
+//
+// Durability caveat: this rides on sysRedis (the same instance the blocked-prompt
+// store uses). It is NOT a guaranteed-delivery broker — a sysRedis wipe loses pending
+// items, and the cap below (FIFO eviction of the OLDEST unprocessed entries) can drop
+// items under a sustained OpenAI outage that outpaces drain. Both are acceptable: this
+// is a best-effort SECONDARY safety net layered on top of the primary regex audit, not
+// the primary CSAM gate.
+const RESCREEN_QUEUE_KEY = REDIS_SYS_KEYS.GENERATION.MODERATION_RESCREEN_QUEUE;
+// Hard cap on the queue length so a prolonged OpenAI outage can never grow it
+// unbounded. lPush adds to the head (newest); lTrim(0, MAX-1) keeps the newest MAX
+// and evicts the oldest tail.
+const RESCREEN_QUEUE_MAX = 20000;
+// Max times an item is re-screened before it is dropped (OpenAI persistently down).
+const RESCREEN_MAX_ATTEMPTS = 5;
+// Drop the consequence-source label distinct from inline 'External' so a deferred
+// block is traceable in ClickHouse / UserRestriction triggers while remaining an
+// external-category block (semantics identical to inline external).
+const RESCREEN_SOURCE = 'External-Deferred';
+
+export interface PromptRescreenPayload {
+  prompt: string;
+  negativePrompt?: string;
+  userId: number;
+  isModerator?: boolean;
+  remixOfId?: number;
+  imageId?: number;
+  attempt: number;
+}
+
+/**
+ * Best-effort enqueue of a prompt whose inline external moderation was skipped
+ * (the OpenAI call failed/timed-out). FIRE-AND-FORGET: never throws, never blocks
+ * the caller — the generation hot path must be unaffected. Caps the queue length so
+ * it can never grow unbounded.
+ */
+export function enqueuePromptRescreen(payload: PromptRescreenPayload): void {
+  // Increment the metric eagerly (synchronous, cannot throw meaningfully) so the
+  // skip is observable even if the async push below fails.
+  try {
+    externalModerationOutcomeCounter.inc({ outcome: 'skipped' });
+  } catch {
+    // metrics are best-effort
+  }
+  // Fire-and-forget: do not await, swallow all errors. A rejected promise here is
+  // explicitly caught so it can never become an unhandledRejection.
+  void (async () => {
+    try {
+      await sysRedis.lPush(RESCREEN_QUEUE_KEY, JSON.stringify(payload));
+      await sysRedis.lTrim(RESCREEN_QUEUE_KEY, 0, RESCREEN_QUEUE_MAX - 1);
+    } catch (error) {
+      logToAxiom({
+        name: 'prompt-rescreen-enqueue-error',
+        type: 'error',
+        message: (error as Error)?.message ?? 'unknown',
+      });
+    }
+  })();
+}
+
+/**
+ * Drain up to `batchSize` skipped-prompt items from the queue and re-screen each one
+ * against the external moderation service. Applies the SAME consequence as the inline
+ * path on a flag (addBlockedPrompt → reportProhibitedRequest); re-enqueues (up to the
+ * attempt cap) on a transient re-screen failure; drops + logs at the cap.
+ *
+ * NEVER throws out of the whole function — a single bad item can't abort the batch.
+ * Returns a summary suitable for the job's return value.
+ */
+export async function processPromptRescreenQueue(
+  batchSize = 500
+): Promise<{ processed: number; flagged: number; clean: number; requeued: number; dropped: number }> {
+  const summary = { processed: 0, flagged: 0, clean: 0, requeued: 0, dropped: 0 };
+
+  let raw: string[] | null = null;
+  try {
+    // LPOP COUNT — pops from the head (newest-first; FIFO-ish is acceptable per spec).
+    raw = await sysRedis.lPopCount(RESCREEN_QUEUE_KEY, batchSize);
+  } catch (error) {
+    logToAxiom({
+      name: 'prompt-rescreen-pop-error',
+      type: 'error',
+      message: (error as Error)?.message ?? 'unknown',
+    });
+    return summary;
+  }
+
+  if (!raw || raw.length === 0) return summary;
+
+  for (const item of raw) {
+    summary.processed++;
+
+    let payload: PromptRescreenPayload;
+    try {
+      payload = JSON.parse(item) as PromptRescreenPayload;
+    } catch {
+      // Unparseable entry — drop it (cannot re-enqueue something we can't read).
+      summary.dropped++;
+      try {
+        externalModerationOutcomeCounter.inc({ outcome: 'rescreen_dropped' });
+      } catch {}
+      continue;
+    }
+
+    const { prompt, negativePrompt, userId, isModerator, remixOfId, imageId, attempt } = payload;
+
+    // Defensive: a malformed payload with no prompt/userId can't be screened.
+    if (!prompt || typeof userId !== 'number') {
+      summary.dropped++;
+      try {
+        externalModerationOutcomeCounter.inc({ outcome: 'rescreen_dropped' });
+      } catch {}
+      continue;
+    }
+
+    try {
+      const { flagged, categories } = await extModeration.moderatePrompt(prompt);
+
+      // Match the inline decision: inline treats ANY returned category as a block
+      // trigger (and `flagged` is set by the same path). Re-use the same OR so the
+      // deferred block fires under exactly the inline conditions.
+      if (flagged || (categories && categories.length > 0)) {
+        try {
+          const blockedEntry: BlockedPromptEntry = {
+            prompt: prompt ?? '',
+            negativePrompt: negativePrompt ?? '',
+            source: RESCREEN_SOURCE,
+            category: 'external' as PromptTriggerCategory,
+            matchedWord: categories[0],
+            imageId: imageId ?? null,
+            remixOfId: remixOfId ?? null,
+            time: new Date().toISOString(),
+          };
+
+          const count = await addBlockedPrompt(userId, blockedEntry);
+
+          // No `track` — the job has no request/tracker context. reportProhibitedRequest
+          // tolerates a missing track (ClickHouse audit-track is skipped; the mute
+          // escalation still runs off the Redis count).
+          await reportProhibitedRequest({
+            prompt,
+            negativePrompt,
+            userId,
+            isModerator,
+            source: RESCREEN_SOURCE,
+            count,
+            remixOfId,
+          });
+
+          summary.flagged++;
+          externalModerationOutcomeCounter.inc({ outcome: 'rescreen_flagged' });
+        } catch (consequenceError) {
+          // The consequence side-effect failed (Redis/DB). Don't lose the item — the
+          // generation already happened and this is the only recovery path. Treat like
+          // a transient failure: re-enqueue (subject to the cap) so a later run retries
+          // the consequence.
+          await requeueOrDrop(payload, summary, consequenceError);
+        }
+      } else {
+        summary.clean++;
+        externalModerationOutcomeCounter.inc({ outcome: 'rescreen_clean' });
+      }
+    } catch (screenError) {
+      // moderatePrompt threw again — OpenAI still unavailable.
+      await requeueOrDrop(payload, summary, screenError);
+    }
+  }
+
+  return summary;
+}
+
+/**
+ * Re-enqueue an item with attempt+1 if under the cap, else drop it (+log). Never
+ * throws — used inside the per-item loop above.
+ */
+async function requeueOrDrop(
+  payload: PromptRescreenPayload,
+  summary: { requeued: number; dropped: number },
+  error: unknown
+): Promise<void> {
+  const nextAttempt = (payload.attempt ?? 0) + 1;
+  if (nextAttempt < RESCREEN_MAX_ATTEMPTS) {
+    try {
+      await sysRedis.lPush(
+        RESCREEN_QUEUE_KEY,
+        JSON.stringify({ ...payload, attempt: nextAttempt })
+      );
+      await sysRedis.lTrim(RESCREEN_QUEUE_KEY, 0, RESCREEN_QUEUE_MAX - 1);
+      summary.requeued++;
+      externalModerationOutcomeCounter.inc({ outcome: 'rescreen_requeued' });
+    } catch (requeueError) {
+      // Even the re-enqueue failed — count it as dropped so the metric balances.
+      summary.dropped++;
+      try {
+        externalModerationOutcomeCounter.inc({ outcome: 'rescreen_dropped' });
+      } catch {}
+      logToAxiom({
+        name: 'prompt-rescreen-requeue-error',
+        type: 'error',
+        message: (requeueError as Error)?.message ?? 'unknown',
+        details: { userId: payload.userId },
+      });
+    }
+  } else {
+    summary.dropped++;
+    try {
+      externalModerationOutcomeCounter.inc({ outcome: 'rescreen_dropped' });
+    } catch {}
+    logToAxiom({
+      name: 'prompt-rescreen-dropped',
+      type: 'warning',
+      message: `dropped after ${nextAttempt} attempts: ${(error as Error)?.message ?? 'unknown'}`,
+      details: { userId: payload.userId, attempts: nextAttempt },
+    });
+  }
+}
+
 export interface AuditPromptOptions {
   prompt: string;
   negativePrompt?: string;
@@ -260,6 +484,18 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     // Run external moderation service
     const { flagged, categories } = await extModeration.moderatePrompt(prompt).catch((error) => {
       logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
+      // The inline external CSAM pre-screen was skipped (OpenAI slow/down). Enqueue the
+      // prompt for deferred re-screen so the consequence is recovered when OpenAI is
+      // healthy again. Fire-and-forget — never throws, never blocks; fail-soft preserved.
+      enqueuePromptRescreen({
+        prompt,
+        negativePrompt,
+        userId,
+        isModerator,
+        remixOfId,
+        imageId,
+        attempt: 0,
+      });
       return { flagged: false, categories: [] as string[] };
     });
 

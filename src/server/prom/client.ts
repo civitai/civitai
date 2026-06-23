@@ -188,6 +188,22 @@ export const clavataCounter = registerCounter({
   help: 'Clavata requests',
 });
 
+// External moderation deferred re-screen outcomes (CSAM pre-screen recovery).
+// The inline external-moderation call (OpenAI omni-moderation) is fail-soft: when
+// OpenAI is slow/down the prompt's CSAM pre-screen is silently skipped. Those skips
+// are enqueued and re-screened async by the rescreen-skipped-prompt-moderation job.
+// Exposed name: civitai_app_external_moderation_outcome_total. `outcome`:
+//   skipped           — inline call failed → enqueued for deferred re-screen
+//   rescreen_clean    — deferred re-screen returned not-flagged
+//   rescreen_flagged  — deferred re-screen flagged → same consequence as inline
+//   rescreen_requeued — re-screen threw again (OpenAI still down) → re-enqueued
+//   rescreen_dropped  — re-screen kept failing past the attempt cap → dropped + logged
+export const externalModerationOutcomeCounter = registerCounterWithLabels({
+  name: 'external_moderation_outcome_total',
+  help: 'External moderation deferred re-screen outcomes (inline-skip recovery)',
+  labelNames: ['outcome'] as const,
+});
+
 // Cache metrics
 export const cacheHitCounter = registerCounterWithLabels({
   name: 'cache_hit_total',

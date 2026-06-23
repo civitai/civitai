@@ -1340,6 +1340,10 @@ export const REDIS_SYS_KEYS = {
     EXPERIMENTAL: 'generation:experimental',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
+    // Queue of prompts whose INLINE external moderation (OpenAI omni-moderation)
+    // call failed/timed-out and was skipped fail-soft — drained + re-screened by
+    // the rescreen-skipped-prompt-moderation job when OpenAI recovers.
+    MODERATION_RESCREEN_QUEUE: 'generation:moderation-rescreen-queue',
     REMIX_AUDIT_CHECKED: 'generation:remix-audit-checked',
     CLIENT: 'generation:client',
   },
