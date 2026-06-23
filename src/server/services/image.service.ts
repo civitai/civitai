@@ -4679,6 +4679,14 @@ type ImageMetricMap = Record<number, Partial<Record<string, number>>>;
 // `new MetricService(clickhouse, redis as unknown as IRedisClient)`), so it uses
 // the RAW (plain-string) hGetAll / hSet — NOT the `redis.packed.*` helpers. We do
 // the same here (raw redis ops) so the stored bytes are byte-compatible.
+// These MUST equal the submodule's MetricService TTLs so the flag-ON write-back
+// stores `metrics:Image:<id>` hashes with the SAME lifetime the flag-OFF path
+// expects. The submodule constants `CACHE_TTL` / `MISS_CACHE_TTL` are module-private
+// `const`s (NOT exported) at event-engine-common/services/metrics.ts:14-15, so they
+// can't be imported here. The drift guard lives in
+// __tests__/image-metrics-current-totals.test.ts ('TTL drift guard' suite): it
+// reads both source files and fails CI if these copies ever diverge from the
+// submodule. If you change a value here, change it there (metrics.ts:14-15) too.
 const IMAGE_METRICS_CACHE_TTL = 12 * 60 * 60; // mirrors MetricService CACHE_TTL (12h)
 const IMAGE_METRICS_MISS_CACHE_TTL = 5 * 60; // mirrors MetricService MISS_CACHE_TTL (5m)
 const imageMetricsCacheKey = (id: number) => `metrics:Image:${id}`;
@@ -4820,6 +4828,16 @@ const fetchImageMetricsFromCurrentTotals = async (ids: number[]): Promise<ImageM
   // EXACT format so the flag-OFF path reuses them (found → string fields +
   // CACHE_TTL; no rows for an id → notFound:'1' + MISS_CACHE_TTL). Best-effort:
   // a write failure must not fail the read.
+  //
+  // ATOMIC: mirror MetricService.hSetEx EXACTLY —
+  //   redis.multi().hSet(key, fields).expire(key, ttl).exec()
+  // (see event-engine-common/utils/query-utils.ts `hSetEx`). The previous
+  // `Promise.all([hSet, expire])` was NON-atomic: the two commands are
+  // independent RESP frames, so a failed/late `expire` could leave the hash
+  // with NO TTL — stale forever. A single-key MULTI groups HSET+EXPIRE into one
+  // transaction on the (single) key's slot, so the field can't be written
+  // without its key-level TTL also being queued. Each write-back is one key
+  // (`metrics:Image:<id>`), so this is single-slot/cluster-safe.
   try {
     await Promise.all(
       cacheMisses.map((id) => {
@@ -4827,13 +4845,13 @@ const fetchImageMetricsFromCurrentTotals = async (ids: number[]): Promise<ImageM
         if (fresh[id]) {
           const fields: Record<string, string> = {};
           for (const [k, v] of Object.entries(fresh[id])) fields[k] = String(v);
-          // hSetEx == hSet(fields) + expire(ttl) (see MetricService.hSetEx).
-          return Promise.all([redis.hSet(key, fields), redis.expire(key, IMAGE_METRICS_CACHE_TTL)]);
+          return redis.multi().hSet(key, fields).expire(key, IMAGE_METRICS_CACHE_TTL).exec();
         }
-        return Promise.all([
-          redis.hSet(key, { notFound: '1' }),
-          redis.expire(key, IMAGE_METRICS_MISS_CACHE_TTL),
-        ]);
+        return redis
+          .multi()
+          .hSet(key, { notFound: '1' })
+          .expire(key, IMAGE_METRICS_MISS_CACHE_TTL)
+          .exec();
       })
     );
   } catch (e) {

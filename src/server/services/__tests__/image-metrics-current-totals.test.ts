@@ -25,6 +25,7 @@ const {
   hGetAllMock,
   hSetMock,
   expireMock,
+  execMock,
 } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
   timeoutCounterIncMock: vi.fn(),
@@ -32,8 +33,15 @@ const {
   isFliptMock: vi.fn(),
   chQueryMock: vi.fn(),
   hGetAllMock: vi.fn(),
+  // The write-back now mirrors MetricService.hSetEx EXACTLY:
+  //   redis.multi().hSet(key, fields).expire(key, ttl).exec()
+  // So hSet/expire are recorded on the MULTI chain (not the bare client). Each
+  // returns the same chain object so the calls compose; exec() resolves. We still
+  // assert the SAME end state (key/fields/TTL) via hSetMock/expireMock — they're
+  // just invoked through the chain now.
   hSetMock: vi.fn(),
   expireMock: vi.fn(),
+  execMock: vi.fn(),
 }));
 
 // image.service registers TWO counters via registerCounter:
@@ -92,9 +100,12 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 // clickhouse client: expose the $query spy the ON path calls for cache MISSES.
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: chQueryMock } }));
-// redis client: expose the raw plain-string hGetAll / hSet / expire the ON-path
-// read-through uses (mirrors MetricService's cache contract). packed.* kept for
-// the unrelated module-load callers.
+// redis client: expose the raw plain-string hGetAll for the ON-path read-through,
+// and a multi() that returns a chainable transaction whose hSet/expire are
+// recorded (so we assert the same key/fields/TTL end state) and whose exec()
+// resolves — mirroring MetricService.hSetEx's
+// `multi().hSet(key, fields).expire(key, ttl).exec()`. packed.* kept for the
+// unrelated module-load callers.
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
   const keyProxy = make();
@@ -102,8 +113,20 @@ vi.mock('~/server/redis/client', () => {
     redis: {
       packed: { get: vi.fn(), set: vi.fn() },
       hGetAll: hGetAllMock,
-      hSet: hSetMock,
-      expire: expireMock,
+      multi: () => {
+        const chain: any = {
+          hSet: (...args: unknown[]) => {
+            hSetMock(...args);
+            return chain;
+          },
+          expire: (...args: unknown[]) => {
+            expireMock(...args);
+            return chain;
+          },
+          exec: () => execMock(),
+        };
+        return chain;
+      },
     },
     sysRedis: {},
     REDIS_KEYS: keyProxy,
@@ -128,10 +151,12 @@ const nullMetrics = (id: number) => ({
 describe('getImageMetricsObject — flag-gated current-totals read path', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default redis behaviour: every key a cache MISS (empty hash); writes succeed.
+    // Default redis behaviour: every key a cache MISS (empty hash); the multi()
+    // write-back transaction succeeds (exec resolves).
     hGetAllMock.mockResolvedValue({});
-    hSetMock.mockResolvedValue(1);
-    expireMock.mockResolvedValue(true);
+    hSetMock.mockReturnValue(undefined);
+    expireMock.mockReturnValue(undefined);
+    execMock.mockResolvedValue([1, true]);
   });
 
   it('(a) flag OFF → uses the existing MetricService path with the unchanged mapping', async () => {
@@ -233,14 +258,20 @@ describe('getImageMetricsObject — flag-gated current-totals read path', () => 
     // miss-id array (index 2) must be [2, 3] — the MISSES only, NOT the hit id 1.
     expect(queryArgs[2]).toEqual([2, 3]);
 
-    // Write-back: id 2 found → string fields + CACHE_TTL (12h=43200);
-    //             id 3 no rows → { notFound: '1' } + MISS_CACHE_TTL (5m=300).
-    // id 1 (a hit) must NOT be written back.
+    // Write-back is ATOMIC: multi().hSet(...).expire(...).exec() per missed id.
+    // Same end state as before (key/fields/TTL) but now hSet+expire are queued in
+    // one transaction and committed by exec() — so a key can never be left with no
+    // TTL.
+    //   id 2 found → string fields + CACHE_TTL (12h=43200);
+    //   id 3 no rows → { notFound: '1' } + MISS_CACHE_TTL (5m=300).
+    //   id 1 (a hit) must NOT be written back.
     expect(hSetMock).toHaveBeenCalledWith('metrics:Image:2', { Heart: '9', tippedAmount: '50' });
     expect(expireMock).toHaveBeenCalledWith('metrics:Image:2', 12 * 60 * 60);
     expect(hSetMock).toHaveBeenCalledWith('metrics:Image:3', { notFound: '1' });
     expect(expireMock).toHaveBeenCalledWith('metrics:Image:3', 5 * 60);
     expect(hSetMock).not.toHaveBeenCalledWith('metrics:Image:1', expect.anything());
+    // Two missed ids → two committed transactions (the atomicity proof).
+    expect(execMock).toHaveBeenCalledTimes(2);
 
     expect(result[1]).toEqual({ ...nullMetrics(1), reactionLike: 5, comment: 3 });
     expect(result[2]).toEqual({ ...nullMetrics(2), reactionHeart: 9, buzz: 50 });
@@ -293,5 +324,54 @@ describe('getImageMetricsObject — flag-gated current-totals read path', () => 
     expect(result[2]).toEqual(nullMetrics(2));
     expect(timeoutCounterIncMock).toHaveBeenCalledTimes(1);
     expect(readFailedCounterIncMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TTL drift guard
+// ---------------------------------------------------------------------------
+// image.service hardcodes IMAGE_METRICS_CACHE_TTL / IMAGE_METRICS_MISS_CACHE_TTL
+// as copies of the submodule MetricService constants CACHE_TTL / MISS_CACHE_TTL
+// (event-engine-common/services/metrics.ts), which are module-private `const`s and
+// thus NOT importable. The write-back stores `metrics:Image:<id>` hashes that the
+// flag-OFF MetricService path reads, so the two TTLs MUST stay equal or the shared
+// cache would expire under inconsistent lifetimes. These source-level assertions
+// fail CI if EITHER file's value changes without the other following.
+describe('TTL drift guard — civitai copies must equal submodule MetricService TTLs', () => {
+  // Read sources directly (no module load — avoids image.service's heavy import graph).
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fs = require('fs') as typeof import('fs');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const path = require('path') as typeof import('path');
+
+  const submodulePath = path.resolve(
+    __dirname,
+    '../../../../event-engine-common/services/metrics.ts'
+  );
+  const servicePath = path.resolve(__dirname, '../image.service.ts');
+
+  // Match `const NAME = <expr>;` and eval the numeric expression (e.g. `12 * 60 * 60`).
+  const readNumericConst = (src: string, name: string): number => {
+    const m = src.match(new RegExp(`\\b${name}\\s*=\\s*([0-9*+\\-/ ()]+?)\\s*;`));
+    if (!m) throw new Error(`could not find numeric const ${name}`);
+    // Restricted to a digits/operators/space/parens charset above — safe to eval.
+    // eslint-disable-next-line no-eval
+    return eval(m[1]) as number;
+  };
+
+  it('CACHE_TTL matches IMAGE_METRICS_CACHE_TTL', () => {
+    const submoduleSrc = fs.readFileSync(submodulePath, 'utf8');
+    const serviceSrc = fs.readFileSync(servicePath, 'utf8');
+    expect(readNumericConst(serviceSrc, 'IMAGE_METRICS_CACHE_TTL')).toBe(
+      readNumericConst(submoduleSrc, 'CACHE_TTL')
+    );
+  });
+
+  it('MISS_CACHE_TTL matches IMAGE_METRICS_MISS_CACHE_TTL', () => {
+    const submoduleSrc = fs.readFileSync(submodulePath, 'utf8');
+    const serviceSrc = fs.readFileSync(servicePath, 'utf8');
+    expect(readNumericConst(serviceSrc, 'IMAGE_METRICS_MISS_CACHE_TTL')).toBe(
+      readNumericConst(submoduleSrc, 'MISS_CACHE_TTL')
+    );
   });
 });
