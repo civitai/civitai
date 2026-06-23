@@ -61,10 +61,18 @@ describe('extModeration.moderatePrompt', () => {
       });
     });
     const start = Date.now();
-    await expect(extModeration.moderatePrompt('a hanging prompt')).rejects.toBeTruthy();
+    const err = await extModeration.moderatePrompt('a hanging prompt').then(
+      () => {
+        throw new Error('should have rejected');
+      },
+      (e) => e
+    );
     const elapsed = Date.now() - start;
     // Must reject promptly at the deadline, not park indefinitely.
     expect(elapsed).toBeLessThan(2000);
+    // The caller's fail-soft path reads `error.message` (logToAxiom) — guard that the
+    // abort rejection carries a string message so that access can never throw.
+    expect(typeof err.message).toBe('string');
   });
 
   it('throws on a non-ok response (503) so the caller fails soft', async () => {

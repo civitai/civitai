@@ -427,7 +427,11 @@ export const serverSchema = z.object({
   // fail-soft path: when the moderation gateway is slow/hanging (503/504 waves),
   // the fetch is aborted at this deadline instead of parking the whole generation
   // submission for undici's ~300s default. See src/server/integrations/moderation.ts.
-  EXTERNAL_MODERATION_TIMEOUT_MS: z.coerce.number().optional().default(5000),
+  // `.int().positive().catch(5000)` so a missing/empty/0/negative/garbage value
+  // falls back to 5000 rather than (a) crashing boot or (b) coercing to 0 →
+  // AbortSignal.timeout(0) → aborting every call → SILENTLY disabling external
+  // moderation (the dangerous failure for a trust-and-safety control).
+  EXTERNAL_MODERATION_TIMEOUT_MS: z.coerce.number().int().positive().catch(5000),
   BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
   MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),
 
