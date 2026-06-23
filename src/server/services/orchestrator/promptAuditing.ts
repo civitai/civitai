@@ -216,10 +216,18 @@ function filterAllowlistedTriggers(
 // is a best-effort SECONDARY safety net layered on top of the primary regex audit, not
 // the primary CSAM gate.
 const RESCREEN_QUEUE_KEY = REDIS_SYS_KEYS.GENERATION.MODERATION_RESCREEN_QUEUE;
-// Hard cap on the queue length so a prolonged OpenAI outage can never grow it
-// unbounded. lPush adds to the head (newest); lTrim(0, MAX-1) keeps the newest MAX
-// and evicts the oldest tail.
+// FIFO queue: enqueue with rPush (append to tail), drain with lPopCount from the
+// head — so the OLDEST skipped prompts are re-screened first (clear the backlog in
+// order). Hard cap so a prolonged OpenAI outage can never grow it unbounded:
+// lTrim(0, MAX-1) keeps the oldest MAX (the head) and evicts the NEWEST tail — and
+// during an active outage the live path keeps enqueuing newest, so evicting newest
+// loses the least (it'll be re-enqueued by ongoing traffic; the backlog we're
+// draining is preserved).
 const RESCREEN_QUEUE_MAX = 20000;
+// TTL backstop so raw prompt text can never persist indefinitely in sysRedis if the
+// drain cron stops (job-runner outage / orphaned key). Drained items are gone in
+// minutes; this only bounds the worst case. Re-applied on every push.
+const RESCREEN_QUEUE_TTL_SECONDS = 60 * 60 * 6; // 6h
 // Max times an item is re-screened before it is dropped (OpenAI persistently down).
 const RESCREEN_MAX_ATTEMPTS = 5;
 // Drop the consequence-source label distinct from inline 'External' so a deferred
@@ -255,8 +263,9 @@ export function enqueuePromptRescreen(payload: PromptRescreenPayload): void {
   // explicitly caught so it can never become an unhandledRejection.
   void (async () => {
     try {
-      await sysRedis.lPush(RESCREEN_QUEUE_KEY, JSON.stringify(payload));
+      await sysRedis.rPush(RESCREEN_QUEUE_KEY, JSON.stringify(payload));
       await sysRedis.lTrim(RESCREEN_QUEUE_KEY, 0, RESCREEN_QUEUE_MAX - 1);
+      await sysRedis.expire(RESCREEN_QUEUE_KEY, RESCREEN_QUEUE_TTL_SECONDS);
     } catch (error) {
       logToAxiom({
         name: 'prompt-rescreen-enqueue-error',
@@ -283,7 +292,7 @@ export async function processPromptRescreenQueue(
 
   let raw: string[] | null = null;
   try {
-    // LPOP COUNT — pops from the head (newest-first; FIFO-ish is acceptable per spec).
+    // LPOP COUNT from the head — with rPush enqueue this is FIFO (oldest first).
     raw = await sysRedis.lPopCount(RESCREEN_QUEUE_KEY, batchSize);
   } catch (error) {
     logToAxiom({
@@ -325,17 +334,29 @@ export async function processPromptRescreenQueue(
     try {
       const { flagged, categories } = await extModeration.moderatePrompt(prompt);
 
-      // Match the inline decision: inline treats ANY returned category as a block
-      // trigger (and `flagged` is set by the same path). Re-use the same OR so the
-      // deferred block fires under exactly the inline conditions.
-      if (flagged || (categories && categories.length > 0)) {
+      // Match the inline decision EXACTLY: inline blocks on `if (flagged)`. In the
+      // prod config (EXTERNAL_MODERATION_CATEGORIES set) `flagged === categories.length>0`,
+      // so this also covers the category path — but keying off `flagged` alone avoids a
+      // config-coupled divergence where the deferred path could over-block.
+      if (flagged) {
+        // Count the screen result FIRST — the screen succeeded and DID flag.
+        summary.flagged++;
+        externalModerationOutcomeCounter.inc({ outcome: 'rescreen_flagged' });
+
+        // Apply the consequence BEST-EFFORT — log on failure, do NOT re-enqueue. The
+        // screen already determined this prompt is flagged; re-running it would call
+        // addBlockedPrompt AGAIN and double-count toward the auto-mute threshold (could
+        // wrongly mute a user on a transient Redis blip). A consequence write that fails
+        // here is dropped: the generation already happened and the local regex audit +
+        // Hive image-CSAM layers still apply. Only a re-SCREEN failure (OpenAI still
+        // down, the catch below) is re-enqueued — that path hasn't counted anything yet.
         try {
           const blockedEntry: BlockedPromptEntry = {
             prompt: prompt ?? '',
             negativePrompt: negativePrompt ?? '',
             source: RESCREEN_SOURCE,
             category: 'external' as PromptTriggerCategory,
-            matchedWord: categories[0],
+            matchedWord: categories?.[0],
             imageId: imageId ?? null,
             remixOfId: remixOfId ?? null,
             time: new Date().toISOString(),
@@ -355,22 +376,21 @@ export async function processPromptRescreenQueue(
             count,
             remixOfId,
           });
-
-          summary.flagged++;
-          externalModerationOutcomeCounter.inc({ outcome: 'rescreen_flagged' });
         } catch (consequenceError) {
-          // The consequence side-effect failed (Redis/DB). Don't lose the item — the
-          // generation already happened and this is the only recovery path. Treat like
-          // a transient failure: re-enqueue (subject to the cap) so a later run retries
-          // the consequence.
-          await requeueOrDrop(payload, summary, consequenceError);
+          logToAxiom({
+            name: 'prompt-rescreen-consequence-error',
+            type: 'error',
+            message: (consequenceError as Error)?.message ?? 'unknown',
+            details: { userId },
+          });
         }
       } else {
         summary.clean++;
         externalModerationOutcomeCounter.inc({ outcome: 'rescreen_clean' });
       }
     } catch (screenError) {
-      // moderatePrompt threw again — OpenAI still unavailable.
+      // moderatePrompt threw again — OpenAI still unavailable. Re-enqueue: nothing has
+      // been counted for this item yet, so a retry can't over-count.
       await requeueOrDrop(payload, summary, screenError);
     }
   }
@@ -390,11 +410,12 @@ async function requeueOrDrop(
   const nextAttempt = (payload.attempt ?? 0) + 1;
   if (nextAttempt < RESCREEN_MAX_ATTEMPTS) {
     try {
-      await sysRedis.lPush(
+      await sysRedis.rPush(
         RESCREEN_QUEUE_KEY,
         JSON.stringify({ ...payload, attempt: nextAttempt })
       );
       await sysRedis.lTrim(RESCREEN_QUEUE_KEY, 0, RESCREEN_QUEUE_MAX - 1);
+      await sysRedis.expire(RESCREEN_QUEUE_KEY, RESCREEN_QUEUE_TTL_SECONDS);
       summary.requeued++;
       externalModerationOutcomeCounter.inc({ outcome: 'rescreen_requeued' });
     } catch (requeueError) {

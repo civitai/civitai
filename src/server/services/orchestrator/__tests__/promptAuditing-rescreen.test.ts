@@ -121,10 +121,11 @@ describe('auditPromptServer fail-soft + enqueue contract', () => {
       expect.objectContaining({ name: 'external-moderation-error' })
     );
 
-    // enqueue pushed the payload (fire-and-forget; let the microtask flush)
+    // enqueue pushed the payload (fire-and-forget; let the microtask flush). FIFO:
+    // the queue is appended with rPush (drained oldest-first via lPopCount).
     await new Promise((r) => setImmediate(r));
-    expect(sysRedis.lPush).toHaveBeenCalledWith(QUEUE_KEY, expect.any(String));
-    const pushed = JSON.parse(sysRedis.lPush.mock.calls[0][1] as string);
+    expect(sysRedis.rPush).toHaveBeenCalledWith(QUEUE_KEY, expect.any(String));
+    const pushed = JSON.parse(sysRedis.rPush.mock.calls[0][1] as string);
     expect(pushed).toMatchObject({
       prompt: 'a serene mountain landscape',
       negativePrompt: 'blurry',
@@ -147,7 +148,7 @@ describe('auditPromptServer fail-soft + enqueue contract', () => {
     ).resolves.toBeUndefined();
 
     await new Promise((r) => setImmediate(r));
-    expect(sysRedis.lPush).not.toHaveBeenCalled();
+    expect(sysRedis.rPush).not.toHaveBeenCalled();
     expect(outcomes()).not.toContain('skipped');
   });
 });
@@ -160,15 +161,17 @@ describe('enqueuePromptRescreen', () => {
     expect(outcomes()).toContain('skipped');
   });
 
-  it('caps the list via lTrim(0, MAX-1) after lPush', async () => {
+  it('caps the list via lTrim(0, MAX-1) and sets a TTL after rPush', async () => {
     enqueuePromptRescreen({ prompt: 'p', userId: 5, attempt: 0 });
     await new Promise((r) => setImmediate(r));
-    expect(sysRedis.lPush).toHaveBeenCalledWith(QUEUE_KEY, expect.any(String));
+    expect(sysRedis.rPush).toHaveBeenCalledWith(QUEUE_KEY, expect.any(String));
     expect(sysRedis.lTrim).toHaveBeenCalledWith(QUEUE_KEY, 0, 19999);
+    // TTL backstop so raw prompt text can't persist indefinitely (6h = 21600s).
+    expect(sysRedis.expire).toHaveBeenCalledWith(QUEUE_KEY, 21600);
   });
 
   it('swallows a redis error (best-effort, never throws/rejects)', async () => {
-    sysRedis.lPush.mockRejectedValueOnce(new Error('redis down'));
+    sysRedis.rPush.mockRejectedValueOnce(new Error('redis down'));
     expect(() => enqueuePromptRescreen({ prompt: 'p', userId: 5, attempt: 0 })).not.toThrow();
     await new Promise((r) => setImmediate(r));
     expect(logToAxiom).toHaveBeenCalledWith(
@@ -211,15 +214,44 @@ describe('processPromptRescreenQueue', () => {
     expect(outcomes()).toContain('rescreen_flagged');
   });
 
-  it('flagged on categories-only (flagged:false) still blocks (matches inline OR)', async () => {
+  it('flagged:false is treated as clean — matches the inline if(flagged) gate', async () => {
+    // In prod (EXTERNAL_MODERATION_CATEGORIES set) moderatePrompt returns
+    // flagged===categories.length>0, so flagged:false means no block. Keying off
+    // `flagged` alone (not categories) mirrors the inline path exactly and avoids a
+    // config-coupled over-block on the CSAM path.
     sysRedis.lPopCount.mockResolvedValueOnce([
       JSON.stringify({ prompt: 'bad', userId: 101, attempt: 0 }),
     ] as never);
     moderatePrompt.mockResolvedValueOnce({ flagged: false, categories: ['sexual/minors'] });
-    sysRedis.lLen.mockResolvedValue(1 as never);
 
     const r = await processPromptRescreenQueue(500);
+    expect(r.flagged).toBe(0);
+    expect(r.clean).toBe(1);
+    expect(
+      sysRedis.lPush.mock.calls.some((c) => String(c[0]).startsWith('generation:blocked-prompts'))
+    ).toBe(false);
+    expect(outcomes()).toContain('rescreen_clean');
+  });
+
+  it('flagged item whose consequence write throws is NOT re-enqueued (no auto-mute over-count)', async () => {
+    sysRedis.lPopCount.mockResolvedValueOnce([
+      JSON.stringify({ prompt: 'bad', userId: 102, attempt: 0 }),
+    ] as never);
+    moderatePrompt.mockResolvedValueOnce({ flagged: true, categories: ['sexual/minors'] });
+    // addBlockedPrompt throws partway (e.g. transient sysRedis blip after the count push).
+    sysRedis.lLen.mockRejectedValueOnce(new Error('redis blip'));
+
+    const r = await processPromptRescreenQueue(500);
+
+    // Counted as flagged (the screen DID flag), but the consequence is best-effort:
+    // the item is NOT re-enqueued — re-running would call addBlockedPrompt again and
+    // double-count toward the mute threshold.
     expect(r.flagged).toBe(1);
+    expect(r.requeued).toBe(0);
+    expect(sysRedis.rPush.mock.calls.some((c) => c[0] === QUEUE_KEY)).toBe(false);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'prompt-rescreen-consequence-error' })
+    );
     expect(outcomes()).toContain('rescreen_flagged');
   });
 
@@ -251,9 +283,9 @@ describe('processPromptRescreenQueue', () => {
 
     expect(r.requeued).toBe(1);
     expect(r.dropped).toBe(0);
-    expect(sysRedis.lPush).toHaveBeenCalledWith(QUEUE_KEY, expect.any(String));
+    expect(sysRedis.rPush).toHaveBeenCalledWith(QUEUE_KEY, expect.any(String));
     const requeued = JSON.parse(
-      sysRedis.lPush.mock.calls.find((c) => c[0] === QUEUE_KEY)![1] as string
+      sysRedis.rPush.mock.calls.find((c) => c[0] === QUEUE_KEY)![1] as string
     );
     expect(requeued.attempt).toBe(2);
     expect(outcomes()).toContain('rescreen_requeued');
@@ -271,7 +303,7 @@ describe('processPromptRescreenQueue', () => {
     expect(r.dropped).toBe(1);
     expect(r.requeued).toBe(0);
     // NOT re-enqueued
-    expect(sysRedis.lPush.mock.calls.some((c) => c[0] === QUEUE_KEY)).toBe(false);
+    expect(sysRedis.rPush.mock.calls.some((c) => c[0] === QUEUE_KEY)).toBe(false);
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'prompt-rescreen-dropped' })
     );
