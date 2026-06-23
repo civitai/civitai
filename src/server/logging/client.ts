@@ -1,16 +1,7 @@
-import { Client } from '@axiomhq/axiom-node';
 import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
-
-const shouldConnect = !env.IS_BUILD && env.AXIOM_TOKEN && env.AXIOM_ORG_ID;
-const axiom = shouldConnect
-  ? new Client({
-      token: env.AXIOM_TOKEN,
-      orgId: env.AXIOM_ORG_ID,
-    })
-  : null;
 
 /**
  * Extract only safe primitive fields from an error for logging.
@@ -92,32 +83,25 @@ export function buildServerFaultErrorLog(e: unknown): MixedObject {
   return safeError(e) ?? { message: String(e) };
 }
 
+// Named `logToAxiom` for call-site stability (429 sites). Post Axiom→Loki Phase 4
+// there is NO Axiom: the sink is structured stdout/stderr → Alloy → Loki. The
+// optional `datastream` arg is preserved as the `_axiom` tag on the line (a stable
+// pipeline/stream hint for Alloy + LogQL), NOT an Axiom datastream anymore.
 export async function logToAxiom(data: MixedObject, datastream?: string) {
   const sendData = { pod: env.PODNAME, ...data };
   if (isProd) {
-    datastream ??= env.AXIOM_DATASTREAM;
-
-    // Write stderr BEFORE the Axiom-null/datastream guards (and before awaiting
-    // Axiom) — Loki ingest depends on this stderr line, so it must fire even when
-    // no Axiom client is configured (preview envs use a placeholder token → axiom
-    // is null) or when Axiom is degraded (ingestEvents rejects and the rest of this
-    // function never runs). Without this ordering, preview tRPC 500s never reach
-    // Loki, and the Grafana alerts that consume `{ "name": "sysredis-fail-open",
-    // ... }` go silent during the exact multi-service incident class they exist to
-    // handle (sysRedis + Axiom both down). `_axiom: datastream` may be undefined in
-    // previews (no AXIOM_DATASTREAM) — JSON.stringify drops it; the line still
-    // carries message/stack/code/path.
+    // ALWAYS-ON structured line — the durable, queryable sink: stdout/stderr → Alloy
+    // → Loki, queried by name via `{namespace="civitai-dp-prod"} | name="…"`
+    // (structured metadata) or `| json | name="…"` (full JSON line). Phase 1 (#2721)
+    // removed the `LOG_ERRORS_TO_STDOUT` gate so every event lands in Loki by default;
+    // Phase 4 (this change) removes the redundant Axiom dual-write that used to run
+    // after this write. Volume/noise control belongs in the Alloy `civitai_logs`
+    // pipeline (sample/drop stages + line-size cap), not an app-side gate.
     //
-    // ALWAYS-ON (Phase 1 of the Axiom→Loki migration): this structured line is the
-    // durable, queryable sink — stdout/stderr → Alloy → Loki, queried by name via
-    // `{namespace="civitai-dp-prod"} | json | name="…"`. It used to be gated behind
-    // `LOG_ERRORS_TO_STDOUT==='true'` (a blunt, temporary per-deployment flag flipped
-    // on dp-prod-api to read diagnostics); the gate is removed so every event lands
-    // in Loki by default while Axiom dual-write below continues during the transition.
-    // Volume/noise control belongs in the Alloy `civitai_logs` pipeline (sample/drop
-    // stages + line-size cap), not an app-side gate.
+    // `_axiom: datastream` may be undefined (no datastream passed) — JSON.stringify
+    // drops it; the line still carries message/stack/code/path.
     //
-    // SERIALIZATION GUARD: this write is now UNCONDITIONAL and `logToAxiom` is called
+    // SERIALIZATION GUARD: this write is UNCONDITIONAL and `logToAxiom` is called
     // (often `await`ed) on hot paths — the central tRPC 500 handler, payment webhooks,
     // upload endpoints — with arbitrary `data`/`error` objects. `JSON.stringify` THROWS
     // on BigInt values and circular references, so an unguarded stringify here could
@@ -140,10 +124,6 @@ export async function logToAxiom(data: MixedObject, datastream?: string) {
         console.error('logToAxiom: failed to serialize event', (sendData as MixedObject)?.name);
       }
     }
-
-    if (!axiom) return;
-    if (!datastream) return;
-    await axiom.ingestEvents(datastream, sendData);
   } else {
     console.log('logToAxiom', sendData);
   }

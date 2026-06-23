@@ -82,7 +82,6 @@
     "@aws-sdk/client-s3": "^3.490.0",
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
-    "@axiomhq/axiom-node": "^0.12.0",
     "@civitai/app-sdk": "^0.6.0",
     "@civitai/blocks-react": "^0.4.0",
     "@civitai/client": "0.2.0-beta.73",
