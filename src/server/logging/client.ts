@@ -130,10 +130,14 @@ export async function logToAxiom(data: MixedObject, datastream?: string) {
     } catch (err) {
       try {
         console.error(
-          JSON.stringify({ _axiom: datastream, name: sendData?.name, _stringifyError: String(err) })
+          JSON.stringify({
+            _axiom: datastream,
+            name: (sendData as MixedObject)?.name,
+            _stringifyError: String(err),
+          })
         );
       } catch {
-        console.error('logToAxiom: failed to serialize event', sendData?.name);
+        console.error('logToAxiom: failed to serialize event', (sendData as MixedObject)?.name);
       }
     }
 
