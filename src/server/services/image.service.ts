@@ -1259,6 +1259,7 @@ export const getAllImages = async (
     disableMinor,
     poiOnly,
     minorOnly,
+    pendingReviewOnly,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
   let { dbTarget = 'read' } = input;
@@ -1290,6 +1291,9 @@ export const getAllImages = async (
   let isPersonalized = false;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
+  // Moderators opting into the "pending review" collection filter get the same
+  // unscanned-content visibility as the existing `pending` flag (nsfwLevel = 0 allowed).
+  const effectivePending = pending || (isModerator && !!pendingReviewOnly);
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
   // Exclude unselectable browsing levels
@@ -1395,7 +1399,7 @@ export const getAllImages = async (
   // [x]
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
-  } else if (!pending) {
+  } else if (!effectivePending) {
     if (userId && !publishedOnly) {
       // userId is bound into the SQL, so each user gets their own cache key —
       // safe to cache, lower hit rate but no cross-user leakage.
@@ -1542,6 +1546,13 @@ export const getAllImages = async (
       ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
       : '';
 
+    // Moderators can opt into viewing entries still under review for a collection.
+    // Otherwise: accepted items for everyone, plus the requester's own non-rejected items.
+    const collectionStatusFilter =
+      isModerator && pendingReviewOnly
+        ? `ci."status" = 'REVIEW'`
+        : `(ci."status" = 'ACCEPTED'${displayOwnedItems})`;
+
     // For random sort, use prefetched seed or parse from cursor
     if (sort === ImageSort.Random) {
       if (cursor) {
@@ -1582,12 +1593,7 @@ export const getAllImages = async (
             WHERE ci."collectionId" = ${collectionId}
               ${Prisma.raw(collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``)}
               AND ci."imageId" IS NOT NULL
-              AND (
-                (
-                  ci."status" = 'ACCEPTED'
-                )
-                ${Prisma.raw(displayOwnedItems)}
-              )
+              AND ${Prisma.raw(collectionStatusFilter)}
           ) sub
           ${Prisma.raw(
             useRandomCursor &&
@@ -1745,7 +1751,7 @@ export const getAllImages = async (
     )`);
   }
 
-  if (pending && (isModerator || userId)) {
+  if (effectivePending && (isModerator || userId)) {
     isPersonalized = true; // pending view is moderator/owner-scoped
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
