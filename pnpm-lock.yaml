@@ -400,9 +400,6 @@ importers:
       konva:
         specifier: ^10.0.12
         version: 10.0.12
-      kysely:
-        specifier: ^0.28.7
-        version: 0.28.17
       linkify-react:
         specifier: ^4.1.3
         version: 4.3.2(linkifyjs@4.3.2)(react@18.3.1)
