@@ -17,7 +17,7 @@ export interface SessionRegistryRedis {
   hGetAll?(key: string): Promise<Record<string, unknown>>;
   hExpire?(key: string, field: string, seconds: number): Promise<unknown>;
   get(key: string): Promise<string | null | undefined>;
-  set(key: string, value: string): Promise<unknown>;
+  set(key: string, value: string, opts?: { EX?: number }): Promise<unknown>;
 }
 
 export type InvalidateInfo = { scope: 'token' | 'user' | 'all'; tokenId?: string; userId?: number };
@@ -91,7 +91,9 @@ export function createSessionRegistry(config: SessionRegistryConfig): SessionReg
   }
 
   async function invalidateAll() {
-    await redis.set(keys.all, new Date(now()).toISOString());
+    // TTL the cutoff marker (matches the main app's prior EX): it only revokes tokens signed before it, which
+    // all expire within `ttl` anyway, so the marker self-cleans rather than lingering forever.
+    await redis.set(keys.all, new Date(now()).toISOString(), { EX: ttl });
     await config.onInvalidate?.({ scope: 'all' });
   }
 

@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   produce: vi.fn(),
   mintSessionToken: vi.fn(),
   mintUserSession: vi.fn(),
+  invalidateAll: vi.fn(),
 }));
 vi.mock('$lib/server/auth/verifier', () => ({ verifier: { verifyToken: h.verifyToken } }));
 vi.mock('$lib/server/auth/session-producer', () => ({
@@ -16,6 +17,7 @@ vi.mock('$lib/server/auth/session-producer', () => ({
   invalidateSessionUser: h.invalidate,
   produceSessionUser: h.produce,
 }));
+vi.mock('$lib/server/auth/registry', () => ({ sessions: { invalidateAll: h.invalidateAll } }));
 vi.mock('$lib/server/auth/session', () => ({
   SESSION_COOKIE: 'civ-token',
   getSigner: () => ({ mintSessionToken: h.mintSessionToken }),
@@ -142,6 +144,19 @@ describe('POST /api/auth/identity (invalidate / refresh)', () => {
     expect((await POST(ev({ auth: 'Bearer secret-123', body: { userId: 'nope' } }))).status).toBe(
       400
     );
+  });
+
+  it('scope:"all" sets the global cutoff and returns 204 (no per-user bust)', async () => {
+    const res = await POST(ev({ auth: 'Bearer secret-123', body: { scope: 'all' } }));
+    expect(res.status).toBe(204);
+    expect(h.invalidateAll).toHaveBeenCalledTimes(1);
+    expect(h.invalidate).not.toHaveBeenCalled(); // mass path does not touch per-user busts
+  });
+
+  it('scope:"all" still requires the internal token', async () => {
+    const res = await POST(ev({ auth: 'Bearer wrong', body: { scope: 'all' } }));
+    expect(res.status).toBe(401);
+    expect(h.invalidateAll).not.toHaveBeenCalled();
   });
 });
 

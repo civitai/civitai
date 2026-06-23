@@ -35,6 +35,13 @@ export interface SessionClient {
   invalidate(userId: number): Promise<void>;
   /** Bust AND re-produce now (eager); returns the fresh user, or null if there's no such user. */
   refresh(userId: number): Promise<SessionUser | null>;
+  /**
+   * Mass invalidation (logout everyone): set the global token-revocation cutoff (now) through the hub (which
+   * owns the SESSION.ALL marker) — revokes every token signed before this call. Does NOT wipe the shared
+   * session:data2 cache (its 4h TTL bounds data staleness; a cluster-wide wipe isn't worth the cost).
+   * Service-authed (AUTH_INTERNAL_TOKEN). Throws on a non-ok hub response.
+   */
+  invalidateAll(): Promise<void>;
 }
 
 export interface SessionClientConfig {
@@ -141,11 +148,26 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     return ((await res.json()) ?? null) as SessionUser | null;
   }
 
+  // WRITE: mass invalidation. POST the hub with `scope: 'all'` — the hub sets the global token-revocation
+  // cutoff (it owns the SESSION.ALL marker). Service-authed, like postInvalidate.
+  async function invalidateAll(): Promise<void> {
+    const token = loadAuthEnv().AUTH_INTERNAL_TOKEN;
+    if (!token)
+      throw new Error('[@civitai/auth] createSessionClient: AUTH_INTERNAL_TOKEN is not set');
+    const res = await hubFetch('/api/auth/identity', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ scope: 'all' }),
+    });
+    if (!res.ok) throw new Error(`[@civitai/auth] session invalidateAll failed: ${res.status}`);
+  }
+
   return {
     getSessionUser,
     getSessionUserById,
     invalidate: (userId) => postInvalidate(userId, false).then(() => undefined),
     refresh: (userId) => postInvalidate(userId, true),
+    invalidateAll,
   };
 }
 

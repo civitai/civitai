@@ -7,6 +7,7 @@ import {
   produceSessionUser,
 } from '$lib/server/auth/session-producer';
 import { SESSION_COOKIE } from '$lib/server/auth/session';
+import { sessions } from '$lib/server/auth/registry';
 import { isInternalRequest } from '$lib/server/auth/internal';
 
 // The hub is the SOLE PRODUCER of session-user data (docs/thin-session-token-design.md, "LOCKED
@@ -50,19 +51,29 @@ export const GET: RequestHandler = async ({ request, url, cookies }) => {
   return json(user);
 };
 
-// WRITE side — service-authed cache invalidation (createSessionInvalidator). Targets an ARBITRARY userId
+// WRITE side — service-authed cache invalidation (createSessionClient). Targets an ARBITRARY userId
 // (a mod banning user X, a subscription webhook), so it's authed by the shared `AUTH_INTERNAL_TOKEN`, NOT a
-// user session token. Body: { userId, refresh? }. Default busts the cache (lazy — next read re-produces);
-// `refresh: true` also re-produces now and returns the fresh user.
+// user session token. Body: { userId, refresh? } per-user; or { scope: 'all', asOf? } mass. Default busts
+// the cache (lazy — next read re-produces); `refresh: true` also re-produces now and returns the fresh user.
 export const POST: RequestHandler = async ({ request }) => {
   if (!isInternalRequest(request)) return json({ error: 'unauthorized' }, { status: 401 });
 
-  let body: { userId?: unknown; refresh?: unknown };
+  let body: { userId?: unknown; refresh?: unknown; scope?: unknown };
   try {
     body = await request.json();
   } catch {
     body = {};
   }
+
+  // Mass invalidation (createSessionClient.invalidateAll): set the global token-revocation cutoff (now) via
+  // the registry — revokes every token signed before this call. No userId. We deliberately do NOT wipe the
+  // shared session:data2 cache — its 4h TTL bounds data staleness, and a cluster-wide SCAN+del on every mass
+  // invalidation is far more expensive than the freshness it buys.
+  if (body.scope === 'all') {
+    await sessions.invalidateAll();
+    return new Response(null, { status: 204 });
+  }
+
   const userId = Number(body.userId);
   if (!Number.isFinite(userId)) return json({ error: 'bad_request' }, { status: 400 });
 

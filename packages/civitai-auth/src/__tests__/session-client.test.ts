@@ -290,3 +290,29 @@ describe('createSessionClient — invalidate / refresh (write)', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+describe('createSessionClient — invalidateAll (mass cutoff)', () => {
+  it('POSTs scope:"all" with the service token, and resolves on 204', async () => {
+    const fetch = stubFetch(async () => ({ ok: true, status: 204, json: async () => null }));
+    await expect(createSessionClient().invalidateAll()).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledWith('https://auth.test/api/auth/identity', {
+      method: 'POST',
+      headers: { authorization: 'Bearer secret-123', 'content-type': 'application/json' },
+      body: JSON.stringify({ scope: 'all' }),
+    });
+  });
+
+  it('throws on a non-ok response', async () => {
+    stubFetch(async () => ({ ok: false, status: 500, json: async () => ({}) }));
+    await expect(createSessionClient().invalidateAll()).rejects.toThrow(
+      /invalidateAll failed: 500/
+    );
+  });
+
+  it('throws (without fetching) when AUTH_INTERNAL_TOKEN is unset', async () => {
+    h.loadAuthEnv.mockReturnValue({ AUTH_JWT_ISSUER: 'https://auth.test' });
+    const fetch = stubFetch(async () => ({ ok: true, status: 204, json: async () => null }));
+    await expect(createSessionClient().invalidateAll()).rejects.toThrow(/AUTH_INTERNAL_TOKEN/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
