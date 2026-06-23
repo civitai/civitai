@@ -7,6 +7,9 @@ import {
   includesMinorAge,
   checkable,
   __buildOldAgeRegexesForTest,
+  __buildOldAgeRegexesCombinedForTest,
+  __getAgesForTest,
+  __getAgeRegexesForTest,
 } from '~/utils/metadata/audit';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import poiWords from '~/utils/metadata/lists/words-poi.json';
@@ -109,10 +112,13 @@ function refGetTags(prompt: string): string[] {
 // --- Reference (pre-optimization) young.nouns matching ---
 // Mirrors audit.ts: words.young.nouns = checkable(youngWords.nouns.concat(composedNouns),
 // { pluralize: true }). leet defaults to true. The composed nouns interleave every
-// adjective with every partialNoun via the body `adj·([\s|\w]*|[^\w]+)·noun` — the
-// highest-risk class for alternation interaction inside the gate.
+// adjective with every partialNoun via the body `adj·([\s|\w]{0,40}|[^\w]{1,40})·noun`
+// — the highest-risk class for alternation interaction. The gap quantifiers are
+// BOUNDED (must match audit.ts's composedNouns exactly so this stays a faithful
+// old-vs-new *boundary* comparison): the unbounded original was O(n^2) on a long
+// Latin `\w` run (the residual ReDoS lever closed alongside this oracle).
 const youngComposedNouns = youngWords.partialNouns.flatMap((word) =>
-  youngWords.adjectives.map((adj) => adj + '([\\s|\\w]*|[^\\w]+)' + word)
+  youngWords.adjectives.map((adj) => adj + '([\\s|\\w]{0,40}|[^\\w]{1,40})' + word)
 );
 const youngNounList = youngWords.nouns.concat(youngComposedNouns);
 const youngNounRefRegexes = youngNounList.map((w) => refPrepareWordRegex(w, true, true));
@@ -199,6 +205,50 @@ function refIncludesMinorAge(prompt: string | undefined): {
     }
   }
   return { found: false, age: undefined };
+}
+
+// --- Reference (pre-#2722) LEGACY COMBINED AGE path (ageRegexes) ---
+// #2723's oracle (above) covers the PER-AGE path (perAgeRegexes / includesMinorAge).
+// It does NOT cover the legacy COMBINED `ageRegexes` array that feeds `highlightMinor`
+// and `debugAuditPrompt` — which ALSO received the #2722 zero-width boundary change.
+// This is that guard. `oldAgeRegexesCombined` are the OLD *consuming-boundary* form of
+// the live `ageRegexes`, built by the test-only `__buildOldAgeRegexesCombinedForTest`
+// export (which reuses audit.ts's own `templates` + `allAgePattern` + year/old patterns
+// + named capture groups — so the ONLY difference vs the live regexes is the boundary
+// form; no copy-pasted data that could rot). `refHighlightMinor` then mirrors the live
+// `highlightMinor` EXACTLY (same `ages.find` age-resolution via the post-expansion
+// `ages` table reused through `__getAgesForTest`, same trimNonAlphanumeric, same
+// first-occurrence replace) but iterating the old-form regexes. Comparing it against
+// the live `__highlightMinorForTest` isolates the boundary change on the legacy age
+// path — the matched output is boundary-invariant (trimmed) so equivalence must hold.
+const oldAgeRegexesCombined = __buildOldAgeRegexesCombinedForTest();
+const liveAgeRegexes = __getAgeRegexesForTest();
+const agesTable = __getAgesForTest();
+
+// The DETECTION signal of the legacy `ageRegexes` path, boundary-invariant: per
+// template, does it match, and (mirroring highlightMinor/debugAuditPrompt's
+// resolution) what age does the named `age` group resolve to? This is what actually
+// drives flagging/highlighting decisions — the zero-width refactor (#2722) must not
+// change WHICH templates fire or WHICH age they detect.
+//
+// NOTE (surfaced by this oracle): #2722 does change the *highlighted SPAN text* on
+// prompts where a connector char (`_`) sits adjacent to the age phrase, because the
+// boundary class `[^a-zA-Z0-9]` and the trim class `\w` (in trimNonAlphanumeric)
+// DISAGREE on `_`: the old CONSUMING boundary pulled a trailing `_` into match[0]
+// (which trim keeps, since `_` ∈ `\w`), so it wrapped e.g. `9_year_`; the zero-width
+// boundary stops before the `_`, wrapping `9_year`. That is a display-only span shift
+// in highlightMinor, NOT a detection change — both still flag the same age via the
+// same template. So this oracle compares the detection signal (match + resolved age),
+// which IS preserved, rather than the cosmetic span text (which #2722 already shifted
+// on `_`-adjacent inputs, independent of this PR).
+function ageDetectionSignal(prompt: string, regexes: RegExp[]): Array<number | null> {
+  return regexes.map((regex) => {
+    if (!regex.test(prompt)) return null;
+    const match = regex.exec(prompt);
+    const ageText = match?.groups?.age?.toLowerCase();
+    const age = agesTable.find((x) => x.matches.includes(ageText ?? ''))?.age;
+    return age ?? null;
+  });
 }
 
 // Deterministic PRNG (mulberry32) — fixed seed keeps the random-string batch stable
@@ -527,6 +577,40 @@ describe('audit matching equivalence (gate vs brute-force)', () => {
         includesMinorAge(p),
         `includesMinorAge age-path random-batch divergence for: ${JSON.stringify(p)}`
       ).toEqual(refIncludesMinorAge(p));
+    }
+  });
+
+  // LEGACY COMBINED AGE path (`ageRegexes`, feeding highlightMinor + debugAuditPrompt)
+  // old-vs-new boundary guard — closes the remaining #2722 gap #2723 left open (it
+  // covered only the per-age path). Asserts the live zero-width `ageRegexes` detect the
+  // SAME templates with the SAME resolved ages as the old consuming-boundary reference
+  // over the SAME deterministic age corpus #2723 uses (plus the existing corpora and
+  // random batch). Compares the boundary-invariant DETECTION signal (see the
+  // ageDetectionSignal note above re: the `_`/`\w` cosmetic span shift).
+  it('ageRegexes (legacy combined) detect the same templates+ages as the old-boundary reference over the age corpus', () => {
+    for (const p of ageCorpus) {
+      expect(
+        ageDetectionSignal(p, liveAgeRegexes),
+        `ageRegexes legacy detection divergence for: ${JSON.stringify(p)}`
+      ).toEqual(ageDetectionSignal(p, oldAgeRegexesCombined));
+    }
+  });
+
+  it('ageRegexes (legacy combined) detect the same templates+ages as the old-boundary reference over the existing corpora', () => {
+    for (const p of [...corpus, ...youngCorpus]) {
+      expect(
+        ageDetectionSignal(p, liveAgeRegexes),
+        `ageRegexes legacy detection divergence for: ${JSON.stringify(p)}`
+      ).toEqual(ageDetectionSignal(p, oldAgeRegexesCombined));
+    }
+  });
+
+  it('ageRegexes (legacy combined) detect the same templates+ages as the old-boundary reference across the random batch', () => {
+    for (const p of randomBatch) {
+      expect(
+        ageDetectionSignal(p, liveAgeRegexes),
+        `ageRegexes legacy detection random-batch divergence for: ${JSON.stringify(p)}`
+      ).toEqual(ageDetectionSignal(p, oldAgeRegexesCombined));
     }
   });
 

@@ -5,6 +5,7 @@ import {
   includesPoi,
   includesMinor,
   getTagsFromPrompt,
+  MAX_AUDIT_PROMPT_LENGTH,
 } from '~/utils/metadata/audit';
 
 /**
@@ -138,6 +139,70 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
         MAX_MS
       );
     }
+  });
+
+  // Latin `\w`-run quadratic — the residual ReDoS lever the #2725 audit found,
+  // SEPARATE from the #2722 CJK class. The composed young-noun bodies were
+  // `young([\s|\w]*|[^\w]+)\w*girl+\w*`: the unbounded gap sat adjacent to the
+  // partial-noun's trailing `\w*`, both ranging over the SAME long Latin `\w` run
+  // → O(n^2). `"young " + "a"*N` drove `words.young.nouns.inPrompt` to ~2.8s at
+  // N=24000 (seconds of synchronous main-thread CPU = user-triggerable DoS). Two
+  // defenses, tested independently:
+  //   (a) the per-pattern gap is now bounded ({0,40}/{1,40}) → linear regardless
+  //       of length. Exercised via `includesMinor`, which is NOT length-capped.
+  //   (b) `auditPrompt` truncates to MAX_AUDIT_PROMPT_LENGTH first → blanket bound.
+  const LATIN_RUN_MAX_MS = 100;
+  describe('Latin \\w-run composed-noun quadratic (residual ReDoS lever)', () => {
+    it('includesMinor is fast on a long Latin \\w run after the adjective (quantifier bound)', () => {
+      // Goes straight to the bounded young-noun regexes (no length cap on this path),
+      // so this proves the {0,40} gap bound — not just the cap — defuses the O(n^2).
+      const input = 'young ' + 'a'.repeat(24000);
+      const ms = timeCall(() => includesMinor(input));
+      expect(
+        ms,
+        `includesMinor too slow on Latin \\w-run (${ms.toFixed(1)}ms — was ~2800ms unbounded)`
+      ).toBeLessThan(LATIN_RUN_MAX_MS);
+      // The bound preserves matching: realistic close-proximity phrasings still flag.
+      expect(includesMinor('young girl')).toBeTruthy();
+      expect(includesMinor('young pretty little girl')).toBeTruthy();
+    });
+
+    it('includesMinor is fast across several adjective+long-run shapes', () => {
+      for (const adj of ['young', 'little', 'small', 'teeny', 'loli']) {
+        for (const sep of ['a', ' a', '.-_']) {
+          const input = adj + ' ' + sep.repeat(8000);
+          const ms = timeCall(() => includesMinor(input));
+          expect(
+            ms,
+            `includesMinor too slow on "${adj}"+run("${sep}") (${ms.toFixed(1)}ms)`
+          ).toBeLessThan(LATIN_RUN_MAX_MS);
+        }
+      }
+    });
+
+    it('auditPrompt is fast on a long Latin \\w run (quantifier bound + length cap)', () => {
+      const input = 'young ' + 'a'.repeat(60000); // > MAX_AUDIT_PROMPT_LENGTH
+      const ms = timeCall(() => auditPrompt(input));
+      expect(
+        ms,
+        `auditPrompt too slow on Latin \\w-run (${ms.toFixed(1)}ms)`
+      ).toBeLessThan(LATIN_RUN_MAX_MS);
+    });
+
+    it('auditPrompt truncates input beyond MAX_AUDIT_PROMPT_LENGTH (length cap defense-in-depth)', () => {
+      // A blocked word placed strictly beyond the cap is not scanned → not flagged.
+      // (Real prompts are <=10k chars; this asserts the documented truncation contract
+      // that blanket-bounds worst-case audit cost.)
+      const blocked = '9 year old girl';
+      const within = auditPrompt(blocked);
+      expect(within.success, 'sanity: the marker phrase is blocked within the cap').toBe(false);
+      const padded = 'x'.repeat(MAX_AUDIT_PROMPT_LENGTH) + ' ' + blocked;
+      const beyond = auditPrompt(padded);
+      expect(
+        beyond.success,
+        'a banned phrase placed entirely beyond the cap is truncated away (not scanned)'
+      ).toBe(true);
+    });
   });
 
   it('the whole adversarial battery audits in well under a true-hang timeout', () => {
