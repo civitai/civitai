@@ -423,6 +423,11 @@ export const serverSchema = z.object({
   EXTERNAL_MODERATION_TOKEN: z.string().optional(),
   EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
   EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
+  // Hard request timeout (ms) for the external moderation call. Bounds the
+  // fail-soft path: when the moderation gateway is slow/hanging (503/504 waves),
+  // the fetch is aborted at this deadline instead of parking the whole generation
+  // submission for undici's ~300s default. See src/server/integrations/moderation.ts.
+  EXTERNAL_MODERATION_TIMEOUT_MS: z.coerce.number().optional().default(5000),
   BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
   MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),
 
