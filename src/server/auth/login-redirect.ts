@@ -1,6 +1,6 @@
 // Builds the redirect from /login to the centralized hub (auth.civitai.com). Pure (no request access) so it's
 // unit-testable; the caller resolves `origin` from the request host. Thin wrapper over the shared
-// `buildHubLoginUrl` (src/utils/hub-login.ts) — the single source the popup path (auth-helpers.ts) also uses.
+// `buildHubLoginUrl` (src/utils/hub-login.ts) — the single source the /api/auth/login-popup endpoint also uses.
 
 import { buildHubLoginUrl } from '~/utils/hub-login';
 

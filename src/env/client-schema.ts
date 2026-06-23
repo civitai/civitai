@@ -39,10 +39,9 @@ export const clientSchema = z.object({
   // Auth proxy URL for PR previews - when set, OAuth flows redirect through this URL
   // instead of handling locally (e.g., "https://auth.civitaic.com")
   NEXT_PUBLIC_AUTH_PROXY_URL: z.string().optional(),
-  // Centralized auth hub origin (e.g. "https://auth.civitai.com"). When set, the client routes
-  // logout to the hub (login already funnels through /login → server-side hub redirect). Set this
-  // alongside the server's AUTH_JWT_ISSUER. See docs/main-app-auth-cutover.md.
-  NEXT_PUBLIC_AUTH_HUB_URL: z.string().optional(),
+  // (NEXT_PUBLIC_AUTH_HUB_URL removed: every client-initiated hub flow — login full-page + popup, account
+  // connect, discord-link — now routes through a same-origin main-app endpoint that builds the hub URL from
+  // the SERVER's AUTH_JWT_ISSUER, so the client no longer needs a build-time hub origin.)
 });
 
 /**
@@ -84,5 +83,4 @@ export const clientEnv = {
     process.env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_AUTH_PROXY_URL: process.env.NEXT_PUBLIC_AUTH_PROXY_URL,
-  NEXT_PUBLIC_AUTH_HUB_URL: process.env.NEXT_PUBLIC_AUTH_HUB_URL,
 };
