@@ -16,9 +16,27 @@ export const cookiePrefix = (secure: boolean): string => (secure ? SECURE_COOKIE
  * falling back to the hub issuer (`AUTH_JWT_ISSUER`, which the hub sets to its own origin). The distinction
  * matters cross-domain: a localhost (http) spoke talking to the prod (https) hub must use a NON-secure cookie
  * even though the issuer is https. Read straight off `process.env` so it's safe at module load.
+ *
+ * NB: TRUTHINESS (`||`), not `??` — an EMPTY-string `NEXT_PUBLIC_BASE_URL` must fall through to
+ * `AUTH_JWT_ISSUER`. `??` only falls through on null/undefined, so a `NEXT_PUBLIC_BASE_URL=""` (present but
+ * empty, common in shared env files) would resolve to `''` → `false` on an HTTPS deploy → the cookie silently
+ * loses its `__Secure-` prefix and two apps compute DIFFERENT cookie names → they can't read each other's
+ * session (the test-site redirect-loop class of bug). Warn loudly if NEITHER is set.
  */
-export const isSecureCookie = (): boolean =>
-  (process.env.NEXT_PUBLIC_BASE_URL ?? process.env.AUTH_JWT_ISSUER ?? '').startsWith('https://');
+let warnedNoCookieBase = false;
+export const isSecureCookie = (): boolean => {
+  const base = process.env.NEXT_PUBLIC_BASE_URL || process.env.AUTH_JWT_ISSUER || '';
+  if (!base && !warnedNoCookieBase) {
+    warnedNoCookieBase = true;
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[@civitai/auth] neither NEXT_PUBLIC_BASE_URL nor AUTH_JWT_ISSUER is set — auth cookies default to ' +
+        'NON-secure naming, which mismatches a secure (https) deploy and breaks cross-app session sharing. ' +
+        "Set one to this app's own origin."
+    );
+  }
+  return base.startsWith('https://');
+};
 
 // `secure` defaults to the env-derived value, so call sites can just use `sessionCookieName()` — pass an
 // explicit boolean only to override (tests, or clearing BOTH prefixes on logout).

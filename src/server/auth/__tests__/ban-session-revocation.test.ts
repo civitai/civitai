@@ -17,7 +17,7 @@ const h = vi.hoisted(() => {
       USER: { SESSION: 'user:session' }, // invalidateAllSessions clears this pattern
     },
     REDIS_SYS_KEYS: {
-      SESSION: { TOKEN_STATE: 'session:tokenstate', ALL: 'session:all', REFRESH_CAUSE: 'session:refreshcause' },
+      SESSION: { TOKEN_STATE: 'session:tokenstate', ALL: 'session:all' },
     },
   };
   const sysRedis = {
@@ -46,11 +46,7 @@ vi.mock('~/server/redis/atomic', () => ({
     m.set(field, String(value));
     h.hashes.set(key, m);
   },
-  hSetMultiWithTTL: async (
-    _c: unknown,
-    key: string,
-    fields: Record<string, string | number>
-  ) => {
+  hSetMultiWithTTL: async (_c: unknown, key: string, fields: Record<string, string | number>) => {
     const m = h.hashes.get(key) ?? new Map<string, string>();
     for (const [f, v] of Object.entries(fields)) m.set(f, String(v));
     h.hashes.set(key, m);
