@@ -16,15 +16,17 @@ import promptTags from '~/utils/metadata/lists/prompt-tags.json';
 import youngWords from '~/utils/metadata/lists/words-young.json';
 
 /**
- * Equivalence guard for the combined-regex pre-filter ("gate") added to
- * `checkable().inPrompt` in audit.ts.
+ * Matching-correctness guard for `checkable().inPrompt` / `.highlight` in audit.ts.
  *
- * The gate must NEVER change the matching result — only the speed of reaching
- * it. These tests reconstruct the original brute-force per-word matching loop
- * as a reference oracle and assert the public audit API agrees with it across a
- * broad sample of prompts (every real list entry as a positive case + benign /
- * adversarial negatives). A single divergence here means the optimization
- * changed moderation behavior.
+ * Originally written to prove the combined-regex pre-filter ("gate", PR #2452)
+ * never changed matching results. That gate was removed (it caused catastrophic
+ * regex backtracking / ReDoS on user prompts — single inPrompt calls burned
+ * 11–47s of main-thread CPU on prod api pods). These tests are KEPT as a
+ * standing correctness oracle: they reconstruct the brute-force per-word
+ * matching loop independently and assert the public audit API agrees with it
+ * across a broad sample of prompts (every real list entry as a positive case +
+ * benign / adversarial negatives). A single divergence here means moderation
+ * matching behavior changed.
  */
 
 // --- Reference (pre-optimization) per-word matching, copied verbatim ---
