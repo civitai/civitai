@@ -64,6 +64,22 @@ export interface EnrichedAuditResult {
   success: boolean;
 }
 
+// Defense-in-depth length cap applied before any audit regex runs. Every
+// sub-check scans the prompt with hundreds of regexes; the worst-case cost of a
+// pathological pattern grows with prompt length (the "504 wave" DoS was a regex
+// backtracking on a long adversarial prompt). The longest prompt any schema
+// accepts is 10000 chars (user-restriction); generation prompts are capped at
+// 1500. Truncating beyond this generous ceiling blanket-bounds the cost of ANY
+// audit regex — this incident's class AND future patterns — without affecting
+// real prompts. Complements the per-pattern quantifier bounds (e.g. the composed
+// young-noun gap below): the bounds keep individual regexes linear, this keeps
+// the whole pipeline's input bounded.
+export const MAX_AUDIT_PROMPT_LENGTH = 20000;
+const capAuditLength = <T extends string | undefined>(s: T): T =>
+  typeof s === 'string' && s.length > MAX_AUDIT_PROMPT_LENGTH
+    ? (s.slice(0, MAX_AUDIT_PROMPT_LENGTH) as T)
+    : s;
+
 /**
  * Enriched version of auditPrompt that returns structured trigger data alongside blockedFor.
  * Used server-side for UserBan records, moderator UI, and the false-positive allowlist system.
@@ -74,6 +90,8 @@ export const auditPromptEnriched = (
   checkProfanity?: boolean
 ): EnrichedAuditResult => {
   if (!prompt.trim().length) return { blockedFor: [], triggers: [], success: true };
+  prompt = capAuditLength(prompt);
+  negativePrompt = capAuditLength(negativePrompt);
 
   // Per-sub-check timing instrumentation. Always-on but threshold-gated: below
   // AUDIT_SLOW_LOG_MS it costs only a handful of `performance.now()` deltas and
@@ -642,8 +660,20 @@ function inPromptEdit(prompt: string, { regex }: Checkable) {
   return wrapped;
 }
 
+// The gap between a young-adjective and a partial-noun. BOUNDED quantifiers
+// ({0,40}/{1,40}) instead of the original unbounded `([\s|\w]*|[^\w]+)`: the
+// partial nouns end in `\w*` (e.g. `\w*girl+\w*`), so an unbounded gap sat
+// adjacent to another unbounded `\w*` over the SAME input run → O(n^2)
+// catastrophic backtracking on a long Latin `\w` run (`"young " + "a"*24000`
+// took ~2.8s of synchronous main-thread CPU through `words.young.nouns` — a
+// user-triggerable DoS of the same class as the #2722 CJK ReDoS, surfaced by the
+// #2725 audit). Any FINITE bound collapses this to linear; 40 chars is a generous
+// adjective→noun proximity window (~7 words) that preserves realistic phrasings
+// ("young pretty little asian girl") — verified equal to the old form on the
+// equivalence-oracle corpus, whose `youngComposedNouns` reference mirrors this
+// exact body.
 const composedNouns = youngWords.partialNouns.flatMap((word) => {
-  return youngWords.adjectives.map((adj) => adj + '([\\s|\\w]*|[^\\w]+)' + word);
+  return youngWords.adjectives.map((adj) => adj + '([\\s|\\w]{0,40}|[^\\w]{1,40})' + word);
 });
 const words = {
   nsfw: checkable(nsfwWords),
