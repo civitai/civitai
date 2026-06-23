@@ -1546,8 +1546,9 @@ export const getAllImages = async (
       ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
       : '';
 
-    // Moderators can opt into viewing entries still under review for a collection.
-    // Otherwise: accepted items for everyone, plus the requester's own non-rejected items.
+    // Moderators can opt into viewing ALL entries still under review for a collection
+    // (owner-only clause intentionally dropped — mods see every REVIEW item, not just
+    // their own). Everyone else: accepted items + the requester's own non-rejected items.
     const collectionStatusFilter =
       isModerator && pendingReviewOnly
         ? `ci."status" = 'REVIEW'`
