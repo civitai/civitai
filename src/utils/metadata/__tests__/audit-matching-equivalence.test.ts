@@ -6,6 +6,7 @@ import {
   includesMinor,
   includesMinorAge,
   checkable,
+  __buildOldAgeRegexesForTest,
 } from '~/utils/metadata/audit';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import poiWords from '~/utils/metadata/lists/words-poi.json';
@@ -16,15 +17,17 @@ import promptTags from '~/utils/metadata/lists/prompt-tags.json';
 import youngWords from '~/utils/metadata/lists/words-young.json';
 
 /**
- * Equivalence guard for the combined-regex pre-filter ("gate") added to
- * `checkable().inPrompt` in audit.ts.
+ * Matching-correctness guard for `checkable().inPrompt` / `.highlight` in audit.ts.
  *
- * The gate must NEVER change the matching result — only the speed of reaching
- * it. These tests reconstruct the original brute-force per-word matching loop
- * as a reference oracle and assert the public audit API agrees with it across a
- * broad sample of prompts (every real list entry as a positive case + benign /
- * adversarial negatives). A single divergence here means the optimization
- * changed moderation behavior.
+ * Originally written to prove the combined-regex pre-filter ("gate", PR #2452)
+ * never changed matching results. That gate was removed (it caused catastrophic
+ * regex backtracking / ReDoS on user prompts — single inPrompt calls burned
+ * 11–47s of main-thread CPU on prod api pods). These tests are KEPT as a
+ * standing correctness oracle: they reconstruct the brute-force per-word
+ * matching loop independently and assert the public audit API agrees with it
+ * across a broad sample of prompts (every real list entry as a positive case +
+ * benign / adversarial negatives). A single divergence here means moderation
+ * matching behavior changed.
  */
 
 // --- Reference (pre-optimization) per-word matching, copied verbatim ---
@@ -155,6 +158,49 @@ function refHighlight(
   return prompt;
 }
 
+// --- Reference (pre-#2722) AGE matching ---
+// The word-list path above proves the consuming→zero-width boundary refactor on
+// prepareWordRegex. The AGE path (perAgeRegexes/includesMinorAge) got the SAME
+// `0*`+boundary change but had no committed old-vs-new guard — independent probes
+// found no divergence, but the safety-critical minor-age path deserves the same
+// property-based protection. This is that guard.
+//
+// `oldPerAgeRegexes` are the OLD *consuming-boundary* form of perAgeRegexes, built by
+// the test-only `__buildOldAgeRegexesForTest` export which reuses audit.ts's own
+// post-teen-expansion `ages` + `templates` + `buildAgePattern` + year/old patterns
+// (so the only difference vs the live regexes is the boundary form — no copy-pasted
+// data that could rot). `refIncludesMinorAge` then mirrors the live includesMinorAge
+// two-phase function EXACTLY (same falsePositiveTagPattern strip, same quickScreen,
+// same per-age short-circuit loop) but iterating the old-form regexes. Comparing it
+// against the live includesMinorAge isolates the boundary change on the age path.
+const oldPerAgeRegexes = __buildOldAgeRegexesForTest();
+
+// Copied verbatim from audit.ts (module-private there). These two are NOT what the
+// refactor changed; replicating them keeps the comparison about the boundary only.
+const refFalsePositiveTagPattern =
+  /\bscore_\d(?:_up|_down)?\b|\bsource_\w+\b|\brating_\w+\b/gi;
+const refQuickScreenPattern =
+  /(?:age[ds]?|year|old|birthday|anos|\b(?:1[0-7]|[1-9])\b|teen|eleven|twelve|one|two|three|four|five|six|seven|eight|nine|ten)/i;
+
+function refIncludesMinorAge(prompt: string | undefined): {
+  found: boolean;
+  age: number | undefined;
+} {
+  if (!prompt) return { found: false, age: undefined };
+  const cleaned = prompt.replace(refFalsePositiveTagPattern, ' ');
+  if (!refQuickScreenPattern.test(cleaned)) {
+    return { found: false, age: undefined };
+  }
+  for (const { age, regexes } of oldPerAgeRegexes) {
+    for (const regex of regexes) {
+      if (regex.test(cleaned)) {
+        return { found: true, age };
+      }
+    }
+  }
+  return { found: false, age: undefined };
+}
+
 // Deterministic PRNG (mulberry32) — fixed seed keeps the random-string batch stable
 // across runs while still exercising alternation backtracking. Avoids Math.random().
 function makeRng(seed: number) {
@@ -281,6 +327,140 @@ function buildYoungCorpus(): string[] {
 const youngCorpus = buildYoungCorpus();
 const randomBatch = buildRandomStrings(4000);
 
+// --- Age-path corpus: deterministic batch covering the age-detection risk surface ---
+// Curated (mirrors src/utils/metadata/__tests__/audit.test.ts) + generated. No
+// randomness — every case is a fixed literal so the oracle is reproducible.
+function buildAgeCorpus(): string[] {
+  const prompts: string[] = [];
+
+  // (a) Curated corpus mirroring audit.test.ts — both positives and benigns.
+  prompts.push(
+    '9 year old girl',
+    'a 15 year old',
+    'aged 15',
+    'seventeen year old',
+    'a 12 yo',
+    'score_9, a 9 year old girl', // tag must not mask a real age phrase
+    'score_9_up, year 2025', // danbooru tag — benign
+    'score_5_down, year 2025',
+    'source_pony, year 2025',
+    'rating_safe, year 2025',
+    'year 2025, masterpiece', // benign
+    '8K, 4K, masterpiece, year 2025', // benign
+    '',
+    '   ',
+    'a beautiful landscape, masterpiece, best quality' // benign
+  );
+
+  // (b) Numeric ages 1..17 across the phrasing templates.
+  const numericAges = Array.from({ length: 17 }, (_, i) => i + 1);
+  for (const n of numericAges) {
+    prompts.push(
+      `${n} year old`,
+      `${n} years old`,
+      `a ${n} yo girl`,
+      `${n}yr old`,
+      `${n} yrs`,
+      `aged ${n}`,
+      `age ${n}`,
+      `age of ${n}`,
+      `${n} age`,
+      `${n}th birthday`,
+      `${n} anos` // {age} {years} via 'anos'
+    );
+  }
+
+  // (c) English number words — canonical + truncated/typo variants from audit.ts.
+  const wordAges = [
+    'one',
+    'two',
+    'three',
+    'thri', // typo variant
+    'four',
+    'fore',
+    'five',
+    'fiv',
+    'six',
+    'sicks',
+    'seven',
+    'sevn',
+    'eight',
+    'eigt',
+    'eigh',
+    'nine',
+    'nien',
+    'ten',
+    'eleven',
+    'twelve',
+    'twelv',
+    'thirteen',
+    'fourteen',
+    'fifteen',
+    'sixteen',
+    'seventeen',
+    'sevnteen', // truncated teen-compound
+  ];
+  for (const w of wordAges) {
+    prompts.push(`${w} year old`, `${w}th birthday`, `aged ${w}`, `a ${w} yo`);
+  }
+
+  // (d) Compound-word boundary cases that must NOT match (eighty/seventy/eighteen+).
+  prompts.push(
+    'eighty year old man', // 'eight' must not match via trailing-y year unit
+    'seventy years',
+    'an eighteen year old', // 18 is not a tracked age
+    'a nineteen year old',
+    'a twenty year old',
+    'a thirty year old'
+  );
+
+  // (e) Multiple {0,3}-separator spacings between parts.
+  prompts.push(
+    '9   year   old',
+    '9-year-old',
+    '9.year.old',
+    '9_year_old',
+    '9,,,year,,,old',
+    '15...yo',
+    'aged...15'
+  );
+
+  // (f) Leading-zero `0*` cases.
+  prompts.push('09 year old', '0009 year old', 'x0009y year old', '015 yo', '00 year old');
+
+  // (g) Edge positions — match at string start, at end, and whole-string.
+  prompts.push(
+    '9 year old', // whole string
+    '9 year old girl by the lake', // leading
+    'a portrait of a 9 year old', // trailing
+    '15yo' // tight whole-string
+  );
+
+  // (h) Non-Latin (CJK/Hangul) bounded around an embedded age — the #2722 ReDoS shape.
+  prompts.push(
+    '美9 year old美',
+    '美丽9 year old丽美',
+    '한국어 9 year old 사람',
+    '美aged 15美',
+    '美seventeen year old美',
+    '日本語のテキスト16 yoテキスト'
+  );
+
+  // (i) Bare digits / near-misses that should stay benign.
+  prompts.push(
+    '8k resolution',
+    '4k uhd render',
+    'lora:detail:0.9',
+    'iso 100, f1.8',
+    'a 99 year old', // 99 not tracked
+    'chapter 7 of the book' // '7' bare digit, no year/old/age unit nearby
+  );
+
+  return prompts;
+}
+
+const ageCorpus = buildAgeCorpus();
+
 // Gated checkables built with the EXACT same word lists + options as audit.ts's
 // `words.young.nouns` and `words.poi`. `checkable(...).highlight` is the gated
 // function under test; `refHighlight` over the matching per-word regexes is the
@@ -317,6 +497,38 @@ describe('audit matching equivalence (gate vs brute-force)', () => {
     },
     60000
   );
+
+  // AGE PATH old-vs-new boundary guard (closes the #2722 audit gap). Asserts the
+  // live includesMinorAge (zero-width boundaries) agrees with the old consuming-
+  // boundary reference on BOTH the found boolean AND the detected age.
+  it('includesMinorAge matches the old-boundary reference over the curated + generated age corpus', () => {
+    for (const p of ageCorpus) {
+      expect(
+        includesMinorAge(p),
+        `includesMinorAge age-path divergence for: ${JSON.stringify(p)}`
+      ).toEqual(refIncludesMinorAge(p));
+    }
+  });
+
+  // Also fold the existing word-list/young corpora through the age oracle — these
+  // are realistic prompts and a cheap way to widen coverage with no extra randomness.
+  it('includesMinorAge matches the old-boundary reference over the existing corpora', () => {
+    for (const p of [...corpus, ...youngCorpus]) {
+      expect(
+        includesMinorAge(p),
+        `includesMinorAge age-path divergence for: ${JSON.stringify(p)}`
+      ).toEqual(refIncludesMinorAge(p));
+    }
+  });
+
+  it('includesMinorAge matches the old-boundary reference across the deterministic random batch', () => {
+    for (const p of randomBatch) {
+      expect(
+        includesMinorAge(p),
+        `includesMinorAge age-path random-batch divergence for: ${JSON.stringify(p)}`
+      ).toEqual(refIncludesMinorAge(p));
+    }
+  });
 
   it('getTagsFromPrompt returns the same tag set as the reference', () => {
     for (const p of corpus) {

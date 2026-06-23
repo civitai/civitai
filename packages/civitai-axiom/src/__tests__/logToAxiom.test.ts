@@ -1,15 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAxiomLogger } from '../client';
 
-// Pins the ordering contract of `logToAxiom`: the structured stderr line (which Loki ingests — it carries
-// message/stack/code/path) must be emitted BEFORE the `if (!axiom) return` / `if (!datastream) return`
-// guards. Previously it sat after those guards, so preview environments — where the Axiom token is a
-// placeholder → `axiom` is null → the function returned early — never reached Loki (confirmed: 0
-// INTERNAL_SERVER_ERROR matches across 2.2M preview log lines). The same blind spot hits any Axiom outage.
+// Pins the contract of `logToAxiom`'s structured-stderr sink:
+//  1. ALWAYS-ON (Phase 1, Axiom→Loki migration): in prod the structured JSON line is emitted
+//     UNCONDITIONALLY — no longer gated behind LOG_ERRORS_TO_STDOUT. stdout/stderr → Alloy → Loki is the
+//     durable sink, so every event must land there by default.
+//  2. ORDERING: the line is emitted BEFORE the `if (!axiom) return` / `if (!datastream) return` guards AND
+//     independently of Axiom throwing.
+//  3. SERIALIZATION GUARD: an unserializable `data` (BigInt / circular) must not throw to the caller; a
+//     stringify-safe fallback is emitted and the Axiom dual-write still runs.
+//  4. DUAL-WRITE: Axiom ingest still fires when a client + datastream are configured.
 //
 // Relocated from the main app's src/server/logging/__tests__/client.test.ts when the logger moved into this
-// package: the factory takes a Partial<AxiomConfig>, so we inject isProd/token/datastream/logErrorsToStdout
-// directly instead of mocking the app's `~/env/*` modules (which the package never reads).
+// package: the factory takes a Partial<AxiomConfig>, so we inject isProd/token/datastream directly instead
+// of mocking the app's `~/env/*` modules (which the package never reads).
 
 const h = vi.hoisted(() => ({ ingestEvents: vi.fn() }));
 vi.mock('@axiomhq/axiom-node', () => ({
@@ -25,7 +29,15 @@ const ERR = {
   path: 'model.getById',
 };
 
-describe('logToAxiom stderr-for-Loki ordering', () => {
+const PROD_CONFIGURED = {
+  isProd: true,
+  token: 'token',
+  orgId: 'org',
+  datastream: 'civitai-errors',
+  podName: 'pod-test',
+} as const;
+
+describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -37,23 +49,34 @@ describe('logToAxiom stderr-for-Loki ordering', () => {
     errorSpy.mockRestore();
   });
 
-  it('REGRESSION GUARD: emits the structured stderr line in prod even when Axiom is null (preview/outage)', async () => {
-    // No token → axiom client is null (the preview/outage case that was broken).
+  it('ALWAYS-ON: emits the structured stderr line in prod even when logErrorsToStdout is false (gate removed)', async () => {
+    const { logToAxiom } = createAxiomLogger({ ...PROD_CONFIGURED, logErrorsToStdout: false });
+
+    await logToAxiom(ERR);
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(errorSpy.mock.calls[0][0] as string);
+    expect(parsed).toMatchObject({
+      message: ERR.message,
+      stack: ERR.stack,
+      code: ERR.code,
+      path: ERR.path,
+    });
+  });
+
+  it('ORDERING: emits the stderr line in prod even when Axiom is null (preview/outage), before the guards', async () => {
     const { logToAxiom } = createAxiomLogger({
       isProd: true,
       token: undefined,
       orgId: undefined,
       datastream: undefined,
       podName: 'pod-test',
-      logErrorsToStdout: true,
     });
 
     await logToAxiom(ERR);
 
     expect(errorSpy).toHaveBeenCalledTimes(1);
-    const payload = errorSpy.mock.calls[0][0] as string;
-    expect(typeof payload).toBe('string');
-    const parsed = JSON.parse(payload);
+    const parsed = JSON.parse(errorSpy.mock.calls[0][0] as string);
     expect(parsed).toMatchObject({
       message: ERR.message,
       stack: ERR.stack,
@@ -62,43 +85,58 @@ describe('logToAxiom stderr-for-Loki ordering', () => {
     });
     // No datastream in previews → `_axiom` is undefined and dropped by JSON.stringify.
     expect('_axiom' in parsed).toBe(false);
-    // Axiom ingest is correctly skipped when no client is configured.
     expect(h.ingestEvents).not.toHaveBeenCalled();
   });
 
-  it('does NOT emit the stderr line when logErrorsToStdout is false (no stderr spam)', async () => {
-    const { logToAxiom } = createAxiomLogger({
-      isProd: true,
-      token: undefined,
-      orgId: undefined,
-      logErrorsToStdout: false,
-    });
+  it('ORDERING: emits the stderr line even when Axiom ingest throws (Axiom degraded)', async () => {
+    h.ingestEvents.mockRejectedValue(new Error('axiom down'));
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
 
-    await logToAxiom(ERR);
+    // The stderr line is written synchronously before the await, so it lands even though the rejection
+    // propagates out of logToAxiom.
+    await expect(logToAxiom(ERR)).rejects.toThrow('axiom down');
 
-    expect(errorSpy).not.toHaveBeenCalled();
-    expect(h.ingestEvents).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(errorSpy.mock.calls[0][0] as string);
+    expect(parsed).toMatchObject({ message: ERR.message, code: ERR.code });
+    expect(h.ingestEvents).toHaveBeenCalledTimes(1);
   });
 
-  it('still ingests to Axiom (existing behavior) AND emits the stderr line when configured + flag on', async () => {
-    const { logToAxiom } = createAxiomLogger({
-      isProd: true,
-      token: 'token',
-      orgId: 'org',
-      datastream: 'civitai-errors',
-      podName: 'pod-test',
-      logErrorsToStdout: true,
-    });
+  it('SERIALIZATION GUARD: a circular `data` does NOT throw to the caller and still attempts the Axiom dual-write', async () => {
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+
+    // Circular reference → JSON.stringify throws "Converting circular structure to JSON". (A BigInt value
+    // throws "Do not know how to serialize a BigInt" the same way.)
+    const circular: Record<string, unknown> = { name: 'payment.webhook' };
+    circular.self = circular;
+
+    // The unconditional stringify must be contained: logToAxiom must not throw.
+    await expect(logToAxiom(circular)).resolves.toBeUndefined();
+
+    // Contained, NOT silent: a stringify-safe fallback line is emitted.
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(errorSpy.mock.calls[0][0] as string);
+    expect(parsed.name).toBe('payment.webhook');
+    expect(typeof parsed._stringifyError).toBe('string');
+
+    // The failure did not abort the function — the Axiom dual-write still ran with the original object.
+    expect(h.ingestEvents).toHaveBeenCalledTimes(1);
+    expect(h.ingestEvents).toHaveBeenCalledWith(
+      'civitai-errors',
+      expect.objectContaining({ name: 'payment.webhook', pod: 'pod-test' })
+    );
+  });
+
+  it('DUAL-WRITE: still ingests to Axiom AND emits the stderr line when a client + datastream are configured', async () => {
+    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
 
     await logToAxiom(ERR);
 
-    // stderr line emitted, carrying the resolved datastream in `_axiom`.
     expect(errorSpy).toHaveBeenCalledTimes(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0][0] as string);
     expect(parsed._axiom).toBe('civitai-errors');
     expect(parsed).toMatchObject({ message: ERR.message, code: ERR.code });
 
-    // Axiom ingest preserved.
     expect(h.ingestEvents).toHaveBeenCalledTimes(1);
     expect(h.ingestEvents).toHaveBeenCalledWith(
       'civitai-errors',

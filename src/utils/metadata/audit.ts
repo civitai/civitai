@@ -11,6 +11,7 @@ import youngWords from './lists/words-young.json';
 import { harmfulCombinations } from './lists/harmful-combinations';
 import { blockedNSFWRegexLazy, blockedRegexLazy } from '~/utils/metadata/audit-base';
 import { createProfanityFilter } from '~/libs/profanity-simple';
+import { AuditTimer } from '~/utils/metadata/audit-slow-log';
 
 const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
 
@@ -73,13 +74,25 @@ export const auditPromptEnriched = (
   checkProfanity?: boolean
 ): EnrichedAuditResult => {
   if (!prompt.trim().length) return { blockedFor: [], triggers: [], success: true };
-  prompt = normalizeText(prompt);
-  negativePrompt = normalizeText(negativePrompt);
+
+  // Per-sub-check timing instrumentation. Always-on but threshold-gated: below
+  // AUDIT_SLOW_LOG_MS it costs only a handful of `performance.now()` deltas and
+  // emits nothing. On the pathological 11-47s CPU-pin (the "504 wave" DoS) it logs
+  // ONE structured line naming the slowest sub-check + an input fingerprint. The
+  // timer NEVER alters the audit result and `finish()` can never throw — it is
+  // called on every return path below with the (normalized) prompts. The raw text
+  // passed to finish() is what was audited; logging it is privacy-gated (see
+  // audit-slow-log.ts). See that module's header for the full incident writeup.
+  const timer = new AuditTimer();
+
+  prompt = timer.time('normalize', () => normalizeText(prompt));
+  negativePrompt = timer.time('normalize', () => normalizeText(negativePrompt));
 
   // 1. Minor age check
-  const { found, age } = includesMinorAge(prompt);
+  const { found, age } = timer.time('minor_age', () => includesMinorAge(prompt));
   if (found && age != null) {
     const message = `${age} year old`;
+    timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
       triggers: [{ category: 'minor_age', message, matchedWord: String(age) }],
@@ -88,9 +101,10 @@ export const auditPromptEnriched = (
   }
 
   // 2. POI check
-  const poiMatch = includesPoi(prompt);
+  const poiMatch = timer.time('poi', () => includesPoi(prompt));
   if (poiMatch) {
     const message = 'Prompt cannot include celebrity names';
+    timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
       triggers: [
@@ -103,9 +117,10 @@ export const auditPromptEnriched = (
       success: false,
     };
   }
-  const negPoiMatch = includesPoi(negativePrompt);
+  const negPoiMatch = timer.time('poi', () => includesPoi(negativePrompt));
   if (negPoiMatch) {
     const message = 'Negative prompt cannot include celebrity names';
+    timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
       triggers: [
@@ -120,7 +135,9 @@ export const auditPromptEnriched = (
   }
 
   // 3. Inappropriate content check (with matched word capture)
-  const inappropriateResult = includesInappropriateEnriched({ prompt, negativePrompt });
+  const inappropriateResult = timer.time('inappropriate', () =>
+    includesInappropriateEnriched({ prompt, negativePrompt })
+  );
   if (inappropriateResult) {
     const message =
       inappropriateResult.type === 'minor'
@@ -128,6 +145,7 @@ export const auditPromptEnriched = (
         : 'Inappropriate real person content';
     const category: PromptTriggerCategory =
       inappropriateResult.type === 'minor' ? 'inappropriate_minor' : 'inappropriate_poi';
+    timer.finish(prompt, negativePrompt);
     return {
       blockedFor: [message],
       triggers: [{ category, message, matchedWord: inappropriateResult.matchedWord }],
@@ -136,21 +154,29 @@ export const auditPromptEnriched = (
   }
 
   // 4. NSFW blocklist check
-  for (const { word, regex } of blockedNSFWRegexLazy()) {
-    if (regex.test(prompt)) {
-      return {
-        blockedFor: [word],
-        triggers: [{ category: 'nsfw_blocklist', message: word, matchedWord: word }],
-        success: false,
-      };
+  const nsfwBlock = timer.time('nsfw_blocklist', () => {
+    for (const { word, regex } of blockedNSFWRegexLazy()) {
+      if (regex.test(prompt)) return word;
     }
+    return undefined;
+  });
+  if (nsfwBlock != null) {
+    timer.finish(prompt, negativePrompt);
+    return {
+      blockedFor: [nsfwBlock],
+      triggers: [{ category: 'nsfw_blocklist', message: nsfwBlock, matchedWord: nsfwBlock }],
+      success: false,
+    };
   }
 
   // 5. Profanity check (green domain only)
   if (checkProfanity) {
-    const profanityFilter = createProfanityFilter();
-    const profanityResults = profanityFilter.analyze(prompt);
+    const profanityResults = timer.time('profanity', () => {
+      const profanityFilter = createProfanityFilter();
+      return profanityFilter.analyze(prompt);
+    });
     if (profanityResults.isProfane) {
+      timer.finish(prompt, negativePrompt);
       return {
         blockedFor: profanityResults.matches,
         triggers: profanityResults.matches.map((word: string) => ({
@@ -163,6 +189,7 @@ export const auditPromptEnriched = (
     }
   }
 
+  timer.finish(prompt, negativePrompt);
   return { blockedFor: [], triggers: [], success: true };
 };
 // #endregion [enriched audit]
@@ -312,11 +339,43 @@ const perAgeRegexes = ages.map((ageEntry) => {
     regexStr = regexStr.replace('{old}', `(${oldPattern})`);
     // Limit to 0-3 non-alphanumeric chars between parts
     regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
-    regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
+    // Zero-width word boundaries instead of consuming non-alnum runs. Logically
+    // equivalent for the boolean match ("preceded/followed by non-alnum or string
+    // edge" ≡ "not preceded/followed by an alnum") but, being zero-width, there is
+    // nothing for the engine to backtrack over a long non-Latin (CJK) run — this
+    // collapses the O(regexes × n²) catastrophic backtracking to linear. See
+    // audit-base.ts prepareWordRegex + audit-cjk-redos.test.ts for the incident.
+    regexStr = `(?<![a-zA-Z0-9])0*` + regexStr + `(?![a-zA-Z0-9])`;
     return new RegExp(regexStr, 'i');
   });
   return { age: ageEntry.age, regexes };
 });
+
+// TEST-ONLY. Reconstructs the per-age regexes EXACTLY as `perAgeRegexes` above but
+// with the PRE-#2722 *consuming* boundary groups (`([^a-zA-Z0-9]+|^)0*…([^a-zA-Z0-9]+|$)`)
+// instead of the zero-width assertions. It deliberately reuses the SAME in-module
+// building blocks (the post-teen-expansion `ages`, `templates`, `buildAgePattern`,
+// `yearsPattern`, `oldPattern`) so the equivalence oracle in
+// `__tests__/audit-matching-equivalence.test.ts` is a faithful old-vs-new comparison
+// that can never drift from the live construction (no copy-pasted data to rot).
+// Not used by any runtime path — exported solely so the test can prove the #2722
+// boundary refactor preserved age matching. Do NOT call from production code.
+export function __buildOldAgeRegexesForTest() {
+  return ages.map((ageEntry) => {
+    const agePattern = buildAgePattern(ageEntry.matches);
+    const regexes = templates.map((template) => {
+      let regexStr = template;
+      regexStr = regexStr.replace('{age}', `(${agePattern})`);
+      regexStr = regexStr.replace('{years}', `(${yearsPattern})`);
+      regexStr = regexStr.replace('{old}', `(${oldPattern})`);
+      regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
+      // Pre-#2722 consuming boundaries (the only intended difference vs perAgeRegexes).
+      regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
+      return new RegExp(regexStr, 'i');
+    });
+    return { age: ageEntry.age, regexes };
+  });
+}
 
 // Legacy: Keep ageRegexes for debugAuditPrompt and highlightMinor (which iterate all templates)
 // These use the combined pattern for detailed match info
@@ -328,7 +387,8 @@ const ageRegexes = templates.map((template) => {
   regexStr = regexStr.replace('{years}', `(?<years>${yearsPattern})`);
   regexStr = regexStr.replace('{old}', `(?<old>${oldPattern})`);
   regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
-  regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
+  // Zero-width boundaries — see the perAgeRegexes note above (same ReDoS fix).
+  regexStr = `(?<![a-zA-Z0-9])0*` + regexStr + `(?![a-zA-Z0-9])`;
   return new RegExp(regexStr, 'i');
 });
 
@@ -367,9 +427,7 @@ export function includesMinorAge(prompt: string | undefined) {
 
 // #region [inappropriate]
 // Builds the "body" of a word pattern (everything between the leading/trailing
-// non-alphanumeric boundary groups). Extracted so the combined-regex pre-filter
-// in `checkable` can reuse the EXACT same body, guaranteeing the gate matches a
-// superset of what the per-word regexes match.
+// non-alphanumeric boundary groups).
 function prepareWordRegexBody(word: string, pluralize = false, leet = true) {
   let regexStr = word;
   regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]+`);
@@ -386,7 +444,19 @@ function prepareWordRegexBody(word: string, pluralize = false, leet = true) {
 
 function prepareWordRegex(word: string, pluralize = false, leet = true) {
   const body = prepareWordRegexBody(word, pluralize, leet);
-  const regexStr = `([^a-zA-Z0-9]+|^)` + body + `([^a-zA-Z0-9]+|$)`;
+  // Zero-width word boundaries instead of CONSUMING non-alnum runs. The old form
+  // `([^a-zA-Z0-9]+|^)…([^a-zA-Z0-9]+|$)` had a greedy `[^a-zA-Z0-9]+` group on each
+  // side; run UNANCHORED over a long non-Latin (CJK/Japanese/…) prompt — one giant
+  // `[^a-zA-Z0-9]` run — across hundreds of word regexes, the leading group
+  // backtracks at every position → O(regexes × n²) → seconds of synchronous CPU
+  // (proven 1.6s–84s prod api event-loop pin = user-triggerable DoS / "504 wave").
+  // The lookbehind/lookahead are LOGICALLY EQUIVALENT for the boolean match
+  // ("preceded/followed by non-alnum or string edge" ≡ "not preceded/followed by an
+  // alnum") but, being zero-width, have nothing to backtrack over → linear. The
+  // proof is audit-matching-equivalence.test.ts (brute-force oracle, unchanged).
+  // NOTE: match[0] no longer includes the boundary char(s); callers run it through
+  // trimNonAlphanumeric (now a near-no-op) so the highlight path is unaffected.
+  const regexStr = `(?<![a-zA-Z0-9])` + body + `(?![a-zA-Z0-9])`;
   const regex = new RegExp(regexStr, 'i');
   return regex;
 }
@@ -413,41 +483,10 @@ export function checkable(
     preprocessor?: PreprocessorFn;
   }
 ) {
-  const bodies: string[] = [];
   const regexes = words.map((word) => {
-    bodies.push(prepareWordRegexBody(word, options?.pluralize, options?.leet));
     const regex = prepareWordRegex(word, options?.pluralize, options?.leet);
     return { regex, word } as Checkable;
   });
-
-  // Combined-regex pre-filter ("gate"): one alternation regex per chunk that
-  // answers "does ANY word in this chunk match at all?" in a single exec. The
-  // dominant case — a prompt that matches nothing in the list — then costs
-  // `ceil(N / CHUNK)` exec calls instead of N. Each body is wrapped in a
-  // non-capturing group and reuses the EXACT per-word body inside the same
-  // leading/trailing boundary groups, so the gate matches a superset of the
-  // per-word regexes (no false negatives). On a gate hit we fall back to the
-  // unchanged per-word loop to identify the specific match, so results are
-  // byte-for-byte identical to the original implementation.
-  //
-  // Chunking keeps each combined pattern well under JS engine limits (large
-  // alternations can blow the compiled-regex size budget) and bounds the cost
-  // of any single exec.
-  const GATE_CHUNK_SIZE = 200;
-  const gateRegexes: RegExp[] = [];
-  for (let i = 0; i < bodies.length; i += GATE_CHUNK_SIZE) {
-    const chunk = bodies
-      .slice(i, i + GATE_CHUNK_SIZE)
-      .map((body) => `(?:${body})`)
-      .join('|');
-    gateRegexes.push(new RegExp(`([^a-zA-Z0-9]+|^)(?:${chunk})([^a-zA-Z0-9]+|$)`, 'i'));
-  }
-  function gatePasses(prompt: string) {
-    for (const gate of gateRegexes) {
-      if (gate.test(prompt)) return true;
-    }
-    return false;
-  }
 
   function preprocessor(prompt: string) {
     prompt = prompt.trim();
@@ -457,10 +496,6 @@ export function checkable(
 
   function inPrompt(prompt: string, matcher?: MatcherFn) {
     prompt = preprocessor(prompt);
-    // Fast no-match gate: if nothing in any chunk can match, no per-word regex
-    // (and no matcher, which only returns a value when `regex.test` is true) can
-    // either — short-circuit the O(N) loop.
-    if (!gatePasses(prompt)) return false;
     matcher ??= options?.matcher;
     for (const { regex, word } of regexes) {
       if (matcher) {
@@ -478,9 +513,6 @@ export function checkable(
   }
   function highlight(prompt: string, replaceFn: (word: string) => string) {
     const target = preprocessor(prompt);
-    // Same gate as inPrompt: highlight rewrites only words that match, so if the
-    // gate misses there is nothing to rewrite and we return the prompt unchanged.
-    if (!gatePasses(target)) return prompt;
     for (const { regex } of regexes) {
       if (regex.test(target)) {
         const match = regex.exec(target);

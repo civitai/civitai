@@ -42,6 +42,7 @@ import {
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan, withDetachedSpan } from '~/server/utils/otel-helpers';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
   FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
   MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
@@ -58,7 +59,11 @@ import {
   wrapMeilisearchClientWithLimiter,
 } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
-import { leakingContentCounter, registerCounterWithLabels } from '~/server/prom/client';
+import {
+  leakingContentCounter,
+  registerCounter,
+  registerCounterWithLabels,
+} from '~/server/prom/client';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import {
   getBaseModelFromResources,
@@ -137,6 +142,7 @@ import {
 } from '~/server/services/model3d.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
+import { parseScannerFlag } from '~/server/services/image-scanner-flag';
 import {
   deleteImagTagsForReviewByImageIds,
   getImagTagsForReviewByImageIds,
@@ -784,9 +790,15 @@ export const getImageById = async ({ id }: GetByIdInput) => {
  * Operators set the key to '1' to enable.
  */
 async function isImageScannerNewEnabled(): Promise<boolean> {
-  const value = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW);
-  if (value === '1' || value === 'true') return true;
-  if (value === '0' || value === 'false') return false;
+  // The HA/Sentinel sysRedis returns a Buffer for BLOB_STRING replies, which
+  // matched none of the literals pre-fix → fell through and destructively
+  // overwrote the operator's '1' with 'false'. parseScannerFlag coerces the
+  // Buffer first and returns null ONLY for a genuinely-unset/unknown key, so
+  // the seed below now fires only in its intended default-seeding case.
+  // See PR #2697/#2700 for the canonical Buffer-vs-string regression.
+  const raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW);
+  const parsed = parseScannerFlag(raw);
+  if (parsed !== null) return parsed;
   await sysRedis.set(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW, 'false');
   return false;
 }
@@ -1188,6 +1200,15 @@ const imageFeedStatementTimeoutCounter = registerCounterWithLabels({
   name: 'image_feed_statement_timeout_total',
   help: 'getAllImages raw query cancelled by server-side statement_timeout',
   labelNames: ['dbTarget'] as const,
+});
+
+// getImageMetricsObject soft-fallback rate: incremented whenever the ClickHouse
+// image-metrics read exceeds CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and we serve
+// empty (TRANSIENT-zero) metrics. Makes the otherwise axiom-only fallback rate
+// observable in Prometheus. No label dimension — the timeout has no natural one.
+const imageMetricsClickhouseTimeoutCounter = registerCounter({
+  name: 'image_metrics_clickhouse_timeout_total',
+  help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (served empty metrics)',
 });
 
 export const getAllImages = async (
@@ -4612,11 +4633,41 @@ type ImageMetricsObject = Record<
 // MetricService (which now pulls from the FINAL `entityMetricDailyAgg_v2` view).
 // The legacy in-app `entitymetric:*` read path (imageMetricsCache) was retired
 // after the v2 + watcher cutover went 100% stable.
-const getImageMetricsObject = async (data: { id: number }[]): Promise<ImageMetricsObject> => {
+export const getImageMetricsObject = async (
+  data: { id: number }[]
+): Promise<ImageMetricsObject> => {
   try {
     const ids = data.map((d) => d.id);
 
-    const metrics = await getImageMetricService().fetch('Image', ids);
+    // The ClickHouse read has NO request-level timeout other than the
+    // @clickhouse/client 30s default, and a try/catch CANNOT catch a hang. Bound
+    // it here so a saturated/cold-miss metric read fails SOFT to empty metrics
+    // (callers treat missing ids as null) instead of parking ~30s and blowing the
+    // SSR deadline. Empty `{}` matches the existing catch fallback.
+    const timeoutMs = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS;
+    // Narrow type flows from this call (`fetch('Image', …)` → Record<number,
+    // ImageMetrics>); withTimeoutFallback infers T from it so the empty fallback
+    // is typed identically (no widening to the full metric union).
+    const fetchPromise = getImageMetricService().fetch('Image', ids);
+    type ImageMetricMap = Awaited<typeof fetchPromise>;
+    const metrics = await withTimeoutFallback(
+      fetchPromise,
+      timeoutMs,
+      {} as ImageMetricMap,
+      () => {
+        imageMetricsClickhouseTimeoutCounter.inc();
+        logToAxiom(
+          {
+            type: 'warning',
+            name: 'getImageMetrics timeout',
+            message: `ClickHouse image metrics read exceeded ${timeoutMs}ms`,
+            idCount: ids.length,
+            timeoutMs,
+          },
+          'clickhouse'
+        ).catch();
+      }
+    );
     const result: ImageMetricsObject = {};
     for (const id of ids) {
       const m = metrics[id];
