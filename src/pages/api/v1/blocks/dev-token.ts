@@ -383,6 +383,36 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     granted = granted.filter((s: string) => s !== 'ai:write:budgeted');
   }
 
+  //   g) FORCE-GRANT `user:read:self` (UNCONDITIONAL, post-clamp). The local
+  //      harness's `dev:live` mode resolves the dev's OWN viewer identity by
+  //      calling `GET /api/v1/blocks/me`, which is gated on `user:read:self`.
+  //      That scope is only minted if it survives the app-manifest/approved-
+  //      snapshot + OAuth-bitmask clamp above — and the page-money scaffold
+  //      manifest declares ONLY `ai:write:budgeted`, so `user:read:self` is
+  //      never in `approvedScopes` and never minted → /blocks/me 403s → the
+  //      harness falls back to an anonymous viewer. This bypasses that clamp
+  //      for this ONE read scope so `dev:live` can resolve the viewer.
+  //
+  //      SAFE because:
+  //        - `user:read:self` is a READ scope that returns ONLY the self-bound
+  //          caller's own profile — no third-party data, no write, no spend. The
+  //          `/blocks/me` handler resolves `userId` from `claims.sub` and reads
+  //          exactly that user (me.ts), and `enforceContextBinding` rejects
+  //          `user:read:self` on an `anon` sub (block-scope.middleware.ts). The
+  //          dev token's `sub` is ALWAYS `user:<callerId>` (self-bound, set from
+  //          the authenticated caller at sign time below — never from the body),
+  //          so this can only ever return the CALLER's own identity.
+  //        - it's already a member of `DEV_TOKEN_SCOPE_ALLOWLIST` — an intended,
+  //          vetted dev scope (it was simply being clamped OUT by the per-app
+  //          approved-scopes pin, which the page-money manifest doesn't list).
+  //        - this endpoint is mod-gated (step 2) and self-bound, so the net
+  //          effect is "a dev reads their OWN identity via their OWN token" —
+  //          zero escalation, no new data surface.
+  //      Post-clamp + uniform across BOTH the personal-key and OAuth paths (the
+  //      grant runs after every clamp belt, so neither path can suppress it).
+  //      This does NOT touch the prod mint (`/api/v1/block-tokens`).
+  granted.push('user:read:self');
+
   // Dedup, deterministic order.
   granted = Array.from(new Set(granted)).sort();
 
