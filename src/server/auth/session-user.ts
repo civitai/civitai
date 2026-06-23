@@ -1,222 +1,38 @@
-import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '~/types/session';
-import { env } from '~/env/server';
-import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
-import { withRetries } from '~/utils/errorHandling';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
-import type { UserMeta, UserSubscriptionsByBuzzType } from '~/server/schema/user.schema';
-import { userSettingsSchema } from '~/server/schema/user.schema';
-import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { getSystemPermissions } from '~/server/services/system-cache';
-import { getUserBanDetails } from '~/utils/user-helpers';
-import type { UserTier } from '~/server/schema/user.schema';
-import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
+import { sessionClient } from './session-client';
 
-export const getSessionUser = async ({ userId, token }: { userId?: number; token?: string }) => {
+// Resolve the rich SessionUser by userId (or by API-key token → userId). The hub is the SOLE PRODUCER of
+// session data (docs/thin-session-token-design.md, "LOCKED ARCHITECTURE"): we no longer compute it from the
+// DB here. We read the shared `session:data2` cache and, on a miss, fetch the hub via
+// `createSessionClient.getSessionUserById` (single-flight + read-through). The only DB touch left is the
+// API-key → userId lookup for the bearer path.
+//
+// Date caveat: a cold hub miss returns dates as ISO strings (HTTP JSON); a warm cache hit returns real Dates.
+// Coerce if a consumer needs a `Date`.
+export const getSessionUser = async ({
+  userId,
+  token,
+}: {
+  userId?: number;
+  token?: string;
+}): Promise<SessionUser | undefined> => {
   if (!userId && !token) return undefined;
 
-  return withRetries(
-    async () => {
-      // Get UserId from Token
-      if (!userId && token) {
-        const now = new Date();
-        const result = await dbWrite.apiKey.findFirst({
-          where: { key: token, OR: [{ expiresAt: { gte: now } }, { expiresAt: null }] },
-          select: { userId: true },
-        });
-        if (!result) return undefined;
-        userId = result.userId;
-      }
-      if (!userId) return undefined;
+  // API-key token → userId (the bearer path's own resolver is in bearer-token.ts; this covers direct callers).
+  if (!userId && token) {
+    const now = new Date();
+    const result = await dbWrite.apiKey.findFirst({
+      where: { key: token, OR: [{ expiresAt: { gte: now } }, { expiresAt: null }] },
+      select: { userId: true },
+    });
+    if (!result) return undefined;
+    userId = result.userId;
+  }
+  if (!userId) return undefined;
 
-      // Get from cache
-      // ----------------------------------
-      const cacheKey = `${REDIS_KEYS.USER.SESSION}:${userId}` as const;
-      const cachedResult = await redis.packed.get<SessionUser | null>(cacheKey);
-      if (cachedResult && !('clearedAt' in cachedResult)) return cachedResult;
-
-      // On cache miss get from database
-      // ----------------------------------
-      const where: Prisma.UserWhereInput = { deletedAt: null, id: userId };
-
-      // console.log(new Date().toISOString() + ' ::', 'running query');
-      // console.trace();
-
-      // TODO switch from prisma, or try to make this a direct/raw query
-      const response = await dbWrite.user.findFirst({
-        where,
-        include: {
-          referral: { select: { id: true } },
-          profilePicture: {
-            select: {
-              id: true,
-              url: true,
-              // nsfw: true,
-              hash: true,
-              userId: true,
-            },
-          },
-        },
-      });
-      // Get ALL user subscriptions (one per buzzType)
-      // Include past_due and unpaid so users can still see and manage their membership
-      const allSubscriptions = await dbWrite.customerSubscription.findMany({
-        where: {
-          userId,
-          status: { notIn: ['canceled', 'incomplete_expired'] },
-        },
-        include: {
-          product: true,
-          price: true,
-        },
-      });
-
-      if (!response) return undefined;
-
-      // nb: doing this because these fields are technically nullable, but prisma
-      // likes returning them as undefined. that messes with the typing.
-      const { banDetails, ...userMeta } = (response.meta ?? {}) as UserMeta;
-
-      // Build subscriptions object per buzzType
-      const subscriptionsByBuzzType: UserSubscriptionsByBuzzType = {};
-
-      let highestTier: UserTier | undefined = undefined;
-      let primarySubscriptionId: string | undefined = undefined;
-      let memberInBadState = false;
-
-      const tierOrder: Record<string, number> = {
-        founder: 5,
-        gold: 4,
-        silver: 3,
-        bronze: 2,
-        free: 1,
-      };
-
-      for (const sub of allSubscriptions) {
-        const metadata = sub.product.metadata as any;
-        const tier = metadata?.[env.TIER_METADATA_KEY] as UserTier | undefined;
-        const isActive = ['active', 'trialing'].includes(sub.status);
-        const isBadState = ['incomplete', 'past_due', 'unpaid'].includes(sub.status);
-
-        if (isBadState) memberInBadState = true;
-
-        if (tier && tier !== 'free') {
-          subscriptionsByBuzzType[sub.buzzType] = {
-            tier,
-            isMember: isActive,
-            subscriptionId: sub.id,
-            status: sub.status,
-          };
-
-          // Track highest tier for backward compatibility
-          // Only set highest tier for active subscriptions (not bad state)
-          if (
-            isActive &&
-            (!highestTier || (tierOrder[tier] ?? 0) > (tierOrder[highestTier] ?? 0))
-          ) {
-            highestTier = tier;
-            primarySubscriptionId = sub.id;
-          }
-
-          // For bad state subscriptions, still track the subscriptionId so user can manage it
-          if (isBadState && !primarySubscriptionId) {
-            primarySubscriptionId = sub.id;
-          }
-        }
-      }
-
-      const tier = highestTier;
-
-      const user = {
-        ...response,
-        image: response.image ?? undefined,
-        referral: response.referral ?? undefined,
-        name: response.name ?? undefined,
-        username: response.username ?? undefined,
-        email: response.email ?? undefined,
-        emailVerified: response.emailVerified ?? undefined,
-        isModerator: response.isModerator ?? undefined,
-        deletedAt: response.deletedAt ?? undefined,
-        customerId: response.customerId ?? undefined,
-        paddleCustomerId: response.paddleCustomerId ?? undefined,
-        mutedAt: response.mutedAt ?? undefined,
-        muted: response.muted ?? undefined,
-        bannedAt: response.bannedAt ?? undefined,
-        autoplayGifs: response.autoplayGifs ?? undefined,
-        leaderboardShowcase: response.leaderboardShowcase ?? undefined,
-        filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
-        meta: userMeta,
-        banDetails: getUserBanDetails({ meta: userMeta }),
-        subscriptionId: primarySubscriptionId ?? undefined,
-        subscriptions: subscriptionsByBuzzType,
-      };
-
-      const { profilePicture, profilePictureId, publicSettings, settings, ...rest } = user;
-
-      const permissions: string[] = [];
-      // Fail-open on sysRedis: derive a session with empty permissions so
-      // the request can complete, but flag the result as degraded so the
-      // 4h cache write below is skipped. Caching an empty-permissions
-      // SessionUser would silently strip moderator / beta privileges for
-      // up to 4 hours after sysRedis recovers, and the staleness would
-      // persist until each affected user's cache entry naturally expired.
-      // Re-derive on every request during the outage instead — DB load
-      // is the trade-off, but it bounds the staleness to the outage
-      // window itself.
-      let permissionsSourceDegraded = false;
-      try {
-        const systemPermissions = await getSystemPermissions();
-        for (const [key, value] of Object.entries(systemPermissions)) {
-          if (value.includes(user.id)) permissions.push(key);
-        }
-      } catch (err) {
-        logSysRedisFailOpen(
-          'read-degraded',
-          'getSessionUser getSystemPermissions',
-          err,
-          { userId: user.id, action: 'skipping-cache-write' }
-        );
-        permissionsSourceDegraded = true;
-      }
-
-      const userSettings = userSettingsSchema.safeParse(settings ?? {});
-
-      const sessionUser: SessionUser = {
-        ...rest,
-        image: profilePicture?.url ?? rest.image,
-        tier: !!tier ? tier : undefined,
-        permissions,
-        memberInBadState,
-        allowAds:
-          userSettings.success && userSettings.data.allowAds != null
-            ? userSettings.data.allowAds
-            : tier != null
-            ? false
-            : true,
-        redBrowsingLevel:
-          userSettings.success && userSettings.data.redBrowsingLevel != null
-            ? userSettings.data.redBrowsingLevel
-            : undefined,
-      };
-
-      // Skip the 4h cache write when permissions came from the fail-open
-      // path (sysRedis was unreachable). Next request will re-derive — DB
-      // cost during the outage window, but no stale permission cache once
-      // sysRedis recovers. Also skip the orchestrator invalidation: during
-      // a sysRedis outage every authenticated request re-derives the
-      // session, and firing invalidateCivitaiUser on each would pile N
-      // orchestrator requests per user per request on an already-stressed
-      // system. The orchestrator picks up the next legitimate refresh
-      // once sysRedis recovers.
-      if (!permissionsSourceDegraded) {
-        await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
-        await invalidateCivitaiUser({ userId });
-      }
-
-      return sessionUser;
-    },
-    2, // 2 retries = 3 total attempts
-    100 // 100ms initial retry delay
-  );
+  // The hub produces + caches; we only read. Structurally the ExtendedUser the app expects (kept in parity by
+  // the hub's session-shape.ts), but loosely typed in the package contract — cast at this boundary.
+  const user = await sessionClient.getSessionUserById(userId);
+  return (user as unknown as SessionUser) ?? undefined;
 };

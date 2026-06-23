@@ -54,6 +54,16 @@ vi.mock('~/server/redis/atomic', () => ({
 }));
 vi.mock('~/server/utils/cache-helpers', () => ({ clearCacheByPattern: async () => {} }));
 vi.mock('~/server/auth/session-cache', () => ({ clearSessionCache: async () => {} }));
+// invalidateAllSessions now routes the global cutoff through the hub (sessionClient.invalidateAll). Simulate
+// the hub here: write the SESSION.ALL marker the verifier reads, at a fixed cutoff (5000), so the end-to-end
+// "revoked iff signed before the cutoff" assertion stays deterministic.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: {
+    invalidateAll: async () => {
+      h.strings.set(h.KEYS.REDIS_SYS_KEYS.SESSION.ALL, new Date(5000).toISOString());
+    },
+  },
+}));
 vi.mock('~/utils/signal-client', () => ({ signalClient: { send: async () => {} } }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: () => {} }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => {} }));
@@ -121,7 +131,7 @@ describe('ban / logout session revocation (B2 coverage)', () => {
   });
 
   it('global invalidateAllSessions revokes tokens signed before the cutoff, not after', async () => {
-    await invalidateAllSessions(new Date(5000));
+    await invalidateAllSessions(); // hub sets the cutoff (simulated at 5000 by the session-client mock)
 
     expect(await isRevoked(claims('old', 4000))).toBe(true); // signed before the cutoff
     expect(await isRevoked(claims('new', 6000))).toBe(false); // signed after
