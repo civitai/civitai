@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   invalidate: vi.fn(),
   produce: vi.fn(),
   mintSessionToken: vi.fn(),
+  mintUserSession: vi.fn(),
 }));
 vi.mock('$lib/server/auth/verifier', () => ({ verifier: { verifyToken: h.verifyToken } }));
 vi.mock('$lib/server/auth/session-producer', () => ({
@@ -18,21 +19,36 @@ vi.mock('$lib/server/auth/session-producer', () => ({
 vi.mock('$lib/server/auth/session', () => ({
   SESSION_COOKIE: 'civ-token',
   getSigner: () => ({ mintSessionToken: h.mintSessionToken }),
+  mintUserSession: h.mintUserSession,
 }));
 
 import { GET, POST } from '../../../../routes/api/auth/identity/+server';
 import { POST as DEV_LOGIN } from '../../../../routes/api/auth/dev/login/+server';
+import { POST as LEGACY_EXCHANGE } from '../../../../routes/api/auth/oauth/legacy-exchange/+server';
 
 // Loosely typed (`any`): the same mock event is fed to handlers with different route generics.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const ev = (opts: { method?: string; auth?: string; cookie?: string; body?: unknown } = {}): any => ({
-  request: new Request('http://h/api/auth/identity', {
-    method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
-    headers: opts.auth ? { authorization: opts.auth, 'content-type': 'application/json' } : {},
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  }),
-  cookies: { get: (n: string) => (n === 'civ-token' ? opts.cookie : undefined) },
-});
+const ev = (
+  opts: {
+    method?: string;
+    auth?: string;
+    cookie?: string;
+    body?: unknown;
+    userId?: string | number;
+  } = {}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): any => {
+  const url = new URL('http://h/api/auth/identity');
+  if (opts.userId !== undefined) url.searchParams.set('userId', String(opts.userId));
+  return {
+    request: new Request(url, {
+      method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
+      headers: opts.auth ? { authorization: opts.auth, 'content-type': 'application/json' } : {},
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    }),
+    url,
+    cookies: { get: (n: string) => (n === 'civ-token' ? opts.cookie : undefined) },
+  };
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -42,6 +58,7 @@ beforeEach(() => {
   h.produce.mockResolvedValue({ id: 5, username: 'alice' });
   h.invalidate.mockResolvedValue(undefined);
   h.mintSessionToken.mockResolvedValue('minted.jwt.token');
+  h.mintUserSession.mockResolvedValue('civ.minted.jwt');
 });
 
 describe('GET /api/auth/identity', () => {
@@ -74,6 +91,31 @@ describe('GET /api/auth/identity', () => {
   });
 });
 
+describe('GET /api/auth/identity?userId= (internal by-userId read-through)', () => {
+  it('returns the produced user for an internal caller (read-through, no token)', async () => {
+    const res = await GET(ev({ auth: 'Bearer secret-123', userId: 5 }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: 5 });
+    expect(h.getOrProduce).toHaveBeenCalledWith(5);
+    expect(h.verifyToken).not.toHaveBeenCalled(); // by-userId path never verifies a token
+  });
+
+  it('401 without a valid internal token (and does not resolve)', async () => {
+    const res = await GET(ev({ auth: 'Bearer wrong', userId: 5 }));
+    expect(res.status).toBe(401);
+    expect(h.getOrProduce).not.toHaveBeenCalled();
+  });
+
+  it('400 on a non-numeric userId', async () => {
+    expect((await GET(ev({ auth: 'Bearer secret-123', userId: 'nope' }))).status).toBe(400);
+  });
+
+  it('404 when there is no such user', async () => {
+    h.getOrProduce.mockResolvedValue(null);
+    expect((await GET(ev({ auth: 'Bearer secret-123', userId: 5 }))).status).toBe(404);
+  });
+});
+
 describe('POST /api/auth/identity (invalidate / refresh)', () => {
   it('401 without a valid internal token (and does not bust)', async () => {
     const res = await POST(ev({ auth: 'Bearer wrong', body: { userId: 5 } }));
@@ -97,7 +139,63 @@ describe('POST /api/auth/identity (invalidate / refresh)', () => {
   });
 
   it('400 on a non-numeric userId', async () => {
-    expect((await POST(ev({ auth: 'Bearer secret-123', body: { userId: 'nope' } }))).status).toBe(400);
+    expect((await POST(ev({ auth: 'Bearer secret-123', body: { userId: 'nope' } }))).status).toBe(
+      400
+    );
+  });
+});
+
+describe('POST /api/auth/oauth/legacy-exchange (upgrade-on-read)', () => {
+  it('401 without a valid internal token (never re-decodes or mints)', async () => {
+    const res = await LEGACY_EXCHANGE(
+      ev({ auth: 'Bearer wrong', body: { legacyToken: 'legacy.jwe' } })
+    );
+    expect(res.status).toBe(401);
+    expect(h.verifyToken).not.toHaveBeenCalled();
+    expect(h.mintUserSession).not.toHaveBeenCalled();
+  });
+
+  it('400 when no legacyToken is supplied', async () => {
+    expect((await LEGACY_EXCHANGE(ev({ auth: 'Bearer secret-123', body: {} }))).status).toBe(400);
+    expect(h.verifyToken).not.toHaveBeenCalled();
+  });
+
+  it('re-decodes the legacy cookie and mints a civ-token for the SAME user', async () => {
+    const res = await LEGACY_EXCHANGE(
+      ev({ auth: 'Bearer secret-123', body: { legacyToken: 'legacy.jwe' } })
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ token: 'civ.minted.jwt' });
+    expect(h.verifyToken).toHaveBeenCalledWith('legacy.jwe');
+    expect(h.getOrProduce).toHaveBeenCalledWith(5);
+    expect(h.mintUserSession).toHaveBeenCalledWith({ id: 5, username: 'alice' });
+  });
+
+  it('NEVER trusts a caller-supplied userId — only the decoded cookie identity', async () => {
+    await LEGACY_EXCHANGE(
+      ev({ auth: 'Bearer secret-123', body: { legacyToken: 'legacy.jwe', userId: 999 } })
+    );
+    // 5 comes from verifyToken (the cookie), not the 999 in the body.
+    expect(h.getOrProduce).toHaveBeenCalledWith(5);
+    expect(h.getOrProduce).not.toHaveBeenCalledWith(999);
+  });
+
+  it('401 when the legacy cookie fails to decode (never mints)', async () => {
+    h.verifyToken.mockResolvedValue(null);
+    const res = await LEGACY_EXCHANGE(
+      ev({ auth: 'Bearer secret-123', body: { legacyToken: 'bad' } })
+    );
+    expect(res.status).toBe(401);
+    expect(h.mintUserSession).not.toHaveBeenCalled();
+  });
+
+  it('404 when the decoded user no longer exists', async () => {
+    h.getOrProduce.mockResolvedValue(null);
+    const res = await LEGACY_EXCHANGE(
+      ev({ auth: 'Bearer secret-123', body: { legacyToken: 'legacy.jwe' } })
+    );
+    expect(res.status).toBe(404);
+    expect(h.mintUserSession).not.toHaveBeenCalled();
   });
 });
 
@@ -110,7 +208,9 @@ describe('POST /api/auth/dev/login (dev-gated)', () => {
   });
 
   it('404 (throws) without a valid internal token', async () => {
-    await expect(DEV_LOGIN(ev({ auth: 'Bearer wrong', body: { userId: 5 } }))).rejects.toMatchObject({
+    await expect(
+      DEV_LOGIN(ev({ auth: 'Bearer wrong', body: { userId: 5 } }))
+    ).rejects.toMatchObject({
       status: 404,
     });
     expect(h.mintSessionToken).not.toHaveBeenCalled();

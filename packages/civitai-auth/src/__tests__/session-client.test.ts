@@ -23,7 +23,14 @@ import { createSessionClient } from '../session-client';
 
 const key = (id: number) => `session:data2:${id}`;
 const richUser = (id: number, username = 'fresh'): SessionUser =>
-  ({ id, username, showNsfw: false, blurNsfw: true, browsingLevel: 1, onboarding: 0 }) as SessionUser;
+  ({
+    id,
+    username,
+    showNsfw: false,
+    blurNsfw: true,
+    browsingLevel: 1,
+    onboarding: 0,
+  } as SessionUser);
 
 type Res = { ok: boolean; status: number; json: () => Promise<unknown> };
 function stubFetch(impl: (url: string, init: unknown) => Promise<Res>) {
@@ -51,13 +58,19 @@ describe('createSessionClient — getSessionUser (read)', () => {
   it('returns the cached user without fetching', async () => {
     h.store.set(key(7), richUser(7, 'bob'));
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => null }));
-    expect(await createSessionClient().getSessionUser('7')).toMatchObject({ id: 7, username: 'bob' });
+    expect(await createSessionClient().getSessionUser('7')).toMatchObject({
+      id: 7,
+      username: 'bob',
+    });
     expect(fetch).not.toHaveBeenCalled();
   });
 
   it('on a miss fetches the hub identity and returns it (no write-through)', async () => {
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
-    expect(await createSessionClient().getSessionUser('7')).toMatchObject({ id: 7, username: 'fresh' });
+    expect(await createSessionClient().getSessionUser('7')).toMatchObject({
+      id: 7,
+      username: 'fresh',
+    });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(h.store.has(key(7))).toBe(false); // consumer does NOT write — the producer does
   });
@@ -72,7 +85,11 @@ describe('createSessionClient — getSessionUser (read)', () => {
 
   it('treats a clearedAt tombstone as a miss', async () => {
     h.store.set(key(7), { id: 7, clearedAt: 1 });
-    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7, 'new') }));
+    const fetch = stubFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => richUser(7, 'new'),
+    }));
     expect(await createSessionClient().getSessionUser('7')).toMatchObject({ username: 'new' });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -111,7 +128,11 @@ describe('createSessionClient — getSessionUser (read)', () => {
     h.cacheGet.mockImplementationOnce(async () => {
       throw new Error('redis down');
     });
-    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7, 'db') }));
+    const fetch = stubFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => richUser(7, 'db'),
+    }));
     expect(await createSessionClient().getSessionUser('7')).toMatchObject({ username: 'db' });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -129,6 +150,99 @@ describe('createSessionClient — getSessionUser (read)', () => {
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => null }));
     expect(await createSessionClient().getSessionUser('7')).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('createSessionClient — getSessionUserById (read by userId)', () => {
+  it('returns the cached user without fetching', async () => {
+    h.store.set(key(7), richUser(7, 'bob'));
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => null }));
+    expect(await createSessionClient().getSessionUserById(7)).toMatchObject({
+      id: 7,
+      username: 'bob',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('on a miss fetches the INTERNAL-authed read-through endpoint by userId (no write-through)', async () => {
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    expect(await createSessionClient().getSessionUserById(7)).toMatchObject({
+      id: 7,
+      username: 'fresh',
+    });
+    expect(fetch).toHaveBeenCalledWith('https://auth.test/api/auth/identity?userId=7', {
+      headers: { authorization: 'Bearer secret-123' },
+    });
+    expect(h.store.has(key(7))).toBe(false); // consumer does NOT write — the hub producer does
+  });
+
+  it('treats a clearedAt tombstone as a miss', async () => {
+    h.store.set(key(7), { id: 7, clearedAt: 1 });
+    const fetch = stubFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => richUser(7, 'new'),
+    }));
+    expect(await createSessionClient().getSessionUserById(7)).toMatchObject({ username: 'new' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null (without fetching) when AUTH_INTERNAL_TOKEN is unset', async () => {
+    h.loadAuthEnv.mockReturnValue({ AUTH_JWT_ISSUER: 'https://auth.test' });
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    expect(await createSessionClient().getSessionUserById(7)).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('returns null for a non-finite userId without reading cache or fetching', async () => {
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    expect(await createSessionClient().getSessionUserById(Number.NaN)).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(h.cacheGet).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the hub reports no such user (404)', async () => {
+    const fetch = stubFetch(async () => ({ ok: false, status: 404, json: async () => null }));
+    expect(await createSessionClient().getSessionUserById(7)).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null when the hub fetch throws (unreachable / not configured)', async () => {
+    const fetch = stubFetch(async () => {
+      throw new Error('hub unreachable');
+    });
+    expect(await createSessionClient().getSessionUserById(7)).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('single-flights concurrent misses for the same user (one fetch)', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const fetch = stubFetch(async () => {
+      await gate;
+      return { ok: true, status: 200, json: async () => richUser(7, 'one') };
+    });
+    const client = createSessionClient();
+    const a = client.getSessionUserById(7);
+    const b = client.getSessionUserById(7);
+    await new Promise((r) => setTimeout(r, 0));
+    release();
+    expect(await a).toMatchObject({ username: 'one' });
+    expect(await b).toMatchObject({ username: 'one' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails open to a fetch when the cache read throws', async () => {
+    h.cacheGet.mockImplementationOnce(async () => {
+      throw new Error('redis down');
+    });
+    const fetch = stubFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => richUser(7, 'db'),
+    }));
+    expect(await createSessionClient().getSessionUserById(7)).toMatchObject({ username: 'db' });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
 
