@@ -79,7 +79,13 @@ function buildCookie(
 // test-auth.civitai.com, produce `.test-auth.civitai.com` and never match the `.civitai.com` cookie (orphaning
 // it; this was a real bug). (oauth2-proxy uses its own `_oauth2_proxy` cookie, never these.)
 function legacyClearScopes(host?: string): (string | undefined)[] {
-  return [...new Set([undefined, process.env.NEXTAUTH_COOKIE_DOMAIN || undefined, cookieDomainForHost(host)])];
+  return [
+    ...new Set([
+      undefined,
+      process.env.NEXTAUTH_COOKIE_DOMAIN || undefined,
+      cookieDomainForHost(host),
+    ]),
+  ];
 }
 
 /**
