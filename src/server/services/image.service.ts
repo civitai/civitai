@@ -189,6 +189,7 @@ import type {
 import {
   Availability,
   BlockImageReason,
+  CollectionItemStatus,
   CollectionMode,
   AppealStatus,
   EntityType,
@@ -1164,6 +1165,7 @@ type GetAllImagesRaw = {
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
   collectionItemNote?: string | null;
+  collectionItemStatus?: CollectionItemStatus | null;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -1567,11 +1569,12 @@ export const getAllImages = async (
     WITH.push(
       Prisma.sql`
         ct AS (
-          SELECT "imageId", note, "sortKey"
+          SELECT "imageId", note, status, "sortKey"
           FROM (
             SELECT
               ci."imageId",
               ci.note,
+              ci.status,
               abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
                 seedStr
               )}')), 1000000000)) as "sortKey"
@@ -1829,7 +1832,7 @@ export const getAllImages = async (
       i.poi,
       i."acceptableMinor",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
-      ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote"' : '')}
+      ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus"' : '')}
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
