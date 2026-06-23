@@ -71,7 +71,7 @@ import { includesPoi } from '~/utils/metadata/audit';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { randomInt } from 'crypto';
-import { MAX_SEED } from '~/shared/constants/generation.constants';
+import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -938,7 +938,10 @@ export async function createWorkflowStepsFromGraph({
   // don't affect the caller's `data`.
   const resolvedData = {
     ...data,
-    seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_SEED),
+    // Int32-safe bound: some engines (e.g. google/nano-banana-2) type `seed`
+    // as Nullable<Int32>, so a generated seed above 2^31-1 fails orchestrator
+    // deserialization. MAX_RANDOM_SEED keeps the default within Int32 range.
+    seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
   };
 
   // Calculate timeout: base 20 minutes + 1 minute per additional resource
@@ -1195,7 +1198,7 @@ async function getSnippetOverlays({
   // Seed precedence: form's preview-locked `snippets.seed` first, then the
   // image-gen seed on resolvedData, then a fresh sample. Spec:
   // resolver random = PRNG keyed by `(seed ?? generationSeed, ...)`.
-  const seed = snippets.seed ?? resolvedData.seed ?? randomInt(MAX_SEED);
+  const seed = snippets.seed ?? resolvedData.seed ?? randomInt(MAX_RANDOM_SEED);
 
   const result = await expandSnippetsToTargets({
     snippets: { wildcardSetIds, mode, batchCount, targets: {} },
