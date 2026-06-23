@@ -90,7 +90,8 @@ export const getServerAuthSession = async ({
   // Best-effort; this request is still served from the legacy decode above.
   if (legacy) {
     const legacyToken = req.cookies?.[legacySessionCookieName()];
-    await maybeUpgradeLegacySession(legacyToken, res, req.headers.host).catch(() => {});
+    const device = req.cookies?.[deviceCookieName()];
+    await maybeUpgradeLegacySession(legacyToken, device, res, req.headers.host).catch(() => {});
   }
   return legacy;
 };

@@ -72,56 +72,33 @@ function buildCookie(
   ].join('; ');
 }
 
-// The legacy next-auth session cookie (`civitai-token` / prod `__Secure-civitai-token`). We CLEAR it whenever
-// a fresh civ-token is set: a valid civ-token supersedes it (getServerAuthSession only falls back to the
-// legacy cookie when civ-token is absent), so leaving it set is stale cruft that keeps a legacy-cookie user
-// "logged in" via the fallback. Cleared across the domains next-auth could have used — host-only,
-// NEXTAUTH_COOKIE_DOMAIN, and the request-derived `.{host}` parent — mirroring /api/auth/logout's legacy
-// clear. (oauth2-proxy uses its own `_oauth2_proxy` cookie, not this one, so it's never the source.) Remove
-// this whole helper once legacy cookies have aged out post-cutover.
-function clearLegacySessionCookies(host?: string): string[] {
-  const h = (host ?? '').split(':')[0].toLowerCase();
-  const parent = h && h !== 'localhost' && !/^\d+\.\d+\.\d+\.\d+$/.test(h) ? `.${h}` : undefined;
-  const domains = [
-    ...new Set([undefined, process.env.NEXTAUTH_COOKIE_DOMAIN || undefined, parent]),
-  ];
-  const out: string[] = [];
-  for (const [name, secure] of [
-    ['civitai-token', false],
-    ['__Secure-civitai-token', true],
-  ] as const) {
-    for (const d of domains) {
-      out.push(
-        `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}${
-          d ? `; Domain=${d}` : ''
-        }`
-      );
-    }
-  }
-  return out;
+// The Domain scopes a legacy next-auth cookie could have been set on: host-only, the explicit
+// NEXTAUTH_COOKIE_DOMAIN, and the REGISTRABLE domain (civitai.com / civitai.red — where next-auth actually set
+// them AND where setSessionCookie plants civ-token). Single source so the session + ancillary clears can't
+// drift — using the full-host parent `.{host}` instead would, on a subdomain serving host like
+// test-auth.civitai.com, produce `.test-auth.civitai.com` and never match the `.civitai.com` cookie (orphaning
+// it; this was a real bug). (oauth2-proxy uses its own `_oauth2_proxy` cookie, never these.)
+function legacyClearScopes(host?: string): (string | undefined)[] {
+  return [...new Set([undefined, process.env.NEXTAUTH_COOKIE_DOMAIN || undefined, cookieDomainForHost(host)])];
 }
 
 /**
- * Clear the ANCILLARY next-auth cookies left over from the pre-migration next-auth: the CSRF token, the
- * callback-url, and the transient OIDC/OAuth `state`, PKCE `code_verifier`, and `nonce` (the last set by the
- * Google OIDC flow). NONE of these authenticate a user — the session cookie was `civitai-token` (handled by
- * clearLegacySessionCookies) — so they're harmless cruft, but we expire them on logout AND on the legacy->civ
- * login so a returning user's browser is fully de-crudded. Names are the next-auth defaults (dev: `next-auth.<x>`;
- * prod: secure-prefixed). The CSRF cookie carries the `__Host-` prefix (browser-enforced host-only, NO Domain)
- * so it can only be cleared host-only; the others are cleared across every scope next-auth could have set them
- * on (host-only + NEXTAUTH_COOKIE_DOMAIN + `.{host}`). Remove this whole helper once pre-cutover sessions have
- * aged out.
+ * Expire EVERY legacy next-auth cookie a returning pre-cutover user's browser might still carry, across every
+ * scope next-auth could have set them on:
+ *   - the SESSION cookie (`civitai-token` / prod `__Secure-civitai-token`) — the only one that authenticated a
+ *     user; a valid civ-token supersedes it, and getServerAuthSession only falls back to it when civ-token is
+ *     absent, so a lingering one keeps a migrated user "logged in" via the stale fallback.
+ *   - the ANCILLARY cruft (CSRF, callback-url, and the transient OIDC/OAuth `state` / PKCE `code_verifier` /
+ *     `nonce`) — none authenticate, but we de-crud them so the browser is fully cleaned.
+ * Call at the auth transitions where these must go: the login callback, upgrade-on-read, and logout. (NOT baked
+ * into setSessionCookie — that fires on every rolling refresh, and re-emitting ~30 expiries for already-gone
+ * cookies on each refresh is pure waste; the only paths that set a civ-token while a legacy cookie still exists
+ * are callback + upgrade, which both call this.) Names are the next-auth defaults (dev: `next-auth.<x>`; prod:
+ * secure-prefixed). The CSRF cookie's `__Host-` prefix forbids a Domain attribute, so it's cleared host-only.
+ * Remove this whole helper once pre-cutover cookies have aged out.
  */
-export function clearLegacyNextAuthCookies(host?: string): string[] {
-  const h = (host ?? '').split(':')[0].toLowerCase();
-  const parent = h && h !== 'localhost' && !/^\d+\.\d+\.\d+\.\d+$/.test(h) ? `.${h}` : undefined;
-  const scopes = [
-    ...new Set<string | undefined>([
-      undefined,
-      process.env.NEXTAUTH_COOKIE_DOMAIN || undefined,
-      parent,
-    ]),
-  ];
+export function clearLegacyCookies(host?: string): string[] {
+  const scopes = legacyClearScopes(host);
   const expire = (name: string, secure: boolean, domain?: string) =>
     `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}${
       domain ? `; Domain=${domain}` : ''
@@ -131,9 +108,11 @@ export function clearLegacyNextAuthCookies(host?: string): string[] {
     expire('next-auth.csrf-token', false),
     expire('__Host-next-auth.csrf-token', true),
   ];
-  // callback-url + the transient OIDC/OAuth state / PKCE verifier / nonce — clear across every scope they could
-  // be set on (next-auth Domain-scoped state/pkce when NEXTAUTH_COOKIE_DOMAIN was set; the rest host-only).
+  // The SESSION cookie + callback-url + transient state/pkce/nonce — clear across every scope they could be set
+  // on (next-auth Domain-scoped these when NEXTAUTH_COOKIE_DOMAIN was set; otherwise host-only).
   for (const d of scopes) {
+    out.push(expire('civitai-token', false, d));
+    out.push(expire('__Secure-civitai-token', true, d));
     out.push(expire('next-auth.callback-url', false, d));
     out.push(expire('__Secure-next-auth.callback-url', true, d));
     out.push(expire('next-auth.state', false, d));
@@ -151,7 +130,8 @@ export function clearLegacyNextAuthCookies(host?: string): string[] {
  * any Set-Cookie already on the response. Pass `host` (the request's `Host` header) so the cookie Domain matches
  * the serving color; omit it only where there's no request (then the cookie is host-only). Pass `deviceCookie`
  * to roll the device cookie in lockstep (switch + rolling-refresh; impersonation does NOT touch the device set).
- * Also clears the legacy next-auth cookie — a fresh civ-token supersedes it.
+ * Does NOT clear legacy cookies — the transitions that need that (login callback, upgrade-on-read) call
+ * clearLegacyCookies explicitly; keeping it out of here avoids re-emitting the de-crud on every rolling refresh.
  */
 export function setSessionCookie(
   res: CookieWritable,
@@ -173,8 +153,6 @@ export function setSessionCookie(
   if (opts?.deviceCookie) {
     all.push(buildCookie(deviceCookieName(), opts.deviceCookie, secure, domain, DEVICE_TTL_S));
   }
-  // A valid civ-token supersedes the legacy next-auth cookie → clear it so it doesn't linger.
-  all.push(...clearLegacySessionCookies(opts?.host));
   res.setHeader('Set-Cookie', all);
 }
 

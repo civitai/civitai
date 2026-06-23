@@ -3,7 +3,7 @@ import {
   cookieDomainForHost,
   postLoginMarkerCookie,
   clearAllSessionCookies,
-  clearLegacyNextAuthCookies,
+  clearLegacyCookies,
   POST_LOGIN_MARKER,
 } from '../civ-cookie';
 
@@ -93,12 +93,14 @@ describe('clearAllSessionCookies — cross-scope session-cookie wipe', () => {
   });
 });
 
-describe('clearLegacyNextAuthCookies — ancillary next-auth de-crud', () => {
-  const cleared = clearLegacyNextAuthCookies('civitai.com');
+describe('clearLegacyCookies — full legacy next-auth de-crud (session + ancillary)', () => {
+  const cleared = clearLegacyCookies('civitai.com');
   const startsWith = (name: string) => cleared.filter((c) => c.startsWith(`${name}=;`));
 
-  it('expires every ancillary next-auth cookie (CSRF / callback-url / state / pkce / nonce, both prefixes)', () => {
+  it('expires every legacy next-auth cookie (session + CSRF / callback-url / state / pkce / nonce, both prefixes)', () => {
     for (const name of [
+      'civitai-token',
+      '__Secure-civitai-token',
       'next-auth.csrf-token',
       '__Host-next-auth.csrf-token',
       'next-auth.callback-url',
@@ -116,9 +118,12 @@ describe('clearLegacyNextAuthCookies — ancillary next-auth de-crud', () => {
     expect(cleared.every((c) => has(c, 'Max-Age=0'))).toBe(true);
   });
 
-  it('does NOT clear the legacy SESSION cookie (that is clearLegacySessionCookies job)', () => {
-    expect(cleared.some((c) => c.startsWith('civitai-token='))).toBe(false);
-    expect(cleared.some((c) => c.startsWith('__Secure-civitai-token='))).toBe(false);
+  it('clears the legacy SESSION cookie across host-only AND the registrable domain (both prefixes)', () => {
+    for (const name of ['civitai-token', '__Secure-civitai-token']) {
+      const entries = startsWith(name);
+      expect(entries.some((c) => domainOf(c) === undefined)).toBe(true); // host-only
+      expect(entries.some((c) => domainOf(c) === 'civitai.com')).toBe(true); // registrable domain
+    }
   });
 
   it('emits the `__Host-` CSRF clear host-only (no Domain) WITH Secure — else the browser rejects it', () => {
@@ -148,13 +153,11 @@ describe('clearLegacyNextAuthCookies — ancillary next-auth de-crud', () => {
     ]) {
       const entries = startsWith(name);
       expect(entries.some((c) => domainOf(c) === undefined)).toBe(true); // host-only
-      expect(entries.some((c) => domainOf(c) === '.civitai.com')).toBe(true); // `.{host}` parent
+      expect(entries.some((c) => domainOf(c) === 'civitai.com')).toBe(true); // registrable domain
     }
   });
 
   it('on localhost emits only host-only clears (no Domain)', () => {
-    expect(clearLegacyNextAuthCookies('localhost').every((c) => domainOf(c) === undefined)).toBe(
-      true
-    );
+    expect(clearLegacyCookies('localhost').every((c) => domainOf(c) === undefined)).toBe(true);
   });
 });

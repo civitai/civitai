@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { sessionCookieName, deviceCookieName, createSessionTokenClient } from '@civitai/auth';
-import { cookieDomainForHost, clearLegacyNextAuthCookies } from '~/server/auth/civ-cookie';
+import { cookieDomainForHost, clearLegacyCookies } from '~/server/auth/civ-cookie';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
 // Main-app logout for the hub flow. Clears BOTH the hub's civ-token AND the legacy next-auth session cookie
@@ -12,13 +12,6 @@ import { generationServiceCookie } from '~/shared/constants/generation.constants
 const sessionTokenClient = createSessionTokenClient();
 
 const uniq = <T>(arr: T[]): T[] => [...new Set(arr)];
-
-// The `.{hostname}` parent domain next-auth used for the LEGACY session cookie on non-localhost hosts.
-function legacyParentDomain(host: string | undefined): string | undefined {
-  const h = (host ?? '').split(':')[0];
-  if (!h || h === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(h)) return undefined;
-  return `.${h}`;
-}
 
 // Clear a cookie across host-only + each candidate domain, so we match however it was actually set.
 // Clearing a non-existent variant is harmless.
@@ -47,12 +40,6 @@ export function buildLogoutCookies(host: string | undefined): string[] {
     process.env.AUTH_COOKIE_DOMAIN || undefined,
     cookieDomainForHost(host),
   ];
-  // legacy civitai-token: next-auth scoped it by NEXTAUTH_COOKIE_DOMAIN or the request-derived `.{host}`.
-  const legacyDomains = [
-    undefined,
-    process.env.NEXTAUTH_COOKIE_DOMAIN || undefined,
-    legacyParentDomain(host),
-  ];
 
   return [
     // new hub session cookie — clear BOTH prefixes explicitly (defensive: nuke it regardless of how it was set)
@@ -62,12 +49,10 @@ export function buildLogoutCookies(host: string | undefined): string[] {
     // it would let the seamless-switch account set survive logout on a shared machine. Clear BOTH prefixes.
     ...clearCookie(deviceCookieName(false), false, civDomains),
     ...clearCookie(deviceCookieName(true), true, civDomains),
-    // legacy next-auth session cookie (hybrid fallback reads it)
-    ...clearCookie('civitai-token', false, legacyDomains),
-    ...clearCookie('__Secure-civitai-token', true, legacyDomains),
-    // ancillary next-auth cruft (CSRF / callback-url / OAuth state + PKCE) — none authenticate, but fully
-    // de-crud the browser on logout so nothing next-auth lingers post-cutover.
-    ...clearLegacyNextAuthCookies(host),
+    // every legacy next-auth cookie — the SESSION cookie (the hybrid fallback reads it) AND the ancillary cruft
+    // (CSRF / callback-url / OAuth state + PKCE). Single source (clearLegacyCookies) — clears over the
+    // registrable domain, so a subdomain logout host doesn't orphan the `.civitai.com` legacy session cookie.
+    ...clearLegacyCookies(host),
     // orchestrator service-auth cookie (host-only)
     `${generationServiceCookie.name}=; Path=/; Max-Age=0; SameSite=Lax`,
   ];

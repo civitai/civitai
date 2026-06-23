@@ -76,14 +76,16 @@ describe('createSessionTokenClient', () => {
       });
     });
 
-    it('posts the legacy token under the service-secret bearer and returns the fresh civ-token', async () => {
+    it('posts the legacy token under the service-secret bearer and returns the fresh civ-token + deviceId', async () => {
       const fetch = stubFetch(async () => ({
         ok: true,
         status: 200,
-        json: async () => ({ token: 'civ.jwt' }),
+        json: async () => ({ token: 'civ.jwt', deviceId: 'dev-9' }),
       }));
+      // deviceId rides back so the spoke sets the (hub-minted) civ-device on the upgraded session.
       expect(await createSessionTokenClient().exchangeLegacy('legacy.jwe')).toEqual({
         token: 'civ.jwt',
+        deviceId: 'dev-9',
       });
       const [url, init] = fetch.mock.calls[0];
       expect(url).toBe('https://auth.test/api/auth/oauth/legacy-exchange');
@@ -91,6 +93,17 @@ describe('createSessionTokenClient', () => {
       // Service secret authenticates the CALLER; the legacy cookie (in the body) proves WHO.
       expect(init.headers.authorization).toBe('Bearer svc-secret');
       expect(JSON.parse(init.body ?? '{}')).toEqual({ legacyToken: 'legacy.jwe' });
+    });
+
+    it('forwards an existing device cookie so the hub reuses this browser device set', async () => {
+      const fetch = stubFetch(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ token: 'civ.jwt', deviceId: 'dev-existing' }),
+      }));
+      await createSessionTokenClient().exchangeLegacy('legacy.jwe', { deviceCookie: 'dev-existing' });
+      const [, init] = fetch.mock.calls[0];
+      expect(init.headers.cookie).toContain('dev-existing');
     });
 
     it('returns null (no fetch) when AUTH_INTERNAL_TOKEN is unset', async () => {

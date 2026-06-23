@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import {
   setSessionCookie,
   postLoginMarkerCookie,
-  clearLegacyNextAuthCookies,
+  clearLegacyCookies,
 } from '~/server/auth/civ-cookie';
 import {
   resolveSelfOrigin,
@@ -61,9 +61,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     ? [String(existing)]
     : [];
   all.push(postLoginMarkerCookie());
-  // De-crud the browser at the legacy->civ-token transition: expire the leftover next-auth ancillary cookies
-  // (CSRF / callback-url / OAuth state + PKCE). setSessionCookie already cleared the legacy SESSION cookie.
-  all.push(...clearLegacyNextAuthCookies(req.headers.host));
+  // De-crud the browser at the legacy->civ-token transition: expire every leftover next-auth cookie — the
+  // SESSION cookie (so the hybrid fallback can't keep a migrated user on the stale legacy identity) AND the
+  // ancillary cruft (CSRF / callback-url / OAuth state + PKCE).
+  all.push(...clearLegacyCookies(req.headers.host));
   res.setHeader('Set-Cookie', all);
   res.redirect(302, result.returnUrl);
 }

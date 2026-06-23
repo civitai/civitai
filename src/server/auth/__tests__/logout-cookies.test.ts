@@ -80,7 +80,9 @@ describe('buildLogoutCookies', () => {
     const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
     const headers = buildLogoutCookies('stage.civitai.com');
 
-    for (const name of [sessionCookieName(true), deviceCookieName(true)]) {
+    // civ-token + civ-device, plus the legacy session cookie (clearLegacyCookies now also scopes to the
+    // registrable domain — the old `.{full-host}` parent orphaned it on a subdomain logout host too).
+    for (const name of [sessionCookieName(true), deviceCookieName(true), '__Secure-civitai-token']) {
       const scoped = headers.filter((h) => h.startsWith(`${name}=;`));
       // The fix: a clear scoped to the registrable domain the cookie was actually set with.
       expect(scoped.some((h) => h.includes('Domain=civitai.com'))).toBe(true);

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Unit-test maybeUpgradeLegacySession's Set-Cookie assembly (the upgrade-on-read path). We stub ONLY the hub
-// session-token client so we can drive exchangeLegacy; setSessionCookie, clearLegacyNextAuthCookies, and the
+// session-token client so we can drive exchangeLegacy; setSessionCookie, clearLegacyCookies, and the
 // cookie-name helpers stay REAL, so we assert the actual headers a legacy user's response would carry.
 const h = vi.hoisted(() => ({ exchangeLegacy: vi.fn(), refresh: vi.fn(), revoke: vi.fn() }));
 vi.mock('@civitai/auth', async (importOriginal) => {
@@ -47,23 +47,36 @@ describe('maybeUpgradeLegacySession — upgrade-on-read Set-Cookie assembly', ()
   const clears = (cookies: string[], name: string) =>
     cookies.some((c) => c.startsWith(`${name}=;`) && /Max-Age=0/i.test(c));
 
-  it('on success sets the civ-token AND clears the legacy session + ancillary next-auth cookies', async () => {
-    h.exchangeLegacy.mockResolvedValue({ token: 'fresh.civ.jwt' });
+  it('on success sets the civ-token + civ-device AND clears the legacy session + ancillary next-auth cookies', async () => {
+    h.exchangeLegacy.mockResolvedValue({ token: 'fresh.civ.jwt', deviceId: 'dev-minted' });
     const { maybeUpgradeLegacySession } = await import('../session-client');
     const res = fakeRes();
 
-    await maybeUpgradeLegacySession('legacy.jwe', res, 'civitai.com');
+    await maybeUpgradeLegacySession('legacy.jwe', undefined, res, 'civitai.com');
     const cookies = res.cookies();
 
-    expect(h.exchangeLegacy).toHaveBeenCalledWith('legacy.jwe');
+    // The existing device cookie (here: none) is forwarded so the hub can reuse-or-mint.
+    expect(h.exchangeLegacy).toHaveBeenCalledWith('legacy.jwe', { deviceCookie: undefined });
     // (a) the freshly-minted civ-token lands (and the merge didn't drop it when appending the ancillary clears)
     expect(cookies.some((c) => c.includes('fresh.civ.jwt'))).toBe(true);
-    // (b) the legacy SESSION cookie is cleared (via setSessionCookie -> clearLegacySessionCookies)
+    // (b) the hub's reused-or-minted device id lands as civ-device (so the upgraded session joins the switcher)
+    expect(cookies.some((c) => c.startsWith('__Secure-civ-device=dev-minted'))).toBe(true);
+    // (c) the legacy SESSION cookie is cleared (via clearLegacyCookies)
     expect(clears(cookies, '__Secure-civitai-token')).toBe(true);
-    // (c) the ancillary next-auth cruft is cleared too
+    // (d) the ancillary next-auth cruft is cleared too
     expect(clears(cookies, '__Host-next-auth.csrf-token')).toBe(true);
     expect(clears(cookies, '__Secure-next-auth.callback-url')).toBe(true);
     expect(clears(cookies, '__Secure-next-auth.nonce')).toBe(true);
+  });
+
+  it('forwards an existing civ-device so the hub reuses this browser device set', async () => {
+    h.exchangeLegacy.mockResolvedValue({ token: 'fresh.civ.jwt', deviceId: 'dev-existing' });
+    const { maybeUpgradeLegacySession } = await import('../session-client');
+    const res = fakeRes();
+
+    await maybeUpgradeLegacySession('legacy.jwe', 'dev-existing', res, 'civitai.com');
+    expect(h.exchangeLegacy).toHaveBeenCalledWith('legacy.jwe', { deviceCookie: 'dev-existing' });
+    expect(res.cookies().some((c) => c.startsWith('__Secure-civ-device=dev-existing'))).toBe(true);
   });
 
   it('does nothing when the hub declines the exchange (no civ-token, no clears)', async () => {
@@ -71,7 +84,7 @@ describe('maybeUpgradeLegacySession — upgrade-on-read Set-Cookie assembly', ()
     const { maybeUpgradeLegacySession } = await import('../session-client');
     const res = fakeRes();
 
-    await maybeUpgradeLegacySession('legacy.jwe', res, 'civitai.com');
+    await maybeUpgradeLegacySession('legacy.jwe', undefined, res, 'civitai.com');
     expect(res.cookies()).toEqual([]);
   });
 
@@ -79,7 +92,7 @@ describe('maybeUpgradeLegacySession — upgrade-on-read Set-Cookie assembly', ()
     const { maybeUpgradeLegacySession } = await import('../session-client');
     const res = fakeRes();
 
-    await maybeUpgradeLegacySession(undefined, res, 'civitai.com');
+    await maybeUpgradeLegacySession(undefined, undefined, res, 'civitai.com');
     expect(h.exchangeLegacy).not.toHaveBeenCalled();
     expect(res.cookies()).toEqual([]);
   });
@@ -90,7 +103,7 @@ describe('maybeUpgradeLegacySession — upgrade-on-read Set-Cookie assembly', ()
     const { maybeUpgradeLegacySession } = await import('../session-client');
     const res = fakeRes();
 
-    await maybeUpgradeLegacySession('legacy.jwe', res, 'civitai.com');
+    await maybeUpgradeLegacySession('legacy.jwe', undefined, res, 'civitai.com');
     expect(h.exchangeLegacy).not.toHaveBeenCalled();
   });
 
@@ -100,7 +113,7 @@ describe('maybeUpgradeLegacySession — upgrade-on-read Set-Cookie assembly', ()
     const res = fakeRes();
 
     await expect(
-      maybeUpgradeLegacySession('legacy.jwe', res, 'civitai.com')
+      maybeUpgradeLegacySession('legacy.jwe', undefined, res, 'civitai.com')
     ).resolves.toBeUndefined();
     expect(res.cookies().some((c) => c.includes('fresh'))).toBe(false);
   });

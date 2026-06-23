@@ -28,8 +28,8 @@ export interface SessionTokenClient {
    */
   exchangeLegacy(
     legacyToken: string,
-    opts?: { timeoutMs?: number }
-  ): Promise<{ token: string } | null>;
+    opts?: { deviceCookie?: string; timeoutMs?: number }
+  ): Promise<{ token: string; deviceId?: string } | null>;
 }
 
 export function createSessionTokenClient(): SessionTokenClient {
@@ -82,13 +82,16 @@ export function createSessionTokenClient(): SessionTokenClient {
           headers: {
             authorization: `Bearer ${internal}`, // proves the caller is a trusted spoke server
             'content-type': 'application/json',
+            // Forward any existing device cookie so the hub reuses this browser's device set instead of minting
+            // a fresh one (and orphaning the old). Absent for a pure legacy user → the hub mints + returns one.
+            ...(opts?.deviceCookie ? { cookie: `${deviceCookieName()}=${opts.deviceCookie}` } : {}),
           },
           body: JSON.stringify({ legacyToken }), // the legacy cookie itself proves WHO (hub re-decodes it)
           signal: controller.signal,
         });
         if (!res.ok) return null;
-        const { token } = (await res.json()) as { token?: string };
-        return token ? { token } : null;
+        const { token, deviceId } = (await res.json()) as { token?: string; deviceId?: string };
+        return token ? { token, deviceId } : null;
       } catch {
         return null;
       } finally {
