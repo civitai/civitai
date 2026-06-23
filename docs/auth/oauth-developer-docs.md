@@ -42,6 +42,8 @@ const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('b
 ### Step 2: Redirect User to Authorization
 
 > **Note:** OAuth endpoints are served from the hub origin `https://auth.civitai.com`. The old `https://civitai.com/api/auth/oauth/...` URLs are legacy 308-redirect shims kept for back-compat — point new integrations at `auth.civitai.com`.
+>
+> **OIDC issuer:** if you integrated "Sign in with Civitai" (OpenID Connect) against the `https://civitai.com` issuer, update your configured issuer to `https://auth.civitai.com` — the discovery doc, `id_token.iss`, and JWKS are all served from the hub now. (Plain OAuth API-token integrations are unaffected — only OIDC clients that validate `iss` need this change.)
 
 ```
 GET https://auth.civitai.com/api/auth/oauth/authorize
