@@ -60,7 +60,9 @@ export async function promoteChallengeEntries(args: {
       "reviewedAt" = now(),
       "reviewedById" = ${reviewerId}
     FROM source s
-    WHERE s.id = ci."imageId";
+    WHERE s.id = ci."imageId"
+      AND ci."collectionId" = ${collectionId}
+      AND ci.status = 'REVIEW';
   `;
 }
 

@@ -219,7 +219,7 @@ export async function getChallengesToReconcileFromDb(windowHours = 48): Promise<
     SELECT c.id
     FROM "Challenge" c
     WHERE c.status = ${ChallengeStatus.Completed}::"ChallengeStatus"
-    AND c."endsAt" > now() - (${windowHours} || ' hours')::interval
+    AND c."endsAt" > now() - (${windowHours} * interval '1 hour')
     AND EXISTS (
       SELECT 1 FROM "CollectionItem" ci
       WHERE ci."collectionId" = c."collectionId" AND ci.status = 'REVIEW'
