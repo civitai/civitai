@@ -1107,6 +1107,48 @@ export async function createWorkflowStepsFromGraph({
   };
 }
 
+/**
+ * Validate generation-graph `input` and assemble the orchestrator workflow
+ * steps WITHOUT submitting — the validate + step-build half of
+ * `generateFromGraph`, exposed for callers that drive their own
+ * `submitWorkflow`.
+ *
+ * App Blocks is the motivating caller: it wraps each submit with App-Blocks-
+ * specific belts (per-call buzz budget, cumulative daily Buzz cap, token-
+ * derived maturity clamp, daily-boost autoclaim) and so can't use the bundled
+ * `generateFromGraph` (which submits internally). It builds the step here, runs
+ * its own whatIf + budget checks, then calls `submitWorkflow` itself.
+ *
+ * NOTE: this does NOT audit the prompt — `generateFromGraph` audits before
+ * step-build, but this entry leaves auditing to the caller (App Blocks audits
+ * with its token-derived `isGreen`/`isModerator` in the router). Resource
+ * enrichment, canGenerate/availability gating, and POI detection still run
+ * (inside `createWorkflowStepsFromGraph`), so the resource belt is intact.
+ */
+export async function createWorkflowStepsFromGraphInput({
+  input,
+  externalCtx,
+  user,
+  isWhatIf,
+  isGreen,
+}: {
+  input: Record<string, unknown>;
+  externalCtx: GenerationCtx;
+  user?: { id?: number; isModerator?: boolean };
+  isWhatIf?: boolean;
+  isGreen?: boolean;
+}): Promise<WorkflowStepTemplate[]> {
+  const { data, computedKeys } = validateInput(input, externalCtx);
+  const { steps } = await createWorkflowStepsFromGraph({
+    data,
+    computedKeys,
+    user,
+    isWhatIf,
+    isGreen,
+  });
+  return steps;
+}
+
 type SnippetsPayloadShape = {
   wildcardSetIds?: number[];
   mode?: 'random' | 'batch';

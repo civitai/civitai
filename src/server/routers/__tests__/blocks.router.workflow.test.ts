@@ -19,7 +19,8 @@ const {
   mockSubmitWorkflow,
   mockGetWorkflow,
   mockCancelWorkflow,
-  mockCreateTextToImageStep,
+  mockCreateStepsFromGraph,
+  mockBuildGenerationContext,
   mockAuditPromptServer,
   mockGetUserById,
   mockDbRead,
@@ -39,7 +40,8 @@ const {
   mockSubmitWorkflow: vi.fn(),
   mockGetWorkflow: vi.fn(),
   mockCancelWorkflow: vi.fn(),
-  mockCreateTextToImageStep: vi.fn(),
+  mockCreateStepsFromGraph: vi.fn(),
+  mockBuildGenerationContext: vi.fn(),
   mockAuditPromptServer: vi.fn(),
   mockGetUserById: vi.fn(),
   mockDbRead: {
@@ -100,8 +102,13 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   getWorkflow: mockGetWorkflow,
   cancelWorkflow: mockCancelWorkflow,
 }));
-vi.mock('~/server/services/orchestrator/textToImage/textToImage', () => ({
-  createTextToImageStep: mockCreateTextToImageStep,
+// The router builds the txt2img step via the generation-graph pipeline
+// (dynamically imported inside `createBlockTextToImageStep`): it calls
+// `buildGenerationContext` for the external ctx, then
+// `createWorkflowStepsFromGraphInput` for the step array (router takes steps[0]).
+vi.mock('~/server/services/orchestrator/orchestration-new.service', () => ({
+  buildGenerationContext: mockBuildGenerationContext,
+  createWorkflowStepsFromGraphInput: mockCreateStepsFromGraph,
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: mockAuditPromptServer,
@@ -298,7 +305,8 @@ beforeEach(() => {
     mockSubmitWorkflow,
     mockGetWorkflow,
     mockCancelWorkflow,
-    mockCreateTextToImageStep,
+    mockCreateStepsFromGraph,
+    mockBuildGenerationContext,
     mockAuditPromptServer,
     mockGetUserById,
     mockDbRead.modelVersion.findUnique,
@@ -359,7 +367,10 @@ beforeEach(() => {
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockAuditPromptServer.mockResolvedValue(undefined);
-  mockCreateTextToImageStep.mockResolvedValue({ $type: 'textToImage', name: 's1', input: {} });
+  mockBuildGenerationContext.mockResolvedValue({ externalCtx: {} });
+  // createWorkflowStepsFromGraphInput returns an ARRAY of steps; the block path
+  // is single-step txt2img, so default to one step (router takes steps[0]).
+  mockCreateStepsFromGraph.mockResolvedValue([{ $type: 'textToImage', name: 's1', input: {} }]);
   // Daily-boost autoclaim defaults: balance high enough that no claim
   // fires unless a test explicitly drops it. Reward details say boost is
   // unclaimed today with the standard 25 awardAmount. Tests that exercise
@@ -1877,7 +1888,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       // The orchestrator resource belt (inside createTextToImageStep) rejects an
       // un-entitled early-access / Private resource. The whatIf step is the FIRST
       // belt call in submit, and it is BEFORE the reservation.
-      mockCreateTextToImageStep.mockRejectedValueOnce(
+      mockCreateStepsFromGraph.mockRejectedValueOnce(
         new TRPCError({ code: 'FORBIDDEN', message: 'early access pass required' })
       );
       const caller = blocksRouter.createCaller(fakeCtx() as never);
@@ -1901,7 +1912,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       mockResolveCanGenerateForVersions.mockResolvedValue(
         new Map([[99, { canGenerate: true }]])
       );
-      mockCreateTextToImageStep.mockRejectedValueOnce(
+      mockCreateStepsFromGraph.mockRejectedValueOnce(
         new TRPCError({ code: 'FORBIDDEN', message: 'this model requires a subscription' })
       );
       const caller = blocksRouter.createCaller(fakeCtx() as never);
@@ -2127,7 +2138,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
           [201, { canGenerate: true }],
         ])
       );
-      mockCreateTextToImageStep.mockRejectedValueOnce(
+      mockCreateStepsFromGraph.mockRejectedValueOnce(
         new TRPCError({ code: 'BAD_REQUEST', message: 'Using Private resources require an active subscription.' })
       );
       const caller = blocksRouter.createCaller(fakeCtx() as never);
@@ -2249,10 +2260,11 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       expect(versions.map((v: { id: number }) => v.id).sort((a: number, b: number) => a - b)).toEqual([
         99, 201,
       ]);
-      // The anchor at the head of the resources array is the RESOLVED checkpoint
-      // (500), not the body version (99).
-      const stepArg = mockCreateTextToImageStep.mock.calls[0][0];
-      expect(stepArg.resources[0].id).toBe(500);
+      // The graph input's `model` anchor is the RESOLVED checkpoint (500), not
+      // the body version (99). (In the graph shape the checkpoint is `model`,
+      // not `resources[0]` — the additional LoRA lives in `resources`.)
+      const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
+      expect(stepArg.input.model.id).toBe(500);
     });
 
     it('FIX1: non-Checkpoint page body — a LoRA matching the BODY family but NOT the resolved checkpoint is REJECTED', async () => {
