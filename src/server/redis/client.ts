@@ -1592,6 +1592,14 @@ export const REDIS_SYS_KEYS = {
      * local "live" harness.
      */
     DEV_TOKEN_RATE_LIMIT: 'system:blocks:dev-token-rate-limit',
+    /**
+     * Per-user (fallback per-IP) rate-limit counter for the token-auth
+     * self-scoped submission-status read (`/api/v1/blocks/submissions`). Same
+     * `SET NX EX` + `INCR` MULTI shape as `SUBMIT_RATE_LIMIT` (always created
+     * with its TTL), on `sysRedis`. Bounds a dev polling their own
+     * submission/review/deploy status from `civitai app status`.
+     */
+    SUBMISSIONS_RATE_LIMIT: 'system:blocks:submissions-rate-limit',
   },
 } as const;
 
