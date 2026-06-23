@@ -1584,6 +1584,14 @@ export const REDIS_SYS_KEYS = {
      * declared here rather than in `REDIS_KEYS.BLOCKS`.
      */
     SUBMIT_RATE_LIMIT: 'system:blocks:submit-rate-limit',
+    /**
+     * Per-user (fallback per-IP) rate-limit counter for the dev/preview
+     * block-token mint (`/api/v1/blocks/dev-token`). Same `SET NX EX` + `INCR`
+     * MULTI shape as `SUBMIT_RATE_LIMIT` (always created with its TTL), on
+     * `sysRedis`. Bounds a mod minting fresh short-lived dev tokens for their
+     * local "live" harness.
+     */
+    DEV_TOKEN_RATE_LIMIT: 'system:blocks:dev-token-rate-limit',
   },
 } as const;
 
