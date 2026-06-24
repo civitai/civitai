@@ -14,6 +14,7 @@ import {
   isMarketplaceCategory,
   MARKETPLACE_CATEGORY_LABELS,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { isPageSlot } from '~/shared/constants/slot-registry';
 import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema';
 
 /**
@@ -85,6 +86,14 @@ export function AppBlockCard({
   };
   const [busy] = useState(false);
   const slot = manifest.targets?.[0]?.slotId;
+  // A page app (target slot `app.page`) is STATELESS — installModel `'none'` in
+  // the slot registry — so it has no `block_user_subscriptions` install row and
+  // the Install/Manage CTA (openAppSettingsModal → slot subscription) is a
+  // dead/forbidden action for it (slot installs are server-gated dark, #2622).
+  // Show Install ONLY for model/in-context slot apps; a page app shows just
+  // "Open app". The predicate is about the APP's slot, not the viewer — so a
+  // model-slot app still shows Install for the grandfathered mod audience.
+  const isPageApp = isPageSlot(slot ?? '');
   return (
     <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
       <Stack gap="sm" h="100%">
@@ -196,19 +205,21 @@ export function AppBlockCard({
                 Open app
               </Button>
             )}
-            <LoginRedirect reason="perform-action">
-              <Button
-                size="xs"
-                variant={alreadySubscribed ? 'default' : 'filled'}
-                leftSection={
-                  alreadySubscribed ? <IconSettings size={14} /> : <IconPlugConnected size={14} />
-                }
-                loading={busy}
-                onClick={() => onOpen(block)}
-              >
-                {alreadySubscribed ? 'Manage' : 'Install'}
-              </Button>
-            </LoginRedirect>
+            {!isPageApp && (
+              <LoginRedirect reason="perform-action">
+                <Button
+                  size="xs"
+                  variant={alreadySubscribed ? 'default' : 'filled'}
+                  leftSection={
+                    alreadySubscribed ? <IconSettings size={14} /> : <IconPlugConnected size={14} />
+                  }
+                  loading={busy}
+                  onClick={() => onOpen(block)}
+                >
+                  {alreadySubscribed ? 'Manage' : 'Install'}
+                </Button>
+              </LoginRedirect>
+            )}
           </Group>
         </Group>
       </Stack>
