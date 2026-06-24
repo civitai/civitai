@@ -5,18 +5,23 @@ import { renderWithProviders } from '../../../test/component-setup';
 import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema';
 
 /**
- * App Blocks marketplace CARD — component tests for the action-CTA gate.
+ * App Blocks marketplace CARD — component tests for the action-CTA gate + the
+ * 2026-06 UX-pass card cleanup.
  *
  * Load-bearing behaviour:
+ *  - "View details" is the UNIVERSAL details affordance: it renders on EVERY
+ *    card (page app, model app, flag on/off) and opens the details modal. This
+ *    is what now guarantees the never-empty-card INVARIANT (audit HIGH) — it
+ *    SUPERSEDES the #2747 page-link "View" fallback (the old tests that asserted
+ *    a "View" detail-page link now assert "View details" instead — the coverage
+ *    is preserved, retargeted to the new affordance, NOT deleted).
  *  - The "Install"/"Manage" CTA is shown ONLY for apps that install into a
  *    model/in-context slot. A PAGE app (target slot `app.page`, installModel
  *    `'none'`) is stateless — no install row, slot install path server-gated
  *    dark (#2622) — so it never shows Install/Manage.
- *  - INVARIANT (audit HIGH): every card renders ≥1 affordance. A page app whose
- *    live "Open app" run isn't available (no page, or the viewer's
- *    `appBlocksPages` flag is off → `canOpenPage` false) falls back to a "View"
- *    link to the always-reachable detail page — it MUST NOT be an actionless
- *    card.
+ *  - Card cleanup: the install count is HIDDEN, the review indicator is hidden
+ *    when reviewCount=0 (shown when >0), the mod-assigned category (+ icon) is
+ *    shown, and the scopes were MOVED off the card face into the modal.
  *
  * The install predicate is the shared `hasInstallSlot(manifest)` (slot-registry,
  * the single source of truth shared with the detail page) — it scans ALL targets
@@ -29,6 +34,20 @@ import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema'
 // onClick runs directly — keeps the card test network-free.
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
   LoginRedirect: ({ children }: { children: React.ReactElement }) => children,
+}));
+
+// AppDetailsModal pulls in tRPC queries (getAppDetail / listMySubscriptions) +
+// feature-flag/current-user hooks — its internals are covered by its OWN test
+// (AppDetailsModal.browser.test.tsx). Stub it to a lightweight, network-free
+// component that just reflects `opened` so the CARD test can assert the
+// "View details" button opens the modal without any network. Renders a probe
+// element ONLY when open.
+const detailsModalSpy = vi.fn();
+vi.mock('~/components/Apps/AppDetailsModal', () => ({
+  AppDetailsModal: ({ opened, block }: { opened: boolean; block: { id: string } }) => {
+    detailsModalSpy({ opened, blockId: block.id });
+    return opened ? <div data-testid="details-modal">details for {block.id}</div> : null;
+  },
 }));
 
 // Import AFTER the mocks are declared (vi.mock is hoisted, imports are not).
@@ -78,6 +97,7 @@ const onOpen = vi.fn();
 
 beforeEach(() => {
   onOpen.mockClear();
+  detailsModalSpy.mockClear();
 });
 
 /** The card's action group lives in the bottom Group; assert ≥1 actionable
@@ -86,20 +106,25 @@ function expectAtLeastOneAffordance() {
   const links = page.getByRole('link').elements();
   const buttons = page.getByRole('button').elements();
   // The title + description are also links (to the detail page); the action
-  // group adds Open app / View / Install on top. The invariant we care about is
-  // a CTA in the action row — every branch below asserts the SPECIFIC expected
-  // CTA, so this is the coarse backstop that SOMETHING actionable rendered.
+  // group adds "View details" (universal) / Open app / Install on top. The
+  // invariant we care about is a CTA in the action row — every branch below
+  // asserts the SPECIFIC expected CTA, so this is the coarse backstop that
+  // SOMETHING actionable rendered.
   expect(links.length + buttons.length).toBeGreaterThan(0);
 }
 
 describe('AppBlockCard action CTA gate', () => {
-  test('page app + canOpenPage=false (pages flag off) → "View" fallback, NOT zero buttons [HIGH regression]', async () => {
+  test('page app + canOpenPage=false (pages flag off) → "View details" present, NOT actionless [HIGH regression, #2747 retargeted]', async () => {
     renderWithProviders(
       <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
     );
 
-    // The live "Open app" run is unavailable (flag off) → fall back to "View".
-    await expect.element(page.getByRole('link', { name: /^view$/i })).toBeInTheDocument();
+    // The live "Open app" run is unavailable (flag off); the never-empty-card
+    // invariant is now carried by the universal "View details" button (was the
+    // #2747 page-link "View" fallback).
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    // The old page-link "View" fallback is GONE (replaced by the modal button).
+    expect(page.getByRole('link', { name: /^view$/i }).query()).toBeNull();
     // "Open app" did NOT render (no flag), and Install is forbidden for a page app.
     expect(page.getByRole('link', { name: /open app/i }).query()).toBeNull();
     expect(page.getByRole('button', { name: /^install$/i }).query()).toBeNull();
@@ -108,7 +133,7 @@ describe('AppBlockCard action CTA gate', () => {
     expectAtLeastOneAffordance();
   });
 
-  test('page app + manifest.hasPage=false → still ≥1 affordance ("View")', async () => {
+  test('page app + manifest.hasPage=false → still ≥1 affordance ("View details")', async () => {
     renderWithProviders(
       // hasPage false but canOpenPage true → "Open app" still can't render (no page).
       <AppBlockCard
@@ -119,19 +144,21 @@ describe('AppBlockCard action CTA gate', () => {
       />
     );
 
-    await expect.element(page.getByRole('link', { name: /^view$/i })).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
     expect(page.getByRole('link', { name: /open app/i }).query()).toBeNull();
     expect(page.getByRole('button', { name: /^install$/i }).query()).toBeNull();
     expectAtLeastOneAffordance();
   });
 
-  test('page app + canOpenPage=true → "Open app" shows, "View" NOT duplicated', async () => {
+  test('page app + canOpenPage=true → "Open app" shows ALONGSIDE the universal "View details"', async () => {
     renderWithProviders(
       <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage />
     );
 
     await expect.element(page.getByRole('link', { name: /open app/i })).toBeInTheDocument();
-    // The live run IS available → no redundant "View" fallback.
+    // "View details" is universal — present even when "Open app" renders.
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    // No legacy page-link "View".
     expect(page.getByRole('link', { name: /^view$/i }).query()).toBeNull();
     // Still no Install/Manage for a page app.
     expect(page.getByRole('button', { name: /^install$/i }).query()).toBeNull();
@@ -149,7 +176,7 @@ describe('AppBlockCard action CTA gate', () => {
     expect(page.getByRole('link', { name: /^view$/i }).query()).toBeNull();
   });
 
-  test('model-slot app renders "Install" and fires onOpen (no regression)', async () => {
+  test('model-slot app renders "Install" + the universal "View details" and fires onOpen', async () => {
     renderWithProviders(
       <AppBlockCard
         block={makeBlock({ targets: [{ slotId: 'model.sidebar_top' }] })}
@@ -160,7 +187,9 @@ describe('AppBlockCard action CTA gate', () => {
 
     const install = page.getByRole('button', { name: /^install$/i });
     await expect.element(install).toBeInTheDocument();
-    // No page → no "Open app", and no "View" fallback (Install IS the action).
+    // "View details" is universal — present even for a model-slot app.
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    // No page → no "Open app", and no legacy page-link "View".
     expect(page.getByRole('link', { name: /open app/i }).query()).toBeNull();
     expect(page.getByRole('link', { name: /^view$/i }).query()).toBeNull();
 
@@ -211,7 +240,7 @@ describe('AppBlockCard action CTA gate', () => {
     expect(page.getByRole('link', { name: /^view$/i }).query()).toBeNull();
   });
 
-  test('empty-string slotId at index [0] → treated as a page app (no Install), "View" fallback', async () => {
+  test('empty-string slotId at index [0] → treated as a page app (no Install), "View details" fallback', async () => {
     // Parity with the detail page: a falsy slotId is skipped (filter(Boolean)),
     // so [''] yields NO model install slot → page-app branch. The card and the
     // detail page agree on this input (both via the shared hasInstallSlot).
@@ -225,8 +254,177 @@ describe('AppBlockCard action CTA gate', () => {
     );
 
     expect(page.getByRole('button', { name: /^install$/i }).query()).toBeNull();
-    // No usable page either → the never-empty-card invariant gives us "View".
-    await expect.element(page.getByRole('link', { name: /^view$/i })).toBeInTheDocument();
+    // No usable page either → the never-empty-card invariant gives us "View details".
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    expect(page.getByRole('link', { name: /^view$/i }).query()).toBeNull();
     expectAtLeastOneAffordance();
+  });
+});
+
+describe('AppBlockCard — View details modal opens', () => {
+  test('"View details" button is present on a model app and opens the modal', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ targets: [{ slotId: 'model.sidebar_top' }] })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    // Closed initially — the modal probe is not in the DOM.
+    expect(page.getByTestId('details-modal').query()).toBeNull();
+
+    const viewDetails = page.getByRole('button', { name: /view details/i });
+    await expect.element(viewDetails).toBeInTheDocument();
+    await viewDetails.click();
+
+    // Clicking opens the modal (opened=true → probe renders).
+    await expect.element(page.getByTestId('details-modal')).toBeInTheDocument();
+    // The modal received this app's id.
+    expect(detailsModalSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ opened: true, blockId: 'app-1' })
+    );
+  });
+
+  test('"View details" button is present on a PAGE app and opens the modal', async () => {
+    renderWithProviders(
+      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
+    );
+
+    const viewDetails = page.getByRole('button', { name: /view details/i });
+    await expect.element(viewDetails).toBeInTheDocument();
+    await viewDetails.click();
+    await expect.element(page.getByTestId('details-modal')).toBeInTheDocument();
+  });
+
+  // ── L3 (audit): the modal SUBTREE is not even mounted while closed ──────────
+  // Previously <AppDetailsModal> was mounted in every card unconditionally
+  // (N idle modal instances + their hook subtrees across the grid). It's now
+  // gated `{detailsOpen && <AppDetailsModal .../>}`, so the component does not
+  // mount — and crucially does not run its tRPC-query hooks — until opened.
+  test('modal subtree is NOT mounted while closed (component never invoked), mounts on open', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ targets: [{ slotId: 'model.sidebar_top' }] })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    // The "View details" BUTTON is unconditional (never-empty-card invariant)…
+    const viewDetails = page.getByRole('button', { name: /view details/i });
+    await expect.element(viewDetails).toBeInTheDocument();
+    // …but the modal SUBTREE is gated: the component was never even rendered
+    // while closed (not "rendered but returned null"). This is the L3 probe —
+    // the spy fires inside AppDetailsModal's render, so zero calls ⇒ not mounted.
+    expect(detailsModalSpy).not.toHaveBeenCalled();
+    expect(page.getByTestId('details-modal').query()).toBeNull();
+
+    // Opening mounts the subtree.
+    await viewDetails.click();
+    await expect.element(page.getByTestId('details-modal')).toBeInTheDocument();
+    expect(detailsModalSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ opened: true, blockId: 'app-1' })
+    );
+  });
+});
+
+describe('AppBlockCard — 2026-06 card cleanup', () => {
+  test('install count is NOT rendered (hidden until a real user base)', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({}, { installCount: 1234 })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    // The old install-count copy ("N installs", lowercase) is gone, and the
+    // formatted count itself ("1,234") renders nowhere. (Note: the "Install"
+    // BUTTON is a separate, intentional CTA — we match the lowercase count copy,
+    // not the capitalized button label.)
+    expect(page.getByText(/\d[\d,]*\s+installs?/i).query()).toBeNull();
+    expect(page.getByText('1,234', { exact: false }).query()).toBeNull();
+  });
+
+  test('review indicator HIDDEN when reviewCount=0 (no "No reviews" affordance)', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({}, { reviewCount: 0, avgRating: null })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    // No "No reviews" text, and no rating affordance for a 0-review app.
+    expect(page.getByText(/no reviews/i).query()).toBeNull();
+  });
+
+  test('review indicator SHOWN when reviewCount>0 (avg + count)', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({}, { reviewCount: 12, avgRating: 4.5 })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    // avg "4.5" and count "(12)" render.
+    await expect.element(page.getByText('4.5', { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('(12)', { exact: false })).toBeInTheDocument();
+  });
+
+  test('category (+ icon) rendered when a category is set', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({}, { category: 'generation' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    // The category label chip shows.
+    await expect.element(page.getByText('Generation', { exact: true })).toBeInTheDocument();
+    // The category badge carries an icon (the leftSection svg). The "grape"
+    // category badge is the one with the label text; assert an svg sits in it.
+    const labelEl = page.getByText('Generation', { exact: true }).element();
+    const badge = labelEl.closest('.mantine-Badge-root');
+    expect(badge).not.toBeNull();
+    expect(badge!.querySelector('svg')).not.toBeNull();
+  });
+
+  test('no category → no category chip rendered', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({}, { category: null })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    // None of the category labels render.
+    expect(page.getByText('Generation', { exact: true }).query()).toBeNull();
+    expect(page.getByText('Utility', { exact: true }).query()).toBeNull();
+  });
+
+  test('scopes are NOT rendered on the card face (moved into the modal)', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock(
+          {},
+          { scopesSummary: ['user:read:self', 'ai:write:budgeted'] }
+        )}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    // The scope ids must NOT appear on the card face.
+    expect(page.getByText('user:read:self', { exact: false }).query()).toBeNull();
+    expect(page.getByText('ai:write:budgeted', { exact: false }).query()).toBeNull();
   });
 });
