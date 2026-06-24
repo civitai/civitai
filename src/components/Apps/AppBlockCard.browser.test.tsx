@@ -296,6 +296,37 @@ describe('AppBlockCard — View details modal opens', () => {
     await viewDetails.click();
     await expect.element(page.getByTestId('details-modal')).toBeInTheDocument();
   });
+
+  // ── L3 (audit): the modal SUBTREE is not even mounted while closed ──────────
+  // Previously <AppDetailsModal> was mounted in every card unconditionally
+  // (N idle modal instances + their hook subtrees across the grid). It's now
+  // gated `{detailsOpen && <AppDetailsModal .../>}`, so the component does not
+  // mount — and crucially does not run its tRPC-query hooks — until opened.
+  test('modal subtree is NOT mounted while closed (component never invoked), mounts on open', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ targets: [{ slotId: 'model.sidebar_top' }] })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    // The "View details" BUTTON is unconditional (never-empty-card invariant)…
+    const viewDetails = page.getByRole('button', { name: /view details/i });
+    await expect.element(viewDetails).toBeInTheDocument();
+    // …but the modal SUBTREE is gated: the component was never even rendered
+    // while closed (not "rendered but returned null"). This is the L3 probe —
+    // the spy fires inside AppDetailsModal's render, so zero calls ⇒ not mounted.
+    expect(detailsModalSpy).not.toHaveBeenCalled();
+    expect(page.getByTestId('details-modal').query()).toBeNull();
+
+    // Opening mounts the subtree.
+    await viewDetails.click();
+    await expect.element(page.getByTestId('details-modal')).toBeInTheDocument();
+    expect(detailsModalSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ opened: true, blockId: 'app-1' })
+    );
+  });
 });
 
 describe('AppBlockCard — 2026-06 card cleanup', () => {

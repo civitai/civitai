@@ -78,7 +78,11 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
 
   // Anon-capable public read path — only fires while the modal is open (and the
   // appBlocks flag is granted). Returns ONLY the PublicAppDetail allowlist.
-  const { data, isLoading } = trpc.blocks.getAppDetail.useQuery(
+  // `retry: false` → a failure surfaces immediately as `isError` (we render an
+  // explicit error state for the detail-only sections rather than silently
+  // falling through to "no permissions" — that would be a misleading
+  // security-relevant disclosure; see the scopes block below).
+  const { data, isLoading, isError } = trpc.blocks.getAppDetail.useQuery(
     { appBlockId },
     { enabled: opened && !!features.appBlocks && !!appBlockId, retry: false }
   );
@@ -95,6 +99,11 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
   );
 
   const detail = data as PublicAppDetail | undefined;
+  // Did the detail query actually RESOLVE (vs still loading / failed)? This is
+  // the load-bearing distinction for the disclosure copy + the aggregates: we
+  // only make a definitive statement ("does not request any permissions",
+  // resolved avgRating/reviewCount) once the public detail genuinely resolved.
+  const detailLoaded = detail !== undefined;
   // Title/author render from the listing row immediately; the detail query
   // enriches them (and is the only source for screenshots/scopes/version).
   const name = detail?.manifest.name ?? block.manifest.name ?? block.blockId;
@@ -102,6 +111,12 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
   const description = detail?.manifest.description ?? block.manifest.description ?? '';
   const screenshots = detail?.screenshots ?? [];
   const scopes = detail?.scopes ?? [];
+  // L2: once the detail resolved, the aggregate is authoritative — prefer it
+  // DIRECTLY (a legit `null` means "no rating", not "fall back to the stale
+  // listing value"). Only use the listing `block` aggregate WHILE loading
+  // (detail === undefined). `??` would wrongly fall through on a resolved null.
+  const avgRating = detailLoaded ? detail.avgRating : block.avgRating;
+  const reviewCount = detailLoaded ? detail.reviewCount : block.reviewCount;
 
   return (
     <Modal opened={opened} onClose={onClose} title={name} size="lg" radius="md">
@@ -132,9 +147,23 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
           </Text>
         )}
 
+        {/* Detail-load failure (audit M1): when the public-detail query errors
+            we can't say anything definitive about screenshots OR scopes, so
+            surface ONE explicit error banner here (the scopes block below shows
+            its own inline error too) rather than rendering a "no screenshots /
+            no permissions" view that looks like a deliberate, reassuring
+            statement about the app. */}
+        {isError && (
+          <Text size="sm" c="red">
+            Couldn&apos;t load full details — try again.
+          </Text>
+        )}
+
         {/* Screenshots — publisher gallery from the public allowlist (gated app
             route URLs, magic-byte-validated + mod-reviewed at approval). Hidden
-            entirely when the app shipped none (graceful absence). */}
+            entirely when the app shipped none (graceful absence). On detail-load
+            error `screenshots` is empty AND `isError` shows the banner above, so
+            we don't imply "this app has no screenshots". */}
         {screenshots.length > 0 && (
           <Stack gap="xs">
             <Title order={5}>Screenshots</Title>
@@ -174,7 +203,15 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
 
         {/* Scopes — the permission disclosure, MOVED off the card face into the
             modal (2026-06 UX pass). Sourced from the app's APPROVED scopes
-            (PublicAppDetail.scopes). */}
+            (PublicAppDetail.scopes).
+
+            DISCLOSURE CORRECTNESS (audit M1): the definitive "does not request
+            any permissions" copy renders ONLY when the detail genuinely RESOLVED
+            (detailLoaded) with an empty scope list. While LOADING we show a
+            spinner; on ERROR we show an explicit "couldn't load" state — never
+            the reassuring "no permissions" line, which would be a misleading
+            security-relevant claim about an app whose scopes we never actually
+            read. */}
         <Stack gap="xs">
           <Group gap="xs">
             <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
@@ -182,7 +219,15 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
             </ThemeIcon>
             <Title order={5}>This app can…</Title>
           </Group>
-          {scopes.length === 0 ? (
+          {isError ? (
+            <Text size="sm" c="red">
+              Couldn&apos;t load full details — try again.
+            </Text>
+          ) : !detailLoaded ? (
+            <Center py="xs">
+              <Loader size="xs" />
+            </Center>
+          ) : scopes.length === 0 ? (
             <Text size="sm" c="dimmed">
               This app does not request any permissions.
             </Text>
@@ -220,8 +265,8 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
             getAppDetail invalidation inside the component). */}
         <AppBlockReviews
           appBlockId={appBlockId}
-          avgRating={detail?.avgRating ?? block.avgRating}
-          reviewCount={detail?.reviewCount ?? block.reviewCount}
+          avgRating={avgRating}
+          reviewCount={reviewCount}
           subscriptions={mySubsForApp}
         />
       </Stack>

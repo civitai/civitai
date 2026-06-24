@@ -260,13 +260,15 @@ export function AppBlockCard({
           </Group>
         </Group>
       </Stack>
-      {/* Details modal — controlled by this card's local state. Lazily mounted
-          but the query inside only fires while `opened`. */}
-      <AppDetailsModal
-        opened={detailsOpen}
-        onClose={() => setDetailsOpen(false)}
-        block={block}
-      />
+      {/* Details modal — controlled by this card's local state. GATED so the
+          whole subtree (its tRPC query hooks + the <AppBlockReviews> subtree)
+          only EXISTS while open: with N cards in the marketplace grid, an
+          always-mounted modal per card meant N idle modal instances. The "View
+          details" BUTTON above stays unconditional (the never-empty-card
+          invariant) — only this subtree is gated. */}
+      {detailsOpen && (
+        <AppDetailsModal opened onClose={() => setDetailsOpen(false)} block={block} />
+      )}
     </Card>
   );
 }
