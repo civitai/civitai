@@ -514,8 +514,12 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
     }
   );
 
-  it.each([408, 429, 502, 503, 504])(
-    'maps a MeiliSearchApiError(httpStatus=%i) to a retryable 503',
+  // A MeiliSearchApiError carries a STRUCTURED JSON error body — for a 5xx that
+  // is more likely a deterministic Meili-internal error than a transient
+  // brownout, so ONLY the unambiguous gateway statuses 502/503/504 reclassify to
+  // 503 (audit 🟡 #1). A JSON-body 408/429/500 ApiError is NOT masked.
+  it.each([502, 503, 504])(
+    'maps a MeiliSearchApiError(httpStatus=%i, gateway 5xx) to a retryable 503',
     async (status) => {
       mockGetImagesFromFeedSearch.mockRejectedValue(makeApiError(status));
       const { req, res } = createMocks({ query: { limit: '10' } });
@@ -525,6 +529,19 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
       expect(res._getStatusCode()).toBe(503);
       expect(res._getHeader('Cache-Control')).toBe('no-store');
       expect(res._getHeader('Retry-After')).toBe('2');
+    }
+  );
+
+  it.each([408, 429])(
+    'does NOT mask a MeiliSearchApiError(httpStatus=%i, JSON body) as 503 — only the Communication/transport path treats 408/429 as transient',
+    async (status) => {
+      mockGetImagesFromFeedSearch.mockRejectedValue(makeApiError(status));
+      const { req, res } = createMocks({ query: { limit: '10' } });
+
+      await handler(req, res);
+
+      expect(res._getStatusCode()).not.toBe(503);
+      expect(res._getHeader('Retry-After')).toBeUndefined();
     }
   );
 
@@ -587,6 +604,33 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
       expect(res._getHeader('Retry-After')).toBeUndefined();
     }
   );
+
+  it('does NOT mask a deterministic MeiliSearchApiError(httpStatus=500) (JSON body) as 503 — bubbles to 500, no Retry-After', async () => {
+    // A structured-JSON Meili 500 is a deterministic Meili-internal error, NOT a
+    // transient brownout — it must surface as a hard error, never a retryable
+    // 503 (audit 🟡 #1 masking-guard). It isn't a TRPCError, so it falls to the
+    // generic mapping → 500.
+    mockGetImagesFromFeedSearch.mockRejectedValue(makeApiError(500));
+    const { req, res } = createMocks({ query: { limit: '10' } });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).not.toBe(503);
+    expect(res._getHeader('Retry-After')).toBeUndefined();
+  });
+
+  it('DOES map a transport-layer MeiliSearchCommunicationError(statusCode=500) (empty body) to a retryable 503', async () => {
+    // Contrast with the ApiError above: an empty/non-JSON-body 500 is the
+    // genuinely-transient transport case → 503 with Retry-After.
+    mockGetImagesFromFeedSearch.mockRejectedValue(makeCommunicationError(500));
+    const { req, res } = createMocks({ query: { limit: '10' } });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(503);
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
+    expect(res._getHeader('Retry-After')).toBe('2');
+  });
 
   it('does NOT mask a generic app error (null deref) as 503 — bubbles to 500', async () => {
     mockGetImagesFromFeedSearch.mockRejectedValue(new Error('cannot read properties of undefined'));

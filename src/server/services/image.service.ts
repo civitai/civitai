@@ -50,6 +50,7 @@ import {
   MeilisearchFetchError,
   SEARCH_ACTOR_HEADER,
   failfastReasonForStatus,
+  failfastReasonForTransientError,
   fetchDocumentsAbortable,
   getMetricsSearchClient,
   isFailfastStatus,
@@ -2226,6 +2227,16 @@ export const getAllImagesIndex = async (
     // inside the search index path. 4xx-other (malformed filter / auth) and
     // any other Error are NOT transient and still bubble as-is.
     if (isTransientMeiliError(err)) {
+      // Keep a transient Meili outage ATTRIBUTABLE: the reclassified 503 would
+      // otherwise vanish into the unlabeled 503 bucket. Mirror the post-filter
+      // loop's counter usage (route + reason) so an outage is queryable by the
+      // same label vocabulary; `iteration:'0'` (this is the single pre-filter
+      // search, not the post-filter iteration loop).
+      meiliFetchFailfastTotal.inc({
+        route: 'getAllImagesIndex',
+        iteration: '0',
+        reason: failfastReasonForTransientError(err),
+      });
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
@@ -2955,6 +2966,15 @@ export async function getImagesFromFeedSearch(
     // generic 500 mapping). 4xx-other (malformed filter / auth) and any other
     // Error are NOT transient and still bubble as-is (→ their real status).
     if (isTransientMeiliError(err)) {
+      // Keep a transient Meili outage ATTRIBUTABLE (see getAllImagesIndex). The
+      // reclassified 503 would otherwise land in the unlabeled 503 bucket;
+      // mirror the post-filter loop's {route, reason} so a Meili brownout is
+      // queryable. `iteration:'0'` — this is the single feed-search call.
+      meiliFetchFailfastTotal.inc({
+        route: 'getImagesFromFeedSearch',
+        iteration: '0',
+        reason: failfastReasonForTransientError(err),
+      });
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
