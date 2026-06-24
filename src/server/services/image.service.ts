@@ -1064,6 +1064,14 @@ export function enqueueImageIngestion({
 }) {
   if (!images.length) return;
 
+  logToAxiom({
+    name: `${name}:enqueue`,
+    type: 'info',
+    userId,
+    message: `Enqueuing ${images.length} images for ingestion`,
+    imageIds: images.map(img => img.id),
+  }).catch(() => undefined);
+
   const tasks = images.map(
     (img) => () =>
       ingestImage({ image: img, lowPriority, userId }).catch((error) => {
