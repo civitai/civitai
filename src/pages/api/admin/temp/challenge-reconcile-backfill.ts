@@ -13,16 +13,13 @@
  * Body shape:
  *   {
  *     "action": "preview" | "run",
- *     "windowHours": 720,            // optional, default 720 (30d); rolling lookback fallback
- *     "challengeIds": [306, 305],    // optional; explicit targets
- *     "start": "2026-06-20",         // optional; with `end`, target a date range instead
- *     "end": "2026-06-22"            // optional; calendar-day INCLUSIVE (whole end day counted)
+ *     "windowHours": 720,            // optional, default 720 (30d); ignored when challengeIds given
+ *     "challengeIds": [306, 305]     // optional; explicit targets instead of the window scan
  *   }
  *
- * Targets (precedence: challengeIds > date range > windowHours):
- *   - challengeIds given → exactly those challenges.
- *   - start + end given  → completed challenges whose endsAt falls within [start, end]
- *     (both bounds calendar-day inclusive) that still have REVIEW CollectionItems.
+ * Targets:
+ *   - challengeIds given → exactly those challenges. Use this to chunk a large backfill into
+ *     batches (each request is capped — see Known limitations).
  *   - otherwise → completed challenges within `windowHours` that still have REVIEW
  *     CollectionItems (same selector the hourly reconciliation job uses).
  *
@@ -52,7 +49,7 @@
  *     the paidUserIds metadata write (last-write-wins). Money is safe (externalTransactionId
  *     dedup); only the bookkeeping list can drift. Avoid running both on one challenge at once.
  *   - `run` is sequential and capped at MAX_CHALLENGES per request to avoid a partial timeout;
- *     chunk larger backfills via date range or challengeIds.
+ *     chunk larger backfills into batches of challengeIds.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -63,26 +60,16 @@ import {
   getChallengeConfig,
   challengeToLegacyFormat,
   getChallengesToReconcile,
-  getChallengesToReconcileBetween,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { getChallengeById } from '~/server/games/daily-challenge/challenge-helpers';
 import { reconcileCompletedChallenge } from '~/server/games/daily-challenge/challenge-rewards';
 import { isDefined } from '~/utils/type-guards';
 
-const schema = z
-  .object({
-    action: z.enum(['preview', 'run']),
-    windowHours: z.number().positive().optional(),
-    challengeIds: z.array(z.number()).optional(),
-    start: z.coerce.date().optional(),
-    end: z.coerce.date().optional(),
-  })
-  .refine((d) => (d.start ? !!d.end : !d.end), {
-    message: 'start and end must be provided together',
-  })
-  .refine((d) => !d.start || !d.end || d.start <= d.end, {
-    message: 'start must be on or before end',
-  });
+const schema = z.object({
+  action: z.enum(['preview', 'run']),
+  windowHours: z.number().positive().optional(),
+  challengeIds: z.array(z.number()).optional(),
+});
 
 export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const parsed = schema.safeParse(req.body);
@@ -90,30 +77,13 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
     return res.status(400).json({ error: 'Invalid request', issues: parsed.error.issues });
   }
 
-  const { action, challengeIds, windowHours = 720, start, end } = parsed.data;
+  const { action, challengeIds, windowHours = 720 } = parsed.data;
 
-  // Normalize the date range to whole UTC days so the bounds are calendar-day inclusive
-  // regardless of any time component in the input (z.coerce.date also accepts ISO datetimes).
-  // startNorm = 00:00 UTC of the start day; endExclusive = 00:00 UTC of the day AFTER the end
-  // day, selected with endsAt < endExclusive — so e.g. end=2026-06-22 includes the challenge
-  // that closed 2026-06-22 04:00 UTC.
-  const startNorm = start
-    ? new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()))
-    : undefined;
-  const endNorm = end
-    ? new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()))
-    : undefined;
-  const endExclusive = endNorm
-    ? new Date(endNorm.getTime() + 24 * 60 * 60 * 1000)
-    : undefined;
-
-  // Resolve target challenges. Precedence: explicit ids > date range > rolling window.
+  // Resolve target challenges (explicit ids, else the rolling window scan).
   const challenges = challengeIds?.length
     ? (await Promise.all(challengeIds.map((id) => getChallengeById(id))))
         .filter(isDefined)
         .map(challengeToLegacyFormat)
-    : startNorm && endExclusive
-    ? await getChallengesToReconcileBetween(startNorm, endExclusive)
     : await getChallengesToReconcile(windowHours);
 
   if (action === 'preview') {
@@ -131,25 +101,18 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
         };
       })
     );
-    return res.status(200).json({
-      action,
-      windowHours,
-      start: startNorm ?? null,
-      end: endNorm ?? null,
-      challengeCount: plan.length,
-      plan,
-    });
+    return res.status(200).json({ action, windowHours, challengeCount: plan.length, plan });
   }
 
   // action === 'run'
   // `run` processes challenges sequentially in a single HTTP request (bulk UPDATE + Buzz
   // batch + notification + metadata write each). Cap the per-request count so a wide window
   // can't blow the ingress/serverless timeout mid-run. Re-runs are idempotent, but chunk
-  // large backfills via a narrower date range or explicit challengeIds.
+  // large backfills into batches of challengeIds.
   const MAX_CHALLENGES = 100;
   if (challenges.length > MAX_CHALLENGES) {
     return res.status(400).json({
-      error: `Would process ${challenges.length} challenges in one request (max ${MAX_CHALLENGES}). Narrow the date range or pass challengeIds in batches to avoid a mid-run timeout.`,
+      error: `Would process ${challenges.length} challenges in one request (max ${MAX_CHALLENGES}). Pass challengeIds in batches to avoid a mid-run timeout.`,
       challengeCount: challenges.length,
     });
   }
@@ -195,8 +158,6 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
   return res.status(200).json({
     action,
     windowHours,
-    start: startNorm ?? null,
-    end: endNorm ?? null,
     challengeCount: results.length,
     totals,
     results,
