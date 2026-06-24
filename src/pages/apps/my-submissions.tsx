@@ -1,8 +1,8 @@
-import { Alert, Button, Card, Container, Group, Stack, Text, Title } from '@mantine/core';
+import { Alert, Button, Card, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle, IconArrowRight } from '@tabler/icons-react';
 import Link from 'next/link';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { AppsSubNav } from '~/components/Apps/AppsSubNav';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { deployRefetchInterval } from '~/components/Apps/deploy-status';
 import { MySubmissionsList, type Submission } from '~/components/Apps/MySubmissionsList';
 import { Meta } from '~/components/Meta/Meta';
@@ -73,52 +73,44 @@ export default function MySubmissionsPage() {
   return (
     <>
       <Meta title="My app submissions — Civitai" deIndex />
-      <Container size="xl" py="xl">
-        <Stack gap="lg">
-          <AppsSubNav />
-          <Group justify="space-between" align="flex-end">
-            <Stack gap={4}>
-              <Title order={2}>My submissions</Title>
-              <Text c="dimmed" size="sm">
-                Status of every app submission you've made. Open a row's reviewer
-                notes to see mod feedback; pending submissions can be withdrawn.
-              </Text>
+      <AppsPageLayout
+        title="My submissions"
+        subtitle="Status of every app submission you've made. Open a row's reviewer notes to see mod feedback; pending submissions can be withdrawn."
+        actions={
+          <Button
+            component={Link}
+            href="/apps/submit"
+            rightSection={<IconArrowRight size={16} />}
+          >
+            Submit a new app
+          </Button>
+        }
+      >
+        {submissionsQuery.isError && (
+          <Alert color="red" icon={<IconAlertTriangle size={16} />}>
+            {submissionsQuery.error.message}
+          </Alert>
+        )}
+
+        {!submissionsQuery.isLoading && submissions.length === 0 && (
+          <Card withBorder p="lg">
+            <Stack gap="xs" align="center" py="md">
+              <Text>You haven't submitted any apps yet.</Text>
+              <Button component={Link} href="/apps/submit">
+                Submit your first app
+              </Button>
             </Stack>
-            <Button
-              component={Link}
-              href="/apps/submit"
-              rightSection={<IconArrowRight size={16} />}
-            >
-              Submit a new app
-            </Button>
-          </Group>
+          </Card>
+        )}
 
-          {submissionsQuery.isError && (
-            <Alert color="red" icon={<IconAlertTriangle size={16} />}>
-              {submissionsQuery.error.message}
-            </Alert>
-          )}
-
-          {!submissionsQuery.isLoading && submissions.length === 0 && (
-            <Card withBorder p="lg">
-              <Stack gap="xs" align="center" py="md">
-                <Text>You haven't submitted any apps yet.</Text>
-                <Button component={Link} href="/apps/submit">
-                  Submit your first app
-                </Button>
-              </Stack>
-            </Card>
-          )}
-
-          {submissions.length > 0 && (
-            <MySubmissionsList
-              submissions={submissions}
-              onWithdraw={(id) => withdrawMutation.mutate({ publishRequestId: id })}
-              withdrawing={withdrawMutation.isPending}
-            />
-          )}
-        </Stack>
-      </Container>
+        {submissions.length > 0 && (
+          <MySubmissionsList
+            submissions={submissions}
+            onWithdraw={(id) => withdrawMutation.mutate({ publishRequestId: id })}
+            withdrawing={withdrawMutation.isPending}
+          />
+        )}
+      </AppsPageLayout>
     </>
   );
 }

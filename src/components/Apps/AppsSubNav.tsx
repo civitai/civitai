@@ -1,4 +1,4 @@
-import { Button, Group, ScrollArea } from '@mantine/core';
+import { ScrollArea, Tabs } from '@mantine/core';
 import {
   IconBuildingStore,
   IconCurrencyDollar,
@@ -92,9 +92,25 @@ export function isActiveAppsRoute(href: string, current: string): boolean {
 }
 
 /**
+ * The href of the tab that should be active for `currentPath`, or `null` when
+ * none matches (a deep `/apps/*` route with no corresponding tab leaves the bar
+ * with no active tab rather than mis-lighting one). Drives `Tabs.value`.
+ */
+export function activeAppsTab(currentPath: string): string | null {
+  return SUB_NAV_LINKS.find((l) => isActiveAppsRoute(l.href, currentPath))?.href ?? null;
+}
+
+/**
  * Pure presentational sub-nav. Kept separate from the data-fetching container
  * so it can be rendered in isolation (props-only) under test and reused if a
  * caller already has the summary in hand.
+ *
+ * Rendered as Mantine navigation **Tabs**: each tab is a real Next `Link`
+ * (`component={Link}` — keyboard / middle-click / SEO affordances of an anchor),
+ * and `Tabs.value` (the active href) drives the active styling + `aria-selected`.
+ * Navigation is the anchor's job; there's no `onChange` (the route is the single
+ * source of truth, so clicking just follows the link and the new route lights
+ * the matching tab).
  */
 export function AppsSubNavView({
   summary,
@@ -104,28 +120,30 @@ export function AppsSubNavView({
   currentPath: string;
 }) {
   const links = SUB_NAV_LINKS.filter((l) => l.visible(summary));
+  const active = activeAppsTab(currentPath);
   return (
     <ScrollArea type="never" w="100%">
-      <Group gap="xs" wrap="nowrap" role="navigation" aria-label="App sections">
-        {links.map((link) => {
-          const active = isActiveAppsRoute(link.href, currentPath);
-          const Icon = link.icon;
-          return (
-            <Button
-              key={link.href}
-              component={Link}
-              href={link.href}
-              size="compact-sm"
-              radius="xl"
-              variant={active ? 'filled' : 'default'}
-              aria-current={active ? 'page' : undefined}
-              leftSection={<Icon size={15} />}
-            >
-              {link.label}
-            </Button>
-          );
-        })}
-      </Group>
+      <Tabs value={active} variant="default" w="100%">
+        <Tabs.List aria-label="App sections" style={{ flexWrap: 'nowrap' }}>
+          {links.map((link) => {
+            const Icon = link.icon;
+            return (
+              <Tabs.Tab
+                key={link.href}
+                value={link.href}
+                // `renderRoot` (not `component`) is the Mantine-blessed way to
+                // mount a typed Next `<Link>` as the polymorphic root without the
+                // generic-component TS2322 — keeps the tab a real anchor (href,
+                // keyboard, middle-click) while Tabs owns role/aria-selected.
+                renderRoot={(props) => <Link href={link.href} {...props} />}
+                leftSection={<Icon size={15} />}
+              >
+                {link.label}
+              </Tabs.Tab>
+            );
+          })}
+        </Tabs.List>
+      </Tabs>
     </ScrollArea>
   );
 }
