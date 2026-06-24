@@ -11,6 +11,7 @@ import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { resolveRequestConsent } from './requestConsentGate';
 import { hideBlock } from './hiddenBlocks';
+import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -125,18 +126,35 @@ function storageErrorMessage(err: unknown): string {
  * to every viewer; this lets a viewer dismiss one without affecting the
  * publisher or anyone else). Rendering it here (vs in the sandboxed iframe) is
  * the whole point — the trust boundary belongs to the host. (Roadmap W7.)
+ *
+ * SURFACE-AWARE: on the full-page run surface (`/apps/run/<slug>`, slot kind
+ * `page`) the "Hide app block" action is meaningless — there is no model-page
+ * slot to dismiss the block FROM; the page IS the block. So the host passes the
+ * rendering `slotId` and we drop the "Hide" item when `isPageSlot(slotId)` is
+ * true. "Manage apps" + the provenance badge stay on every surface. (Mirrors PR
+ * #2747's `isPageSlot` page-vs-model distinction.) When `slotId` is omitted the
+ * chrome defaults to the model surface (shows Hide) — back-compat for any caller
+ * that hasn't threaded a slot.
  */
 export function AppBlockChrome({
   blockInstanceId,
   appName,
   modelId,
   modelName,
+  slotId,
 }: {
   blockInstanceId: string;
   appName?: string;
   modelId?: number;
   modelName?: string;
+  /** The slot this chrome renders in. Drives the page-vs-model surface
+   *  distinction — the "Hide" item is hidden on the full-page (`app.page`)
+   *  surface. Omitted → treated as a model surface (Hide shown). */
+  slotId?: string;
 }) {
+  // The full-page run surface (`app.page`) has no model-page slot to hide the
+  // block from — the page IS the block — so suppress the "Hide" item there.
+  const showHide = !(slotId != null && isPageSlot(slotId));
   // The host-rendered name of the running app. (H2) Naming the app in the host
   // chrome — not just the iframe `title` — lets the user tell WHICH sandboxed
   // app is running and trust its provenance; the iframe can't fake it. The name
@@ -200,20 +218,22 @@ export function AppBlockChrome({
           >
             Manage apps
           </Menu.Item>
-          <Menu.Item
-            leftSection={<IconEyeOff size={14} stroke={1.5} />}
-            onClick={() =>
-              hideBlock({
-                blockInstanceId,
-                appName,
-                modelId,
-                modelName,
-                hiddenAt: Date.now(),
-              })
-            }
-          >
-            Hide app block
-          </Menu.Item>
+          {showHide && (
+            <Menu.Item
+              leftSection={<IconEyeOff size={14} stroke={1.5} />}
+              onClick={() =>
+                hideBlock({
+                  blockInstanceId,
+                  appName,
+                  modelId,
+                  modelName,
+                  hiddenAt: Date.now(),
+                })
+              }
+            >
+              Hide app block
+            </Menu.Item>
+          )}
         </Menu.Dropdown>
       </Menu>
     </Group>
@@ -1199,6 +1219,7 @@ export function IframeHost({
         appName={install.manifest.name}
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}
+        slotId={slotId}
       />
       {children}
     </Box>
