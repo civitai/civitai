@@ -168,6 +168,46 @@ export function isFailfastStatus(status: number): boolean {
 }
 
 /**
+ * Exact HTTP reason-phrase (statusText) → status code, for the transient
+ * statuses `isFailfastStatus` already treats as fast-fail-eligible.
+ *
+ * WHY THIS EXISTS — the prod 500s that PR #2759 did NOT fix:
+ * The heavy /api/v1/images feed runs Meili through the `event-engine-common`
+ * submodule's `populatedQuery`, which bundles its OWN meilisearch-js. When that
+ * inner SDK throws on a shed / slow backend, the error is re-thrown across the
+ * submodule module boundary and arrives at the civitai-side catch as a PLAIN
+ * `Error` whose ONLY signal is `message = <HTTP statusText>` (e.g.
+ * "Service Unavailable" / "Request Timeout"). The structured shape is GONE:
+ * no Meili `name` (not `MeiliSearchCommunicationError`/`ApiError`), no
+ * `statusCode`/`httpStatus`/`code`/`errno`. So every name/status branch below
+ * returned false and the handler mapped it to a hard 500 — confirmed live on
+ * dp-prod AFTER #2759 deployed: `{"error":"Service Unavailable"}` /
+ * `{"error":"Request Timeout"}` with NO `code` field. #2759's unit tests passed
+ * because they built the RAW SDK error (with name + statusCode); prod throws the
+ * stripped version.
+ *
+ * The match is DELIBERATELY EXACT (a `Set`/record lookup on the bare reason
+ * phrase), NOT a substring/`includes`: a real app error is extremely unlikely to
+ * have `.message` be EXACTLY one of these bare HTTP reason phrases, whereas a
+ * substring match would mask "Bad Gateway error: <app detail>" or arbitrary
+ * text and hide genuine bugs as retryable 503s (the audit's masking concern).
+ *
+ * Only the transient statuses are listed (mirrors `isFailfastStatus`'s
+ * 408/429/5xx, restricted to the standard gateway/timeout/overload phrases that
+ * a proxy or backend actually emits): 408/429/502/503/504. Notably ABSENT is
+ * "Internal Server Error" (500) — a bare statusText-only 500 is ambiguous
+ * (could be a deterministic app/Meili-internal bug), so it is NOT masked and
+ * bubbles as a hard 500, matching the JSON-body-500 stance below.
+ */
+export const TRANSIENT_STATUSTEXT_TO_STATUS: Readonly<Record<string, number>> = {
+  'Request Timeout': 408,
+  'Too Many Requests': 429,
+  'Bad Gateway': 502,
+  'Service Unavailable': 503,
+  'Gateway Timeout': 504,
+};
+
+/**
  * Classify an error caught from a Meilisearch SDK call (or the civitai-feeds
  * proxy in front of it) as a genuinely-transient upstream failure that should
  * surface to the client as a retryable 503, NOT a hard 500.
@@ -237,7 +277,16 @@ export function isTransientMeiliError(error: unknown): boolean {
     // (408/429 don't arrive as a parseable Meili JSON ApiError in practice; if
     // they ever do, they fall through to false → bubble as their real status,
     // which is the safe direction — we never widen masking.)
-    return typeof e.httpStatus === 'number' && [502, 503, 504].includes(e.httpStatus);
+    if (typeof e.httpStatus === 'number') {
+      return [502, 503, 504].includes(e.httpStatus);
+    }
+    // httpStatus undefined — fall through to the message lookup below. An
+    // ApiError's `.message` is the Meili JSON error message (e.g.
+    // "Index `x` not found"), NOT a bare HTTP statustext, so the EXACT-match
+    // lookup won't false-match it as transient — but if some path ever DID
+    // strip httpStatus while leaving a bare statustext message, we want it
+    // caught rather than mis-classified as a hard 500.
+    return messageMatchesTransientStatusText(e.message);
   }
 
   if (e.name === 'MeiliSearchCommunicationError') {
@@ -249,10 +298,47 @@ export function isTransientMeiliError(error: unknown): boolean {
     if (typeof e.statusCode === 'number') return isFailfastStatus(e.statusCode);
     // Network-level failure (no HTTP status, but a node errno/code) → the
     // backend was unreachable / the socket dropped, which is transient.
-    return typeof e.errno === 'string' || typeof e.code === 'string';
+    if (typeof e.errno === 'string' || typeof e.code === 'string') return true;
+    // THE REAL PROD SHAPE (audit-confirmed against meilisearch-js 0.33/0.34):
+    // the SDK's `request()` catch re-wraps the first `MeiliSearchCommunicationError`
+    // via `httpErrorHandler` → `new MeiliSearchCommunicationError(firstErr.message,
+    // firstErr, url, stack)`. The 2nd arg is now an Error (not a Response), so the
+    // constructor's `if (body instanceof Response)` block that sets `statusCode`
+    // does NOT run → `statusCode` is dropped — but `this.name` is STILL set to
+    // 'MeiliSearchCommunicationError' and `this.message` STILL carries the
+    // original statustext ("Service Unavailable" / "Request Timeout"). So here —
+    // name preserved, statusCode undefined, no errno/code — the message statustext
+    // is the only surviving signal. Fall back to the EXACT-match lookup instead of
+    // returning false (which is what made PR #2759/#2765's fallback DEAD CODE: the
+    // function exited in this branch before ever reaching the terminal lookup).
+    return messageMatchesTransientStatusText(e.message);
   }
 
-  return false;
+  // statusText-message fallback — belt-and-suspenders for a NAMELESS plain Error
+  // (in case any path DOES strip the Meili `name` too). The audit proved the real
+  // prod error keeps `.name` (handled in the CommunicationError branch above), but
+  // a stripped variant would arrive here with NO name / statusCode / httpStatus /
+  // code, carrying only `message = <HTTP statusText>`. An EXACT (case- and
+  // whitespace-sensitive) match of `.message` is the only signal left. EXACT,
+  // never substring — see `TRANSIENT_STATUSTEXT_TO_STATUS` JSDoc for the masking
+  // rationale.
+  return messageMatchesTransientStatusText(e.message);
+}
+
+/**
+ * EXACT (case- and whitespace-sensitive) lookup of an error message against the
+ * transient HTTP reason-phrase set. Returns true only when `message` is EXACTLY
+ * one of the bare transient statustexts (never a substring — see the masking
+ * rationale in `TRANSIENT_STATUSTEXT_TO_STATUS`). Shared by `isTransientMeiliError`
+ * so the statustext fallback is reachable on BOTH the name-preserved
+ * CommunicationError/ApiError-with-undefined-status path AND the (hypothetical)
+ * fully-stripped nameless-Error path.
+ */
+function messageMatchesTransientStatusText(message: unknown): boolean {
+  return (
+    typeof message === 'string' &&
+    Object.prototype.hasOwnProperty.call(TRANSIENT_STATUSTEXT_TO_STATUS, message)
+  );
 }
 
 /**
@@ -288,6 +374,19 @@ export function failfastReasonForTransientError(error: unknown): MeiliFetchFailf
     }
     if (e.name === 'MeiliSearchCommunicationError' && typeof e.statusCode === 'number') {
       return failfastReasonForStatus(e.statusCode);
+    }
+    // statusText-message fallback — derive the SAME reason label the status code
+    // would have produced, so `meiliFetchFailfastTotal` stays meaningful and the
+    // message-matched events bucket identically to their typed twins. This is
+    // reached for BOTH the stripped nameless-Error AND — critically — the REAL
+    // prod shape: a `MeiliSearchCommunicationError` whose `statusCode` was dropped
+    // by the SDK's httpErrorHandler double-wrap (name preserved, statusCode
+    // undefined). Without this, that message-matched CommunicationError would fall
+    // through to the generic `upstream-error` label instead of e.g.
+    // `upstream-overload` for a "Service Unavailable" (503).
+    if (typeof e.message === 'string') {
+      const statusFromText = TRANSIENT_STATUSTEXT_TO_STATUS[e.message];
+      if (typeof statusFromText === 'number') return failfastReasonForStatus(statusFromText);
     }
   }
   // Network-level CommunicationError (no HTTP status) / anything else transient
