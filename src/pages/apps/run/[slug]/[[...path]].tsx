@@ -164,6 +164,7 @@ export default function AppPage(props: PageProps) {
           viewer={viewer}
           theme={theme}
           onConsentGranted={refresh}
+          onRetryToken={refresh}
         />
       </Box>
     </>

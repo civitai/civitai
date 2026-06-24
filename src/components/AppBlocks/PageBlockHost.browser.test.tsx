@@ -338,6 +338,283 @@ describe('PageBlockHost loading indicator (Task 1)', () => {
   );
 });
 
+// Drive the host to the `fatal` terminal state via its REAL status machine:
+// reach ready, then post BLOCK_ERROR{fatal:true}. Fast (message-driven), so the
+// retry tests don't pay the 10s/15s real-timer windows.
+async function driveToFatal() {
+  await driveToReady();
+  postFromBlock('BLOCK_ERROR', { fatal: true });
+  await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+}
+
+describe('PageBlockHost terminal error surface (Task: readable error + Retry)', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+  });
+
+  // Each terminal state must render its OWN readable message AND a Retry button
+  // — never the loader. `fatal`/`error` are fast (message/prop-driven);
+  // `timeout`/`no_token` ride the real readiness/token-wait timers.
+
+  test('fatal terminal state: readable "failed to load" message + Retry, not the loader', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToFatal();
+
+    // Readable message (app name surfaced on the fatal path) — NOT "reported an error".
+    await expect
+      .element(page.getByText('Budgeted Generator failed to load'))
+      .toBeInTheDocument();
+    // Retry button present.
+    await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    // Loader is gone (no infinite spinner behind the fallback).
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  });
+
+  test('error terminal state (mint failure): readable auth message + Retry, not the loader', async () => {
+    renderWithProviders(
+      <PageBlockHost {...baseProps} token={null} tokenError onConsentGranted={vi.fn()} />
+    );
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+
+    await expect
+      .element(page.getByText("Couldn't authenticate this app"))
+      .toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  });
+
+  test(
+    'timeout terminal state: readable timeout message + Retry, not the loader',
+    async () => {
+      // token present, never ack BLOCK_READY → readiness timeout (10s) → 'timeout'.
+      renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+
+      await vi.waitFor(
+        () => {
+          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+        },
+        { timeout: 13_000, interval: 250 }
+      );
+      await expect
+        .element(page.getByText("This app didn't load in time"))
+        .toBeInTheDocument();
+      await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+      expect(page.getByTestId('app-page-loading').query()).toBeNull();
+    },
+    20_000
+  );
+
+  test(
+    'no_token terminal state: readable auth message + Retry, not the loader',
+    async () => {
+      // token=null, no error → token-wait timeout (15s) → 'no_token' → token_error copy.
+      renderWithProviders(
+        <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
+      );
+      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+
+      await vi.waitFor(
+        () => {
+          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+        },
+        { timeout: 18_000, interval: 250 }
+      );
+      await expect
+        .element(page.getByText("Couldn't authenticate this app"))
+        .toBeInTheDocument();
+      await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+      expect(page.getByTestId('app-page-loading').query()).toBeNull();
+    },
+    25_000
+  );
+});
+
+describe('PageBlockHost Retry (Task: re-attempt load from terminal fallback)', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+  });
+
+  test('clicking Retry returns to loading, remounts the iframe, and re-arms the handshake', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToFatal();
+
+    // Capture the iframe element identity BEFORE retry so we can prove a real
+    // remount (a NEW DOM node), not just a same-node src reload.
+    const beforeEl = page.getByTestId('app-page-iframe').query() as HTMLIFrameElement | null;
+    // While in the fatal fallback, the iframe is unmounted (showIframe=false).
+    expect(beforeEl).toBeNull();
+
+    await page.getByRole('button', { name: 'Retry' }).click();
+
+    // Back to the loading state: the loader overlay is shown again and the
+    // fallback is gone (no stuck terminal state).
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+
+    // The iframe is remounted fresh (data-block-ready reset to 'false') so the
+    // re-armed init handshake talks to a clean frame.
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not remounted yet');
+      if (el.getAttribute('data-block-ready') !== 'false') throw new Error('not reset yet');
+    });
+  });
+
+  test('success-after-retry: a BLOCK_READY following Retry clears the fallback (no stuck state)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToFatal();
+
+    await page.getByRole('button', { name: 'Retry' }).click();
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+
+    // The re-armed handshake re-posts BLOCK_INIT; ack READY on the fresh frame.
+    await driveToReady();
+
+    // Fallback cleared, iframe ready, loader gone — recovered.
+    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+    const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+    expect(el.getAttribute('data-block-ready')).toBe('true');
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  });
+
+  test('failure-after-retry: a second fatal error shows the fallback again (no timer leak / stuck state)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToFatal();
+
+    await page.getByRole('button', { name: 'Retry' }).click();
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+
+    // Drive the fresh frame to ready, then fail it AGAIN. The second failure must
+    // route back to the fallback (the re-armed status machine still works).
+    await driveToReady();
+    postFromBlock('BLOCK_ERROR', { fatal: true });
+
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  });
+});
+
+describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+  });
+
+  // The token is a PROP minted upstream (useBlockToken in the route). For an
+  // AUTH-failure terminal (`error` = hard mint failure, `no_token` = token never
+  // arrived) the local reset + reloadNonce bump in handleRetry can NEVER recover
+  // — `token`/`tokenError` are owned upstream, so the re-armed handshake just
+  // times out to the SAME terminal again (the 15s dead-end). The fix calls
+  // onRetryToken (= useBlockToken.refresh) to RE-MINT on those two states. These
+  // tests pin that: Retry from error/no_token calls onRetryToken AND returns to
+  // loading; Retry from fatal/timeout does NOT re-mint (remount-only path
+  // unchanged). Mutation-sanity: deleting the `onRetryToken?.()` call from the
+  // auth branch fails the first two tests.
+
+  test('error (mint failure): Retry calls onRetryToken AND returns to loading', async () => {
+    const onRetryToken = vi.fn();
+    // token=null + tokenError → synchronous `error` terminal; fallback renders.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError
+        onConsentGranted={vi.fn()}
+        onRetryToken={onRetryToken}
+      />
+    );
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    expect(onRetryToken).not.toHaveBeenCalled();
+
+    await page.getByRole('button', { name: 'Retry' }).click();
+
+    // The token re-mint fired exactly once (the auth-recovery path) …
+    expect(onRetryToken).toHaveBeenCalledTimes(1);
+    // … and the host returned to the loading state (the local re-arm still runs).
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+  });
+
+  test(
+    'no_token (token never arrived): Retry calls onRetryToken AND returns to loading',
+    async () => {
+      const onRetryToken = vi.fn();
+      // token=null, no error → token-wait timeout (15s) → `no_token` terminal.
+      renderWithProviders(
+        <PageBlockHost
+          {...baseProps}
+          token={null}
+          tokenError={false}
+          onConsentGranted={vi.fn()}
+          onRetryToken={onRetryToken}
+        />
+      );
+      await vi.waitFor(
+        () => {
+          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+        },
+        { timeout: 18_000, interval: 250 }
+      );
+      expect(onRetryToken).not.toHaveBeenCalled();
+
+      await page.getByRole('button', { name: 'Retry' }).click();
+
+      expect(onRetryToken).toHaveBeenCalledTimes(1);
+      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+      expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+    },
+    25_000
+  );
+
+  test('fatal (non-auth): Retry returns to loading + remounts but does NOT re-mint the token', async () => {
+    const onRetryToken = vi.fn();
+    // token PRESENT; drive to the `fatal` terminal via a block error. The token
+    // was fine — so Retry must remount only, never call onRetryToken.
+    renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
+    );
+    await driveToFatal();
+
+    await page.getByRole('button', { name: 'Retry' }).click();
+
+    // Remount-only path is unchanged: back to loading, fresh iframe, NO re-mint.
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not remounted yet');
+      if (el.getAttribute('data-block-ready') !== 'false') throw new Error('not reset yet');
+    });
+    expect(onRetryToken).not.toHaveBeenCalled();
+  });
+
+  test(
+    'timeout (non-auth): Retry returns to loading but does NOT re-mint the token',
+    async () => {
+      const onRetryToken = vi.fn();
+      // token present, never ack BLOCK_READY → readiness timeout (10s) → `timeout`.
+      renderWithProviders(
+        <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
+      );
+      await vi.waitFor(
+        () => {
+          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+        },
+        { timeout: 13_000, interval: 250 }
+      );
+
+      await page.getByRole('button', { name: 'Retry' }).click();
+
+      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+      expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+      // Token was fine on a timeout → no re-mint (remount-only path unchanged).
+      expect(onRetryToken).not.toHaveBeenCalled();
+    },
+    20_000
+  );
+});
+
 describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
   // Analytics Phase 2 now emits via the /api/track/block-render BEACON
   // (sendBlockRender → fetch), not a tRPC mutation. Spy on global fetch and
