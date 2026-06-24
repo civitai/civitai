@@ -1,4 +1,4 @@
-import { ScrollArea, Tabs } from '@mantine/core';
+import { Box, ScrollArea, Tabs } from '@mantine/core';
 import {
   IconBuildingStore,
   IconCurrencyDollar,
@@ -105,12 +105,22 @@ export function activeAppsTab(currentPath: string): string | null {
  * so it can be rendered in isolation (props-only) under test and reused if a
  * caller already has the summary in hand.
  *
- * Rendered as Mantine navigation **Tabs**: each tab is a real Next `Link`
- * (`component={Link}` — keyboard / middle-click / SEO affordances of an anchor),
- * and `Tabs.value` (the active href) drives the active styling + `aria-selected`.
- * Navigation is the anchor's job; there's no `onChange` (the route is the single
- * source of truth, so clicking just follows the link and the new route lights
- * the matching tab).
+ * Rendered with the Mantine navigation **Tabs** LOOK (active underline driven by
+ * `Tabs.value`), but wrapped in a real `<nav aria-label="App sections">` so it's
+ * exposed as a navigation LANDMARK — this is cross-page navigation, not a
+ * single-page tab panel, so the landmark (not a bare `role="tablist"`) is the
+ * correct semantics. Each tab is a real Next `Link` (`renderRoot` → `<a href>`)
+ * so keyboard / middle-click / SEO affordances of an anchor survive while Tabs
+ * owns the active styling + `aria-selected`. Navigation is the anchor's job;
+ * there's no `onChange` (the route is the single source of truth, so clicking
+ * just follows the link and the new route lights the matching tab).
+ *
+ * `activateTabWithKeyboard={false}`: Mantine's default arrow-key handler
+ * synthesizes a `.click()` on the focused tab, which on these real `<Link>`
+ * anchors triggers a full page navigation — so a keyboard user can't ARROW to
+ * scan the nav without being yanked to another page. Disabling it lets arrow
+ * keys move focus only; Enter/Space on a focused tab still navigates natively
+ * (it's a real anchor).
  */
 export function AppsSubNavView({
   summary,
@@ -122,29 +132,31 @@ export function AppsSubNavView({
   const links = SUB_NAV_LINKS.filter((l) => l.visible(summary));
   const active = activeAppsTab(currentPath);
   return (
-    <ScrollArea type="never" w="100%">
-      <Tabs value={active} variant="default" w="100%">
-        <Tabs.List aria-label="App sections" style={{ flexWrap: 'nowrap' }}>
-          {links.map((link) => {
-            const Icon = link.icon;
-            return (
-              <Tabs.Tab
-                key={link.href}
-                value={link.href}
-                // `renderRoot` (not `component`) is the Mantine-blessed way to
-                // mount a typed Next `<Link>` as the polymorphic root without the
-                // generic-component TS2322 — keeps the tab a real anchor (href,
-                // keyboard, middle-click) while Tabs owns role/aria-selected.
-                renderRoot={(props) => <Link href={link.href} {...props} />}
-                leftSection={<Icon size={15} />}
-              >
-                {link.label}
-              </Tabs.Tab>
-            );
-          })}
-        </Tabs.List>
-      </Tabs>
-    </ScrollArea>
+    <Box component="nav" aria-label="App sections" w="100%">
+      <ScrollArea type="never" w="100%">
+        <Tabs value={active} variant="default" w="100%" activateTabWithKeyboard={false}>
+          <Tabs.List style={{ flexWrap: 'nowrap' }}>
+            {links.map((link) => {
+              const Icon = link.icon;
+              return (
+                <Tabs.Tab
+                  key={link.href}
+                  value={link.href}
+                  // `renderRoot` (not `component`) is the Mantine-blessed way to
+                  // mount a typed Next `<Link>` as the polymorphic root without the
+                  // generic-component TS2322 — keeps the tab a real anchor (href,
+                  // keyboard, middle-click) while Tabs owns role/aria-selected.
+                  renderRoot={(props) => <Link href={link.href} {...props} />}
+                  leftSection={<Icon size={15} />}
+                >
+                  {link.label}
+                </Tabs.Tab>
+              );
+            })}
+          </Tabs.List>
+        </Tabs>
+      </ScrollArea>
+    </Box>
   );
 }
 

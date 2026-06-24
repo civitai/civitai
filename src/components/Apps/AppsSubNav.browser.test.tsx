@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import {
   activeAppsTab,
   AppsSubNavView,
@@ -14,13 +14,19 @@ import { renderWithProviders } from '../../../test/component-setup';
 // query / router that the `AppsSubNav` container wires. We drive the booleans
 // directly and assert which tabs render.
 //
-// The sub-nav is now Mantine navigation **Tabs**: each tab is a real Next
-// `Link` (`component={Link}`) so the element is an `<a href>` with
-// `role="tab"` + `aria-selected`. We therefore target `role: 'tab'` (not
-// `'link'`) and assert the active tab via `aria-selected="true"`. Navigation is
-// the anchor's `href` contract — clicking a Next `<Link>` anchor in browser mode
-// would trigger a real page navigation, so we assert the `href` target each tab
-// points at (the click-destination) rather than firing the click.
+// The sub-nav uses the Mantine **Tabs** LOOK but is wrapped in a real
+// `<nav aria-label="App sections">` so it's exposed as a navigation LANDMARK
+// (cross-page nav, not a single-page tab panel). Each tab is a real Next
+// `Link` (`renderRoot`) so the element is an `<a href>` with `role="tab"` +
+// `aria-selected`. We therefore target `role: 'tab'` (not `'link'`) and assert
+// the active tab via `aria-selected="true"`, and assert the wrapping
+// `role="navigation"` landmark carries the `App sections` accessible name.
+// Navigation is the anchor's `href` contract — clicking a Next `<Link>` anchor
+// in browser mode would trigger a real page navigation, so we assert the `href`
+// target each tab points at (the click-destination) rather than firing the
+// click. Arrow keys are configured NOT to auto-activate
+// (`activateTabWithKeyboard={false}`) so a keyboard user can scan the nav
+// without being yanked to another page.
 //
 // NOTE: this env does not load `@mantine/core/styles.css`, so we assert
 // presence / ARIA attributes / href — never computed styles.
@@ -107,6 +113,28 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
   });
 });
 
+describe('AppsSubNavView (navigation landmark)', () => {
+  // HIGH-severity a11y regression the audit flagged: converting to Tabs dropped
+  // the `role="navigation"` landmark, leaving a bare `role="tablist"` (an ARIA
+  // anti-pattern for cross-page navigation). The tabs are wrapped in a
+  // `<nav aria-label="App sections">` so the landmark is restored while the Tabs
+  // LOOK (active underline) is preserved. Reverting the nav-wrap fails this.
+  test('the sub-nav is exposed as a `navigation` landmark named "App sections"', async () => {
+    renderWithProviders(<AppsSubNavView summary={NONE} currentPath="/apps" />);
+    const nav = page.getByRole('navigation', { name: 'App sections' });
+    await expect.element(nav).toBeInTheDocument();
+    // The accessible name is on the <nav> landmark, NOT on the tablist.
+    expect(nav.element().tagName.toLowerCase()).toBe('nav');
+  });
+
+  test('the tablist itself does NOT carry the `App sections` name (it moved to the nav)', async () => {
+    renderWithProviders(<AppsSubNavView summary={NONE} currentPath="/apps" />);
+    await expect.element(page.getByRole('tablist')).toBeInTheDocument();
+    const tablist = page.getByRole('tablist').element();
+    expect(tablist.getAttribute('aria-label')).not.toBe('App sections');
+  });
+});
+
 describe('AppsSubNavView (active tab reflects the current route)', () => {
   test('the current route is the selected tab (aria-selected=true)', async () => {
     renderWithProviders(
@@ -170,6 +198,61 @@ describe('AppsSubNavView (each tab navigates to its route)', () => {
       await expect.element(tab(name)).toBeInTheDocument();
       expect(tab(name).element().getAttribute('href')).toBe(href);
     }
+  });
+});
+
+describe('AppsSubNavView (keyboard: arrow keys scan, do not auto-navigate)', () => {
+  // MEDIUM a11y regression: Mantine's default `activateTabWithKeyboard` makes
+  // ArrowLeft/Right ACTIVATE the focused tab — on these real `<Link>` anchors
+  // that synthesizes a click → full page navigation, so a keyboard user can't
+  // arrow across the nav to read it. We set `activateTabWithKeyboard={false}` so
+  // arrow keys move focus only and the SELECTED tab (the active route) doesn't
+  // change as you scan.
+  //
+  // Observable: the active tab is marked `aria-selected="true"` and is bound to
+  // `Tabs.value` (= the current route, NOT keyboard focus). With auto-activation
+  // ON, arrowing would move `aria-selected` onto the newly-focused tab; with it
+  // OFF, selection stays anchored on the route's tab. We assert focus moves
+  // (keyboard reachability) while selection stays put. The mutation
+  // `activateTabWithKeyboard={true}` flips selection onto the focused tab and
+  // fails this test.
+  test('ArrowRight moves focus but does NOT change the selected tab (no auto-activate)', async () => {
+    renderWithProviders(<AppsSubNavView summary={NONE} currentPath="/apps" />);
+    // Wait for the async render before reaching into the DOM synchronously.
+    await expect.element(tab('Marketplace')).toBeInTheDocument();
+
+    const marketplace = tab('Marketplace').element() as HTMLElement;
+    const submit = tab('Submit').element() as HTMLElement;
+
+    // Marketplace (= current route) is the selected tab; Submit is not.
+    expect(marketplace.getAttribute('aria-selected')).toBe('true');
+    expect(submit.getAttribute('aria-selected')).toBe('false');
+
+    // Focus the first tab, then arrow to the next.
+    marketplace.focus();
+    expect(document.activeElement).toBe(marketplace);
+    await userEvent.keyboard('{ArrowRight}');
+
+    // Focus moved to Submit (keyboard-reachable scan)…
+    expect(document.activeElement).toBe(submit);
+    // …but selection (aria-selected, driven by the route) did NOT follow focus.
+    // If activateTabWithKeyboard were on, Submit would now be aria-selected=true.
+    expect(submit.getAttribute('aria-selected')).toBe('false');
+    expect(marketplace.getAttribute('aria-selected')).toBe('true');
+  });
+
+  test('Enter/Space still activate: the focused tab is a real anchor with the right href', async () => {
+    // We don't fire Enter (it would trigger a real navigation in browser mode);
+    // instead we assert the keyboard-activation contract structurally — the
+    // focusable element IS the `<a href>` the route points at, so native
+    // anchor activation (Enter) navigates correctly even with arrow-activation off.
+    renderWithProviders(<AppsSubNavView summary={NONE} currentPath="/apps" />);
+    await expect.element(tab('Submit')).toBeInTheDocument();
+    const submit = tab('Submit').element() as HTMLElement;
+    submit.focus();
+    expect(document.activeElement).toBe(submit);
+    expect(submit.tagName.toLowerCase()).toBe('a');
+    expect(submit.getAttribute('href')).toBe('/apps/submit');
   });
 });
 

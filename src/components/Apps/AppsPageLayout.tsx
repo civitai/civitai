@@ -10,8 +10,12 @@ import { AppsSubNav } from '~/components/Apps/AppsSubNav';
  * position on every apps page. Before this, each page hand-rolled its own
  * `Container size=… py=…` + a per-page title block placed ABOVE or AROUND the
  * sub-nav, so the tabs jumped around as you navigated between surfaces. This
- * layout fixes the tabs as the FIRST element of a sticky header region — so they
- * never move — and renders the optional per-page title/actions BELOW them.
+ * layout fixes the tabs as the FIRST element of the page header region — so they
+ * land in the same vertical position every time — and renders the optional
+ * per-page title/actions BELOW them. (No sticky positioning: the requirement is
+ * a CONSISTENT position across pages, which the uniform "tabs first" order
+ * already delivers; pinning the band on scroll risks colliding with the global
+ * app-shell header and was unverified.)
  *
  * Each page wraps its body in `<AppsPageLayout …>{body}</AppsPageLayout>`,
  * dropping its own `Container` + ad-hoc sub-nav placement. The per-page title,
@@ -44,7 +48,7 @@ export function AppsPageLayout({
     <Container size={size} py="md">
       <Stack gap="lg">
         {/*
-          Sticky header region. The sub-nav tabs are the FIRST child here and
+          Page header region. The sub-nav tabs are the FIRST child here and
           carry no leading content, so they land in the same spot on every page
           regardless of whether a per-page title is present. The title/actions
           render BELOW the tabs (never above), which is what keeps the tabs from
@@ -52,13 +56,9 @@ export function AppsPageLayout({
         */}
         <Stack
           gap="md"
-          pos="sticky"
-          top={0}
           py="sm"
           style={(theme) => ({
-            zIndex: 2,
-            backgroundColor: 'var(--mantine-color-body)',
-            // Hairline divider so sticky content reads as a header band.
+            // Hairline divider so the header reads as a band.
             borderBottom: `1px solid ${theme.colors.dark[4]}`,
           })}
         >
