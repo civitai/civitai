@@ -1,0 +1,226 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { renderWithProviders } from '../../../test/component-setup';
+
+/**
+ * /apps/my-submissions LIST — component tests for the UX-pass cleanup:
+ *   1. The "Changes" column is gone (header + the +/~/- file-diff badges).
+ *   2. Reviewer notes are NOT inline; a "See reviewer notes" button shows ONLY
+ *      when notes exist and opens the notes in a modal.
+ *   3. An approved row shows the compact runs/users (30d) inline stat + an
+ *      "Analytics" button that opens AppAnalyticsPanel (scoped) in a modal; a
+ *      non-approved row shows neither.
+ *   4. The authoring affordance links the Civitai CLI (the git path is demoted
+ *      to a collapsed "Advanced" footnote).
+ *
+ * tRPC + the heavy analytics panel are mocked per the documented scaffold
+ * pattern so this stays network-free and chart-free.
+ */
+
+const mocks = vi.hoisted(() => ({
+  analytics: { runs: { count: 0 }, engagement: { activeUsers: 0 } } as unknown,
+  analyticsLoading: false,
+  panelRenders: vi.fn(),
+}));
+
+vi.mock('~/utils/trpc', () => ({
+  trpc: {
+    blocks: {
+      getMyAppAnalytics: {
+        useQuery: () => ({ data: mocks.analytics, isLoading: mocks.analyticsLoading }),
+      },
+      // getMyApps is used only by the (mocked-away) panel; keep a stub so any
+      // accidental call is harmless.
+      getMyApps: { useQuery: () => ({ data: [], isLoading: false }) },
+      getMyAppRepo: { useQuery: () => ({ data: undefined, isLoading: false }) },
+    },
+  },
+}));
+
+// The real AppAnalyticsPanel pulls in chart.js; replace it with a marker that
+// records the scoped appBlockId it was opened with.
+vi.mock('~/components/AppBlocks/AppAnalyticsPanel', () => ({
+  AppAnalyticsPanel: ({ scopedAppBlockId }: { scopedAppBlockId?: string }) => {
+    mocks.panelRenders(scopedAppBlockId);
+    return <div data-testid="analytics-panel">analytics-panel:{scopedAppBlockId}</div>;
+  },
+}));
+
+// AuthorViaGit provisions a Forgejo identity on mount — stub to a marker so the
+// "Advanced: author via git" footnote is testable without that side-effect.
+vi.mock('~/components/Apps/AuthorViaGit', () => ({
+  AuthorViaGit: () => <div data-testid="author-via-git">git-panel</div>,
+}));
+
+// Type-only import is erased at runtime, so it's safe above the dynamic value
+// import (which must come AFTER the hoisted vi.mock calls).
+import type { Submission } from './MySubmissionsList';
+const { MySubmissionsList } = await import('./MySubmissionsList');
+
+function makeSubmission(overrides: Partial<Submission>): Submission {
+  return {
+    id: 's1',
+    appBlockId: 'block-1',
+    slug: 'my-app',
+    version: '1.0.0',
+    status: 'approved',
+    submittedAt: new Date('2026-01-01T00:00:00Z'),
+    reviewedAt: new Date('2026-01-02T00:00:00Z'),
+    rejectionReason: null,
+    approvalNotes: null,
+    deployState: 'live',
+    deployDetail: null,
+    deployUpdatedAt: new Date('2026-01-02T00:00:00Z'),
+    fileSummary: { added: ['a.js'], changed: ['b.js'], removed: ['c.js'] },
+    manifestDiffSummary: { kind: 'update', added: [], removed: [], changed: [] },
+    modelInstallCount: 3,
+    userSubscriptionCount: 5,
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  mocks.analytics = { runs: { count: 0 }, engagement: { activeUsers: 0 } };
+  mocks.analyticsLoading = false;
+  mocks.panelRenders.mockClear();
+});
+
+describe('MySubmissionsList', () => {
+  test('the "Changes" column header is NOT rendered', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[makeSubmission({})]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    // Sanity: the table painted (a known-kept header is present).
+    await expect.element(page.getByText('Submitted', { exact: true })).toBeInTheDocument();
+    // The "Changes" column header is gone.
+    expect(page.getByText('Changes', { exact: true }).elements()).toHaveLength(0);
+    // The file-diff badges that lived in that column are gone too.
+    expect(page.getByText('+1', { exact: true }).elements()).toHaveLength(0);
+    expect(page.getByText('~1', { exact: true }).elements()).toHaveLength(0);
+  });
+
+  test('reviewer notes are NOT inline; "See reviewer notes" opens a modal with the notes', async () => {
+    const notes = 'Please tighten the manifest scopes before next version.';
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[makeSubmission({ approvalNotes: notes })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    // Notes are NOT rendered inline up-front.
+    expect(page.getByText(notes, { exact: false }).elements()).toHaveLength(0);
+    // The trigger button is present.
+    const btn = page.getByRole('button', { name: /see reviewer notes/i });
+    await expect.element(btn).toBeInTheDocument();
+    // Clicking it opens the modal with the notes.
+    await btn.click();
+    await expect.element(page.getByText(notes, { exact: false })).toBeInTheDocument();
+  });
+
+  test('"See reviewer notes" is ABSENT when a row has no notes', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[makeSubmission({ approvalNotes: null, rejectionReason: null })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await expect.element(page.getByText('my-app', { exact: false })).toBeInTheDocument();
+    expect(page.getByRole('button', { name: /see reviewer notes/i }).elements()).toHaveLength(0);
+  });
+
+  test('"See reviewer notes" shows for a REJECTED row with a rejection reason', async () => {
+    const reason = 'Rejected: the block requests an unapproved scope.';
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[
+          makeSubmission({
+            id: 'r1',
+            status: 'rejected',
+            deployState: null,
+            approvalNotes: null,
+            rejectionReason: reason,
+          }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    const btn = page.getByRole('button', { name: /see reviewer notes/i });
+    await expect.element(btn).toBeInTheDocument();
+    // Reason not inline.
+    expect(page.getByText(reason, { exact: false }).elements()).toHaveLength(0);
+    await btn.click();
+    await expect.element(page.getByText(reason, { exact: false })).toBeInTheDocument();
+  });
+
+  test('an APPROVED row shows the inline 30d stat and an Analytics modal scoped to the app', async () => {
+    mocks.analytics = { runs: { count: 1234 }, engagement: { activeUsers: 56 } };
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[makeSubmission({ appBlockId: 'block-xyz' })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    // Compact inline stat: runs + users.
+    await expect.element(page.getByText('1,234', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('56', { exact: true })).toBeInTheDocument();
+
+    // The Analytics button opens the (scoped) panel in a modal.
+    const analyticsBtn = page.getByRole('button', { name: /analytics/i });
+    await expect.element(analyticsBtn).toBeInTheDocument();
+    await analyticsBtn.click();
+    await expect.element(page.getByTestId('analytics-panel')).toBeInTheDocument();
+    expect(mocks.panelRenders).toHaveBeenCalledWith('block-xyz');
+  });
+
+  test('a NON-approved (pending) row shows NO analytics affordance', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[
+          makeSubmission({
+            id: 'p1',
+            status: 'pending',
+            deployState: null,
+            reviewedAt: null,
+            appBlockId: null,
+          }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await expect.element(page.getByText('my-app', { exact: false })).toBeInTheDocument();
+    // No inline analytics stat, no Analytics button.
+    expect(page.getByRole('button', { name: /^analytics$/i }).elements()).toHaveLength(0);
+    expect(page.getByText('runs', { exact: true }).elements()).toHaveLength(0);
+  });
+
+  test('the authoring affordance links the Civitai CLI (git demoted to an Advanced footnote)', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[makeSubmission({ appBlockId: 'block-1' })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    // CLI link present + points at the CLI repo.
+    const cliLink = page.getByRole('link', { name: /civitai.*CLI/i });
+    await expect.element(cliLink).toBeInTheDocument();
+    expect(cliLink.element().getAttribute('href')).toBe('https://github.com/civitai/cli');
+
+    // Git is NOT a primary affordance — the panel is collapsed behind "Advanced".
+    expect(page.getByTestId('author-via-git').elements()).toHaveLength(0);
+    const advanced = page.getByRole('button', { name: /advanced.*git/i });
+    await expect.element(advanced).toBeInTheDocument();
+    await advanced.click();
+    await expect.element(page.getByTestId('author-via-git')).toBeInTheDocument();
+  });
+});
