@@ -134,6 +134,14 @@ export interface PageBlockHostProps {
    *  granted scopes (pushed to the iframe via TOKEN_REFRESH). Mirrors
    *  IframeHost.onConsentGranted → useBlockToken.refresh. */
   onConsentGranted?: () => void;
+  /** Re-mint the page token on a Retry from an AUTH-failure terminal state
+   *  (`error` / `no_token`). The token is a PROP minted by useBlockToken in the
+   *  route; `handleRetry`'s local reset alone can never clear an auth failure
+   *  because `token`/`tokenError` are owned upstream — only re-minting can. Wired
+   *  to the same useBlockToken.refresh as onConsentGranted (it aborts any
+   *  in-flight mint; the endpoint is rate-limited 60/min). Omitted → Retry on an
+   *  auth error only remounts (the pre-fix dead-end), so the route MUST pass it. */
+  onRetryToken?: () => void;
 }
 
 export function PageBlockHost({
@@ -157,10 +165,16 @@ export function PageBlockHost({
   viewer,
   theme,
   onConsentGranted,
+  onRetryToken,
 }: PageBlockHostProps) {
   const router = useRouter();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
+  // Mirror of `status` for the Retry handler to read the prior terminal state
+  // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater
+  // (which React may double-invoke under StrictMode → a double re-mint). Kept in
+  // sync via the effect below.
+  const statusRef = useRef<Status>('loading');
   // #4 Retry: bumped by the terminal-fallback Retry button to re-key the
   // <iframe> below. Re-keying forces React to unmount + remount the iframe (a
   // fresh `contentWindow`), so the re-armed init handshake talks to a clean
@@ -175,6 +189,12 @@ export function PageBlockHost({
   // 'ready' state could each still observe `current === 'loading'`. This ref
   // makes the per-mount emit deterministic regardless of ack timing.
   const blockRenderEmittedRef = useRef<boolean>(false);
+
+  // Keep statusRef tracking the live status so handleRetry can branch on the
+  // prior terminal state without reading it inside the setStatus updater.
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const expectedOrigin = useMemo(() => {
     try {
@@ -1051,17 +1071,37 @@ export function PageBlockHost({
   // Only meaningful from a terminal state; a no-op while loading/ready (status
   // stays put, nonce churn is harmless but we still gate to avoid a spurious
   // iframe remount mid-handshake).
+  //
+  // AUTH-FAILURE branch (the HIGH this fix closes): the `error` (hard mint
+  // failure) and `no_token` (token never arrived) terminals are AUTH failures —
+  // the iframe never received a usable token. A local-only retry (reset +
+  // reloadNonce) can NEVER recover them: the token is a PROP minted upstream by
+  // useBlockToken (route), and `shouldStartInit` gates on `hasToken`. With
+  // `token`/`tokenError` unchanged, the re-armed handshake just times out to the
+  // SAME terminal again (the 15s dead-end). So for `error`/`no_token` we ALSO
+  // call onRetryToken (= useBlockToken.refresh) to re-mint the token; the rotated
+  // token flips the props, init re-fires, and a successful mint loads the block.
+  // For `fatal`/`timeout` the token was fine — the block crashed or didn't ack —
+  // so remount-only (no re-mint) is the right, unchanged behavior. refresh()
+  // aborts any in-flight mint and the endpoint is rate-limited (60/min); Retry is
+  // user-initiated, so no auto-retry loop is added.
   const handleRetry = useCallback(() => {
-    setStatus((current) => {
-      if (current === 'loading' || current === 'ready') return current;
-      controllerRef.current?.dispose();
-      controllerRef.current = null;
-      initSentRef.current = false;
-      blockRenderEmittedRef.current = false;
-      setReloadNonce((n) => n + 1);
-      return 'loading';
-    });
-  }, []);
+    const prior = statusRef.current;
+    // Double-click no-op guard (mirrors the pre-fix gate): a Retry while the
+    // status is already loading/ready does nothing — no re-mint, no remount.
+    if (prior === 'loading' || prior === 'ready') return;
+    // AUTH failures (`error`/`no_token`) need a token re-mint — the local reset
+    // below alone can't change the upstream `token`/`tokenError` props. Fire it
+    // BEFORE the local re-arm (the rotated token then flips props → init
+    // re-fires). `fatal`/`timeout` are not auth failures → remount only.
+    if (prior === 'error' || prior === 'no_token') onRetryToken?.();
+    controllerRef.current?.dispose();
+    controllerRef.current = null;
+    initSentRef.current = false;
+    blockRenderEmittedRef.current = false;
+    setReloadNonce((n) => n + 1);
+    setStatus('loading');
+  }, [onRetryToken]);
 
   return (
     <Box

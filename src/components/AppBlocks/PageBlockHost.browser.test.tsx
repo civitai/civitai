@@ -496,6 +496,125 @@ describe('PageBlockHost Retry (Task: re-attempt load from terminal fallback)', (
   });
 });
 
+describe('PageBlockHost Retry re-mints the token on AUTH failures (the HIGH)', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+  });
+
+  // The token is a PROP minted upstream (useBlockToken in the route). For an
+  // AUTH-failure terminal (`error` = hard mint failure, `no_token` = token never
+  // arrived) the local reset + reloadNonce bump in handleRetry can NEVER recover
+  // — `token`/`tokenError` are owned upstream, so the re-armed handshake just
+  // times out to the SAME terminal again (the 15s dead-end). The fix calls
+  // onRetryToken (= useBlockToken.refresh) to RE-MINT on those two states. These
+  // tests pin that: Retry from error/no_token calls onRetryToken AND returns to
+  // loading; Retry from fatal/timeout does NOT re-mint (remount-only path
+  // unchanged). Mutation-sanity: deleting the `onRetryToken?.()` call from the
+  // auth branch fails the first two tests.
+
+  test('error (mint failure): Retry calls onRetryToken AND returns to loading', async () => {
+    const onRetryToken = vi.fn();
+    // token=null + tokenError → synchronous `error` terminal; fallback renders.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError
+        onConsentGranted={vi.fn()}
+        onRetryToken={onRetryToken}
+      />
+    );
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    expect(onRetryToken).not.toHaveBeenCalled();
+
+    await page.getByRole('button', { name: 'Retry' }).click();
+
+    // The token re-mint fired exactly once (the auth-recovery path) …
+    expect(onRetryToken).toHaveBeenCalledTimes(1);
+    // … and the host returned to the loading state (the local re-arm still runs).
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+  });
+
+  test(
+    'no_token (token never arrived): Retry calls onRetryToken AND returns to loading',
+    async () => {
+      const onRetryToken = vi.fn();
+      // token=null, no error → token-wait timeout (15s) → `no_token` terminal.
+      renderWithProviders(
+        <PageBlockHost
+          {...baseProps}
+          token={null}
+          tokenError={false}
+          onConsentGranted={vi.fn()}
+          onRetryToken={onRetryToken}
+        />
+      );
+      await vi.waitFor(
+        () => {
+          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+        },
+        { timeout: 18_000, interval: 250 }
+      );
+      expect(onRetryToken).not.toHaveBeenCalled();
+
+      await page.getByRole('button', { name: 'Retry' }).click();
+
+      expect(onRetryToken).toHaveBeenCalledTimes(1);
+      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+      expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+    },
+    25_000
+  );
+
+  test('fatal (non-auth): Retry returns to loading + remounts but does NOT re-mint the token', async () => {
+    const onRetryToken = vi.fn();
+    // token PRESENT; drive to the `fatal` terminal via a block error. The token
+    // was fine — so Retry must remount only, never call onRetryToken.
+    renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
+    );
+    await driveToFatal();
+
+    await page.getByRole('button', { name: 'Retry' }).click();
+
+    // Remount-only path is unchanged: back to loading, fresh iframe, NO re-mint.
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not remounted yet');
+      if (el.getAttribute('data-block-ready') !== 'false') throw new Error('not reset yet');
+    });
+    expect(onRetryToken).not.toHaveBeenCalled();
+  });
+
+  test(
+    'timeout (non-auth): Retry returns to loading but does NOT re-mint the token',
+    async () => {
+      const onRetryToken = vi.fn();
+      // token present, never ack BLOCK_READY → readiness timeout (10s) → `timeout`.
+      renderWithProviders(
+        <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={onRetryToken} />
+      );
+      await vi.waitFor(
+        () => {
+          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+        },
+        { timeout: 13_000, interval: 250 }
+      );
+
+      await page.getByRole('button', { name: 'Retry' }).click();
+
+      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+      expect(page.getByTestId('app-page-fallback').query()).toBeNull();
+      // Token was fine on a timeout → no re-mint (remount-only path unchanged).
+      expect(onRetryToken).not.toHaveBeenCalled();
+    },
+    20_000
+  );
+});
+
 describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
   // Analytics Phase 2 now emits via the /api/track/block-render BEACON
   // (sendBlockRender → fetch), not a tRPC mutation. Spy on global fetch and

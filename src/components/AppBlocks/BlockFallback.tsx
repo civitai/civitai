@@ -39,7 +39,7 @@ const REASON_COPY: Record<
   token_error: {
     color: 'yellow',
     title: "Couldn't authenticate this app",
-    hint: 'We couldn’t authorize this app for you. Try again, or reload the page.',
+    hint: "We couldn't authorize this app for you. Try again, or reload the page.",
   },
   fatal_block_error: {
     color: 'red',
