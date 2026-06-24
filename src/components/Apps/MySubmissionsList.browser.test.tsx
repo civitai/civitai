@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import dayjs from '~/shared/utils/dayjs';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -22,13 +23,19 @@ const mocks = vi.hoisted(() => ({
   analytics: { runs: { count: 0 }, engagement: { activeUsers: 0 } } as unknown,
   analyticsLoading: false,
   panelRenders: vi.fn(),
+  // Spy on the analytics query so we can assert the input (e.g. the floored
+  // `from`) every approved row passes — the per-row dedup key depends on it.
+  analyticsUseQuery: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     blocks: {
       getMyAppAnalytics: {
-        useQuery: () => ({ data: mocks.analytics, isLoading: mocks.analyticsLoading }),
+        useQuery: (...args: unknown[]) => {
+          mocks.analyticsUseQuery(...args);
+          return { data: mocks.analytics, isLoading: mocks.analyticsLoading };
+        },
       },
       // getMyApps is used only by the (mocked-away) panel; keep a stub so any
       // accidental call is harmless.
@@ -84,6 +91,7 @@ beforeEach(() => {
   mocks.analytics = { runs: { count: 0 }, engagement: { activeUsers: 0 } };
   mocks.analyticsLoading = false;
   mocks.panelRenders.mockClear();
+  mocks.analyticsUseQuery.mockClear();
 });
 
 describe('MySubmissionsList', () => {
@@ -179,6 +187,49 @@ describe('MySubmissionsList', () => {
     await analyticsBtn.click();
     await expect.element(page.getByTestId('analytics-panel')).toBeInTheDocument();
     expect(mocks.panelRenders).toHaveBeenCalledWith('block-xyz');
+  });
+
+  test('the inline analytics `from` is floored to start-of-day, so same-app rows share one query key (per-row dedup)', async () => {
+    // Two APPROVED versions of the SAME app block. Pre-fix, each AppAnalyticsInline
+    // computed `from = dayjs().subtract(30,'day').toISOString()` at ms precision per
+    // instance → two distinct query inputs → no React-Query dedup → 2 heavy queries.
+    // The floor (.startOf('day')) makes both rows pass the IDENTICAL input.
+    const appBlockId = 'block-dedup';
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[
+          makeSubmission({ id: 'v1', version: '1.0.0', appBlockId }),
+          makeSubmission({ id: 'v2', version: '2.0.0', appBlockId }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await expect.element(page.getByText('my-app', { exact: false }).first()).toBeInTheDocument();
+
+    // Every call carried the same app id.
+    const inputs = mocks.analyticsUseQuery.mock.calls.map((c) => c[0] as { appBlockId: string; from: string });
+    const appInputs = inputs.filter((i) => i?.appBlockId === appBlockId);
+    expect(appInputs.length).toBeGreaterThanOrEqual(2); // both rows mounted an inline stat
+
+    // (1) `from` is floored to a day boundary — TZ-agnostic: re-flooring a value
+    // that's ALREADY at start-of-day is a no-op, so `from === startOf('day')(from)`.
+    // (Asserting a literal `T00:00:00Z` would be wrong — `dayjs().startOf('day')`
+    // floors to the LOCAL midnight, whose ISO carries the UTC offset.)
+    const isFlooredToDay = (iso: string) =>
+      dayjs(iso).valueOf() === dayjs(iso).startOf('day').valueOf();
+    for (const i of appInputs) {
+      expect(isFlooredToDay(i.from)).toBe(true);
+    }
+
+    // (2) Mutation-sanity: a ms-precision `from` (the pre-fix value, ~now) is NOT
+    // on a day boundary, so reverting the `.startOf('day')` floor fails this test.
+    expect(isFlooredToDay(new Date().toISOString())).toBe(false);
+
+    // (3) The crux: identical `from` across same-app rows → identical input →
+    // React-Query dedups to ONE in-flight query (not N).
+    const uniqueFroms = new Set(appInputs.map((i) => i.from));
+    expect(uniqueFroms.size).toBe(1);
   });
 
   test('a NON-approved (pending) row shows NO analytics affordance', async () => {

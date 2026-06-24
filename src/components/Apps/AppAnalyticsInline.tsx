@@ -34,7 +34,12 @@ export function AppAnalyticsInline({
   const [opened, { open, close }] = useDisclosure(false);
 
   // Last 30 days, app-scoped. Cheap aggregate the revenue dashboard already runs.
-  const from = useMemo(() => dayjs().subtract(30, 'day').toISOString(), []);
+  // Floor to the start of the (local) day so the React-Query key is STABLE across
+  // every approved row of the same app — a per-instance ms-precision `from` gives
+  // each identical-app row a distinct key, defeating dedup and firing N heavy
+  // getMyAppAnalytics queries (request batching is off). Start-of-day collapses
+  // them to one shared key → one query per unique appBlockId.
+  const from = useMemo(() => dayjs().subtract(30, 'day').startOf('day').toISOString(), []);
   const statQuery = trpc.blocks.getMyAppAnalytics.useQuery(
     { appBlockId, from },
     { staleTime: 5 * 60 * 1000, refetchOnWindowFocus: false }
