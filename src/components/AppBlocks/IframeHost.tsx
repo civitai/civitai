@@ -245,7 +245,7 @@ export function AppBlockChrome({
               component={Link}
               href="/apps"
               size="xs"
-              c="blue.4"
+              c="blue.6"
               td="underline"
               style={{ flexShrink: 0, cursor: 'pointer' }}
               data-testid="app-block-breadcrumb-apps"

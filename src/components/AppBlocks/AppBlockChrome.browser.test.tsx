@@ -164,6 +164,26 @@ describe('AppBlockChrome run-page breadcrumb (Apps / <app name>)', () => {
     expect(crumbName.getAttribute('data-clickable')).toBeNull();
   });
 
+  // Contrast (audit L3): the "Apps" link color must clear WCAG AA on the
+  // near-white light-mode chrome surface. The original `c="blue.4"` was borderline
+  // on a light background; it was bumped to a DARKER shade (`blue.6`). Mantine emits
+  // `c="blue.6"` as an inline `color: var(--mantine-color-blue-6)`. Assert the link
+  // resolves to the blue-6 token and is NOT the too-light blue-4 — mutation-sanity:
+  // reverting to `blue.4` (or any lighter shade) fails this.
+  test('the "Apps" link uses a darker blue (blue.6) that clears AA on the light chrome surface, not the borderline blue.4', async () => {
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-bc-contrast" appName="Budgeted Generator" slotId="app.page" />
+    );
+    await expect.element(page.getByTestId('app-block-breadcrumb-apps')).toBeInTheDocument();
+    const appsLink = page.getByTestId('app-block-breadcrumb-apps').element() as HTMLElement;
+
+    // Mantine's `c` prop renders as an inline color referencing the Mantine color
+    // CSS variable for the chosen shade.
+    const inlineColor = appsLink.style.color;
+    expect(inlineColor).toContain('--mantine-color-blue-6');
+    expect(inlineColor).not.toContain('--mantine-color-blue-4');
+  });
+
   // De-dup (audit fix): on the page surface the app name must appear EXACTLY
   // ONCE — in the breadcrumb crumb. Before the fix the standalone provenance
   // badge `Text` (`app-block-name`) ALSO rendered the name, so the page chrome

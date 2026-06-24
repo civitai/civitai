@@ -126,7 +126,7 @@ function PinnedInstallRow({ sub }: PinnedInstallRowProps) {
       children: (
         <Stack gap="xs">
           <Text size="sm">
-            This removes the install row entirely. The block will stop appearing on{' '}
+            This removes the install row entirely. The app will stop appearing on{' '}
             <strong>{targetName}</strong>. Any platform default for the same slot will become
             eligible again. The app's data and any other installs of it are untouched.
           </Text>

@@ -192,7 +192,7 @@ function RevenuePanel() {
             <Title order={5}>Recent attributions</Title>
             {data.recentAttributions.length === 0 ? (
               <Text c="dimmed" size="sm" mt="sm">
-                No buzz purchases yet. Install your blocks on more models to earn share.
+                No buzz purchases yet. Install your apps on more models to earn share.
               </Text>
             ) : (
               <Table mt="sm" highlightOnHover>
@@ -267,7 +267,7 @@ export default function AppBlocksDashboardPage() {
         title="Apps Dashboard"
         subtitle={
           <>
-            Revenue share and analytics for your blocks. Payouts are batched weekly; see{' '}
+            Revenue share and analytics for your apps. Payouts are batched weekly; see{' '}
             <Anchor component={Link} href="/apps/installed">
               Apps
             </Anchor>{' '}

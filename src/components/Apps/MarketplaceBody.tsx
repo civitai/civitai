@@ -254,7 +254,7 @@ export function MarketplaceBody() {
       <Group gap="md" align="end">
         <TextInput
           label="Search"
-          placeholder="Search by name or block id"
+          placeholder="Search by name or app id"
           leftSection={<IconSearch size={16} />}
           value={searchInput}
           onChange={(e) => setSearchInput(e.currentTarget.value)}
