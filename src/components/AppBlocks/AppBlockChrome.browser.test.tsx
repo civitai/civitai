@@ -103,3 +103,66 @@ describe('AppBlockChrome "Hide" item is surface-aware (page vs model)', () => {
       .not.toBeInTheDocument();
   });
 });
+
+// New: the run-page frame border carries an `Apps / <app name>` breadcrumb on
+// the full-page run surface (`/apps/run/<slug>`, slot kind `page`) — "Apps"
+// links back to /apps, the app name reuses the SAME sanitized (spoof-proof)
+// chrome name as the provenance badge. The breadcrumb is page-only: the compact
+// model-slot chrome (badge + ⋯ menu) gets nothing extra. The page-context
+// predicate is `isPageSlot(slotId)`, the same signal that suppresses "Hide".
+describe('AppBlockChrome run-page breadcrumb (Apps / <app name>)', () => {
+  test('page surface (app.page) renders the breadcrumb with the app name + an "Apps" link to /apps', async () => {
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-bc-page" appName="Budgeted Generator" slotId="app.page" />
+    );
+    // The breadcrumb container is present on the page surface.
+    await expect.element(page.getByTestId('app-block-breadcrumb')).toBeInTheDocument();
+    // "Apps" is a link back to the apps list.
+    const appsLink = page.getByTestId('app-block-breadcrumb-apps').element();
+    expect(appsLink.tagName.toLowerCase()).toBe('a');
+    expect(appsLink.getAttribute('href')).toBe('/apps');
+    expect((appsLink.textContent ?? '').trim()).toBe('Apps');
+    // The current app's (sanitized) name is the trailing crumb.
+    const crumbName = page.getByTestId('app-block-breadcrumb-name').element();
+    expect((crumbName.textContent ?? '').trim()).toBe('Budgeted Generator');
+  });
+
+  test('model surface (model.sidebar_top) does NOT render the breadcrumb', async () => {
+    renderWithProviders(
+      <AppBlockChrome
+        blockInstanceId="inst-bc-model"
+        appName="Background Remover"
+        slotId="model.sidebar_top"
+      />
+    );
+    // Badge name still present (compact model chrome) …
+    await expect.element(page.getByTestId('app-block-name')).toBeInTheDocument();
+    // … but no breadcrumb on a model slot.
+    await expect.element(page.getByTestId('app-block-breadcrumb')).not.toBeInTheDocument();
+  });
+
+  test('omitted slotId (back-compat default = model surface) does NOT render the breadcrumb', async () => {
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-bc-default" appName="Background Remover" />
+    );
+    await expect.element(page.getByTestId('app-block-name')).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-block-breadcrumb')).not.toBeInTheDocument();
+  });
+
+  test('the breadcrumb app name is sanitized (bidi/control chars stripped)', async () => {
+    // RLO override + control char + zero-width space — sanitizeAppChromeName strips
+    // the format/control chars and collapses whitespace; the accessible breadcrumb
+    // text must read the clean name, never the raw untrusted string.
+    const rawName = 'Evil‮App​Name';
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-bc-sanitize" appName={rawName} slotId="app.page" />
+    );
+    await expect.element(page.getByTestId('app-block-breadcrumb-name')).toBeInTheDocument();
+    const crumbName = page.getByTestId('app-block-breadcrumb-name').element();
+    const text = crumbName.textContent ?? '';
+    // No bidi-override / bell / zero-width chars survive into the rendered crumb.
+    expect(text).not.toMatch(/[‮​]/);
+    // The legible characters are preserved (control char became a space → collapsed).
+    expect(text.replace(/\s+/g, '')).toBe('EvilAppName');
+  });
+});

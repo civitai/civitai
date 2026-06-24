@@ -154,7 +154,8 @@ export function AppBlockChrome({
 }) {
   // The full-page run surface (`app.page`) has no model-page slot to hide the
   // block from — the page IS the block — so suppress the "Hide" item there.
-  const showHide = !(slotId != null && isPageSlot(slotId));
+  const isPage = slotId != null && isPageSlot(slotId);
+  const showHide = !isPage;
   // The host-rendered name of the running app. (H2) Naming the app in the host
   // chrome — not just the iframe `title` — lets the user tell WHICH sandboxed
   // app is running and trust its provenance; the iframe can't fake it. The name
@@ -202,6 +203,48 @@ export function AppBlockChrome({
         <Text size="xs" c="dimmed" truncate maw={160} data-testid="app-block-name">
           {label}
         </Text>
+        {/* Page-surface breadcrumb: `Apps / <app name>`. Only on the full-page
+            run surface (`app.page`) — the page IS the block, so an "up to the
+            apps list" trail is meaningful there; the compact model-slot chrome
+            (badge + ⋯ menu) gets nothing extra. "Apps" links back to /apps; the
+            app name reuses the SAME sanitized (spoof-proof) chrome name as the
+            provenance badge — never a raw/untrusted manifest string. */}
+        {isPage && (
+          <Group
+            gap={4}
+            wrap="nowrap"
+            style={{ minWidth: 0 }}
+            data-testid="app-block-breadcrumb"
+            aria-label="Breadcrumb"
+          >
+            <Text size="xs" c="dimmed" aria-hidden>
+              /
+            </Text>
+            <Text
+              component={Link}
+              href="/apps"
+              size="xs"
+              c="dimmed"
+              style={{ flexShrink: 0 }}
+              data-testid="app-block-breadcrumb-apps"
+            >
+              Apps
+            </Text>
+            <Text size="xs" c="dimmed" aria-hidden>
+              /
+            </Text>
+            <Text
+              size="xs"
+              c="dimmed"
+              fw={500}
+              truncate
+              maw={200}
+              data-testid="app-block-breadcrumb-name"
+            >
+              {label}
+            </Text>
+          </Group>
+        )}
       </Group>
       <Menu position="bottom-end" shadow="md" width={180}>
         <Menu.Target>
