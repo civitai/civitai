@@ -900,6 +900,93 @@ describe('isTransientMeiliError — transient upstream classification', () => {
     ambiguous.name = 'MeiliSearchCommunicationError';
     expect(isTransientMeiliError(ambiguous)).toBe(false);
   });
+
+  // ── statusText-message fallback: the STRIPPED PROD SHAPE #2759 missed ──────
+  //
+  // Captured live on dp-prod AFTER #2759 deployed: GET /api/v1/images returned a
+  // hard 500 with body {"error":"Service Unavailable"} / {"error":"Request
+  // Timeout"} and NO `code` field. The error reaching the service catch is a
+  // PLAIN Error — NO Meili `name`, NO `statusCode`/`httpStatus`/`code`/`errno` —
+  // carrying ONLY `message = <HTTP statusText>` (the structured SDK shape is lost
+  // crossing the event-engine-common submodule boundary; only `statusText`
+  // survives). #2759's tests passed because they built the RAW SDK error (name +
+  // statusCode), which prod never sees. These tests pin the PROD shape directly.
+  it.each([
+    'Request Timeout', // 408
+    'Too Many Requests', // 429
+    'Bad Gateway', // 502
+    'Service Unavailable', // 503
+    'Gateway Timeout', // 504
+  ])(
+    'returns TRUE for a PLAIN Error whose message is ONLY the transient statusText "%s" (no name, no statusCode — the prod shape)',
+    async (statusText) => {
+      const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+      // Deliberately a bare Error: no .name, no .statusCode, no .code/.errno —
+      // exactly what arrives at the catch in prod.
+      const e = new Error(statusText);
+      expect((e as { name?: string }).name).toBe('Error'); // sanity: NOT a Meili name
+      expect((e as { statusCode?: number }).statusCode).toBeUndefined();
+      expect(isTransientMeiliError(e)).toBe(true);
+    }
+  );
+
+  it.each([
+    'Internal Server Error', // 500 — ambiguous (could be a deterministic app/Meili bug)
+    'Not Found', // 404 — real client error
+    'Bad Request', // 400
+    'Unauthorized', // 401
+    'some app bug', // arbitrary application error message
+    'null deref upstream',
+  ])(
+    'returns FALSE for a plain Error with a non-transient / arbitrary message "%s" (no masking of real bugs)',
+    async (message) => {
+      const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+      expect(isTransientMeiliError(new Error(message))).toBe(false);
+    }
+  );
+
+  it.each([
+    'DB error: Service Unavailable downstream',
+    'Bad Gateway error: connection reset by peer',
+    'upstream said Request Timeout after 30s',
+    'Service Unavailable', // exact — sanity that the substring cases below are the only diff
+  ])(
+    'matches EXACT statusText only, never a substring — "%s"',
+    async (message) => {
+      const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+      const exact = message === 'Service Unavailable';
+      // Only the bare exact reason phrase is transient; a message that merely
+      // CONTAINS it (with surrounding text) must NOT be masked as a 503.
+      expect(isTransientMeiliError(new Error(message))).toBe(exact);
+    }
+  );
+
+  it('does not match a case-mismatched statusText (exact, case-sensitive)', async () => {
+    const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+    expect(isTransientMeiliError(new Error('service unavailable'))).toBe(false);
+    expect(isTransientMeiliError(new Error('SERVICE UNAVAILABLE'))).toBe(false);
+    expect(isTransientMeiliError(new Error('Service Unavailable '))).toBe(false); // trailing space
+  });
+
+  it('exposes TRANSIENT_STATUSTEXT_TO_STATUS mapping the same statuses isFailfastStatus treats transient', async () => {
+    const { TRANSIENT_STATUSTEXT_TO_STATUS, isFailfastStatus } = await import(
+      '~/server/meilisearch/client'
+    );
+    // Every mapped status must itself be fast-fail eligible (no drift between
+    // the statusText set and the numeric predicate).
+    for (const status of Object.values(TRANSIENT_STATUSTEXT_TO_STATUS)) {
+      expect(isFailfastStatus(status)).toBe(true);
+    }
+    expect(TRANSIENT_STATUSTEXT_TO_STATUS).toMatchObject({
+      'Request Timeout': 408,
+      'Too Many Requests': 429,
+      'Bad Gateway': 502,
+      'Service Unavailable': 503,
+      'Gateway Timeout': 504,
+    });
+    // Notably ABSENT: a bare "Internal Server Error" (500) — not masked.
+    expect('Internal Server Error' in TRANSIENT_STATUSTEXT_TO_STATUS).toBe(false);
+  });
 });
 
 // ─── failfastReasonForTransientError: label mapping for the reclassified 503s ──
@@ -967,6 +1054,24 @@ describe('failfastReasonForTransientError — reason label mapping', () => {
     e.errno = 'ECONNREFUSED';
     expect(failfastReasonForTransientError(e)).toBe('upstream-error');
   });
+
+  // The stripped prod shape (plain Error, message-only) must derive the SAME
+  // reason label its status code would have produced via failfastReasonForStatus,
+  // so message-matched 503s bucket identically to their typed CommunicationError
+  // twins in meiliFetchFailfastTotal.
+  it.each([
+    ['Request Timeout', 'upstream-timeout'], // 408
+    ['Too Many Requests', 'upstream-error'], // 429 → generic (failfastReasonForStatus default)
+    ['Bad Gateway', 'upstream-error'], // 502
+    ['Service Unavailable', 'upstream-overload'], // 503
+    ['Gateway Timeout', 'upstream-error'], // 504
+  ])(
+    'maps a plain-Error statusText "%s" to %s (same label as the matching status code)',
+    async (message, expectedReason) => {
+      const { failfastReasonForTransientError } = await import('~/server/meilisearch/client');
+      expect(failfastReasonForTransientError(new Error(message))).toBe(expectedReason);
+    }
+  );
 });
 
 // ─── Service-catch counter contract (audit 🟡 #3) ────────────────────────────
