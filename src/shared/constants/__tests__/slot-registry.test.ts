@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALL_SLOT_IDS,
+  getPrimaryInstallSlot,
+  hasInstallSlot,
   isKnownSlotId,
   isLaunchSlot,
   isPageSlot,
@@ -122,6 +124,62 @@ describe('slot-registry (Phase 0 foundation)', () => {
       for (const id of LAUNCH_SLOT_IDS) {
         expect(isPageSlot(id), `launch slot "${id}" must be a page slot`).toBe(true);
       }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // INSTALL-SLOT PREDICATE — the SHARED card/detail-page "show Install?" gate.
+  // ---------------------------------------------------------------------------
+  describe('getPrimaryInstallSlot / hasInstallSlot (shared install-CTA predicate)', () => {
+    it('returns the model slot for a single model-target manifest', () => {
+      const m = { targets: [{ slotId: 'model.sidebar_top' }] };
+      expect(getPrimaryInstallSlot(m)).toBe('model.sidebar_top');
+      expect(hasInstallSlot(m)).toBe(true);
+    });
+
+    it('returns undefined for a page-only manifest (page apps have no install slot)', () => {
+      const m = { targets: [{ slotId: 'app.page' }] };
+      expect(getPrimaryInstallSlot(m)).toBeUndefined();
+      expect(hasInstallSlot(m)).toBe(false);
+    });
+
+    // The `.some()` fix: a multi-target manifest is classified by ANY non-page
+    // slot, not by index [0] — proven order-independent (both orderings).
+    it('multi-target [model, page] → install slot found (not masked by index)', () => {
+      const m = { targets: [{ slotId: 'model.sidebar_top' }, { slotId: 'app.page' }] };
+      expect(getPrimaryInstallSlot(m)).toBe('model.sidebar_top');
+      expect(hasInstallSlot(m)).toBe(true);
+    });
+
+    it('multi-target [page, model] → install slot found despite page at [0]', () => {
+      const m = { targets: [{ slotId: 'app.page' }, { slotId: 'model.sidebar_top' }] };
+      expect(getPrimaryInstallSlot(m)).toBe('model.sidebar_top');
+      expect(hasInstallSlot(m)).toBe(true);
+    });
+
+    // PARITY: a falsy slotId is skipped (matching the detail page's
+    // `…filter(Boolean)[0]`), so an empty-string slot at index [0] does NOT
+    // count as an install slot — the card and detail page agree on this input.
+    it('empty-string slotId at index [0] is skipped (parity with filter(Boolean))', () => {
+      const m = { targets: [{ slotId: '' }] };
+      expect(getPrimaryInstallSlot(m)).toBeUndefined();
+      expect(hasInstallSlot(m)).toBe(false);
+    });
+
+    it('empty-string at [0] then a real model slot → still finds the model slot', () => {
+      const m = { targets: [{ slotId: '' }, { slotId: 'model.below_images' }] };
+      expect(getPrimaryInstallSlot(m)).toBe('model.below_images');
+      expect(hasInstallSlot(m)).toBe(true);
+    });
+
+    it('handles missing / empty / null manifest + targets defensively', () => {
+      expect(getPrimaryInstallSlot(undefined)).toBeUndefined();
+      expect(getPrimaryInstallSlot(null)).toBeUndefined();
+      expect(getPrimaryInstallSlot({})).toBeUndefined();
+      expect(getPrimaryInstallSlot({ targets: [] })).toBeUndefined();
+      expect(getPrimaryInstallSlot({ targets: [undefined] })).toBeUndefined();
+      expect(getPrimaryInstallSlot({ targets: [{}] })).toBeUndefined();
+      expect(hasInstallSlot(undefined)).toBe(false);
     });
   });
 });

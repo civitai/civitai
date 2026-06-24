@@ -1,6 +1,7 @@
 import { FliptClient } from '@flipt-io/flipt-client-js';
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
+import type { AggSource } from '../../../event-engine-common/services/metrics';
 
 export enum FLIPT_FEATURE_FLAGS {
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
@@ -381,12 +382,37 @@ export async function ensureFliptInitialized(): Promise<void> {
   await FliptSingleton.getInstance();
 }
 
+// Single source of truth for which ClickHouse table the entity-metric READ path
+// pulls per-(entity,metric,day) totals from. BOTH read paths must use this:
+//   - `MetricService` (the watcher-fed `metrics:*` cache populate) — via the
+//     `aggSourceProvider` it is constructed with (image.service / bitdex-stats).
+//   - the direct CH subquery sites — via `buildEntityMetricPerDaySource` below,
+//     which emits the same `entityMetricDailyAgg_v2` table.
+//
+// `entityMetricDailyAgg_v2` is a read VIEW that already returns FINAL per-day
+// totals, so `needsArgMaxDedup: false` (no argMax dedup needed).
+//
+// History: PR #2666 made the v2 cutover permanent and DELETED the prior
+// `getEntityMetricAggSource()` provider, dropping the provider arg from every
+// `new MetricService(...)`. That silently fell MetricService back to the
+// submodule's `DEFAULT_AGG_SOURCE = entityMetricDailyAgg_new`. When that legacy
+// ReplacingMergeTree table was dropped from ClickHouse (2026-06-24), MetricService
+// began throwing `UNKNOWN_TABLE` (~100k/hr) → 500s on /api/v1/images and on-site
+// image feeds. This constant restores the deleted "one shared source of truth"
+// so a future table change can't migrate one reader and orphan another. v2 is
+// permanent — there is intentionally no Flipt flag here.
+export const imageMetricAggSource = (): AggSource => ({
+  table: 'entityMetricDailyAgg_v2',
+  needsArgMaxDedup: false,
+});
+
 // Build the inner `(entityId, metricType, day, total)` subquery the direct CH
 // read sites (search-index / comic populate / metric-helpers) sum over. `where`
 // is the caller's full WHERE clause (e.g. "WHERE entityType = 'Image' AND ...").
-// Reads the already-FINAL view `entityMetricDailyAgg_v2`, so we select total
-// directly (no argMax dedup). Selecting metricType is harmless even for callers
-// that only group by day (it's just carried through the subquery).
+// Reads the already-FINAL view `entityMetricDailyAgg_v2` (see imageMetricAggSource
+// above — same source of truth), so we select total directly (no argMax dedup).
+// Selecting metricType is harmless even for callers that only group by day (it's
+// just carried through the subquery).
 //
 // (Historically this was flag-switchable via METRICS_AGG_V2_READ between the
 // ReplacingMergeTree `entityMetricDailyAgg_new` — which needed argMax — and the

@@ -5,7 +5,6 @@ import {
   Button,
   Card,
   Code,
-  Container,
   FileInput,
   Group,
   Loader,
@@ -25,6 +24,9 @@ import Link from 'next/link';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { CliSubmitCta } from '~/components/Apps/CliSubmitCta';
+import { ManualUploadSection } from '~/components/Apps/ManualUploadSection';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -83,9 +85,7 @@ type ParsedManifest = {
   targets?: Array<{ slotId?: string; priority?: number }>;
 };
 
-type ManifestPreview =
-  | { ok: true; manifest: ParsedManifest }
-  | { ok: false; error: string };
+type ManifestPreview = { ok: true; manifest: ParsedManifest } | { ok: false; error: string };
 
 async function fileToBase64(file: File): Promise<string> {
   return new Promise<string>((resolve, reject) => {
@@ -150,14 +150,24 @@ async function previewManifest(file: File): Promise<ManifestPreview> {
     return { ok: false, error: 'manifest must be a JSON object' };
   }
   const m = parsed as Record<string, unknown>;
-  if (typeof m.blockId !== 'string' || !SLUG_REGEX.test(m.blockId) || m.blockId.length < 3 || m.blockId.length > 40) {
+  if (
+    typeof m.blockId !== 'string' ||
+    !SLUG_REGEX.test(m.blockId) ||
+    m.blockId.length < 3 ||
+    m.blockId.length > 40
+  ) {
     return {
       ok: false,
-      error: `manifest.blockId "${m.blockId ?? ''}" must be 3-40 chars, lowercase a-z/0-9/hyphens, start with a letter`,
+      error: `manifest.blockId "${
+        m.blockId ?? ''
+      }" must be 3-40 chars, lowercase a-z/0-9/hyphens, start with a letter`,
     };
   }
   if (typeof m.version !== 'string' || !SEMVER_REGEX.test(m.version)) {
-    return { ok: false, error: `manifest.version "${m.version ?? ''}" must be semver (e.g. 0.1.0)` };
+    return {
+      ok: false,
+      error: `manifest.version "${m.version ?? ''}" must be semver (e.g. 0.1.0)`,
+    };
   }
   if (typeof m.name !== 'string' || m.name.length === 0) {
     return { ok: false, error: 'manifest.name must be a non-empty string' };
@@ -292,28 +302,38 @@ export default function SubmitAppPage() {
   return (
     <>
       <Meta title="Submit an app — Civitai" deIndex />
-      <Container size="sm" py="xl">
-        <Stack gap="lg">
-          <Stack gap={4}>
-            <Title order={2}>Submit an app</Title>
-            <Text c="dimmed" size="sm">
-              Upload a ZIP of your app source. The slug, version, and name come
-              from <Code>block.manifest.json</Code> — no separate fields to
-              fill in, and you don&apos;t set <Code>iframe.src</Code> (the
-              platform assigns it from your slug). A moderator reviews the
-              manifest + change summary, then approves or rejects with feedback.
-              Approved submissions deploy automatically.
-            </Text>
-          </Stack>
+      <AppsPageLayout
+        size="sm"
+        title="Submit an app"
+        subtitle={
+          <>
+            The recommended way to author and submit an app is the <Code>civitai</Code> CLI — it
+            scaffolds your block and submits it for you. A moderator reviews the manifest + change
+            summary, then approves or rejects with feedback. Approved submissions deploy
+            automatically. Prefer to do it by hand? You can still upload a ZIP.
+          </>
+        }
+      >
+        {submitted ? (
+          <SuccessCard submitted={submitted} />
+        ) : (
+          <>
+              {/* PRIMARY: the recommended CLI flow. */}
+              <CliSubmitCta />
 
-          {submitted ? (
-            <SuccessCard submitted={submitted} />
-          ) : (
-            <Card withBorder p="lg">
-              <Stack gap="md">
+              {/* SECONDARY: manual ZIP upload, de-emphasized behind a toggle. */}
+              <ManualUploadSection>
+                <Text size="sm" c="dimmed">
+                  Upload a ZIP of your app source. The slug, version, and name come from{' '}
+                  <Code>block.manifest.json</Code> — no separate fields to fill in, and you
+                  don&apos;t set <Code>iframe.src</Code> (the platform assigns it from your slug).
+                </Text>
+
                 <FileInput
                   label="App bundle (.zip)"
-                  description={`ZIP of your app source: block.manifest.json + index.html + src/. No Dockerfile/nginx needed — the platform builds + serves it. Max ${Math.round(MAX_BUNDLE_SIZE_BYTES / (1024 * 1024))} MiB.`}
+                  description={`ZIP of your app source: block.manifest.json + index.html + src/. No Dockerfile/nginx needed — the platform builds + serves it. Max ${Math.round(
+                    MAX_BUNDLE_SIZE_BYTES / (1024 * 1024)
+                  )} MiB.`}
                   placeholder="my-app.zip"
                   accept=".zip,application/zip,application/x-zip-compressed"
                   value={bundle}
@@ -326,10 +346,7 @@ export default function SubmitAppPage() {
                 {preview && <ManifestPreviewCard preview={preview} />}
 
                 {previewOk && (checkingPending || existingPending) && (
-                  <PendingNotice
-                    loading={checkingPending}
-                    pending={existingPending}
-                  />
+                  <PendingNotice loading={checkingPending} pending={existingPending} />
                 )}
 
                 <Alert
@@ -339,7 +356,8 @@ export default function SubmitAppPage() {
                   title="What happens next"
                 >
                   <Text size="sm" mb={6}>
-                    1. We store your bundle and compute a diff against the previous approved version (if any).
+                    1. We store your bundle and compute a diff against the previous approved version
+                    (if any).
                   </Text>
                   <Text size="sm" mb={6}>
                     2. A moderator reviews the manifest + change summary on{' '}
@@ -384,11 +402,10 @@ export default function SubmitAppPage() {
                     {existingPending ? 'Withdraw and resubmit' : 'Submit for review'}
                   </Button>
                 </Group>
-              </Stack>
-            </Card>
+              </ManualUploadSection>
+            </>
           )}
-        </Stack>
-      </Container>
+      </AppsPageLayout>
     </>
   );
 }
@@ -409,9 +426,7 @@ function PendingNotice({
   }
   if (!pending) return null;
   const submittedAt =
-    typeof pending.submittedAt === 'string'
-      ? new Date(pending.submittedAt)
-      : pending.submittedAt;
+    typeof pending.submittedAt === 'string' ? new Date(pending.submittedAt) : pending.submittedAt;
   return (
     <Alert
       color="yellow"
@@ -422,11 +437,9 @@ function PendingNotice({
       <Stack gap={4}>
         <Text size="sm">
           v<Code>{pending.version}</Code> submitted{' '}
-          {Number.isFinite(submittedAt.getTime())
-            ? submittedAt.toLocaleString()
-            : 'recently'}{' '}
-          is still in the moderator queue. Submitting this bundle will withdraw
-          that request and put this one in its place.
+          {Number.isFinite(submittedAt.getTime()) ? submittedAt.toLocaleString() : 'recently'} is
+          still in the moderator queue. Submitting this bundle will withdraw that request and put
+          this one in its place.
         </Text>
         <Text size="xs" c="dimmed">
           {pending.id}
@@ -439,8 +452,15 @@ function PendingNotice({
 function ManifestPreviewCard({ preview }: { preview: ManifestPreview }) {
   if (!preview.ok) {
     return (
-      <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />} title="Bundle problem">
-        <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{preview.error}</Text>
+      <Alert
+        color="red"
+        variant="light"
+        icon={<IconAlertTriangle size={16} />}
+        title="Bundle problem"
+      >
+        <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+          {preview.error}
+        </Text>
       </Alert>
     );
   }
@@ -449,30 +469,46 @@ function ManifestPreviewCard({ preview }: { preview: ManifestPreview }) {
     <Alert color="green" variant="light" icon={<IconCheck size={16} />} title="Manifest parsed">
       <Stack gap={6}>
         <Group gap={6}>
-          <Text size="sm" fw={600}>Slug</Text>
+          <Text size="sm" fw={600}>
+            Slug
+          </Text>
           <Code>{m.blockId}</Code>
-          <Text size="sm" fw={600} ml="md">Version</Text>
+          <Text size="sm" fw={600} ml="md">
+            Version
+          </Text>
           <Code>{m.version}</Code>
         </Group>
         <Group gap={6}>
-          <Text size="sm" fw={600}>Name</Text>
+          <Text size="sm" fw={600}>
+            Name
+          </Text>
           <Text size="sm">{m.name}</Text>
         </Group>
         {m.description && (
           <Group gap={6} align="flex-start">
-            <Text size="sm" fw={600} style={{ minWidth: 80 }}>Description</Text>
-            <Text size="sm" c="dimmed" style={{ flex: 1 }}>{m.description}</Text>
+            <Text size="sm" fw={600} style={{ minWidth: 80 }}>
+              Description
+            </Text>
+            <Text size="sm" c="dimmed" style={{ flex: 1 }}>
+              {m.description}
+            </Text>
           </Group>
         )}
         {m.contentRating && (
           <Group gap={6}>
-            <Text size="sm" fw={600}>Rating</Text>
-            <Badge color="gray" variant="light">{m.contentRating}</Badge>
+            <Text size="sm" fw={600}>
+              Rating
+            </Text>
+            <Badge color="gray" variant="light">
+              {m.contentRating}
+            </Badge>
           </Group>
         )}
         {m.targets && m.targets.length > 0 && (
           <Group gap={6}>
-            <Text size="sm" fw={600}>Slots</Text>
+            <Text size="sm" fw={600}>
+              Slots
+            </Text>
             {m.targets.map((t, i) => (
               <Code key={i}>{t.slotId ?? '?'}</Code>
             ))}
@@ -492,9 +528,8 @@ function SuccessCard({ submitted }: { submitted: Submitted }) {
           <Title order={4}>Submitted — pending review</Title>
         </Group>
         <Text size="sm">
-          Your submission for <Code>{submitted.slug}</Code> v
-          <Code>{submitted.version}</Code> is in the moderator queue. You'll see
-          the result on{' '}
+          Your submission for <Code>{submitted.slug}</Code> v<Code>{submitted.version}</Code> is in
+          the moderator queue. You'll see the result on{' '}
           <Anchor component={Link} href="/apps/my-submissions">
             /apps/my-submissions
           </Anchor>{' '}

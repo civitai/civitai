@@ -20,7 +20,8 @@ import {
   type DerivedLabelInput,
   type DerivedLabelMode,
 } from '~/server/services/scanner-derived-labels.service';
-import { matchAllLabels, REGEX_VERSION } from '~/server/services/scanner-label-regex';
+import { matchAllLabels } from '~/server/services/scanner-label-regex';
+import { buildRegexShadowRows } from '~/server/services/scanner-regex-shadow.builder';
 
 /**
  * Age-classifier topK band names that count as minor. Stored in normalized
@@ -230,23 +231,13 @@ async function writeRegexShadowComparison(args: {
     const regexResults = matchAllLabels(args.positivePrompt);
     if (regexResults.length === 0) return;
 
-    const rows = regexResults.map((r) => {
-      const xg = args.xguardLabels.find((l) => l.label === r.label);
-      return {
-        workflowId: args.workflowId,
-        contentHash: args.contentHash,
-        scanner: args.scanner,
-        label: r.label,
-        regexMatched: r.matched ? 1 : 0,
-        regexReason: r.reason,
-        regexMatchedTerms: r.matchedTerms,
-        regexVersion: REGEX_VERSION,
-        xguardTriggered: xg ? xg.triggered : null,
-        xguardScore: xg?.score ?? null,
-        xguardThreshold: xg?.threshold ?? null,
-        xguardPolicyHash: xg?.version ?? null,
-        scannedAt: args.scannedAt,
-      };
+    const rows = buildRegexShadowRows({
+      workflowId: args.workflowId,
+      contentHash: args.contentHash,
+      scanner: args.scanner,
+      regexResults,
+      xguardLabels: args.xguardLabels,
+      scannedAt: args.scannedAt,
     });
 
     await clickhouse.insert({

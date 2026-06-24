@@ -23,6 +23,7 @@ import type { OutputType } from './types';
 // graphs import helpers from this file, so importing them back here would form a
 // graph <-> config/workflows cycle (the cause of "X is undefined" at module-eval).
 import {
+  happyHorseVersionIds,
   klingVersionIds,
   nanoBananaVersionIds,
   viduVersionIds,
@@ -326,6 +327,8 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Edit a video with AI',
     category: 'video',
     ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse],
+    // HappyHorse v1.1 has no videoEdit operation — v1.0 only.
+    excludeModelVersionIds: [happyHorseVersionIds['v1.1']],
   },
 
   // Disabled — LTXV23 extendVideo is producing poor results. Re-enable once

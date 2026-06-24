@@ -353,7 +353,6 @@ export const getModel3DsInfinite = async ({
   includeDrafts,
   sort,
   period,
-  rigged,
   animated,
   browsingLevel,
   user,
@@ -411,11 +410,13 @@ export const getModel3DsInfinite = async ({
     if (query) AND.push({ name: { contains: query, mode: 'insensitive' } });
     if (tagIds?.length) AND.push({ tags: { some: { tagId: { in: tagIds } } } });
 
-    // PolyGen generation-param toggles. JSON path equality against the form-input
-    // snapshot stored on Model3D.generationParams.
-    if (rigged) {
-      AND.push({ generationParams: { path: ['enableRigging'], equals: true } });
-    }
+    // PolyGen `enableAnimation` toggle. JSON path equality against the
+    // form-input snapshot stored on `Model3D.generationParams`. The
+    // standalone `rigged` filter is gone (rigging now follows animation
+    // at submit time via `toMeshyPolyGenInput`), so we only key off
+    // `enableAnimation`. Older records with `enableRigging: true,
+    // enableAnimation: false` still exist but aren't filterable — they
+    // surface only via the unfiltered feed / direct link.
     if (animated) {
       AND.push({ generationParams: { path: ['enableAnimation'], equals: true } });
     }

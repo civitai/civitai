@@ -2524,6 +2524,10 @@ model BlockUserSubscription {
   // (app_block_id equality + created_at range). See migration
   // 20260621120000_bus_app_block_created_analytics_idx.
   @@index([appBlockId, createdAt(sort: Desc)], map: "bus_app_block_created_idx")
+  // NOTE: userId existence check for blocks.getNavSummary is already served by
+  // the live index bus_user_subscriptions_idx ON (user_id, updated_at DESC)
+  // (non-partial, leads on user_id) — verified on prod 2026-06-24. A dedicated
+  // @@index([userId]) would be redundant, so it is intentionally NOT declared.
   @@map("block_user_subscriptions")
 }
 

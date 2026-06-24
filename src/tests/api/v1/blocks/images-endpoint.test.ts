@@ -274,4 +274,62 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     expect(res.statusCode).toBe(200);
     expect(mockRunImageSearch).toHaveBeenCalledTimes(1);
   });
+
+  // ── Transient Meili → retryable 503 (audit 🟡 #2) ──────────────────────────
+  // The sibling now uses the SAME isTransientMeiliError predicate the public
+  // /api/v1/images handler uses, and attaches no-store + Retry-After: 2 so the
+  // 503 carries the same retryable contract (the doc claims it mirrors the
+  // public endpoint). isTransientMeiliError is NOT mocked here — the real
+  // predicate runs.
+  it('maps a transient Meili error to a retryable 503 (no-store + Retry-After)', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    // meilisearch-js 0.33 MeiliSearchCommunicationError(503) shape — a transport
+    // brownout the inner SDK throws, which used to bubble as a hard 500 here.
+    const transient = new Error('Service Unavailable') as Error & {
+      name: string;
+      statusCode: number;
+    };
+    transient.name = 'MeiliSearchCommunicationError';
+    transient.statusCode = 503;
+    mockRunImageSearch.mockRejectedValueOnce(transient);
+
+    const res = await invoke({});
+
+    expect(res.statusCode).toBe(503);
+    expect(res.body).toEqual({ error: 'Image search is temporarily overloaded — please retry.' });
+    const headers = (res as unknown as { headers: Record<string, unknown> }).headers;
+    expect(headers['Cache-Control']).toBe('no-store');
+    expect(headers['Retry-After']).toBe('2');
+  });
+
+  it('a TRPCError SERVICE_UNAVAILABLE (service-wrapped) → 503 WITH no-store + Retry-After', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    const trpcError = Object.assign(
+      new Error('Image search is temporarily overloaded — please retry.'),
+      { code: 'SERVICE_UNAVAILABLE', name: 'TRPCError' }
+    );
+    mockRunImageSearch.mockRejectedValueOnce(trpcError);
+
+    const res = await invoke({});
+
+    expect(res.statusCode).toBe(503);
+    const headers = (res as unknown as { headers: Record<string, unknown> }).headers;
+    expect(headers['Cache-Control']).toBe('no-store');
+    expect(headers['Retry-After']).toBe('2');
+  });
+
+  it('does NOT mask a deterministic ApiError 500 (JSON body) as 503 — surfaces a non-503 status, no Retry-After', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    // Structured-JSON Meili 500 → deterministic, must NOT be reclassified.
+    const apiError500 = new Error('internal') as Error & { name: string; httpStatus: number };
+    apiError500.name = 'MeiliSearchApiError';
+    apiError500.httpStatus = 500;
+    mockRunImageSearch.mockRejectedValueOnce(apiError500);
+
+    const res = await invoke({});
+
+    expect(res.statusCode).not.toBe(503);
+    const headers = (res as unknown as { headers: Record<string, unknown> }).headers;
+    expect(headers['Retry-After']).toBeUndefined();
+  });
 });

@@ -19,9 +19,11 @@ const {
   mockSubmitWorkflow,
   mockGetWorkflow,
   mockCancelWorkflow,
-  mockCreateTextToImageStep,
+  mockCreateStepsFromGraph,
+  mockBuildGenerationContext,
   mockAuditPromptServer,
   mockGetUserById,
+  mockGetSessionUser,
   mockDbRead,
   mockRedis,
   mockIsAppBlocksEnabled,
@@ -39,9 +41,15 @@ const {
   mockSubmitWorkflow: vi.fn(),
   mockGetWorkflow: vi.fn(),
   mockCancelWorkflow: vi.fn(),
-  mockCreateTextToImageStep: vi.fn(),
+  mockCreateStepsFromGraph: vi.fn(),
+  mockBuildGenerationContext: vi.fn(),
   mockAuditPromptServer: vi.fn(),
   mockGetUserById: vi.fn(),
+  // assertAppBlocksEnabledForTokenUser now resolves the FULL SessionUser (so the
+  // Flipt context carries the real tier/isMember). isAppBlocksEnabled is mocked
+  // here, but getSessionUser must still be stubbed so the real resolver doesn't
+  // hit the DB/redis.
+  mockGetSessionUser: vi.fn(),
   mockDbRead: {
     modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
     // Required by resolveBlockCheckpoint (LoRA path) — published checkpoint
@@ -100,14 +108,22 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   getWorkflow: mockGetWorkflow,
   cancelWorkflow: mockCancelWorkflow,
 }));
-vi.mock('~/server/services/orchestrator/textToImage/textToImage', () => ({
-  createTextToImageStep: mockCreateTextToImageStep,
+// The router builds the txt2img step via the generation-graph pipeline
+// (dynamically imported inside `createBlockTextToImageStep`): it calls
+// `buildGenerationContext` for the external ctx, then
+// `createWorkflowStepsFromGraphInput` for the step array (router takes steps[0]).
+vi.mock('~/server/services/orchestrator/orchestration-new.service', () => ({
+  buildGenerationContext: mockBuildGenerationContext,
+  createWorkflowStepsFromGraphInput: mockCreateStepsFromGraph,
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: mockAuditPromptServer,
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: mockGetUserById,
+}));
+vi.mock('~/server/auth/session-user', () => ({
+  getSessionUser: (...args: unknown[]) => mockGetSessionUser(...args),
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
@@ -298,9 +314,11 @@ beforeEach(() => {
     mockSubmitWorkflow,
     mockGetWorkflow,
     mockCancelWorkflow,
-    mockCreateTextToImageStep,
+    mockCreateStepsFromGraph,
+    mockBuildGenerationContext,
     mockAuditPromptServer,
     mockGetUserById,
+    mockGetSessionUser,
     mockDbRead.modelVersion.findUnique,
     mockIsAppBlocksEnabled,
     mockDailyBoostApply,
@@ -356,10 +374,18 @@ beforeEach(() => {
     email: 'u@example.com',
     username: 'u',
   });
+  // assertAppBlocksEnabledForTokenUser resolves the full SessionUser for the flag
+  // gate; default to a moderator so the (mocked) flag gate passes. The vanished
+  // -viewer test sets getUserById→null to make the SECOND gate
+  // (assertViewerIsModerator) reject; this default keeps the first gate green.
+  mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockAuditPromptServer.mockResolvedValue(undefined);
-  mockCreateTextToImageStep.mockResolvedValue({ $type: 'textToImage', name: 's1', input: {} });
+  mockBuildGenerationContext.mockResolvedValue({ externalCtx: {} });
+  // createWorkflowStepsFromGraphInput returns an ARRAY of steps; the block path
+  // is single-step txt2img, so default to one step (router takes steps[0]).
+  mockCreateStepsFromGraph.mockResolvedValue([{ $type: 'textToImage', name: 's1', input: {} }]);
   // Daily-boost autoclaim defaults: balance high enough that no claim
   // fires unless a test explicitly drops it. Reward details say boost is
   // unclaimed today with the standard 25 awardAmount. Tests that exercise
@@ -847,13 +873,23 @@ describe('blocks.submitWorkflow', () => {
     expect(mockSubmitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('rejects when the App Blocks flag is disabled', async () => {
-    mockIsAppBlocksEnabled.mockResolvedValueOnce(false);
+  it('rejects when the App Blocks flag is disabled (kill-switch, even for a mod token)', async () => {
+    // The flag is now evaluated IN-BODY against the TOKEN subject (not the
+    // `enforceAppBlocksFlag` middleware's ctx.user), so it runs AFTER
+    // verifyBlockToken — but it is still a real kill-switch. Even with a valid
+    // MOD token, flag=off → UNAUTHORIZED "App Blocks not enabled", and the real
+    // submit never fires.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expect(mockVerifyBlockToken).not.toHaveBeenCalled();
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+    // The token IS verified (the flag gate is in-body now), but no spend/submit.
+    expect(mockVerifyBlockToken).toHaveBeenCalled();
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid body shape (zod validation)', async () => {
@@ -865,6 +901,172 @@ describe('blocks.submitWorkflow', () => {
         body: { kind: 'unknown', modelId: 7 } as never,
       })
     ).rejects.toThrow();
+  });
+
+  // ---- App-Blocks flag evaluated against the TOKEN subject (dev:live fix) ----
+  //
+  // ROOT CAUSE this proves fixed: `enforceAppBlocksFlag` evaluated the flag
+  // against `ctx.user` (the SESSION user). A dev:live / localhost call is
+  // block-token-authed with NO session cookie → `ctx.user` is undefined → the
+  // mod-segmented `app-blocks-enabled` flag global-evals false → 401, even when
+  // the token's subject is a moderator. fakeCtx() has `user: undefined`,
+  // reproducing exactly that path. With the fix the flag is evaluated against
+  // the TOKEN subject (resolved via getUserById), so a mod subject passes and a
+  // non-mod/anon subject is still blocked (no-widening).
+  //
+  // The mock here is FAITHFUL: it mirrors the live mod-segmented flag — ON iff
+  // the supplied user is a moderator; no user (global eval) → false.
+  describe('flag is evaluated against the block-token subject (no session)', () => {
+    function faithfulModSegmentedFlag() {
+      mockIsAppBlocksEnabled.mockImplementation(async (opts?: { user?: { isModerator?: boolean } }) =>
+        !!opts?.user?.isModerator
+      );
+    }
+
+    it('INVARIANT 1a — MOD token + flag-on: estimate passes the gate (reaches the cost step)', async () => {
+      faithfulModSegmentedFlag();
+      // ctx.user is undefined (dev:live), but the TOKEN subject (42) is a mod.
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      mockGetUserById.mockResolvedValue({
+        id: 42,
+        isModerator: true,
+        tier: 'free',
+        email: 'u@example.com',
+        username: 'u',
+      });
+      happyVersionLookup();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 12 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      // Got past the flag gate → the orchestrator whatif ran and produced a cost.
+      expect(result.snapshot.cost).toEqual({ total: 12 });
+      // The flag was evaluated against the TOKEN subject ({ user: <mod row> }),
+      // NOT ctx.user (undefined) — the dev:live fix.
+      expect(mockIsAppBlocksEnabled).toHaveBeenCalledWith({
+        user: expect.objectContaining({ id: 42, isModerator: true }),
+      });
+    });
+
+    it('INVARIANT 1a — MOD token + flag-on: submit passes the gate (real submit fires)', async () => {
+      faithfulModSegmentedFlag();
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      mockGetUserById.mockResolvedValue({
+        id: 42,
+        isModerator: true,
+        tier: 'free',
+        email: 'u@example.com',
+        username: 'u',
+      });
+      happyVersionLookup();
+      mockSysRedis.incrBy.mockResolvedValue(125);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+    });
+
+    it('INVARIANT 1b — NON-MOD token: flag false → 401, no submit (stays mod-only pre-GA)', async () => {
+      faithfulModSegmentedFlag();
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      // TOKEN subject resolves to a NON-mod user → flag false. The flag gate
+      // resolves the subject via getSessionUser (not ctx.user), so set it here.
+      const nonMod = {
+        id: 42,
+        isModerator: false,
+        tier: 'free',
+        email: 'u@example.com',
+        username: 'u',
+      };
+      mockGetUserById.mockResolvedValue(nonMod);
+      mockGetSessionUser.mockResolvedValue(nonMod);
+      happyVersionLookup();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('INVARIANT 1c — ANON token (sub:anon): rejected before the flag, no submit', async () => {
+      faithfulModSegmentedFlag();
+      // sub:'anon' → parseSubjectUserId returns null → UNAUTHORIZED before the
+      // flag/mod resolve even runs (there is no resolvable user to evaluate).
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon', buzzBudget: 1000 }));
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      // Never resolved a user / evaluated the flag against one, never submitted.
+      expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('INVARIANT 4 — invalid token rejected before any flag/mod check', async () => {
+      faithfulModSegmentedFlag();
+      mockVerifyBlockToken.mockResolvedValue(null);
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('INVARIANT 2 — page-host path (session=mod AND token=mod): unaffected, still passes', async () => {
+      faithfulModSegmentedFlag();
+      // A real page-host call carries BOTH a session AND the token, same mod.
+      // After the change the gate uses the TOKEN subject (= the same mod) → pass.
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      mockGetUserById.mockResolvedValue({
+        id: 42,
+        isModerator: true,
+        tier: 'free',
+        email: 'u@example.com',
+        username: 'u',
+      });
+      happyVersionLookup();
+      mockSysRedis.incrBy.mockResolvedValue(125);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      // Session user present (page-host), same mod as the token subject.
+      const ctxWithSession = {
+        ...fakeCtx(),
+        user: { id: 42, isModerator: true, tier: 'free', username: 'u' },
+      };
+      const caller = blocksRouter.createCaller(ctxWithSession as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      // Gate used the TOKEN subject, not the session ctx.user.
+      expect(mockIsAppBlocksEnabled).toHaveBeenCalledWith({
+        user: expect.objectContaining({ id: 42, isModerator: true }),
+      });
+    });
+
+    it('pollWorkflow: MOD token + flag-on passes; non-mod token → 401', async () => {
+      faithfulModSegmentedFlag();
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      mockGetUserById.mockResolvedValue({ id: 42, isModerator: true });
+      mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
+      mockGetWorkflow.mockResolvedValue({ id: 'wf_1', status: 'succeeded', cost: { total: 0 }, steps: [] });
+      let caller = blocksRouter.createCaller(fakeCtx() as never);
+      const ok = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+      expect(ok.snapshot.workflowId).toBe('wf_1');
+
+      // Non-mod subject → flag false → 401, orchestrator never read. The flag
+      // gate resolves the subject via getSessionUser.
+      mockGetWorkflow.mockClear();
+      mockGetUserById.mockResolvedValue({ id: 42, isModerator: false });
+      mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false, tier: 'free' });
+      caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+      expect(mockGetWorkflow).not.toHaveBeenCalled();
+    });
   });
 
   // ---- W3 flow A — buzz SPEND attribution wire-in ------------------------
@@ -1877,7 +2079,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       // The orchestrator resource belt (inside createTextToImageStep) rejects an
       // un-entitled early-access / Private resource. The whatIf step is the FIRST
       // belt call in submit, and it is BEFORE the reservation.
-      mockCreateTextToImageStep.mockRejectedValueOnce(
+      mockCreateStepsFromGraph.mockRejectedValueOnce(
         new TRPCError({ code: 'FORBIDDEN', message: 'early access pass required' })
       );
       const caller = blocksRouter.createCaller(fakeCtx() as never);
@@ -1901,7 +2103,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       mockResolveCanGenerateForVersions.mockResolvedValue(
         new Map([[99, { canGenerate: true }]])
       );
-      mockCreateTextToImageStep.mockRejectedValueOnce(
+      mockCreateStepsFromGraph.mockRejectedValueOnce(
         new TRPCError({ code: 'FORBIDDEN', message: 'this model requires a subscription' })
       );
       const caller = blocksRouter.createCaller(fakeCtx() as never);
@@ -2127,7 +2329,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
           [201, { canGenerate: true }],
         ])
       );
-      mockCreateTextToImageStep.mockRejectedValueOnce(
+      mockCreateStepsFromGraph.mockRejectedValueOnce(
         new TRPCError({ code: 'BAD_REQUEST', message: 'Using Private resources require an active subscription.' })
       );
       const caller = blocksRouter.createCaller(fakeCtx() as never);
@@ -2249,10 +2451,11 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       expect(versions.map((v: { id: number }) => v.id).sort((a: number, b: number) => a - b)).toEqual([
         99, 201,
       ]);
-      // The anchor at the head of the resources array is the RESOLVED checkpoint
-      // (500), not the body version (99).
-      const stepArg = mockCreateTextToImageStep.mock.calls[0][0];
-      expect(stepArg.resources[0].id).toBe(500);
+      // The graph input's `model` anchor is the RESOLVED checkpoint (500), not
+      // the body version (99). (In the graph shape the checkpoint is `model`,
+      // not `resources[0]` — the additional LoRA lives in `resources`.)
+      const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
+      expect(stepArg.input.model.id).toBe(500);
     });
 
     it('FIX1: non-Checkpoint page body — a LoRA matching the BODY family but NOT the resolved checkpoint is REJECTED', async () => {

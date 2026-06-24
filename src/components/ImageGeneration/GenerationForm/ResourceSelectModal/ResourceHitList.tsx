@@ -20,11 +20,9 @@ import { isDefined } from '~/utils/type-guards';
 import { NoContent } from '~/components/NoContent/NoContent';
 
 export function ResourceHitList({
-  likes,
   featured,
   selectedTab,
 }: ResourceSelectOptions & {
-  likes: number[] | undefined;
   featured: GetFeaturedModels | undefined;
   selectedTab?: Tabs;
 }) {
@@ -134,18 +132,11 @@ export function ResourceHitList({
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
   }, [status]);
 
-  const likesSet = useMemo(() => new Set(likes ?? []), [likes]);
-
   const renderCard = useCallback(
     ({ data, height }: { data: SearchIndexDataMap['models'][number]; height: number }) => (
-      <ResourceSelectCard
-        data={data}
-        height={height}
-        isFavorite={likesSet.has(data.id)}
-        selectSource={selectSource}
-      />
+      <ResourceSelectCard data={data} height={height} selectSource={selectSource} />
     ),
-    [likesSet, selectSource]
+    [selectSource]
   );
 
   if (loading && !filtered.length)
@@ -198,28 +189,16 @@ export function ResourceHitList({
           )}
         >
           <div className={cardClasses.winnerFirst}>
-            <ResourceSelectCard
-              data={topItems[0]}
-              isFavorite={likesSet.has(topItems[0].id)}
-              selectSource={selectSource}
-            />
+            <ResourceSelectCard data={topItems[0]} selectSource={selectSource} />
           </div>
           {topItems.length > 1 && (
             <div className={cardClasses.winnerSecond}>
-              <ResourceSelectCard
-                data={topItems[1]}
-                isFavorite={likesSet.has(topItems[1].id)}
-                selectSource={selectSource}
-              />
+              <ResourceSelectCard data={topItems[1]} selectSource={selectSource} />
             </div>
           )}
           {topItems.length > 2 && (
             <div className={cardClasses.winnerThird}>
-              <ResourceSelectCard
-                data={topItems[2]}
-                isFavorite={likesSet.has(topItems[2].id)}
-                selectSource={selectSource}
-              />
+              <ResourceSelectCard data={topItems[2]} selectSource={selectSource} />
             </div>
           )}
         </div>

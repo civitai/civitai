@@ -224,7 +224,11 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       push('PBR materials', params.enablePbr);
       push('Mode', params.mode);
       push('Seed', params.seed);
-      push('Rigging', params.enableRigging);
+      // `Rigging` row was removed once the form collapsed both flags
+      // into a single Animate toggle (Meshy requires rigging when
+      // animation is on). The legacy `params.enableRigging` may still
+      // be `true` on older records — surfaced via `Animation` instead
+      // for new generations, and on old records the bool is implied.
       push('Animation', params.enableAnimation);
       push('Texture prompt', params.texturePrompt);
     }

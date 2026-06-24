@@ -228,6 +228,19 @@ export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
   labelNames: ['cache_name'] as const,
 });
 
+// ClickHouse TRANSPORT-error fail-soft counter. Incremented each time a path swallows
+// a TRANSIENT ClickHouse connection/transport failure (socket hang up / Code 279 / Code
+// 210 — see isClickHouseConnectionError) instead of 500-ing the request. The `path`
+// label names where it happened ('buzz-reward', 'image-feed', …). A query/schema error
+// (UNKNOWN_TABLE etc.) is NEVER counted here — it still throws. A SUSTAINED nonzero rate
+// is the alert signal that ClickHouse Cloud is in a real outage that fail-soft is now
+// masking (a Loki/Prom alert should be added in the datapacket-talos repo on this series).
+export const clickhouseFailSoftCounter = registerCounterWithLabels({
+  name: 'civitai_app_clickhouse_failsoft_total',
+  help: 'Transient ClickHouse transport errors swallowed (failed soft) instead of 500-ing, by path',
+  labelNames: ['path'] as const,
+});
+
 // Cluster-client SELF-HEAL reconnect counter (FIX #1). Incremented once each time the
 // inflight-leak watchdog forces a full cluster reconnect because inflight stayed pinned
 // above the threshold for the sustained window. Healthy pods never touch this; a nonzero
@@ -255,6 +268,20 @@ export const redisMetricWriteFailSoftCounter = registerCounterWithLabels({
   name: 'redis_metric_write_failsoft_total',
   help: 'Non-critical metric write/lock cluster commands that failed soft (timed out/errored, skipped)',
   labelNames: ['op'] as const,
+});
+
+// Cluster ROUTING retry-after-rediscover counter (the topology-churn 500 wave that #2665 does
+// not cover). Incremented when a cluster `_execute` hit a TRANSIENT pre-dispatch routing throw
+// (getSlotRandomNode "Cannot read properties of undefined (reading 'replicas')" et al.) and the
+// guard retried after a rediscover. `result` ∈ recovered|exhausted: a rising `recovered` series
+// during a rolling update / failover is the direct confirmation the fix converted what would
+// have been a fleet-wide 500 wave into a transparent retry; a rising `exhausted` series means
+// the slot map stayed inconsistent past the bounded retries and the original error re-threw (the
+// pre-fix behavior). Safe for reads AND writes — the command never reached a node. 2 series.
+export const redisRoutingRetryCounter = registerCounterWithLabels({
+  name: 'redis_routing_retry_total',
+  help: 'Cluster commands that hit a transient routing throw and were retried after a rediscover (recovered) or exhausted retries (exhausted, original error re-thrown)',
+  labelNames: ['result'] as const,
 });
 
 // tRPC per-procedure latency — wall-clock duration of the full middleware chain +
@@ -502,6 +529,7 @@ export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,
   redisMetricWriteFailSoftCounter,
+  redisRoutingRetryCounter,
 };
 
 // pgPoolAcquireHistogram is registered in src/server/db/db-helpers.ts, not here.

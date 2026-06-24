@@ -67,6 +67,34 @@ vi.mock('../rate-card', async (importOriginal) => {
   };
 });
 
+// Spy on the per-APP bounty cap. `recordSpendAttribution` dynamic-imports it to
+// reserve/clamp the row's accrued share. The cap has its own dedicated unit
+// suite (app-bounty-cap.service.test.ts) exercising Redis; here we only assert
+// the WIRING: the write reserves the share it is about to accrue, and applies
+// the granted amount. The default fake grants exactly what is requested (no
+// clamp) so the dormant 0→0 path is faithful.
+const { reserveAppBountySpy, refundAppBountySpy } = vi.hoisted(() => ({
+  reserveAppBountySpy: vi.fn(),
+  refundAppBountySpy: vi.fn(),
+}));
+vi.mock('../app-bounty-cap.service', () => ({
+  reserveAppBountyAccrual: (appBlockId: string, shareCents: number) => {
+    reserveAppBountySpy(appBlockId, shareCents);
+    // Faithful default: grant exactly the requested share (no clamp). The
+    // clamp behaviour itself is covered in the cap's own suite.
+    return Promise.resolve({
+      grantedCents: Math.max(0, Math.floor(shareCents)),
+      clamped: false,
+      total: Math.max(0, Math.floor(shareCents)),
+      key: `system:blocks:bounty-cap:${appBlockId}:test`,
+    });
+  },
+  refundAppBountyAccrual: (...args: unknown[]) => {
+    refundAppBountySpy(...args);
+    return Promise.resolve();
+  },
+}));
+
 import {
   AttributionAppMissingError,
   buzzSpendToUsdCents,
@@ -118,6 +146,8 @@ beforeEach(() => {
   mockDbWrite.blockSpendAttribution.create.mockReset();
   mockLog.mockReset();
   computeSpendShareSpy.mockReset();
+  reserveAppBountySpy.mockReset();
+  refundAppBountySpy.mockReset();
   // Default: app exists, owned by a different user than the spender.
   mockDbRead.oauthClient.findUnique.mockResolvedValue({
     id: APP_ID,
@@ -194,6 +224,43 @@ describe('recordSpendAttribution', () => {
     expect(data.spendSharePct).toBe(0);
     expect(data.rateCardVersion).toBe(UNRATED_RATE_CARD_VERSION);
     expect(computeSpendShareSpy).not.toHaveBeenCalled();
+  });
+
+  it('DORMANT per-app cap: reserves the row\'s accrued share (0 today) → no clamp, no behaviour change', async () => {
+    // The per-app bounty cap is wired into the write, but while the spend flow
+    // is TRACK-ONLY the accrued share is identically 0 — so the cap reserves 0,
+    // grants 0, and changes nothing. This is the "dormant by construction"
+    // proof at the integration point (the cap's own atomic/clamp behaviour is
+    // covered in app-bounty-cap.service.test.ts).
+    const res = await recordSpendAttribution(fakeInput({ buzzAmount: 100000 }));
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+
+    // The write reserved against the per-app cap, keyed by appBlockId, with the
+    // share it is about to accrue — which is 0 today (not the raw user spend).
+    expect(reserveAppBountySpy).toHaveBeenCalledTimes(1);
+    expect(reserveAppBountySpy).toHaveBeenCalledWith(APP_BLOCK_ID, 0);
+    // Granted 0 → row's accrued share stays 0 → identical to pre-cap behaviour.
+    expect(data.appOwnerShareCents).toBe(0);
+    expect(res.row.appOwnerShareCents).toBe(0);
+    // Successful write → no refund.
+    expect(refundAppBountySpy).not.toHaveBeenCalled();
+  });
+
+  it('per-app cap reserves the BOUNTY (appOwnerShareCents), NOT the raw user spend', async () => {
+    // The property that makes the cap dormant today: it reserves the row's
+    // accrued share — which is 0 — and writes back the granted amount, so a
+    // large user spend (here $100 of Buzz) does NOT advance the per-app counter.
+    // This is what distinguishes it from the per-USER cap (which reserves raw
+    // spend). If the write ever regressed to reserving `buzzAmount`/`gross`,
+    // this asserts the contract breaks.
+    await recordSpendAttribution(fakeInput({ buzzAmount: 100000 })); // $100 gross
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls.at(-1)![0];
+    const [reservedAppBlockId, reservedShare] = reserveAppBountySpy.mock.calls.at(-1)!;
+    expect(reservedAppBlockId).toBe(APP_BLOCK_ID);
+    // Reserved == the bounty being written (0), NOT the gross (10000) or spend.
+    expect(reservedShare).toBe(data.appOwnerShareCents);
+    expect(reservedShare).toBe(0);
+    expect(reservedShare).not.toBe(data.grossValueCents);
   });
 
   it('self-spend (spender == app owner) → voided, zero share', async () => {

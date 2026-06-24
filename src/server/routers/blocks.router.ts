@@ -86,12 +86,17 @@ import {
 } from '~/server/services/blocks/workflow.service';
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
+import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
-import { createTextToImageStep } from '~/server/services/orchestrator/textToImage/textToImage';
+import {
+  buildGenerationContext,
+  createWorkflowStepsFromGraphInput,
+} from '~/server/services/orchestrator/orchestration-new.service';
 import { getUserById } from '~/server/services/user.service';
+import { getSessionUser } from '~/server/auth/session-user';
 import {
   guardedProcedure,
   moderatorProcedure,
@@ -150,6 +155,61 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
       code: 'FORBIDDEN',
       message: 'App Blocks is restricted to the civitai team',
     });
+  }
+}
+
+/**
+ * App-Blocks flag gate for the BLOCK-TOKEN-authed runtime procs
+ * (estimate/submit/poll/cancelWorkflow, updateUserSettings).
+ *
+ * WHY THIS EXISTS — `enforceAppBlocksFlag` (the middleware) evaluates the flag
+ * against `ctx.user` (the request's SESSION user). These procs are
+ * `publicProcedure` authenticated by a BLOCK JWT, NOT a civitai.com session: a
+ * page-host call carries a session, but a `dev:live` (localhost) call is
+ * block-token-only and has NO session cookie → `ctx.user` is `undefined`. The
+ * live `app-blocks-enabled` flag is base-`false` with a `moderators` segment, so
+ * a no-user (global) eval can never match the segment → resolves `false` →
+ * UNAUTHORIZED "App Blocks not enabled", even when the token's subject IS a
+ * moderator. The flag must therefore be evaluated against the TOKEN's subject
+ * user, not `ctx.user`.
+ *
+ * The flag stays a real kill-switch (a flip still shuts these procs down) — we
+ * only fix the IDENTITY it's evaluated against. This does NOT widen access: the
+ * mod-segmented flag resolves `true` only for a moderator subject; a non-mod or
+ * anon (`sub:'anon'` → no resolvable user) subject still resolves `false` →
+ * blocked. `verifyBlockToken` (caller) already rejected invalid/expired/revoked
+ * tokens before this runs, and `assertViewerIsModerator` + every other belt
+ * (budget cap, daily Buzz cap, reserveBlockBuzzSpend, getOrchestratorToken,
+ * forced-SFW) are unchanged — this only swaps which identity the FLAG sees.
+ *
+ * Resolves the FULL server-side SessionUser via `getSessionUser` (never a
+ * client-supplied value) so the segment match can't be spoofed AND every
+ * property `buildFliptContext` consumes is real.
+ *
+ * ## Why the full SessionUser, not a trimmed `{ id, isModerator }` cast
+ *
+ * `isAppBlocksEnabled({ user })` feeds `user` to `buildFliptContext`, which
+ * reads `id`, `isModerator`, AND `tier` (deriving `isMember` from `tier`). A
+ * trimmed `getUserById({ select: { id, isModerator } })` cast to SessionUser
+ * (the #2740 shape) leaves `tier` undefined → the Flipt context carries the
+ * type-default `tier:'free'` / `isMember:'false'` instead of the user's real
+ * subscription tier. That is correct TODAY only because the live
+ * `app-blocks-enabled` flag segments solely on `isModerator`. The moment the
+ * flag is widened to segment on `tier`/region, a stale-`free` context would
+ * silently mis-gate a paying user. Resolving the real SessionUser here (whose
+ * `tier` is derived from the highest active subscription — not a User column,
+ * so it CANNOT be fetched by widening the select) makes the gate stay correct
+ * across any future widening. Pre-GA security review hardening.
+ */
+async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void> {
+  // Full, authoritative SessionUser (cached; tier derived from active
+  // subscriptions) so buildFliptContext sees the user's REAL tier/isMember,
+  // not type-defaults. A vanished user → undefined → global eval → flag false
+  // → blocked (fail-closed; the subsequent assertViewerIsModerator would also
+  // reject).
+  const user = await getSessionUser({ userId });
+  if (!(await isAppBlocksEnabled({ user }))) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
   }
 }
 
@@ -604,6 +664,47 @@ async function resolveModelIdFromBlockInstance(blockInstanceId: string): Promise
   const modelId = row.targetModelIds?.[0];
   if (!modelId) throw throwNotFoundError('Block install not found');
   return modelId;
+}
+
+// Replacement for the deleted legacy `createTextToImageStep`. Builds the single
+// txt2img workflow step from the block's generation-graph `input` (produced by
+// `buildTextToImageInput`) via the new generation-graph pipeline, WITHOUT
+// submitting — the router keeps driving its own `submitWorkflow` calls so the
+// App-Blocks belts (per-call buzz budget, cumulative daily Buzz cap, token-
+// derived maturity clamp, daily-boost autoclaim) wrap submit unchanged.
+//
+// Flags are intentionally NOT threaded into `buildGenerationContext` (passed
+// `undefined`): the legacy step never applied flag-driven adjustments (e.g. the
+// SDCPP 2-for-1 quantity bonus) either, so omitting them keeps the block's cost
+// profile identical to before. The resource entitlement belt still runs.
+async function createBlockTextToImageStep(opts: {
+  input: Record<string, unknown>;
+  user: SessionUser;
+  whatIf?: boolean;
+  isGreen?: boolean;
+}) {
+  const { externalCtx } = await buildGenerationContext(opts.user.tier ?? 'free', undefined, {
+    id: opts.user.id,
+    isModerator: opts.user.isModerator,
+  });
+  const steps = await createWorkflowStepsFromGraphInput({
+    input: opts.input,
+    externalCtx,
+    user: { id: opts.user.id, isModerator: opts.user.isModerator },
+    isWhatIf: opts.whatIf,
+    isGreen: opts.isGreen,
+  });
+  // The block path is plain txt2img with no snippet fan-out, so the graph
+  // always yields exactly one step. Fail closed if that invariant breaks rather
+  // than silently submitting a partial / multi-step workflow.
+  const step = steps[0];
+  if (!step || steps.length !== 1) {
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'expected a single generation step',
+    });
+  }
+  return step;
 }
 
 export const blocksRouter = router({
@@ -1260,6 +1361,58 @@ export const blocksRouter = router({
     }),
 
   /**
+   * Lightweight booleans that drive the conditional links in the apps
+   * sub-nav (`AppsSubNav`). One round-trip instead of fanning out to
+   * `listMySubscriptions` + `listMyPublishRequests` + `getMyApps` (the
+   * heavyweight per-page queries) just to decide which tabs to show.
+   *
+   * Booleans ONLY — no rows, no manifests, no per-app data. Each check is a
+   * `findFirst({ select: { id } })` so Prisma pushes `LIMIT 1` into SQL and
+   * stops at the first matching row (a `count({ take: 1 })` would NOT — Prisma
+   * ignores `take` for `count` and runs a full `COUNT(*)`). Stays cheap even
+   * for a user with many installs/submissions.
+   *
+   * `protectedProcedure` + `enforceAppBlocksFlag`: own-data scoped to
+   * `ctx.user.id`; returns the all-false shape when the flag is dark so
+   * the sub-nav degrades to just the always-on tabs.
+   */
+  getNavSummary: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .query(async ({ ctx }) => {
+      const allFalse = {
+        hasInstalls: false,
+        hasSubmissions: false,
+        hasApprovedApps: false,
+        isReviewer: false,
+      };
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return allFalse;
+      const user = ctx.user;
+      if (!user) return allFalse;
+
+      const [install, submission, approvedApp] = await Promise.all([
+        dbRead.blockUserSubscription.findFirst({
+          where: { userId: user.id },
+          select: { id: true },
+        }),
+        dbRead.appBlockPublishRequest.findFirst({
+          where: { submittedByUserId: user.id },
+          select: { id: true },
+        }),
+        dbRead.appBlock.findFirst({
+          where: { app: { userId: user.id }, status: 'approved' },
+          select: { id: true },
+        }),
+      ]);
+
+      return {
+        hasInstalls: install !== null,
+        hasSubmissions: submission !== null,
+        hasApprovedApps: approvedApp !== null,
+        isReviewer: isAppReviewer(user),
+      };
+    }),
+
+  /**
    * Marketplace listing — approved app blocks, optionally filtered by slot
    * and/or a free-text query. Cursor-paginated. Public, ANON-CAPABLE (F-E E1):
    * any viewer the appBlocks flag grants can browse the marketplace without a
@@ -1742,7 +1895,9 @@ export const blocksRouter = router({
    * That's the gate — we don't need a second client-side ownership check.
    */
   pollWorkflow: publicProcedure
-    .use(enforceAppBlocksFlag)
+    // No `enforceAppBlocksFlag` middleware here: block-token procs are
+    // block-JWT-authed (no session for dev:live/localhost), so the flag must be
+    // evaluated against the TOKEN subject — see assertAppBlocksEnabledForTokenUser.
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -1762,6 +1917,8 @@ export const blocksRouter = router({
           message: 'workflow poll requires authenticated viewer',
         });
       }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsModerator(userId);
       const token = await getOrchestratorToken(userId, ctx);
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
@@ -1782,7 +1939,8 @@ export const blocksRouter = router({
    * still clears its card.
    */
   cancelWorkflow: publicProcedure
-    .use(enforceAppBlocksFlag)
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -1802,6 +1960,8 @@ export const blocksRouter = router({
           message: 'workflow cancel requires authenticated viewer',
         });
       }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsModerator(userId);
       const token = await getOrchestratorToken(userId, ctx);
       await cancelWorkflow({ workflowId: input.workflowId, token });
@@ -1816,7 +1976,8 @@ export const blocksRouter = router({
    * discovers whether budget is sufficient.
    */
   estimateWorkflow: publicProcedure
-    .use(enforceAppBlocksFlag)
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
     .mutation(async ({ ctx, input }) => {
       const claims = await verifyBlockToken(input.blockToken);
@@ -1861,6 +2022,8 @@ export const blocksRouter = router({
           message: 'estimate requires authenticated viewer',
         });
       }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsModerator(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
@@ -1929,8 +2092,9 @@ export const blocksRouter = router({
       const generateInput = buildTextToImageInput(input.body, {
         ...resolved,
         checkpointVersionId: checkpoint.versionId,
+        checkpointBaseModel: checkpoint.baseModel,
       });
-      const step = await createTextToImageStep({ ...generateInput, user, whatIf: true });
+      const step = await createBlockTextToImageStep({ input: generateInput, user, whatIf: true });
       const workflow = await submitWorkflow({
         token,
         body: {
@@ -1952,7 +2116,8 @@ export const blocksRouter = router({
    * outcomes the block can recover from (e.g. by opening BuyBuzzModal).
    */
   submitWorkflow: publicProcedure
-    .use(enforceAppBlocksFlag)
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
     .mutation(async ({ ctx, input }) => {
       const claims = await verifyBlockToken(input.blockToken);
@@ -2001,6 +2166,8 @@ export const blocksRouter = router({
           message: 'workflow submit requires authenticated viewer',
         });
       }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsModerator(userId);
       const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
       if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
@@ -2078,14 +2245,16 @@ export const blocksRouter = router({
       const generateInput = buildTextToImageInput(input.body, {
         ...resolved,
         checkpointVersionId: checkpoint.versionId,
+        checkpointBaseModel: checkpoint.baseModel,
       });
 
-      // Cost preflight. Build the step once, reuse for both whatif and submit
-      // so the orchestrator computes cost against the exact same step it'll
-      // execute. (Calling createTextToImageStep twice would risk a different
-      // seed defaulting, since the step creator fills seed via getRandomInt.)
-      const stepForCostCheck = await createTextToImageStep({
-        ...generateInput,
+      // Cost preflight. Build a whatIf step for the cost estimate, then a
+      // separate real step for submit below. Seed defaulting differs between the
+      // two (the graph fills a random seed when none is supplied), but that
+      // doesn't affect cost — the estimate is computed against the same
+      // resources/params the real submit uses.
+      const stepForCostCheck = await createBlockTextToImageStep({
+        input: generateInput,
         user,
         whatIf: true,
       });
@@ -2172,7 +2341,7 @@ export const blocksRouter = router({
           ip: ctx.ip,
         });
 
-        const step = await createTextToImageStep({ ...generateInput, user });
+        const step = await createBlockTextToImageStep({ input: generateInput, user, isGreen });
         const submitted = await submitWorkflow({
           token,
           body: {
@@ -2399,7 +2568,8 @@ export const blocksRouter = router({
    * a "your saved override is invalid" failure at next generate.
    */
   updateUserSettings: publicProcedure
-    .use(enforceAppBlocksFlag)
+    // Block-JWT-authed (no session for dev:live) — flag evaluated against the
+    // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -2420,6 +2590,8 @@ export const blocksRouter = router({
           message: 'anon viewers cannot persist block settings',
         });
       }
+      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+      await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsModerator(userId);
       const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
       if (!Number.isInteger(ctxModelId)) {
