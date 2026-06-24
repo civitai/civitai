@@ -160,10 +160,21 @@ function MiniLineChart({
   );
 }
 
-export function AppAnalyticsPanel() {
-  const { data: appsRaw, isLoading: appsLoading } = trpc.blocks.getMyApps.useQuery();
+/**
+ * @param scopedAppBlockId When supplied, the panel is locked to a single app
+ *   (the per-app picker is hidden) — used when the panel is opened in a modal
+ *   from a specific app's row on /apps/my-submissions. When omitted the panel
+ *   shows the "All my apps" picker (the /apps/revenue dashboard usage).
+ */
+export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: string } = {}) {
+  const scoped = scopedAppBlockId != null;
+  const { data: appsRaw, isLoading: appsLoading } = trpc.blocks.getMyApps.useQuery(undefined, {
+    // No need to load the picker list when we're locked to one app.
+    enabled: !scoped,
+  });
   const apps = (appsRaw as MyApp[] | undefined) ?? [];
-  const [appBlockId, setAppBlockId] = useState<string | null>(null);
+  const [pickedAppBlockId, setPickedAppBlockId] = useState<string | null>(null);
+  const appBlockId = scoped ? scopedAppBlockId : pickedAppBlockId;
 
   const {
     data: analyticsRaw,
@@ -185,15 +196,17 @@ export function AppAnalyticsPanel() {
   return (
     <Stack gap="lg">
       <Group justify="space-between" align="flex-end">
-        <Select
-          label="App"
-          data={appOptions}
-          value={appBlockId ?? ''}
-          onChange={(v) => setAppBlockId(v ? v : null)}
-          disabled={appsLoading}
-          w={260}
-          comboboxProps={{ withinPortal: true }}
-        />
+        {!scoped && (
+          <Select
+            label="App"
+            data={appOptions}
+            value={pickedAppBlockId ?? ''}
+            onChange={(v) => setPickedAppBlockId(v ? v : null)}
+            disabled={appsLoading}
+            w={260}
+            comboboxProps={{ withinPortal: true }}
+          />
+        )}
         {analytics && (
           <Text size="xs" c="dimmed">
             {dayjs(analytics.range.from).format('MMM D, YYYY')} –{' '}
