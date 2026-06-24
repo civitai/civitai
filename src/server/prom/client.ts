@@ -228,6 +228,19 @@ export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
   labelNames: ['cache_name'] as const,
 });
 
+// ClickHouse TRANSPORT-error fail-soft counter. Incremented each time a path swallows
+// a TRANSIENT ClickHouse connection/transport failure (socket hang up / Code 279 / Code
+// 210 — see isClickHouseConnectionError) instead of 500-ing the request. The `path`
+// label names where it happened ('buzz-reward', 'image-feed', …). A query/schema error
+// (UNKNOWN_TABLE etc.) is NEVER counted here — it still throws. A SUSTAINED nonzero rate
+// is the alert signal that ClickHouse Cloud is in a real outage that fail-soft is now
+// masking (a Loki/Prom alert should be added in the datapacket-talos repo on this series).
+export const clickhouseFailSoftCounter = registerCounterWithLabels({
+  name: 'civitai_app_clickhouse_failsoft_total',
+  help: 'Transient ClickHouse transport errors swallowed (failed soft) instead of 500-ing, by path',
+  labelNames: ['path'] as const,
+});
+
 // Cluster-client SELF-HEAL reconnect counter (FIX #1). Incremented once each time the
 // inflight-leak watchdog forces a full cluster reconnect because inflight stayed pinned
 // above the threshold for the sustained window. Healthy pods never touch this; a nonzero
