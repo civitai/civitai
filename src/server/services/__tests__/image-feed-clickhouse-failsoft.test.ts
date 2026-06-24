@@ -56,6 +56,8 @@ vi.mock('~/env/server', () => ({
       if (prop in target) return target[prop as string];
       if (typeof prop === 'string' && (prop.endsWith('_URL') || prop.endsWith('_ENDPOINT')))
         return 'https://test:test@localhost:5432/test';
+      // Numeric-looking config (e.g. *_CONCURRENCY) is fed into helpers like pLimit at
+      // module load; hand it a safe positive number (matches image-metrics-timeout).
       if (
         typeof prop === 'string' &&
         /(_CONCURRENCY|_LIMIT|_MS|_PORT|_TIMEOUT|_MAX|_SIZE|_COUNT)$/.test(prop)
@@ -79,21 +81,11 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 
-// getFliptBoolean is called at the top of getImagesFromFeedSearch (existence-check
-// flag). Stub the whole module (a Proxy returns a no-op fn for any export image.service
-// reads at load) so the feed path proceeds to populatedQuery without booting real Flipt.
-vi.mock('~/server/flipt/client', () => {
-  const noop = vi.fn(async () => false);
-  return new Proxy(
-    {
-      getFliptBoolean: noop,
-      isFlipt: noop,
-      getFliptVariant: vi.fn(async () => undefined),
-      FLIPT_FEATURE_FLAGS: new Proxy({}, { get: (_t, p) => String(p) }),
-    },
-    { get: (t, p) => (p in t ? (t as any)[p] : vi.fn(async () => false)) }
-  );
-});
+// NB: do NOT mock '~/server/flipt/client'. A catch-all Proxy mock (returning a fn for any
+// unknown export) wedges image.service's module-load import (silent hang, no test output).
+// The real flipt module loads fine here — the env mock hands FLIPT a connection string so
+// init doesn't throw, and getFliptBoolean fail-opens to false at runtime without connecting
+// (mirrors the proven image-metrics-timeout.test.ts, which also leaves flipt real).
 
 import { getImagesFromFeedSearch } from '../image.service';
 
