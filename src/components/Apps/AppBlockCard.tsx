@@ -14,6 +14,7 @@ import {
   isMarketplaceCategory,
   MARKETPLACE_CATEGORY_LABELS,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema';
 
 /**
@@ -85,6 +86,25 @@ export function AppBlockCard({
   };
   const [busy] = useState(false);
   const slot = manifest.targets?.[0]?.slotId;
+  // Show Install ONLY for an app that installs into a model/in-context slot.
+  // A page app (target slot `app.page`) is STATELESS — installModel `'none'` in
+  // the slot registry — so it has no `block_user_subscriptions` install row and
+  // the Install/Manage CTA (openAppSettingsModal → slot subscription) is a
+  // dead/forbidden action for it (slot installs are server-gated dark, #2622).
+  // `hasInstallSlot` is the SHARED predicate (with the detail page) — it scans
+  // ALL targets for ANY non-page slot, so it's correct for multi-target and
+  // empty-slotId manifests, not just index `[0]`. Keyed on the APP's slot, not
+  // the viewer — so a model-slot app still shows Install for the grandfathered
+  // mod audience.
+  const showInstall = hasInstallSlot(manifest);
+  // The live "Open app" run is only available for a real page app that the
+  // viewer's `appBlocksPages` flag has unlocked (dark today / launch-flip
+  // window). When that run can't render AND there's no Install affordance, the
+  // card would otherwise have ZERO actions — guarantee ≥1 affordance by linking
+  // to the always-reachable detail page ("View"). The detail page itself always
+  // exposes "Open live", so this never strands the user.
+  const canOpenApp = Boolean(manifest.hasPage && canOpenPage);
+  const showView = !showInstall && !canOpenApp;
   return (
     <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
       <Stack gap="sm" h="100%">
@@ -186,7 +206,7 @@ export function AppBlockCard({
                 app declares a page AND the viewer has the appBlocksPages flag
                 (dark today). The route itself 404s without the flag, so this is
                 belt-and-suspenders against showing a dead link. */}
-            {manifest.hasPage && canOpenPage && (
+            {canOpenApp && (
               <Button
                 component={Link}
                 href={`/apps/run/${encodeURIComponent(block.blockId)}`}
@@ -196,19 +216,36 @@ export function AppBlockCard({
                 Open app
               </Button>
             )}
-            <LoginRedirect reason="perform-action">
+            {/* INVARIANT: every card renders ≥1 affordance. A page app whose
+                live "Open app" run isn't available (no page, or the
+                `appBlocksPages` flag is off) and which has no Install slot would
+                otherwise be an actionless card — fall back to a "View" link to
+                the always-reachable detail page. */}
+            {showView && (
               <Button
+                component={Link}
+                href={`/apps/${block.id}`}
                 size="xs"
-                variant={alreadySubscribed ? 'default' : 'filled'}
-                leftSection={
-                  alreadySubscribed ? <IconSettings size={14} /> : <IconPlugConnected size={14} />
-                }
-                loading={busy}
-                onClick={() => onOpen(block)}
+                variant="light"
               >
-                {alreadySubscribed ? 'Manage' : 'Install'}
+                View
               </Button>
-            </LoginRedirect>
+            )}
+            {showInstall && (
+              <LoginRedirect reason="perform-action">
+                <Button
+                  size="xs"
+                  variant={alreadySubscribed ? 'default' : 'filled'}
+                  leftSection={
+                    alreadySubscribed ? <IconSettings size={14} /> : <IconPlugConnected size={14} />
+                  }
+                  loading={busy}
+                  onClick={() => onOpen(block)}
+                >
+                  {alreadySubscribed ? 'Manage' : 'Install'}
+                </Button>
+              </LoginRedirect>
+            )}
           </Group>
         </Group>
       </Stack>

@@ -45,6 +45,7 @@ import {
   SLOT_DESCRIPTIONS,
 } from '~/server/services/blocks/scope-descriptions.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -126,6 +127,16 @@ export default function AppDetailPage() {
   const name = detail?.manifest.name ?? detail?.blockId ?? appBlockId;
   const description = detail?.manifest.description ?? '';
   const slots = detail?.manifest.targets?.map((t) => t.slotId).filter(Boolean) ?? [];
+  // Show Install ONLY for an app that installs into a model/in-context slot.
+  // A page app (target slot `app.page`) is STATELESS (installModel `'none'`) — no
+  // install row, and the Install/Manage CTA (openAppSettingsModal → slot
+  // subscription) is a dead/forbidden action (slot installs are server-gated
+  // dark, #2622). `hasInstallSlot` is the SHARED predicate (with the card) — it
+  // scans ALL targets for ANY non-page slot, so it's correct for multi-target
+  // and empty-slotId manifests, not just index `[0]`. Keyed on the APP's slot,
+  // not the viewer. The header always renders "Open live", so even a page app
+  // keeps ≥1 affordance here.
+  const showInstall = hasInstallSlot(detail?.manifest);
   const scopes = detail?.scopes ?? [];
   // F-E E5 publisher screenshot gallery — public display URLs (gated app route),
   // magic-byte-validated + mod-reviewed at approval. Empty when the app shipped
@@ -244,21 +255,23 @@ export default function AppDetailPage() {
                     LoginModal (via LoginRedirect); logged-in → the install/
                     settings modal. Dark today (page is mod-gated).
                   */}
-                  <LoginRedirect reason="perform-action">
-                    <Button
-                      leftSection={
-                        alreadySubscribed ? (
-                          <IconSettings size={16} />
-                        ) : (
-                          <IconPlugConnected size={16} />
-                        )
-                      }
-                      variant={alreadySubscribed ? 'default' : 'filled'}
-                      onClick={handleInstall}
-                    >
-                      {alreadySubscribed ? 'Manage' : 'Install'}
-                    </Button>
-                  </LoginRedirect>
+                  {showInstall && (
+                    <LoginRedirect reason="perform-action">
+                      <Button
+                        leftSection={
+                          alreadySubscribed ? (
+                            <IconSettings size={16} />
+                          ) : (
+                            <IconPlugConnected size={16} />
+                          )
+                        }
+                        variant={alreadySubscribed ? 'default' : 'filled'}
+                        onClick={handleInstall}
+                      >
+                        {alreadySubscribed ? 'Manage' : 'Install'}
+                      </Button>
+                    </LoginRedirect>
+                  )}
                 </Group>
               </Group>
 

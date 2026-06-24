@@ -183,6 +183,50 @@ export function isPageSlot(id: string): boolean {
   return isKnownSlotId(id) && SLOT_REGISTRY[id].kind === 'page';
 }
 
+/** Minimal manifest shape the install-slot predicate reads. */
+export interface InstallSlotManifest {
+  targets?: Array<{ slotId?: string } | undefined> | null;
+}
+
+/**
+ * The slot that drives an app's INSTALL affordance — i.e. the first
+ * model/in-context (non-page) target slot, or `undefined` when the app has none
+ * (a page-only app).
+ *
+ * SINGLE SOURCE OF TRUTH for the card / detail-page "show Install?" decision, so
+ * the two surfaces cannot drift:
+ *   - Robust to multi-target manifests: scans ALL targets for ANY non-page slot
+ *     (`.some`-style) rather than trusting index `[0]` — a manifest that lists
+ *     `[{app.page},{model.sidebar_top}]` is still an installable model app.
+ *   - Robust to a malformed empty-string `slotId` at index 0: a falsy slotId is
+ *     skipped (the `Boolean` filter), matching the detail page's
+ *     `…filter(Boolean)[0]` and the card, so they agree on the same input.
+ *
+ * Show the Install/Manage CTA iff this returns a truthy slot. A page app
+ * (only `app.page` targets, or no model target) returns `undefined` → no
+ * Install CTA — it is STATELESS (installModel `'none'`), so Install/Manage
+ * (openAppSettingsModal → slot subscription) is a dead/forbidden action.
+ */
+export function getPrimaryInstallSlot(manifest: InstallSlotManifest | null | undefined):
+  | string
+  | undefined {
+  const targets = manifest?.targets ?? [];
+  for (const target of targets) {
+    const slotId = target?.slotId;
+    if (slotId && !isPageSlot(slotId)) return slotId;
+  }
+  return undefined;
+}
+
+/**
+ * Does the app install into a model/in-context slot (i.e. show the Install/Manage
+ * CTA)? `false` for a page-only app. Thin boolean wrapper over
+ * {@link getPrimaryInstallSlot} so call-sites read as intent.
+ */
+export function hasInstallSlot(manifest: InstallSlotManifest | null | undefined): boolean {
+  return getPrimaryInstallSlot(manifest) !== undefined;
+}
+
 /**
  * LAUNCH ALLOWLIST — the slot ids exposed to the PUBLIC (non-moderator) audience
  * at the initial App Blocks public launch.
