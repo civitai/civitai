@@ -122,8 +122,8 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/user.service', () => ({
   getUserById: mockGetUserById,
 }));
-vi.mock('~/server/auth/session-user', () => ({
-  getSessionUser: (...args: unknown[]) => mockGetSessionUser(...args),
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
