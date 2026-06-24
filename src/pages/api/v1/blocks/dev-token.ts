@@ -309,16 +309,29 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       app: { select: { allowedScopes: true, userId: true } },
     },
   });
-  // 404 (never leak which) for missing / not-approved / not-owned. Ownership is
-  // checked AFTER existence but we collapse them into one 404 so a non-owner
-  // can't probe which appBlockIds exist.
-  if (!block || block.status !== 'approved' || !block.app) {
+  // 404 (never leak which) for a row that doesn't exist or isn't owned by the
+  // caller. We check EXISTENCE+OWNERSHIP first (collapsed into one bare 404 so a
+  // non-owner can't probe which appBlockIds exist OR their approval state), and
+  // ONLY THEN — for a row the caller demonstrably owns — surface the actionable
+  // not-yet-live message. A non-owner therefore still gets the indistinguishable
+  // bare 404 regardless of the app's status (no probe oracle); approval-state
+  // detail is revealed exclusively to the confirmed owner.
+  if (!block || !block.app || block.app.userId !== user.id) {
     res.status(404).json({ message: 'App not found' });
     return;
   }
-  if (block.app.userId !== user.id) {
-    // Not the owner → 404, not 403, so ownership isn't a probe oracle.
-    res.status(404).json({ message: 'App not found' });
+  // Owned, but no LIVE deployment yet (the dev-token mint resolves a DEPLOYED
+  // block instance — deployState: live, i.e. an `approved` AppBlock row). A
+  // brand-new app — even right after a successful submit (status: pending) —
+  // legitimately exists and is owned here but has nothing live to mint against.
+  // Return an ACTIONABLE message instead of the misleading bare "App not found".
+  if (block.status !== 'approved') {
+    res.status(404).json({
+      message:
+        `block '${block.blockId}' has no live deployment — dev:live requires an ` +
+        `approved + deployed version (deployState: live). Until your first ` +
+        `version is live, validate locally with dev:harness (mock).`,
+    });
     return;
   }
 

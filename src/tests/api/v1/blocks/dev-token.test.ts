@@ -313,21 +313,28 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(mockSign).not.toHaveBeenCalled();
   });
 
-  it('404 when the app is not found', async () => {
+  it('404 with the bare "App not found" message when the app truly does not exist', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockAppBlockFindUnique.mockResolvedValueOnce(null);
     const { req, res } = authPost({ appBlockId: 'apb_missing' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(404);
+    expect((res._getJSONData() as { message: string }).message).toBe('App not found');
     expect(mockSign).not.toHaveBeenCalled();
   });
 
-  it('404 when the app is not approved', async () => {
+  it('404 with an ACTIONABLE no-live-deployment message when an OWNED app is not approved (pending)', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockAppBlockFindUnique.mockResolvedValueOnce(pageApp({ status: 'pending' }));
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(404);
+    const msg = (res._getJSONData() as { message: string }).message;
+    // NOT the misleading bare message...
+    expect(msg).not.toBe('App not found');
+    // ...but an actionable one naming the block + pointing at dev:harness.
+    expect(msg).toContain("block 'my-page-app' has no live deployment");
+    expect(msg).toContain('dev:harness');
     expect(mockSign).not.toHaveBeenCalled();
   });
 
@@ -339,6 +346,10 @@ describe('POST /api/v1/blocks/dev-token', () => {
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(404);
+    // A non-owner gets the bare, indistinguishable message even though the row
+    // exists and is approved — the actionable status detail is owner-only, so
+    // ownership/approval-state is never a probe oracle.
+    expect((res._getJSONData() as { message: string }).message).toBe('App not found');
     expect(mockSign).not.toHaveBeenCalled();
   });
 
