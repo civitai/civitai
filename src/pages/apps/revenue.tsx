@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppAnalyticsPanel } from '~/components/AppBlocks/AppAnalyticsPanel';
 import { Meta } from '~/components/Meta/Meta';
+import { AppsSubNav } from '~/components/Apps/AppsSubNav';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -264,6 +265,7 @@ export default function AppBlocksDashboardPage() {
       <Meta title="App Blocks Dashboard — Civitai" deIndex />
       <Container size="lg" py="xl">
         <Stack gap="lg">
+          <AppsSubNav />
           <div>
             <Title order={2}>App Blocks Dashboard</Title>
             <Text c="dimmed" size="sm">
