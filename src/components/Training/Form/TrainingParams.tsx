@@ -160,6 +160,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hidream_o1: { all: { default: 'ai-toolkit' } },
       anima: { all: { default: 'ai-toolkit' } },
       boogu: { all: { default: 'ai-toolkit' } },
+      krea2: { all: { default: 'ai-toolkit' } },
       acestep_15: { all: { default: 'ai-toolkit' } },
       acestep_15_xl_base: { all: { default: 'ai-toolkit' } },
       acestep_15_xl_sft: { all: { default: 'ai-toolkit' } },
@@ -202,6 +203,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       boogu: {
         all: { default: 5 },
       },
+      // Krea 2 uses the standard 10 epochs (= base default) per the model owners' spec.
       ltx2: {
         all: { min: 1, max: 20 },
       },
@@ -273,6 +275,10 @@ export const trainingSettings: TrainingSettingsType[] = [
       },
       // Boogu batch size is fixed at 1 for this ecosystem (per @civitai/client).
       boogu: {
+        all: { default: 1, min: 1, max: 1 },
+      },
+      // Krea 2 batch size is fixed at 1 for this ecosystem (per @civitai/client).
+      krea2: {
         all: { default: 1, min: 1, max: 1 },
       },
       ltx2: { all: { default: 2, min: 1, max: 4 } },
@@ -367,6 +373,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hidream_o1: { all: { default: 1024 } },
       anima: { all: { default: 1024 } },
       boogu: { all: { default: 1024 } },
+      krea2: { all: { default: 1024 } },
       ltx2: { all: { disabled: true, default: 960, min: 960, max: 960 } },
       ltx23: { all: { disabled: true, default: 960, min: 960, max: 960 } },
       // Audio has no spatial resolution — disable but keep a value the WhatIf schema accepts.
@@ -418,6 +425,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hidream_o1: { all: { disabled: true } },
       anima: { all: { disabled: true } },
       boogu: { all: { disabled: true } },
+      krea2: { all: { disabled: true } },
       acestep_15: { all: { disabled: true } },
       acestep_15_xl_base: { all: { disabled: true } },
       acestep_15_xl_sft: { all: { disabled: true } },
@@ -461,6 +469,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hidream_o1: { all: { disabled: true } },
       anima: { all: { disabled: true } },
       boogu: { all: { disabled: true } },
+      krea2: { all: { disabled: true } },
       acestep_15: { all: { disabled: true } },
       acestep_15_xl_base: { all: { disabled: true } },
       acestep_15_xl_sft: { all: { disabled: true } },
@@ -531,6 +540,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hidream_o1: { all: { default: 1e-4 } },
       anima: { all: { default: 1e-4 } },
       boogu: { all: { default: 1e-4 } },
+      krea2: { all: { default: 1e-4 } },
       acestep_15: { all: { default: 1e-4 } },
       acestep_15_xl_base: { all: { default: 1e-4 } },
       acestep_15_xl_sft: { all: { default: 1e-4 } },
@@ -567,6 +577,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hidream_o1: { all: { disabled: true, default: 0, max: 0 } },
       anima: { all: { disabled: true, default: 0, max: 0 } },
       boogu: { all: { disabled: true, default: 0, max: 0 } },
+      krea2: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15_xl_base: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15_xl_sft: { all: { disabled: true, default: 0, max: 0 } },
@@ -600,6 +611,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hidream_o1: { all: { default: 'constant' } },
       anima: { all: { default: 'constant' } },
       boogu: { all: { default: 'constant' } },
+      krea2: { all: { default: 'constant' } },
       acestep_15: { all: { default: 'constant' } },
       acestep_15_xl_base: { all: { default: 'constant' } },
       acestep_15_xl_sft: { all: { default: 'constant' } },
@@ -661,6 +673,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hidream_o1: { all: { disabled: true, default: 0, max: 0 } },
       anima: { all: { disabled: true, default: 0, max: 0 } },
       boogu: { all: { disabled: true, default: 0, max: 0 } },
+      krea2: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15_xl_base: { all: { disabled: true, default: 0, max: 0 } },
       acestep_15_xl_sft: { all: { disabled: true, default: 0, max: 0 } },
@@ -690,6 +703,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hidream_o1: { all: { default: 32 } },
       anima: { all: { default: 32 } },
       boogu: { all: { default: 32 } },
+      krea2: { all: { default: 32 } },
       acestep_15: { all: { default: 32 } },
       acestep_15_xl_base: { all: { default: 32 } },
       acestep_15_xl_sft: { all: { default: 32 } },
@@ -736,6 +750,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hidream_o1: { all: { default: 32 } },
       anima: { all: { default: 32 } },
       boogu: { all: { default: 32 } },
+      krea2: { all: { default: 32 } },
       acestep_15: { all: { default: 32 } },
       acestep_15_xl_base: { all: { default: 32 } },
       acestep_15_xl_sft: { all: { default: 32 } },
@@ -765,6 +780,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       hidream_o1: { all: { default: 0 } },
       anima: { all: { default: 0 } },
       boogu: { all: { default: 0 } },
+      krea2: { all: { default: 0 } },
       acestep_15: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       acestep_15_xl_base: { all: { disabled: true, default: 0, min: 0, max: 0 } },
       acestep_15_xl_sft: { all: { disabled: true, default: 0, min: 0, max: 0 } },
@@ -842,6 +858,9 @@ export const trainingSettings: TrainingSettingsType[] = [
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       boogu: {
+        all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
+      },
+      krea2: {
         all: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       ltx2: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
