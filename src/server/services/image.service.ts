@@ -193,6 +193,7 @@ import type {
 import {
   Availability,
   BlockImageReason,
+  CollectionItemStatus,
   CollectionMode,
   AppealStatus,
   EntityType,
@@ -1174,6 +1175,7 @@ type GetAllImagesRaw = {
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
   collectionItemNote?: string | null;
+  collectionItemStatus?: CollectionItemStatus | null;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -1267,6 +1269,7 @@ export const getAllImages = async (
     disableMinor,
     poiOnly,
     minorOnly,
+    pendingReviewOnly,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
   let { dbTarget = 'read' } = input;
@@ -1298,6 +1301,9 @@ export const getAllImages = async (
   let isPersonalized = false;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
+  // Moderators opting into the "pending review" collection filter get the same
+  // unscanned-content visibility as the existing `pending` flag (nsfwLevel = 0 allowed).
+  const effectivePending = pending || (isModerator && !!pendingReviewOnly);
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
   // Exclude unselectable browsing levels
@@ -1403,7 +1409,7 @@ export const getAllImages = async (
   // [x]
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
-  } else if (!pending) {
+  } else if (!effectivePending) {
     if (userId && !publishedOnly) {
       // userId is bound into the SQL, so each user gets their own cache key —
       // safe to cache, lower hit rate but no cross-user leakage.
@@ -1550,6 +1556,14 @@ export const getAllImages = async (
       ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
       : '';
 
+    // Moderators can opt into viewing ALL entries still under review for a collection
+    // (owner-only clause intentionally dropped — mods see every REVIEW item, not just
+    // their own). Everyone else: accepted items + the requester's own non-rejected items.
+    const collectionStatusFilter =
+      isModerator && pendingReviewOnly
+        ? `ci."status" = 'REVIEW'`
+        : `(ci."status" = 'ACCEPTED'${displayOwnedItems})`;
+
     // For random sort, use prefetched seed or parse from cursor
     if (sort === ImageSort.Random) {
       if (cursor) {
@@ -1577,11 +1591,12 @@ export const getAllImages = async (
     WITH.push(
       Prisma.sql`
         ct AS (
-          SELECT "imageId", note, "sortKey"
+          SELECT "imageId", note, status, "sortKey"
           FROM (
             SELECT
               ci."imageId",
               ci.note,
+              ci.status,
               abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
                 seedStr
               )}')), 1000000000)) as "sortKey"
@@ -1589,12 +1604,7 @@ export const getAllImages = async (
             WHERE ci."collectionId" = ${collectionId}
               ${Prisma.raw(collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``)}
               AND ci."imageId" IS NOT NULL
-              AND (
-                (
-                  ci."status" = 'ACCEPTED'
-                )
-                ${Prisma.raw(displayOwnedItems)}
-              )
+              AND ${Prisma.raw(collectionStatusFilter)}
           ) sub
           ${Prisma.raw(
             useRandomCursor &&
@@ -1752,7 +1762,7 @@ export const getAllImages = async (
     )`);
   }
 
-  if (pending && (isModerator || userId)) {
+  if (effectivePending && (isModerator || userId)) {
     isPersonalized = true; // pending view is moderator/owner-scoped
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
@@ -1839,7 +1849,7 @@ export const getAllImages = async (
       i.poi,
       i."acceptableMinor",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
-      ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote"' : '')}
+      ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus"' : '')}
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
@@ -2052,6 +2062,7 @@ export const getAllImages = async (
         // Visibility-gated linked-Model3D id (or null) for the "Posted to 3D
         // Model" chip on the feed-modal path. See the model3dId override below.
         model3dId?: number | null;
+        collectionItemStatus?: CollectionItemStatus | null;
       }
     > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, collectionItemNote, ...i }) => {
       const judgeScore = parseJudgeScore(collectionItemNote ?? null);

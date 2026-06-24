@@ -13,6 +13,7 @@ import {
   closeChallengeCollection,
   getActiveChallengeFromDb,
   getActiveChallengesFromDb,
+  getChallengesToReconcileFromDb,
   getEndedActiveChallengesFromDb,
   getScheduledChallengeFromDb,
   getScheduledChallengesReadyToStart,
@@ -543,6 +544,15 @@ export async function getActiveChallenges(): Promise<DailyChallengeDetails[]> {
  */
 export async function getEndedActiveChallenges(): Promise<DailyChallengeDetails[]> {
   const challenges = await getEndedActiveChallengesFromDb();
+  return challenges.map(challengeToLegacyFormat);
+}
+
+/**
+ * Gets recently-completed challenges that still have stuck REVIEW CollectionItems,
+ * in legacy format. Used by the reconciliation pass.
+ */
+export async function getChallengesToReconcile(windowHours = 48): Promise<DailyChallengeDetails[]> {
+  const challenges = await getChallengesToReconcileFromDb(windowHours);
   return challenges.map(challengeToLegacyFormat);
 }
 
