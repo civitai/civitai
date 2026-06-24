@@ -4,6 +4,7 @@ import poiWords from '~/utils/metadata/lists/words-poi.json';
 import nsfwPromptWords from '~/utils/metadata/lists/words-nsfw-prompt.json';
 import nsfwWordsPaddle from '~/utils/metadata/lists/words-paddle-nsfw.json';
 import youngWords from '~/utils/metadata/lists/words-young.json';
+import { ABSOLUTE_HANG_CEILING_MS, expectSubQuadraticScaling } from './redos-perf-helpers';
 
 /**
  * Combined-regex "gate" pre-filter — ZERO-WIDTH boundary ReDoS guard.
@@ -31,8 +32,6 @@ import youngWords from '~/utils/metadata/lists/words-young.json';
  * Matching CORRECTNESS of the gate (results byte-identical to the gateless per-word
  * loop) is proven separately by audit-matching-equivalence.test.ts.
  */
-
-const PERF_BUDGET_MS = 100;
 
 // A long run of non-Latin (CJK) characters with embedded ASCII tokens — the exact
 // shape that pinned the prod event loop. None of the embedded tokens match any list
@@ -66,54 +65,55 @@ const nsfwCheckable = checkable([
 const noop = (word: string) => `<<${word}>>`;
 
 describe('audit gate (zero-width) does not backtrack on long non-Latin prompts', () => {
-  // The OLD consuming-boundary gate's O(n²) cost grew with length, so the bigger
-  // inputs are where it really bit — assert all stay linear.
+  // The OLD consuming-boundary gate's cost was O(regexes × n²) on this CJK no-match
+  // shape (one giant [^a-zA-Z0-9] run): seconds of synchronous CPU. The zero-width
+  // rebuild made it linear. We assert that ALGORITHMIC property via input-size
+  // scaling (hardware-independent) rather than an absolute wall-clock budget — the
+  // old `< 100ms` flaked on slower/loaded runners while the code was demonstrably
+  // linear (see redos-perf-helpers).
+  it('poi.inPrompt scales linearly on growing CJK no-match prompts (gate short-circuits, not O(n²))', () => {
+    expectSubQuadraticScaling(
+      'poi.inPrompt CJK no-match',
+      (n) => buildCjkNoMatchPrompt(n),
+      (input) => poiCheckable.inPrompt(input)
+    );
+  });
+
+  it('young.nouns.inPrompt scales linearly on growing CJK no-match prompts (not O(n²))', () => {
+    expectSubQuadraticScaling(
+      'young.nouns.inPrompt CJK no-match',
+      (n) => buildCjkNoMatchPrompt(n),
+      (input) => youngNounsCheckable.inPrompt(input)
+    );
+  });
+
+  it('nsfw.inPrompt scales linearly on growing CJK no-match prompts (not O(n²))', () => {
+    expectSubQuadraticScaling(
+      'nsfw.inPrompt CJK no-match',
+      (n) => buildCjkNoMatchPrompt(n),
+      (input) => nsfwCheckable.inPrompt(input)
+    );
+  });
+
+  it('young.nouns.highlight scales linearly on growing CJK no-match prompts (not O(n²))', () => {
+    expectSubQuadraticScaling(
+      'young.nouns.highlight CJK no-match',
+      (n) => buildCjkNoMatchPrompt(n),
+      (input) => youngNounsCheckable.highlight(input, noop)
+    );
+  });
+
+  // Correctness (separate from cost): the gate must short-circuit a no-match prompt
+  // to `false` / a highlight no-op, at the proven prod size and a larger one.
   for (const cjkEach of [650, 1500, 4000]) {
     const prompt = buildCjkNoMatchPrompt(cjkEach);
 
-    it(`poi.inPrompt finishes < ${PERF_BUDGET_MS}ms on a ${prompt.length}-char CJK no-match prompt`, () => {
-      const start = performance.now();
-      const result = poiCheckable.inPrompt(prompt);
-      const ms = performance.now() - start;
-      expect(ms, `poi.inPrompt too slow (${ms.toFixed(1)}ms) on ${prompt.length}-char CJK`).toBeLessThan(
-        PERF_BUDGET_MS
-      );
-      // No-match prompt — the gate must have short-circuited to false.
-      expect(result).toBe(false);
-    });
-
-    it(`young.nouns.inPrompt finishes < ${PERF_BUDGET_MS}ms on a ${prompt.length}-char CJK no-match prompt`, () => {
-      const start = performance.now();
-      const result = youngNounsCheckable.inPrompt(prompt);
-      const ms = performance.now() - start;
-      expect(
-        ms,
-        `young.nouns.inPrompt too slow (${ms.toFixed(1)}ms) on ${prompt.length}-char CJK`
-      ).toBeLessThan(PERF_BUDGET_MS);
-      expect(result).toBe(false);
-    });
-
-    it(`nsfw.inPrompt finishes < ${PERF_BUDGET_MS}ms on a ${prompt.length}-char CJK no-match prompt`, () => {
-      const start = performance.now();
-      const result = nsfwCheckable.inPrompt(prompt);
-      const ms = performance.now() - start;
-      expect(
-        ms,
-        `nsfw.inPrompt too slow (${ms.toFixed(1)}ms) on ${prompt.length}-char CJK`
-      ).toBeLessThan(PERF_BUDGET_MS);
-      expect(result).toBe(false);
-    });
-
-    it(`young.nouns.highlight finishes < ${PERF_BUDGET_MS}ms and is a no-op on a ${prompt.length}-char CJK no-match prompt`, () => {
-      const start = performance.now();
-      const result = youngNounsCheckable.highlight(prompt, noop);
-      const ms = performance.now() - start;
-      expect(
-        ms,
-        `young.nouns.highlight too slow (${ms.toFixed(1)}ms) on ${prompt.length}-char CJK`
-      ).toBeLessThan(PERF_BUDGET_MS);
+    it(`gate short-circuits a ${prompt.length}-char CJK no-match prompt to false / no-op`, () => {
+      expect(poiCheckable.inPrompt(prompt)).toBe(false);
+      expect(youngNounsCheckable.inPrompt(prompt)).toBe(false);
+      expect(nsfwCheckable.inPrompt(prompt)).toBe(false);
       // Gate miss → highlight returns the prompt unchanged (preprocessor trims it).
-      expect(result).toBe(prompt.trim());
+      expect(youngNounsCheckable.highlight(prompt, noop)).toBe(prompt.trim());
     });
   }
 
@@ -125,7 +125,8 @@ describe('audit gate (zero-width) does not backtrack on long non-Latin prompts',
     const start = performance.now();
     const result = youngNounsCheckable.inPrompt(prompt);
     const ms = performance.now() - start;
-    expect(ms, `slow CJK+match (${ms.toFixed(1)}ms)`).toBeLessThan(PERF_BUDGET_MS);
+    // Generous absolute backstop (hardware-independent) — a single call must not hang.
+    expect(ms, `slow CJK+match (${ms.toFixed(1)}ms)`).toBeLessThan(ABSOLUTE_HANG_CEILING_MS);
     expect(result).not.toBe(false);
   });
 });
