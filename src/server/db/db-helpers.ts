@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { QueryResult, QueryResultRow } from 'pg';
-import { Pool } from 'pg';
+import { Client, Pool } from 'pg';
 import { performance } from 'node:perf_hooks';
 import client from 'prom-client';
 import { env } from '~/env/server';
@@ -237,10 +237,24 @@ export function getClient(
 
     const cancel = async () => {
       if (done) return;
-      const cancelConnection = await pool.connect();
-      await cancelConnection.query('SELECT pg_cancel_backend($1)', [pid]);
-      cancelConnection.release();
-      done = true;
+      // Issue the cancel via a fresh one-shot client outside the pool so that
+      // cancel() never blocks on pool.connect() when the pool is full. A saturated
+      // pool is exactly when cancellation is most urgent, so acquiring from the
+      // same pool would deadlock: every slot is occupied by a query that needs
+      // cancelling, and cancellation needs a slot to run.
+      // Do NOT set done=true here — the query's own .finally() owns that flag and
+      // the connection release. If cancelClient.connect() throws, the original query
+      // keeps running and .finally() will still release the connection correctly.
+      const cancelClient = new Client({
+        connectionString: pool.options.connectionString as string,
+        connectionTimeoutMillis: pool.options.connectionTimeoutMillis ?? 5000,
+      });
+      try {
+        await cancelClient.connect();
+        await cancelClient.query('SELECT pg_cancel_backend($1)', [pid]);
+      } finally {
+        cancelClient.end().catch(() => null);
+      }
     };
     const result = async () => {
       const { rows } = await query;

@@ -111,7 +111,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
                 //language=text
                 const updateQuery = Prisma.sql`
                 UPDATE "PendingNotification" pn
-                SET "users" = u.users::int[],
+                SET "users" = ARRAY(SELECT DISTINCT unnest(pn."users" || u.users::int[])),
                     "lastTriggered" = NOW()
                 FROM (VALUES
                   ${Prisma.join(
@@ -146,7 +146,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
                         }, ${JSON.stringify(d.details)}::jsonb)`
                     )
                   )}
-                  ON CONFLICT (key) DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
+                  ON CONFLICT (key) DO UPDATE SET "users" = ARRAY(SELECT DISTINCT unnest("PendingNotification"."users" || excluded."users")), "lastTriggered" = NOW()
                 `;
 
                   const insertResp = await notifDbWrite.cancellableQuery(insertQuery);
