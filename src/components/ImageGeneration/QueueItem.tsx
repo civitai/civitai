@@ -917,11 +917,11 @@ function CanUpgradeBlock({
   return (
     <>
       <Text align="center" size="sm">
-        Unlock this content with{' '}
+        Unlock with{' '}
         <Text component="span" c="yellow">
           yellow
         </Text>{' '}
-        Buzz!
+        Buzz
       </Text>
       <CurrencyBadge
         unitAmount={yellowBuzzRequired}
@@ -933,23 +933,23 @@ function CanUpgradeBlock({
         loading={isLoading}
       />
       <Text align="center" size="xs" c="dimmed">
-        The {refundedLabel} you used to generate this content will be refunded.
+        Your {refundedLabel} will be refunded.
+        {!isPaidMember && (
+          <>
+            {' '}
+            {features.isGreen ? (
+              <Anchor component={Link} href={pricingHref} size="xs">
+                Become a member
+              </Anchor>
+            ) : (
+              <Anchor href={pricingHref} target="_blank" rel="noreferrer nofollow" size="xs">
+                Become a member
+              </Anchor>
+            )}{' '}
+            to use Blue Buzz for mature content.
+          </>
+        )}
       </Text>
-      {!isPaidMember && (
-        <Text align="center" size="xs" c="dimmed">
-          Or{' '}
-          {features.isGreen ? (
-            <Anchor component={Link} href={pricingHref} size="xs">
-              become a member
-            </Anchor>
-          ) : (
-            <Anchor href={pricingHref} target="_blank" rel="noreferrer nofollow" size="xs">
-              become a member
-            </Anchor>
-          )}{' '}
-          to use Blue Buzz for mature content
-        </Text>
-      )}
     </>
   );
 }
