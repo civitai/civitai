@@ -95,6 +95,7 @@ import {
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { getUserById } from '~/server/services/user.service';
+import { getSessionUser } from '~/server/auth/session-user';
 import {
   guardedProcedure,
   moderatorProcedure,
@@ -180,14 +181,32 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
  * (budget cap, daily Buzz cap, reserveBlockBuzzSpend, getOrchestratorToken,
  * forced-SFW) are unchanged — this only swaps which identity the FLAG sees.
  *
- * Reads `isModerator` from the DB (the server-side user row), never a
- * client-supplied value, so the segment match can't be spoofed.
+ * Resolves the FULL server-side SessionUser via `getSessionUser` (never a
+ * client-supplied value) so the segment match can't be spoofed AND every
+ * property `buildFliptContext` consumes is real.
+ *
+ * ## Why the full SessionUser, not a trimmed `{ id, isModerator }` cast
+ *
+ * `isAppBlocksEnabled({ user })` feeds `user` to `buildFliptContext`, which
+ * reads `id`, `isModerator`, AND `tier` (deriving `isMember` from `tier`). A
+ * trimmed `getUserById({ select: { id, isModerator } })` cast to SessionUser
+ * (the #2740 shape) leaves `tier` undefined → the Flipt context carries the
+ * type-default `tier:'free'` / `isMember:'false'` instead of the user's real
+ * subscription tier. That is correct TODAY only because the live
+ * `app-blocks-enabled` flag segments solely on `isModerator`. The moment the
+ * flag is widened to segment on `tier`/region, a stale-`free` context would
+ * silently mis-gate a paying user. Resolving the real SessionUser here (whose
+ * `tier` is derived from the highest active subscription — not a User column,
+ * so it CANNOT be fetched by widening the select) makes the gate stay correct
+ * across any future widening. Pre-GA security review hardening.
  */
 async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void> {
-  const row = await getUserById({ id: userId, select: { id: true, isModerator: true } });
-  // A vanished user → no SessionUser → global eval → flag false → blocked
-  // (fail-closed; the subsequent assertViewerIsModerator would also reject).
-  const user = row ? (row as unknown as SessionUser) : undefined;
+  // Full, authoritative SessionUser (cached; tier derived from active
+  // subscriptions) so buildFliptContext sees the user's REAL tier/isMember,
+  // not type-defaults. A vanished user → undefined → global eval → flag false
+  // → blocked (fail-closed; the subsequent assertViewerIsModerator would also
+  // reject).
+  const user = await getSessionUser({ userId });
   if (!(await isAppBlocksEnabled({ user }))) {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
   }
