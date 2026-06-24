@@ -51,3 +51,55 @@ describe('AppBlockChrome (H2 host-rendered app name)', () => {
     await expect.element(page.getByRole('button', { name: 'App block menu' })).toBeInTheDocument();
   });
 });
+
+// Task 2: the "Hide app block" menu item is meaningless on the full-page run
+// surface (`/apps/run/<slug>`, slot kind `page`) — there's no model-page slot to
+// dismiss the block FROM; the page IS the block. The chrome takes the rendering
+// `slotId` and drops "Hide" when `isPageSlot(slotId)` is true. "Manage apps" +
+// the provenance badge stay on every surface. (Mirrors PR #2747's `isPageSlot`
+// page-vs-model distinction.)
+//
+// The menu items live in a Mantine `<Menu>` dropdown that only mounts its
+// contents once the trigger is opened — so each test clicks the ⋯ trigger first,
+// then asserts on the dropdown contents.
+describe('AppBlockChrome "Hide" item is surface-aware (page vs model)', () => {
+  async function openMenu() {
+    await page.getByRole('button', { name: 'App block menu' }).click();
+    // "Manage apps" is present on every surface — wait on it so the dropdown has
+    // mounted before asserting on the conditional "Hide" item.
+    await expect.element(page.getByRole('menuitem', { name: 'Manage apps' })).toBeInTheDocument();
+  }
+
+  test('model surface (model.sidebar_top) renders the "Hide app block" item', async () => {
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-model" appName="Background Remover" slotId="model.sidebar_top" />
+    );
+    await openMenu();
+    await expect
+      .element(page.getByRole('menuitem', { name: 'Hide app block' }))
+      .toBeInTheDocument();
+  });
+
+  test('no slotId (back-compat default = model surface) renders the "Hide app block" item', async () => {
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-default" appName="Background Remover" />
+    );
+    await openMenu();
+    await expect
+      .element(page.getByRole('menuitem', { name: 'Hide app block' }))
+      .toBeInTheDocument();
+  });
+
+  test('page surface (app.page) does NOT render the "Hide app block" item, keeps "Manage apps"', async () => {
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-page" appName="Budgeted Generator" slotId="app.page" />
+    );
+    await openMenu();
+    // "Manage apps" stays …
+    await expect.element(page.getByRole('menuitem', { name: 'Manage apps' })).toBeInTheDocument();
+    // … but "Hide app block" is suppressed on the full-page surface.
+    await expect
+      .element(page.getByRole('menuitem', { name: 'Hide app block' }))
+      .not.toBeInTheDocument();
+  });
+});

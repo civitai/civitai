@@ -204,6 +204,43 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
   });
 });
 
+describe('PageBlockHost loading indicator (Task 1)', () => {
+  test('shows a loading indicator before BLOCK_READY and removes it once ready', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    // While status === 'loading' (iframe mounted, pre-handshake) the centered
+    // Loader overlay is present so the surface isn't blank.
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await expect.element(page.getByLabelText('Loading Budgeted Generator')).toBeInTheDocument();
+
+    // Drive the handshake to BLOCK_READY → status flips to 'ready'.
+    await driveToReady();
+
+    // The overlay is gated purely on status === 'loading', so it unmounts the
+    // instant the block is ready — never spins forever.
+    await vi.waitFor(() => {
+      expect(page.getByTestId('app-page-loading').query()).toBeNull();
+    });
+  });
+
+  test('the error terminal path shows the fallback and never the loader (does not spin forever)', async () => {
+    // token=null + tokenError=true → the `error` effect flips status out of
+    // 'loading' synchronously, so showIframe is false and the loader overlay is
+    // never reached: the surface lands on the host BlockFallback, not an endless
+    // spinner. (The mint-failure → terminal mapping is unit-covered by
+    // pageBlockHostLogic.pageFallbackReason; here we assert the host surfaces it
+    // INSTEAD of the loading indicator.)
+    renderWithProviders(
+      <PageBlockHost {...baseProps} token={null} tokenError onConsentGranted={vi.fn()} />
+    );
+
+    // Terminal fallback is rendered …
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    // … and the loading indicator is NOT present (no infinite spinner).
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  });
+});
+
 describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
   // Analytics Phase 2 now emits via the /api/track/block-render BEACON
   // (sendBlockRender → fetch), not a tRPC mutation. Spy on global fetch and
