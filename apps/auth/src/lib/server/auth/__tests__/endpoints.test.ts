@@ -180,7 +180,9 @@ describe('POST /api/auth/oauth/legacy-exchange (upgrade-on-read)', () => {
       ev({ auth: 'Bearer secret-123', body: { legacyToken: 'legacy.jwe' } })
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ token: 'civ.minted.jwt' });
+    // Returns the minted civ-token PLUS a deviceId (no civ-device cookie in this request → the handler mints
+    // one via randomUUID) so the spoke can set civ-device on the upgraded session, matching establishSession.
+    expect(await res.json()).toEqual({ token: 'civ.minted.jwt', deviceId: expect.any(String) });
     expect(h.verifyToken).toHaveBeenCalledWith('legacy.jwe');
     expect(h.getOrProduce).toHaveBeenCalledWith(5);
     expect(h.mintUserSession).toHaveBeenCalledWith({ id: 5, username: 'alice' });
