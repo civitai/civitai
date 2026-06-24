@@ -968,6 +968,101 @@ describe('isTransientMeiliError — transient upstream classification', () => {
     expect(isTransientMeiliError(new Error('Service Unavailable '))).toBe(false); // trailing space
   });
 
+  // ── THE REAL PROD SHAPE (audit-confirmed) — name PRESERVED, statusCode DROPPED ──
+  //
+  // This is the test that would have caught #2759 AND #2765. The audit traced the
+  // ACTUAL bundled meilisearch-js (0.33/0.34, both confirmed): the error reaching
+  // the service catch is a `MeiliSearchCommunicationError` with
+  //   name = 'MeiliSearchCommunicationError'  (INTACT — NOT stripped)
+  //   statusCode = undefined                  (DROPPED)
+  //   message = 'Service Unavailable' / etc.  (the surviving statustext)
+  //
+  // Mechanism: `httpResponseErrorHandler` throws
+  // `MeiliSearchCommunicationError(statusText, Response, url)` (sets message +
+  // statusCode); then `request()`'s catch re-wraps via `httpErrorHandler` →
+  // `new MeiliSearchCommunicationError(firstErr.message, firstErr, url, stack)`.
+  // The 2nd arg is now an Error (not a Response), so the constructor's
+  // `if (body instanceof Response)` block that sets `statusCode` does NOT run →
+  // statusCode dropped — but the constructor still sets `this.name`.
+  //
+  // The OLD code's CommunicationError branch saw `statusCode === undefined` + no
+  // errno/code and `return`ed false BEFORE the terminal message lookup ran — so
+  // #2759/#2765's statustext fallback was DEAD CODE for the real shape and the
+  // handler still emitted a hard 500 `{"error":"Service Unavailable"}`. The fix
+  // makes the message lookup reachable in this branch. These tests construct the
+  // proven shape directly (name set, statusCode undefined) and would FAIL against
+  // the pre-fix code (which returned false here).
+  describe('real prod shape — MeiliSearchCommunicationError, name preserved, statusCode dropped', () => {
+    // Replicate the SDK double-wrap end-product faithfully: name set,
+    // statusCode left undefined (never assigned by the 2nd constructor call),
+    // message = the surviving statustext. No errno/code (this is a
+    // server-responded transport error re-wrap, not a network ECONNREFUSED).
+    const makeRewrappedCommunicationError = (statusText: string) => {
+      const e = new Error(statusText) as Error & { name: string; statusCode?: number };
+      e.name = 'MeiliSearchCommunicationError';
+      // statusCode intentionally NOT set — this is the dropped-status reality.
+      return e;
+    };
+
+    it.each([
+      'Request Timeout', // 408
+      'Too Many Requests', // 429
+      'Bad Gateway', // 502
+      'Service Unavailable', // 503 — the dominant captured prod body
+      'Gateway Timeout', // 504
+    ])(
+      'returns TRUE for the re-wrapped CommunicationError "%s" (name kept, statusCode undefined)',
+      async (statusText) => {
+        const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+        const e = makeRewrappedCommunicationError(statusText);
+        // Pin the proven shape so a regression in the test's own construction is loud.
+        expect(e.name).toBe('MeiliSearchCommunicationError');
+        expect((e as { statusCode?: number }).statusCode).toBeUndefined();
+        expect((e as { code?: string }).code).toBeUndefined();
+        expect((e as { errno?: string }).errno).toBeUndefined();
+        expect(isTransientMeiliError(e)).toBe(true);
+      }
+    );
+
+    it('failfastReasonForTransientError labels the re-wrapped CommunicationError by its statustext (503 → upstream-overload), not the generic upstream-error', async () => {
+      const { failfastReasonForTransientError } = await import('~/server/meilisearch/client');
+      expect(failfastReasonForTransientError(makeRewrappedCommunicationError('Service Unavailable'))).toBe(
+        'upstream-overload'
+      );
+      expect(failfastReasonForTransientError(makeRewrappedCommunicationError('Request Timeout'))).toBe(
+        'upstream-timeout'
+      );
+      expect(failfastReasonForTransientError(makeRewrappedCommunicationError('Bad Gateway'))).toBe(
+        'upstream-error'
+      );
+    });
+
+    it('still returns FALSE for a re-wrapped CommunicationError whose message is NOT a transient statustext (no masking of a real bug)', async () => {
+      const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+      // name preserved + statusCode undefined, but the message is an arbitrary
+      // app/internal error — must NOT be masked as transient.
+      expect(isTransientMeiliError(makeRewrappedCommunicationError('Internal Server Error'))).toBe(
+        false
+      );
+      expect(isTransientMeiliError(makeRewrappedCommunicationError('some internal failure'))).toBe(
+        false
+      );
+    });
+
+    it('an ApiError with httpStatus undefined falls through to the message lookup (a real Meili JSON message does NOT false-match)', async () => {
+      const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+      // ApiError whose httpStatus got dropped but carries a Meili JSON message —
+      // it is NOT a bare statustext so it must stay non-transient.
+      const e = new Error('Index `images` not found.') as Error & { name: string };
+      e.name = 'MeiliSearchApiError';
+      expect(isTransientMeiliError(e)).toBe(false);
+      // ...but if such a path ever yielded a bare transient statustext, catch it.
+      const e2 = new Error('Service Unavailable') as Error & { name: string };
+      e2.name = 'MeiliSearchApiError';
+      expect(isTransientMeiliError(e2)).toBe(true);
+    });
+  });
+
   it('exposes TRANSIENT_STATUSTEXT_TO_STATUS mapping the same statuses isFailfastStatus treats transient', async () => {
     const { TRANSIENT_STATUSTEXT_TO_STATUS, isFailfastStatus } = await import(
       '~/server/meilisearch/client'

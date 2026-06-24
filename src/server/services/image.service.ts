@@ -2967,7 +2967,29 @@ export async function getImagesFromFeedSearch(
     // Unavailable"} 500 because they're not TRPCErrors and fell through the
     // generic 500 mapping). 4xx-other (malformed filter / auth) and any other
     // Error are NOT transient and still bubble as-is (→ their real status).
-    if (isTransientMeiliError(err)) {
+    const transient = isTransientMeiliError(err);
+    // DIAGNOSTIC (no PII): confirm the LIVE error SHAPE from logs instead of
+    // re-inferring it from the response body. The audit traced the real prod
+    // error to a `MeiliSearchCommunicationError` whose `.name` is PRESERVED but
+    // `.statusCode` is dropped by the SDK's httpErrorHandler double-wrap — this
+    // line lets us verify that on-cluster (error name + ctor name + whether a
+    // numeric statusCode survived + whether isTransientMeiliError matched) so
+    // the "we keep guessing the shape" loop closes. Cheap: one log line on the
+    // catch path only (not the hot success path).
+    const errShape = err as { name?: unknown; statusCode?: unknown; message?: unknown };
+    logToAxiom(
+      {
+        type: transient ? 'info' : 'warning',
+        name: 'meili-error-shape',
+        path: 'getImagesFromFeedSearch',
+        errorName: typeof errShape?.name === 'string' ? errShape.name : null,
+        ctorName: (err as { constructor?: { name?: string } })?.constructor?.name ?? null,
+        hasStatusCode: typeof errShape?.statusCode === 'number',
+        transient,
+      },
+      'temp-search'
+    ).catch();
+    if (transient) {
       // Keep a transient Meili outage ATTRIBUTABLE (see getAllImagesIndex). The
       // reclassified 503 would otherwise land in the unlabeled 503 bucket;
       // mirror the post-filter loop's {route, reason} so a Meili brownout is

@@ -277,7 +277,16 @@ export function isTransientMeiliError(error: unknown): boolean {
     // (408/429 don't arrive as a parseable Meili JSON ApiError in practice; if
     // they ever do, they fall through to false → bubble as their real status,
     // which is the safe direction — we never widen masking.)
-    return typeof e.httpStatus === 'number' && [502, 503, 504].includes(e.httpStatus);
+    if (typeof e.httpStatus === 'number') {
+      return [502, 503, 504].includes(e.httpStatus);
+    }
+    // httpStatus undefined — fall through to the message lookup below. An
+    // ApiError's `.message` is the Meili JSON error message (e.g.
+    // "Index `x` not found"), NOT a bare HTTP statustext, so the EXACT-match
+    // lookup won't false-match it as transient — but if some path ever DID
+    // strip httpStatus while leaving a bare statustext message, we want it
+    // caught rather than mis-classified as a hard 500.
+    return messageMatchesTransientStatusText(e.message);
   }
 
   if (e.name === 'MeiliSearchCommunicationError') {
@@ -289,22 +298,47 @@ export function isTransientMeiliError(error: unknown): boolean {
     if (typeof e.statusCode === 'number') return isFailfastStatus(e.statusCode);
     // Network-level failure (no HTTP status, but a node errno/code) → the
     // backend was unreachable / the socket dropped, which is transient.
-    return typeof e.errno === 'string' || typeof e.code === 'string';
+    if (typeof e.errno === 'string' || typeof e.code === 'string') return true;
+    // THE REAL PROD SHAPE (audit-confirmed against meilisearch-js 0.33/0.34):
+    // the SDK's `request()` catch re-wraps the first `MeiliSearchCommunicationError`
+    // via `httpErrorHandler` → `new MeiliSearchCommunicationError(firstErr.message,
+    // firstErr, url, stack)`. The 2nd arg is now an Error (not a Response), so the
+    // constructor's `if (body instanceof Response)` block that sets `statusCode`
+    // does NOT run → `statusCode` is dropped — but `this.name` is STILL set to
+    // 'MeiliSearchCommunicationError' and `this.message` STILL carries the
+    // original statustext ("Service Unavailable" / "Request Timeout"). So here —
+    // name preserved, statusCode undefined, no errno/code — the message statustext
+    // is the only surviving signal. Fall back to the EXACT-match lookup instead of
+    // returning false (which is what made PR #2759/#2765's fallback DEAD CODE: the
+    // function exited in this branch before ever reaching the terminal lookup).
+    return messageMatchesTransientStatusText(e.message);
   }
 
-  // statusText-message fallback — the PROD shape PR #2759 missed. When the
-  // Meili SDK error crosses the `event-engine-common` submodule boundary it
-  // arrives as a PLAIN `Error` with NO name / statusCode / httpStatus / code,
-  // carrying only `message = <HTTP statusText>` (e.g. "Service Unavailable").
-  // None of the structured branches above can see it, so an EXACT (case- and
-  // whitespace-sensitive) match of `.message` against the transient reason
-  // phrases is the only signal left. EXACT, never substring — see
-  // `TRANSIENT_STATUSTEXT_TO_STATUS` JSDoc for the masking rationale.
-  if (typeof e.message === 'string') {
-    return Object.prototype.hasOwnProperty.call(TRANSIENT_STATUSTEXT_TO_STATUS, e.message);
-  }
+  // statusText-message fallback — belt-and-suspenders for a NAMELESS plain Error
+  // (in case any path DOES strip the Meili `name` too). The audit proved the real
+  // prod error keeps `.name` (handled in the CommunicationError branch above), but
+  // a stripped variant would arrive here with NO name / statusCode / httpStatus /
+  // code, carrying only `message = <HTTP statusText>`. An EXACT (case- and
+  // whitespace-sensitive) match of `.message` is the only signal left. EXACT,
+  // never substring — see `TRANSIENT_STATUSTEXT_TO_STATUS` JSDoc for the masking
+  // rationale.
+  return messageMatchesTransientStatusText(e.message);
+}
 
-  return false;
+/**
+ * EXACT (case- and whitespace-sensitive) lookup of an error message against the
+ * transient HTTP reason-phrase set. Returns true only when `message` is EXACTLY
+ * one of the bare transient statustexts (never a substring — see the masking
+ * rationale in `TRANSIENT_STATUSTEXT_TO_STATUS`). Shared by `isTransientMeiliError`
+ * so the statustext fallback is reachable on BOTH the name-preserved
+ * CommunicationError/ApiError-with-undefined-status path AND the (hypothetical)
+ * fully-stripped nameless-Error path.
+ */
+function messageMatchesTransientStatusText(message: unknown): boolean {
+  return (
+    typeof message === 'string' &&
+    Object.prototype.hasOwnProperty.call(TRANSIENT_STATUSTEXT_TO_STATUS, message)
+  );
 }
 
 /**
@@ -341,10 +375,15 @@ export function failfastReasonForTransientError(error: unknown): MeiliFetchFailf
     if (e.name === 'MeiliSearchCommunicationError' && typeof e.statusCode === 'number') {
       return failfastReasonForStatus(e.statusCode);
     }
-    // statusText-message fallback (the stripped prod-shape plain Error — see
-    // `TRANSIENT_STATUSTEXT_TO_STATUS`): derive the SAME reason label the status
-    // code would have produced, so `meiliFetchFailfastTotal` stays meaningful
-    // and the message-matched events bucket identically to their typed twins.
+    // statusText-message fallback — derive the SAME reason label the status code
+    // would have produced, so `meiliFetchFailfastTotal` stays meaningful and the
+    // message-matched events bucket identically to their typed twins. This is
+    // reached for BOTH the stripped nameless-Error AND — critically — the REAL
+    // prod shape: a `MeiliSearchCommunicationError` whose `statusCode` was dropped
+    // by the SDK's httpErrorHandler double-wrap (name preserved, statusCode
+    // undefined). Without this, that message-matched CommunicationError would fall
+    // through to the generic `upstream-error` label instead of e.g.
+    // `upstream-overload` for a "Service Unavailable" (503).
     if (typeof e.message === 'string') {
       const statusFromText = TRANSIENT_STATUSTEXT_TO_STATUS[e.message];
       if (typeof statusFromText === 'number') return failfastReasonForStatus(statusFromText);
