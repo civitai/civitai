@@ -51,6 +51,20 @@ export function buildWordmarkSvg(opts: WordmarkOptions = {}): string {
   );
 }
 
+/**
+ * The Civitai favicon — the diamond "C" badge as a standalone SVG document, ready for
+ * `<link rel="icon" type="image/svg+xml">`. Same mark as {@link buildBadgeSvg}; the only
+ * difference is a `favicon`-scoped gradient id (so it never collides with an inline badge on
+ * the same origin) and an explicit square `width`/`height` for hosts that ignore the viewBox.
+ * Transparent background — the blue gradient + white "C" read on both light and dark tab bars.
+ */
+export function buildFaviconSvg(opts: Omit<BadgeOptions, 'idPrefix'> = {}): string {
+  return buildBadgeSvg({ ...opts, idPrefix: 'favicon' }).replace(
+    '<svg ',
+    '<svg width="32" height="32" '
+  );
+}
+
 /** The diamond "C" badge as an SVG string, themed by holiday/gradient. */
 export function buildBadgeSvg(opts: BadgeOptions = {}): string {
   const key: GradientKey = opts.gradient ?? opts.holiday ?? DEFAULT_GRADIENT;
