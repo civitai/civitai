@@ -45,6 +45,7 @@ function CopyableCommand({ command }: { command: string }) {
             variant="transparent"
             color="gray"
             aria-label={`Copy command: ${command}`}
+            onClick={copy}
           >
             {copied ? <IconCheck size={16} /> : <IconClipboard size={16} />}
           </LegacyActionIcon>

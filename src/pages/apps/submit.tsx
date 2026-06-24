@@ -323,9 +323,8 @@ export default function SubmitAppPage() {
               {/* PRIMARY: the recommended CLI flow. */}
               <CliSubmitCta />
 
-              {/* SECONDARY: manual ZIP upload, de-emphasized behind a toggle.
-                  Keep it open if the user already has a bundle selected. */}
-              <ManualUploadSection defaultOpen={!!bundle}>
+              {/* SECONDARY: manual ZIP upload, de-emphasized behind a toggle. */}
+              <ManualUploadSection>
                 <Text size="sm" c="dimmed">
                   Upload a ZIP of your app source. The slug, version, and name come from{' '}
                   <Code>block.manifest.json</Code> — no separate fields to fill in, and you

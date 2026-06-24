@@ -12,17 +12,11 @@ import { useState } from 'react';
  * `children`, so the page keeps its logic and this component only owns the
  * collapse/visual-demotion chrome.
  *
- * `defaultOpen` lets the page keep the section open when a bundle is already
- * selected, so the user doesn't lose context mid-flow.
+ * Defaults closed: the section is opened only when the user explicitly clicks
+ * the toggle (bundle selection happens after that, inside the open section).
  */
-export function ManualUploadSection({
-  children,
-  defaultOpen = false,
-}: {
-  children: React.ReactNode;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
+export function ManualUploadSection({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
 
   return (
     <>

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import {
   CIVITAI_CLI_GITHUB_URL,
   CLI_CREATE_COMMAND,
@@ -65,5 +65,43 @@ describe('CliSubmitCta (CLI-first submit primary CTA)', () => {
         .element(page.getByRole('button', { name: `Copy command: ${command}` }))
         .toBeInTheDocument();
     }
+  });
+
+  // M1 (a11y): the copy must WORK when the real <button aria-label="Copy …"> is
+  // operated — both by mouse and by keyboard (the path a keyboard / screen-reader
+  // user takes). The fix moves `onClick={copy}` onto the LegacyActionIcon button
+  // (canonical Mantine CopyButton pattern, see CivitaiLinkWizard) so the button is
+  // independently functional rather than relying on its click bubbling to the
+  // wrapping <Box onClick>.
+  //
+  // HONEST CAVEAT ON MUTATION-SENSITIVITY: the button is a DOM descendant of the
+  // <Box>, and BOTH handlers are React-synthetic (dispatched at the delegated
+  // React root). A mouse click and a native keyboard-Enter both bubble to that
+  // shared root, so React fires whichever onClick is present — the copy succeeds
+  // whether the handler sits on the button or only on the Box. There is therefore
+  // NO observable behavioral differential a DOM-level test can isolate (a
+  // DOM-level stopPropagation kills BOTH handlers, since it stops the event before
+  // it reaches the React root). These tests assert the real user-facing
+  // guarantee — the button is focusable and copy fires on mouse + keyboard — and
+  // document that the fix is canonical-pattern hardening, not a behavior change.
+  test('clicking the copy button copies — shows "Copied"', async () => {
+    renderWithProviders(<CliSubmitCta />);
+    const button = page.getByRole('button', { name: `Copy command: ${CLI_INSTALL_COMMAND}` });
+    await expect.element(button).toBeInTheDocument();
+    await button.click();
+    // CopyButton flips its render-prop `copied` → the Code block text becomes
+    // "Copied" iff the activation triggered the `copy()` callback.
+    await expect.element(page.getByText('Copied')).toBeInTheDocument();
+  });
+
+  test('the copy button is focusable and keyboard-Enter copies — shows "Copied"', async () => {
+    renderWithProviders(<CliSubmitCta />);
+    const button = page.getByRole('button', { name: `Copy command: ${CLI_SUBMIT_COMMAND}` });
+    await expect.element(button).toBeInTheDocument();
+    const el = button.element() as HTMLElement;
+    el.focus();
+    expect(document.activeElement).toBe(el); // genuinely keyboard-reachable
+    await userEvent.keyboard('{Enter}');
+    await expect.element(page.getByText('Copied')).toBeInTheDocument();
   });
 });

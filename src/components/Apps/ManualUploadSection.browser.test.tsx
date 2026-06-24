@@ -38,12 +38,4 @@ describe('ManualUploadSection (secondary manual ZIP upload)', () => {
       .element(page.getByRole('button', { name: 'Hide manual ZIP upload' }))
       .toBeInTheDocument();
   });
-
-  test('defaultOpen keeps the section open so a selected bundle is not lost', async () => {
-    renderWithProviders(<ManualUploadSection defaultOpen>{CHILD}</ManualUploadSection>);
-    const toggle = page.getByRole('button', { name: 'Hide manual ZIP upload' });
-    await expect.element(toggle).toBeInTheDocument();
-    expect(toggle.element().getAttribute('aria-expanded')).toBe('true');
-    await expect.element(page.getByTestId('manual-upload-form')).toBeInTheDocument();
-  });
 });
