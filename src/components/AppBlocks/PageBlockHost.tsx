@@ -161,6 +161,11 @@ export function PageBlockHost({
   const router = useRouter();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
+  // #4 Retry: bumped by the terminal-fallback Retry button to re-key the
+  // <iframe> below. Re-keying forces React to unmount + remount the iframe (a
+  // fresh `contentWindow`), so the re-armed init handshake talks to a clean
+  // frame instead of a wedged one. See `handleRetry`.
+  const [reloadNonce, setReloadNonce] = useState<number>(0);
   const initSentRef = useRef<boolean>(false);
   const controllerRef = useRef<IframeInitController | null>(null);
   const buildInitPayloadRef = useRef<() => BlockInitPayload>();
@@ -1028,6 +1033,36 @@ export function PageBlockHost({
   // for the status→reason mapping + the anti-spoof rationale.
   const fallbackReason = pageFallbackReason(status);
 
+  // #4 Retry: re-attempt the load from a terminal fallback. The full re-arm in
+  // one place so there's no stuck state and no timer leak across retries:
+  //   1. Dispose any controller the terminal cleanup may not have torn down yet
+  //      (defensive — the init effect's cleanup already disposes + nulls it when
+  //      status left 'loading'; this guarantees no orphaned interval/timeout
+  //      survives a retry).
+  //   2. Reset the per-mount handshake/analytics guards so init re-fires and a
+  //      successful retry re-emits exactly one impression.
+  //   3. Bump `reloadNonce` → re-keys the <iframe> → React remounts it (fresh
+  //      contentWindow), so the re-armed handshake talks to a clean frame.
+  //   4. Flip status back to 'loading'. shouldStartInit then re-passes and the
+  //      init effect (controllerRef now null) builds a NEW controller whose
+  //      start() re-posts BLOCK_INIT and re-arms the readiness timeout — so a
+  //      second failure routes back to the fallback (no stuck state), and a
+  //      BLOCK_READY clears it (success-after-retry).
+  // Only meaningful from a terminal state; a no-op while loading/ready (status
+  // stays put, nonce churn is harmless but we still gate to avoid a spurious
+  // iframe remount mid-handshake).
+  const handleRetry = useCallback(() => {
+    setStatus((current) => {
+      if (current === 'loading' || current === 'ready') return current;
+      controllerRef.current?.dispose();
+      controllerRef.current = null;
+      initSentRef.current = false;
+      blockRenderEmittedRef.current = false;
+      setReloadNonce((n) => n + 1);
+      return 'loading';
+    });
+  }, []);
+
   return (
     <Box
       style={{
@@ -1063,6 +1098,10 @@ export function PageBlockHost({
         // never spin forever.
         <Box style={{ position: 'relative', flex: 1, display: 'flex' }}>
           <iframe
+            // #4 Retry: re-key on `reloadNonce` so a retry UNMOUNTS + REMOUNTS
+            // the iframe (fresh contentWindow), not just reloads its src — the
+            // re-armed init handshake then talks to a clean frame.
+            key={reloadNonce}
             ref={iframeRef}
             src={iframeSrc}
             sandbox={effectiveSandbox}
@@ -1106,7 +1145,11 @@ export function PageBlockHost({
         </Box>
       ) : fallbackReason ? (
         <Box style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }} data-testid="app-page-fallback">
-          <BlockFallback reason={fallbackReason} blockName={appName} />
+          <BlockFallback
+            reason={fallbackReason}
+            blockName={sanitizeAppChromeName(appName) || blockId}
+            onRetry={handleRetry}
+          />
         </Box>
       ) : null}
     </Box>
