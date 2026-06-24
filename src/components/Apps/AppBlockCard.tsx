@@ -27,8 +27,13 @@ import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema'
 
 /**
  * Marketplace card for an approved app block. Renders the block name,
- * a short description (from manifest.description), the slot it targets,
- * publisher/app attribution, install count, and an install/manage CTA.
+ * a short description (from manifest.description), the mod-assigned category,
+ * and the action CTAs (View details / Open app / Install/Manage).
+ *
+ * Round-2 marketplace pass (2026-06): the slot/location badge and the
+ * "by {author}" attribution line were dropped from the card face (the launch
+ * is page-only, so the slot badge is noise) — both still live on the detail
+ * page / modal. "View details" is a link-style (subtle) button.
  *
  * The install CTA opens the per-app settings panel; we delegate the open
  * action to the parent via `onOpen` so the page owns the modal lifecycle.
@@ -49,19 +54,6 @@ export interface AppBlockCardProps {
    * "Open app" link to `/apps/run/<slug>` is shown. Dark today (flag mod-only).
    */
   canOpenPage?: boolean;
-}
-
-function slotLabel(slotId?: string): string {
-  switch (slotId) {
-    case 'model.sidebar_top':
-      return 'Model sidebar';
-    case 'model.below_images':
-      return 'Below images';
-    case 'model.actions_extra':
-      return 'Model actions';
-    default:
-      return slotId ?? 'Unknown slot';
-  }
 }
 
 /**
@@ -109,7 +101,6 @@ export function AppBlockCard({
   };
   const [busy] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const slot = manifest.targets?.[0]?.slotId;
   // Show Install ONLY for an app that installs into a model/in-context slot.
   // A page app (target slot `app.page`) is STATELESS — installModel `'none'` in
   // the slot registry — so it has no `block_user_subscriptions` install row and
@@ -151,14 +142,8 @@ export function AppBlockCard({
                 {manifest.name ?? block.blockId}
               </Title>
             </Anchor>
-            <Text size="xs" c="dimmed">
-              by {block.appName ?? block.appId}
-            </Text>
           </Stack>
           <Stack gap={4} align="flex-end">
-            <Badge variant="light" color="blue" size="sm">
-              {slotLabel(slot)}
-            </Badge>
             {/* Mod-assigned marketplace category (+ its icon). NULL until a mod
                 sets one → no chip. The icon comes from CATEGORY_ICONS (generic
                 tag fallback for an unknown/legacy value). */}
@@ -224,8 +209,10 @@ export function AppBlockCard({
                 (this is what guarantees the never-empty-card invariant; it
                 supersedes the #2747 page-link "View" fallback). Opens the
                 details modal (description, screenshots, recent reviews, scopes).
-                A button, not a link, so it doesn't navigate away from the grid. */}
-            <Button size="xs" variant="light" onClick={() => setDetailsOpen(true)}>
+                A button, not a link, so it doesn't navigate away from the grid.
+                Styled link-subtle (variant="subtle") — round-2 marketplace pass:
+                de-emphasised vs the filled Install/Open-app run affordances. */}
+            <Button size="xs" variant="subtle" onClick={() => setDetailsOpen(true)}>
               View details
             </Button>
             {/* W10 — "Open app" link to the full-page route, shown only when the
