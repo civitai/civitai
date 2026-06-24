@@ -86,6 +86,7 @@ import {
 } from '~/server/services/blocks/workflow.service';
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
+import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
@@ -1357,6 +1358,58 @@ export const blocksRouter = router({
     .query(async ({ ctx }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
       return BlockRegistry.listUserSubscriptions(ctx.user!.id);
+    }),
+
+  /**
+   * Lightweight booleans that drive the conditional links in the apps
+   * sub-nav (`AppsSubNav`). One round-trip instead of fanning out to
+   * `listMySubscriptions` + `listMyPublishRequests` + `getMyApps` (the
+   * heavyweight per-page queries) just to decide which tabs to show.
+   *
+   * Booleans ONLY — no rows, no manifests, no per-app data. Each check is a
+   * `findFirst({ select: { id } })` so Prisma pushes `LIMIT 1` into SQL and
+   * stops at the first matching row (a `count({ take: 1 })` would NOT — Prisma
+   * ignores `take` for `count` and runs a full `COUNT(*)`). Stays cheap even
+   * for a user with many installs/submissions.
+   *
+   * `protectedProcedure` + `enforceAppBlocksFlag`: own-data scoped to
+   * `ctx.user.id`; returns the all-false shape when the flag is dark so
+   * the sub-nav degrades to just the always-on tabs.
+   */
+  getNavSummary: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .query(async ({ ctx }) => {
+      const allFalse = {
+        hasInstalls: false,
+        hasSubmissions: false,
+        hasApprovedApps: false,
+        isReviewer: false,
+      };
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return allFalse;
+      const user = ctx.user;
+      if (!user) return allFalse;
+
+      const [install, submission, approvedApp] = await Promise.all([
+        dbRead.blockUserSubscription.findFirst({
+          where: { userId: user.id },
+          select: { id: true },
+        }),
+        dbRead.appBlockPublishRequest.findFirst({
+          where: { submittedByUserId: user.id },
+          select: { id: true },
+        }),
+        dbRead.appBlock.findFirst({
+          where: { app: { userId: user.id }, status: 'approved' },
+          select: { id: true },
+        }),
+      ]);
+
+      return {
+        hasInstalls: install !== null,
+        hasSubmissions: submission !== null,
+        hasApprovedApps: approvedApp !== null,
+        isReviewer: isAppReviewer(user),
+      };
     }),
 
   /**

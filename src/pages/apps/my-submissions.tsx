@@ -27,6 +27,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { AuthorViaGit } from '~/components/Apps/AuthorViaGit';
 import { deployRefetchInterval, isStaleDeploy } from '~/components/Apps/deploy-status';
 import { Meta } from '~/components/Meta/Meta';
+import { AppsSubNav } from '~/components/Apps/AppsSubNav';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -223,6 +224,7 @@ export default function MySubmissionsPage() {
       <Meta title="My app submissions — Civitai" deIndex />
       <Container size="xl" py="xl">
         <Stack gap="lg">
+          <AppsSubNav />
           <Group justify="space-between" align="flex-end">
             <Stack gap={4}>
               <Title order={2}>My submissions</Title>

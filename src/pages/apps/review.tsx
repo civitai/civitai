@@ -39,6 +39,7 @@ import type { MouseEvent } from 'react';
 import { useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
+import { AppsSubNav } from '~/components/Apps/AppsSubNav';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   SCOPE_DESCRIPTIONS,
@@ -195,6 +196,7 @@ export default function ReviewQueuePage() {
       <Meta title="App publish-request queue — Civitai" deIndex />
       <Container size="xl" py="xl">
         <Stack gap="lg">
+          <AppsSubNav />
           <Stack gap={4}>
             <Title order={2}>App publish-request queue</Title>
             <Text c="dimmed" size="sm">

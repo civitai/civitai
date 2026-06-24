@@ -25,6 +25,7 @@ import Link from 'next/link';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { AppsSubNav } from '~/components/Apps/AppsSubNav';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -294,6 +295,7 @@ export default function SubmitAppPage() {
       <Meta title="Submit an app — Civitai" deIndex />
       <Container size="sm" py="xl">
         <Stack gap="lg">
+          <AppsSubNav />
           <Stack gap={4}>
             <Title order={2}>Submit an app</Title>
             <Text c="dimmed" size="sm">
