@@ -26,8 +26,10 @@
  *   preview - List target challenges + their stuck REVIEW item counts. No writes.
  *   run     - For each target run reconcileCompletedChallenge: re-promote now-rated
  *             entries (still skips nsfwLevel = 0) and back-pay newly-eligible
- *             non-winner, not-yet-paid users. Returns per-challenge { promoted, paid }
- *             plus totals.
+ *             non-winner, not-yet-paid users. Returns per-challenge
+ *             { promoted, paid, buzzGranted } plus totals. `paid`/`buzzGranted` count
+ *             only NET-NEW payees — users already paid at completion (or a prior run)
+ *             are excluded, not just deduped at the Buzz API.
  *
  * Idempotency:
  *   Safe to re-run. Buzz uses externalTransactionId `challenge-entry-prize-{challengeId}-{userId}`
@@ -94,13 +96,20 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
     title: string;
     promoted?: number;
     paid?: number;
+    buzzGranted?: number;
     error?: string;
   }> = [];
 
   for (const challenge of challenges) {
     try {
-      const { promoted, paid } = await reconcileCompletedChallenge(challenge, config);
-      results.push({ challengeId: challenge.challengeId, title: challenge.title, promoted, paid });
+      const { promoted, paid, buzzGranted } = await reconcileCompletedChallenge(challenge, config);
+      results.push({
+        challengeId: challenge.challengeId,
+        title: challenge.title,
+        promoted,
+        paid,
+        buzzGranted,
+      });
     } catch (e) {
       results.push({
         challengeId: challenge.challengeId,
@@ -111,8 +120,12 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
   }
 
   const totals = results.reduce(
-    (acc, r) => ({ promoted: acc.promoted + (r.promoted ?? 0), paid: acc.paid + (r.paid ?? 0) }),
-    { promoted: 0, paid: 0 }
+    (acc, r) => ({
+      promoted: acc.promoted + (r.promoted ?? 0),
+      paid: acc.paid + (r.paid ?? 0),
+      buzzGranted: acc.buzzGranted + (r.buzzGranted ?? 0),
+    }),
+    { promoted: 0, paid: 0, buzzGranted: 0 }
   );
 
   return res.status(200).json({ action, windowHours, challengeCount: results.length, totals, results });

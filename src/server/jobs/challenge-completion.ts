@@ -51,9 +51,11 @@ export const challengeCompletionJob = createJob('challenge-completion', '0 * * *
     log(`Reconciling ${toReconcile.length} recently-completed challenge(s)`);
     for (const challenge of toReconcile) {
       try {
-        const { promoted, paid } = await reconcileCompletedChallenge(challenge, config);
+        const { promoted, paid, buzzGranted } = await reconcileCompletedChallenge(challenge, config);
         if (promoted > 0 || paid > 0) {
-          log(`Reconciled challenge ${challenge.challengeId}: promoted=${promoted} paid=${paid}`);
+          log(
+            `Reconciled challenge ${challenge.challengeId}: promoted=${promoted} paid=${paid} buzzGranted=${buzzGranted}`
+          );
         }
       } catch (error) {
         const err = error as Error;

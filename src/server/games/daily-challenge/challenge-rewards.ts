@@ -131,7 +131,7 @@ export async function distributeParticipationPrizes(args: {
 export async function reconcileCompletedChallenge(
   challenge: DailyChallengeDetails,
   config: ChallengeConfig
-): Promise<{ promoted: number; paid: number }> {
+): Promise<{ promoted: number; paid: number; buzzGranted: number }> {
   const record = await getChallengeById(challenge.challengeId);
   const allowedNsfwLevel = record?.allowedNsfwLevel ?? 1;
 
@@ -139,6 +139,22 @@ export async function reconcileCompletedChallenge(
   const judgeId = record?.judgeId ?? config.defaultJudgeId;
   if (!judgeId) throw new Error('No judge assigned and no defaultJudgeId configured');
   const judgingConfig = await getJudgingConfig(judgeId, record?.judgingPrompt);
+
+  // 0. Snapshot users already at/over the participation threshold BEFORE promoting.
+  //    Nothing has re-promoted since completion, so their current ACCEPTED count equals
+  //    their completion-time count — meaning they were already paid the participation
+  //    prize at completion. Only users who cross the threshold via newly-promoted entries
+  //    are net-new payees. Excluding the pre-eligible set keeps `paid`/`buzzGranted` an
+  //    accurate net-new count and avoids firing dedup no-op Buzz transactions for everyone
+  //    already paid.
+  const preEligible = await dbRead.$queryRaw<{ userId: number }[]>`
+    SELECT i."userId"
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    WHERE ci."collectionId" = ${challenge.collectionId} AND ci.status = 'ACCEPTED'
+    GROUP BY i."userId"
+    HAVING COUNT(*) >= ${challenge.entryPrizeRequirement}
+  `;
 
   // 1. Promote any now-scanned REVIEW entries (skips nsfwLevel = 0)
   const promoted = await promoteChallengeEntries({
@@ -149,13 +165,17 @@ export async function reconcileCompletedChallenge(
     reviewerId: judgingConfig.userId,
   });
 
-  // 2. Winners + already-paid are excluded from participation back-pay
+  // 2. Winners + already-paid + pre-eligible are excluded from participation back-pay
   const winners = await dbRead.$queryRaw<{ userId: number }[]>`
     SELECT "userId" FROM "ChallengeWinner" WHERE "challengeId" = ${challenge.challengeId}
   `;
   const metadata = parseChallengeMetadata(record?.metadata);
   const alreadyPaid = metadata.reconciliation?.paidUserIds ?? [];
-  const excludeUserIds = [...winners.map((w) => w.userId), ...alreadyPaid];
+  const excludeUserIds = [
+    ...winners.map((w) => w.userId),
+    ...alreadyPaid,
+    ...preEligible.map((u) => u.userId),
+  ];
 
   // 3. Pay newly-eligible users (idempotent), hour-bucketed notification key
   const hourBucket = dayjs().utc().format('YYYY-MM-DD-HH');
@@ -192,5 +212,5 @@ export async function reconcileCompletedChallenge(
     },
   });
 
-  return { promoted, paid: paid.length };
+  return { promoted, paid: paid.length, buzzGranted: paid.length * (challenge.entryPrize?.buzz ?? 0) };
 }
