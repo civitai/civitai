@@ -1,4 +1,4 @@
-import { ThemeIcon } from '@mantine/core';
+import { HoverCard, ThemeIcon } from '@mantine/core';
 import {
   IconMaximize,
   IconMinimize,
@@ -15,6 +15,7 @@ import React, {
   useImperativeHandle,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { VimeoEmbed } from '../VimeoEmbed/VimeoEmbed';
@@ -56,6 +57,15 @@ type State = {
   muted: boolean;
 };
 
+// `fullscreenchange` is a document-level event (no JSX prop for it), so we subscribe via
+// useSyncExternalStore instead of useEffect to read fullscreen state reactively.
+function subscribeFullscreen(callback: () => void) {
+  document.addEventListener('fullscreenchange', callback);
+  return () => document.removeEventListener('fullscreenchange', callback);
+}
+const getFullscreenSnapshot = () => typeof document !== 'undefined' && !!document.fullscreenElement;
+const getFullscreenServerSnapshot = () => false;
+
 export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
   (
     {
@@ -92,6 +102,14 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const [showPlayIndicator, setShowPlayIndicator] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [autoplayFailed, setAutoplayFailed] = useState(false);
+    // hide the audio control for videos with no audio track. Detected reactively from
+    // the video's load/play events (hasAudio populates as metadata/decoded bytes become available).
+    const [hasAudioState, setHasAudioState] = useState(false);
+    const isFullscreen = useSyncExternalStore(
+      subscribeFullscreen,
+      getFullscreenSnapshot,
+      getFullscreenServerSnapshot
+    );
     const [volume, setVolume] = useLocalStorage({
       key: 'global-volume',
       defaultValue: state.muted ? 0 : 0.5,
@@ -141,28 +159,50 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       }
     }, []);
 
+    const detectAudio = useCallback(() => {
+      const video = ref.current;
+      if (!video) return;
+      // hasAudio() is monotonic per element (decoded byte count only grows, track list is stable),
+      // so re-running it across load/play events lets the control appear once audio is confirmed.
+      setHasAudioState(hasAudio(video));
+    }, []);
+
+    // Runs from the video's own load events (onLoadedMetadata/onLoadedData/onCanPlay/onPlaying).
+    // No effect needed: this component renders the <video>, so React hands us the events as props.
+    const markVideoReady = useCallback(() => {
+      const video = ref.current;
+      if (!video) return;
+      setLoaded(true);
+      detectAudio();
+      // Apply persisted volume on load for non-muted videos (replaces the old render-body write).
+      if (!initialMuted) video.volume = volume;
+    }, [detectAudio, initialMuted, volume]);
+
     const handleLoadedData = useCallback(
       (e: React.SyntheticEvent<HTMLVideoElement>) => {
         onLoadedData?.(e);
-        setLoaded(true);
         e.currentTarget.style.opacity = '1';
+        markVideoReady();
       },
-      [onLoadedData]
+      [onLoadedData, markVideoReady]
     );
-
-    const handleCanPlay = useCallback(() => {
-      setLoaded(true);
-    }, []);
 
     const handleToggleMuted = useCallback(() => {
       const video = ref.current;
       if (!video) return;
 
-      video.muted = !video.muted;
-      setVolume(video.muted ? 0 : video.volume);
-      setState((current) => ({ ...current, muted: video.muted }));
-      onMutedChange?.(video.muted);
-    }, [onMutedChange, setVolume]);
+      const nextMuted = !video.muted;
+      video.muted = nextMuted;
+      // Muting keeps the persisted level (the slider shows 0 via the muted-aware binding below).
+      // Unmuting restores it — bumped off 0 so there's actually something to hear.
+      if (!nextMuted) {
+        const restored = volume > 0 ? volume : 0.5;
+        video.volume = restored;
+        setVolume(restored);
+      }
+      setState((current) => ({ ...current, muted: nextMuted }));
+      onMutedChange?.(nextMuted);
+    }, [onMutedChange, setVolume, volume]);
 
     const handleVolumeChange = useCallback(
       (value: number) => {
@@ -170,6 +210,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         if (!video) return;
 
         video.volume = value;
+        // Raising the slider must also unmute, otherwise scrubbing does nothing audible.
+        video.muted = value === 0;
         setVolume(value);
         setState((current) => ({ ...current, muted: value === 0 }));
       },
@@ -177,11 +219,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     );
 
     const showCustomControls = loaded && controls && !html5Controls;
-    const enableAudioControl = ref.current && hasAudio(ref.current);
     const inSafari =
       typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
-
-    if (!initialMuted && loaded && ref.current) ref.current.volume = volume;
 
     useEffect(() => {
       // Hard set the width to 100% for Safari because it doesn't render in full size otherwise ¯\_(ツ)_/¯ -Manuel
@@ -252,21 +291,14 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       clear();
     };
 
+    // Dark translucent buttons + white icons so the controls stay legible over bright media.
+    const controlButtonClass = 'z-10 border-0 !bg-black/50 !text-white hover:!bg-black/70';
+
     const defaultPlayer = (
       // extra div wrapper to prevent positioning errors of parent components that make their child absolute
       <div
         ref={containerRef}
         {...wrapperProps}
-        draggable={!!imageId}
-        onDragStart={
-          imageId
-            ? (e) => {
-                e.dataTransfer.setData('text/uri-list', videoUrl);
-                e.dataTransfer.setData('application/x-civitai-media-id', String(imageId));
-                e.dataTransfer.setData('application/x-civitai-media-type', 'video');
-              }
-            : undefined
-        }
         className={clsx(
           styles.iosScroll,
           wrapperProps?.className ? wrapperProps?.className : 'h-full',
@@ -276,17 +308,32 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         <video
           key={videoUrl}
           ref={ref}
+          // Drag source lives on the video body only. If it were on the container, the browser
+          // would walk up from the volume slider to the draggable ancestor and start a drag while
+          // scrubbing — draggable={false} on the controls does NOT block that ancestor walk-up.
+          draggable={!!imageId}
+          onDragStart={
+            imageId
+              ? (e) => {
+                  e.dataTransfer.setData('text/uri-list', videoUrl);
+                  e.dataTransfer.setData('application/x-civitai-media-id', String(imageId));
+                  e.dataTransfer.setData('application/x-civitai-media-type', 'video');
+                }
+              : undefined
+          }
           className={clsx(`block cursor-pointer ${contain ? 'h-full' : 'h-auto'}`)}
           muted={state.muted}
           style={style}
+          onLoadedMetadata={markVideoReady}
           onLoadedData={handleLoadedData}
-          onCanPlay={handleCanPlay}
+          onCanPlay={markVideoReady}
           onLoad={onLoad}
           controls={html5Controls}
           onClick={handleTogglePlayPause}
           onPlaying={() => {
             setIsPlaying(true);
             setAutoplayFailed(false);
+            detectAudio();
           }}
           onPause={() => setIsPlaying(false)}
           onVolumeChange={(e) => {
@@ -316,7 +363,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           <div className={styles.controls}>
             <LegacyActionIcon
               onClick={handleTogglePlayPause}
-              className="z-10"
+              className={controlButtonClass}
               variant="light"
               size="lg"
               radius="xl"
@@ -324,47 +371,54 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
               {isPlaying ? <IconPlayerPauseFilled size={16} /> : <IconPlayerPlayFilled size={16} />}
             </LegacyActionIcon>
             <div className="flex flex-nowrap gap-4">
-              {enableAudioControl && (
-                <div className={styles.volumeControl}>
-                  <div className={styles.volumeSlider}>
+              {hasAudioState && (
+                <HoverCard
+                  position="top"
+                  offset={2}
+                  openDelay={0}
+                  closeDelay={100}
+                  withinPortal={false}
+                >
+                  <HoverCard.Target>
+                    <LegacyActionIcon
+                      onClick={handleToggleMuted}
+                      className={controlButtonClass}
+                      variant="light"
+                      size="lg"
+                      radius="xl"
+                    >
+                      {state.muted || volume === 0 ? (
+                        <IconVolumeOff size={16} />
+                      ) : (
+                        <IconVolume size={16} />
+                      )}
+                    </LegacyActionIcon>
+                  </HoverCard.Target>
+                  <HoverCard.Dropdown
+                    className={styles.volumeDropdown}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
                     <input
                       type="range"
-                      className="w-20"
+                      className={styles.volumeSlider}
                       min="0"
                       max="1"
                       step="0.05"
-                      value={volume}
+                      value={state.muted ? 0 : volume}
                       onChange={(e) => handleVolumeChange(e.currentTarget.valueAsNumber)}
                     />
-                  </div>
-                  <LegacyActionIcon
-                    onClick={handleToggleMuted}
-                    className="z-10"
-                    variant="light"
-                    size="lg"
-                    radius="xl"
-                    disabled={!enableAudioControl}
-                  >
-                    {state.muted || volume === 0 || !enableAudioControl ? (
-                      <IconVolumeOff size={16} />
-                    ) : (
-                      <IconVolume size={16} />
-                    )}
-                  </LegacyActionIcon>
-                </div>
+                  </HoverCard.Dropdown>
+                </HoverCard>
               )}
               <LegacyActionIcon
                 onClick={handleToggleFullscreen}
-                className="z-10"
+                className={controlButtonClass}
                 variant="light"
                 size="lg"
                 radius="xl"
               >
-                {typeof document !== 'undefined' && document.fullscreenElement ? (
-                  <IconMinimize size={16} />
-                ) : (
-                  <IconMaximize size={16} />
-                )}
+                {isFullscreen ? <IconMinimize size={16} /> : <IconMaximize size={16} />}
               </LegacyActionIcon>
             </div>
           </div>
