@@ -165,10 +165,23 @@ export function AppBlockChrome({
   const hasName = sanitizedName !== null;
   // Falls back to the literal "App block" so the trust label is never blank.
   const label = sanitizedName ?? 'App block';
-  // When a real name shows, keep the icon's "App block" provenance aria-label so
-  // the icon + name read as "App block, <name>". On the fallback the visible
-  // Text already says "App block", so mark the icon decorative (aria-hidden)
-  // rather than leaving it an unlabeled SVG / double-reading "App block".
+  // De-dup the app name on the page surface. The breadcrumb's trailing crumb
+  // (`app-block-breadcrumb-name`) already carries the app name there, so the
+  // standalone badge name `Text` would render the SAME name a second time
+  // (`[icon] <name>  /  Apps  /  <name>`). Suppress the badge name `Text` when
+  // the breadcrumb is shown (page surface) and let the crumb be the sole
+  // app-name; the provenance ICON stays (see the icon aria-label below) so the
+  // trust signal is preserved. On the model surface (no breadcrumb) the badge
+  // name renders exactly as before.
+  const showBadgeName = !isPage;
+  // The icon must carry the "App block" provenance aria-label whenever there is
+  // no adjacent visible Text saying "App block" — i.e. when a real name shows
+  // (so the icon + name read as "App block, <name>") OR when the badge name Text
+  // is suppressed on the page surface (so the provenance signal isn't lost with
+  // the dropped Text). It's marked decorative (aria-hidden) ONLY when the
+  // visible fallback "App block" Text is present to carry provenance itself —
+  // avoiding an unlabeled SVG / a double-reading "App block".
+  const iconProvenance = hasName || !showBadgeName;
   return (
     <Group
       justify="space-between"
@@ -192,17 +205,21 @@ export function AppBlockChrome({
         <IconApps
           size={14}
           stroke={1.5}
-          role={hasName ? 'img' : undefined}
-          aria-label={hasName ? 'App block' : undefined}
-          aria-hidden={hasName ? undefined : true}
+          role={iconProvenance ? 'img' : undefined}
+          aria-label={iconProvenance ? 'App block' : undefined}
+          aria-hidden={iconProvenance ? undefined : true}
           style={{ flexShrink: 0 }}
         />
         {/* Host-rendered (spoof-proof) app-name label. Truncates with an
             ellipsis at a bounded width so a long name never wraps or shoves
-            the menu off the row in the narrow model.sidebar_top slot. */}
-        <Text size="xs" c="dimmed" truncate maw={160} data-testid="app-block-name">
-          {label}
-        </Text>
+            the menu off the row in the narrow model.sidebar_top slot. On the
+            page surface this is suppressed (the breadcrumb crumb below carries
+            the name once) — see `showBadgeName`. */}
+        {showBadgeName && (
+          <Text size="xs" c="dimmed" truncate maw={160} data-testid="app-block-name">
+            {label}
+          </Text>
+        )}
         {/* Page-surface breadcrumb: `Apps / <app name>`. Only on the full-page
             run surface (`app.page`) — the page IS the block, so an "up to the
             apps list" trail is meaningful there; the compact model-slot chrome

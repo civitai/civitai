@@ -127,17 +127,56 @@ describe('AppBlockChrome run-page breadcrumb (Apps / <app name>)', () => {
     expect((crumbName.textContent ?? '').trim()).toBe('Budgeted Generator');
   });
 
-  test('model surface (model.sidebar_top) does NOT render the breadcrumb', async () => {
+  // De-dup (audit fix): on the page surface the app name must appear EXACTLY
+  // ONCE — in the breadcrumb crumb. Before the fix the standalone provenance
+  // badge `Text` (`app-block-name`) ALSO rendered the name, so the page chrome
+  // read `[icon] <name>  /  Apps  /  <name>`. The badge name is now suppressed on
+  // the page surface (the breadcrumb carries it); the provenance ICON stays.
+  test('page surface (app.page) shows the app name exactly once — breadcrumb crumb only, no duplicate badge name; provenance icon kept', async () => {
+    const name = 'Budgeted Generator';
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-bc-dedup" appName={name} slotId="app.page" />
+    );
+    // The breadcrumb (and its trailing crumb) is the SOLE app-name node.
+    await expect.element(page.getByTestId('app-block-breadcrumb-name')).toBeInTheDocument();
+    const crumbName = page.getByTestId('app-block-breadcrumb-name').element();
+    expect((crumbName.textContent ?? '').trim()).toBe(name);
+
+    // The name must render exactly once across the whole chrome. getByText with a
+    // non-exact match would also catch the crumb; count nodes whose trimmed text
+    // is exactly the name. Reverting the badge-name suppression makes this 2.
+    const matches = page.getByText(name, { exact: true }).all();
+    expect(matches.length).toBe(1);
+
+    // The standalone provenance badge name `Text` is gone on the page surface.
+    await expect.element(page.getByTestId('app-block-name')).not.toBeInTheDocument();
+
+    // Provenance trust signal preserved: the app-block icon still carries its
+    // "App block" provenance label (role=img + aria-label) even though the badge
+    // name Text was dropped.
+    await expect.element(page.getByRole('img', { name: 'App block' })).toBeInTheDocument();
+
+    // "Apps" link still routes to /apps (no regression to the breadcrumb).
+    const appsLink = page.getByTestId('app-block-breadcrumb-apps').element();
+    expect(appsLink.getAttribute('href')).toBe('/apps');
+  });
+
+  test('model surface (model.sidebar_top) does NOT render the breadcrumb; badge name present once (no regression)', async () => {
+    const name = 'Background Remover';
     renderWithProviders(
       <AppBlockChrome
         blockInstanceId="inst-bc-model"
-        appName="Background Remover"
+        appName={name}
         slotId="model.sidebar_top"
       />
     );
-    // Badge name still present (compact model chrome) …
+    // Badge name still present (compact model chrome) — unchanged by the page-surface de-dup …
     await expect.element(page.getByTestId('app-block-name')).toBeInTheDocument();
-    // … but no breadcrumb on a model slot.
+    const badgeName = page.getByTestId('app-block-name').element();
+    expect((badgeName.textContent ?? '').trim()).toBe(name);
+    // … the name renders exactly once (the badge; no breadcrumb crumb on a model slot) …
+    expect(page.getByText(name, { exact: true }).all().length).toBe(1);
+    // … and no breadcrumb on a model slot.
     await expect.element(page.getByTestId('app-block-breadcrumb')).not.toBeInTheDocument();
   });
 
