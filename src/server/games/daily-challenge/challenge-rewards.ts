@@ -140,13 +140,17 @@ export async function reconcileCompletedChallenge(
   if (!judgeId) throw new Error('No judge assigned and no defaultJudgeId configured');
   const judgingConfig = await getJudgingConfig(judgeId, record?.judgingPrompt);
 
-  // 0. Snapshot users already at/over the participation threshold BEFORE promoting.
-  //    Nothing has re-promoted since completion, so their current ACCEPTED count equals
-  //    their completion-time count — meaning they were already paid the participation
-  //    prize at completion. Only users who cross the threshold via newly-promoted entries
-  //    are net-new payees. Excluding the pre-eligible set keeps `paid`/`buzzGranted` an
-  //    accurate net-new count and avoids firing dedup no-op Buzz transactions for everyone
-  //    already paid.
+  // 0. Snapshot users already at/over the participation threshold BEFORE this run's promotion.
+  //    Invariant: anyone at/above threshold here was already paid — either at completion
+  //    (pickWinnersForChallenge pays, then atomically writes status=Completed + paidUserIds in
+  //    one update) or by a prior reconcile run (recorded in metadata.reconciliation.paidUserIds).
+  //    So only users who cross the threshold via entries promoted in THIS run are net-new payees.
+  //    Excluding the pre-eligible set keeps `paid`/`buzzGranted` an accurate net-new count and
+  //    skips dedup no-op Buzz calls for everyone already paid.
+  //    Caveat: challenges completed before this feature have no paidUserIds metadata; their
+  //    completion-payees are still covered because they sit at/above threshold. A user that OLD
+  //    completion failed to pay despite meeting threshold would be excluded here — a pre-existing,
+  //    ledger-only edge we accept (see the backfill endpoint's "Known limitations").
   const preEligible = await dbRead.$queryRaw<{ userId: number }[]>`
     SELECT i."userId"
     FROM "CollectionItem" ci

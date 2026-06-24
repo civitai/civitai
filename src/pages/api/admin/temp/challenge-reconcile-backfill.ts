@@ -39,6 +39,20 @@
  *   Safe to re-run. Buzz uses externalTransactionId `challenge-entry-prize-{challengeId}-{userId}`
  *   (API-deduped) and paid users are recorded in Challenge.metadata.reconciliation.paidUserIds,
  *   so a second run pays 0 for already-handled users.
+ *
+ * Known limitations:
+ *   - Net-new accuracy assumes every prior payout is accounted for: completion writes
+ *     paidUserIds atomically with status=Completed, and reconcile appends after each run.
+ *     reconcileCompletedChallenge also treats anyone already at/above the entry-prize threshold
+ *     as already-paid. A user that OLD pre-feature completion failed to pay despite meeting the
+ *     threshold therefore sits at/above threshold and is excluded here — they won't be back-paid.
+ *     Recovering those would require checking the Buzz ledger by externalTransactionId (out of
+ *     scope). Buzz dedup still guarantees nobody is ever double-paid.
+ *   - Concurrent runs (the hourly reconcile job + this endpoint) on the SAME challenge race on
+ *     the paidUserIds metadata write (last-write-wins). Money is safe (externalTransactionId
+ *     dedup); only the bookkeeping list can drift. Avoid running both on one challenge at once.
+ *   - `run` is sequential and capped at MAX_CHALLENGES per request to avoid a partial timeout;
+ *     chunk larger backfills via date range or challengeIds.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -78,17 +92,28 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
 
   const { action, challengeIds, windowHours = 720, start, end } = parsed.data;
 
-  // End bound is calendar-day inclusive: extend to the start of the day AFTER `end` and
-  // select endsAt < that, so e.g. end=2026-06-22 includes the challenge that closed 06-22.
-  const endExclusive = end ? new Date(end.getTime() + 24 * 60 * 60 * 1000) : undefined;
+  // Normalize the date range to whole UTC days so the bounds are calendar-day inclusive
+  // regardless of any time component in the input (z.coerce.date also accepts ISO datetimes).
+  // startNorm = 00:00 UTC of the start day; endExclusive = 00:00 UTC of the day AFTER the end
+  // day, selected with endsAt < endExclusive — so e.g. end=2026-06-22 includes the challenge
+  // that closed 2026-06-22 04:00 UTC.
+  const startNorm = start
+    ? new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()))
+    : undefined;
+  const endNorm = end
+    ? new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()))
+    : undefined;
+  const endExclusive = endNorm
+    ? new Date(endNorm.getTime() + 24 * 60 * 60 * 1000)
+    : undefined;
 
   // Resolve target challenges. Precedence: explicit ids > date range > rolling window.
   const challenges = challengeIds?.length
     ? (await Promise.all(challengeIds.map((id) => getChallengeById(id))))
         .filter(isDefined)
         .map(challengeToLegacyFormat)
-    : start && endExclusive
-    ? await getChallengesToReconcileBetween(start, endExclusive)
+    : startNorm && endExclusive
+    ? await getChallengesToReconcileBetween(startNorm, endExclusive)
     : await getChallengesToReconcile(windowHours);
 
   if (action === 'preview') {
@@ -109,14 +134,26 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
     return res.status(200).json({
       action,
       windowHours,
-      start: start ?? null,
-      end: end ?? null,
+      start: startNorm ?? null,
+      end: endNorm ?? null,
       challengeCount: plan.length,
       plan,
     });
   }
 
   // action === 'run'
+  // `run` processes challenges sequentially in a single HTTP request (bulk UPDATE + Buzz
+  // batch + notification + metadata write each). Cap the per-request count so a wide window
+  // can't blow the ingress/serverless timeout mid-run. Re-runs are idempotent, but chunk
+  // large backfills via a narrower date range or explicit challengeIds.
+  const MAX_CHALLENGES = 100;
+  if (challenges.length > MAX_CHALLENGES) {
+    return res.status(400).json({
+      error: `Would process ${challenges.length} challenges in one request (max ${MAX_CHALLENGES}). Narrow the date range or pass challengeIds in batches to avoid a mid-run timeout.`,
+      challengeCount: challenges.length,
+    });
+  }
+
   const config = await getChallengeConfig();
   const results: Array<{
     challengeId: number;
@@ -158,8 +195,8 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
   return res.status(200).json({
     action,
     windowHours,
-    start: start ?? null,
-    end: end ?? null,
+    start: startNorm ?? null,
+    end: endNorm ?? null,
     challengeCount: results.length,
     totals,
     results,
