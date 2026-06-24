@@ -449,7 +449,12 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
         )}
 
         {nearDeadline && (
-          <AlertWithIcon color="yellow" size="sm" icon={<IconClockHour4 size={16} />}>
+          <AlertWithIcon
+            color="yellow"
+            iconColor="yellow"
+            size="sm"
+            icon={<IconClockHour4 size={16} />}
+          >
             Less than an hour left in this challenge. Entries are judged only after an automated
             content scan, which can lag behind submission when the queue is busy. If a scan
             finishes after the challenge closes, that entry may not make it into judging in time —
