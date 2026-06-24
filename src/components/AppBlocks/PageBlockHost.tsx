@@ -2,6 +2,7 @@ import { Box, Center, Loader } from '@mantine/core';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
@@ -1066,7 +1067,11 @@ export function PageBlockHost({
             src={iframeSrc}
             sandbox={effectiveSandbox}
             referrerPolicy="no-referrer"
-            title={appName || blockId}
+            // Sanitize the publisher-controlled appName for the iframe title too
+            // (same sanitizer as the visible chrome + the loader aria-label), so
+            // every appName-derived plain-text attribute is consistent. Falls
+            // back to blockId when nothing legible remains.
+            title={sanitizeAppChromeName(appName) || blockId}
             data-testid="app-page-iframe"
             data-block-instance-id={blockInstanceId}
             data-block-ready={isReady ? 'true' : 'false'}
@@ -1081,9 +1086,21 @@ export function PageBlockHost({
           {status === 'loading' && (
             <Center
               data-testid="app-page-loading"
+              // Announce the loading state on the REGION, not just the graphic:
+              // role="status" + aria-busy mark the overlay container as a live
+              // busy region so a screen reader announces "loading" when it
+              // appears (the bare <Loader> below only exposes a labeled graphic).
+              role="status"
+              aria-busy={true}
+              aria-live="polite"
               style={{ position: 'absolute', inset: 0, background: 'var(--mantine-color-body)' }}
             >
-              <Loader aria-label={`Loading ${appName || 'app'}`} />
+              {/* Run the publisher-controlled appName through the SAME sanitizer
+                  the visible chrome uses (sanitizeAppChromeName) so the accessible
+                  name a screen reader reads can't carry control/bidi/zalgo
+                  spoofing — consistency with AppBlockChrome, not a new gate. Falls
+                  back to 'app' when nothing legible remains. */}
+              <Loader aria-label={`Loading ${sanitizeAppChromeName(appName) || 'app'}`} />
             </Center>
           )}
         </Box>

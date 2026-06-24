@@ -213,6 +213,13 @@ describe('PageBlockHost loading indicator (Task 1)', () => {
     await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
     await expect.element(page.getByLabelText('Loading Budgeted Generator')).toBeInTheDocument();
 
+    // a11y: the overlay container is marked as a busy live region (role="status"
+    // + aria-busy) so a screen reader announces the loading state on the REGION,
+    // not just the labeled graphic. Assert the attributes while still loading.
+    const overlay = page.getByTestId('app-page-loading').element();
+    expect(overlay.getAttribute('role')).toBe('status');
+    expect(overlay.getAttribute('aria-busy')).toBe('true');
+
     // Drive the handshake to BLOCK_READY → status flips to 'ready'.
     await driveToReady();
 
@@ -221,6 +228,21 @@ describe('PageBlockHost loading indicator (Task 1)', () => {
     await vi.waitFor(() => {
       expect(page.getByTestId('app-page-loading').query()).toBeNull();
     });
+  });
+
+  test('the aria-label runs appName through the chrome sanitizer (control/bidi chars stripped)', async () => {
+    // A publisher-controlled name carrying a control char (\t) and a bidi
+    // override (U+202E) must NOT reach the accessible name verbatim — it goes
+    // through the SAME sanitizeAppChromeName the visible chrome uses: the \t
+    // control char becomes a space and the U+202E format char is dropped →
+    // 'Evil App' (verified against the sanitizer's documented behaviour +
+    // appChromeName.test.ts). Built from char codes so the source carries no
+    // literal invisible chars.
+    const spoofedName = 'Evil' + String.fromCharCode(0x09) + String.fromCharCode(0x202e) + 'App';
+    renderWithProviders(
+      <PageBlockHost {...baseProps} appName={spoofedName} onConsentGranted={vi.fn()} />
+    );
+    await expect.element(page.getByLabelText('Loading Evil App')).toBeInTheDocument();
   });
 
   test('the error terminal path shows the fallback and never the loader (does not spin forever)', async () => {
@@ -239,6 +261,81 @@ describe('PageBlockHost loading indicator (Task 1)', () => {
     // … and the loading indicator is NOT present (no infinite spinner).
     expect(page.getByTestId('app-page-loading').query()).toBeNull();
   });
+
+  // The loader must clear on EVERY terminal status the host's real status machine
+  // can reach — not just `error`. These drive each terminal transition through the
+  // host's actual code path (BLOCK_ERROR message, the BLOCK_READY-timeout, the
+  // token-wait timeout) and assert the overlay unmounts (so it can never spin
+  // forever). `fatal` is message-driven (fast); `timeout`/`no_token` are
+  // real-timer driven (BLOCK_READY_TIMEOUT_MS=10s, TOKEN_WAIT_TIMEOUT_MS=15s) so
+  // each is given a per-test timeout above its trigger window.
+
+  test('loader clears after BLOCK_ERROR{fatal:true} (fatal terminal path)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    // Loader present while loading, then drive to ready (fatal is reachable from
+    // both 'loading' and 'ready'; we go through ready as a real block would).
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await driveToReady();
+    await vi.waitFor(() => {
+      expect(page.getByTestId('app-page-loading').query()).toBeNull();
+    });
+
+    // A fatal block error flips status → 'fatal'; showIframe becomes false and the
+    // host renders the BlockFallback. The loader must stay gone (never re-spin).
+    postFromBlock('BLOCK_ERROR', { fatal: true });
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  });
+
+  test(
+    'loader clears after the BLOCK_READY timeout (timeout terminal path)',
+    async () => {
+      // token present so the init controller arms its readiness timeout, but we
+      // NEVER ack BLOCK_READY → after BLOCK_READY_TIMEOUT_MS (10s) onReadyTimeout
+      // flips status 'loading' → 'timeout', clearing the loader and rendering the
+      // fallback.
+      renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+
+      // Wait out the real 10s readiness window (poll with generous timeout). The
+      // loader must clear and the timeout fallback render.
+      await vi.waitFor(
+        () => {
+          expect(page.getByTestId('app-page-loading').query()).toBeNull();
+        },
+        { timeout: 13_000, interval: 250 }
+      );
+      await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    },
+    20_000
+  );
+
+  test(
+    'loader clears after the token-wait timeout (no_token terminal path)',
+    async () => {
+      // token=null and tokenError=false → no init controller (shouldStartInit
+      // needs a token) and no synchronous error flip; the token-wait effect's
+      // TOKEN_WAIT_TIMEOUT_MS (15s) timer flips status 'loading' → 'no_token',
+      // clearing the loader and rendering the fallback. (With a null token the
+      // iframe still mounts in the loading state, so the overlay is shown first.)
+      renderWithProviders(
+        <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
+      );
+
+      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+
+      await vi.waitFor(
+        () => {
+          expect(page.getByTestId('app-page-loading').query()).toBeNull();
+        },
+        { timeout: 18_000, interval: 250 }
+      );
+      await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    },
+    25_000
+  );
 });
 
 describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
