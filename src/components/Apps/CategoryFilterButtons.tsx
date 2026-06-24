@@ -5,7 +5,10 @@ import {
   MARKETPLACE_CATEGORY_LABELS,
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
-import { CATEGORY_ICONS } from '~/components/Apps/marketplaceCategoryIcons';
+import {
+  CATEGORY_ICONS,
+  FALLBACK_CATEGORY_ICON,
+} from '~/components/Apps/marketplaceCategoryIcons';
 
 /**
  * Marketplace category filter — a row of single-select icon TOGGLE buttons, one
@@ -51,7 +54,10 @@ export function CategoryFilterButtons({ value, onChange }: CategoryFilterButtons
       </Tooltip>
 
       {MARKETPLACE_CATEGORIES.map((category) => {
-        const Icon = CATEGORY_ICONS[category];
+        // Fallback to a generic tag icon if a category was added to
+        // MARKETPLACE_CATEGORIES but not yet given an icon in CATEGORY_ICONS —
+        // a missing icon would otherwise render `undefined` and crash the row.
+        const Icon = CATEGORY_ICONS[category] ?? FALLBACK_CATEGORY_ICON;
         const label = MARKETPLACE_CATEGORY_LABELS[category];
         const active = value === category;
         return (

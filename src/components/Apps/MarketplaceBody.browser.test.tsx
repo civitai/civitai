@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -7,7 +7,7 @@ import {
   clearRecentlyOpenedApps,
   getRecentlyOpenedApps,
   RECENTLY_OPENED_APPS_KEY,
-} from '~/components/Apps/recentlyOpenedApps';
+} from '~/components/Apps/recentlyOpenedAppsStore';
 
 /**
  * /apps marketplace BODY — page-level wiring tests (network-free; tRPC, feature
@@ -44,6 +44,24 @@ function makeBlock(id: string, name: string): AvailableBlock {
 
 const ITEMS = [makeBlock('a', 'Alpha App'), makeBlock('b', 'Bravo App')];
 
+// A PAGE app — no install slot (so no Install CTA); its open path is the route
+// "Open app" link + the title/description detail links. Used for the M1
+// route/title-records-to-recents coverage.
+function makePageBlock(id: string, name: string): AvailableBlock {
+  return {
+    id,
+    blockId: `block-${id}`,
+    appId: id,
+    appName: name,
+    manifest: { name, description: 'desc', targets: [{ slotId: 'app.page' }], hasPage: true },
+    installCount: 0,
+    category: null,
+    scopesSummary: [],
+    avgRating: null,
+    reviewCount: 0,
+  };
+}
+
 // Hoisted, per-test-controllable query state.
 const mocks = vi.hoisted(() => ({
   listAvailableItems: [] as AvailableBlock[],
@@ -51,6 +69,10 @@ const mocks = vi.hoisted(() => ({
   // can assert the category/search filters are cleared by "Explore all".
   lastListArgs: null as null | Record<string, unknown>,
   openSettings: vi.fn(),
+  // Per-test-controllable `appBlocksPages` flag (gates the "Open app" route
+  // link). Default off (mirrors prod dark state); flip on for the route-link
+  // M1 test.
+  appBlocksPages: false,
 }));
 
 vi.mock('~/utils/trpc', () => {
@@ -88,7 +110,7 @@ vi.mock('~/utils/trpc', () => {
 });
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
+  useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: mocks.appBlocksPages }),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -118,6 +140,7 @@ beforeEach(() => {
   clearRecentlyOpenedApps();
   mocks.listAvailableItems = [...ITEMS];
   mocks.lastListArgs = null;
+  mocks.appBlocksPages = false;
   mocks.openSettings.mockClear();
 });
 
@@ -205,5 +228,95 @@ describe('/apps marketplace body (opening an app records it to recents)', () => 
 
     // The "Recently opened" section now renders (resolved against the listing).
     await expect.element(page.getByRole('heading', { name: 'Recently opened' })).toBeInTheDocument();
+  });
+});
+
+describe('/apps marketplace body — PAGE app open records to recents (M1)', () => {
+  // A page app has NO install slot → no Install CTA → it never fires the
+  // install `onOpen`. Its open paths are the route "Open app" link (flag-gated)
+  // and the detail-page title/description links. M1 wires `onRecentOpen` onto
+  // those so a page app's main open populates "Recently opened".
+  //
+  // These are real Next `<Link>` anchors — a click would navigate the test
+  // iframe and crash the runner. Install a capture-phase guard that
+  // `preventDefault()`s the navigation; the card's bubble-phase `onClick`
+  // (which records to recents) still fires before the browser navigates.
+  const stopNav = (e: Event) => {
+    if ((e.target as HTMLElement)?.closest('a')) e.preventDefault();
+  };
+  beforeEach(() => document.addEventListener('click', stopNav, true));
+  afterEach(() => document.removeEventListener('click', stopNav, true));
+
+  test('clicking "Open app" (route link) on a PAGE app records it to recents', async () => {
+    mocks.appBlocksPages = true; // unlock the "Open app" route link
+    mocks.listAvailableItems = [makePageBlock('p', 'Page App')];
+    expect(getRecentlyOpenedApps()).toEqual([]);
+
+    renderWithProviders(<MarketplaceBody />);
+    await expect.element(page.getByText('Page App')).toBeInTheDocument();
+
+    // The route link is the page app's primary open path.
+    const openApp = page.getByRole('link', { name: /open app/i });
+    await expect.element(openApp).toBeInTheDocument();
+    await userEvent.click(openApp.element());
+
+    // The install/settings opener did NOT fire (page app has no install) —
+    // recents was populated purely by the route open.
+    expect(mocks.openSettings).not.toHaveBeenCalled();
+    const recents = getRecentlyOpenedApps();
+    expect(recents.map((r) => r.id)).toContain('p');
+    expect(window.localStorage.getItem(RECENTLY_OPENED_APPS_KEY)).toBeTruthy();
+    // The "Recently opened" section renders for the page app.
+    await expect.element(page.getByRole('heading', { name: 'Recently opened' })).toBeInTheDocument();
+  });
+
+  test('clicking the title link on a PAGE app also records it to recents (flag off)', async () => {
+    // Title link is present regardless of the pages flag — assert it records too.
+    mocks.appBlocksPages = false;
+    mocks.listAvailableItems = [makePageBlock('p', 'Page App')];
+    expect(getRecentlyOpenedApps()).toEqual([]);
+
+    renderWithProviders(<MarketplaceBody />);
+    // The card title links to the detail page; it is the open path here.
+    const titleLink = page.getByRole('link', { name: /Page App/i }).first();
+    await expect.element(titleLink).toBeInTheDocument();
+    await userEvent.click(titleLink.element());
+
+    expect(mocks.openSettings).not.toHaveBeenCalled();
+    expect(getRecentlyOpenedApps().map((r) => r.id)).toContain('p');
+    await expect.element(page.getByRole('heading', { name: 'Recently opened' })).toBeInTheDocument();
+  });
+});
+
+describe('/apps marketplace body — sort default + fallback (M3)', () => {
+  test('the listing query uses the visible default sort "rating" on first render', async () => {
+    renderWithProviders(<MarketplaceBody />);
+    // The Sort select shows the default "Top rated" (= rating) on first render,
+    // and the listing query is invoked with sort:'rating'.
+    await expect.element(page.getByRole('textbox', { name: 'Sort' })).toBeInTheDocument();
+    expect(
+      (page.getByRole('textbox', { name: 'Sort' }).element() as HTMLInputElement).value
+    ).toBe('Top rated');
+    expect(mocks.lastListArgs?.sort).toBe('rating');
+  });
+});
+
+describe('/apps marketplace body — Explore-all CTA reacts to typing immediately (L1)', () => {
+  test('the CTA appears as soon as the search input is non-empty (no 300ms debounce wait)', async () => {
+    renderWithProviders(<MarketplaceBody />);
+    const search = page.getByRole('textbox', { name: 'Search' });
+    await expect.element(search).toBeInTheDocument();
+    // Initially no active filters → no CTA.
+    expect(page.getByRole('button', { name: 'Explore all apps' }).elements()).toHaveLength(0);
+
+    // Type a single character — the CTA must appear (hasActiveFilters is now
+    // keyed on the IMMEDIATE input, not the 300ms-debounced value). Pre-fix the
+    // CTA only appeared after the debounce fired; reverting the L1 change (back
+    // to keying hasActiveFilters on debouncedSearch) breaks the immediacy this
+    // asserts. We synchronously check the CTA right after the input event,
+    // before the debounce window could plausibly have elapsed.
+    await userEvent.type(search.element() as HTMLInputElement, 'a');
+    // Synchronous check (no retry/debounce wait): the button is in the DOM now.
+    expect(page.getByRole('button', { name: 'Explore all apps' }).elements()).toHaveLength(1);
   });
 });

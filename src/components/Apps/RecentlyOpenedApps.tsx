@@ -9,7 +9,7 @@ import type {
 /**
  * "Recently opened" marketplace section — a compact strip of the apps the
  * viewer most recently opened, sourced from localStorage (see
- * `recentlyOpenedApps.ts`) and resolved against the public listing.
+ * `recentlyOpenedAppsStore.ts`) and resolved against the public listing.
  *
  * Split into a PURE presentational `RecentlyOpenedAppsView` (props-only, no
  * localStorage / no tRPC) so it renders in isolation for component tests; the
@@ -25,6 +25,9 @@ export interface RecentlyOpenedAppsViewProps {
   blocks: AvailableBlock[];
   subsByBlock: Map<string, Partial<Record<SubscriptionScope, SubscriptionRecord>>>;
   onOpen: (block: AvailableBlock) => void;
+  /** M1 — record a route/title open from a recents card back into recents
+   *  (re-opening from the strip moves the app to the front via the store). */
+  onRecentOpen?: (block: AvailableBlock) => void;
   earningsByAppBlockId: Map<string, number>;
   canOpenPage: boolean;
 }
@@ -33,6 +36,7 @@ export function RecentlyOpenedAppsView({
   blocks,
   subsByBlock,
   onOpen,
+  onRecentOpen,
   earningsByAppBlockId,
   canOpenPage,
 }: RecentlyOpenedAppsViewProps) {
@@ -49,6 +53,7 @@ export function RecentlyOpenedAppsView({
               block={block}
               alreadySubscribed={subsByBlock.has(block.id)}
               onOpen={onOpen}
+              onRecentOpen={onRecentOpen}
               ownedEarningCents={earningsByAppBlockId.get(block.id)}
               canOpenPage={canOpenPage}
             />

@@ -6,7 +6,7 @@ import {
   recordRecentlyOpenedApp,
   RECENTLY_OPENED_APPS_KEY,
   type RecentApp,
-} from '~/components/Apps/recentlyOpenedApps';
+} from '~/components/Apps/recentlyOpenedAppsStore';
 
 /**
  * `recentlyOpenedApps` localStorage helper — runs in browser mode so a REAL

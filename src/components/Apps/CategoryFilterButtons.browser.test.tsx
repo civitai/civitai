@@ -4,6 +4,10 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import { CategoryFilterButtons } from '~/components/Apps/CategoryFilterButtons';
 import {
+  CATEGORY_ICONS,
+  FALLBACK_CATEGORY_ICON,
+} from '~/components/Apps/marketplaceCategoryIcons';
+import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
 } from '~/server/services/blocks/marketplace-categories.constants';
@@ -24,6 +28,32 @@ beforeEach(() => onChange.mockClear());
 function btn(name: string) {
   return page.getByRole('button', { name });
 }
+
+describe('CategoryFilterButtons — shared icon map (M2, no dup)', () => {
+  test('the filter buttons use the shared CATEGORY_ICONS map (single source of truth)', async () => {
+    // The control renders one icon per category, sourced from the shared
+    // `CATEGORY_ICONS` map in `marketplaceCategoryIcons.ts`. Every category in
+    // the taxonomy must be a key in that shared map (no missing entry → no
+    // silent fallback for a KNOWN category), and the map must be defined exactly
+    // once (this module is the single import site the card ALSO uses).
+    for (const category of MARKETPLACE_CATEGORIES) {
+      expect(CATEGORY_ICONS[category]).toBeDefined();
+    }
+    // The fallback is a distinct icon, only used for UNKNOWN categories.
+    expect(FALLBACK_CATEGORY_ICON).toBeDefined();
+    expect(Object.values(CATEGORY_ICONS)).not.toContain(FALLBACK_CATEGORY_ICON);
+
+    // Behavioural sanity: the row renders an icon for every category from the
+    // shared map (a duplicated/diverged map would be caught by the unknown
+    // category in the sibling fallback test; here we assert completeness).
+    renderWithProviders(<CategoryFilterButtons value={null} onChange={onChange} />);
+    for (const category of MARKETPLACE_CATEGORIES) {
+      const button = page.getByRole('button', { name: MARKETPLACE_CATEGORY_LABELS[category] });
+      await expect.element(button).toBeInTheDocument();
+      expect(button.element().querySelector('svg')).not.toBeNull();
+    }
+  });
+});
 
 describe('CategoryFilterButtons (rendering)', () => {
   test('renders one button per category plus an "All categories" clear', async () => {

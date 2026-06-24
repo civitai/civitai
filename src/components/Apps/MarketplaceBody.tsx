@@ -11,7 +11,7 @@ import {
   getRecentlyOpenedApps,
   recordRecentlyOpenedApp,
   type RecentApp,
-} from '~/components/Apps/recentlyOpenedApps';
+} from '~/components/Apps/recentlyOpenedAppsStore';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
@@ -106,9 +106,13 @@ export function MarketplaceBody() {
     [availableData]
   );
 
-  const hasActiveFilters = Boolean(
-    slotFilter || category || (debouncedSearch && debouncedSearch.length > 0)
-  );
+  // L1: the Explore-all CTA + the "is the view filtered" branch react to the
+  // IMMEDIATE search input (not the 300ms-debounced value) so typing flips the
+  // CTA without a lag. The LISTING query below stays keyed on `debouncedSearch`
+  // (we don't want to refetch on every keystroke) — only this UI-state flag is
+  // made immediate.
+  const hasActiveFilters =
+    searchInput.length > 0 || category != null || slotFilter != null;
 
   // F-E E4 discovery rails — shown ABOVE the grid only on the unfiltered default
   // view (a "Featured" staff-pick rail + a "New" recently-deployed rail). When
@@ -215,10 +219,20 @@ export function MarketplaceBody() {
     return out;
   }, [recents, blocksById]);
 
-  function handleOpen(block: AvailableBlock) {
-    // Record the open in the client-only recents list BEFORE opening the
-    // settings panel (capped + deduped + newest-first inside the helper).
+  // Record a "recently opened" entry (capped + deduped + newest-first inside the
+  // helper) and refresh local state. Shared by BOTH open paths:
+  //  - the install/settings open (`handleOpen` → model-slot cards' `onOpen`), and
+  //  - the route/detail-page open (`onRecentOpen` on the card's "Open app" +
+  //    title/description links) — the PRIMARY open path for a PAGE app, which
+  //    never fires the install `onOpen`. The store dedups, so an app opened via
+  //    both paths is recorded once.
+  function recordRecent(block: AvailableBlock) {
     setRecents(recordRecentlyOpenedApp({ id: block.id, blockId: block.blockId }));
+  }
+
+  function handleOpen(block: AvailableBlock) {
+    // Record the open BEFORE opening the settings panel.
+    recordRecent(block);
     openAppSettingsModal({
       block,
       existingByScope: subsByBlock.get(block.id) ?? {},
@@ -250,7 +264,7 @@ export function MarketplaceBody() {
           label="Sort"
           data={SORT_OPTIONS}
           value={sort}
-          onChange={(v) => setSort((v as MarketplaceSort) ?? 'popular')}
+          onChange={(v) => setSort((v as MarketplaceSort) ?? 'rating')}
           allowDeselect={false}
           w={170}
         />
@@ -276,6 +290,7 @@ export function MarketplaceBody() {
           blocks={featuredItems}
           subsByBlock={subsByBlock}
           onOpen={handleOpen}
+          onRecentOpen={recordRecent}
           earningsByAppBlockId={earningsByAppBlockId}
           canOpenPage={!!features.appBlocksPages}
         />
@@ -286,6 +301,7 @@ export function MarketplaceBody() {
           blocks={newItems}
           subsByBlock={subsByBlock}
           onOpen={handleOpen}
+          onRecentOpen={recordRecent}
           earningsByAppBlockId={earningsByAppBlockId}
           canOpenPage={!!features.appBlocksPages}
         />
@@ -320,6 +336,7 @@ export function MarketplaceBody() {
                   block={block}
                   alreadySubscribed={subsByBlock.has(block.id)}
                   onOpen={handleOpen}
+                  onRecentOpen={recordRecent}
                   ownedEarningCents={earningsByAppBlockId.get(block.id)}
                   canOpenPage={!!features.appBlocksPages}
                 />
@@ -343,6 +360,7 @@ export function MarketplaceBody() {
         blocks={recentBlocks}
         subsByBlock={subsByBlock}
         onOpen={handleOpen}
+        onRecentOpen={recordRecent}
         earningsByAppBlockId={earningsByAppBlockId}
         canOpenPage={!!features.appBlocksPages}
       />
@@ -454,6 +472,7 @@ function MarketplaceRail({
   blocks,
   subsByBlock,
   onOpen,
+  onRecentOpen,
   earningsByAppBlockId,
   canOpenPage,
 }: {
@@ -461,6 +480,7 @@ function MarketplaceRail({
   blocks: AvailableBlock[];
   subsByBlock: Map<string, Partial<Record<SubscriptionScope, SubscriptionRecord>>>;
   onOpen: (block: AvailableBlock) => void;
+  onRecentOpen: (block: AvailableBlock) => void;
   earningsByAppBlockId: Map<string, number>;
   canOpenPage: boolean;
 }) {
@@ -474,6 +494,7 @@ function MarketplaceRail({
               block={block}
               alreadySubscribed={subsByBlock.has(block.id)}
               onOpen={onOpen}
+              onRecentOpen={onRecentOpen}
               ownedEarningCents={earningsByAppBlockId.get(block.id)}
               canOpenPage={canOpenPage}
             />

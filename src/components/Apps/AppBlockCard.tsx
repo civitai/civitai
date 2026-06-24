@@ -1,26 +1,21 @@
 import { Anchor, Badge, Button, Card, Group, Stack, Text, Title } from '@mantine/core';
 import {
-  IconBraces,
-  IconChartBar,
-  IconCompass,
-  IconDeviceGamepad2,
   IconPlugConnected,
   IconSettings,
-  IconShieldHalf,
-  IconSparkles,
   IconStarFilled,
-  IconTag,
-  IconTool,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { AppDetailsModal } from '~/components/Apps/AppDetailsModal';
+import {
+  CATEGORY_ICONS,
+  FALLBACK_CATEGORY_ICON,
+} from '~/components/Apps/marketplaceCategoryIcons';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import {
   isMarketplaceCategory,
   MARKETPLACE_CATEGORY_LABELS,
-  type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema';
@@ -54,6 +49,16 @@ export interface AppBlockCardProps {
    * "Open app" link to `/apps/run/<slug>` is shown. Dark today (flag mod-only).
    */
   canOpenPage?: boolean;
+  /**
+   * M1 — record a "recently opened" entry for THIS block. Called from the
+   * card's route-open paths (the "Open app" link + the title/description
+   * detail-page links) so a PAGE app — which never fires the install `onOpen`
+   * (it has no install slot) — still populates the "Recently opened" strip on
+   * its main open path. Fire-and-navigate: a sync onClick doesn't block the
+   * `<Link>` navigation. Optional so existing callers (and tests) that don't
+   * track recents are unaffected.
+   */
+  onRecentOpen?: (block: AvailableBlock) => void;
 }
 
 /**
@@ -68,22 +73,13 @@ function categoryLabel(category: string): string {
 /**
  * Per-category icon. The category taxonomy is the structured free-text
  * `app_blocks.category` column (the MARKETPLACE_CATEGORIES single-source const);
- * this maps each known value to a Tabler icon. An unknown/legacy category (or
- * NULL, handled by the caller) falls back to a generic tag icon so the chip
- * never breaks on a newer category.
+ * `CATEGORY_ICONS` (the SHARED single-source map in `marketplaceCategoryIcons.ts`,
+ * also used by the filter buttons) maps each known value to a Tabler icon. An
+ * unknown/legacy category (or NULL, handled by the caller) falls back to a
+ * generic tag icon so the chip never breaks on a newer category.
  */
-const CATEGORY_ICONS: Record<MarketplaceCategory, Icon> = {
-  generation: IconSparkles,
-  games: IconDeviceGamepad2,
-  utility: IconTool,
-  discovery: IconCompass,
-  moderation: IconShieldHalf,
-  analytics: IconChartBar,
-  other: IconBraces,
-};
-
 function categoryIcon(category: string): Icon {
-  return isMarketplaceCategory(category) ? CATEGORY_ICONS[category] : IconTag;
+  return isMarketplaceCategory(category) ? CATEGORY_ICONS[category] : FALLBACK_CATEGORY_ICON;
 }
 
 export function AppBlockCard({
@@ -92,6 +88,7 @@ export function AppBlockCard({
   onOpen,
   ownedEarningCents,
   canOpenPage,
+  onRecentOpen,
 }: AppBlockCardProps) {
   const manifest = block.manifest as {
     name?: string;
@@ -137,6 +134,9 @@ export function AppBlockCard({
               href={`/apps/${block.id}`}
               underline="never"
               c="inherit"
+              // M1: navigating to the detail page IS opening the app — record it
+              // to recents. Fire-and-navigate (sync onClick won't block <Link>).
+              onClick={() => onRecentOpen?.(block)}
             >
               <Title order={4} className="line-clamp-2">
                 {manifest.name ?? block.blockId}
@@ -169,7 +169,14 @@ export function AppBlockCard({
           </Stack>
         </Group>
         {manifest.description && (
-          <Anchor component={Link} href={`/apps/${block.id}`} underline="never" c="inherit">
+          <Anchor
+            component={Link}
+            href={`/apps/${block.id}`}
+            underline="never"
+            c="inherit"
+            // M1: the description link is a detail-page open too — record it.
+            onClick={() => onRecentOpen?.(block)}
+          >
             <Text size="sm" c="dimmed" className="line-clamp-3">
               {manifest.description}
             </Text>
@@ -225,6 +232,10 @@ export function AppBlockCard({
                 href={`/apps/run/${encodeURIComponent(block.blockId)}`}
                 size="xs"
                 variant="light"
+                // M1: the live "Open app" route is the PRIMARY open path for a
+                // page app (which never fires the install `onOpen`) — record it
+                // to recents. Fire-and-navigate (sync onClick won't block <Link>).
+                onClick={() => onRecentOpen?.(block)}
               >
                 Open app
               </Button>
