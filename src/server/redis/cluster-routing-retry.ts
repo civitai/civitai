@@ -28,11 +28,26 @@ import { env } from '~/env/server';
  *    wave's 500s are general READS (confirmed metric-write-failsoft_total=0 during the wave).
  *
  * THE SAFETY ARGUMENT (the key insight that makes this safe for ALL commands, reads AND
- * writes/mutations): getSlotRandomNode throws during NODE SELECTION — BEFORE the command is
- * dispatched to any node. The command NEVER EXECUTED. Therefore a bounded retry-after-rediscover
- * carries ZERO double-execution risk for writes/mutations: there is nothing to re-do, only a
- * fresh node-selection attempt against the (now hopefully settled) slot map. That is cleaner and
- * broader than a read-path-only fail-open, which would still 500 every write during the wave.
+ * writes/mutations): the retried error shapes throw during NODE SELECTION / SLOT ROUTING — BEFORE
+ * the command is dispatched to any node. The command NEVER EXECUTED. Therefore a bounded
+ * retry-after-rediscover carries ZERO double-execution risk for writes/mutations: there is nothing
+ * to re-do, only a fresh node-selection attempt against the (now hopefully settled) slot map. That
+ * is cleaner and broader than a read-path-only fail-open, which would still 500 every write during
+ * the wave.
+ *
+ * SCOPE OF THE RETRY — PRE-DISPATCH ONLY (audit-narrowed): the guard retries ONLY provably
+ * pre-dispatch routing throws — the getSlotRandomNode `reading 'replicas'/'master'` TypeError and
+ * `NoSlot`/"no slot"-style cluster routing errors. It DELIBERATELY does NOT retry the reconnect
+ * rejections `ClientClosedError` / `DisconnectsClientError`. Per #2665 (cluster-selfheal.ts:113),
+ * a self-heal reconnect's `destroy()` → `queue.flushAll(new DisconnectsClientError())` rejects
+ * BOTH the not-yet-written queue AND the `#waitingForReply` queue — i.e. commands ALREADY WRITTEN
+ * to the socket and awaiting a reply. node-redis (@redis/client 5.8.x) gives the caller NO signal
+ * to tell "never sent" from "sent, server may have applied it, socket torn down before the reply".
+ * Retrying a `DisconnectsClientError` could therefore DOUBLE-EXECUTE a non-idempotent cluster
+ * write (hIncrBy/incrBy/lPush/rPush/sAdd/zAdd). So those errors fail the caller exactly as they do
+ * today (#2665's invariant: a self-heal reconnect reject fails the caller — it is NOT retried).
+ * MULTI/pipeline (`#queue.addCommand`) is out of scope by design — this guard wraps the single
+ * cluster `_execute` chokepoint, not transactions.
  *
  * BEHAVIOR PRESERVED: after exhausting the bounded retries the ORIGINAL error is RE-THROWN — no
  * silent swallow, today's failure mode is unchanged for a genuinely persistent break. The guard
@@ -65,49 +80,47 @@ function errText(err: unknown): string {
 }
 
 /**
- * TRUE iff `err` is a TRANSIENT pre-dispatch cluster-routing failure — i.e. "there is no node
- * for this slot RIGHT NOW because the slot map is mid-rediscovery". Matched conservatively so a
- * real WRONGTYPE, an auth failure, or an app bug still throws:
+ * TRUE iff `err` is a TRANSIENT *PRE-DISPATCH* cluster-routing failure — i.e. "there is no node
+ * for this slot RIGHT NOW because the slot map is mid-rediscovery", thrown during node selection
+ * BEFORE the command reaches any node. Matched conservatively so a real WRONGTYPE, an auth failure,
+ * or an app bug still throws:
  *
  *  - the getSlotRandomNode `Cannot read properties of undefined (reading 'replicas')` TypeError
  *    (the exact fleet-wide throw measured during the rolling update);
  *  - sibling node-selection failures: a message/name mentioning `getSlotRandomNode`, a
- *    `getSlotMaster`/`getSlotRandomNode`-style "undefined reading 'replicas'/'master'/'client'"
- *    on an empty slot, an explicit `NoSlot`/"no slot"/"slot not served" error;
- *  - the `ClientClosedError` / `DisconnectsClientError` a CONCURRENT self-heal reconnect (FIX #1
- *    destroy()→flushAll) produces — also pre/at-dispatch and safe to re-route after rediscover.
+ *    `getSlotMaster`/`getSlotRandomNode`-style "undefined reading 'replicas'/'master'" on an empty
+ *    slot, an explicit `NoSlot`/"no slot"/"slot not served" error.
  *
- * Deliberately does NOT match: WRONGTYPE, NOAUTH/auth, CROSSSLOT (a real key-distribution bug,
- * not a transient), MOVED/ASK (node-redis handles those internally), generic ReplyError, or any
- * arbitrary TypeError whose text doesn't mention the routing-specific tokens above.
+ * Deliberately does NOT match (any of these re-throws so the caller sees today's behavior):
+ *  - WRONGTYPE, NOAUTH/auth, CROSSSLOT (a real key-distribution bug, not a transient), MOVED/ASK
+ *    (node-redis handles those internally), generic ReplyError, or any arbitrary TypeError whose
+ *    text doesn't mention the routing-specific tokens above;
+ *  - the reconnect rejections `ClientClosedError` / `DisconnectsClientError` (AUDIT-NARROWED, was
+ *    previously matched). A #2665 self-heal reconnect's `destroy()` → `queue.flushAll(new
+ *    DisconnectsClientError())` rejects the `#waitingForReply` queue too — i.e. commands ALREADY
+ *    WRITTEN to the socket and awaiting a reply, which the server may have ALREADY APPLIED before
+ *    the socket teardown. The client gives no signal to distinguish "never sent" from "sent and
+ *    applied", so retrying these could DOUBLE-EXECUTE a non-idempotent write (hIncrBy/incrBy/
+ *    lPush/rPush/sAdd/zAdd). They are therefore NOT transient for this guard's purposes — they
+ *    fail the caller exactly as before (preserving #2665's "a reconnect reject fails the caller"
+ *    invariant). Verified against @redis/client 5.8.x: `flushAll` (commands-queue.js) rejects both
+ *    `#toWrite` (pre-dispatch, safe) and `#waitingForReply` (post-dispatch, unsafe) with the SAME
+ *    error — so error name alone cannot prove the command never ran.
  */
 export function isTransientClusterRoutingError(err: unknown): boolean {
   if (err == null) return false;
 
-  const name = err instanceof Error ? err.name : '';
   const text = errText(err);
   if (!text) return false;
-
-  // The concurrent-reconnect errors node-redis raises when destroy()/flushAll rejected the
-  // queue (FIX #1 self-heal) or the socket closed mid-route. Pre/at-dispatch → safe to retry.
-  if (
-    name === 'ClientClosedError' ||
-    name === 'DisconnectsClientError' ||
-    /\bClientClosedError\b/.test(text) ||
-    /\bDisconnectsClientError\b/.test(text)
-  ) {
-    return true;
-  }
 
   // The exact getSlotRandomNode throw + its sibling empty-slot node-selection failures. The
   // canonical signature is a TypeError "Cannot read properties of undefined (reading 'replicas')"
   // raised from getSlotRandomNode; we match either the frame name OR the undefined-read on a
   // routing field, so a future node-redis patch that renames the frame still matches by shape.
+  // Only the documented pre-dispatch routing fields (`replicas`/`master`) qualify — `client` and
+  // `nodes` were dropped as speculative breadth (audit 🟡) since they're not the measured shapes.
   if (/getSlotRandomNode|getSlotMaster|getRandomNode/.test(text)) return true;
-  if (
-    /reading '(replicas|master|client|nodes)'/.test(text) &&
-    /undefined|null/.test(text)
-  ) {
+  if (/reading '(replicas|master)'/.test(text) && /undefined|null/.test(text)) {
     return true;
   }
 
@@ -160,8 +173,11 @@ const defaultSleep = (ms: number) =>
  * onResult('exhausted') and RE-THROW THE ORIGINAL error (no silent swallow). A NON-transient
  * error (WRONGTYPE, auth, app bug) → re-thrown IMMEDIATELY, no rediscover, no retry.
  *
- * Single-flight/idempotent-safe by construction: a transient routing error means the command
- * NEVER reached a node, so re-running exec() cannot double-execute a write/mutation.
+ * Single-flight/idempotent-safe by construction: the retried error shapes are all PRE-DISPATCH
+ * (node-selection / NoSlot), meaning the command NEVER reached a node, so re-running exec() cannot
+ * double-execute a write/mutation. The reconnect rejections (ClientClosedError /
+ * DisconnectsClientError) are intentionally NOT retried — they can fire on already-dispatched,
+ * possibly-already-applied commands (see isTransientClusterRoutingError) and so re-throw as before.
  *
  * Disabled (enabled=false) → pure pass-through: exec() runs exactly once and any error propagates
  * unchanged (today's behavior). On the happy path exec() is called EXACTLY ONCE.
@@ -209,8 +225,9 @@ export async function withClusterRoutingRetry<T>(
         throw err;
       }
 
-      // Bounded backoff, then nudge a rediscover and retry. The command never reached a node, so
-      // this is safe for reads AND writes.
+      // Bounded backoff, then nudge a rediscover and retry. Only pre-dispatch routing shapes reach
+      // here (the predicate excludes the reconnect rejections), so the command never reached a
+      // node — safe to retry for reads AND writes (no double-execution).
       const waitMs = backoff[Math.min(attempt, backoff.length - 1)] ?? 0;
       if (waitMs > 0) await sleep(waitMs);
       if (options.rediscover) {

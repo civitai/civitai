@@ -5,12 +5,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // change the node-redis client throws FLEET-WIDE BEFORE dispatching the command:
 //   TypeError: Cannot read properties of undefined (reading 'replicas')
 //     at RedisClusterSlots.getSlotRandomNode (cluster-slots.js:342)
-// Because the command NEVER reached a node, a bounded retry-after-rediscover is safe for reads
-// AND writes (no double-execution). These pin: the predicate matches the transient routing
-// throws and ONLY those; the wrapper retries+recovers, exhausts+re-throws the ORIGINAL, never
-// retries a non-transient error, passes through when disabled, honors max/backoff, never
-// double-executes the happy path, and is idempotent across a retried command. env is mocked so
-// both default-on and disabled branches are deterministic (mirrors metric-write-failsoft.test.ts).
+// Because that getSlotRandomNode/NoSlot throw is PRE-DISPATCH (the command never reached a node),
+// a bounded retry-after-rediscover is safe for reads AND writes (no double-execution). The
+// reconnect rejections (ClientClosedError / DisconnectsClientError from a #2665 self-heal
+// destroy()→flushAll) are AUDIT-EXCLUDED: flushAll rejects already-WRITTEN-and-maybe-applied
+// commands with the same error, so retrying them could double-apply a non-idempotent write — they
+// must re-throw. These pin: the predicate matches the PRE-DISPATCH routing throws and ONLY those
+// (NOT the reconnect errors); the wrapper retries+recovers, exhausts+re-throws the ORIGINAL, never
+// retries a non-transient error (incl. the reconnect rejections — write-safety), passes through
+// when disabled, honors max/backoff, never double-executes the happy path, and is idempotent
+// across a retried command. env is mocked so both default-on and disabled branches are
+// deterministic (mirrors metric-write-failsoft.test.ts).
 vi.mock('~/env/server', () => ({
   env: {
     REDIS_CLUSTER_ROUTING_RETRY_ENABLED: true,
@@ -64,13 +69,46 @@ describe('isTransientClusterRoutingError', () => {
     expect(isTransientClusterRoutingError(new Error('slot not served by any node'))).toBe(true);
   });
 
-  it('is TRUE for the reconnect ClientClosedError / DisconnectsClientError (concurrent self-heal)', () => {
-    expect(isTransientClusterRoutingError(namedError('ClientClosedError'))).toBe(true);
-    expect(isTransientClusterRoutingError(namedError('DisconnectsClientError'))).toBe(true);
-    // also by message text, in case .name is generic
-    expect(isTransientClusterRoutingError(new Error('The client is closed (ClientClosedError)'))).toBe(
-      true
-    );
+  // AUDIT-INVERTED (was: "is TRUE … concurrent self-heal"). These reconnect rejections are NOT
+  // transient for retry purposes: a #2665 self-heal reconnect's destroy() → flushAll(new
+  // DisconnectsClientError()) rejects the #waitingForReply queue too — commands ALREADY WRITTEN to
+  // the socket that the server may have ALREADY APPLIED before the teardown. The error name cannot
+  // distinguish "never sent" from "sent-and-applied", so retrying could DOUBLE-EXECUTE a
+  // non-idempotent write. The predicate must therefore return FALSE so the caller re-throws (#2665
+  // invariant: a reconnect reject fails the caller).
+  it('is FALSE for the reconnect ClientClosedError / DisconnectsClientError (post-dispatch → double-exec risk)', () => {
+    expect(isTransientClusterRoutingError(namedError('ClientClosedError'))).toBe(false);
+    expect(isTransientClusterRoutingError(namedError('DisconnectsClientError'))).toBe(false);
+    // and by message text — still not transient
+    expect(
+      isTransientClusterRoutingError(new Error('The client is closed (ClientClosedError)'))
+    ).toBe(false);
+    expect(
+      isTransientClusterRoutingError(new Error('Disconnects client (DisconnectsClientError)'))
+    ).toBe(false);
+  });
+
+  // AUDIT-NARROWED: only the documented pre-dispatch routing fields (replicas/master) match; the
+  // speculative `client`/`nodes` reads were dropped (not measured shapes, could mask app bugs).
+  it("is FALSE for an undefined-read on a non-routing field (e.g. 'client'/'nodes' — speculative, dropped)", () => {
+    expect(
+      isTransientClusterRoutingError(
+        new TypeError("Cannot read properties of undefined (reading 'client')")
+      )
+    ).toBe(false);
+    expect(
+      isTransientClusterRoutingError(
+        new TypeError("Cannot read properties of undefined (reading 'nodes')")
+      )
+    ).toBe(false);
+  });
+
+  it("is still TRUE for the documented 'master' routing-field read", () => {
+    expect(
+      isTransientClusterRoutingError(
+        new TypeError("Cannot read properties of undefined (reading 'master')")
+      )
+    ).toBe(true);
   });
 
   it('is FALSE for a real WRONGTYPE redis error (must still throw)', () => {
@@ -166,6 +204,40 @@ describe('withClusterRoutingRetry', () => {
     ).rejects.toBe(wrong);
 
     expect(exec).toHaveBeenCalledTimes(1); // no retry
+    expect(rediscover).not.toHaveBeenCalled();
+    expect(onResult).not.toHaveBeenCalled();
+  });
+
+  // WRITE-SAFETY (the path the audit flagged as untested): a DisconnectsClientError /
+  // ClientClosedError from a concurrent #2665 self-heal reconnect can fire on an ALREADY-DISPATCHED,
+  // possibly-already-applied write. The guard must NOT retry it (no rediscover, exec called exactly
+  // once) and must re-throw the ORIGINAL error — otherwise a non-idempotent write could double-apply.
+  it('write-safety: DisconnectsClientError is NOT retried — exec called once, original re-thrown (no double-exec)', async () => {
+    const original = namedError('DisconnectsClientError', 'Disconnects client');
+    const exec = vi.fn().mockRejectedValue(original);
+    const rediscover = vi.fn();
+    const onResult = vi.fn();
+
+    await expect(
+      withClusterRoutingRetry(exec, { rediscover, onResult, sleep: noSleep })
+    ).rejects.toBe(original);
+
+    expect(exec).toHaveBeenCalledTimes(1); // no retry → a write cannot double-apply
+    expect(rediscover).not.toHaveBeenCalled();
+    expect(onResult).not.toHaveBeenCalled();
+  });
+
+  it('write-safety: ClientClosedError is NOT retried — exec called once, original re-thrown', async () => {
+    const original = namedError('ClientClosedError', 'The client is closed');
+    const exec = vi.fn().mockRejectedValue(original);
+    const rediscover = vi.fn();
+    const onResult = vi.fn();
+
+    await expect(
+      withClusterRoutingRetry(exec, { rediscover, onResult, sleep: noSleep })
+    ).rejects.toBe(original);
+
+    expect(exec).toHaveBeenCalledTimes(1);
     expect(rediscover).not.toHaveBeenCalled();
     expect(onResult).not.toHaveBeenCalled();
   });
