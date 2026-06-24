@@ -139,12 +139,7 @@ export function ResourceSelectModalContent() {
           </Center>
         </div>
       ) : (
-        <ResourceHitList
-          key={selectedTab}
-          likes={likedModels}
-          featured={featuredModels}
-          selectedTab={selectedTab}
-        />
+        <ResourceHitList key={selectedTab} featured={featuredModels} selectedTab={selectedTab} />
       )}
     </>
   );
