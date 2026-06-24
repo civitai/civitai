@@ -5,7 +5,7 @@ import { oauthServer } from '$lib/server/oauth/server';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
-import { getOrCreateDeviceId } from '$lib/server/auth/device';
+import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
 import { redirectUriMatches } from '$lib/server/oauth/redirect-uri';
 import { hasScope } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
@@ -169,10 +169,18 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   //    civ-device joins ONE shared device set (the spoke can't read the `.civitai.com` cookie itself, and the
   //    server-to-server /session can't see it either — so it has to ride the code from here). `getOrCreateDeviceId`
   //    reads/rolls the hub's own device cookie on this browser nav. Third-party clients never touch the device set.
+  // getOrCreateDeviceId WRITES the hub's civ-device cookie as a side effect, so REGISTER it here (atomic with
+  // the write) — every other device-cookie writer (establishSession, /switch) pairs the two. Relying solely on
+  // /session's touchAccount left an ORPHANED civ-device (cookie set, but no device:accounts entry) whenever
+  // that /session touchAccount didn't fire for this exact id (abandoned/re-run consent, a post-redirect error,
+  // or a session established another way) — and the switcher (/api/auth/accounts) then showed nothing.
+  // /session re-touches the same id; that's idempotent.
+  const deviceId = isFirstParty ? getOrCreateDeviceId(cookies) : undefined;
+  if (deviceId) await touchAccount(deviceId, user.id);
   await storeOidcContext(code.authorizationCode, {
     nonce: typeof params.nonce === 'string' ? params.nonce : undefined,
     authTime: Math.floor(Date.now() / 1000),
-    deviceId: isFirstParty ? getOrCreateDeviceId(cookies) : undefined,
+    deviceId,
   });
 
   logOAuthEvent({
