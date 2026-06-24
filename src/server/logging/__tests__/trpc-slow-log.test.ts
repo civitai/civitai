@@ -25,12 +25,15 @@ import {
   maybeLogTrpcSlow,
   __resetTrpcSlowLogRateLimit,
   __rateGateForTest,
+  __flushPendingEmitsForTest,
 } from '~/server/logging/trpc-slow-log';
 
-// Flush the fire-and-forget async tail: it awaits one dynamic import before
-// calling logToAxiom, so a couple of macrotask hops are needed for it to settle.
+// Drain the fire-and-forget async tail inside emitSlowLog deterministically: it
+// awaits a dynamic import before calling logToAxiom, so a fixed wall-clock wait
+// races the import and FLAKES on a loaded CI box (the import resolves slower
+// than the timeout → 0 calls). Await the actual in-flight emit instead.
 async function flush() {
-  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 5));
+  await __flushPendingEmitsForTest();
 }
 
 const ENV_KEYS = ['TRPC_SLOW_LOG_ENABLED', 'TRPC_SLOW_LOG_MS', 'TRPC_SLOW_LOG_MAX_PER_SEC'] as const;
