@@ -261,10 +261,10 @@ export default function AppBlocksDashboardPage() {
 
   return (
     <>
-      <Meta title="App Blocks Dashboard — Civitai" deIndex />
+      <Meta title="Apps Dashboard — Civitai" deIndex />
       <AppsPageLayout
         size="lg"
-        title="App Blocks Dashboard"
+        title="Apps Dashboard"
         subtitle={
           <>
             Revenue share and analytics for your blocks. Payouts are batched weekly; see{' '}

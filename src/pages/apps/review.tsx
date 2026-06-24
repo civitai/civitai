@@ -195,7 +195,7 @@ export default function ReviewQueuePage() {
       <AppsPageLayout
         size="xl"
         title="App publish-request queue"
-        subtitle="Moderator review for App Blocks. Pending queue is oldest-first; history tabs are newest-first."
+        subtitle="Moderator review for Apps. Pending queue is oldest-first; history tabs are newest-first."
       >
         <Tabs
           value={tab}

@@ -22,7 +22,7 @@ export default function AppsPage() {
 
   return (
     <>
-      <Meta title="Apps — Civitai" description="Civitai App Blocks marketplace" deIndex />
+      <Meta title="Apps — Civitai" description="Civitai Apps marketplace" deIndex />
       {/* Outer chrome (Container + sticky sub-nav) is supplied by AppsPageLayout;
           the marketplace title/subtitle were removed for the page-apps-only
           launch (the sub-nav supplies the wayfinding), so no header props. The

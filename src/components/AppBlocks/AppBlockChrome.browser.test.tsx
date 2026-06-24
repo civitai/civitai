@@ -38,9 +38,14 @@ describe('AppBlockChrome (H2 host-rendered app name)', () => {
     expect(nameEl.getAttribute('data-truncate')).toBe('end');
   });
 
-  test('falls back to "App block" when appName is undefined (never blank)', async () => {
+  test('falls back to "App" when appName is undefined (never blank)', async () => {
     renderWithProviders(<AppBlockChrome blockInstanceId="inst-3" />);
-    await expect.element(page.getByText('App block')).toBeInTheDocument();
+    // Copy sweep: the provenance fallback now reads "App" (not "App block").
+    // Mutation-sanity: reverting the fallback to "App block" fails this exact-text
+    // assertion. exact:true so a future "App block" string can't satisfy it.
+    await expect.element(page.getByText('App', { exact: true })).toBeInTheDocument();
+    // The old "App block" copy must be gone.
+    expect(page.getByText('App block', { exact: true }).elements()).toHaveLength(0);
     // Guard against a blank/whitespace-only label.
     const nameEl = page.getByTestId('app-block-name').element();
     expect((nameEl.textContent ?? '').trim().length).toBeGreaterThan(0);
@@ -48,7 +53,7 @@ describe('AppBlockChrome (H2 host-rendered app name)', () => {
 
   test('the ⋯ menu trigger is still present', async () => {
     renderWithProviders(<AppBlockChrome blockInstanceId="inst-4" appName="Background Remover" />);
-    await expect.element(page.getByRole('button', { name: 'App block menu' })).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'App menu' })).toBeInTheDocument();
   });
 });
 
@@ -64,7 +69,7 @@ describe('AppBlockChrome (H2 host-rendered app name)', () => {
 // then asserts on the dropdown contents.
 describe('AppBlockChrome "Hide" item is surface-aware (page vs model)', () => {
   async function openMenu() {
-    await page.getByRole('button', { name: 'App block menu' }).click();
+    await page.getByRole('button', { name: 'App menu' }).click();
     // "Manage apps" is present on every surface — wait on it so the dropdown has
     // mounted before asserting on the conditional "Hide" item.
     await expect.element(page.getByRole('menuitem', { name: 'Manage apps' })).toBeInTheDocument();
@@ -76,7 +81,7 @@ describe('AppBlockChrome "Hide" item is surface-aware (page vs model)', () => {
     );
     await openMenu();
     await expect
-      .element(page.getByRole('menuitem', { name: 'Hide app block' }))
+      .element(page.getByRole('menuitem', { name: 'Hide app' }))
       .toBeInTheDocument();
   });
 
@@ -86,7 +91,7 @@ describe('AppBlockChrome "Hide" item is surface-aware (page vs model)', () => {
     );
     await openMenu();
     await expect
-      .element(page.getByRole('menuitem', { name: 'Hide app block' }))
+      .element(page.getByRole('menuitem', { name: 'Hide app' }))
       .toBeInTheDocument();
   });
 
@@ -99,7 +104,7 @@ describe('AppBlockChrome "Hide" item is surface-aware (page vs model)', () => {
     await expect.element(page.getByRole('menuitem', { name: 'Manage apps' })).toBeInTheDocument();
     // … but "Hide app block" is suppressed on the full-page surface.
     await expect
-      .element(page.getByRole('menuitem', { name: 'Hide app block' }))
+      .element(page.getByRole('menuitem', { name: 'Hide app' }))
       .not.toBeInTheDocument();
   });
 });
@@ -127,6 +132,38 @@ describe('AppBlockChrome run-page breadcrumb (Apps / <app name>)', () => {
     expect((crumbName.textContent ?? '').trim()).toBe('Budgeted Generator');
   });
 
+  // The "Apps" crumb must read as obviously CLICKABLE — visually distinct from the
+  // static dimmed crumb text + separators. It gets a link affordance: a distinct
+  // link color + underline (Mantine `td="underline"` → `data-underline`/inline
+  // text-decoration) plus an explicit `data-clickable` marker + `cursor:pointer`.
+  // The trailing crumb (the static app name) carries NONE of these. Mutation-
+  // sanity: dropping the link styling (so the crumb looks like plain text again)
+  // fails these assertions.
+  test('the "Apps" crumb carries a clickable link affordance distinguishing it from the static crumb', async () => {
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-bc-link" appName="Budgeted Generator" slotId="app.page" />
+    );
+    await expect.element(page.getByTestId('app-block-breadcrumb-apps')).toBeInTheDocument();
+    const appsLink = page.getByTestId('app-block-breadcrumb-apps').element() as HTMLElement;
+
+    // Explicit clickable marker + pointer cursor (link affordance).
+    expect(appsLink.getAttribute('data-clickable')).toBe('true');
+    expect(appsLink.style.cursor).toBe('pointer');
+
+    // Underline affordance: Mantine renders `td="underline"` as a text-decoration
+    // (inline style or a `data-`/`style` attribute). Assert an underline decoration
+    // is present on the link via its computed/inline text-decoration.
+    const decorated =
+      appsLink.style.textDecoration.includes('underline') ||
+      getComputedStyle(appsLink).textDecorationLine.includes('underline');
+    expect(decorated).toBe(true);
+
+    // The static trailing crumb (app name) is NOT styled as a link — no clickable
+    // marker — so the two are visually distinguishable.
+    const crumbName = page.getByTestId('app-block-breadcrumb-name').element() as HTMLElement;
+    expect(crumbName.getAttribute('data-clickable')).toBeNull();
+  });
+
   // De-dup (audit fix): on the page surface the app name must appear EXACTLY
   // ONCE — in the breadcrumb crumb. Before the fix the standalone provenance
   // badge `Text` (`app-block-name`) ALSO rendered the name, so the page chrome
@@ -152,9 +189,9 @@ describe('AppBlockChrome run-page breadcrumb (Apps / <app name>)', () => {
     await expect.element(page.getByTestId('app-block-name')).not.toBeInTheDocument();
 
     // Provenance trust signal preserved: the app-block icon still carries its
-    // "App block" provenance label (role=img + aria-label) even though the badge
+    // "App" provenance label (role=img + aria-label) even though the badge
     // name Text was dropped.
-    await expect.element(page.getByRole('img', { name: 'App block' })).toBeInTheDocument();
+    await expect.element(page.getByRole('img', { name: 'App' })).toBeInTheDocument();
 
     // "Apps" link still routes to /apps (no regression to the breadcrumb).
     const appsLink = page.getByTestId('app-block-breadcrumb-apps').element();

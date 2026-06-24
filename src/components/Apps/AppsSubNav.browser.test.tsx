@@ -43,10 +43,37 @@ function tab(name: string) {
 }
 
 describe('AppsSubNavView (conditional sub-nav tabs)', () => {
-  test('Marketplace + Submit are ALWAYS present (even with an all-false summary)', async () => {
+  test('Marketplace + Create are ALWAYS present (even with an all-false summary)', async () => {
     renderWithProviders(<AppsSubNavView summary={NONE} currentPath="/apps" />);
     await expect.element(tab('Marketplace')).toBeInTheDocument();
-    await expect.element(tab('Submit')).toBeInTheDocument();
+    await expect.element(tab('Create')).toBeInTheDocument();
+  });
+
+  // The "Submit" tab was relabeled to "Create" (icon → IconSquarePlus) while
+  // keeping the SAME `/apps/submit` route + active-state logic. These assert the
+  // visible label flipped, the OLD label is gone (mutation-sanity: reverting the
+  // label to "Submit" fails the "no Submit tab" expectation), the route is
+  // unchanged, and the new create-affordance icon renders inside the tab.
+  test('the always-on author tab reads "Create", NOT "Submit"', async () => {
+    renderWithProviders(<AppsSubNavView summary={NONE} currentPath="/apps" />);
+    await expect.element(tab('Create')).toBeInTheDocument();
+    // The old label must be gone entirely (no tab named "Submit").
+    expect(tab('Submit').elements()).toHaveLength(0);
+  });
+
+  test('the Create tab still points at /apps/submit (route unchanged)', async () => {
+    renderWithProviders(<AppsSubNavView summary={NONE} currentPath="/apps" />);
+    await expect.element(tab('Create')).toBeInTheDocument();
+    expect(tab('Create').element().getAttribute('href')).toBe('/apps/submit');
+  });
+
+  test('the Create tab renders its leftSection icon (create affordance)', async () => {
+    renderWithProviders(<AppsSubNavView summary={NONE} currentPath="/apps" />);
+    await expect.element(tab('Create')).toBeInTheDocument();
+    // The tab's leftSection mounts a tabler SVG; assert an <svg> is present
+    // inside the Create tab so the icon affordance isn't silently dropped.
+    const icon = tab('Create').element().querySelector('svg');
+    expect(icon).not.toBeNull();
   });
 
   test('with an all-false summary the conditional tabs are hidden', async () => {
@@ -107,7 +134,7 @@ describe('AppsSubNavView (conditional sub-nav tabs)', () => {
       isReviewer: true,
     };
     renderWithProviders(<AppsSubNavView summary={ALL} currentPath="/apps" />);
-    for (const name of ['Marketplace', 'Submit', 'Installed', 'My submissions', 'Revenue', 'Review']) {
+    for (const name of ['Marketplace', 'Create', 'Installed', 'My submissions', 'Revenue', 'Review']) {
       await expect.element(tab(name)).toBeInTheDocument();
     }
   });
@@ -162,14 +189,14 @@ describe('AppsSubNavView (active tab reflects the current route)', () => {
     await expect.element(tab('Marketplace')).toBeInTheDocument();
     const marketplace = tab('Marketplace').element();
     expect(marketplace.getAttribute('aria-selected')).toBe('true');
-    const submit = tab('Submit').element();
+    const submit = tab('Create').element();
     expect(submit.getAttribute('aria-selected')).toBe('false');
   });
 
-  test('Submit tab is selected on /apps/submit (and Marketplace is not)', async () => {
+  test('Create tab is selected on /apps/submit (and Marketplace is not)', async () => {
     renderWithProviders(<AppsSubNavView summary={NONE} currentPath="/apps/submit" />);
-    await expect.element(tab('Submit')).toBeInTheDocument();
-    expect(tab('Submit').element().getAttribute('aria-selected')).toBe('true');
+    await expect.element(tab('Create')).toBeInTheDocument();
+    expect(tab('Create').element().getAttribute('aria-selected')).toBe('true');
     expect(tab('Marketplace').element().getAttribute('aria-selected')).toBe('false');
   });
 });
@@ -188,7 +215,7 @@ describe('AppsSubNavView (each tab navigates to its route)', () => {
     renderWithProviders(<AppsSubNavView summary={ALL} currentPath="/apps" />);
     const cases: Array<[string, string]> = [
       ['Marketplace', '/apps'],
-      ['Submit', '/apps/submit'],
+      ['Create', '/apps/submit'],
       ['Installed', '/apps/installed'],
       ['My submissions', '/apps/my-submissions'],
       ['Revenue', '/apps/revenue'],
@@ -222,7 +249,7 @@ describe('AppsSubNavView (keyboard: arrow keys scan, do not auto-navigate)', () 
     await expect.element(tab('Marketplace')).toBeInTheDocument();
 
     const marketplace = tab('Marketplace').element() as HTMLElement;
-    const submit = tab('Submit').element() as HTMLElement;
+    const submit = tab('Create').element() as HTMLElement;
 
     // Marketplace (= current route) is the selected tab; Submit is not.
     expect(marketplace.getAttribute('aria-selected')).toBe('true');
@@ -247,8 +274,8 @@ describe('AppsSubNavView (keyboard: arrow keys scan, do not auto-navigate)', () 
     // focusable element IS the `<a href>` the route points at, so native
     // anchor activation (Enter) navigates correctly even with arrow-activation off.
     renderWithProviders(<AppsSubNavView summary={NONE} currentPath="/apps" />);
-    await expect.element(tab('Submit')).toBeInTheDocument();
-    const submit = tab('Submit').element() as HTMLElement;
+    await expect.element(tab('Create')).toBeInTheDocument();
+    const submit = tab('Create').element() as HTMLElement;
     submit.focus();
     expect(document.activeElement).toBe(submit);
     expect(submit.tagName.toLowerCase()).toBe('a');
