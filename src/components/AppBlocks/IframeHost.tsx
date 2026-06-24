@@ -121,14 +121,14 @@ function storageErrorMessage(err: unknown): string {
  * block can't fake, restyle, or hide it. It's the user-facing safety
  * signal that says "this is a sandboxed app block, not native Civitai UI":
  * a thin top bar with the Civitai app-block badge plus a menu whose
- * "Manage apps" item routes to /apps/installed and a "Hide app block" item
+ * "Manage apps" item routes to /apps/installed and a "Hide app" item
  * that locally hides this install for the viewer (a model owner's block shows
  * to every viewer; this lets a viewer dismiss one without affecting the
  * publisher or anyone else). Rendering it here (vs in the sandboxed iframe) is
  * the whole point — the trust boundary belongs to the host. (Roadmap W7.)
  *
  * SURFACE-AWARE: on the full-page run surface (`/apps/run/<slug>`, slot kind
- * `page`) the "Hide app block" action is meaningless — there is no model-page
+ * `page`) the "Hide app" action is meaningless — there is no model-page
  * slot to dismiss the block FROM; the page IS the block. So the host passes the
  * rendering `slotId` and we drop the "Hide" item when `isPageSlot(slotId)` is
  * true. "Manage apps" + the provenance badge stay on every surface. (Mirrors PR
@@ -163,8 +163,8 @@ export function AppBlockChrome({
   // collapse whitespace, bound length) before rendering it in the trust label.
   const sanitizedName = sanitizeAppChromeName(appName);
   const hasName = sanitizedName !== null;
-  // Falls back to the literal "App block" so the trust label is never blank.
-  const label = sanitizedName ?? 'App block';
+  // Falls back to the literal "App" so the trust label is never blank.
+  const label = sanitizedName ?? 'App';
   // De-dup the app name on the page surface. The breadcrumb's trailing crumb
   // (`app-block-breadcrumb-name`) already carries the app name there, so the
   // standalone badge name `Text` would render the SAME name a second time
@@ -174,13 +174,13 @@ export function AppBlockChrome({
   // trust signal is preserved. On the model surface (no breadcrumb) the badge
   // name renders exactly as before.
   const showBadgeName = !isPage;
-  // The icon must carry the "App block" provenance aria-label whenever there is
-  // no adjacent visible Text saying "App block" — i.e. when a real name shows
-  // (so the icon + name read as "App block, <name>") OR when the badge name Text
+  // The icon must carry the "App" provenance aria-label whenever there is
+  // no adjacent visible Text saying "App" — i.e. when a real name shows
+  // (so the icon + name read as "App, <name>") OR when the badge name Text
   // is suppressed on the page surface (so the provenance signal isn't lost with
   // the dropped Text). It's marked decorative (aria-hidden) ONLY when the
-  // visible fallback "App block" Text is present to carry provenance itself —
-  // avoiding an unlabeled SVG / a double-reading "App block".
+  // visible fallback "App" Text is present to carry provenance itself —
+  // avoiding an unlabeled SVG / a double-reading "App".
   const iconProvenance = hasName || !showBadgeName;
   return (
     <Group
@@ -200,13 +200,13 @@ export function AppBlockChrome({
       <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
         {/* Provenance signal for screen readers. role="img" is required for the
             aria-label to be reliably announced — a bare tabler <svg> has no role,
-            so without it the label is dropped. On the fallback the visible "App
-            block" Text carries provenance, so the icon is marked decorative. */}
+            so without it the label is dropped. On the fallback the visible "App"
+            Text carries provenance, so the icon is marked decorative. */}
         <IconApps
           size={14}
           stroke={1.5}
           role={iconProvenance ? 'img' : undefined}
-          aria-label={iconProvenance ? 'App block' : undefined}
+          aria-label={iconProvenance ? 'App' : undefined}
           aria-hidden={iconProvenance ? undefined : true}
           style={{ flexShrink: 0 }}
         />
@@ -237,13 +237,19 @@ export function AppBlockChrome({
             <Text size="xs" c="dimmed" aria-hidden>
               /
             </Text>
+            {/* Link affordance: distinct link COLOR + underline so this crumb
+                reads as obviously clickable, visually separated from the static
+                dimmed crumb text + separators around it. Keeps the real anchor
+                semantics (it's a Next <Link>) for keyboard / middle-click. */}
             <Text
               component={Link}
               href="/apps"
               size="xs"
-              c="dimmed"
-              style={{ flexShrink: 0 }}
+              c="blue.6"
+              td="underline"
+              style={{ flexShrink: 0, cursor: 'pointer' }}
               data-testid="app-block-breadcrumb-apps"
+              data-clickable="true"
             >
               Apps
             </Text>
@@ -265,12 +271,12 @@ export function AppBlockChrome({
       </Group>
       <Menu position="bottom-end" shadow="md" width={180}>
         <Menu.Target>
-          <ActionIcon variant="subtle" color="gray" size="sm" aria-label="App block menu">
+          <ActionIcon variant="subtle" color="gray" size="sm" aria-label="App menu">
             <IconDots size={16} stroke={1.5} />
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
-          <Menu.Label>App block</Menu.Label>
+          <Menu.Label>App</Menu.Label>
           <Menu.Item
             component={Link}
             href="/apps/installed"
@@ -291,7 +297,7 @@ export function AppBlockChrome({
                 })
               }
             >
-              Hide app block
+              Hide app
             </Menu.Item>
           )}
         </Menu.Dropdown>

@@ -5,7 +5,7 @@ import {
   IconGavel,
   IconListDetails,
   IconPlugConnected,
-  IconUpload,
+  IconSquarePlus,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -48,12 +48,12 @@ type SubNavLink = {
 
 /**
  * Tab order = discovery → author → manage → revenue → moderate. The two
- * always-on tabs (Marketplace + Submit) lead so the bar never collapses to
+ * always-on tabs (Marketplace + Create) lead so the bar never collapses to
  * fewer than two entries.
  */
 const SUB_NAV_LINKS: SubNavLink[] = [
   { href: '/apps', label: 'Marketplace', icon: IconBuildingStore, visible: () => true },
-  { href: '/apps/submit', label: 'Submit', icon: IconUpload, visible: () => true },
+  { href: '/apps/submit', label: 'Create', icon: IconSquarePlus, visible: () => true },
   {
     href: '/apps/installed',
     label: 'Installed',

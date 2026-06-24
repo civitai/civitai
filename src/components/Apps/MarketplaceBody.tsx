@@ -254,7 +254,7 @@ export function MarketplaceBody() {
       <Group gap="md" align="end">
         <TextInput
           label="Search"
-          placeholder="Search by name or block id"
+          placeholder="Search by name or app id"
           leftSection={<IconSearch size={16} />}
           value={searchInput}
           onChange={(e) => setSearchInput(e.currentTarget.value)}
@@ -420,7 +420,7 @@ function MarketplaceEmptyState({
       <Center py="xl">
         <Stack align="center" gap={8}>
           <Text size="lg" fw={500}>
-            No app blocks match
+            No apps match
           </Text>
           <Text size="sm" c="dimmed">
             Try clearing your filters or search query.
@@ -442,7 +442,7 @@ function MarketplaceEmptyState({
           No apps yet
         </Text>
         <Text size="sm" c="dimmed" ta="center" maw={420}>
-          App Blocks add interactive panels to model pages — generation, games, utilities and
+          Apps add interactive panels to model pages — generation, games, utilities and
           more. Be the first to publish one.
         </Text>
         {canSubmit && (

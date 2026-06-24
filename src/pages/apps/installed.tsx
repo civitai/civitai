@@ -126,7 +126,7 @@ function PinnedInstallRow({ sub }: PinnedInstallRowProps) {
       children: (
         <Stack gap="xs">
           <Text size="sm">
-            This removes the install row entirely. The block will stop appearing on{' '}
+            This removes the install row entirely. The app will stop appearing on{' '}
             <strong>{targetName}</strong>. Any platform default for the same slot will become
             eligible again. The app's data and any other installs of it are untouched.
           </Text>
@@ -674,7 +674,7 @@ function HiddenBlocksPanel() {
         <Stack align="center" gap="xs">
           <IconEyeOff size={28} opacity={0.5} />
           <Text size="sm" c="dimmed" ta="center" maw={420}>
-            You haven't hidden any app blocks. Use the ⋯ menu on a block to hide it on this
+            You haven't hidden any apps. Use the ⋯ menu on an app to hide it on this
             device — it only affects what you see, never the publisher or other viewers.
           </Text>
         </Stack>
@@ -689,7 +689,7 @@ function HiddenBlocksPanel() {
           <Group justify="space-between" wrap="nowrap" gap="md" align="center">
             <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
               <Text fw={600} className="truncate">
-                {block.appName ?? 'App block'}
+                {block.appName ?? 'App'}
               </Text>
               <Group gap={6} wrap="wrap">
                 {block.modelId ? (
@@ -711,7 +711,7 @@ function HiddenBlocksPanel() {
                 unhideBlock(block.blockInstanceId);
                 showSuccessNotification({
                   title: 'Restored',
-                  message: `${block.appName ?? 'App block'} will show again.`,
+                  message: `${block.appName ?? 'App'} will show again.`,
                 });
               }}
             >
@@ -769,7 +769,7 @@ export default function InstalledAppsPage() {
       <AppsPageLayout
         size="lg"
         title="Your installed apps"
-        subtitle="Manage where Civitai App Blocks show up across the site."
+        subtitle="Manage where Civitai Apps show up across the site."
         actions={
           <Button
             component={Link}
@@ -841,7 +841,7 @@ export default function InstalledAppsPage() {
             <Tabs.Panel value="hidden" pt="md">
               <Stack gap="sm">
                 <Text size="sm" c="dimmed">
-                  App blocks you've hidden on this device. Hiding is local to your browser —
+                  Apps you've hidden on this device. Hiding is local to your browser —
                   it never affects the publisher's install or other viewers. Restore one to
                   have it show on its model page again.
                 </Text>
