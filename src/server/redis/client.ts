@@ -9,6 +9,7 @@ import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { withCommandDeadline } from '~/server/redis/command-deadline';
+import { withClusterRoutingRetry } from '~/server/redis/cluster-routing-retry';
 import { ClusterSelfHealWatchdog } from '~/server/redis/cluster-selfheal';
 import type { ClusterSelfHealTrigger } from '~/server/redis/cluster-selfheal';
 import {
@@ -950,6 +951,9 @@ type RedisMetricsBridge = {
   // undefined until prom/client loads server-side; callers null-check.
   redisSelfHealReconnectCounter?: { inc: (labels: { trigger: string }) => void };
   redisMetricWriteFailSoftCounter?: { labels: (labels: { op: string }) => { inc: () => void } };
+  // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
+  // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
+  redisRoutingRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
 };
 
 // Server-runtime lookup of the prom metric handles WITHOUT a static import edge
@@ -1009,21 +1013,44 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
       metrics?.redisCommandsInflight.dec(labels);
       metrics?.redisCommandDuration.observe(labels, (Date.now() - start) / 1000);
     };
-    let result: any;
-    try {
-      result = original.apply(this, args);
-    } catch (err) {
-      // Synchronous throw (e.g. ClientClosedError) — still account for it.
-      done();
-      throw err;
-    }
+
+    // Run the underlying command, capturing a SYNCHRONOUS routing throw (the getSlotRandomNode
+    // TypeError fires synchronously during node selection BEFORE dispatch) as a rejection so the
+    // retry guard below sees it uniformly with an async reject. Defined as a thunk so the routing
+    // guard can re-invoke it for a retry — safe because a transient routing error means the
+    // command NEVER reached a node (no double-execution).
+    const runOnce = () =>
+      new Promise<any>((resolve, reject) => {
+        try {
+          resolve(original.apply(this, args));
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+    // Retry-after-rediscover for the TRANSIENT cluster-routing throw — CLUSTER client ONLY (the
+    // topology-churn 500 wave #2665 doesn't cover; see cluster-routing-retry.ts). Sits AROUND
+    // node selection, INSIDE the single inflight inc/dec + deadline accounting: the retried
+    // attempts are SEQUENTIAL (await), never overlapping, so this is ONE inflight unit regardless
+    // of retries (no double-count, done() fires exactly once). The sys client (wrapWithDeadline=
+    // false) is left exactly as before — no routing guard, no deadline. Default-on; the
+    // REDIS_CLUSTER_ROUTING_RETRY_ENABLED=false kill-switch passes runOnce() straight through.
+    const executed: Promise<any> = wrapWithDeadline
+      ? withClusterRoutingRetry(runOnce, {
+          rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),
+          onResult: (result) => getRedisMetrics()?.redisRoutingRetryCounter?.inc({ result }),
+        })
+      : runOnce();
+
     // Bound the cluster command so a never-settling `_execute` still reaches done()
     // (gauge dec'd, handler unparked). No-op when the deadline env is 0/disabled or for
     // the sys client (wrapWithDeadline=false). withCommandDeadline reaps the late
     // rejection of the orphaned command so it can't surface as an unhandledRejection.
+    // Layered OUTSIDE the routing retry so the 15s deadline bounds the WHOLE retried sequence
+    // (the bounded ~50ms+150ms backoff is well inside it).
     const settled = wrapWithDeadline
-      ? withCommandDeadline(Promise.resolve(result), undefined, recordClusterDeadlineHit)
-      : Promise.resolve(result);
+      ? withCommandDeadline(executed, undefined, recordClusterDeadlineHit)
+      : executed;
     return settled.finally(done);
   };
 }
