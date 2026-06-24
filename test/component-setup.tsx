@@ -46,6 +46,22 @@ vi.mock('next/router', () => {
   };
 });
 
+// Mantine's `useClipboard` (and any copy affordance) calls
+// `navigator.clipboard.writeText`. In CI's headless Chromium the page is an
+// insecure context with no clipboard permission, so the REAL `writeText`
+// rejects — `copied` never flips and the "Copied" affordance never renders.
+// That made copy tests pass locally (Chromium grants the permission) but fail
+// in CI. Stub a resolving clipboard so copy behaviour is deterministic and
+// matches a real secure-context browser. Tests assert the "Copied" UI state,
+// not the OS clipboard contents.
+Object.defineProperty(globalThis.navigator, 'clipboard', {
+  configurable: true,
+  value: {
+    writeText: vi.fn().mockResolvedValue(undefined),
+    readText: vi.fn().mockResolvedValue(''),
+  },
+});
+
 afterEach(() => {
   cleanup();
 });
