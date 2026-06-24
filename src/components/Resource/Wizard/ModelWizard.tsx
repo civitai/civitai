@@ -1,7 +1,7 @@
 import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Text, Title } from '@mantine/core';
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -62,6 +62,9 @@ const CreateSteps = ({
   );
   const editing = !!model;
   const hasVersions = model && model.modelVersions.length > 0;
+  // Whether each later step's prerequisite data exists yet — used to let the user
+  // click forward to already-reachable steps (not just back via the indicator).
+  const hasFiles = !!model?.modelVersions?.some((version) => version.files.length > 0);
 
   // URL step → stepper-rendered index. When skipFiles=true the Files step (URL step 3)
   // is omitted, so URL step 4 (post) collapses to rendered index 2.
@@ -127,7 +130,7 @@ const CreateSteps = ({
       </Stepper.Step>
 
       {/* Step 2: Version Info */}
-      <Stepper.Step label={hasVersions ? 'Edit version' : 'Add version'}>
+      <Stepper.Step label={hasVersions ? 'Edit version' : 'Add version'} allowStepSelect={!!model}>
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>{hasVersions ? 'Edit version' : 'Add version'}</Title>
           <ModelVersionUpsertForm
@@ -168,6 +171,7 @@ const CreateSteps = ({
           label="Upload files"
           loading={uploading > 0}
           color={error + aborted > 0 ? 'red' : undefined}
+          allowStepSelect={!!hasVersions}
         >
           <div className="container flex max-w-sm flex-col gap-3">
             <Title order={3}>Upload files</Title>
@@ -177,7 +181,10 @@ const CreateSteps = ({
         </Stepper.Step>
       )}
 
-      <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
+      <Stepper.Step
+        label={postId ? 'Edit post' : 'Create a post'}
+        allowStepSelect={!!hasVersions && (hasFiles || skipFiles)}
+      >
         {model && modelVersion && (
           <PostUpsertForm2 postId={postId} modelVersionId={modelVersion.id} modelId={model.id} />
         )}
@@ -380,11 +387,21 @@ export function ModelWizard() {
   // CreateSteps stepper and the auto-redirect effect agree on the same step layout.
   const skipFiles = modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
 
+  // Only auto-resume to the furthest valid step ONCE, when the model first loads.
+  // Without this guard the effect re-runs on every `model` refetch — e.g. when a
+  // file upload completes and invalidates the model query — yanking the user
+  // forward to the next step. Forward navigation is now user-driven (Next button
+  // or clicking a reachable step indicator).
+  const autoResumedRef = useRef(false);
+
   useEffect(() => {
     // redirect to correct step if missing values
     if (!isNew) {
       // don't redirect for trained type or if model is not loaded
       if (isTraining || !model) return;
+      // resume only once per mount — never push the user forward mid-session
+      if (autoResumedRef.current) return;
+      autoResumedRef.current = true;
 
       const hasVersions = model.modelVersions.length > 0;
       const hasFiles = model.modelVersions.some((version) => version.files.length > 0);

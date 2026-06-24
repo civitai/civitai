@@ -46,7 +46,10 @@ import {
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
-import { getActiveBaseModels } from '~/shared/constants/basemodel.constants';
+import {
+  baseModelSupportsClipSkip,
+  getActiveBaseModels,
+} from '~/shared/constants/basemodel.constants';
 import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
@@ -217,6 +220,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   // licensing-fee and early-access controls for these versions.
   const isNonCommercial = isNonCommercialBaseModel(baseModel);
   const recResources = form.watch('recommendedResources') ?? [];
+  // Clip skip only applies to SD1.x / SDXL-family base models — hide it elsewhere.
+  const showClipSkip = baseModelSupportsClipSkip(baseModel);
+  // Recommended Resources clutter the form; only surface the section when the
+  // version already has recommended resources set.
+  const showRecommendedResources = recResources.length > 0;
   const [minStrength, maxStrength] = form.watch([
     'settings.minStrength',
     'settings.maxStrength',
@@ -314,7 +322,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
 
       const result = await upsertVersionMutation.mutateAsync({
         ...data,
-        clipSkip: data.clipSkip ?? null,
+        // Don't persist a stale clip skip for base models that don't use it.
+        clipSkip: showClipSkip ? data.clipSkip ?? null : null,
         epochs: data.epochs ?? null,
         steps: data.steps ?? null,
         modelId: model?.id ?? -1,
@@ -938,59 +947,65 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               />
             </Group>
           </Stack>
-          <Stack gap={4}>
-            <Divider label="Recommended Settings" />
-            <Group gap="xs" className="*:grow">
-              <InputNumber
-                name="clipSkip"
-                label="Clip Skip"
-                placeholder="Clip Skip"
-                min={1}
-                max={12}
-              />
-              {showStrengthInput && (
-                <Group w="100%" align="start" grow>
+          {(showClipSkip || showStrengthInput || showRecommendedResources) && (
+            <Stack gap={4}>
+              <Divider label="Recommended Settings" />
+              <Group gap="xs" className="*:grow">
+                {showClipSkip && (
                   <InputNumber
-                    name="settings.minStrength"
-                    label="Min Strength"
-                    min={-100}
-                    max={100}
-                    decimalScale={1}
-                    step={0.1}
+                    name="clipSkip"
+                    label="Clip Skip"
+                    placeholder="Clip Skip"
+                    min={1}
+                    max={12}
                   />
-                  <InputNumber
-                    name="settings.maxStrength"
-                    label="Max Strength"
-                    min={-100}
-                    max={100}
-                    decimalScale={1}
-                    step={0.1}
+                )}
+                {showStrengthInput && (
+                  <Group w="100%" align="start" grow>
+                    <InputNumber
+                      name="settings.minStrength"
+                      label="Min Strength"
+                      min={-100}
+                      max={100}
+                      decimalScale={1}
+                      step={0.1}
+                    />
+                    <InputNumber
+                      name="settings.maxStrength"
+                      label="Max Strength"
+                      min={-100}
+                      max={100}
+                      decimalScale={1}
+                      step={0.1}
+                    />
+                    <InputNumber
+                      name="settings.strength"
+                      label="Strength"
+                      min={minStrength ?? -1}
+                      max={maxStrength ?? 2}
+                      decimalScale={1}
+                      step={0.1}
+                    />
+                  </Group>
+                )}
+                {showRecommendedResources && (
+                  <InputResourceSelectMultiple
+                    name="recommendedResources"
+                    label="Resources"
+                    description="Select which resources work best with your model"
+                    selectSource="modelVersion"
+                    buttonLabel="Add resource"
+                    w="100%"
+                    limit={10}
+                    options={{
+                      resources: [{ type: ModelType.Checkpoint, baseModels: [baseModel] }],
+                      excludeIds: recResources.map((r) => r.id),
+                    }}
                   />
-                  <InputNumber
-                    name="settings.strength"
-                    label="Strength"
-                    min={minStrength ?? -1}
-                    max={maxStrength ?? 2}
-                    decimalScale={1}
-                    step={0.1}
-                  />
-                </Group>
-              )}
-              <InputResourceSelectMultiple
-                name="recommendedResources"
-                label="Resources"
-                description="Select which resources work best with your model"
-                selectSource="modelVersion"
-                buttonLabel="Add resource"
-                w="100%"
-                limit={10}
-                options={{
-                  resources: [{ type: ModelType.Checkpoint, baseModels: [baseModel] }],
-                  excludeIds: recResources.map((r) => r.id),
-                }}
-              />
-            </Group>
-          </Stack>
+                )}
+              </Group>
+            </Stack>
+          )}
           {modelDownloadEnabled && (
             <Stack gap={8}>
               <Divider label="Additional options" />
