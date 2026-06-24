@@ -1206,6 +1206,12 @@ function ProjectWorkspace() {
   // page already handles the no-renderable-panels case.
   const hasReadyPanelsWithImages = totalPanelCount > 0;
 
+  // Hero banner (the wide overview-page banner). Surfaced in the workspace
+  // header so the author can see at a glance whether it's set — previously
+  // it was only visible/editable from the Settings modal.
+  const heroImage = (project as any).heroImage as { id: number; url: string } | null | undefined;
+  const heroImagePosition = ((project as any).heroImagePosition as number | undefined) ?? 50;
+
   // Detail drawer is opened from the active chapter's panel grid, so we
   // only need to look there. Chapters other than the active one don't have
   // their panels loaded into the cache.
@@ -1307,6 +1313,42 @@ function ProjectWorkspace() {
               </Alert>
             );
           })()}
+
+          {/* ── Hero banner ─────────────────────────── */}
+          {/* The overview-page banner, shown here so the author can tell at
+              a glance whether it's set. Click anywhere to edit it (and the
+              cover) in Settings. */}
+          <div
+            className={clsx(styles.heroBanner, !heroImage && styles.heroBannerEmpty)}
+            onClick={() => openSettings()}
+            role="button"
+            tabIndex={0}
+          >
+            {heroImage?.url ? (
+              <>
+                <img
+                  src={getEdgeUrl(heroImage.url, { width: 1200 })}
+                  alt={`${project.name} hero banner`}
+                  className={styles.heroBannerImg}
+                  style={{ objectPosition: `center ${heroImagePosition}%` }}
+                />
+                <span className={styles.heroBannerEdit}>
+                  <IconSettings size={14} />
+                  Edit in settings
+                </span>
+              </>
+            ) : (
+              <Stack gap={2} align="center" className={styles.heroBannerPlaceholder}>
+                <IconPhoto size={22} style={{ color: '#909296' }} />
+                <Text size="sm" fw={600}>
+                  No hero banner set
+                </Text>
+                <Text size="xs" c="dimmed" ta="center">
+                  Add one in Settings — it headlines your comic&apos;s overview page
+                </Text>
+              </Stack>
+            )}
+          </div>
 
           {/* ── Header card ─────────────────────────── */}
           <div className={clsx(styles.headerCard, styles.gradientTopBorder)}>
