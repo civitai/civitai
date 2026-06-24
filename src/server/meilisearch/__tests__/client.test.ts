@@ -745,3 +745,323 @@ describe('post-filter catch — MeiliCallTimeoutError (circuit-open / wrapper-ti
     expect(incMock).not.toHaveBeenCalled();
   });
 });
+
+// ─── isTransientMeiliError: SDK-error classification (500→503 reclassification) ─
+//
+// The REST image feed (/api/v1/images) runs through event-engine-common's
+// populatedQuery, whose INNER meilisearch-js (0.33) calls throw the SDK's OWN
+// error types on a slow / shed backend — NOT civitai's MeilisearchFetchError /
+// MeiliCallTimeoutError (those wrap only the direct raw-fetch path). When the
+// proxy/backend returns 408 ("Request Timeout") or 503 ("Service Unavailable")
+// with an empty body, the SDK throws MeiliSearchCommunicationError with
+// message=statusText + statusCode=<http status>; a parseable error body yields
+// MeiliSearchApiError carrying httpStatus. Neither is a TRPCError, so they were
+// hitting the generic 500 mapping → the dominant remaining HTTP-500 source on
+// /api/v1/images. isTransientMeiliError classifies these (and the civitai
+// wrapper errors) as genuinely-transient so the caller can re-map them to a
+// retryable 503 — while a 4xx-other / app error stays a hard error.
+//
+// We reconstruct the SDK error SHAPES (name + statusCode/httpStatus/code/errno)
+// rather than import the SDK classes, because the predicate intentionally
+// name-matches (`error.name === 'MeiliSearch...'`) so it survives a duplicated
+// SDK copy inside the event-engine-common submodule's own node_modules — the
+// real bug was an instanceof miss across module boundaries.
+
+describe('isTransientMeiliError — transient upstream classification', () => {
+  // Faithful reproductions of the meilisearch-js 0.33 error shapes.
+  const makeCommunicationError = (statusCode: number) => {
+    // SDK: `this.message = body.statusText; this.statusCode = body.status`
+    const e = new Error(statusCode === 408 ? 'Request Timeout' : 'Service Unavailable') as Error & {
+      name: string;
+      statusCode: number;
+    };
+    e.name = 'MeiliSearchCommunicationError';
+    e.statusCode = statusCode;
+    return e;
+  };
+
+  const makeApiError = (httpStatus: number) => {
+    const e = new Error('meilisearch upstream error') as Error & {
+      name: string;
+      httpStatus: number;
+      code: string;
+    };
+    e.name = 'MeiliSearchApiError';
+    e.httpStatus = httpStatus;
+    e.code = 'internal';
+    return e;
+  };
+
+  it.each([408, 429, 502, 503, 504])(
+    'returns true for a MeiliSearchCommunicationError with transient statusCode %i',
+    async (status) => {
+      const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+      expect(isTransientMeiliError(makeCommunicationError(status))).toBe(true);
+    }
+  );
+
+  it.each([502, 503, 504])(
+    'returns true for a MeiliSearchApiError with transient gateway httpStatus %i',
+    async (status) => {
+      const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+      expect(isTransientMeiliError(makeApiError(status))).toBe(true);
+    }
+  );
+
+  // ── Masking-guard (audit 🟡 #1): a STRUCTURED-JSON Meili 500 is deterministic ──
+  // A MeiliSearchApiError carries a parseable JSON body — for a 5xx that is far
+  // more likely a deterministic Meili-internal error than a transient brownout.
+  // So a JSON-body 500 must NOT be classified transient (it must surface as a
+  // hard 500), while the empty/non-JSON-body transport-layer 500
+  // (MeiliSearchCommunicationError) IS transient. This pins exactly that split.
+  it('returns FALSE for a MeiliSearchApiError with httpStatus=500 (JSON body → deterministic, must bubble as 500 not 503)', async () => {
+    const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+    expect(isTransientMeiliError(makeApiError(500))).toBe(false);
+  });
+
+  it.each(['Internal Server Error', 'Request Timeout', 'Service Unavailable'])(
+    'returns TRUE for a MeiliSearchCommunicationError with statusCode=500 (empty/transport body "%s" → transient 503)',
+    async (statusText) => {
+      const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+      // Transport-layer 500 (empty / non-JSON body) — the SDK couldn't parse a
+      // structured error, so this is the genuinely-transient case → 503.
+      const e = new Error(statusText) as Error & { name: string; statusCode: number };
+      e.name = 'MeiliSearchCommunicationError';
+      e.statusCode = 500;
+      expect(isTransientMeiliError(e)).toBe(true);
+    }
+  );
+
+  it('returns true for a network-level MeiliSearchCommunicationError (no http status, has errno/code)', async () => {
+    const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+    const e = new Error('request to ... failed, reason: connect ECONNREFUSED') as Error & {
+      name: string;
+      code: string;
+      errno: string;
+    };
+    e.name = 'MeiliSearchCommunicationError';
+    e.code = 'ECONNREFUSED';
+    e.errno = 'ECONNREFUSED';
+    expect(isTransientMeiliError(e)).toBe(true);
+  });
+
+  it('returns true for a MeiliSearchTimeOutError (name-matched)', async () => {
+    const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+    const e = new Error('timeout of 5000ms has exceeded ...') as Error & { name: string };
+    e.name = 'MeiliSearchTimeOutError';
+    expect(isTransientMeiliError(e)).toBe(true);
+  });
+
+  it('returns true for the civitai wrapper errors (MeiliCallTimeoutError, failfast MeilisearchFetchError)', async () => {
+    const { isTransientMeiliError, MeiliCallTimeoutError, MeilisearchFetchError } = await import(
+      '~/server/meilisearch/client'
+    );
+    expect(isTransientMeiliError(new MeiliCallTimeoutError('timeout'))).toBe(true);
+    expect(isTransientMeiliError(new MeiliCallTimeoutError('concurrency'))).toBe(true);
+    expect(isTransientMeiliError(new MeilisearchFetchError(503, 'overloaded'))).toBe(true);
+    expect(isTransientMeiliError(new MeilisearchFetchError(408, ''))).toBe(true);
+    expect(isTransientMeiliError(new MeilisearchFetchError(429, ''))).toBe(true);
+  });
+
+  it('returns true for the raw-fetch local-deadline error (FETCH_DOCUMENTS_TIMEOUT_MESSAGE)', async () => {
+    const { isTransientMeiliError, FETCH_DOCUMENTS_TIMEOUT_MESSAGE } = await import(
+      '~/server/meilisearch/client'
+    );
+    expect(isTransientMeiliError(new Error(FETCH_DOCUMENTS_TIMEOUT_MESSAGE))).toBe(true);
+  });
+
+  it.each([400, 401, 403, 404, 422])(
+    'returns FALSE for a non-transient %i status (real client/app error must surface, not be masked as 503)',
+    async (status) => {
+      const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+      // Both SDK error shapes with a 4xx-other status must NOT be treated as transient.
+      expect(isTransientMeiliError(makeCommunicationError(status))).toBe(false);
+      expect(isTransientMeiliError(makeApiError(status))).toBe(false);
+    }
+  );
+
+  it('returns FALSE for a non-failfast MeilisearchFetchError (400 malformed filter)', async () => {
+    const { isTransientMeiliError, MeilisearchFetchError } = await import(
+      '~/server/meilisearch/client'
+    );
+    expect(isTransientMeiliError(new MeilisearchFetchError(400, 'bad filter'))).toBe(false);
+  });
+
+  it('returns FALSE for unrelated errors and non-error values', async () => {
+    const { isTransientMeiliError } = await import('~/server/meilisearch/client');
+    expect(isTransientMeiliError(new Error('null deref upstream'))).toBe(false);
+    expect(isTransientMeiliError(new TypeError('x is not a function'))).toBe(false);
+    expect(isTransientMeiliError(undefined)).toBe(false);
+    expect(isTransientMeiliError(null)).toBe(false);
+    expect(isTransientMeiliError('a string')).toBe(false);
+    expect(isTransientMeiliError({ random: 'object' })).toBe(false);
+    // A communication-error NAME but no status and no network code → not classifiable as transient.
+    const ambiguous = new Error('weird') as Error & { name: string };
+    ambiguous.name = 'MeiliSearchCommunicationError';
+    expect(isTransientMeiliError(ambiguous)).toBe(false);
+  });
+});
+
+// ─── failfastReasonForTransientError: label mapping for the reclassified 503s ──
+//
+// Audit 🟡 #3: when getImagesFromFeedSearch / getAllImagesIndex turn a transient
+// Meili error into a 503, they increment `meiliFetchFailfastTotal{route, reason}`
+// so a Meili outage stays attributable instead of vanishing into the unlabeled
+// 503 bucket. This proves the reason-label mapping the counter uses — it must
+// reuse the SAME vocabulary as the post-filter loop (failfastReasonForStatus)
+// and add the timeout / network buckets that helper doesn't cover.
+describe('failfastReasonForTransientError — reason label mapping', () => {
+  const makeCommunicationError = (statusCode: number) => {
+    const e = new Error('x') as Error & { name: string; statusCode: number };
+    e.name = 'MeiliSearchCommunicationError';
+    e.statusCode = statusCode;
+    return e;
+  };
+  const makeApiError = (httpStatus: number) => {
+    const e = new Error('x') as Error & { name: string; httpStatus: number };
+    e.name = 'MeiliSearchApiError';
+    e.httpStatus = httpStatus;
+    return e;
+  };
+
+  it('maps the status-bearing SDK errors via failfastReasonForStatus (same vocab as the post-filter loop)', async () => {
+    const { failfastReasonForTransientError } = await import('~/server/meilisearch/client');
+    expect(failfastReasonForTransientError(makeCommunicationError(408))).toBe('upstream-timeout');
+    expect(failfastReasonForTransientError(makeCommunicationError(503))).toBe('upstream-overload');
+    expect(failfastReasonForTransientError(makeCommunicationError(502))).toBe('upstream-error');
+    expect(failfastReasonForTransientError(makeApiError(503))).toBe('upstream-overload');
+    expect(failfastReasonForTransientError(makeApiError(504))).toBe('upstream-error');
+  });
+
+  it('maps the timeout cases to local-timeout', async () => {
+    const { failfastReasonForTransientError, FETCH_DOCUMENTS_TIMEOUT_MESSAGE } = await import(
+      '~/server/meilisearch/client'
+    );
+    const timeoutErr = new Error('timeout of 5000ms') as Error & { name: string };
+    timeoutErr.name = 'MeiliSearchTimeOutError';
+    expect(failfastReasonForTransientError(timeoutErr)).toBe('local-timeout');
+    expect(failfastReasonForTransientError(new Error(FETCH_DOCUMENTS_TIMEOUT_MESSAGE))).toBe(
+      'local-timeout'
+    );
+  });
+
+  it('maps the civitai wrapper errors', async () => {
+    const { failfastReasonForTransientError, MeiliCallTimeoutError, MeilisearchFetchError } =
+      await import('~/server/meilisearch/client');
+    expect(failfastReasonForTransientError(new MeiliCallTimeoutError('timeout'))).toBe(
+      'upstream-circuit-open'
+    );
+    expect(failfastReasonForTransientError(new MeilisearchFetchError(503, ''))).toBe(
+      'upstream-overload'
+    );
+    expect(failfastReasonForTransientError(new MeilisearchFetchError(408, ''))).toBe(
+      'upstream-timeout'
+    );
+  });
+
+  it('maps a network-level CommunicationError (no http status) to upstream-error', async () => {
+    const { failfastReasonForTransientError } = await import('~/server/meilisearch/client');
+    const e = new Error('ECONNREFUSED') as Error & { name: string; code: string; errno: string };
+    e.name = 'MeiliSearchCommunicationError';
+    e.code = 'ECONNREFUSED';
+    e.errno = 'ECONNREFUSED';
+    expect(failfastReasonForTransientError(e)).toBe('upstream-error');
+  });
+});
+
+// ─── Service-catch counter contract (audit 🟡 #3) ────────────────────────────
+//
+// getImagesFromFeedSearch / getAllImagesIndex now increment
+// meiliFetchFailfastTotal{route, iteration:'0', reason} on the transient-503
+// path. The full image.service is too heavy to module-load in isolation (the
+// flipt-client import wedges it), so — mirroring how the post-filter contract
+// tests above prove the counter without loading image.service — we replicate
+// the EXACT service-catch shape and assert the counter fires with the right
+// {route, reason} label. incMock is the shared registerCounterWithLabels().inc.
+describe('service-catch → meiliFetchFailfastTotal{route, reason} on a transient-503', () => {
+  beforeEach(() => {
+    incMock.mockClear();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['getImagesFromFeedSearch', 'CommunicationError(503)', 'upstream-overload'],
+    ['getAllImagesIndex', 'CommunicationError(503)', 'upstream-overload'],
+  ])(
+    'increments for %s on a %s (reason=%s)',
+    async (route, _shape, expectedReason) => {
+      const {
+        isTransientMeiliError,
+        failfastReasonForTransientError,
+        meiliFetchFailfastTotal,
+      } = await import('~/server/meilisearch/client');
+
+      const err = (() => {
+        const e = new Error('Service Unavailable') as Error & {
+          name: string;
+          statusCode: number;
+        };
+        e.name = 'MeiliSearchCommunicationError';
+        e.statusCode = 503;
+        return e;
+      })();
+
+      // Mirror the service catch in image.service.ts exactly.
+      let reclassified = false;
+      try {
+        throw err;
+      } catch (caught) {
+        if (isTransientMeiliError(caught)) {
+          meiliFetchFailfastTotal.inc({
+            route,
+            iteration: '0',
+            reason: failfastReasonForTransientError(caught),
+          });
+          reclassified = true;
+        } else {
+          throw caught;
+        }
+      }
+
+      expect(reclassified).toBe(true);
+      expect(incMock).toHaveBeenCalledWith({ route, iteration: '0', reason: expectedReason });
+      expect(incMock).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('does NOT increment when the error is non-transient (a deterministic ApiError 500 bubbles, no counter)', async () => {
+    const { isTransientMeiliError, failfastReasonForTransientError, meiliFetchFailfastTotal } =
+      await import('~/server/meilisearch/client');
+
+    const apiError500 = (() => {
+      const e = new Error('internal') as Error & { name: string; httpStatus: number };
+      e.name = 'MeiliSearchApiError';
+      e.httpStatus = 500;
+      return e;
+    })();
+
+    let reThrown: unknown;
+    try {
+      try {
+        throw apiError500;
+      } catch (caught) {
+        if (isTransientMeiliError(caught)) {
+          meiliFetchFailfastTotal.inc({
+            route: 'getImagesFromFeedSearch',
+            iteration: '0',
+            reason: failfastReasonForTransientError(caught),
+          });
+        } else {
+          throw caught;
+        }
+      }
+    } catch (e) {
+      reThrown = e;
+    }
+
+    expect(reThrown).toBe(apiError500);
+    expect(incMock).not.toHaveBeenCalled();
+  });
+});

@@ -50,9 +50,11 @@ import {
   MeilisearchFetchError,
   SEARCH_ACTOR_HEADER,
   failfastReasonForStatus,
+  failfastReasonForTransientError,
   fetchDocumentsAbortable,
   getMetricsSearchClient,
   isFailfastStatus,
+  isTransientMeiliError,
   meiliFetchFailfastTotal,
   metricsSearchClient,
   withMeili,
@@ -2218,25 +2220,29 @@ export const getAllImagesIndex = async (
     // into kubelet SIGKILL on 2026-05-29. 503 is the correct code for a
     // transient backend brownout (was TIMEOUT/408 as a tRPC-v10 stopgap; v11
     // has SERVICE_UNAVAILABLE).
-    if (err instanceof MeiliCallTimeoutError) {
-      throw new TRPCError({
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'Image search is temporarily overloaded — please retry.',
-        cause: err,
+    //
+    // `isTransientMeiliError` covers the civitai wrapper errors
+    // (MeiliCallTimeoutError = local timer / circuit-open; MeilisearchFetchError
+    // with a failfast status = raw-fetch 408/429/5xx) AND the meilisearch-js
+    // SDK's own error types (MeiliSearchCommunicationError /
+    // MeiliSearchApiError / MeiliSearchTimeOutError) thrown by the SDK calls
+    // inside the search index path. 4xx-other (malformed filter / auth) and
+    // any other Error are NOT transient and still bubble as-is.
+    if (isTransientMeiliError(err)) {
+      // Keep a transient Meili outage ATTRIBUTABLE: the reclassified 503 would
+      // otherwise vanish into the unlabeled 503 bucket. Mirror the post-filter
+      // loop's counter usage (route + reason) so an outage is queryable by the
+      // same label vocabulary; `iteration:'0'` (this is the single pre-filter
+      // search, not the post-filter iteration loop).
+      meiliFetchFailfastTotal.inc({
+        route: 'getAllImagesIndex',
+        iteration: '0',
+        reason: failfastReasonForTransientError(err),
       });
-    }
-    // Upstream returned 408 (backend timeout) or 5xx (feeds-proxy shed /
-    // brownout). Same disposition as the timeout above — a retryable 503
-    // SERVICE_UNAVAILABLE so the client shows its retry banner with a friendly
-    // message, instead of a raw 500 ("Meilisearch fetch failed (503): ...")
-    // leaking to the UI.
-    // Mirrors the user/model search REST handlers. 4xx-other (malformed
-    // filter / auth) is NOT failfast-eligible and still bubbles as-is.
-    if (err instanceof MeilisearchFetchError && isFailfastStatus(err.status)) {
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
-        cause: err,
+        cause: err as Error,
       });
     }
     throw err;
@@ -2946,25 +2952,35 @@ export async function getImagesFromFeedSearch(
     };
   } catch (err) {
     console.error('Error in getImagesFromFeedSearch:', err);
-    // Meili saturation / timeout → fail fast as SERVICE_UNAVAILABLE (HTTP 503)
-    // so the caller gets a fast, retryable response instead of bleeding 30s
-    // while Traefik gives up. 503 is the correct transient-brownout code
-    // (was TIMEOUT/408 under tRPC v10, which lacked SERVICE_UNAVAILABLE).
-    if (err instanceof MeiliCallTimeoutError) {
-      throw new TRPCError({
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'Image search is temporarily overloaded — please retry.',
-        cause: err,
+    // Any genuinely-transient upstream failure → fail fast as SERVICE_UNAVAILABLE
+    // (HTTP 503) so the caller gets a fast, retryable response instead of
+    // bleeding 30s while Traefik gives up. 503 is the correct transient-brownout
+    // code (was TIMEOUT/408 under tRPC v10, which lacked SERVICE_UNAVAILABLE).
+    //
+    // `isTransientMeiliError` covers BOTH civitai's own wrapper errors
+    // (MeiliCallTimeoutError / MeilisearchFetchError, from the raw-fetch path)
+    // AND the meilisearch-js SDK's own error types (MeiliSearchCommunicationError /
+    // MeiliSearchApiError / MeiliSearchTimeOutError) that the feed library's
+    // INNER SDK calls throw on a slow/shed backend — the latter were the
+    // dominant remaining HTTP-500 source on /api/v1/images (a 408/503 from the
+    // proxy surfaced as a bare {"error":"Request Timeout"} / {"error":"Service
+    // Unavailable"} 500 because they're not TRPCErrors and fell through the
+    // generic 500 mapping). 4xx-other (malformed filter / auth) and any other
+    // Error are NOT transient and still bubble as-is (→ their real status).
+    if (isTransientMeiliError(err)) {
+      // Keep a transient Meili outage ATTRIBUTABLE (see getAllImagesIndex). The
+      // reclassified 503 would otherwise land in the unlabeled 503 bucket;
+      // mirror the post-filter loop's {route, reason} so a Meili brownout is
+      // queryable. `iteration:'0'` — this is the single feed-search call.
+      meiliFetchFailfastTotal.inc({
+        route: 'getImagesFromFeedSearch',
+        iteration: '0',
+        reason: failfastReasonForTransientError(err),
       });
-    }
-    // 408/5xx from the upstream (or feeds-proxy) → retryable 503, same as
-    // the circuit-open path above. Keeps this path symmetric with
-    // getAllImagesIndex even though it's REST-only and historically low-error.
-    if (err instanceof MeilisearchFetchError && isFailfastStatus(err.status)) {
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
-        cause: err,
+        cause: err as Error,
       });
     }
     // TRANSIENT ClickHouse transport blip in the metric-enrichment leg of

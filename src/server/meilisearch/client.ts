@@ -149,12 +149,150 @@ export function failfastReasonForStatus(status: number): MeiliFetchFailfastReaso
 
 /**
  * Does `status` qualify for graceful-break treatment by post-filter / future
- * iteration-loop callers? True for 408 (upstream-side timeout) and any 5xx
- * (upstream unavailable). False for 4xx-other (real client error — must
- * bubble up so we don't silently hide malformed-filter / auth bugs).
+ * iteration-loop callers? True for the genuinely-transient upstream statuses:
+ *   - 408 Request Timeout      (upstream-side timeout)
+ *   - 429 Too Many Requests    (feeds-proxy / backend rate-limit shed)
+ *   - any 5xx                  (502 bad gateway, 503 unavailable, 504 gateway
+ *                               timeout — upstream brownout)
+ * False for 4xx-other (400 malformed filter, 401/403 auth — real client error,
+ * must bubble up so we don't silently hide app bugs as retryable).
+ *
+ * 429 is included because a transient upstream rate-limit is retryable (the
+ * caller can back off and re-issue), exactly like a 503 shed; mapping it to a
+ * hard 500 instead would (a) inflate the 500 SLO with a transient and (b) deny
+ * the client/CF the Retry-After it would honor. It is NOT the public endpoint's
+ * own paging 429 (that is returned directly by the handler before search runs).
  */
 export function isFailfastStatus(status: number): boolean {
-  return status === 408 || status >= 500;
+  return status === 408 || status === 429 || status >= 500;
+}
+
+/**
+ * Classify an error caught from a Meilisearch SDK call (or the civitai-feeds
+ * proxy in front of it) as a genuinely-transient upstream failure that should
+ * surface to the client as a retryable 503, NOT a hard 500.
+ *
+ * Motivation — the dominant remaining HTTP-500 source on /api/v1/images (the
+ * heavy per-user `sort=Most Reactions&period=Year&withMeta=true` feed): the
+ * REST feed path runs through event-engine-common's `populatedQuery`, whose
+ * inner meilisearch-js (0.33) calls throw the SDK's OWN error types on a slow /
+ * shed backend — NOT civitai's `MeilisearchFetchError` / `MeiliCallTimeoutError`
+ * (those wrap only the direct raw-fetch path). When the proxy/backend returns
+ * 408 ("Request Timeout") or 503 ("Service Unavailable") with an empty body,
+ * the SDK throws `MeiliSearchCommunicationError` with `message = statusText`
+ * and `statusCode = <http status>`; a parseable error body yields a
+ * `MeiliSearchApiError` carrying `httpStatus`. Neither is a TRPCError, so they
+ * fell through every existing 503 branch and the handler mapped them to a
+ * hard 500 ({"error":"Request Timeout"} / {"error":"Service Unavailable"}).
+ *
+ * Matches (all genuinely transient):
+ *   - civitai wrappers: `MeiliCallTimeoutError` (local timer / circuit-open),
+ *     `MeilisearchFetchError` with a failfast status (raw-fetch path)
+ *   - SDK `MeiliSearchCommunicationError` (TRANSPORT layer — empty / non-JSON
+ *     body) with a transient `.statusCode` (408/429/5xx, INCLUDING an
+ *     empty-body 500) OR a network-level failure (`.code`/`.errno` set, no
+ *     HTTP status — ECONNREFUSED / ECONNRESET / fetch-abort against the
+ *     backend, i.e. the backend was unreachable, not a logic bug)
+ *   - SDK `MeiliSearchApiError` (STRUCTURED JSON error body) ONLY for the
+ *     unambiguously-transient gateway statuses `502/503/504`. A JSON-body 500
+ *     is a DETERMINISTIC Meili-internal error, NOT a brownout, so it is NOT
+ *     masked as transient — it bubbles as a hard 500. (The transport-layer
+ *     500 above IS transient; the distinction is Api(JSON) vs Communication.)
+ *   - SDK `MeiliSearchTimeOutError` (name-matched; class isn't re-exported on
+ *     the path we instanceof against) — the SDK's own wait/timeout
+ *   - the raw-fetch local-deadline error (message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE)
+ *
+ * Deliberately NARROW: a 4xx-other (400 malformed filter, 401/403 auth) or any
+ * other Error returns false and continues to surface as its real status (500
+ * for a genuine app bug). We do NOT swallow non-transient failures as 503.
+ */
+export function isTransientMeiliError(error: unknown): boolean {
+  if (error instanceof MeiliCallTimeoutError) return true;
+  if (error instanceof MeilisearchFetchError) return isFailfastStatus(error.status);
+
+  if (typeof error !== 'object' || error === null) return false;
+  const e = error as {
+    name?: string;
+    message?: string;
+    statusCode?: number; // MeiliSearchCommunicationError (HTTP responses)
+    httpStatus?: number; // MeiliSearchApiError
+    code?: string; // MeiliSearchCommunicationError (network errors) / MeiliSearchApiError
+    errno?: string; // MeiliSearchCommunicationError (network errors)
+  };
+
+  // The raw-fetch path's local-deadline abort (see fetchDocumentsAbortable).
+  if (e.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE) return true;
+
+  if (e.name === 'MeiliSearchTimeOutError') return true;
+
+  if (e.name === 'MeiliSearchApiError') {
+    // A `MeiliSearchApiError` is thrown ONLY when Meili returned a STRUCTURED
+    // JSON error body (a server-side response the SDK could parse). For a 5xx
+    // that strongly implies a DETERMINISTIC Meili-internal error (e.g. an index
+    // in a bad state, a malformed-internal-query 500) rather than a transient
+    // brownout — so a JSON-body 500 MUST surface as a hard 500, not be masked
+    // as a retryable 503 (the masking-guard the audit flagged). Only the
+    // unambiguously-transient gateway statuses count here:
+    //   502 Bad Gateway / 503 Service Unavailable / 504 Gateway Timeout.
+    // (408/429 don't arrive as a parseable Meili JSON ApiError in practice; if
+    // they ever do, they fall through to false → bubble as their real status,
+    // which is the safe direction — we never widen masking.)
+    return typeof e.httpStatus === 'number' && [502, 503, 504].includes(e.httpStatus);
+  }
+
+  if (e.name === 'MeiliSearchCommunicationError') {
+    // Transport-layer failure: empty / non-JSON body (the SDK couldn't parse a
+    // structured error), which is the genuinely-transient case. Here a 500
+    // (empty-body "Internal Server Error" / proxy 500) IS treated as transient
+    // — `isFailfastStatus` covers 408/429/5xx including 500.
+    // HTTP response → has a numeric statusCode (408/429/5xx are transient).
+    if (typeof e.statusCode === 'number') return isFailfastStatus(e.statusCode);
+    // Network-level failure (no HTTP status, but a node errno/code) → the
+    // backend was unreachable / the socket dropped, which is transient.
+    return typeof e.errno === 'string' || typeof e.code === 'string';
+  }
+
+  return false;
+}
+
+/**
+ * Map a transient Meili error (one that `isTransientMeiliError` returned true
+ * for) onto a `MeiliFetchFailfastReason` label, so the `meiliFetchFailfastTotal`
+ * counter stays attributable when a service catch reclassifies it to a 503.
+ * Reuses `failfastReasonForStatus` for the status-bearing SDK errors (so the
+ * label vocabulary matches the post-filter loop exactly) and adds the
+ * timeout / network buckets the status helper doesn't cover:
+ *   - civitai `MeiliCallTimeoutError` (wrapper timer / circuit-open) →
+ *     `upstream-circuit-open`
+ *   - `MeiliSearchTimeOutError` + the raw-fetch local-deadline message →
+ *     `local-timeout`
+ *   - network-level CommunicationError (errno/code, no HTTP status) →
+ *     `upstream-error`
+ * Caller contract: only pass errors `isTransientMeiliError(error)` accepts.
+ */
+export function failfastReasonForTransientError(error: unknown): MeiliFetchFailfastReason {
+  if (error instanceof MeiliCallTimeoutError) return MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN;
+  if (error instanceof MeilisearchFetchError) return failfastReasonForStatus(error.status);
+
+  if (typeof error === 'object' && error !== null) {
+    const e = error as {
+      name?: string;
+      message?: string;
+      statusCode?: number;
+      httpStatus?: number;
+    };
+    if (e.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE) return 'local-timeout';
+    if (e.name === 'MeiliSearchTimeOutError') return 'local-timeout';
+    if (e.name === 'MeiliSearchApiError' && typeof e.httpStatus === 'number') {
+      return failfastReasonForStatus(e.httpStatus);
+    }
+    if (e.name === 'MeiliSearchCommunicationError' && typeof e.statusCode === 'number') {
+      return failfastReasonForStatus(e.statusCode);
+    }
+  }
+  // Network-level CommunicationError (no HTTP status) / anything else transient
+  // that didn't match a more specific bucket → the generic upstream-error label.
+  return 'upstream-error';
 }
 
 /**
