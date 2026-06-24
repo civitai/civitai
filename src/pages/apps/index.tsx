@@ -1,7 +1,6 @@
 import {
   Button,
   Center,
-  Container,
   Grid,
   Group,
   Loader,
@@ -18,7 +17,7 @@ import { useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppBlockCard } from '~/components/Apps/AppBlockCard';
-import { AppsSubNav } from '~/components/Apps/AppsSubNav';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
@@ -211,15 +210,11 @@ export default function AppsPage() {
   return (
     <>
       <Meta title="Apps — Civitai" description="Civitai App Blocks marketplace" deIndex />
-      <Container size="xl" py="md">
+      {/* Outer chrome (Container + sticky sub-nav) is supplied by AppsPageLayout;
+          the marketplace title/subtitle were removed for the page-apps-only
+          launch (the sub-nav supplies the wayfinding), so no header props. */}
+      <AppsPageLayout size="xl">
         <Stack gap="md">
-          {/* Second-level navigation — the nav dropdown exposes a single
-              `/apps` entry; the per-surface links (installed / submit /
-              revenue / review / submissions) live here, conditionally shown.
-              The marketplace title/subtitle were removed for the page-apps-only
-              launch (the sub-nav supplies the wayfinding). */}
-          <AppsSubNav />
-
           <Group gap="md" align="end">
             <TextInput
               label="Search"
@@ -327,7 +322,7 @@ export default function AppsPage() {
             </>
           )}
         </Stack>
-      </Container>
+      </AppsPageLayout>
     </>
   );
 }

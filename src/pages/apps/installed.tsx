@@ -5,7 +5,6 @@ import {
   Button,
   Card,
   Center,
-  Container,
   Divider,
   Group,
   Loader,
@@ -14,7 +13,6 @@ import {
   Table,
   Tabs,
   Text,
-  Title,
   Tooltip,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
@@ -32,7 +30,7 @@ import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
-import { AppsSubNav } from '~/components/Apps/AppsSubNav';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { groupSubscriptionsByApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
 import { useHiddenBlockList, unhideBlock } from '~/components/AppBlocks/hiddenBlocks';
@@ -768,27 +766,22 @@ export default function InstalledAppsPage() {
   return (
     <>
       <Meta title="Installed Apps — Civitai" deIndex />
-      <Container size="lg" py="md">
-        <Stack gap="lg">
-          <AppsSubNav />
-          <Group justify="space-between">
-            <Stack gap={2}>
-              <Title order={2}>Your installed apps</Title>
-              <Text size="sm" c="dimmed">
-                Manage where Civitai App Blocks show up across the site.
-              </Text>
-            </Stack>
-            <Button
-              component={Link}
-              href="/apps"
-              leftSection={<IconPlus size={16} />}
-              variant="default"
-            >
-              Browse marketplace
-            </Button>
-          </Group>
-
-          <Tabs defaultValue="subscriptions" variant="outline">
+      <AppsPageLayout
+        size="lg"
+        title="Your installed apps"
+        subtitle="Manage where Civitai App Blocks show up across the site."
+        actions={
+          <Button
+            component={Link}
+            href="/apps"
+            leftSection={<IconPlus size={16} />}
+            variant="default"
+          >
+            Browse marketplace
+          </Button>
+        }
+      >
+        <Tabs defaultValue="subscriptions" variant="outline">
             <Tabs.List>
               <Tabs.Tab value="subscriptions" leftSection={<IconPlugConnected size={14} />}>
                 Installs
@@ -855,9 +848,8 @@ export default function InstalledAppsPage() {
                 <HiddenBlocksPanel />
               </Stack>
             </Tabs.Panel>
-          </Tabs>
-        </Stack>
-      </Container>
+        </Tabs>
+      </AppsPageLayout>
     </>
   );
 }

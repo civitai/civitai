@@ -5,7 +5,6 @@ import {
   Button,
   Card,
   Code,
-  Container,
   Group,
   Modal,
   NumberInput,
@@ -18,7 +17,6 @@ import {
   Tabs,
   Text,
   Textarea,
-  Title,
   Tooltip,
 } from '@mantine/core';
 import {
@@ -39,7 +37,7 @@ import type { MouseEvent } from 'react';
 import { useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
-import { AppsSubNav } from '~/components/Apps/AppsSubNav';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   SCOPE_DESCRIPTIONS,
@@ -194,52 +192,45 @@ export default function ReviewQueuePage() {
   return (
     <>
       <Meta title="App publish-request queue — Civitai" deIndex />
-      <Container size="xl" py="xl">
-        <Stack gap="lg">
-          <AppsSubNav />
-          <Stack gap={4}>
-            <Title order={2}>App publish-request queue</Title>
-            <Text c="dimmed" size="sm">
-              Moderator review for App Blocks. Pending queue is oldest-first;
-              history tabs are newest-first.
-            </Text>
-          </Stack>
+      <AppsPageLayout
+        size="xl"
+        title="App publish-request queue"
+        subtitle="Moderator review for App Blocks. Pending queue is oldest-first; history tabs are newest-first."
+      >
+        <Tabs
+          value={tab}
+          onChange={(v) => {
+            if (isTabValue(v)) setTab(v);
+          }}
+          keepMounted={false}
+        >
+          <Tabs.List>
+            <Tabs.Tab value="pending" leftSection={<IconClock size={14} />}>
+              Pending
+            </Tabs.Tab>
+            <Tabs.Tab value="approved" leftSection={<IconCheck size={14} />}>
+              Approved
+            </Tabs.Tab>
+            <Tabs.Tab value="rejected" leftSection={<IconX size={14} />}>
+              Rejected
+            </Tabs.Tab>
+          </Tabs.List>
 
-          <Tabs
-            value={tab}
-            onChange={(v) => {
-              if (isTabValue(v)) setTab(v);
-            }}
-            keepMounted={false}
-          >
-            <Tabs.List>
-              <Tabs.Tab value="pending" leftSection={<IconClock size={14} />}>
-                Pending
-              </Tabs.Tab>
-              <Tabs.Tab value="approved" leftSection={<IconCheck size={14} />}>
-                Approved
-              </Tabs.Tab>
-              <Tabs.Tab value="rejected" leftSection={<IconX size={14} />}>
-                Rejected
-              </Tabs.Tab>
-            </Tabs.List>
+          <Tabs.Panel value="pending" pt="md">
+            <PendingTab
+              onSelect={(r) => setSelected({ request: r, mode: 'pending' })}
+            />
+          </Tabs.Panel>
 
-            <Tabs.Panel value="pending" pt="md">
-              <PendingTab
-                onSelect={(r) => setSelected({ request: r, mode: 'pending' })}
-              />
-            </Tabs.Panel>
+          <Tabs.Panel value="approved" pt="md">
+            <ApprovedTab onSelect={(r) => setSelected({ request: r, mode: 'approved' })} />
+          </Tabs.Panel>
 
-            <Tabs.Panel value="approved" pt="md">
-              <ApprovedTab onSelect={(r) => setSelected({ request: r, mode: 'approved' })} />
-            </Tabs.Panel>
-
-            <Tabs.Panel value="rejected" pt="md">
-              <RejectedTab onSelect={(r) => setSelected({ request: r, mode: 'rejected' })} />
-            </Tabs.Panel>
-          </Tabs>
-        </Stack>
-      </Container>
+          <Tabs.Panel value="rejected" pt="md">
+            <RejectedTab onSelect={(r) => setSelected({ request: r, mode: 'rejected' })} />
+          </Tabs.Panel>
+        </Tabs>
+      </AppsPageLayout>
 
       <ReviewModal
         selection={selected}
