@@ -14,6 +14,10 @@ export interface HubLoginUrlOptions {
   /** Account-LINKING intent ("Connect <provider>") — the hub requires an active session and attaches the
    *  provider to the current user instead of logging in. */
   link?: boolean;
+  /** Request the provider's incremental scope (Discord Linked Roles — `role_connections.write`). Only the
+   *  /discord/link-role flow sets this; plain login/connect never does, so a normal login can't fail on the
+   *  Linked-Roles scope. Pairs with `link: true`. */
+  linkRoles?: boolean;
   /** Forwarded to the provider's authorization URL, e.g. `select_account` to force its account chooser. */
   prompt?: string;
   /** Why the user was sent to log in (e.g. `image-gen`). The hub tracks tracked reasons as a `LoginRedirect`
@@ -28,6 +32,7 @@ export function hubLoginUrl(hubBase: string, opts: HubLoginUrlOptions = {}): str
   const url = new URL(opts.provider ? `/login/${opts.provider}` : '/login', hubBase);
   if (opts.returnUrl) url.searchParams.set('returnUrl', opts.returnUrl);
   if (opts.link) url.searchParams.set('link', 'true');
+  if (opts.linkRoles) url.searchParams.set('roles', 'true');
   if (opts.prompt) url.searchParams.set('prompt', opts.prompt);
   if (opts.reason) url.searchParams.set('reason', opts.reason);
   if (opts.error) url.searchParams.set('error', opts.error);

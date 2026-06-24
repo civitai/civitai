@@ -22,7 +22,12 @@ describe('hubLoginUrl', () => {
 
   it('threads link / prompt / reason', () => {
     const url = new URL(
-      hubLoginUrl(HUB, { provider: 'google', link: true, prompt: 'select_account', reason: 'image-gen' })
+      hubLoginUrl(HUB, {
+        provider: 'google',
+        link: true,
+        prompt: 'select_account',
+        reason: 'image-gen',
+      })
     );
     expect(url.pathname).toBe('/login/google');
     expect(url.searchParams.get('link')).toBe('true');
@@ -30,9 +35,16 @@ describe('hubLoginUrl', () => {
     expect(url.searchParams.get('reason')).toBe('image-gen');
   });
 
+  it('sets roles=true for the linked-roles intent (incremental Discord scope), paired with link', () => {
+    const url = new URL(hubLoginUrl(HUB, { provider: 'discord', link: true, linkRoles: true }));
+    expect(url.searchParams.get('link')).toBe('true');
+    expect(url.searchParams.get('roles')).toBe('true');
+  });
+
   it('omits unset params', () => {
     const url = new URL(hubLoginUrl(HUB, { provider: 'github' }));
     expect(url.searchParams.has('link')).toBe(false);
+    expect(url.searchParams.has('roles')).toBe(false);
     expect(url.searchParams.has('prompt')).toBe(false);
     expect(url.searchParams.has('reason')).toBe(false);
     expect(url.searchParams.has('returnUrl')).toBe(false);

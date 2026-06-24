@@ -28,12 +28,13 @@ type Props = {
 };
 
 // Re-authorize Discord for the CURRENT user via the hub's account-LINKING flow, routed through the MAIN SERVER
-// (/api/auth/connect builds the hub link URL with the server's AUTH_JWT_ISSUER — no client hub env var). The hub
-// requests the `role_connections.write` scope and stores the GRANTED scope on the Account, so on return this
-// page's getServerSideProps sees it and pushes the role-connection metadata.
+// (/api/auth/connect builds the hub link URL with the server's AUTH_JWT_ISSUER — no client hub env var). `roles=true`
+// opts into the INCREMENTAL `role_connections.write` scope (Linked Roles) — requested ONLY here, never at plain
+// login/connect. The hub stores the GRANTED scope on the Account, so on return this page's getServerSideProps
+// sees it and pushes the role-connection metadata.
 function connectDiscord() {
   if (typeof window === 'undefined') return;
-  window.location.href = `/api/auth/connect?provider=discord&returnUrl=${encodeURIComponent(
+  window.location.href = `/api/auth/connect?provider=discord&roles=true&returnUrl=${encodeURIComponent(
     '/discord/link-role'
   )}`;
 }

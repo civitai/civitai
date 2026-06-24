@@ -43,5 +43,13 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals, getCli
   // so it needs no round-trip cookie like returnUrl/sync/link do.
   const prompt = url.searchParams.get('prompt');
 
-  redirect(302, buildAuthorizeUrl(provider, { redirectUri, state, codeChallenge, prompt }));
+  // `roles=true` opts into the provider's incremental scope (Discord Linked Roles — role_connections.write).
+  // The actual scope is server-defined (provider.incrementalScope); this is just the boolean intent. Used by
+  // the /discord/link-role flow, which sends it alongside link=true.
+  const incremental = url.searchParams.get('roles') === 'true';
+
+  redirect(
+    302,
+    buildAuthorizeUrl(provider, { redirectUri, state, codeChallenge, prompt, incremental })
+  );
 };
