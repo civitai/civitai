@@ -1612,6 +1612,20 @@ export const REDIS_SYS_KEYS = {
      */
     BUZZ_CAP: 'system:blocks:buzz-cap',
     /**
+     * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
+     * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one
+     * bounds a single USER's daily Buzz SPEND; this one bounds the daily
+     * platform-funded BOUNTY (in USD cents) accrued toward a single APP across
+     * ALL viewers, so a Sybil ring of many accounts can't funnel unbounded
+     * bounty at one author. Integer counter (cents), keyed
+     * `system:blocks:bounty-cap:${appBlockId}:${UTC-day}`, INCRBY'd by each
+     * row's accrued `app_owner_share_cents` at spend-attribution write time.
+     * TTL is set on first write so the per-window key self-expires. DORMANT
+     * today: the share is 0 until the payout rail (#2605) flips spendSharePct>0,
+     * so the counter never moves and the cap never clamps.
+     */
+    BOUNTY_CAP: 'system:blocks:bounty-cap',
+    /**
      * Per-API-key (fallback per-IP) rate-limit counter for the token-authed
      * bundle-submit endpoint (`/api/v1/blocks/submit-version`). `SET NX EX` +
      * `INCR` in one MULTI (same atomic pattern as the retool endpoint) so the
