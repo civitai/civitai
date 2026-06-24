@@ -10,6 +10,7 @@ import {
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
 import { trpcProcedureDuration } from '~/server/prom/client';
+import { maybeLogTrpcSlow } from '~/server/logging/trpc-slow-log';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -221,30 +222,63 @@ const TRPC_PROCEDURE_METRICS = process.env.TRPC_PROCEDURE_METRICS === 'true';
 // The actual procedure-timing logic. Generic over `next`'s return type so it
 // stays transparent to tRPC's MiddlewareResult typing. Kept standalone so the
 // ALS label wrapper can be applied ONLY when the long-task labels tier is armed.
-function runRecordProcedureDuration<T>(path: string, next: () => Promise<T>): Promise<T> {
-  if (!TRPC_PROCEDURE_METRICS) return next();
-  const end = trpcProcedureDuration.startTimer({ path });
-  return (async () => {
-    try {
-      return await next();
-    } finally {
-      end();
+//
+// Always times the procedure (one `performance.now()` delta) so the always-on,
+// threshold-gated slow-procedure log (`maybeLogTrpcSlow`) can NAME the offender on
+// the next latency-tail spike — the gap that the OPT-IN `trpcProcedureDuration`
+// metric leaves open by default. The metric histogram stays opt-in
+// (`TRPC_PROCEDURE_METRICS`, high-cardinality); the slow log is free below
+// threshold (a numeric compare) and emits at most one log line per slow procedure.
+// A `.then()` on the existing promise (not an async IIFE) keeps the added overhead
+// to a single callback + timestamp per procedure.
+function runRecordProcedureDuration<T>(
+  path: string,
+  type: string,
+  userId: number | undefined,
+  next: () => Promise<T>
+): Promise<T> {
+  const metricsEnd = TRPC_PROCEDURE_METRICS ? trpcProcedureDuration.startTimer({ path }) : undefined;
+  const startedAt = performance.now();
+  return next().then(
+    (result) => {
+      // tRPC MiddlewareResult: { ok: true; ... } | { ok: false; error: TRPCError }.
+      // Read defensively so T stays transparent and a shape change can't throw.
+      const r = result as unknown as { ok?: boolean; error?: { code?: string } };
+      const ok = r?.ok !== false;
+      const errorCode = r?.ok === false ? r.error?.code : undefined;
+      metricsEnd?.();
+      maybeLogTrpcSlow({ path, type, durationMs: performance.now() - startedAt, ok, errorCode, userId });
+      return result;
+    },
+    (err) => {
+      metricsEnd?.();
+      maybeLogTrpcSlow({
+        path,
+        type,
+        durationMs: performance.now() - startedAt,
+        ok: false,
+        errorCode: err instanceof TRPCError ? err.code : undefined,
+        userId,
+      });
+      throw err;
     }
-  })();
+  );
 }
 
-const recordProcedureDuration = t.middleware(({ path, next }) => {
+const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
+  const userId = ctx.user?.id;
   // When the long-task LABELS tier is armed, wrap the procedure in an ALS store
   // tagged with its path so a detected synchronous block can be attributed to the
   // running procedure. This costs one AsyncLocalStorage.run() per request — the
-  // async_hooks context-propagation cost — so it is OFF by default. When it is
-  // not armed (the disarmed default AND base-armed-without-labels), this is the
-  // ORIGINAL code path: a direct call with NO wrapper, NO extra closure, NO
-  // microtask hop. Independent of TRPC_PROCEDURE_METRICS.
+  // async_hooks context-propagation cost — so it is OFF by default. When it is not
+  // armed (the disarmed default), the procedure-timing path is a single `.then()`
+  // on the existing promise. Independent of TRPC_PROCEDURE_METRICS.
   if (longTaskLabelsArmed) {
-    return runWithLongTaskLabel(`trpc:${path}`, () => runRecordProcedureDuration(path, next));
+    return runWithLongTaskLabel(`trpc:${path}`, () =>
+      runRecordProcedureDuration(path, type, userId, next)
+    );
   }
-  return runRecordProcedureDuration(path, next);
+  return runRecordProcedureDuration(path, type, userId, next);
 });
 
 export const publicProcedure = t.procedure

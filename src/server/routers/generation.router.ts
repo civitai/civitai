@@ -37,13 +37,9 @@ import {
   setWorkflowDefinition,
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import * as z from 'zod';
-import { getGenerationEngines } from '~/server/services/generation/engines';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const generationRouter = router({
-  getGenerationEngines: publicProcedure
-    .meta({ requiredScope: TokenScope.AIServicesRead })
-    .query(() => getGenerationEngines()),
   getWorkflowDefinitions: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(({ ctx }) =>

@@ -4,7 +4,6 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import type { UploadType } from '~/server/common/enums';
-import { bytesToKB } from '~/utils/number-helpers';
 
 import { useCatchNavigationStore } from './catch-navigation.store';
 
@@ -208,7 +207,14 @@ export const useS3UploadStore = create<StoreProps>()(
           const trackedFile = {
             ...pendingTrackedFile,
             file,
-            size: file.size ? bytesToKB(file.size) : 0,
+            // `size` is tracked in BYTES throughout the store: progress math
+            // (uploaded/size) and updateProgress() both use raw bytes, and every
+            // consumer of the upload-result `size` (FilesProvider, MultiFileInputUpload)
+            // applies bytesToKB() itself. Initializing in KB here let a stale KB value
+            // leak into the upload result when progress never overwrote it before
+            // completion, causing the consumer to divide by 1024 a second time and
+            // store ModelFile.sizeKB as MB (~1024x too small). Keep it bytes.
+            size: file.size ?? 0,
             uuid,
             meta,
             name: file.name,

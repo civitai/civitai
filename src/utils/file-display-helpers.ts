@@ -63,6 +63,7 @@ export const comfyFileTypeLabels: Record<string, string> = {
   CLIPVision: 'CLIP Vision',
   Workflow: 'Workflow',
   Upscaler: 'Upscale Model',
+  'Enhancement LoRA': 'Enhancement LoRA',
 };
 
 /**
@@ -121,6 +122,7 @@ export function filterFileTypeByExtension(value: ModelFileType, fileName: string
   switch (extension) {
     case 'ckpt':
     case 'safetensors':
+    case 'sft':
     case 'pt':
     case 'gguf':
     case 'onnx':
@@ -135,14 +137,16 @@ export function filterFileTypeByExtension(value: ModelFileType, fileName: string
         'ControlNet',
         'Upscaler',
         'Text Encoder',
+        'Enhancement LoRA',
+        'Other',
       ].includes(value);
     case 'zip':
-      return ['Training Data', 'Archive', 'Model', 'Workflow'].includes(value);
+      return ['Training Data', 'Archive', 'Model', 'Workflow', 'Other'].includes(value);
     case 'yml':
     case 'yaml':
     case 'json':
     case 'txt':
-      return ['Config', 'Text Encoder', 'Workflow'].includes(value);
+      return ['Config', 'Text Encoder', 'Workflow', 'Other'].includes(value);
     default:
       return true;
   }

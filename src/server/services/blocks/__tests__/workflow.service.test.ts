@@ -211,34 +211,55 @@ describe('buildTextToImageInput', () => {
     },
   };
   // checkpointVersionId === body.modelVersionId for Checkpoint-bound installs
-  // (resolveBlockCheckpoint returns the model as its own anchor). For LoRAs
-  // the resolver returns a different versionId — represented here.
+  // (resolveBlockCheckpoint returns the model as its own anchor). For LoRAs the
+  // resolver returns a different versionId — represented here. `checkpointBaseModel`
+  // is the RESOLVED checkpoint's baseModel (drives the graph `ecosystem`).
   const checkpointResolved = {
     baseModel: 'SDXL 1.0',
     modelType: 'Checkpoint',
     checkpointVersionId: 99,
+    checkpointBaseModel: 'SDXL 1.0',
   };
   const sd1CheckpointResolved = {
     baseModel: 'SD 1.5',
     modelType: 'Checkpoint',
     checkpointVersionId: 99,
+    checkpointBaseModel: 'SD 1.5',
   };
   const fluxLoraResolved = {
     baseModel: 'Flux.1 D',
     modelType: 'LORA',
     checkpointVersionId: 691639,
+    checkpointBaseModel: 'Flux.1 D',
   };
 
+  // New shape: the function now emits the flat generation-graph `input`
+  // (`{ workflow, ecosystem, model, resources, prompt, ...top-level params }`)
+  // rather than the legacy `{ params, resources }` GenerateImageSchema. The
+  // checkpoint is the `model` anchor; `resources` holds ONLY additional networks
+  // (LoRAs). Dimensions live on `aspectRatio` (raw here — the graph's
+  // aspectRatio node snaps them to a canonical bucket at validation time).
+
+  it('derives the graph ecosystem from the resolved checkpoint baseModel', () => {
+    expect(buildTextToImageInput(baseBody as never, checkpointResolved).ecosystem).toBe('SDXL');
+    expect(buildTextToImageInput(baseBody as never, sd1CheckpointResolved).ecosystem).toBe('SD1');
+    expect(buildTextToImageInput(baseBody as never, fluxLoraResolved).ecosystem).toBe('Flux1');
+  });
+
   it('fills SDXL/Flux-class defaults (1024x1024) when the block omits dimensions', () => {
-    const out = buildTextToImageInput(baseBody as never, checkpointResolved);
-    expect(out.params.width).toBe(1024);
-    expect(out.params.height).toBe(1024);
+    const out = buildTextToImageInput(baseBody as never, checkpointResolved) as {
+      aspectRatio: { width: number; height: number };
+    };
+    expect(out.aspectRatio.width).toBe(1024);
+    expect(out.aspectRatio.height).toBe(1024);
   });
 
   it('fills SD1/SD2 defaults (512x512) for older base models', () => {
-    const out = buildTextToImageInput(baseBody as never, sd1CheckpointResolved);
-    expect(out.params.width).toBe(512);
-    expect(out.params.height).toBe(512);
+    const out = buildTextToImageInput(baseBody as never, sd1CheckpointResolved) as {
+      aspectRatio: { width: number; height: number };
+    };
+    expect(out.aspectRatio.width).toBe(512);
+    expect(out.aspectRatio.height).toBe(512);
   });
 
   it('respects block-supplied width/height when set', () => {
@@ -246,35 +267,36 @@ describe('buildTextToImageInput', () => {
       ...baseBody,
       params: { ...baseBody.params, width: 768, height: 1152 },
     };
-    const out = buildTextToImageInput(body as never, checkpointResolved);
-    expect(out.params.width).toBe(768);
-    expect(out.params.height).toBe(1152);
+    const out = buildTextToImageInput(body as never, checkpointResolved) as {
+      aspectRatio: { value: string; width: number; height: number };
+    };
+    expect(out.aspectRatio.width).toBe(768);
+    expect(out.aspectRatio.height).toBe(1152);
+    expect(out.aspectRatio.value).toBe('768:1152');
   });
 
   it('defaults sampler/steps and pins workflow to txt2img', () => {
     const out = buildTextToImageInput(baseBody as never, checkpointResolved);
-    expect(out.params.sampler).toBe('Euler');
-    expect(out.params.steps).toBe(25);
-    expect(out.params.workflow).toBe('txt2img');
-    expect(out.params.priority).toBe('low');
-    expect(out.params.draft).toBe(false);
-    expect(out.params.sourceImage).toBeNull();
+    expect(out.sampler).toBe('Euler');
+    expect(out.steps).toBe(25);
+    expect(out.workflow).toBe('txt2img');
+    expect(out.priority).toBe('low');
+    expect(out.prompt).toBe('a cat');
   });
 
-  it('passes the bound model alone when it is itself a Checkpoint', () => {
+  it('puts the bound Checkpoint at `model` with no additional resources', () => {
     const out = buildTextToImageInput(baseBody as never, checkpointResolved);
-    expect(out.resources).toEqual([{ id: 99, strength: 1 }]);
+    expect(out.model).toEqual({ id: 99 });
+    expect(out.resources).toEqual([]);
   });
 
-  it('prepends the resolved checkpoint when the bound model is a LoRA', () => {
+  it('anchors `model` on the resolved checkpoint and pushes the bound LoRA into resources', () => {
     const out = buildTextToImageInput(baseBody as never, fluxLoraResolved);
-    // Resolver-supplied anchor first, then the LoRA the block is bound to.
     // The resolver picks 691639 for Flux1 family (publisher default in this
-    // fixture); the host doesn't second-guess what the resolver returned.
-    expect(out.resources).toEqual([
-      { id: 691639, strength: 1 },
-      { id: 99, strength: 1 },
-    ]);
+    // fixture); the host doesn't second-guess what the resolver returned. The
+    // bound LoRA (body model 99) is the only additional network.
+    expect(out.model).toEqual({ id: 691639 });
+    expect(out.resources).toEqual([{ id: 99, strength: 1 }]);
   });
 
   it('forwards block-supplied sampler/steps/seed overrides', () => {
@@ -283,13 +305,13 @@ describe('buildTextToImageInput', () => {
       params: { ...baseBody.params, sampler: 'DPM++ 2M Karras', steps: 30, seed: 12345 },
     };
     const out = buildTextToImageInput(body as never, checkpointResolved);
-    expect(out.params.sampler).toBe('DPM++ 2M Karras');
-    expect(out.params.steps).toBe(30);
-    expect(out.params.seed).toBe(12345);
+    expect(out.sampler).toBe('DPM++ 2M Karras');
+    expect(out.steps).toBe(30);
+    expect(out.seed).toBe(12345);
   });
 
   // ── Page-LoRA (Increment 1): fan additionalResources into `resources` ──────
-  it('fans N additional LoRAs into the resources array after the checkpoint anchor', () => {
+  it('fans N additional LoRAs into the resources array (checkpoint stays on `model`)', () => {
     const body = {
       ...baseBody,
       additionalResources: [
@@ -299,8 +321,8 @@ describe('buildTextToImageInput', () => {
       ],
     };
     const out = buildTextToImageInput(body as never, checkpointResolved);
+    expect(out.model).toEqual({ id: 99 });
     expect(out.resources).toEqual([
-      { id: 99, strength: 1 }, // checkpoint anchor
       { id: 201, strength: 0.8 },
       { id: 202, strength: 1.2 },
       { id: 203, strength: -0.5 },
@@ -311,34 +333,32 @@ describe('buildTextToImageInput', () => {
     const body = {
       ...baseBody,
       additionalResources: [
-        { modelVersionId: 99, strength: 0.7 }, // same as the checkpoint anchor
+        { modelVersionId: 99, strength: 0.7 }, // same as the checkpoint anchor (`model`)
         { modelVersionId: 201, strength: 1 },
       ],
     };
     const out = buildTextToImageInput(body as never, checkpointResolved);
-    // The checkpoint stays as the single anchor at strength 1 (no double-bill /
-    // double-strength), and only the genuinely-new LoRA is appended.
-    expect(out.resources).toEqual([
-      { id: 99, strength: 1 },
-      { id: 201, strength: 1 },
-    ]);
+    // The checkpoint stays as the `model` anchor (no double-bill); only the
+    // genuinely-new LoRA lands in resources.
+    expect(out.model).toEqual({ id: 99 });
+    expect(out.resources).toEqual([{ id: 201, strength: 1 }]);
   });
 
-  it('does NOT duplicate the bound-model anchor when the body model is a LoRA', () => {
-    // fluxLoraResolved: checkpointVersionId=691639 (resolver anchor),
-    // body.modelVersionId=99 is itself a LoRA pushed as the second entry. An
+  it('does NOT duplicate the bound-model network when the body model is a LoRA', () => {
+    // fluxLoraResolved: checkpointVersionId=691639 (resolver anchor → `model`),
+    // body.modelVersionId=99 is itself a LoRA pushed into resources. An
     // additionalResource repeating either id must be deduped.
     const body = {
       ...baseBody,
       additionalResources: [
-        { modelVersionId: 691639, strength: 0.5 }, // == checkpoint anchor
-        { modelVersionId: 99, strength: 0.5 }, // == bound-model anchor
+        { modelVersionId: 691639, strength: 0.5 }, // == checkpoint anchor (`model`)
+        { modelVersionId: 99, strength: 0.5 }, // == bound-model network
         { modelVersionId: 300, strength: 0.9 }, // genuinely new
       ],
     };
     const out = buildTextToImageInput(body as never, fluxLoraResolved);
+    expect(out.model).toEqual({ id: 691639 });
     expect(out.resources).toEqual([
-      { id: 691639, strength: 1 },
       { id: 99, strength: 1 },
       { id: 300, strength: 0.9 },
     ]);
@@ -353,15 +373,13 @@ describe('buildTextToImageInput', () => {
       ],
     };
     const out = buildTextToImageInput(body as never, checkpointResolved);
-    expect(out.resources).toEqual([
-      { id: 99, strength: 1 },
-      { id: 201, strength: 0.3 }, // first occurrence kept
-    ]);
+    expect(out.resources).toEqual([{ id: 201, strength: 0.3 }]); // first occurrence kept
   });
 
-  it('is byte-identical when additionalResources is absent (no behaviour change)', () => {
+  it('emits no additional resources when additionalResources is absent', () => {
     const out = buildTextToImageInput(baseBody as never, checkpointResolved);
-    expect(out.resources).toEqual([{ id: 99, strength: 1 }]);
+    expect(out.model).toEqual({ id: 99 });
+    expect(out.resources).toEqual([]);
   });
 });
 

@@ -32,7 +32,7 @@ import {
   IconLayersLinked,
 } from '@tabler/icons-react';
 import { isEqual, startCase } from 'lodash-es';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
@@ -458,7 +458,7 @@ export function Files() {
                 <li>Users&apos; preferences will auto-select the best match for their setup</li>
                 <li>Link to existing models when the component already exists on Civitai</li>
                 <li>
-                  Only create a new <strong>version</strong> when you&apos;ve actually
+                  Only create a new <strong>version</strong>{' '}when you&apos;ve actually
                   trained/updated the model
                 </li>
               </ul>
@@ -548,6 +548,24 @@ function LinkedComponentCard({
   );
 }
 
+/**
+ * Whether a file still needs required metadata before it's publishable — mirrors
+ * the server metadata refinements: a type for everything, quant type for GGUF,
+ * and size + precision for Checkpoint model weights. Drives the "Needs info" badge
+ * so auto-uploaded files that couldn't be auto-detected get flagged instead of
+ * silently persisting incomplete.
+ */
+function isMissingRequiredInfo(file: FileFromContextProps): boolean {
+  if (!file.type) return true;
+  const isGguf = file.name.toLowerCase().endsWith('.gguf');
+  const isCheckpointModel = file.type === 'Model' && file.modelType === 'Checkpoint';
+  // GGUF always needs a quant type; Checkpoint weights additionally need a size
+  // regardless of extension (precision is the only field GGUF Checkpoints skip).
+  if (isGguf) return !file.quantType || (isCheckpointModel && !file.size);
+  if (isCheckpointModel) return !file.size || !file.fp;
+  return false;
+}
+
 // Compact horizontal file card
 function FileCard({
   data: versionFile,
@@ -628,7 +646,7 @@ function FileCard({
             <Text size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
               {versionFile.name}
             </Text>
-            {!versionFile.type && !versionFile.isUploading && (
+            {isMissingRequiredInfo(versionFile) && (
               <Badge color="yellow" variant="light" size="xs">
                 Needs info
               </Badge>
@@ -649,30 +667,22 @@ function FileCard({
             />
           )}
         </div>
-        {!versionFile.isUploading && (
-          <Group gap="xs" wrap="nowrap" align="flex-end">
-            <FileEditForm file={versionFile} fileTypes={fileTypes} index={index} />
-            {!trackedFile && (
-              <LegacyActionIcon
-                color="red"
-                onClick={() => handleRemoveFile(versionFile.uuid)}
-                loading={deleteFileMutation.isPending}
-                style={{ marginTop: 18 }}
-              >
-                <IconTrash size={16} />
-              </LegacyActionIcon>
-            )}
-          </Group>
-        )}
-        {versionFile.isUploading && !trackedFile && (
-          <LegacyActionIcon
-            color="red"
-            onClick={() => handleRemoveFile(versionFile.uuid)}
-            loading={deleteFileMutation.isPending}
-          >
-            <IconTrash size={16} />
-          </LegacyActionIcon>
-        )}
+        {/* Selects render during upload too, so the user can set type/precision/
+            size/quant while the bytes upload — the save reads the latest via
+            filesRef. */}
+        <Group gap="xs" wrap="nowrap" align="flex-end">
+          <FileEditForm file={versionFile} fileTypes={fileTypes} index={index} />
+          {!trackedFile && (
+            <LegacyActionIcon
+              color="red"
+              onClick={() => handleRemoveFile(versionFile.uuid)}
+              loading={deleteFileMutation.isPending}
+              style={{ marginTop: 18 }}
+            >
+              <IconTrash size={16} />
+            </LegacyActionIcon>
+          )}
+        </Group>
       </Group>
       {trackedFile && (
         <Card.Section>
@@ -782,15 +792,24 @@ function TrackedFileStatus({
     case 'error':
       return (
         <Group justify="space-between" wrap="nowrap" gap="xs" style={{ width: '100%' }}>
-          <Group gap="xs">
-            <IconBan color="red" />
-            <Text size="sm">Failed to upload</Text>
+          <Group gap="xs" wrap="nowrap">
+            <IconAlertTriangle color="red" style={{ flexShrink: 0 }} />
+            <Text size="sm" c="red">
+              Upload failed and couldn&apos;t recover automatically. Retry, or remove the file.
+            </Text>
           </Group>
-          <Tooltip label="Retry upload" position="left">
-            <LegacyActionIcon color="blue" onClick={() => retry(versionFileUuid)}>
-              <IconRefresh />
-            </LegacyActionIcon>
-          </Tooltip>
+          <Group gap={4} wrap="nowrap">
+            <Tooltip label="Retry upload" position="left">
+              <LegacyActionIcon color="blue" onClick={() => retry(versionFileUuid)}>
+                <IconRefresh />
+              </LegacyActionIcon>
+            </Tooltip>
+            <Tooltip label="Remove file" position="left">
+              <LegacyActionIcon color="red" onClick={handleRemoveFile}>
+                <IconTrash />
+              </LegacyActionIcon>
+            </Tooltip>
+          </Group>
         </Group>
       );
     case 'success':
@@ -855,6 +874,14 @@ function FileEditForm({
     },
   });
 
+  // When the file gets persisted (auto-start assigns an id on upload completion),
+  // rebase the dirty-comparison baseline so Save/Reset don't show spuriously for
+  // a file the user never manually edited.
+  useEffect(() => {
+    if (versionFile.id) setInitialFile({ ...versionFile });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versionFile.id]);
+
   const handleSave = () => {
     const valid = validationCheck();
     if (valid && versionFile.id) {
@@ -917,11 +944,9 @@ function FileEditForm({
           value={versionFile.type ?? null}
           onChange={(value) => {
             const newType = value as ModelFileType | null;
-            updateFile(versionFile.uuid, {
-              type: newType,
-              size: null,
-              fp: null,
-            });
+            // Preserve precision/size when relabeling the file type — re-picking
+            // them every time is tedious and they're usually still correct.
+            updateFile(versionFile.uuid, { type: newType });
           }}
         />
       </div>
@@ -1033,49 +1058,41 @@ function FileEditForm({
 }
 
 export function UploadStepActions({ onBackClick, onNextClick }: ActionProps) {
-  const { startUpload, files, hasPending, usageControl } = useFilesContext();
+  const { files, usageControl } = useFilesContext();
   const isExternalGeneration = usageControl === ModelUsageControl.ExternalGeneration;
+
+  // Files upload automatically on drop, so "Next" just navigates forward. We
+  // intentionally let the user proceed to the post step WITHOUT files so they can
+  // prep the post before (or while) uploading — the version can't actually be
+  // published until files exist, which is enforced at publish time in the post
+  // step. Warn here so it isn't a surprise.
+  const handleNext = () => {
+    const hasUploadingOrUploaded = files.some((file) => file.isUploading || !!file.id);
+
+    if (!isExternalGeneration && !hasUploadingOrUploaded) {
+      return openConfirmModal({
+        title: (
+          <Group gap="xs">
+            <IconAlertTriangle color="gold" />
+            <Text size="lg">No files uploaded</Text>
+          </Group>
+        ),
+        children:
+          "You haven't uploaded any files yet. You can continue and set up your post now, but you won't be able to publish this version until at least one file has uploaded.",
+        labels: { cancel: 'Cancel', confirm: 'Continue' },
+        onConfirm: onNextClick,
+      });
+    }
+
+    onNextClick();
+  };
 
   return (
     <Group mt="xl" justify="flex-end">
       <Button variant="default" onClick={onBackClick}>
         Back
       </Button>
-      <Button
-        onClick={async () => {
-          const allFailed = files.every(
-            (file) => file.status === 'aborted' || file.status === 'error'
-          );
-          const showConfirmModal = !isExternalGeneration && (!files.length || allFailed);
-
-          if (showConfirmModal) {
-            return openConfirmModal({
-              title: (
-                <Group gap="xs">
-                  <IconAlertTriangle color="gold" />
-                  <Text size="lg">Missing files</Text>
-                </Group>
-              ),
-              children:
-                'You have not uploaded any files. You can continue without files, but you will not be able to publish your model. Are you sure you want to continue?',
-              labels: { cancel: 'Cancel', confirm: 'Continue' },
-              onConfirm: onNextClick,
-            });
-          }
-
-          if (hasPending) {
-            try {
-              await startUpload();
-            } catch (error) {
-              // Avoid going to next step when thrown error
-              return;
-            }
-          }
-          return onNextClick();
-        }}
-      >
-        Next
-      </Button>
+      <Button onClick={handleNext}>Next</Button>
     </Group>
   );
 }

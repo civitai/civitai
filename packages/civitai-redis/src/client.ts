@@ -6,6 +6,7 @@ import { RESP_TYPES } from 'redis';
 import slugify from 'slugify';
 import { loadRedisEnv, type RedisConfig } from './env';
 import { withCommandDeadline } from './deadline';
+import { withClusterRoutingRetry } from './cluster-routing-retry';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
 import {
@@ -241,6 +242,13 @@ const clusterRefreshIntervals = new Map<string, ReturnType<typeof setInterval>>(
  * Trigger topology rediscovery on a cluster client.
  * Uses internal _slots.rediscover() method - this is undocumented but stable.
  * See: https://github.com/redis/node-redis/issues/2806
+ *
+ * FIRE-AND-FORGET: this kicks off `_slots.rediscover(...).catch(...)` but RETURNS `undefined` (it
+ * does NOT return/await the rediscover promise). So a caller that `await`s it (the routing-retry
+ * guard's `rediscover` hook) resolves immediately — the rediscover runs in the background and the
+ * guard's BACKOFF is what gives the in-flight, single-flighted slot-map refresh time to settle
+ * before the retry. Intentional: node-redis single-flights rediscover, so a best-effort nudge +
+ * backoff is the right shape; returning the promise here would change the retry timing/blast radius.
  */
 function triggerTopologyRediscovery(clusterClient: any, reason: string) {
   try {
@@ -516,6 +524,9 @@ type RedisMetricsBridge = {
   // undefined until prom/client loads server-side; callers null-check.
   redisSelfHealReconnectCounter?: { inc: (labels: { trigger: string }) => void };
   redisMetricWriteFailSoftCounter?: { labels: (labels: { op: string }) => { inc: () => void } };
+  // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
+  // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
+  redisRoutingRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
 };
 
 function getRedisMetrics(): RedisMetricsBridge | undefined {
@@ -606,17 +617,51 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
       metrics?.redisCommandsInflight.dec(labels);
       metrics?.redisCommandDuration.observe(labels, (Date.now() - start) / 1000);
     };
-    let result: any;
-    try {
-      result = original.apply(this, args);
-    } catch (err) {
-      // Synchronous throw (e.g. ClientClosedError) — still account for it.
-      done();
-      throw err;
-    }
+
+    // Run the underlying command, capturing a SYNCHRONOUS routing throw (the getSlotRandomNode
+    // TypeError fires synchronously during node selection BEFORE dispatch) as a rejection so the
+    // retry guard below sees it uniformly with an async reject. Defined as a thunk so the routing
+    // guard can re-invoke it for a retry — safe because a transient routing error means the
+    // command NEVER reached a node (no double-execution).
+    const runOnce = () =>
+      new Promise<any>((resolve, reject) => {
+        try {
+          resolve(original.apply(this, args));
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+    // Retry-after-rediscover for the TRANSIENT cluster-routing throw — CLUSTER client ONLY (the
+    // topology-churn 500 wave #2665 doesn't cover; see cluster-routing-retry.ts). Sits AROUND
+    // node selection, INSIDE the single inflight inc/dec + deadline accounting: the retried
+    // attempts are SEQUENTIAL (await), never overlapping, so this is ONE inflight unit regardless
+    // of retries (no double-count, done() fires exactly once). The sys client (wrapWithDeadline=
+    // false) is left exactly as before — no routing guard, no deadline. Default-on; the
+    // REDIS_CLUSTER_ROUTING_RETRY_ENABLED=false kill-switch passes runOnce() straight through.
+    // The `rediscover` hook is a FIRE-AND-FORGET nudge: triggerTopologyRediscovery returns
+    // undefined (it does not await the rediscover promise), so the guard's backoff — not this call —
+    // is what gives the in-flight slot-map refresh time to settle before the retry.
+    const executed: Promise<any> = wrapWithDeadline
+      ? withClusterRoutingRetry(runOnce, {
+          // Env-driven knobs (a pure module can't read env itself; client.ts injects config here).
+          enabled: config.clusterRoutingRetryEnabled,
+          maxRetries: config.clusterRoutingRetryMax,
+          backoffMs: [config.clusterRoutingRetryBackoffMs, config.clusterRoutingRetryBackoffMaxMs],
+          rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),
+          onResult: (result) => getRedisMetrics()?.redisRoutingRetryCounter?.inc({ result }),
+        })
+      : runOnce();
+
+    // Bound the cluster command so a never-settling `_execute` still reaches done()
+    // (gauge dec'd, handler unparked). No-op when the deadline env is 0/disabled or for
+    // the sys client (wrapWithDeadline=false). withCommandDeadline reaps the late
+    // rejection of the orphaned command so it can't surface as an unhandledRejection.
+    // Layered OUTSIDE the routing retry so the 15s deadline bounds the WHOLE retried sequence
+    // (the bounded ~50ms+150ms backoff is well inside it).
     const settled = wrapWithDeadline
-      ? withCommandDeadline(Promise.resolve(result), deadlineMs, recordClusterDeadlineHit)
-      : Promise.resolve(result);
+      ? withCommandDeadline(executed, deadlineMs, recordClusterDeadlineHit)
+      : executed;
     return settled.finally(done);
   };
 }
@@ -1251,6 +1296,20 @@ export const REDIS_SYS_KEYS = {
     EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
     // Cumulative Buzz-spend cap counter, keyed `system:blocks:buzz-cap:${userId}:${appBlockId}:${day}`.
     BUZZ_CAP: 'system:blocks:buzz-cap',
+    /**
+     * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
+     * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one
+     * bounds a single USER's daily Buzz SPEND; this one bounds the daily
+     * platform-funded BOUNTY (in USD cents) accrued toward a single APP across
+     * ALL viewers, so a Sybil ring of many accounts can't funnel unbounded
+     * bounty at one author. Integer counter (cents), keyed
+     * `system:blocks:bounty-cap:${appBlockId}:${UTC-day}`, INCRBY'd by each
+     * row's accrued `app_owner_share_cents` at spend-attribution write time.
+     * TTL is set on first write so the per-window key self-expires. DORMANT
+     * today: the share is 0 until the payout rail (#2605) flips spendSharePct>0,
+     * so the counter never moves and the cap never clamps.
+     */
+    BOUNTY_CAP: 'system:blocks:bounty-cap',
     // Per-API-key (fallback per-IP) rate-limit counter for the token-authed bundle-submit
     // endpoint (`/api/v1/blocks/submit-version`). On sysRedis like the retool limiter + BUZZ_CAP.
     SUBMIT_RATE_LIMIT: 'system:blocks:submit-rate-limit',

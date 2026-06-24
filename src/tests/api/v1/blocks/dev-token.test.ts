@@ -133,11 +133,29 @@ const NONMOD_SESSION = {
   subject: { type: 'apiKey', id: 43 },
   tokenScope: TokenScope.Full,
 };
+// OAuth token WITHOUT AppBlocksSubmit. `TokenScope.Full` deliberately EXCLUDES
+// AppBlocksSubmit (bit 25), so a "full" OAuth consent still fails the mint gate.
 const OAUTH_MOD_SESSION = {
   user: { id: OWNER_ID, isModerator: true },
   apiKeyId: 99,
   subject: { type: 'oauth', id: 'client_abc' },
   tokenScope: TokenScope.Full,
+};
+// OAuth token WITH AppBlocksSubmit + AIServicesWrite (the civitai-cli client
+// provisioned with both): mints AND keeps the budgeted-spend scope.
+const OAUTH_SUBMIT_SPEND_SESSION = {
+  user: { id: OWNER_ID, isModerator: true },
+  apiKeyId: 100,
+  subject: { type: 'oauth', id: 'civitai-cli' },
+  tokenScope: TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AIServicesWrite,
+};
+// OAuth token WITH AppBlocksSubmit but WITHOUT AIServicesWrite: mints (read/
+// estimate dev token) but the uniform spend ceiling STRIPS ai:write:budgeted.
+const OAUTH_SUBMIT_NOSPEND_SESSION = {
+  user: { id: OWNER_ID, isModerator: true },
+  apiKeyId: 101,
+  subject: { type: 'oauth', id: 'civitai-cli' },
+  tokenScope: TokenScope.UserRead | TokenScope.AppBlocksSubmit,
 };
 // A personal key deliberately scoped WITHOUT AIServicesWrite (e.g. read-only).
 const READONLY_MOD_SESSION = {
@@ -206,16 +224,56 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(mockSign).not.toHaveBeenCalled();
   });
 
-  it('403 when the key is OAuth-client-issued (personal key only)', async () => {
+  it('403 when an OAuth token LACKS the AppBlocksSubmit scope', async () => {
+    // TokenScope.Full excludes AppBlocksSubmit, so even a "full" OAuth consent
+    // is rejected at the mint gate (mirrors submit-version's OAuth gate).
     mockGetSession.mockResolvedValueOnce(OAUTH_MOD_SESSION);
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
-    expect((res._getJSONData() as { message: string }).message).toContain('personal API key');
+    const msg = (res._getJSONData() as { message: string }).message;
+    // Actionable: tells the dev both how to fix it (personal key) and the OAuth path.
+    expect(msg).toContain('personal API key');
+    expect(msg).toContain('App Blocks submit scope');
     expect(mockSign).not.toHaveBeenCalled();
     // Rejected before flag / db / sign — no leak.
     expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
     expect(mockAppBlockFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('200: OAuth token WITH AppBlocksSubmit + AIServicesWrite mints a spend-capable dev token (self-bound sub)', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_SPEND_SESSION);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign).toHaveBeenCalledTimes(1);
+    const arg = mockSign.mock.calls[0][0];
+    // Self-bound subject = the OAuth user (never settable from the body).
+    expect(arg.userId).toBe(OWNER_ID);
+    // AppBlocksSubmit gated the MINT; AIServicesWrite kept the spend scope.
+    expect(arg.scopes).toContain('ai:write:budgeted');
+    expect(arg.buzzBudget).toBe(50);
+    // Every other belt unchanged: forced SFW + page ctx.
+    expect(arg.maxBrowsingLevel).toBe(SFW);
+    expect(arg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
+  });
+
+  it('200: OAuth token WITH AppBlocksSubmit but WITHOUT AIServicesWrite mints, but the uniform spend ceiling STRIPS ai:write:budgeted', async () => {
+    // Proves AppBlocksSubmit is the MINT gate, NOT a spend grant — spend stays
+    // uniformly gated by AIServicesWrite for OAuth exactly as for personal keys.
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_NOSPEND_SESSION);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const arg = mockSign.mock.calls[0][0];
+    expect(arg.userId).toBe(OWNER_ID);
+    // Read/catalog/storage scopes survive; the budgeted-spend scope is gone.
+    expect(arg.scopes).toEqual(['apps:storage:read', 'models:read:self', 'user:read:self']);
+    expect(arg.scopes).not.toContain('ai:write:budgeted');
+    // No spend scope → no budget claim.
+    expect(arg.buzzBudget).toBeUndefined();
+    const out = res._getJSONData() as Record<string, unknown>;
+    expect(out.buzzBudget).toBeUndefined();
   });
 
   it('403 when the resolved user is NOT a moderator', async () => {
@@ -255,21 +313,28 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(mockSign).not.toHaveBeenCalled();
   });
 
-  it('404 when the app is not found', async () => {
+  it('404 with the bare "App not found" message when the app truly does not exist', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockAppBlockFindUnique.mockResolvedValueOnce(null);
     const { req, res } = authPost({ appBlockId: 'apb_missing' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(404);
+    expect((res._getJSONData() as { message: string }).message).toBe('App not found');
     expect(mockSign).not.toHaveBeenCalled();
   });
 
-  it('404 when the app is not approved', async () => {
+  it('404 with an ACTIONABLE no-live-deployment message when an OWNED app is not approved (pending)', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockAppBlockFindUnique.mockResolvedValueOnce(pageApp({ status: 'pending' }));
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(404);
+    const msg = (res._getJSONData() as { message: string }).message;
+    // NOT the misleading bare message...
+    expect(msg).not.toBe('App not found');
+    // ...but an actionable one naming the block + pointing at dev:harness.
+    expect(msg).toContain("block 'my-page-app' has no live deployment");
+    expect(msg).toContain('dev:harness');
     expect(mockSign).not.toHaveBeenCalled();
   });
 
@@ -281,6 +346,10 @@ describe('POST /api/v1/blocks/dev-token', () => {
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(404);
+    // A non-owner gets the bare, indistinguishable message even though the row
+    // exists and is approved — the actionable status detail is owner-only, so
+    // ownership/approval-state is never a probe oracle.
+    expect((res._getJSONData() as { message: string }).message).toBe('App not found');
     expect(mockSign).not.toHaveBeenCalled();
   });
 
@@ -401,36 +470,44 @@ describe('POST /api/v1/blocks/dev-token', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
     const arg = mockSign.mock.calls[0][0];
-    expect(arg.scopes).toEqual(['apps:storage:write', 'models:read:self']);
+    // user:read:self is FORCE-GRANTED post-clamp (dev:live viewer identity).
+    expect(arg.scopes).toEqual(['apps:storage:write', 'models:read:self', 'user:read:self']);
     expect(arg.scopes).not.toContain('social:tip:self');
     expect(arg.scopes).not.toContain('block:settings:read');
   });
 
-  it('STRIPS a requested scope that is NOT in the app approved set', async () => {
+  it('STRIPS a requested OTHER scope that is NOT in the app approved set (user:read:self is force-granted)', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
-    // App approves only models:read:self; the body requests user:read:self too.
+    // App approves only models:read:self; the body requests ai:write:budgeted too
+    // (which is NOT approved → stripped). user:read:self is force-granted post-
+    // clamp regardless of approval, so it is present even though the app did not
+    // approve it.
     mockAppBlockFindUnique.mockResolvedValueOnce(
       pageApp({ approvedScopes: ['models:read:self'] })
     );
     const { req, res } = authPost({
       appBlockId: 'apb_abc',
-      scopes: ['models:read:self', 'user:read:self'],
+      scopes: ['models:read:self', 'ai:write:budgeted'],
     });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
     const arg = mockSign.mock.calls[0][0];
-    expect(arg.scopes).toEqual(['models:read:self']);
+    // ai:write:budgeted stripped (not approved); user:read:self force-granted.
+    expect(arg.scopes).toEqual(['models:read:self', 'user:read:self']);
+    expect(arg.scopes).not.toContain('ai:write:budgeted');
   });
 
-  it('narrows scopes to the requested subset', async () => {
+  it('narrows scopes to the requested subset, but user:read:self is force-granted regardless of body narrowing', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     const { req, res } = authPost({
       appBlockId: 'apb_abc',
-      scopes: ['models:read:self'], // subset of approved
+      scopes: ['models:read:self'], // subset of approved — excludes user:read:self
     });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
-    expect(mockSign.mock.calls[0][0].scopes).toEqual(['models:read:self']);
+    // Body narrowing dropped everything but models:read:self; user:read:self is
+    // force-granted POST-clamp, so it survives the narrowing.
+    expect(mockSign.mock.calls[0][0].scopes).toEqual(['models:read:self', 'user:read:self']);
   });
 
   it('CAPS an over-cap requested budget to the dev cap', async () => {
@@ -465,7 +542,10 @@ describe('POST /api/v1/blocks/dev-token', () => {
     const { req, res } = authPost({ appBlockId: 'apb_abc' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
-    expect(mockSign.mock.calls[0][0].scopes).toEqual(['apps:storage:read']);
+    // models:read:self dropped by the 0 OAuth ceiling; apps:storage:read survives
+    // (SKIP_OAUTH_CHECK); user:read:self is force-granted POST-clamp so it is
+    // present even though the ceiling would otherwise drop it.
+    expect(mockSign.mock.calls[0][0].scopes).toEqual(['apps:storage:read', 'user:read:self']);
   });
 
   it('STRIPS ai:write:budgeted when the personal key lacks AIServicesWrite', async () => {
@@ -482,5 +562,46 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(arg.buzzBudget).toBeUndefined();
     const out = res._getJSONData() as Record<string, unknown>;
     expect(out.buzzBudget).toBeUndefined();
+  });
+
+  it('PAGE-MONEY case: OAuth dev token for an app that approves ONLY ai:write:budgeted, with a credential lacking AIServicesWrite, still mints user:read:self', async () => {
+    // The exact root-cause scenario: the page-money scaffold manifest declares
+    // ONLY ai:write:budgeted, so user:read:self is never in approvedScopes and
+    // would never be minted by the clamp → /blocks/me 403 → dev:live falls back
+    // to an anonymous viewer. The OAuth credential here also lacks AIServicesWrite,
+    // so ai:write:budgeted is stripped by the spend ceiling. The token therefore
+    // carries NO spend scope, but user:read:self IS present (force-granted) so the
+    // harness can resolve the viewer identity.
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_NOSPEND_SESSION);
+    mockAppBlockFindUnique.mockResolvedValueOnce(
+      pageApp({ approvedScopes: ['ai:write:budgeted'] })
+    );
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const arg = mockSign.mock.calls[0][0];
+    // Identity present; no spend (credential lacked AIServicesWrite).
+    expect(arg.scopes).toEqual(['user:read:self']);
+    expect(arg.scopes).not.toContain('ai:write:budgeted');
+    expect(arg.buzzBudget).toBeUndefined();
+    // Self-bound subject = the caller — so /blocks/me only ever returns this user.
+    expect(arg.userId).toBe(OWNER_ID);
+    const out = res._getJSONData() as Record<string, unknown>;
+    expect(out.scopes).toEqual(['user:read:self']);
+  });
+
+  it('FORCE-GRANTS user:read:self even when the app approves ONLY ai:write:budgeted (personal-key page-money app)', async () => {
+    // Same page-money manifest, but via a personal key that CAN spend
+    // (AIServicesWrite). user:read:self is added regardless, alongside the spend
+    // scope the app approved.
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockAppBlockFindUnique.mockResolvedValueOnce(
+      pageApp({ approvedScopes: ['ai:write:budgeted'] })
+    );
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const arg = mockSign.mock.calls[0][0];
+    expect(arg.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
   });
 });

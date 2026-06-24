@@ -10,6 +10,7 @@ import {
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,
   redisMetricWriteFailSoftCounter,
+  redisRoutingRetryCounter,
 } from '@civitai/telemetry/client';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
@@ -32,6 +33,7 @@ export * from '@civitai/telemetry/client';
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,
   redisMetricWriteFailSoftCounter,
+  redisRoutingRetryCounter,
 };
 
 // pgPoolAcquireHistogram is registered in @civitai/db's db-helpers, not here, to avoid

@@ -42,13 +42,28 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  * The "local-manifest" mode (no approved row) is the higher-risk Phase 4 work
  * and is NOT implemented.
  *
- * ## Auth — PERSONAL API key only (Bearer), resolved via the same
- * `getSessionFromBearerToken` path the `/api/v1/*` REST routes use.
- *  - Personal key (not cookie) → there is NO ambient credential to ride, so
+ * ## Auth — Bearer, resolved via the same `getSessionFromBearerToken` path the
+ * `/api/v1/*` REST routes use. TWO credential shapes accepted:
+ *  - PERSONAL API key (not cookie) → there is NO ambient credential to ride, so
  *    CSRF is moot and we accept the dev's localhost origin WITHOUT relaxing the
  *    prod mint's CORS. (scope doc §4.2 — the deliberately-different dev path.)
- *  - OAuth-client-issued tokens are REJECTED here: the dev path is personal-key
- *    only; an OAuth dev-token would need its own scope + sign-off (out of scope).
+ *  - OAuth-client-issued token → accepted ONLY if it carries the dedicated
+ *    `TokenScope.AppBlocksSubmit` bit. This MIRRORS EXACTLY the OAuth gate the
+ *    token-authenticated submit route (`api/v1/blocks/submit-version`) applies
+ *    (`session.subject?.type === 'oauth'` ⇒ require `AppBlocksSubmit`). It
+ *    unblocks `civitai login` (device-flow OAuth) for the dev:live harness:
+ *    `oauthClient.create` is open to any logged-in user, so an arbitrary OAuth
+ *    token a mod authorized for some unrelated scope must NOT mint a dev token
+ *    (consent escalation). `AppBlocksSubmit` is opt-in, off-by-default, and
+ *    EXCLUDED from `TokenScope.Full`, so only a client that explicitly lists it
+ *    in `allowedScopes` AND a user who consented can reach here (the first-party
+ *    `civitai-cli` client is provisioned with it). An OAuth token WITHOUT the
+ *    bit → 403 with an actionable message.
+ *  - The SPEND scope is UNIFORM across both shapes: `ai:write:budgeted` survives
+ *    the clamp ONLY if the bearer credential carries `AIServicesWrite` (the
+ *    personal-key ceiling at step 7f). An OAuth token whose `civitai-cli` consent
+ *    lacks `AIServicesWrite` therefore mints a read/estimate dev token with NO
+ *    spend scope — `AppBlocksSubmit` is NOT special-cased to grant spend.
  *
  * ## Gates / hard caps (every one server-side + fail-closed — scope doc §4.1)
  *  - MOD-ONLY (`isAppBlocksEnabled({ user })` + `user.isModerator`) — match the
@@ -172,13 +187,39 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   }
   const user = session.user as SessionUser;
 
-  // 1b. PERSONAL key only. `getSessionFromBearerToken` sets subject.type ===
-  // 'oauth' for OAuth-client-issued tokens; the dev path accepts only a
-  // user-type personal key (an OAuth dev-token would need its own scope +
-  // sign-off — out of scope for this PR).
+  // 1b. Token-type gate — accept EITHER a personal API key OR a scoped OAuth
+  // token, MIRRORING EXACTLY the submit-version route's OAuth gate
+  // (src/pages/api/v1/blocks/submit-version.ts:134-142). `getSessionFromBearerToken`
+  // sets `subject = { type: 'oauth', id: clientId }` IFF the resolved `ApiKey`
+  // row has a non-null `clientId` (minted for an OAuth client a user authorized),
+  // and `{ type: 'apiKey', id }` for a user-type personal-access key.
+  //
+  //  - PERSONAL key (`subject.type !== 'oauth'`): pass unchanged — the dev's own
+  //    key mints as before. The mod + flag + ownership gates still apply.
+  //
+  //  - OAUTH token (`subject.type === 'oauth'`): pass ONLY if the token carries
+  //    the dedicated `TokenScope.AppBlocksSubmit` bit. `oauthClient.create` is an
+  //    open `protectedProcedure`, so an arbitrary OAuth token a mod authorized
+  //    for an unrelated scope must NOT mint a dev token (consent escalation).
+  //    `AppBlocksSubmit` is opt-in, off-by-default, and EXCLUDED from
+  //    `TokenScope.Full`, so only a client that lists it in `allowedScopes` and a
+  //    user who consented can reach here (the first-party `civitai-cli` client is
+  //    provisioned with it). This unblocks `civitai login` for the dev:live
+  //    harness. Spend is gated SEPARATELY by the AIServicesWrite ceiling (step
+  //    7f) — `AppBlocksSubmit` grants the right to MINT, never the right to SPEND.
+  //
+  // The mod + not-banned gate (step 2) applies to BOTH paths. Ordered after auth
+  // (401) and before the mod gate so an un-scoped OAuth token gets 403, not a leak.
   if (session.subject?.type === 'oauth') {
-    res.status(403).json({ message: 'dev-token requires a personal API key' });
-    return;
+    if (!Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AppBlocksSubmit)) {
+      res.status(403).json({
+        message:
+          'dev-token needs a personal API key (full scope, create at ' +
+          'civitai.com/user/account) OR an OAuth login whose token carries the ' +
+          'App Blocks submit scope; real Buzz spend additionally needs AI Services scope',
+      });
+      return;
+    }
   }
 
   // 2. MOD gate — App Blocks is mod-only pre-GA. The runtime spend belt already
@@ -268,16 +309,29 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       app: { select: { allowedScopes: true, userId: true } },
     },
   });
-  // 404 (never leak which) for missing / not-approved / not-owned. Ownership is
-  // checked AFTER existence but we collapse them into one 404 so a non-owner
-  // can't probe which appBlockIds exist.
-  if (!block || block.status !== 'approved' || !block.app) {
+  // 404 (never leak which) for a row that doesn't exist or isn't owned by the
+  // caller. We check EXISTENCE+OWNERSHIP first (collapsed into one bare 404 so a
+  // non-owner can't probe which appBlockIds exist OR their approval state), and
+  // ONLY THEN — for a row the caller demonstrably owns — surface the actionable
+  // not-yet-live message. A non-owner therefore still gets the indistinguishable
+  // bare 404 regardless of the app's status (no probe oracle); approval-state
+  // detail is revealed exclusively to the confirmed owner.
+  if (!block || !block.app || block.app.userId !== user.id) {
     res.status(404).json({ message: 'App not found' });
     return;
   }
-  if (block.app.userId !== user.id) {
-    // Not the owner → 404, not 403, so ownership isn't a probe oracle.
-    res.status(404).json({ message: 'App not found' });
+  // Owned, but no LIVE deployment yet (the dev-token mint resolves a DEPLOYED
+  // block instance — deployState: live, i.e. an `approved` AppBlock row). A
+  // brand-new app — even right after a successful submit (status: pending) —
+  // legitimately exists and is owned here but has nothing live to mint against.
+  // Return an ACTIONABLE message instead of the misleading bare "App not found".
+  if (block.status !== 'approved') {
+    res.status(404).json({
+      message:
+        `block '${block.blockId}' has no live deployment — dev:live requires an ` +
+        `approved + deployed version (deployState: live). Until your first ` +
+        `version is live, validate locally with dev:harness (mock).`,
+    });
     return;
   }
 
@@ -323,18 +377,54 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     granted = granted.filter((s: string) => want.has(s));
   }
 
-  //   f) PERSONAL-KEY CEILING. The minted block token's spend capability must be
-  //      a SUBSET of what the dev's own personal API key authorizes — a key
-  //      lacking AIServicesWrite (e.g. a read-only key) cannot mint a
-  //      Buzz-spending dev token. Mirrors the /api/v1/me tokenScope posture
-  //      (me.ts:24). Read/catalog/storage scopes are unaffected; only the
-  //      budgeted-spend scope is gated. Keys default to Full, so this is a
-  //      no-op for a normal key and a tightening only for a deliberately-narrow
-  //      one. Strip (no error), consistent with every other clamp step.
+  //   f) BEARER-CREDENTIAL SPEND CEILING (UNIFORM across personal key AND OAuth).
+  //      The minted block token's spend capability must be a SUBSET of what the
+  //      bearer credential itself authorizes — a credential lacking AIServicesWrite
+  //      (a read-only personal key, OR an OAuth consent that didn't grant
+  //      AIServicesWrite) cannot mint a Buzz-spending dev token. `session.tokenScope`
+  //      is the resolved bitmask for BOTH shapes (personal-key ApiKey.tokenScope,
+  //      or the OAuth-issued token's scope). Mirrors the /api/v1/me tokenScope
+  //      posture (me.ts:24). Read/catalog/storage scopes are unaffected; only the
+  //      budgeted-spend scope is gated. This is DELIBERATELY uniform —
+  //      `AppBlocksSubmit` is the MINT gate (step 1b), `AIServicesWrite` is the
+  //      SPEND gate, and the two are never conflated. Personal keys default to
+  //      Full (carries AIServicesWrite), so this is a no-op for a normal key and a
+  //      tightening only for a narrow key or an OAuth consent without AI Services.
+  //      Strip (no error), consistent with every other clamp step.
   const keyCanSpend = Flags.hasFlag(session.tokenScope ?? 0, TokenScope.AIServicesWrite);
   if (!keyCanSpend) {
     granted = granted.filter((s: string) => s !== 'ai:write:budgeted');
   }
+
+  //   g) FORCE-GRANT `user:read:self` (UNCONDITIONAL, post-clamp). The local
+  //      harness's `dev:live` mode resolves the dev's OWN viewer identity by
+  //      calling `GET /api/v1/blocks/me`, which is gated on `user:read:self`.
+  //      That scope is only minted if it survives the app-manifest/approved-
+  //      snapshot + OAuth-bitmask clamp above — and the page-money scaffold
+  //      manifest declares ONLY `ai:write:budgeted`, so `user:read:self` is
+  //      never in `approvedScopes` and never minted → /blocks/me 403s → the
+  //      harness falls back to an anonymous viewer. This bypasses that clamp
+  //      for this ONE read scope so `dev:live` can resolve the viewer.
+  //
+  //      SAFE because:
+  //        - `user:read:self` is a READ scope that returns ONLY the self-bound
+  //          caller's own profile — no third-party data, no write, no spend. The
+  //          `/blocks/me` handler resolves `userId` from `claims.sub` and reads
+  //          exactly that user (me.ts), and `enforceContextBinding` rejects
+  //          `user:read:self` on an `anon` sub (block-scope.middleware.ts). The
+  //          dev token's `sub` is ALWAYS `user:<callerId>` (self-bound, set from
+  //          the authenticated caller at sign time below — never from the body),
+  //          so this can only ever return the CALLER's own identity.
+  //        - it's already a member of `DEV_TOKEN_SCOPE_ALLOWLIST` — an intended,
+  //          vetted dev scope (it was simply being clamped OUT by the per-app
+  //          approved-scopes pin, which the page-money manifest doesn't list).
+  //        - this endpoint is mod-gated (step 2) and self-bound, so the net
+  //          effect is "a dev reads their OWN identity via their OWN token" —
+  //          zero escalation, no new data surface.
+  //      Post-clamp + uniform across BOTH the personal-key and OAuth paths (the
+  //      grant runs after every clamp belt, so neither path can suppress it).
+  //      This does NOT touch the prod mint (`/api/v1/block-tokens`).
+  granted.push('user:read:self');
 
   // Dedup, deterministic order.
   granted = Array.from(new Set(granted)).sort();

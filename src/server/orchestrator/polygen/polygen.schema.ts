@@ -124,6 +124,16 @@ function dropUndefined<T extends Record<string, unknown>>(obj: T): T {
 export function toMeshyPolyGenInput(
   data: Model3DGenerationSchema
 ): MeshyTextTo3dFalPolyGenInput | MeshyImageTo3dFalPolyGenInput {
+  // The Meshy/Fal API requires `enableRigging: true` whenever
+  // `enableAnimation: true` — animations target the rigged mesh's
+  // skeleton. To collapse this constraint into a single user-facing
+  // "Animate" toggle (the form no longer exposes rigging directly),
+  // coerce rigging to follow animation here. Older stored records that
+  // had `enableRigging: true, enableAnimation: false` still submit
+  // verbatim — only the new single-toggle UI is affected.
+  const enableAnimation = !!data.enableAnimation;
+  const enableRigging = enableAnimation || !!data.enableRigging;
+
   const shared = dropUndefined({
     targetPolycount: data.targetPolycount,
     topology: data.topology,
@@ -131,8 +141,8 @@ export function toMeshyPolyGenInput(
     shouldRemesh: data.shouldRemesh,
     enablePbr: data.enablePbr,
     texturePrompt: data.texturePrompt,
-    enableRigging: data.enableRigging,
-    enableAnimation: data.enableAnimation,
+    enableRigging,
+    enableAnimation,
     seed: data.seed,
   });
 
@@ -184,6 +194,10 @@ export const polyGenGenerationConfig = {
     'enableAnimation',
     'shouldTexture',
   ] as const,
+  // `enableRigging` is intentionally omitted — it's now derived from
+  // `enableAnimation` in `toMeshyPolyGenInput`, so surfacing it as a
+  // separate metadata row on the detail page just duplicates the
+  // animation flag.
   metadataDisplayProps: [
     'process',
     'prompt',
@@ -192,7 +206,6 @@ export const polyGenGenerationConfig = {
     'topology',
     'symmetryMode',
     'enablePbr',
-    'enableRigging',
     'enableAnimation',
     'shouldTexture',
     'seed',

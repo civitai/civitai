@@ -317,6 +317,17 @@ export const redisMetricWriteFailSoftCounter = registerCounterWithLabels({
   labelNames: ['op'] as const,
 });
 
+// Cluster ROUTING retry-after-rediscover counter (the topology-churn 500 wave). Incremented when a cluster
+// `_execute` hit a TRANSIENT pre-dispatch routing throw and the guard retried after a rediscover. `result`
+// ∈ recovered|exhausted: a rising `recovered` series during a rolling update / failover confirms the fix
+// converted a fleet-wide 500 wave into a transparent retry; `exhausted` means the slot map stayed
+// inconsistent past the bounded retries and the original error re-threw. (See @civitai/redis cluster-routing-retry.)
+export const redisRoutingRetryCounter = registerCounterWithLabels({
+  name: 'redis_routing_retry_total',
+  help: 'Cluster commands that hit a transient routing throw and were retried after a rediscover (recovered) or exhausted retries (exhausted, original error re-thrown)',
+  labelNames: ['result'] as const,
+});
+
 // sysRedis Sentinel observability. Uses the `civitai_sysredis_*` metric prefix (NOT civitai_app_*)
 // to match the dashboard naming, so it needs its own registrar.
 const SYSREDIS_PREFIX = 'civitai_sysredis_';

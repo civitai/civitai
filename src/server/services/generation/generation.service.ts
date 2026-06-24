@@ -5,11 +5,7 @@ import type { SessionUser } from '~/types/session';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
-import {
-  getWanVersion,
-  wan21BaseModelMap,
-  wanGeneralBaseModelMap,
-} from '~/server/orchestrator/wan/wan.schema';
+import { wanBaseModelGroupIdMap } from '~/server/services/orchestrator/ecosystems/wan.handler';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -44,7 +40,6 @@ import {
   fluxKreaAir,
   fluxUltraAir,
   getBaseModelFromResources,
-  getBaseModelFromResourcesWithDefault,
   ponyV7Air,
 } from '~/shared/constants/generation.constants';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
@@ -62,7 +57,6 @@ import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
-import { getVeo3ProcessFromAir } from '~/server/orchestrator/veo3/veo3.schema';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   baseModelByName,
@@ -88,8 +82,8 @@ import {
   hasGenerationSupport,
   getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
-import { getMetaResources, normalizeMeta } from '~/server/services/normalize-meta.service';
 import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
+import { cleanPrompt } from '~/utils/metadata/audit';
 
 type GenerationResourceSimple = {
   id: number;
@@ -107,6 +101,38 @@ type GenerationResourceSimple = {
   fileSizeKB: number;
   available: boolean;
 };
+
+type MetaCivitaiResource = { type?: string; weight?: number; modelVersionId: number };
+
+/**
+ * Build the initial resource list from image metadata: maps `civitaiResources`
+ * to `{ modelVersionId, strength }` and adds the Wan checkpoint implied by the
+ * baseModel. Relocated from the removed `normalize-meta.service` (the rest of
+ * that service's normalization is now handled by `mapDataToGraphInput` + the
+ * generation graph).
+ */
+function getMetaResources({
+  baseModel,
+  civitaiResources,
+}: {
+  baseModel?: string;
+  civitaiResources?: MetaCivitaiResource[];
+}) {
+  const resources =
+    civitaiResources?.map(({ weight, modelVersionId }) => ({
+      modelVersionId: Number(modelVersionId),
+      strength: weight,
+    })) ?? [];
+
+  // add missing resource by baseModel
+  const modelVersionId = baseModel
+    ? wanBaseModelGroupIdMap[baseModel as BaseModelGroup]
+    : undefined;
+  if (modelVersionId && !resources.find((x) => x.modelVersionId === modelVersionId)) {
+    resources.push({ modelVersionId, strength: undefined });
+  }
+  return resources;
+}
 
 // const baseModelSetsArray = Object.values(baseModelSets);
 /** @deprecated using search index instead... */
@@ -436,6 +462,78 @@ async function swapGenerationAliases(
   return uniqBy(swapped, 'id');
 }
 
+/**
+ * Shared pre-normalization for the remix / generate-from-image paths
+ * (`getMediaGenerationData` + `resolveImageMeta`):
+ * - clean prompts (the mapper passes prompt/negativePrompt through raw)
+ * - derive `process` from the legacy `type` field (the mapper keys workflow off `process`)
+ * - resolve the ecosystem from baseModel, falling back to the checkpoint resource
+ * - filter resources to the resolved ecosystem
+ * - map the result to generation-graph params
+ *
+ * The mapper + generation graph handle everything else (workflow, images,
+ * aspectRatio, and per-ecosystem version resolution — incl. Wan).
+ */
+function resolveGraphParamsFromImageMeta({
+  initialMeta,
+  baseModel,
+  engine,
+  allResources,
+  width,
+  height,
+}: {
+  initialMeta: ImageMetaProps;
+  baseModel: string | undefined;
+  engine: string | undefined;
+  allResources: GenerationResource[];
+  width: number;
+  height: number;
+}): { resources: GenerationResource[]; params: Record<string, unknown> } {
+  const metaRecord = initialMeta as Record<string, unknown>;
+  const cleanedPrompts = cleanPrompt({
+    prompt: initialMeta.prompt,
+    negativePrompt: initialMeta.negativePrompt,
+  });
+  const process =
+    typeof metaRecord.type === 'string'
+      ? (metaRecord.type as string)
+      : (metaRecord.process as string | undefined);
+
+  // If the ecosystem is 'other' or missing, try to infer from the checkpoint resource
+  let ecosystem =
+    (metaRecord.ecosystem as string | undefined) ??
+    (baseModel ? getEcosystem(baseModel)?.key : undefined);
+  if (!ecosystem || ecosystem === 'Other') {
+    const checkpoint = allResources.find((x) => x.model.type === 'Checkpoint');
+    if (checkpoint) {
+      ecosystem = getEcosystem(checkpoint.baseModel)?.key;
+    }
+  }
+
+  const resources = !ecosystem
+    ? allResources
+    : allResources.filter(
+        (x) => !!getResourceGenerationSupport(ecosystem!, x.baseModel, x.model.type)
+      );
+
+  // Drop raw resource fields (handled separately via `resources`) and the legacy
+  // `type` (consumed into `process`); the mapper strips the rest.
+  const { civitaiResources: _cr, resources: _res, type: _t, ...restMeta } = metaRecord;
+  const meta = {
+    ...restMeta,
+    ...cleanedPrompts,
+    baseModel,
+    engine,
+    ecosystem,
+    process,
+  } as Record<string, unknown>;
+  // Handle legacy 'Clip skip' field name (old image meta uses space-separated key)
+  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
+  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+
+  return { resources, params };
+}
+
 async function getMediaGenerationData({
   id,
   user,
@@ -473,7 +571,6 @@ async function getMediaGenerationData({
     createdAt: media.createdAt,
   };
 
-  // const { resources: imageResources, ...meta } = normalizeMeta(media.meta as ImageMetaProps);
   const initialMeta = (media.meta ?? {}) as ImageMetaProps;
   const imageResources = getMetaResources(initialMeta);
 
@@ -517,29 +614,15 @@ async function getMediaGenerationData({
 
   const type = baseModel ? getBaseModelMediaType(baseModel) ?? media.type : media.type;
   const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
-  const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
 
-  // If the ecosystem is 'other' or missing, try to infer from the checkpoint resource
-  let ecosystem = normalized.ecosystem;
-  if (!ecosystem || ecosystem === 'Other') {
-    const checkpoint = allResources.find((x) => x.model.type === 'Checkpoint');
-    if (checkpoint) {
-      ecosystem = getEcosystem(checkpoint.baseModel)?.key;
-    }
-  }
-
-  const resources = !ecosystem
-    ? allResources
-    : allResources.filter(
-        (x) => !!getResourceGenerationSupport(ecosystem!, x.baseModel, x.model.type)
-      );
-
-  // Delegate param mapping to shared function (handles workflow, baseModel, aspectRatio, etc.)
-  // Cast to Record for loose field access (normalizeMeta returns a union type)
-  const meta = normalized as Record<string, unknown>;
-  // Handle legacy 'Clip skip' field name (old image meta uses space-separated key)
-  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
-  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+  const { resources, params } = resolveGraphParamsFromImageMeta({
+    initialMeta,
+    baseModel,
+    engine,
+    allResources,
+    width,
+    height,
+  });
 
   if (type === 'audio') throw new Error('not implemented');
 
@@ -1516,7 +1599,7 @@ function extractHashCandidates(
  * Resolve resources from raw image EXIF metadata and transform to graph-compatible params.
  *
  * Mirrors the logic of get_image_resources.sql for resource resolution, then applies
- * the same normalizeMeta → mapDataToGraphInput pipeline as getMediaGenerationData.
+ * the same pre-normalize → mapDataToGraphInput pipeline as getMediaGenerationData.
  *
  * Returns { resources, params } where params are ready for the generation graph.
  */
@@ -1634,21 +1717,16 @@ export async function resolveImageMeta({
     allResources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
   );
   const engine = initialMeta.engine ?? (baseModel ? getBaseModelEngine(baseModel) : undefined);
-  const normalized = normalizeMeta({ ...initialMeta, baseModel, engine });
 
-  // Filter resources by ecosystem compatibility
-  const resources = !normalized.ecosystem
-    ? allResources
-    : allResources.filter(
-        (x) => !!getResourceGenerationSupport(normalized.ecosystem!, x.baseModel, x.model.type)
-      );
-
-  // Map to graph-compatible params
-  const meta = normalized as Record<string, unknown>;
-  const clipSkip = meta.clipSkip ?? meta['Clip skip'] ?? undefined;
-  const width = (meta.width as number) ?? 0;
-  const height = (meta.height as number) ?? 0;
-  const params = mapDataToGraphInput({ ...meta, width, height, clipSkip, engine }, resources);
+  const metaRecord = initialMeta as Record<string, unknown>;
+  const { resources, params } = resolveGraphParamsFromImageMeta({
+    initialMeta,
+    baseModel,
+    engine,
+    allResources,
+    width: (metaRecord.width as number) ?? 0,
+    height: (metaRecord.height as number) ?? 0,
+  });
 
   return { resources, params };
 }

@@ -1,7 +1,6 @@
 import {
   Button,
   Center,
-  Chip,
   Container,
   Grid,
   Group,
@@ -13,12 +12,13 @@ import {
   Title,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconPlugConnected, IconPlus, IconSearch } from '@tabler/icons-react';
+import { IconPlus, IconSearch } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppBlockCard } from '~/components/Apps/AppBlockCard';
+import { AppsSubNav } from '~/components/Apps/AppsSubNav';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
@@ -37,19 +37,13 @@ import type {
 } from '~/server/schema/blocks/subscription.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
-import { MODEL_SLOT_IDS, type ModelSlotId } from '~/shared/constants/slot-registry';
+import { type ModelSlotId } from '~/shared/constants/slot-registry';
 
-// Marketplace slot filter — model-entity region slots ONLY. Derived from the
-// registry's MODEL_SLOT_IDS so the new `page` slot (entity=none) never pollutes
-// the model-page slot filter. Adding a model slot to the registry adds it here
-// automatically; adding a page slot does not.
+// Marketplace slot filter — model-entity region slots ONLY. The slot-filter UI
+// is hidden for the page-apps-only launch, but the state is retained (defaults
+// to null = "All slots") so the listing query stays unaffected; the filter UI
+// can be re-shown without re-plumbing.
 type SlotFilter = ModelSlotId;
-
-const MODEL_SLOT_FILTER_LABELS: Record<ModelSlotId, string> = {
-  'model.sidebar_top': 'Model sidebar',
-  'model.below_images': 'Below images',
-  'model.actions_extra': 'Model actions',
-};
 
 const SORT_OPTIONS: { value: MarketplaceSort; label: string }[] = [
   { value: 'rating', label: 'Top rated' },
@@ -219,33 +213,12 @@ export default function AppsPage() {
       <Meta title="Apps — Civitai" description="Civitai App Blocks marketplace" deIndex />
       <Container size="xl" py="md">
         <Stack gap="md">
-          <Group justify="space-between" align="flex-start">
-            <Stack gap={4}>
-              <Title order={2}>Civitai App Blocks</Title>
-              <Text c="dimmed" size="sm">
-                Add interactive blocks to your models, or subscribe to ones you want to see
-                everywhere.
-              </Text>
-            </Stack>
-            <Group gap="xs">
-              {/* Bridge back to /apps/installed so users who subscribe from
-                  the marketplace can find where to manage what they have.
-                  Always rendered — /apps/installed handles the anon →
-                  /login redirect itself. */}
-              <Button
-                component={Link}
-                href="/apps/installed"
-                leftSection={<IconPlugConnected size={16} />}
-                variant="default"
-              >
-                My installed apps
-              </Button>
-              {/* Submit-new link — only rendered for the civitai-team (mod-gated
-                  tRPC mutation would already reject anyone else). v1 replaces
-                  the gate with the W1 review queue. */}
-              <SubmitAppLink />
-            </Group>
-          </Group>
+          {/* Second-level navigation — the nav dropdown exposes a single
+              `/apps` entry; the per-surface links (installed / submit /
+              revenue / review / submissions) live here, conditionally shown.
+              The marketplace title/subtitle were removed for the page-apps-only
+              launch (the sub-nav supplies the wayfinding). */}
+          <AppsSubNav />
 
           <Group gap="md" align="end">
             <TextInput
@@ -275,19 +248,10 @@ export default function AppsPage() {
             />
           </Group>
 
-          <Chip.Group
-            value={slotFilter ?? ''}
-            onChange={(v) => setSlotFilter((v || null) as SlotFilter | null)}
-          >
-            <Group gap={6}>
-              <Chip value="">All slots</Chip>
-              {MODEL_SLOT_IDS.map((slot) => (
-                <Chip key={slot} value={slot}>
-                  {MODEL_SLOT_FILTER_LABELS[slot]}
-                </Chip>
-              ))}
-            </Group>
-          </Chip.Group>
+          {/* Slot/location filter intentionally hidden for the page-apps-only
+              launch — the slot filter UI only makes sense once model-slot apps
+              are public. The slotFilter state is retained (defaults to null =
+              "All slots") so the listing query is unaffected. */}
 
           {/* F-E E4 discovery rails — unfiltered default view only. Featured =
               curated staff picks (sorted by mod-assigned featured_order); New =
@@ -483,23 +447,5 @@ function MarketplaceRail({
         ))}
       </Grid>
     </Stack>
-  );
-}
-
-function SubmitAppLink() {
-  // v0 gate: civitai-team only. The mutation already returns UNAUTHORIZED
-  // to non-mods, so the worst case if the gate slips is a clear server-
-  // side rejection rather than a silent leak.
-  const user = useCurrentUser();
-  if (!isAppDeveloper(user)) return null;
-  return (
-    <Button
-      component={Link}
-      href="/apps/submit"
-      leftSection={<IconPlus size={16} />}
-      variant="light"
-    >
-      Submit App
-    </Button>
   );
 }

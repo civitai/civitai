@@ -64,6 +64,24 @@ export const redisEnvSchema = z
     // PER-POD RECONNECT JITTER (fleet-stampede brake): wait a random [0, this) before the
     // actual reconnect so a synchronized fleet event doesn't stampede the cluster.
     REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS: z.coerce.number().default(1000),
+    // ── CLUSTER ROUTING RETRY-AFTER-REDISCOVER (the topology-churn 500 wave) ────────────
+    // ON by default; REDIS_CLUSTER_ROUTING_RETRY_ENABLED=false is a single-flip kill-switch
+    // that restores today's exact behavior (one attempt, throw on a routing error).
+    REDIS_CLUSTER_ROUTING_RETRY_ENABLED: z.preprocess(
+      // default true; only the literal string 'false' disables it (mirrors the SELFHEAL flag)
+      (x) => x !== 'false',
+      z.boolean().default(true)
+    ),
+    // Max RETRIES after the initial attempt. The transient window is ~1–2 min cluster-wide but
+    // any single pod's command only needs the map to settle for ITS slot — 2 retries with the
+    // bounded backoff below covers the measured settle time.
+    REDIS_CLUSTER_ROUTING_RETRY_MAX: z.coerce.number().default(2),
+    // Backoff before the 1st / 2nd retry (ms). This IS the settle window: the rediscover between
+    // attempts is a best-effort FIRE-AND-FORGET nudge (triggerTopologyRediscovery returns undefined,
+    // not awaited to completion), so it's this backoff — not the rediscover call — that gives the
+    // in-flight, single-flighted slot-map refresh a beat to land before the retry. 50ms then 150ms.
+    REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MS: z.coerce.number().default(50),
+    REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MAX_MS: z.coerce.number().default(150),
     // Used only to derive a hostname for the failover feature-flag context
     NEXTAUTH_URL: z.string().optional(),
     FLIPT_DEPLOYMENT_ID: z.string().optional(),
@@ -112,6 +130,10 @@ function buildEnv() {
     clusterSelfHealDeadlineHitThreshold: parsed.data.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD,
     clusterSelfHealDeadlineHitWindowMs: parsed.data.REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_WINDOW_MS,
     clusterSelfHealReconnectJitterMs: parsed.data.REDIS_CLUSTER_SELFHEAL_RECONNECT_JITTER_MS,
+    clusterRoutingRetryEnabled: parsed.data.REDIS_CLUSTER_ROUTING_RETRY_ENABLED,
+    clusterRoutingRetryMax: parsed.data.REDIS_CLUSTER_ROUTING_RETRY_MAX,
+    clusterRoutingRetryBackoffMs: parsed.data.REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MS,
+    clusterRoutingRetryBackoffMaxMs: parsed.data.REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MAX_MS,
     nextAuthUrl: parsed.data.NEXTAUTH_URL,
     fliptDeploymentId: parsed.data.FLIPT_DEPLOYMENT_ID,
   };
