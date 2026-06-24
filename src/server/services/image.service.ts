@@ -60,6 +60,7 @@ import {
 } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import {
+  clickhouseFailSoftCounter,
   leakingContentCounter,
   registerCounter,
   registerCounterWithLabels,
@@ -166,6 +167,7 @@ import {
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
+  isClickHouseConnectionError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -2963,6 +2965,38 @@ export async function getImagesFromFeedSearch(
         code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
         cause: err,
+      });
+    }
+    // TRANSIENT ClickHouse transport blip in the metric-enrichment leg of
+    // populatedQuery (the event-engine-common MetricService read). The feed items
+    // come from Meili+Postgres; only the display-only engagement metrics are
+    // ClickHouse-backed, and they ALREADY fail-open to zero elsewhere
+    // (getImageMetricsObject → {}). But this feed path runs the metric read INSIDE
+    // populatedQuery, so a CH connection error (socket hang up / Code 279 / Code
+    // 210) thrown there isn't a Meili error → it would fall through to `throw err`
+    // → the handler's generic 500. Re-map it to the same retryable 503 as a Meili
+    // brownout: a CH transport flap is a transient upstream brownout, not a server
+    // bug, and 503+Retry-After lets the client/CF retry the (seconds-long) blip
+    // instead of surfacing a hard 500. A CH QUERY/SCHEMA error (UNKNOWN_TABLE etc.)
+    // is NOT matched by isClickHouseConnectionError and still throws → 500 → visible
+    // + alertable, exactly as the missing-table incident was. No money/entitlement
+    // is on this path — image metrics are display-only.
+    if (isClickHouseConnectionError(err)) {
+      clickhouseFailSoftCounter.inc({ path: 'image-feed' });
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'clickhouse-failsoft',
+          message: 'ClickHouse transport error in image feed metric enrichment — served 503',
+          path: 'image-feed',
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'clickhouse'
+      ).catch();
+      throw new TRPCError({
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Image feed is temporarily overloaded — please retry.',
+        cause: err as Error,
       });
     }
     throw err;
