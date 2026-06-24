@@ -57,9 +57,9 @@ import { trpc } from '~/utils/trpc';
  *     `notFound`. The page is anon-CAPABLE in code (no session→login redirect)
  *     but DARK until the segment is widened at launch — there is intentionally
  *     NO hardcoded isModerator belt (that would break the eventual public flip).
- *   - `deIndex` stays ON in the page <Meta> (per-app OG/title/description are
- *     added now, but the page is not crawlable pre-launch — drop `deIndex` only
- *     at launch).
+ *   - INDEXABLE as of App Blocks GA: `deIndex` was dropped from the page <Meta>
+ *     (the per-app OG/title/description from the public manifest are now crawlable).
+ *     The per-app /apps/<appBlockId>/revenue page stays deIndexed (owner-only).
  *   - The `getAppDetail` query is the anon-capable public read path; it is gated
  *     by the SAME mod-segmented flag server-side (dark today) and returns ONLY
  *     the PublicAppDetail allowlist.
@@ -162,14 +162,15 @@ export default function AppDetailPage() {
   return (
     <>
       {/*
-        Per-app OG/meta (title + description from the public manifest). deIndex
-        STAYS ON until launch (the page is mod-only today; don't let crawlers
-        index it). Dropping deIndex is a deliberate launch-time step.
+        Per-app OG/meta (title + description from the public manifest). INDEXABLE
+        as of App Blocks GA — `deIndex` was dropped at launch so the public per-app
+        detail page is crawlable. Merges in lockstep with the Flipt `appBlocks`
+        mod→public widen (do not ship before GA).
       */}
       <Meta
         title={`${name} — Civitai Apps`}
         description={description || `${name} on the Civitai App Blocks marketplace.`}
-        deIndex
+        canonical={`/apps/${appBlockId}`}
       />
       <Container size="md" py="md">
         <Stack gap="lg">

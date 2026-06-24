@@ -68,7 +68,8 @@ export const getServerSideProps = createServerSideProps({
   // GATING INVARIANT (F-E E1): the flag gate is the ONLY access control; no
   // session→login redirect, so the marketplace renders for a session-less
   // request BEHIND the flag (dark today; lit when the segment widens). See
-  // resolveAppsPageAccess for the full invariant + `deIndex` note.
+  // resolveAppsPageAccess for the full invariant. (The catalog page is INDEXABLE
+  // as of GA — `deIndex` was dropped from the <Meta> below.)
   resolver: async ({ features }) => resolveAppsPageAccess({ features }),
 });
 
@@ -216,7 +217,17 @@ export default function AppsPage() {
 
   return (
     <>
-      <Meta title="Apps — Civitai" description="Civitai App Blocks marketplace" deIndex />
+      {/*
+        Public marketplace catalog — INDEXABLE as of App Blocks GA. `deIndex` was
+        dropped at launch (the page is the public app catalog; per-USER pages
+        like /apps/installed and /apps/revenue stay deIndexed). Merges in lockstep
+        with the Flipt `appBlocks` mod→public widen — do not ship before GA.
+      */}
+      <Meta
+        title="Apps — Civitai"
+        description="Civitai App Blocks marketplace"
+        canonical="/apps"
+      />
       <Container size="xl" py="md">
         <Stack gap="md">
           <Group justify="space-between" align="flex-start">

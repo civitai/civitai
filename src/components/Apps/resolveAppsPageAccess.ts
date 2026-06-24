@@ -13,8 +13,9 @@
  *     flag gate, a session-less request RENDERS the marketplace read-only
  *     instead of bouncing to /login. This is the "anon-capable but dark" read
  *     path — reachable by a real anon user ONLY once the flag grants access
- *     (mods-only today). (`deIndex` is kept ON in the page <Meta> so the page is
- *     not crawlable pre-launch.)
+ *     (mods-only today). (As of App Blocks GA the public catalog + per-app detail
+ *     pages are INDEXABLE — `deIndex` was dropped from their <Meta>; per-USER
+ *     pages like /apps/installed and /apps/revenue stay deIndexed.)
  */
 export type AppsPageAccessResult = { notFound: true } | { props: Record<string, never> };
 
