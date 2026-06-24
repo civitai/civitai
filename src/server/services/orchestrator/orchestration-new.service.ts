@@ -53,7 +53,12 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
-import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
+import {
+  getWorkflow,
+  submitWorkflow,
+  updateWorkflow as clientUpdateWorkflow,
+} from '~/server/services/orchestrator/workflows';
+import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -66,7 +71,7 @@ import { includesPoi } from '~/utils/metadata/audit';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { randomInt } from 'crypto';
-import { MAX_SEED } from '~/shared/constants/generation.constants';
+import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -937,7 +942,10 @@ export async function createWorkflowStepsFromGraph({
   // don't affect the caller's `data`.
   const resolvedData = {
     ...data,
-    seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_SEED),
+    // Int32-safe bound: some engines (e.g. google/nano-banana-2) type `seed`
+    // as Nullable<Int32>, so a generated seed above 2^31-1 fails orchestrator
+    // deserialization. MAX_RANDOM_SEED keeps the default within Int32 range.
+    seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
   };
 
   // Calculate timeout: base 20 minutes + 1 minute per additional resource
@@ -1099,6 +1107,48 @@ export async function createWorkflowStepsFromGraph({
   };
 }
 
+/**
+ * Validate generation-graph `input` and assemble the orchestrator workflow
+ * steps WITHOUT submitting — the validate + step-build half of
+ * `generateFromGraph`, exposed for callers that drive their own
+ * `submitWorkflow`.
+ *
+ * App Blocks is the motivating caller: it wraps each submit with App-Blocks-
+ * specific belts (per-call buzz budget, cumulative daily Buzz cap, token-
+ * derived maturity clamp, daily-boost autoclaim) and so can't use the bundled
+ * `generateFromGraph` (which submits internally). It builds the step here, runs
+ * its own whatIf + budget checks, then calls `submitWorkflow` itself.
+ *
+ * NOTE: this does NOT audit the prompt — `generateFromGraph` audits before
+ * step-build, but this entry leaves auditing to the caller (App Blocks audits
+ * with its token-derived `isGreen`/`isModerator` in the router). Resource
+ * enrichment, canGenerate/availability gating, and POI detection still run
+ * (inside `createWorkflowStepsFromGraph`), so the resource belt is intact.
+ */
+export async function createWorkflowStepsFromGraphInput({
+  input,
+  externalCtx,
+  user,
+  isWhatIf,
+  isGreen,
+}: {
+  input: Record<string, unknown>;
+  externalCtx: GenerationCtx;
+  user?: { id?: number; isModerator?: boolean };
+  isWhatIf?: boolean;
+  isGreen?: boolean;
+}): Promise<WorkflowStepTemplate[]> {
+  const { data, computedKeys } = validateInput(input, externalCtx);
+  const { steps } = await createWorkflowStepsFromGraph({
+    data,
+    computedKeys,
+    user,
+    isWhatIf,
+    isGreen,
+  });
+  return steps;
+}
+
 type SnippetsPayloadShape = {
   wildcardSetIds?: number[];
   mode?: 'random' | 'batch';
@@ -1194,7 +1244,7 @@ async function getSnippetOverlays({
   // Seed precedence: form's preview-locked `snippets.seed` first, then the
   // image-gen seed on resolvedData, then a fresh sample. Spec:
   // resolver random = PRNG keyed by `(seed ?? generationSeed, ...)`.
-  const seed = snippets.seed ?? resolvedData.seed ?? randomInt(MAX_SEED);
+  const seed = snippets.seed ?? resolvedData.seed ?? randomInt(MAX_RANDOM_SEED);
 
   const result = await expandSnippetsToTargets({
     snippets: { wildcardSetIds, mode, batchCount, targets: {} },
@@ -2308,6 +2358,16 @@ function formatStep(
  * Simplified formatGenerationResponse.
  * Replaces the complex switch-based formatting in common.ts.
  */
+/** Update a workflow and return the normalized response. */
+export async function updateWorkflow({
+  user,
+  ...props
+}: WorkflowUpdateSchema & { token: string; user?: SessionUser }) {
+  const workflow = await clientUpdateWorkflow(props);
+  const [formatted] = await formatGenerationResponse2([workflow], user);
+  return formatted;
+}
+
 export async function formatGenerationResponse2(
   workflows: Workflow[],
   user?: SessionUser

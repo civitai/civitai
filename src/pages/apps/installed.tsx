@@ -32,6 +32,7 @@ import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
+import { AppsSubNav } from '~/components/Apps/AppsSubNav';
 import { groupSubscriptionsByApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
 import { useHiddenBlockList, unhideBlock } from '~/components/AppBlocks/hiddenBlocks';
@@ -769,6 +770,7 @@ export default function InstalledAppsPage() {
       <Meta title="Installed Apps — Civitai" deIndex />
       <Container size="lg" py="md">
         <Stack gap="lg">
+          <AppsSubNav />
           <Group justify="space-between">
             <Stack gap={2}>
               <Title order={2}>Your installed apps</Title>

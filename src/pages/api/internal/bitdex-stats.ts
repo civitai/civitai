@@ -3,6 +3,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbRead } from '~/server/db/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { redis } from '~/server/redis/client';
+import { imageMetricAggSource } from '~/server/flipt/client';
 import { MetricService } from '../../../../event-engine-common/services/metrics';
 import type {
   IClickhouseClient,
@@ -67,7 +68,8 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
       // the FINAL entityMetricDailyAgg_v2 view), per-ID with stampede caching.
       const metricService = new MetricService(
         clickhouse as IClickhouseClient,
-        redis as unknown as IRedisClient
+        redis as unknown as IRedisClient,
+        imageMetricAggSource
       );
       const metrics = await metricService.fetch('Image', ids);
 

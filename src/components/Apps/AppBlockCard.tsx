@@ -1,19 +1,28 @@
-import { Anchor, Badge, Button, Card, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { Anchor, Badge, Button, Card, Group, Stack, Text, Title } from '@mantine/core';
 import {
-  IconBolt,
+  IconBraces,
+  IconChartBar,
+  IconCompass,
+  IconDeviceGamepad2,
   IconPlugConnected,
   IconSettings,
-  IconShieldLock,
+  IconShieldHalf,
+  IconSparkles,
   IconStarFilled,
+  IconTag,
+  IconTool,
 } from '@tabler/icons-react';
+import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import { AppDetailsModal } from '~/components/Apps/AppDetailsModal';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
 import {
   isMarketplaceCategory,
   MARKETPLACE_CATEGORY_LABELS,
+  type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema';
 
 /**
@@ -64,10 +73,25 @@ function categoryLabel(category: string): string {
   return isMarketplaceCategory(category) ? MARKETPLACE_CATEGORY_LABELS[category] : category;
 }
 
-/** Human label for a scope id (the permission disclosure), falling back to the
- * raw id for an unknown scope so a new scope ships without breaking the card. */
-function scopeLabel(scope: string): string {
-  return SCOPE_DESCRIPTIONS[scope] ?? scope;
+/**
+ * Per-category icon. The category taxonomy is the structured free-text
+ * `app_blocks.category` column (the MARKETPLACE_CATEGORIES single-source const);
+ * this maps each known value to a Tabler icon. An unknown/legacy category (or
+ * NULL, handled by the caller) falls back to a generic tag icon so the chip
+ * never breaks on a newer category.
+ */
+const CATEGORY_ICONS: Record<MarketplaceCategory, Icon> = {
+  generation: IconSparkles,
+  games: IconDeviceGamepad2,
+  utility: IconTool,
+  discovery: IconCompass,
+  moderation: IconShieldHalf,
+  analytics: IconChartBar,
+  other: IconBraces,
+};
+
+function categoryIcon(category: string): Icon {
+  return isMarketplaceCategory(category) ? CATEGORY_ICONS[category] : IconTag;
 }
 
 export function AppBlockCard({
@@ -84,7 +108,30 @@ export function AppBlockCard({
     hasPage?: boolean;
   };
   const [busy] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const slot = manifest.targets?.[0]?.slotId;
+  // Show Install ONLY for an app that installs into a model/in-context slot.
+  // A page app (target slot `app.page`) is STATELESS — installModel `'none'` in
+  // the slot registry — so it has no `block_user_subscriptions` install row and
+  // the Install/Manage CTA (openAppSettingsModal → slot subscription) is a
+  // dead/forbidden action for it (slot installs are server-gated dark, #2622).
+  // `hasInstallSlot` is the SHARED predicate (with the detail page) — it scans
+  // ALL targets for ANY non-page slot, so it's correct for multi-target and
+  // empty-slotId manifests, not just index `[0]`. Keyed on the APP's slot, not
+  // the viewer — so a model-slot app still shows Install for the grandfathered
+  // mod audience.
+  const showInstall = hasInstallSlot(manifest);
+  // The live "Open app" run is only available for a real page app that the
+  // viewer's `appBlocksPages` flag has unlocked (dark today / launch-flip
+  // window).
+  const canOpenApp = Boolean(manifest.hasPage && canOpenPage);
+  // INVARIANT (never-empty card): "View details" is the UNIVERSAL details
+  // affordance — it is rendered on EVERY card (page app, model app, flag on or
+  // off), so the card can never be actionless. It supersedes the #2747
+  // page-link "View" fallback (a detail-page link shown only when no Install /
+  // Open app rendered): the modal covers that case for every card now, and the
+  // modal itself exposes "Open live"/the detail data, so we don't strand the
+  // user. "Open app" / Install remain the RUN/INSTALL affordances on top of it.
   return (
     <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
       <Stack gap="sm" h="100%">
@@ -112,13 +159,23 @@ export function AppBlockCard({
             <Badge variant="light" color="blue" size="sm">
               {slotLabel(slot)}
             </Badge>
-            {/* F-E E3: mod-assigned marketplace category. NULL until the E3
-                migration is applied + a mod sets one (dark today) → no chip. */}
-            {block.category && (
-              <Badge variant="light" color="grape" size="sm">
-                {categoryLabel(block.category)}
-              </Badge>
-            )}
+            {/* Mod-assigned marketplace category (+ its icon). NULL until a mod
+                sets one → no chip. The icon comes from CATEGORY_ICONS (generic
+                tag fallback for an unknown/legacy value). */}
+            {block.category &&
+              (() => {
+                const CategoryIcon = categoryIcon(block.category);
+                return (
+                  <Badge
+                    variant="light"
+                    color="grape"
+                    size="sm"
+                    leftSection={<CategoryIcon size={12} />}
+                  >
+                    {categoryLabel(block.category)}
+                  </Badge>
+                );
+              })()}
             {ownedEarningCents != null && ownedEarningCents > 0 && (
               <Badge variant="light" color="green" size="sm">
                 Earning ${(ownedEarningCents / 100).toFixed(2)}
@@ -133,44 +190,25 @@ export function AppBlockCard({
             </Text>
           </Anchor>
         )}
-        {/* F-E E3: permission preview — the FIRST N approved scopes (the same
-            public disclosure list the E2 detail page shows in full). Lets a
-            viewer see what the app can do BEFORE installing (closes H3 at the
-            card level). Empty until the app is approved with scopes. */}
-        {block.scopesSummary.length > 0 && (
-          <Group gap={4} wrap="wrap">
-            <IconShieldLock size={14} className="text-gray-500" />
-            {block.scopesSummary.map((scope) => (
-              <Tooltip key={scope} label={scopeLabel(scope)} withArrow multiline w={220}>
-                <Badge variant="outline" color="gray" size="xs" style={{ cursor: 'help' }}>
-                  {scope}
-                </Badge>
-              </Tooltip>
-            ))}
-          </Group>
-        )}
+        {/* Scopes were MOVED off the card face into the details modal (2026-06
+            UX pass) — the permission disclosure now lives under "View details"
+            so the card stays scannable. */}
         <Group justify="space-between" mt="auto" pt="xs">
           <Group gap={10}>
-            <Group gap={4}>
-              <IconBolt size={14} />
-              <Text size="xs" c="dimmed">
-                {block.installCount.toLocaleString()} installs
-              </Text>
-            </Group>
-            {/* F-E marketplace reviews: avg rating + review count. avgRating is
-                null for a 0-review app → show "No reviews". */}
-            <Group gap={4}>
-              <IconStarFilled size={13} className="text-yellow-500" />
-              {block.avgRating != null ? (
+            {/* Install count is HIDDEN until there's a real user base — every
+                app currently shows 0, which reads as "unused". Re-introduce when
+                installs are meaningful. */}
+            {/* Review indicator: shown ONLY when the app has ≥1 review. A
+                0-review app shows nothing (no "No reviews" affordance) so an
+                un-reviewed app doesn't look bad. */}
+            {block.reviewCount > 0 && block.avgRating != null && (
+              <Group gap={4}>
+                <IconStarFilled size={13} className="text-yellow-500" />
                 <Text size="xs" c="dimmed">
                   {block.avgRating.toFixed(1)} ({block.reviewCount.toLocaleString()})
                 </Text>
-              ) : (
-                <Text size="xs" c="dimmed">
-                  No reviews
-                </Text>
-              )}
-            </Group>
+              </Group>
+            )}
           </Group>
           {/*
             Anon-conversion CTA (F-E E1): for a session-less viewer, clicking
@@ -182,11 +220,19 @@ export function AppBlockCard({
             matters once the segment is widened to anon.
           */}
           <Group gap={6} wrap="nowrap">
+            {/* "View details" — the UNIVERSAL details affordance, on EVERY card
+                (this is what guarantees the never-empty-card invariant; it
+                supersedes the #2747 page-link "View" fallback). Opens the
+                details modal (description, screenshots, recent reviews, scopes).
+                A button, not a link, so it doesn't navigate away from the grid. */}
+            <Button size="xs" variant="light" onClick={() => setDetailsOpen(true)}>
+              View details
+            </Button>
             {/* W10 — "Open app" link to the full-page route, shown only when the
                 app declares a page AND the viewer has the appBlocksPages flag
                 (dark today). The route itself 404s without the flag, so this is
                 belt-and-suspenders against showing a dead link. */}
-            {manifest.hasPage && canOpenPage && (
+            {canOpenApp && (
               <Button
                 component={Link}
                 href={`/apps/run/${encodeURIComponent(block.blockId)}`}
@@ -196,22 +242,33 @@ export function AppBlockCard({
                 Open app
               </Button>
             )}
-            <LoginRedirect reason="perform-action">
-              <Button
-                size="xs"
-                variant={alreadySubscribed ? 'default' : 'filled'}
-                leftSection={
-                  alreadySubscribed ? <IconSettings size={14} /> : <IconPlugConnected size={14} />
-                }
-                loading={busy}
-                onClick={() => onOpen(block)}
-              >
-                {alreadySubscribed ? 'Manage' : 'Install'}
-              </Button>
-            </LoginRedirect>
+            {showInstall && (
+              <LoginRedirect reason="perform-action">
+                <Button
+                  size="xs"
+                  variant={alreadySubscribed ? 'default' : 'filled'}
+                  leftSection={
+                    alreadySubscribed ? <IconSettings size={14} /> : <IconPlugConnected size={14} />
+                  }
+                  loading={busy}
+                  onClick={() => onOpen(block)}
+                >
+                  {alreadySubscribed ? 'Manage' : 'Install'}
+                </Button>
+              </LoginRedirect>
+            )}
           </Group>
         </Group>
       </Stack>
+      {/* Details modal — controlled by this card's local state. GATED so the
+          whole subtree (its tRPC query hooks + the <AppBlockReviews> subtree)
+          only EXISTS while open: with N cards in the marketplace grid, an
+          always-mounted modal per card meant N idle modal instances. The "View
+          details" BUTTON above stays unconditional (the never-empty-card
+          invariant) — only this subtree is gated. */}
+      {detailsOpen && (
+        <AppDetailsModal opened onClose={() => setDetailsOpen(false)} block={block} />
+      )}
     </Card>
   );
 }

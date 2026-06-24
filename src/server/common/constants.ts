@@ -65,6 +65,8 @@ export const constants = {
     'ControlNet',
     'Workflow',
     'Upscaler',
+    'Enhancement LoRA',
+    'Other',
   ],
   trainingMediaTypes: ['image', 'video', 'audio'],
   trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],
@@ -134,6 +136,8 @@ export const constants = {
     ControlNet: 11,
     Workflow: 12,
     Upscaler: 13,
+    'Enhancement LoRA': 14,
+    Other: 15,
   },
   cardSizes: {
     model: 320,
@@ -467,6 +471,7 @@ export const componentFileTypes = [
   'CLIPVision',
   'ControlNet',
   'Upscaler',
+  'Enhancement LoRA',
 ] as const;
 export type ComponentFileType = (typeof componentFileTypes)[number];
 

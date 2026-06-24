@@ -2,9 +2,10 @@
  * HappyHorse Graph
  *
  * Controls for HappyHorse video generation ecosystem (Alibaba Taotian).
- * Single version (v1.0) with four operations selected via workflow.
+ * Version-selectable (v1.0 / v1.1) via the model picker; the handler maps the
+ * selected model version id to the @civitai/client engine version.
  *
- * Workflows:
+ * Workflows (vid2vid:edit is v1.0-only — excluded for v1.1 in config/workflows.ts):
  * - txt2vid           → operation 'textToVideo'
  * - img2vid           → operation 'imageToVideo' (single first frame)
  * - img2vid:ref2vid   → operation 'referenceToVideo' (1-9 reference images)
@@ -19,7 +20,8 @@
  * - audioSetting: shown only for vid2vid:edit (auto / origin)
  * - seed
  *
- * Model is locked to a single Civitai version via ecosystemSettings.
+ * The model swap button is locked via ecosystemSettings (modelLocked); users
+ * still pick between the official v1.0 / v1.1 versions.
  */
 
 import z from 'zod';
@@ -42,18 +44,35 @@ import {
   getAspectRatioOptions,
   type GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
+import { happyHorseVersionIds } from './version-ids';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const happyHorseAspectRatioList: GenerationAspectRatio[] = [
-  '16:9',
-  '4:3',
-  '1:1',
-  '3:4',
-  '9:16',
+const happyHorseAspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
+
+// v1.1 accepts a wider ratio set than v1.0 (adds 21:9, 5:4, 4:5). The API also
+// accepts 9:21, but Civitai's shared GenerationAspectRatio tables don't define
+// it, so it isn't exposed here.
+const happyHorseV1_1AspectRatioList: GenerationAspectRatio[] = [
+  ...happyHorseAspectRatioList,
+  '21:9',
+  '5:4',
+  '4:5',
 ];
+
+/** Preferred ratios shown before the "More" overflow for the wider v1.1 set */
+const happyHorseV1_1PriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
+
+/** Options for the HappyHorse version selector (using version IDs as values) */
+const happyHorseVersionOptions = [
+  { label: 'v1.0', value: happyHorseVersionIds['v1.0'] },
+  { label: 'v1.1', value: happyHorseVersionIds['v1.1'] },
+];
+
+/** True when the selected model version is HappyHorse v1.1 */
+const isHappyHorseV1_1 = (modelId?: number) => modelId === happyHorseVersionIds['v1.1'];
 
 /** Default happy horse aspect ratios (720p) — exported for legacy consumers */
 const happyHorseAspectRatios = getAspectRatioOptions('720p', happyHorseAspectRatioList);
@@ -78,8 +97,16 @@ const happyHorseAudioSettings = [
 type HappyHorseCtx = { ecosystem: string; workflow: string };
 
 export const happyHorseGraph = new DataGraph<HappyHorseCtx, GenerationCtx>()
-  // Locked model from ecosystemSettings
-  .merge(createCheckpointGraph())
+  // Version-locked model (v1.0 / v1.1) — picker shows the official versions,
+  // swap button hidden via modelLocked in ecosystemSettings. Defaults to v1.1.
+  .merge(
+    () =>
+      createCheckpointGraph({
+        versions: { options: happyHorseVersionOptions },
+        defaultModelId: happyHorseVersionIds['v1.1'],
+      }),
+    []
+  )
 
   // Images node — workflow-dependent
   .node(
@@ -119,17 +146,25 @@ export const happyHorseGraph = new DataGraph<HappyHorseCtx, GenerationCtx>()
     })
   )
 
-  // Aspect ratio — shown for txt2vid and img2vid:ref2vid only; dimensions scale with resolution
+  // Aspect ratio — shown for txt2vid and img2vid:ref2vid only; dimensions scale
+  // with resolution and the option set widens for v1.1.
   .node(
     'aspectRatio',
-    (ctx) => ({
-      ...aspectRatioNode({
-        options: getAspectRatioOptions(ctx.resolution, happyHorseAspectRatioList),
-        defaultValue: '16:9',
-      }),
-      when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid',
-    }),
-    ['workflow', 'resolution']
+    (ctx) => {
+      const v11 = isHappyHorseV1_1(ctx.model?.id);
+      return {
+        ...aspectRatioNode({
+          options: getAspectRatioOptions(
+            ctx.resolution,
+            v11 ? happyHorseV1_1AspectRatioList : happyHorseAspectRatioList
+          ),
+          defaultValue: '16:9',
+          priorityOptions: v11 ? happyHorseV1_1PriorityRatios : undefined,
+        }),
+        when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid:ref2vid',
+      };
+    },
+    ['workflow', 'resolution', 'model']
   )
 
   // Duration (3-15 seconds)

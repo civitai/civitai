@@ -1,7 +1,8 @@
-import { Box } from '@mantine/core';
+import { Box, Center, Loader } from '@mantine/core';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
@@ -17,6 +18,7 @@ import { sendBlockRender } from './sendBlockRender';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
+import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -1046,25 +1048,61 @@ export function PageBlockHost({
       // silently swallowed.
       data-needs-consent={needsConsent ? 'true' : 'false'}
     >
-      <AppBlockChrome blockInstanceId={blockInstanceId} appName={appName} />
+      <AppBlockChrome blockInstanceId={blockInstanceId} appName={appName} slotId={PAGE_SLOT_ID} />
       {showIframe ? (
-        <iframe
-          ref={iframeRef}
-          src={iframeSrc}
-          sandbox={effectiveSandbox}
-          referrerPolicy="no-referrer"
-          title={appName || blockId}
-          data-testid="app-page-iframe"
-          data-block-instance-id={blockInstanceId}
-          data-block-ready={isReady ? 'true' : 'false'}
-          style={{
-            flex: 1,
-            display: 'block',
-            width: '100%',
-            border: 0,
-            pointerEvents: isReady ? 'auto' : 'none',
-          }}
-        />
+        // The iframe fills the remaining viewport. While the block is still
+        // handshaking (status === 'loading', before BLOCK_READY), the surface
+        // would otherwise be blank — the iframe is mounted but visually empty and
+        // non-interactive (pointerEvents:none). Overlay a centered Loader on top
+        // so the user sees a loading state instead of a blank page. The overlay
+        // is gated purely on `status === 'loading'`: it unmounts the instant the
+        // status machine leaves loading — on BLOCK_READY (→ ready) AND on every
+        // terminal path (timeout / fatal / no_token / error, which also flip
+        // `showIframe` to false and render the BlockFallback below) — so it can
+        // never spin forever.
+        <Box style={{ position: 'relative', flex: 1, display: 'flex' }}>
+          <iframe
+            ref={iframeRef}
+            src={iframeSrc}
+            sandbox={effectiveSandbox}
+            referrerPolicy="no-referrer"
+            // Sanitize the publisher-controlled appName for the iframe title too
+            // (same sanitizer as the visible chrome + the loader aria-label), so
+            // every appName-derived plain-text attribute is consistent. Falls
+            // back to blockId when nothing legible remains.
+            title={sanitizeAppChromeName(appName) || blockId}
+            data-testid="app-page-iframe"
+            data-block-instance-id={blockInstanceId}
+            data-block-ready={isReady ? 'true' : 'false'}
+            style={{
+              flex: 1,
+              display: 'block',
+              width: '100%',
+              border: 0,
+              pointerEvents: isReady ? 'auto' : 'none',
+            }}
+          />
+          {status === 'loading' && (
+            <Center
+              data-testid="app-page-loading"
+              // Announce the loading state on the REGION, not just the graphic:
+              // role="status" + aria-busy mark the overlay container as a live
+              // busy region so a screen reader announces "loading" when it
+              // appears (the bare <Loader> below only exposes a labeled graphic).
+              role="status"
+              aria-busy={true}
+              aria-live="polite"
+              style={{ position: 'absolute', inset: 0, background: 'var(--mantine-color-body)' }}
+            >
+              {/* Run the publisher-controlled appName through the SAME sanitizer
+                  the visible chrome uses (sanitizeAppChromeName) so the accessible
+                  name a screen reader reads can't carry control/bidi/zalgo
+                  spoofing — consistency with AppBlockChrome, not a new gate. Falls
+                  back to 'app' when nothing legible remains. */}
+              <Loader aria-label={`Loading ${sanitizeAppChromeName(appName) || 'app'}`} />
+            </Center>
+          )}
+        </Box>
       ) : fallbackReason ? (
         <Box style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }} data-testid="app-page-fallback">
           <BlockFallback reason={fallbackReason} blockName={appName} />

@@ -101,12 +101,13 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(),
 }));
+vi.mock('~/server/services/orchestrator/orchestration-new.service', () => ({
+  buildGenerationContext: vi.fn(),
+  createWorkflowStepsFromGraphInput: vi.fn(),
+}));
 vi.mock('~/server/services/orchestrator/workflows', () => ({
   submitWorkflow: vi.fn(),
   getWorkflow: vi.fn(),
-}));
-vi.mock('~/server/services/orchestrator/textToImage/textToImage', () => ({
-  createTextToImageStep: vi.fn(),
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(),

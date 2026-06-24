@@ -32,11 +32,15 @@ import { trpc } from '~/utils/trpc';
  *   - Category-tag scroller via `Model3DCategories` — mod-curated tags
  *     linked from the `'model3d category'` system tag (mirrors what
  *     `/images`, `/posts`, `/articles` do)
- *   - Rigged / Animated toggles — filter on the PolyGen `enableRigging` /
- *     `enableAnimation` flags stored on `Model3D.generationParams`
+ *   - Animated toggle — filters on the PolyGen `enableAnimation` flag
+ *     stored on `Model3D.generationParams`. Rigging used to have its own
+ *     toggle but the Meshy API binds rigging to animation (rigging is
+ *     required when animation is enabled), so we now expose a single
+ *     "Animate" affordance and `toMeshyPolyGenInput` pins
+ *     `enableRigging = enableAnimation`.
  *
- * State lives on the URL (sort / period / tags / rigged / animated) so deep
- * links + back/forward retain filter context. Switching any filter resets the
+ * State lives on the URL (sort / period / tags / animated) so deep links +
+ * back/forward retain filter context. Switching any filter resets the
  * infinite-query cursor automatically — TanStack Query re-keys on input.
  */
 export const getServerSideProps = createServerSideProps({
@@ -70,7 +74,6 @@ function Model3DsPage() {
   // feed pages do it). The bespoke single `?tagId=` query param is gone.
   const tagIds = useMemo(() => parseNumericStringArray(router.query.tags) ?? [], [router.query.tags]);
 
-  const rigged = query.rigged === 'true';
   const animated = query.animated === 'true';
 
   // ---- Feed -------------------------------------------------------------------
@@ -87,7 +90,6 @@ function Model3DsPage() {
         sort,
         period,
         tagIds: tagIds.length ? tagIds : undefined,
-        rigged: rigged || undefined,
         animated: animated || undefined,
         browsingLevel,
       },

@@ -85,8 +85,9 @@ export const getModel3DsInfiniteSchema = infiniteQuerySchema
       .enum(Object.values(Model3DSort) as [Model3DSort, ...Model3DSort[]])
       .optional(),
     period: z.enum(MetricTimeframe).optional(),
-    // PolyGen generation-param toggles — JSON checks on Model3D.generationParams.
-    rigged: z.boolean().optional(),
+    // PolyGen `enableAnimation` toggle — JSON check on `Model3D.generationParams`.
+    // The Meshy API binds rigging to animation, so the previous standalone
+    // `rigged` filter is gone (any leftover `?rigged=` in the URL is ignored).
     animated: z.boolean().optional(),
   })
   .merge(baseQuerySchema);

@@ -1446,7 +1446,9 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.HappyHorse,
     defaults: {
-      model: { id: 2902378 },
+      // Default to the newest version (v1.1 = 3063263); v1.0 (2902378) remains
+      // selectable via the version picker in happy-horse-graph.ts.
+      model: { id: 3063263 },
       modelLocked: true,
     },
   },
@@ -3269,6 +3271,23 @@ export function getRootEcosystem(ecosystemIdOrBaseModel: number | string): Ecosy
     return getRootEcosystem(ecosystem.parentEcosystemId);
   }
   return ecosystem;
+}
+
+
+/**
+ * Clip skip is a CLIP text-encoder concept that only applies to the Stable
+ * Diffusion 1.x and SDXL families (SDXL children like Pony, Illustrious and
+ * NoobAI resolve to the SDXL root). Returns false for everything else
+ * (Flux, SD3, video ecosystems, etc.) and for unknown base models.
+ */
+export function baseModelSupportsClipSkip(baseModel?: string | null): boolean {
+  if (!baseModel) return false;
+  try {
+    const root = getRootEcosystem(baseModel);
+    return root.id === ECO.SD1 || root.id === ECO.SDXL;
+  } catch {
+    return false;
+  }
 }
 
 /**
