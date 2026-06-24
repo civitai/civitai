@@ -68,6 +68,11 @@ const SUB_NAV_LINKS: SubNavLink[] = [
   },
   {
     href: '/apps/revenue',
+    // INTENTIONAL mismatch: this tab is keyed on app OWNERSHIP (hasApprovedApps),
+    // but `/apps/revenue` itself gates on `isAppDeveloper` (mod). An owner who
+    // isn't a mod sees the tab but the page enforces access — don't "fix" this
+    // by aligning them; the tab is an ownership affordance, the page is the
+    // access boundary. (Pre-GA, ownership ⊆ mod, so both resolve the same.)
     label: 'Revenue',
     icon: IconCurrencyDollar,
     visible: (s) => s.hasApprovedApps,

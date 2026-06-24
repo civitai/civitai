@@ -1366,9 +1366,11 @@ export const blocksRouter = router({
    * `listMySubscriptions` + `listMyPublishRequests` + `getMyApps` (the
    * heavyweight per-page queries) just to decide which tabs to show.
    *
-   * Counts/booleans ONLY — no rows, no manifests, no per-app data. Each
-   * count is bounded to `take: 1` (existence check) so this stays cheap
-   * even for a user with many installs/submissions.
+   * Booleans ONLY — no rows, no manifests, no per-app data. Each check is a
+   * `findFirst({ select: { id } })` so Prisma pushes `LIMIT 1` into SQL and
+   * stops at the first matching row (a `count({ take: 1 })` would NOT — Prisma
+   * ignores `take` for `count` and runs a full `COUNT(*)`). Stays cheap even
+   * for a user with many installs/submissions.
    *
    * `protectedProcedure` + `enforceAppBlocksFlag`: own-data scoped to
    * `ctx.user.id`; returns the all-false shape when the flag is dark so
@@ -1387,22 +1389,25 @@ export const blocksRouter = router({
       const user = ctx.user;
       if (!user) return allFalse;
 
-      const [installCount, submissionCount, approvedAppCount] = await Promise.all([
-        dbRead.blockUserSubscription.count({ where: { userId: user.id }, take: 1 }),
-        dbRead.appBlockPublishRequest.count({
-          where: { submittedByUserId: user.id },
-          take: 1,
+      const [install, submission, approvedApp] = await Promise.all([
+        dbRead.blockUserSubscription.findFirst({
+          where: { userId: user.id },
+          select: { id: true },
         }),
-        dbRead.appBlock.count({
+        dbRead.appBlockPublishRequest.findFirst({
+          where: { submittedByUserId: user.id },
+          select: { id: true },
+        }),
+        dbRead.appBlock.findFirst({
           where: { app: { userId: user.id }, status: 'approved' },
-          take: 1,
+          select: { id: true },
         }),
       ]);
 
       return {
-        hasInstalls: installCount > 0,
-        hasSubmissions: submissionCount > 0,
-        hasApprovedApps: approvedAppCount > 0,
+        hasInstalls: install !== null,
+        hasSubmissions: submission !== null,
+        hasApprovedApps: approvedApp !== null,
         isReviewer: isAppReviewer(user),
       };
     }),
