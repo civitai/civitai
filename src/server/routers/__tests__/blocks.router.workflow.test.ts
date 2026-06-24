@@ -23,6 +23,7 @@ const {
   mockBuildGenerationContext,
   mockAuditPromptServer,
   mockGetUserById,
+  mockGetSessionUser,
   mockDbRead,
   mockRedis,
   mockIsAppBlocksEnabled,
@@ -44,6 +45,11 @@ const {
   mockBuildGenerationContext: vi.fn(),
   mockAuditPromptServer: vi.fn(),
   mockGetUserById: vi.fn(),
+  // assertAppBlocksEnabledForTokenUser now resolves the FULL SessionUser (so the
+  // Flipt context carries the real tier/isMember). isAppBlocksEnabled is mocked
+  // here, but getSessionUser must still be stubbed so the real resolver doesn't
+  // hit the DB/redis.
+  mockGetSessionUser: vi.fn(),
   mockDbRead: {
     modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
     // Required by resolveBlockCheckpoint (LoRA path) — published checkpoint
@@ -115,6 +121,9 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: mockGetUserById,
+}));
+vi.mock('~/server/auth/session-user', () => ({
+  getSessionUser: (...args: unknown[]) => mockGetSessionUser(...args),
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
@@ -309,6 +318,7 @@ beforeEach(() => {
     mockBuildGenerationContext,
     mockAuditPromptServer,
     mockGetUserById,
+    mockGetSessionUser,
     mockDbRead.modelVersion.findUnique,
     mockIsAppBlocksEnabled,
     mockDailyBoostApply,
@@ -364,6 +374,11 @@ beforeEach(() => {
     email: 'u@example.com',
     username: 'u',
   });
+  // assertAppBlocksEnabledForTokenUser resolves the full SessionUser for the flag
+  // gate; default to a moderator so the (mocked) flag gate passes. The vanished
+  // -viewer test sets getUserById→null to make the SECOND gate
+  // (assertViewerIsModerator) reject; this default keeps the first gate green.
+  mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockAuditPromptServer.mockResolvedValue(undefined);
@@ -956,14 +971,17 @@ describe('blocks.submitWorkflow', () => {
     it('INVARIANT 1b — NON-MOD token: flag false → 401, no submit (stays mod-only pre-GA)', async () => {
       faithfulModSegmentedFlag();
       mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
-      // TOKEN subject resolves to a NON-mod user → flag false.
-      mockGetUserById.mockResolvedValue({
+      // TOKEN subject resolves to a NON-mod user → flag false. The flag gate
+      // resolves the subject via getSessionUser (not ctx.user), so set it here.
+      const nonMod = {
         id: 42,
         isModerator: false,
         tier: 'free',
         email: 'u@example.com',
         username: 'u',
-      });
+      };
+      mockGetUserById.mockResolvedValue(nonMod);
+      mockGetSessionUser.mockResolvedValue(nonMod);
       happyVersionLookup();
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       await expect(
@@ -1032,14 +1050,17 @@ describe('blocks.submitWorkflow', () => {
       faithfulModSegmentedFlag();
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockGetUserById.mockResolvedValue({ id: 42, isModerator: true });
+      mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
       mockGetWorkflow.mockResolvedValue({ id: 'wf_1', status: 'succeeded', cost: { total: 0 }, steps: [] });
       let caller = blocksRouter.createCaller(fakeCtx() as never);
       const ok = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
       expect(ok.snapshot.workflowId).toBe('wf_1');
 
-      // Non-mod subject → flag false → 401, orchestrator never read.
+      // Non-mod subject → flag false → 401, orchestrator never read. The flag
+      // gate resolves the subject via getSessionUser.
       mockGetWorkflow.mockClear();
       mockGetUserById.mockResolvedValue({ id: 42, isModerator: false });
+      mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: false, tier: 'free' });
       caller = blocksRouter.createCaller(fakeCtx() as never);
       await expect(
         caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
