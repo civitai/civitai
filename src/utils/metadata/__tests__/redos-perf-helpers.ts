@@ -119,40 +119,51 @@ export function expectSubQuadraticScaling(
   const smallMs = medianMs(() => op(smallInput));
   const largeMs = medianMs(() => op(largeInput));
 
-  // PRIMARY guard — large-N absolute bound with a deliberately HUGE margin.
+  // Two REGIMES, because a single absolute wall-clock ceiling cannot be both
+  // tight-enough-to-catch-a-mild-quadratic AND loose-enough-to-never-flake on a
+  // pathologically contended CI box. We pick the right discriminator per regime:
   //
-  // The pre-fix code was O(n²)/exponential: the documented prod baseline was
-  // ~2800ms at N≈24k (and up to ~84s on bigger CJK inputs). Linear work on the
-  // large input here measures low-tens-of-ms; even a 10×-slower or heavily
-  // contended runner keeps it well under a second. So a ceiling sitting an order
-  // of magnitude above linear-on-this-input but far BELOW the known quadratic
-  // cost cleanly separates the two on ANY hardware — unlike a tight (100ms) budget
-  // with ~1× margin, which flaked on CPU variance. This is the load-bearing check.
+  //  • RELIABLE-RATIO regime (both medians above the noise floor — typically a
+  //    slow/contended box): the SHAPE ratio is the authoritative, hardware-
+  //    independent check (O(n)→~factor, O(n²)→~factor²). The absolute bound is
+  //    only the GENEROUS multi-second hang backstop — a tight linear ceiling
+  //    false-trips here (genuinely linear work measured 1900ms on a saturated CI
+  //    runner, where transform alone took 467s).
+  //  • FAST-BOX regime (baseline below the noise floor): the ratio of two short
+  //    measurements is noise-dominated and unreliable, but the op is plainly fast
+  //    — so a TIGHT absolute ceiling has enormous margin (linear is tens of ms;
+  //    the removed O(n²) was ~2800ms+ on this input) and cleanly catches a
+  //    reintroduced ReDoS with no ratio.
+  //
+  // Both regimes catch a reintroduced O(n²)/exponential; neither false-trips on
+  // linear work, on any hardware.
+  const NOISE_FLOOR_MS = 40;
+  const ratioIsReliable = smallMs >= NOISE_FLOOR_MS && largeMs >= NOISE_FLOOR_MS;
+
+  if (ratioIsReliable) {
+    const ratio = largeMs / smallMs;
+    expect(
+      ratio,
+      `${label}: cost scaled ${ratio.toFixed(2)}× when input grew ${factor}× ` +
+        `(${baseN}→${baseN * factor} chars: ${smallMs.toFixed(1)}ms→${largeMs.toFixed(1)}ms). ` +
+        `Linear work tracks ${factor}×; a ratio ≥ ${ratioCeiling}× indicates quadratic/` +
+        `exponential backtracking (the ReDoS the audit fix removed).`
+    ).toBeLessThan(ratioCeiling);
+    // Generous absolute backstop only — a true hang trips this on any box.
+    expect(
+      largeMs,
+      `${label}: a single call on the ${largeInput.length}-char input took ${largeMs.toFixed(1)}ms — ` +
+        `over the multi-second hang ceiling; indicates a reintroduced catastrophic backtrack.`
+    ).toBeLessThan(ABSOLUTE_HANG_CEILING_MS);
+    return;
+  }
+
+  // Fast-box regime — tight absolute ceiling with a deliberately HUGE margin over
+  // linear-on-this-input, far below the known quadratic cost.
   expect(
     largeMs,
     `${label}: a single call on the ${largeInput.length}-char input took ${largeMs.toFixed(1)}ms — ` +
-      `linear work here is low-tens-of-ms even on a slow/loaded runner; this magnitude indicates ` +
-      `the quadratic/exponential backtracking the audit fix removed (prod baseline was seconds).`
+      `linear work here is tens-of-ms on a fast box; this magnitude indicates the ` +
+      `quadratic/exponential backtracking the audit fix removed (prod baseline was seconds).`
   ).toBeLessThan(LARGE_N_LINEAR_CEILING_MS);
-
-  // SECONDARY guard — scaling RATIO, but ONLY when both medians are well above
-  // the timer-noise floor. A short baseline makes the ratio unstable: contention
-  // on a shared CI core adds variable absolute ms to each measurement, so a
-  // ~10ms baseline against a contention-inflated large reads as a false 12×
-  // (observed on CI) even though the op is plainly linear and the absolute bound
-  // above passed comfortably. Below the floor the absolute guards (LARGE_N +
-  // HANG ceilings) carry correctness, so we skip the noisy ratio rather than
-  // flake on it. 40ms ensures the baseline is large enough that fixed-overhead
-  // and scheduler jitter are a small fraction of it.
-  const NOISE_FLOOR_MS = 40;
-  if (smallMs < NOISE_FLOOR_MS || largeMs < NOISE_FLOOR_MS) return;
-
-  const ratio = largeMs / smallMs;
-  expect(
-    ratio,
-    `${label}: cost scaled ${ratio.toFixed(2)}× when input grew ${factor}× ` +
-      `(${baseN}→${baseN * factor} chars: ${smallMs.toFixed(1)}ms→${largeMs.toFixed(1)}ms). ` +
-      `Linear work tracks ${factor}×; a ratio ≥ ${ratioCeiling}× indicates quadratic/` +
-      `exponential backtracking (the ReDoS the audit fix removed).`
-  ).toBeLessThan(ratioCeiling);
 }
