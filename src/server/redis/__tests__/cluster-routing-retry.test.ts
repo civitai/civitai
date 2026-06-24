@@ -42,6 +42,22 @@ function getSlotRandomNodeThrow(): TypeError {
   return err;
 }
 
+// A THIRD pre-dispatch shape: during topology churn `nodeClient(node)` (cluster-slots.js:213) is
+// called with `node === undefined` (empty-topology / keyless-command edge, or a slot whose master
+// is undefined) and reads `.connectPromise` off it → TypeError with a getClient/nodeClient frame
+// (NOT getSlotRandomNode, NOT replicas|master). The node is selected at cluster/index.js:177 BEFORE
+// the dispatch try/catch → provably pre-dispatch → write-safe to retry.
+function nodeClientConnectPromiseThrow(): TypeError {
+  const err = new TypeError("Cannot read properties of undefined (reading 'connectPromise')");
+  err.stack = [
+    "TypeError: Cannot read properties of undefined (reading 'connectPromise')",
+    '    at RedisClusterSlots.nodeClient (/app/node_modules/@redis/client/dist/lib/cluster/cluster-slots.js:213:17)',
+    '    at RedisClusterSlots.getClient (/app/node_modules/@redis/client/dist/lib/cluster/cluster-slots.js:330:21)',
+    '    at RedisCluster._execute (/app/node_modules/@redis/client/dist/lib/cluster/index.js:177:40)',
+  ].join('\n');
+  return err;
+}
+
 function namedError(name: string, message = 'boom'): Error {
   const err = new Error(message);
   err.name = name;
@@ -111,6 +127,27 @@ describe('isTransientClusterRoutingError', () => {
     ).toBe(true);
   });
 
+  // AUDIT 🟡 (FIX #1): the THIRD pre-dispatch shape — nodeClient(undefined) reading 'connectPromise'
+  // with a getClient/nodeClient frame. Provably pre-dispatch (cluster/index.js:177 selects the node
+  // before the dispatch try/catch), so retrying is write-safe like the getSlotRandomNode shape.
+  it("is TRUE for the nodeClient(undefined) 'reading connectPromise' TypeError (3rd pre-dispatch shape)", () => {
+    expect(isTransientClusterRoutingError(nodeClientConnectPromiseThrow())).toBe(true);
+  });
+
+  it("is TRUE for a bare \"Cannot read properties of undefined (reading 'connectPromise')\" TypeError", () => {
+    expect(
+      isTransientClusterRoutingError(
+        new TypeError("Cannot read properties of undefined (reading 'connectPromise')")
+      )
+    ).toBe(true);
+  });
+
+  // Symmetry with the replicas|master guard: the undefined/null co-occurrence is required, so a
+  // 'connectPromise' read that does NOT co-occur with undefined/null does NOT match.
+  it("is FALSE for a 'connectPromise' mention without an undefined/null co-occurrence (guard symmetry)", () => {
+    expect(isTransientClusterRoutingError(new Error('connectPromise resolved late'))).toBe(false);
+  });
+
   it('is FALSE for a real WRONGTYPE redis error (must still throw)', () => {
     expect(
       isTransientClusterRoutingError(
@@ -174,6 +211,22 @@ describe('withClusterRoutingRetry', () => {
     expect(exec).toHaveBeenCalledTimes(2); // initial + 1 retry
     expect(rediscover).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onResult).toHaveBeenCalledWith('recovered');
+  });
+
+  it('the nodeClient connectPromise pre-dispatch throw also recovers on retry → counter "recovered"', async () => {
+    const exec = vi
+      .fn()
+      .mockRejectedValueOnce(nodeClientConnectPromiseThrow())
+      .mockResolvedValueOnce('recovered-value');
+    const rediscover = vi.fn();
+    const onResult = vi.fn();
+
+    const result = await withClusterRoutingRetry(exec, { rediscover, onResult, sleep: noSleep });
+
+    expect(result).toBe('recovered-value');
+    expect(exec).toHaveBeenCalledTimes(2); // initial + 1 retry — the new shape IS treated transient
+    expect(rediscover).toHaveBeenCalledTimes(1);
     expect(onResult).toHaveBeenCalledWith('recovered');
   });
 

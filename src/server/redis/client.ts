@@ -236,6 +236,13 @@ const clusterRefreshIntervals = new Map<string, ReturnType<typeof setInterval>>(
  * Trigger topology rediscovery on a cluster client.
  * Uses internal _slots.rediscover() method - this is undocumented but stable.
  * See: https://github.com/redis/node-redis/issues/2806
+ *
+ * FIRE-AND-FORGET: this kicks off `_slots.rediscover(...).catch(...)` but RETURNS `undefined` (it
+ * does NOT return/await the rediscover promise). So a caller that `await`s it (the routing-retry
+ * guard's `rediscover` hook) resolves immediately — the rediscover runs in the background and the
+ * guard's BACKOFF is what gives the in-flight, single-flighted slot-map refresh time to settle
+ * before the retry. Intentional: node-redis single-flights rediscover, so a best-effort nudge +
+ * backoff is the right shape; returning the promise here would change the retry timing/blast radius.
  */
 function triggerTopologyRediscovery(clusterClient: any, reason: string) {
   try {
@@ -1035,6 +1042,9 @@ function instrumentCommands(client: any, clientLabel: 'cluster' | 'sys') {
     // of retries (no double-count, done() fires exactly once). The sys client (wrapWithDeadline=
     // false) is left exactly as before — no routing guard, no deadline. Default-on; the
     // REDIS_CLUSTER_ROUTING_RETRY_ENABLED=false kill-switch passes runOnce() straight through.
+    // The `rediscover` hook is a FIRE-AND-FORGET nudge: triggerTopologyRediscovery returns
+    // undefined (it does not await the rediscover promise), so the guard's backoff — not this call —
+    // is what gives the in-flight slot-map refresh time to settle before the retry.
     const executed: Promise<any> = wrapWithDeadline
       ? withClusterRoutingRetry(runOnce, {
           rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),

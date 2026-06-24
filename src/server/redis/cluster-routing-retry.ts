@@ -89,7 +89,15 @@ function errText(err: unknown): string {
  *    (the exact fleet-wide throw measured during the rolling update);
  *  - sibling node-selection failures: a message/name mentioning `getSlotRandomNode`, a
  *    `getSlotMaster`/`getSlotRandomNode`-style "undefined reading 'replicas'/'master'" on an empty
- *    slot, an explicit `NoSlot`/"no slot"/"slot not served" error.
+ *    slot, an explicit `NoSlot`/"no slot"/"slot not served" error;
+ *  - the `nodeClient(undefined)` "undefined (reading 'connectPromise')" TypeError (a THIRD
+ *    pre-dispatch shape): during topology churn `nodeClient(node)` (cluster-slots.js:213) is called
+ *    with `node === undefined` (empty-topology / keyless-command edge, or a slot whose `master` is
+ *    undefined) and reads `.connectPromise` off it, with a `getClient`/`nodeClient` stack frame
+ *    (NOT getSlotRandomNode, NOT replicas|master). The node is selected at cluster/index.js:177
+ *    BEFORE the dispatch try/catch — provably pre-dispatch, so retrying is write-safe exactly like
+ *    the getSlotRandomNode shape; without this the wave's keyless-command/empty-topology 500s slip
+ *    through.
  *
  * Deliberately does NOT match (any of these re-throws so the caller sees today's behavior):
  *  - WRONGTYPE, NOAUTH/auth, CROSSSLOT (a real key-distribution bug, not a transient), MOVED/ASK
@@ -117,10 +125,16 @@ export function isTransientClusterRoutingError(err: unknown): boolean {
   // canonical signature is a TypeError "Cannot read properties of undefined (reading 'replicas')"
   // raised from getSlotRandomNode; we match either the frame name OR the undefined-read on a
   // routing field, so a future node-redis patch that renames the frame still matches by shape.
-  // Only the documented pre-dispatch routing fields (`replicas`/`master`) qualify — `client` and
-  // `nodes` were dropped as speculative breadth (audit 🟡) since they're not the measured shapes.
+  // The documented pre-dispatch routing fields are `replicas`/`master` (getSlotRandomNode /
+  // getSlotMaster) AND `connectPromise` — the latter is `nodeClient(node)` (cluster-slots.js:213)
+  // called with `node === undefined` (empty-topology / keyless-command edge, or a slot whose
+  // `master` is undefined), throwing "Cannot read properties of undefined (reading 'connectPromise')"
+  // with a `getClient`/`nodeClient` stack frame. That path is selected at cluster/index.js:177
+  // BEFORE the dispatch try/catch (same pre-dispatch guarantee as getSlotRandomNode → safe to
+  // retry for writes too). `client` and `nodes` were dropped as speculative breadth (audit 🟡)
+  // since they're not the measured shapes.
   if (/getSlotRandomNode|getSlotMaster|getRandomNode/.test(text)) return true;
-  if (/reading '(replicas|master)'/.test(text) && /undefined|null/.test(text)) {
+  if (/reading '(replicas|master|connectPromise)'/.test(text) && /undefined|null/.test(text)) {
     return true;
   }
 
@@ -136,11 +150,15 @@ export type ClusterRoutingRetryResult = 'recovered' | 'exhausted';
 
 export interface ClusterRoutingRetryOptions {
   /**
-   * Trigger a topology rediscovery between attempts. Awaited (errors swallowed by the caller's
-   * wiring — a failed rediscover just means the retry runs against the same slot map and likely
-   * re-throws, which is still no worse than today). Injected so the pure module needs no redis
-   * import. If omitted, retries still occur (a fast in-flight rediscover from another path may
-   * have settled the map) but without an explicit nudge.
+   * Best-effort FIRE-AND-FORGET nudge to kick off a topology rediscovery between attempts. This is
+   * NOT awaited to completion: the wired-in `triggerTopologyRediscovery` (client.ts) starts
+   * `_slots.rediscover(...).catch(...)` but returns `undefined`, so awaiting this resolves
+   * immediately. It is the BACKOFF (below) — not this call — that gives the in-flight slot-map
+   * refresh time to settle before the retry runs (node-redis single-flights rediscover, so the
+   * nudge just ensures one is in progress). Injected so the pure module needs no redis import. If
+   * omitted, retries still occur (a fast in-flight rediscover from another path may have settled the
+   * map) but without an explicit nudge. Any error is swallowed by the wrapper — a failed nudge just
+   * means the retry runs against the same slot map and likely re-throws, no worse than today.
    */
   rediscover?: () => void | Promise<unknown>;
   /** Master kill-switch. Defaults to REDIS_CLUSTER_ROUTING_RETRY_ENABLED. When false: pass-through
@@ -167,11 +185,15 @@ const defaultSleep = (ms: number) =>
   ms > 0 ? new Promise<void>((r) => setTimeout(r, ms)) : Promise.resolve();
 
 /**
- * Run `exec()`. On a TRANSIENT cluster-routing error (isTransientClusterRoutingError), trigger
- * ONE rediscover() and retry with a small bounded backoff, up to `maxRetries` times. On success
- * after a retry → fire onResult('recovered'). After exhausting the retries → fire
- * onResult('exhausted') and RE-THROW THE ORIGINAL error (no silent swallow). A NON-transient
- * error (WRONGTYPE, auth, app bug) → re-thrown IMMEDIATELY, no rediscover, no retry.
+ * Run `exec()`. On a TRANSIENT cluster-routing error (isTransientClusterRoutingError), wait a small
+ * bounded backoff, fire a best-effort rediscover() NUDGE (fire-and-forget — see below), then retry,
+ * up to `maxRetries` times. NOTE: the backoff is the real settle window — the rediscover() nudge is
+ * not awaited to completion (the wired `triggerTopologyRediscovery` returns undefined, so awaiting
+ * it resolves immediately), it only ensures a single-flighted slot-map refresh is in progress while
+ * the backoff gives it a beat to land. On success after a retry → fire onResult('recovered'). After
+ * exhausting the retries → fire onResult('exhausted') and RE-THROW THE ORIGINAL error (no silent
+ * swallow). A NON-transient error (WRONGTYPE, auth, app bug) → re-thrown IMMEDIATELY, no rediscover,
+ * no retry.
  *
  * Single-flight/idempotent-safe by construction: the retried error shapes are all PRE-DISPATCH
  * (node-selection / NoSlot), meaning the command NEVER reached a node, so re-running exec() cannot
@@ -225,9 +247,11 @@ export async function withClusterRoutingRetry<T>(
         throw err;
       }
 
-      // Bounded backoff, then nudge a rediscover and retry. Only pre-dispatch routing shapes reach
-      // here (the predicate excludes the reconnect rejections), so the command never reached a
-      // node — safe to retry for reads AND writes (no double-execution).
+      // Bounded backoff (the real settle window), then fire a best-effort rediscover NUDGE
+      // (fire-and-forget — not awaited to completion; it just ensures an in-flight slot-map refresh
+      // is running while the backoff gives it time to land) and retry. Only pre-dispatch routing
+      // shapes reach here (the predicate excludes the reconnect rejections), so the command never
+      // reached a node — safe to retry for reads AND writes (no double-execution).
       const waitMs = backoff[Math.min(attempt, backoff.length - 1)] ?? 0;
       if (waitMs > 0) await sleep(waitMs);
       if (options.rediscover) {

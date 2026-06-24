@@ -281,12 +281,14 @@ export const serverSchema = z.object({
     z.boolean().default(true)
   ),
   // Max RETRIES after the initial attempt. The transient window is ~1–2 min cluster-wide but
-  // any single pod's command only needs the map to settle for ITS slot — 2 retries with a
-  // rediscover nudge clears the vast majority within ~200ms; more would just pile latency on a
+  // any single pod's command only needs the map to settle for ITS slot — 2 retries with the
+  // backoff below clears the vast majority within ~200ms; more would just pile latency on a
   // genuinely-persistent break that's going to re-throw anyway. 0 disables retry (pass-through).
   REDIS_CLUSTER_ROUTING_RETRY_MAX: z.coerce.number().default(2),
-  // Backoff before the 1st / 2nd retry (ms). Small — the rediscover is the heavy lever, the
-  // backoff just gives the in-flight slot refresh a beat to land. 50ms then 150ms.
+  // Backoff before the 1st / 2nd retry (ms). This IS the settle window: the rediscover between
+  // attempts is a best-effort FIRE-AND-FORGET nudge (triggerTopologyRediscovery returns undefined,
+  // not awaited to completion), so it's this backoff — not the rediscover call — that gives the
+  // in-flight, single-flighted slot-map refresh a beat to land before the retry. 50ms then 150ms.
   REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MS: z.coerce.number().default(50),
   REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MAX_MS: z.coerce.number().default(150),
 
