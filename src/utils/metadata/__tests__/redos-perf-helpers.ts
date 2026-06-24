@@ -96,11 +96,17 @@ export function expectSubQuadraticScaling(
 ): void {
   const baseN = opts.baseN ?? 8000;
   const factor = opts.factor ?? 4;
-  // For O(n) the ratio ≈ factor (=4); for O(n²) ≈ factor² (=16). The midpoint
-  // `factor * quadraticGuard` (=4*2=8) cleanly separates them: a linear op stays
-  // near 4, a quadratic op jumps to ~16. quadraticGuard=2 gives linear work 2×
-  // slack for fixed per-call overhead + timer noise while still tripping O(n²).
-  const quadraticGuard = opts.quadraticGuard ?? 2;
+  // For O(n) the ratio ≈ factor (=4); for O(n²) ≈ factor² (=16). We set the
+  // ceiling at `factor * quadraticGuard` (=4*3.5=14): a linear op stays near 4,
+  // a quadratic op jumps to ~16. The original midpoint (8) sat too close to a
+  // noisy-but-linear ratio — on a heavily-contended CI runner a genuinely linear
+  // op measured 12× (9.3ms→111.7ms) because contention adds variable absolute ms
+  // to each short measurement independently, and the absolute large-N guard
+  // already passed (111ms ≪ 1500ms). 3.5× slack over linear keeps that noise
+  // below the ceiling while still tripping a true O(n²) (≥16×). The PRIMARY
+  // absolute guard below is the load-bearing ReDoS check; this ratio is a
+  // secondary "clearly-egregious" backstop.
+  const quadraticGuard = opts.quadraticGuard ?? 3.5;
   const ratioCeiling = factor * quadraticGuard;
 
   const smallInput = buildInput(baseN);
@@ -129,11 +135,16 @@ export function expectSubQuadraticScaling(
       `the quadratic/exponential backtracking the audit fix removed (prod baseline was seconds).`
   ).toBeLessThan(LARGE_N_LINEAR_CEILING_MS);
 
-  // SECONDARY guard — scaling RATIO, but ONLY when both medians are above the
-  // timer-noise floor (otherwise a 2ms→32ms blip reads as a false 13× even though
-  // 32ms is plainly still linear). When the baseline is noise-dominated the
-  // absolute bound above already covers correctness, so we skip the ratio.
-  const NOISE_FLOOR_MS = 8;
+  // SECONDARY guard — scaling RATIO, but ONLY when both medians are well above
+  // the timer-noise floor. A short baseline makes the ratio unstable: contention
+  // on a shared CI core adds variable absolute ms to each measurement, so a
+  // ~10ms baseline against a contention-inflated large reads as a false 12×
+  // (observed on CI) even though the op is plainly linear and the absolute bound
+  // above passed comfortably. Below the floor the absolute guards (LARGE_N +
+  // HANG ceilings) carry correctness, so we skip the noisy ratio rather than
+  // flake on it. 40ms ensures the baseline is large enough that fixed-overhead
+  // and scheduler jitter are a small fraction of it.
+  const NOISE_FLOOR_MS = 40;
   if (smallMs < NOISE_FLOOR_MS || largeMs < NOISE_FLOOR_MS) return;
 
   const ratio = largeMs / smallMs;
