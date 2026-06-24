@@ -14,6 +14,7 @@ import {
   getActiveChallengeFromDb,
   getActiveChallengesFromDb,
   getChallengesToReconcileFromDb,
+  getChallengesToReconcileBetweenFromDb,
   getEndedActiveChallengesFromDb,
   getScheduledChallengeFromDb,
   getScheduledChallengesReadyToStart,
@@ -553,6 +554,18 @@ export async function getEndedActiveChallenges(): Promise<DailyChallengeDetails[
  */
 export async function getChallengesToReconcile(windowHours = 48): Promise<DailyChallengeDetails[]> {
   const challenges = await getChallengesToReconcileFromDb(windowHours);
+  return challenges.map(challengeToLegacyFormat);
+}
+
+/**
+ * Gets completed challenges with stuck REVIEW items whose endsAt falls in [start, endExclusive),
+ * in legacy format. Used by the manual backfill for date-range targeting.
+ */
+export async function getChallengesToReconcileBetween(
+  start: Date,
+  endExclusive: Date
+): Promise<DailyChallengeDetails[]> {
+  const challenges = await getChallengesToReconcileBetweenFromDb(start, endExclusive);
   return challenges.map(challengeToLegacyFormat);
 }
 

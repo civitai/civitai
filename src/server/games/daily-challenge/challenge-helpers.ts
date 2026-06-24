@@ -231,6 +231,33 @@ export async function getChallengesToReconcileFromDb(windowHours = 48): Promise<
 }
 
 /**
+ * Gets completed challenges with stuck REVIEW CollectionItems whose endsAt falls in the
+ * half-open range [start, endExclusive). Used by the manual backfill to target a specific
+ * historical span instead of the rolling lookback window. Callers pass endExclusive as the
+ * day AFTER the intended last day so the end bound is calendar-day inclusive.
+ * Returns challenges ordered by endsAt ASC (oldest first).
+ */
+export async function getChallengesToReconcileBetweenFromDb(
+  start: Date,
+  endExclusive: Date
+): Promise<ChallengeDetails[]> {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT c.id
+    FROM "Challenge" c
+    WHERE c.status = ${ChallengeStatus.Completed}::"ChallengeStatus"
+    AND c."endsAt" >= ${start}
+    AND c."endsAt" < ${endExclusive}
+    AND EXISTS (
+      SELECT 1 FROM "CollectionItem" ci
+      WHERE ci."collectionId" = c."collectionId" AND ci.status = 'REVIEW'
+    )
+    ORDER BY c."endsAt" ASC
+  `;
+  const challenges = await Promise.all(rows.map((row) => getChallengeById(row.id)));
+  return challenges.filter((c): c is ChallengeDetails => c !== null);
+}
+
+/**
  * Gets scheduled challenges that are ready to START (startsAt <= now).
  * These challenges should be activated.
  * Returns challenges ordered by startsAt ASC (oldest first).
