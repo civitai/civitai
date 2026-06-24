@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -100,9 +100,11 @@ function pageBlock(manifestOverrides: ManifestShape = {}): AvailableBlock {
 }
 
 const onOpen = vi.fn();
+const onRecentOpen = vi.fn();
 
 beforeEach(() => {
   onOpen.mockClear();
+  onRecentOpen.mockClear();
   detailsModalSpy.mockClear();
 });
 
@@ -264,6 +266,80 @@ describe('AppBlockCard action CTA gate', () => {
     await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
     expect(page.getByRole('link', { name: /^view$/i }).query()).toBeNull();
     expectAtLeastOneAffordance();
+  });
+});
+
+describe('AppBlockCard — onRecentOpen on route/title open paths (M1)', () => {
+  // A page app never fires the install `onOpen` (no install slot), so its open
+  // path is the "Open app" route link + the detail-page title/description links.
+  // These must call `onRecentOpen` so the page app populates "Recently opened".
+  //
+  // These paths are real Next `<Link>` anchors (`<a href>`). In the browser-mode
+  // test a click would actually navigate the test iframe and crash the runner —
+  // so we install a capture-phase guard that `preventDefault()`s the navigation.
+  // The card's `onClick` (which calls onRecentOpen) fires in the BUBBLE phase
+  // BEFORE the browser's default navigation, so this faithfully exercises the
+  // fire-and-navigate wiring without leaving the page.
+  const stopNav = (e: Event) => {
+    if ((e.target as HTMLElement)?.closest('a')) e.preventDefault();
+  };
+  beforeEach(() => document.addEventListener('click', stopNav, true));
+  afterEach(() => document.removeEventListener('click', stopNav, true));
+
+  test('clicking "Open app" (route link) on a PAGE app calls onRecentOpen', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={pageBlock()}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        onRecentOpen={onRecentOpen}
+        canOpenPage
+      />
+    );
+
+    const openApp = page.getByRole('link', { name: /open app/i });
+    await expect.element(openApp).toBeInTheDocument();
+    await openApp.click();
+
+    // The route open recorded the app to recents (fire-and-navigate).
+    expect(onRecentOpen).toHaveBeenCalledTimes(1);
+    expect(onRecentOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'app-1' }));
+    // It did NOT route the install/settings open (that's a separate CTA absent
+    // for page apps).
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  test('clicking the title link records the open via onRecentOpen', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={pageBlock({ name: 'Titled App' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        onRecentOpen={onRecentOpen}
+        canOpenPage={false}
+      />
+    );
+
+    // The title is a link to the detail page; clicking it is an "open".
+    const titleLink = page.getByRole('link', { name: /Titled App/i });
+    await expect.element(titleLink).toBeInTheDocument();
+    await titleLink.click();
+
+    expect(onRecentOpen).toHaveBeenCalledTimes(1);
+    expect(onRecentOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'app-1' }));
+  });
+
+  test('onRecentOpen is optional — omitting it does not crash the open paths', async () => {
+    // Existing callers (and other tests) that don't track recents must keep
+    // working; the `?.()` call is a no-op when the prop is absent.
+    renderWithProviders(
+      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage />
+    );
+    const openApp = page.getByRole('link', { name: /open app/i });
+    await expect.element(openApp).toBeInTheDocument();
+    // No throw on click without an onRecentOpen handler.
+    await openApp.click();
+    expect(onOpen).not.toHaveBeenCalled();
   });
 });
 
