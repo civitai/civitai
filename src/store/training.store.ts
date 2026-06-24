@@ -11,6 +11,11 @@ import type {
 } from '~/server/schema/model-version.schema';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { AudioSampleOverride, EngineTypes, TrainingBaseModelType } from '~/utils/training';
+import {
+  AI_TOOLKIT_EPOCHS,
+  aiToolkitSaveEveryDefault,
+  aiToolkitStepDefault,
+} from '~/utils/training';
 
 export type ImageDataType = {
   url: string;
@@ -281,6 +286,42 @@ export const getDefaultTrainingParams = (base: TrainingDetailsBaseModel, engine:
     }),
     {} as TrainingDetailsParams
   );
+};
+
+/**
+ * Run-state overrides for a "Train Further" continuation: forces the AI-Toolkit engine,
+ * carries the source LoRA's base, seeds the steps-pricing defaults, and points `continueFrom`
+ * at the source epoch's AIR. Shared by the "Train Further" button (TrainingSelectFile) and the
+ * reload-safe re-seed on Step 3 (TrainingSubmit) so the two paths can't drift — that drift is
+ * what silently fell back to the default SDXL base (ClickUp 868k47a7x).
+ */
+export const buildContinuationRunUpdate = ({
+  base,
+  baseType,
+  continueFromAir,
+  samplePrompts,
+  negativePrompt,
+}: {
+  base: TrainingDetailsBaseModel;
+  baseType: TrainingBaseModelType;
+  continueFromAir: string;
+  samplePrompts?: string[];
+  negativePrompt?: string;
+}): TrainingRunUpdate => {
+  const params = getDefaultTrainingParams(base, 'ai-toolkit');
+  params.engine = 'ai-toolkit';
+  params.trainBatchSize = 1;
+  params.targetSteps = aiToolkitStepDefault(baseType);
+  params.saveEvery = aiToolkitSaveEveryDefault(params.targetSteps);
+  params.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
+  params.continueFrom = continueFromAir;
+  return {
+    base,
+    baseType,
+    params,
+    ...(samplePrompts?.length && { samplePrompts }),
+    ...(negativePrompt && { negativePrompt }),
+  };
 };
 
 const defaultRunBase = {
