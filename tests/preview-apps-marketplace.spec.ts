@@ -47,8 +47,15 @@ import { trpcQuery } from './preview-trpc';
  *    `<Title order={2}>{name}</Title>` where
  *    `name = detail.manifest.name ?? detail.blockId ?? appBlockId` — so the
  *    visible host-rendered name == `manifest.name || blockId`.
- *  - Marketplace page (`/apps/index.tsx`) renders `<Title order={2}>Civitai App
- *    Blocks</Title>` for an appBlocks-enabled viewer; a non-appBlocks viewer
+ *  - Marketplace page (`/apps/index.tsx`) renders the `AppsSubNav` tabs bar — its
+ *    first tab is `{ href: '/apps', label: 'Marketplace' }` (AppsSubNav.tsx:55) —
+ *    plus a search `TextInput` (placeholder "Search by name or block id"). It no
+ *    longer renders a `<Title>Civitai App Blocks</Title>`: the app-blocks nav
+ *    refactor (#2749/#2758) made `AppsPageLayout` DELIBERATELY OMIT the page title
+ *    on the marketplace surface ("omit for a header with just the tabs, e.g. the
+ *    marketplace" — AppsPageLayout.tsx:36), so the heading no longer exists by
+ *    design. We assert the "Marketplace" tab instead — it uniquely identifies the
+ *    rendered apps surface for an appBlocks-enabled viewer; a non-appBlocks viewer
  *    gets the Next 404 (resolveAppsPageAccess.ts → notFound).
  */
 
@@ -91,14 +98,19 @@ test.describe('App Blocks marketplace discovery + detail render (mod)', () => {
     page,
   }) => {
     // The marketplace index renders for an appBlocks-enabled viewer (the mod) and
-    // 404s for everyone else. Asserting it loads (status < 400) + shows its known
-    // heading proves the mod cleared the `features.appBlocks` SSR gate (NOT the
-    // 404 a non-appBlocks user gets). domcontentloaded ONLY — never networkidle.
+    // 404s for everyone else. Asserting it loads (status < 400) + shows the
+    // marketplace's "Marketplace" sub-nav tab proves the mod cleared the
+    // `features.appBlocks` SSR gate and the page rendered (NOT the 404 a
+    // non-appBlocks user gets). The page no longer renders a "Civitai App Blocks"
+    // heading — the app-blocks nav refactor (#2749/#2758) made AppsPageLayout omit
+    // the title on the marketplace surface — so we assert the always-on
+    // "Marketplace" tab, which uniquely identifies the apps surface.
+    // domcontentloaded ONLY — never networkidle.
     const resp = await page.goto('/apps', { waitUntil: 'domcontentloaded' });
     expect(resp?.status(), 'GET /apps status for the appBlocks-enabled mod').toBeLessThan(400);
     await expect(
-      page.getByRole('heading', { name: 'Civitai App Blocks' }),
-      '/apps should render the marketplace heading for an appBlocks-enabled mod (not a 404)'
+      page.getByRole('tab', { name: 'Marketplace' }),
+      '/apps should render the AppsSubNav "Marketplace" tab for an appBlocks-enabled mod (not a 404)'
     ).toBeVisible();
 
     // DISCOVER an appBlockId at runtime from the public listing. Never hardcode

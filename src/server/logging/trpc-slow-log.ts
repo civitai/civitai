@@ -185,7 +185,7 @@ function emitSlowLog(input: TrpcSlowLogInput, slowMs: number, droppedSinceLast: 
 
   // Fire-and-forget async tail — fully swallowed. Kept off the synchronous return
   // so the request path never waits on the Axiom/Loki client.
-  void (async () => {
+  const tail = (async () => {
     try {
       const payload: Record<string, unknown> = {
         name: 'trpc-procedure-slow',
@@ -207,4 +207,17 @@ function emitSlowLog(input: TrpcSlowLogInput, slowMs: number, droppedSinceLast: 
       // Logging failure must never surface.
     }
   })();
+  // Track the in-flight tail so tests can deterministically await the emit
+  // instead of racing a fixed wall-clock timeout (which fails on a loaded CI
+  // box where the dynamic import() resolves slower). Removed on settle, so this
+  // never retains memory in production.
+  pendingEmits.add(tail);
+  void tail.finally(() => pendingEmits.delete(tail));
+}
+
+const pendingEmits = new Set<Promise<void>>();
+
+/** Test-only: resolve once every in-flight fire-and-forget emit tail has settled. */
+export function __flushPendingEmitsForTest(): Promise<void> {
+  return Promise.allSettled([...pendingEmits]).then(() => undefined);
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // file.service.ts imports `@prisma/client` (type-only) plus a wide graph that
 // calls Prisma runtime helpers at module load. Mirror the house stub pattern
@@ -128,8 +128,16 @@ const aFile = {
   hashes: [{ hash: 'abc' }],
 };
 
-// timeout: the first dynamic import cold-transforms a large module graph.
-describe('getFileForModelVersion — orphan model relation + unresolvable URL', { timeout: 30000 }, () => {
+describe('getFileForModelVersion — orphan model relation + unresolvable URL', () => {
+  // The first dynamic import cold-transforms a large module graph. On a loaded CI
+  // box that transform can exceed a per-test timeout (a 30s describe override
+  // flaked here under contention). Pay it ONCE in beforeAll with a generous hook
+  // timeout, then every test uses the warm reference — no per-test import race.
+  let getFileForModelVersion: (typeof import('../file.service'))['getFileForModelVersion'];
+  beforeAll(async () => {
+    ({ getFileForModelVersion } = await import('../file.service'));
+  }, 60000);
+
   beforeEach(() => {
     modelVersionFindFirst.mockReset();
     modelFileFindMany.mockReset();
@@ -146,8 +154,6 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
   it('passes a `model: { is: {} }` existence filter so orphaned-model versions are dropped at the DB', async () => {
     modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
     resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
-
-    const { getFileForModelVersion } = await import('../file.service');
     await getFileForModelVersion({ modelVersionId: 1, noAuth: true });
 
     expect(modelVersionFindFirst).toHaveBeenCalledTimes(1);
@@ -162,8 +168,6 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
     // Post-fix DB behaviour: an orphan-model version is filtered out, so findFirst
     // returns null instead of throwing. The handler maps that to `not-found`.
     modelVersionFindFirst.mockResolvedValue(null);
-
-    const { getFileForModelVersion } = await import('../file.service');
     const result = await getFileForModelVersion({ modelVersionId: 1, noAuth: true });
 
     expect(result.status).toBe('not-found');
@@ -174,8 +178,6 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
     modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
     // Both storage-resolver and delivery-worker rejected → resolveDownloadUrl throws.
     resolveDownloadUrlMock.mockRejectedValue(new Error('Delivery worker error: Not Found'));
-
-    const { getFileForModelVersion } = await import('../file.service');
     // Authenticated owner-or-mod so the request passes the auth gate and reaches
     // URL resolution (where the unresolvable-URL → resolve-failed routing lives).
     const result = await getFileForModelVersion({
@@ -201,8 +203,6 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
       url: 'https://cdn.example.com/signed',
       urlExpiryDate: new Date(),
     });
-
-    const { getFileForModelVersion } = await import('../file.service');
     const result = await getFileForModelVersion({
       modelVersionId: 1,
       noAuth: true,
