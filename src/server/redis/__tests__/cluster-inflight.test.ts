@@ -7,6 +7,7 @@ import {
 } from '../cluster-inflight';
 import { ClusterSelfHealWatchdog } from '../cluster-selfheal';
 import type { ClusterSelfHealConfig, ClusterSelfHealDeps } from '../cluster-selfheal';
+import { withClusterRoutingRetry } from '../cluster-routing-retry';
 
 // FIX #2 coverage: the cluster inflight counter that the self-heal watchdog samples must
 // NEVER go negative — specifically after a heal. forceClusterReconnect calls the cluster
@@ -51,6 +52,64 @@ describe('cluster-inflight counter (FIX #2 floor)', () => {
     // ...then each of the N destroy()-rejected commands runs its done() → floored decrement.
     // Pre-FIX-#2 this would have left the counter at -N; the floor keeps it at 0.
     for (let i = 0; i < N; i++) decClusterInflight();
+    expect(getClusterInflight()).toBe(0);
+  });
+});
+
+// Routing-retry invariant: the topology-churn fix wraps the retry INSIDE the single inflight
+// inc/dec accounting (instrumentCommands inc's ONCE on entry, the routing guard retries the
+// node-selection SEQUENTIALLY, done() dec's ONCE on settle). So a command that hits the
+// transient routing throw and retries must still net ZERO inflight — no leak per retry, no
+// negative. This models that exact composition against the REAL counter.
+describe('cluster-inflight is balanced across a retried routing command (no leak)', () => {
+  beforeEach(() => resetClusterInflight());
+
+  const getSlotThrow = () =>
+    new TypeError("Cannot read properties of undefined (reading 'replicas')");
+
+  // Mirror the instrumentCommands wrapper: inc once → run (with routing retry) → dec once.
+  async function instrumentedCommand<T>(exec: () => Promise<T>): Promise<T> {
+    incClusterInflight();
+    try {
+      return await withClusterRoutingRetry(exec, {
+        enabled: true,
+        maxRetries: 2,
+        rediscover: () => {},
+        sleep: () => Promise.resolve(),
+      });
+    } finally {
+      decClusterInflight();
+    }
+  }
+
+  it('a recovered (retried) command nets 0 inflight', async () => {
+    let calls = 0;
+    const exec = () => {
+      calls += 1;
+      return calls === 1 ? Promise.reject(getSlotThrow()) : Promise.resolve('ok');
+    };
+    expect(getClusterInflight()).toBe(0);
+    const result = await instrumentedCommand(exec);
+    expect(result).toBe('ok');
+    expect(calls).toBe(2); // retried once
+    expect(getClusterInflight()).toBe(0); // balanced — counted as ONE inflight unit, dec'd once
+  });
+
+  it('an exhausted (re-thrown) routing command still nets 0 inflight', async () => {
+    const exec = () => Promise.reject(getSlotThrow());
+    await expect(instrumentedCommand(exec)).rejects.toBeInstanceOf(TypeError);
+    expect(getClusterInflight()).toBe(0); // no leak even when retries exhaust + re-throw
+  });
+
+  it('two concurrent retried commands net 0 (each inc/dec is one unit, retries do not double-count)', async () => {
+    const mk = () => {
+      let n = 0;
+      return () => {
+        n += 1;
+        return n === 1 ? Promise.reject(getSlotThrow()) : Promise.resolve('ok');
+      };
+    };
+    await Promise.all([instrumentedCommand(mk()), instrumentedCommand(mk())]);
     expect(getClusterInflight()).toBe(0);
   });
 });

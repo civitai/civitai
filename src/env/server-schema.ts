@@ -247,6 +247,51 @@ export const serverSchema = z.object({
   // in behavior beyond the existing 15s deadline). Default 1500ms (1.5s) — ~65× the
   // ~23ms healthy p99, so it never clips a healthy write, but bounds a wedged one.
   REDIS_METRIC_WRITE_TIMEOUT_MS: z.coerce.number().default(1500),
+
+  // ── CLUSTER ROUTING RETRY-AFTER-REDISCOVER (the topology-churn 500 wave) ─────────
+  //
+  // During ANY next-redis-cluster topology change (rolling update / node failover /
+  // scale event) the node-redis cluster slot map is transiently inconsistent and the
+  // client throws FLEET-WIDE, BEFORE the command is dispatched to any node:
+  //   TypeError: Cannot read properties of undefined (reading 'replicas')
+  //     at RedisClusterSlots.getSlotRandomNode (@redis/client@5.8.3 cluster-slots.js:342)
+  // Measured live during a rolling update: 1,696 throws in 15 min across ~90 pods →
+  // user-facing HTTP 500s on GENERAL cache READ paths (tag.getAll, image.getGenerationData,
+  // hiddenPreferences.getHidden, …). The cluster stays cluster_state=ok; it is purely the
+  // client mishandling churn, and the wave self-clears in ~1–2 min as topology settles.
+  //
+  // This is a genuine gap #2665 doesn't cover: the self-heal watchdog (FIX #1) only fires
+  // on a SUSTAINED inflight pin (the HANG-wedge), not this IMMEDIATE fail-fast throw; and
+  // the metric-write fail-soft (FIX #3) covers only the write/lock path, not these reads.
+  //
+  // KEY SAFETY ARGUMENT: getSlotRandomNode throws during NODE SELECTION — the command never
+  // reached a node, so a bounded retry-after-rediscover is safe for ALL commands, reads AND
+  // writes/mutations (zero double-execution risk — nothing executed). After exhausting the
+  // retries the ORIGINAL error is RE-THROWN (no silent swallow — current failure mode
+  // preserved for a genuinely persistent break). Cluster client ONLY (wired at the cluster
+  // `_execute` chokepoint; the single-node sysRedis client is never wrapped — a blanket
+  // sys-client change caused the #2556/#2586 wedge). NO money/entitlement blast radius
+  // (cache/routing only; money + entitlement live in Postgres + the sysRedis client).
+  //
+  // ON by default; REDIS_CLUSTER_ROUTING_RETRY_ENABLED=false is a single-flip kill-switch
+  // that restores today's exact behavior (one attempt, throw on a routing error).
+  REDIS_CLUSTER_ROUTING_RETRY_ENABLED: z.preprocess(
+    // default true; only the literal string 'false' disables it (mirrors the SELFHEAL flag)
+    (x) => x !== 'false',
+    z.boolean().default(true)
+  ),
+  // Max RETRIES after the initial attempt. The transient window is ~1–2 min cluster-wide but
+  // any single pod's command only needs the map to settle for ITS slot — 2 retries with the
+  // backoff below clears the vast majority within ~200ms; more would just pile latency on a
+  // genuinely-persistent break that's going to re-throw anyway. 0 disables retry (pass-through).
+  REDIS_CLUSTER_ROUTING_RETRY_MAX: z.coerce.number().default(2),
+  // Backoff before the 1st / 2nd retry (ms). This IS the settle window: the rediscover between
+  // attempts is a best-effort FIRE-AND-FORGET nudge (triggerTopologyRediscovery returns undefined,
+  // not awaited to completion), so it's this backoff — not the rediscover call — that gives the
+  // in-flight, single-flighted slot-map refresh a beat to land before the retry. 50ms then 150ms.
+  REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MS: z.coerce.number().default(50),
+  REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MAX_MS: z.coerce.number().default(150),
+
   // Upper bound (ms) on a single ClickHouse image-metrics read in the feed/SSR
   // hot path (getImageMetricsObject). The @clickhouse/client default
   // request_timeout is 30000ms, so a saturated/cold-cache-miss metric read would

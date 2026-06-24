@@ -257,6 +257,20 @@ export const redisMetricWriteFailSoftCounter = registerCounterWithLabels({
   labelNames: ['op'] as const,
 });
 
+// Cluster ROUTING retry-after-rediscover counter (the topology-churn 500 wave that #2665 does
+// not cover). Incremented when a cluster `_execute` hit a TRANSIENT pre-dispatch routing throw
+// (getSlotRandomNode "Cannot read properties of undefined (reading 'replicas')" et al.) and the
+// guard retried after a rediscover. `result` ∈ recovered|exhausted: a rising `recovered` series
+// during a rolling update / failover is the direct confirmation the fix converted what would
+// have been a fleet-wide 500 wave into a transparent retry; a rising `exhausted` series means
+// the slot map stayed inconsistent past the bounded retries and the original error re-threw (the
+// pre-fix behavior). Safe for reads AND writes — the command never reached a node. 2 series.
+export const redisRoutingRetryCounter = registerCounterWithLabels({
+  name: 'redis_routing_retry_total',
+  help: 'Cluster commands that hit a transient routing throw and were retried after a rediscover (recovered) or exhausted retries (exhausted, original error re-thrown)',
+  labelNames: ['result'] as const,
+});
+
 // tRPC per-procedure latency — wall-clock duration of the full middleware chain +
 // resolver, labeled by procedure path. Used to rank heavy-pool isolation
 // candidates by P99 x rate (the criterion behind the image-feed cutover). Bucket
@@ -502,6 +516,7 @@ export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
   sysredisSentinelClientErrorsCounter,
   redisSelfHealReconnectCounter,
   redisMetricWriteFailSoftCounter,
+  redisRoutingRetryCounter,
 };
 
 // pgPoolAcquireHistogram is registered in src/server/db/db-helpers.ts, not here.
