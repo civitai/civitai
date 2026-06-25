@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { enhance } from '$app/forms';
   import { SYNC_PARAM } from '@civitai/auth/client';
   import { buildWordmarkSvg, buildBadgeSvg, getHoliday } from '@civitai/brand';
@@ -15,6 +16,18 @@
 
   // Tracks the in-flight magic-link request so the button can show a pending state.
   let submitting = $state(false);
+
+  // Turnstile uses the INVISIBLE widget (CF widget-mode = Invisible) — it runs in the background and
+  // auto-issues a token via its success callback (no interactive challenge). We track that token so
+  // the submit button can wait for it, avoiding the race where a fast user POSTs an empty
+  // `cf-turnstile-response` and the server fail-closes. `captchaUnavailable` is the safety valve:
+  // if the widget errors or never loads (CF unreachable, hostname not allow-listed, script blocked),
+  // we STOP gating and let the server-side check be the sole gate — a user must never be trapped
+  // behind a permanently-disabled button.
+  let captchaToken = $state('');
+  let captchaUnavailable = $state(false);
+  // Gate the email submit only while captcha is configured, still loading, and not known-broken.
+  const captchaPending = $derived(!!data.turnstileSiteKey && !captchaToken && !captchaUnavailable);
 
   // Framework-agnostic brand marks from @civitai/brand — no React, just SVG strings.
   const holiday = getHoliday();
@@ -38,10 +51,42 @@
 
   // Cloudflare Turnstile auto-renders any `.cf-turnstile` element once its script loads and injects
   // a hidden `cf-turnstile-response` input into the form. We reset it after each submit so a fresh
-  // (single-use) token is available for the next attempt.
+  // (single-use) token is available for the next attempt; clearing `captchaToken` re-gates the
+  // button until the invisible widget produces the new token.
   const resetTurnstile = () => {
+    captchaToken = '';
     (globalThis as unknown as { turnstile?: { reset: () => void } }).turnstile?.reset();
   };
+
+  // Wire Turnstile's data-* callbacks (it invokes the named functions on `window`). Set them up
+  // client-side only; the invisible widget calls the success callback after its background check.
+  onMount(() => {
+    const w = window as unknown as Record<string, (token?: string) => void>;
+    w.onAuthCaptcha = (token) => {
+      captchaToken = token ?? '';
+      captchaUnavailable = false;
+    };
+    w.onAuthCaptchaExpired = () => {
+      // Token is single-use / TTL-bound; clear it. The invisible widget auto-renews.
+      captchaToken = '';
+    };
+    w.onAuthCaptchaError = () => {
+      // Widget couldn't produce a token — fall back to server-side enforcement (see captchaPending).
+      captchaToken = '';
+      captchaUnavailable = true;
+    };
+    // Last-resort fail-safe: if no token has arrived in time (script blocked, CF unreachable),
+    // stop gating so the user can still submit and let the server fail-closed decide.
+    const timeout = setTimeout(() => {
+      if (!captchaToken) captchaUnavailable = true;
+    }, 8000);
+    return () => {
+      clearTimeout(timeout);
+      delete w.onAuthCaptcha;
+      delete w.onAuthCaptchaExpired;
+      delete w.onAuthCaptchaError;
+    };
+  });
 </script>
 
 <svelte:head>
@@ -133,11 +178,20 @@
             <input type="hidden" name="returnUrl" value={data.returnUrl} />
             {#if data.sync}<input type="hidden" name={SYNC_PARAM} value={data.sync} />{/if}
             {#if data.turnstileSiteKey}
-              <div class="cf-turnstile" data-sitekey={data.turnstileSiteKey} data-theme="dark"></div>
+              <!-- Invisible widget: no data-size (invisibility comes from the sitekey's CF
+                   widget-mode, not an attribute). Callbacks track the token for the submit gate. -->
+              <div
+                class="cf-turnstile"
+                data-sitekey={data.turnstileSiteKey}
+                data-callback="onAuthCaptcha"
+                data-expired-callback="onAuthCaptchaExpired"
+                data-error-callback="onAuthCaptchaError"
+                data-theme="dark"
+              ></div>
             {/if}
-            <button type="submit" class="social email" disabled={submitting}>
+            <button type="submit" class="social email" disabled={submitting || captchaPending}>
               <IconMail size={20} stroke={2} />
-              <span>{submitting ? 'Sending…' : 'Email me a login link'}</span>
+              <span>{submitting ? 'Sending…' : captchaPending ? 'Verifying…' : 'Email me a login link'}</span>
             </button>
             {#if form?.invalid}<p class="error">Enter a valid email address.</p>{/if}
             {#if form?.rateLimited}
