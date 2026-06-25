@@ -31,6 +31,19 @@ Stack mirrors `civitai-advertising`: SvelteKit + **Kysely over `pg`** + `jose` (
 | `AUTH_COOKIE_DOMAIN` | `.civitai.com` for cross-subdomain sharing |
 | `{DISCORD,GOOGLE,GITHUB,REDDIT}_CLIENT_ID` / `_SECRET` | per-provider; a provider only appears once both are set |
 
+## Releasing
+
+```bash
+pnpm run release:auth          # patch (default)
+pnpm run release:auth:minor
+pnpm run release:auth:major
+```
+
+Bumps `apps/auth/package.json` and pushes an **`auth-app-vX.Y.Z`** tag. The in-cluster Tekton
+`tag-webhook` builds `ghcr.io/civitai/civitai-auth:X.Y.Z` and Flux (in the datapacket-talos
+repo) bumps + rolls the deployment. No GitHub Actions, no `release` branch. See
+[`docs/auth/releasing.md`](../../docs/auth/releasing.md) for the full flow.
+
 ## Status / TODO
 
 - **DB types are a hand-written subset** (`lib/server/db/schema.ts`) — replace with a
