@@ -17,12 +17,14 @@
   // Tracks the in-flight magic-link request so the button can show a pending state.
   let submitting = $state(false);
 
-  // The typed email is OWNED by local state (bind:value), NOT a one-way value={form?.email}. The
-  // captcha gate flips `captchaPending` mid-typing (when the invisible widget resolves a token), and
-  // a one-way `value={form?.email ?? ''}` — which is '' since `form` is undefined pre-submit — gets
-  // re-asserted on that re-render and WIPES what the user typed. Local state is unaffected by the
-  // re-render and also preserves the input across a failed submit. Seeded from form?.email so a
-  // no-JS POST round-trip (server echoes the email back) still repopulates it.
+  // The typed email is OWNED by local state (bind:value), NOT a one-way value={form?.email ?? ''}.
+  // OBSERVED (reproduced live on auth.civitai.com): when the captcha gate flips `captchaPending`
+  // mid-typing — "Verifying…" → "Email me a login link" once the invisible widget resolves a token
+  // ~1s after load — the one-way-bound input got cleared to empty, wiping what the user typed.
+  // (`form` is undefined pre-submit so the bound expression is a constant ''; the exact re-render
+  // trigger isn't pinned down, but the wipe is real.) bind:value makes the input own its value so no
+  // re-render can reset it; it also preserves the input across a failed submit. Seeded from
+  // form?.email so a no-JS POST round-trip (server echoes the email back) still repopulates it.
   let email = $state(form?.email ?? '');
 
   // Turnstile uses the INVISIBLE widget (CF widget-mode = Invisible) — it runs in the background and
