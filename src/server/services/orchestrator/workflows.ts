@@ -44,6 +44,21 @@ import {
 const ORCHESTRATOR_UNAVAILABLE_MESSAGE =
   'Generation services are temporarily unavailable. Please try again.';
 
+// Overall wall-clock budgets for the side-effect-free orchestrator paths. These
+// bound the request via a single `AbortSignal.timeout(ms)` (which throws a
+// `TimeoutError` that `isUpstreamNetworkError` already classifies → mapped to a
+// retry-able 503 below). The budget is intentionally created ONCE and SHARED
+// across all retry attempts — the same AbortSignal is threaded into every
+// `submitWorkflowWithRetry` attempt — so the 3-attempt retry loop can NOT
+// multiply the wall-clock cost (that multiplication is exactly what turned a slow
+// orchestrator into a 56–93s park). The orchestrator's healthy P99 here is only a
+// few seconds, so these ceilings leave generous headroom while killing the tail.
+// Read (queryWorkflows → queryGeneratedImages) and what-if (cost estimate) only;
+// the generate/submit WRITE path is deliberately left unbounded (retry-without-
+// idempotency dup-safety is a separate follow-up).
+const ORCHESTRATOR_QUERY_TIMEOUT_MS = 20_000;
+export const ORCHESTRATOR_WHATIF_TIMEOUT_MS = 25_000;
+
 export async function queryWorkflows({
   token,
   fromDate,
@@ -54,6 +69,10 @@ export async function queryWorkflows({
 
   const { data, error } = await clientQueryWorkflows({
     client,
+    // Bound the read with an overall wall-clock budget. A fired timeout throws a
+    // `TimeoutError`, caught below and mapped to a retry-able 503 by the existing
+    // `isUpstreamNetworkError` branch — no new handling needed here.
+    signal: AbortSignal.timeout(ORCHESTRATOR_QUERY_TIMEOUT_MS),
     query: {
       ...query,
       tags: ['civitai', ...(query.tags ?? [])],
@@ -164,7 +183,8 @@ export async function submitWorkflow({
   token,
   body,
   query,
-}: Options<SubmitWorkflowData> & { token: string }) {
+  timeoutMs,
+}: Options<SubmitWorkflowData> & { token: string; timeoutMs?: number }) {
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
 
@@ -185,10 +205,27 @@ export async function submitWorkflow({
     console.log('------');
   }
 
+  // Only the side-effect-free callers (whatIf) pass `timeoutMs`. When set, build
+  // the AbortSignal ONCE and thread it into `submitWorkflowWithRetry` so the SAME
+  // signal is shared across every retry attempt → an OVERALL wall-clock budget,
+  // not a per-attempt one (otherwise 3 attempts could multiply the cost). The
+  // generate/WRITE path passes no `timeoutMs` → no signal, behavior unchanged.
+  const signal = timeoutMs != null ? AbortSignal.timeout(timeoutMs) : undefined;
+
+  // When a budget is in effect, a fired-signal failure surfaces (after retries are
+  // exhausted) as a THROWN upstream network/timeout error from
+  // `submitWorkflowWithRetry`. Map only that class to a retry-able 503; a non-
+  // network throw (a real bug) must re-throw unchanged. Without `timeoutMs` this
+  // wrapper is a no-op (the write path keeps its identical behavior).
   const result = await submitWorkflowWithRetry({
     client,
     body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
     query,
+    ...(signal ? { signal } : {}),
+  }).catch((thrown) => {
+    if (timeoutMs != null && isUpstreamNetworkError(thrown))
+      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, thrown);
+    throw thrown;
   });
 
   // Narrow on `result.data` (not a destructured copy) so this always-throwing

@@ -55,6 +55,7 @@ import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/gen
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import {
   getWorkflow,
+  ORCHESTRATOR_WHATIF_TIMEOUT_MS,
   submitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
@@ -1481,7 +1482,10 @@ export async function whatIfFromGraph({
     user: userId ? { id: userId, isModerator } : undefined,
   });
 
-  // Submit what-if request to orchestrator
+  // Submit what-if request to orchestrator. This is a side-effect-free cost
+  // estimate, so bound it with an overall wall-clock budget shared across retries
+  // (a fired budget → retry-able 503). The generate path intentionally passes no
+  // `timeoutMs` and stays unbounded (idempotency follow-up).
   const workflow = await submitWorkflow({
     token,
     body: {
@@ -1493,6 +1497,7 @@ export async function whatIfFromGraph({
     query: {
       whatif: true,
     },
+    timeoutMs: ORCHESTRATOR_WHATIF_TIMEOUT_MS,
   });
 
   // Check if all jobs are ready (have available support)
