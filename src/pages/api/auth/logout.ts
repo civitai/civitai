@@ -50,16 +50,13 @@ function safeCallback(cb: unknown): string {
 // The full set of Set-Cookie headers that end a session on this host. Pulled out so the cookie names cleared
 // (in particular the device cookie that gates seamless switching) are unit-testable without an HTTP round-trip.
 export function buildLogoutCookies(host: string | undefined): string[] {
-  // civ-token + civ-device are set by the spoke (civ-cookie.ts setSessionCookie) with `cookieDomainForHost()`
-  // — the REGISTRABLE domain (e.g. civitai.com), or AUTH_COOKIE_DOMAIN — NOT `.{host}`. Clear over that EXACT
-  // scope, else a preview/staging SUBDOMAIN (host `stage.civitai.com`, cookie `Domain=civitai.com`) keeps its
-  // cookie after logout. Host-only is the defensive fallback; the registrable already folds in
-  // AUTH_COOKIE_DOMAIN when it scopes the host, but include the raw override too for the hub-set device cookie.
-  const civDomains = [
-    undefined,
-    process.env.AUTH_COOKIE_DOMAIN || undefined,
-    cookieDomainForHost(host),
-  ];
+  // civ-token + civ-device are set by the spoke (civ-cookie.ts setSessionCookie) with `cookieDomainForHost()` —
+  // the REGISTRABLE domain (e.g. civitai.com), NOT `.{host}`. Clear over that EXACT scope (plus host-only as a
+  // defensive fallback), else a preview/staging SUBDOMAIN (host `stage.civitai.com`, cookie `Domain=civitai.com`)
+  // keeps its cookie after logout. The registrable scope ALSO clears the HUB-set `.civitai.com` device cookie: a
+  // Max-Age=0 over the derived `civitai.com` deletes a `.civitai.com` cookie (RFC 6265 — leading dot is the same
+  // scope), so the main app needs no knowledge of (and never reads) the hub-only AUTH_COOKIE_DOMAIN.
+  const civDomains = [undefined, cookieDomainForHost(host)];
 
   return [
     // new hub session cookie — clear BOTH prefixes explicitly (defensive: nuke it regardless of how it was set)

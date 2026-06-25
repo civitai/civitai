@@ -5,11 +5,14 @@ import { decodeTokenClaim } from './token-claims';
 // impersonate/exit, rolling refresh) — the hub's Set-Cookie can't cross a same-origin proxy, so each proxy
 // re-sets the cookie on its own response. Cookie name + secure-ness come from the package (single source).
 
-// The cookie Domain is derived from the REQUEST host, NOT a static env var — civitai.com and civitai.red share
-// one env, so a fixed value would break the other color (a civitai.red response can't set Domain=civitai.com;
-// the browser rejects it). AUTH_COOKIE_DOMAIN, if set, is an explicit override for single-color envs (e.g. PR
-// previews); leave it UNSET in the shared .com/.red prod env so each color self-derives.
-const COOKIE_DOMAIN_OVERRIDE = process.env.AUTH_COOKIE_DOMAIN || undefined;
+// The cookie Domain is ALWAYS derived from the REQUEST host (its registrable domain) — never from an env var.
+// The main app serves multiple colors (civitai.com, civitai.red, …) from ONE deployment, so any single fixed
+// Domain value is wrong for some color: a civitai.red response can't set Domain=civitai.com (the browser drops
+// it, the session cookie never lands, login wedges) AND it makes cookieDomainForHost('civitai.red') fall back to
+// host-only, which silently breaks the cross-site logout's same-registrable check. AUTH_COOKIE_DOMAIN is a
+// HUB-ONLY concern (the hub is a single host) and is deliberately NOT read here — the main app's cookie scope
+// stays decoupled from the hub's env. (Clearing a hub-set `.civitai.com` cookie still works: a Max-Age=0 over
+// the derived `civitai.com` deletes a `.civitai.com` cookie — RFC 6265 treats the leading dot as the same scope.)
 const DEVICE_TTL_S = 30 * 24 * 60 * 60; // 30d rolling — matches the hub's device record TTL
 
 // True if `domain` (leading dot tolerated) is `host` or a parent of it — i.e. the browser will ACCEPT a
@@ -28,18 +31,6 @@ function domainScopesHost(domain: string, host: string): boolean {
 export function cookieDomainForHost(host?: string): string | undefined {
   const h = (host ?? '').split(':')[0].toLowerCase();
   if (!h || h === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(h)) return undefined;
-
-  // Explicit override wins — but ONLY if it actually scopes this host. A mismatched override (e.g.
-  // `.civitai.com` left set in the shared .com/.red env, applied to a .red response) would be rejected by the
-  // browser → the spoke can never read its own session → login loop. Drop to host-only + warn instead.
-  if (COOKIE_DOMAIN_OVERRIDE) {
-    if (domainScopesHost(COOKIE_DOMAIN_OVERRIDE, h)) return COOKIE_DOMAIN_OVERRIDE;
-    console.warn(
-      `[civ-cookie] AUTH_COOKIE_DOMAIN="${COOKIE_DOMAIN_OVERRIDE}" does not scope host "${h}" — ignoring it ` +
-        `and setting a host-only cookie. (Leave AUTH_COOKIE_DOMAIN unset in the shared .com/.red env.)`
-    );
-    return undefined;
-  }
 
   const parts = h.split('.');
   if (parts.length < 2) return undefined;
@@ -175,16 +166,15 @@ export function postLoginMarkerCookie(): string {
 }
 
 /**
- * Expire the civ-token session cookie (BOTH name prefixes) across every plausible Domain scope — host-only, the
- * registrable domain we'd set, and any AUTH_COOKIE_DOMAIN override — plus the marker. A stale, wrong-scope
- * cookie can wedge the session (the spoke reads the bad one and never authenticates); this removes it no matter
- * how it was scoped, so the next login attempt is clean. Used by the loop-recovery path.
+ * Expire the civ-token session cookie (BOTH name prefixes) across every plausible Domain scope — host-only and
+ * the registrable domain we'd set — plus the marker. A stale, wrong-scope cookie can wedge the session (the
+ * spoke reads the bad one and never authenticates); this removes it no matter how it was scoped, so the next
+ * login attempt is clean. The registrable scope also clears a hub-set `.civitai.com` cookie (a Max-Age=0 over
+ * `civitai.com` deletes a `.civitai.com` cookie — RFC 6265 same scope). Used by the loop-recovery path.
  */
 export function clearAllSessionCookies(host?: string): string[] {
   const h = (host ?? '').split(':')[0].toLowerCase();
-  const scopes = [
-    ...new Set<string | undefined>([undefined, cookieDomainForHost(h), COOKIE_DOMAIN_OVERRIDE]),
-  ];
+  const scopes = [...new Set<string | undefined>([undefined, cookieDomainForHost(h)])];
   const out: string[] = [];
   for (const [name, secure] of [
     [sessionCookieName(false), false],

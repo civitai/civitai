@@ -82,7 +82,11 @@ describe('buildLogoutCookies', () => {
 
     // civ-token + civ-device, plus the legacy session cookie (clearLegacyCookies now also scopes to the
     // registrable domain — the old `.{full-host}` parent orphaned it on a subdomain logout host too).
-    for (const name of [sessionCookieName(true), deviceCookieName(true), '__Secure-civitai-token']) {
+    for (const name of [
+      sessionCookieName(true),
+      deviceCookieName(true),
+      '__Secure-civitai-token',
+    ]) {
       const scoped = headers.filter((h) => h.startsWith(`${name}=;`));
       // The fix: a clear scoped to the registrable domain the cookie was actually set with.
       expect(scoped.some((h) => h.includes('Domain=civitai.com'))).toBe(true);
@@ -91,20 +95,25 @@ describe('buildLogoutCookies', () => {
     }
   });
 
-  // The HUB sets the device cookie with Domain=AUTH_COOKIE_DOMAIN (apps/auth/.../device.ts cookieOpts). On a
-  // single-color env where that override is set, a logout that didn't clear over that exact Domain would orphan
-  // the device cookie. Assert buildLogoutCookies picks up AUTH_COOKIE_DOMAIN for the device cookie too.
-  it('clears the device cookie over AUTH_COOKIE_DOMAIN when the override is set', async () => {
+  // The main app must NEVER read AUTH_COOKIE_DOMAIN — it's a HUB-only env var, and honoring it on the
+  // multi-color main app is what broke civitai.red (a `.civitai.com` value can't scope a `.red` host, so the
+  // session cookie never landed AND the cross-site-logout registrable check fell back to host-only). Even with
+  // the var set, the cleared Domains must be ONLY host-only + the host-derived registrable. No coverage is lost:
+  // the hub-set `.civitai.com` device cookie is still cleared by the registrable `civitai.com` (RFC 6265 treats
+  // the leading dot as the same scope).
+  it('IGNORES AUTH_COOKIE_DOMAIN — never scopes a clear to the hub env var', async () => {
     process.env.AUTH_COOKIE_DOMAIN = '.civitai.red';
     vi.resetModules();
     const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
-    const headers = buildLogoutCookies(undefined);
+    const headers = buildLogoutCookies('civitai.com');
 
-    const deviceHeaders = headers.filter((h) => h.startsWith(`${deviceCookieName(true)}=;`));
-    expect(deviceHeaders.some((h) => h.includes('Domain=.civitai.red'))).toBe(true);
-    // ...and it must still emit a host-only (Domain-less) clear as the defensive fallback.
-    expect(
-      headers.some((h) => h.startsWith(`${deviceCookieName(true)}=;`) && !/Domain=/.test(h))
-    ).toBe(true);
+    // No Set-Cookie may carry the override value.
+    expect(headers.some((h) => h.includes('Domain=.civitai.red'))).toBe(false);
+    // civ-token + civ-device are cleared over the derived registrable (civitai.com) AND host-only.
+    for (const name of [sessionCookieName(true), deviceCookieName(true)]) {
+      const scoped = headers.filter((h) => h.startsWith(`${name}=;`));
+      expect(scoped.some((h) => h.includes('Domain=civitai.com'))).toBe(true);
+      expect(scoped.some((h) => !/Domain=/.test(h))).toBe(true);
+    }
   });
 });
