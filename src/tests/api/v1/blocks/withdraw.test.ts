@@ -67,6 +67,7 @@ const {
   mockWithdrawRequest,
   mockSysRedis,
   mockMultiIncr,
+  WithdrawRequestError,
 } = vi.hoisted(() => {
   const mockMultiIncr = {
     value: 1,
@@ -83,6 +84,18 @@ const {
         : ['OK', mockMultiIncr.value];
     }),
   });
+  // A faithful stand-in for the service's typed error so the handler's
+  // `err instanceof WithdrawRequestError` + `.code` switch is exercised against
+  // the REAL discriminant (not a substring). Mirrors the service shape. Defined
+  // inside vi.hoisted so it exists when the (hoisted) vi.mock factory runs.
+  class WithdrawRequestError extends Error {
+    code: 'NOT_FOUND' | 'NOT_OWNED' | 'NOT_PENDING';
+    constructor(code: 'NOT_FOUND' | 'NOT_OWNED' | 'NOT_PENDING', message: string) {
+      super(message);
+      this.name = 'WithdrawRequestError';
+      this.code = code;
+    }
+  }
   return {
     mockGetSession: vi.fn(),
     mockIsAppBlocksEnabled: vi.fn(),
@@ -93,6 +106,7 @@ const {
       expire: vi.fn().mockResolvedValue(1),
     },
     mockMultiIncr,
+    WithdrawRequestError,
   };
 });
 
@@ -101,6 +115,7 @@ vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: mockGe
 vi.mock('~/server/services/app-blocks-flag', () => ({ isAppBlocksEnabled: mockIsAppBlocksEnabled }));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   withdrawRequest: mockWithdrawRequest,
+  WithdrawRequestError,
 }));
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
@@ -259,39 +274,44 @@ describe('POST /api/v1/blocks/withdraw', () => {
     });
   });
 
-  it('404 when the publish request does not exist (no ownership oracle)', async () => {
-    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
-    mockWithdrawRequest.mockRejectedValueOnce(new Error('publish request pubreq_01 not found'));
-    const { req, res } = authPost();
-    await handler(req as never, res as never);
-    expect(res._getStatusCode()).toBe(404);
-    expect((res._getJSONData() as { message: string }).message).toBe('Publish request not found');
-  });
-
-  it('404 when the publish request is NOT OWNED — identical body to not-found (no oracle)', async () => {
+  it('404 when the publish request does not exist (NOT_FOUND code, no ownership oracle)', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockWithdrawRequest.mockRejectedValueOnce(
-      new Error('you can only withdraw your own publish requests')
+      new WithdrawRequestError('NOT_FOUND', 'publish request pubreq_01 not found')
     );
     const { req, res } = authPost();
     await handler(req as never, res as never);
-    // SAME status AND SAME body as the not-found case — a caller cannot tell
-    // "exists but someone else's" from "doesn't exist".
     expect(res._getStatusCode()).toBe(404);
     expect((res._getJSONData() as { message: string }).message).toBe('Publish request not found');
   });
 
-  it('409 when the request is not pending (already approved/rejected) — disclosed to owner', async () => {
+  it('404 when the publish request is NOT_OWNED — identical body to NOT_FOUND (no oracle)', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockWithdrawRequest.mockRejectedValueOnce(
-      new Error('cannot withdraw a request in status approved')
+      new WithdrawRequestError('NOT_OWNED', 'you can only withdraw your own publish requests')
+    );
+    const { req, res } = authPost();
+    await handler(req as never, res as never);
+    // SAME status AND SAME body as the NOT_FOUND case — a caller cannot tell
+    // "exists but someone else's" from "doesn't exist". Mapped by CODE, not by
+    // substring-matching the service message.
+    expect(res._getStatusCode()).toBe(404);
+    expect((res._getJSONData() as { message: string }).message).toBe('Publish request not found');
+  });
+
+  it('409 { message } when the request is not pending (NOT_PENDING code) — disclosed to owner', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockWithdrawRequest.mockRejectedValueOnce(
+      new WithdrawRequestError('NOT_PENDING', 'cannot withdraw a request in status approved')
     );
     const { req, res } = authPost();
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(409);
-    expect((res._getJSONData() as { error: string }).error).toBe(
+    // N3 fix: the endpoint ALWAYS returns `{ message }` on error (was `{ error }`).
+    expect((res._getJSONData() as { message: string }).message).toBe(
       'cannot withdraw a request in status approved'
     );
+    expect((res._getJSONData() as Record<string, unknown>).error).toBeUndefined();
   });
 
   it('200 { ok: true } on the happy path + no-store header', async () => {
