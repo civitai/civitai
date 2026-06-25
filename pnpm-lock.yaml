@@ -22,9 +22,6 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.490.0
         version: 3.862.0
-      '@axiomhq/axiom-node':
-        specifier: ^0.12.0
-        version: 0.12.0
       '@civitai/app-sdk':
         specifier: ^0.6.0
         version: 0.6.0
@@ -1074,11 +1071,6 @@ packages:
     resolution: {integrity: sha512-6Ed0kmC1NMbuFTEgNmamAUU1h5gShgxL1hBVLbEzUa3trX5aJBz1vU4bXaBTvOYUAnOHtiy1Ml4AMStd6hJnFA==}
     engines: {node: '>=18.0.0'}
 
-  '@axiomhq/axiom-node@0.12.0':
-    resolution: {integrity: sha512-998jnkwSCzKk4oTqiWfHIeW18yj7LZu5+srTq72nLXaEZ5rrGMqKPx5W96hs8u9TeOjFxGBsfJCStEIVnrru1g==}
-    engines: {node: '>=14'}
-    deprecated: Please use @axiomhq/js instead
-
   '@babel/code-frame@7.27.1':
     resolution: {integrity: sha512-cjQ7ZlQ0Mv3b47hABuTevyTuYN4i+loJKGeV9flcCgIK37cCXRh+L1bd3iBHlynerhQ7BhCkn2BPbQUL+rGqFg==}
     engines: {node: '>=6.9.0'}
@@ -1246,10 +1238,6 @@ packages:
 
   '@coinbase/cdp-sdk@1.33.0':
     resolution: {integrity: sha512-DqgPk/JednX4Tpi1a0EP7zEYi2EH9rsFULIkb8BbjuUUldTh4VCSp624JC3k6b2IJlibRD7oFHVnEAz2+ykSnw==}
-
-  '@colors/colors@1.6.0':
-    resolution: {integrity: sha512-Ir+AOibqzrIsL6ajt3Rz3LskB7OiMVHqltZmspbW/TJuTVuyOMirVqAkjfY6JISiLHgyNqicAC8AyHHGzNd/dA==}
-    engines: {node: '>=0.1.90'}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -4212,9 +4200,6 @@ packages:
   '@types/tough-cookie@4.0.5':
     resolution: {integrity: sha512-/Ad8+nIOV7Rl++6f1BdKxFSMgmoqEoYbHRpPcx3JEfv8VRsQe9Z4mCXeJBzxs7mbHY/XOZZuXlRNfhpVPbs6ZA==}
 
-  '@types/triple-beam@1.3.5':
-    resolution: {integrity: sha512-6WaYesThRMCl19iryMYP7/x2OVgCtbIVflDGFpWnb9irXI3UjYE4AzmYuiUKY1AJstGijoY+MgUszMgRxIYTYw==}
-
   '@types/unist@2.0.11':
     resolution: {integrity: sha512-CmBKiL6NNo/OqgmMn95Fk9Whlp2mtvIv+KNpQKN2F4SjvrEesubTRWGYSg+BnWZOnlCaSTU1sMpsBOzgbYhnsA==}
 
@@ -4851,9 +4836,6 @@ packages:
     resolution: {integrity: sha512-Xm7bpRXnDSX2YE2YFfBk2FnF0ep6tmG7xPh8iHee8MIcrgq762Nkce856dYtJYLkuIoYZvGfTs/PbZhideTcEg==}
     engines: {node: '>=4'}
 
-  axios-retry@3.9.1:
-    resolution: {integrity: sha512-8PJDLJv7qTTMMwdnbMvrLYuvB47M81wRtxQmEdV5w4rgbTXTt+vtPkXwajOfOdSyv/wZICJOC+/UhXH4aQ/R+w==}
-
   axios-retry@4.5.0:
     resolution: {integrity: sha512-aR99oXhpEDGo0UuAlYcn2iGRds30k366Zfa05XWScR9QaQD4JYiP3/1Qt1u7YlefUOK+cn0CcwoL1oefavQUlQ==}
     peerDependencies:
@@ -4945,9 +4927,6 @@ packages:
   bigint-buffer@1.1.5:
     resolution: {integrity: sha512-trfYco6AoZ+rKhKnxA0hgX0HAbVP/s808/EuDSe2JDzUnCp/xAsli35Orvk67UrTEcwuxZqYZDmfA2RXJgxVvA==}
     engines: {node: '>= 10.0.0'}
-
-  bignumber.js@2.4.0:
-    resolution: {integrity: sha512-uw4ra6Cv483Op/ebM0GBKKfxZlSmn6NgFRby5L3yGTlunLj53KQgndDlqy2WVFOwgvurocApYkSud0aO+mvrpQ==}
 
   bignumber.js@9.3.1:
     resolution: {integrity: sha512-Ko0uX15oIUS7wJ3Rb30Fs6SkVbLmPBAKdlm7q9+ak9bbIeFf0MwuBsQV6z7+X768/cHsfg+WlysDWJcmthjsjQ==}
@@ -6257,9 +6236,6 @@ packages:
       picomatch:
         optional: true
 
-  fecha@4.2.3:
-    resolution: {integrity: sha512-OP2IUU6HeYKJi3i0z4A19kHMQoLVs4Hc+DPqqxI2h/DPZHTm/vjsfC6P0b4jCMy14XizLBqvndQ+UilD7707Jw==}
-
   fetch-blob@3.2.0:
     resolution: {integrity: sha512-7yAQpD2UMJzLi1Dqv7qFYnPbaPx7ZfFK6PiIxQ4PfkGPyNyl2Ugx+a/umUonmKqjhM4DnfbMvdX6otXq83soQQ==}
     engines: {node: ^12.20 || >= 14.13}
@@ -7384,10 +7360,6 @@ packages:
   log-update@6.1.0:
     resolution: {integrity: sha512-9ie8ItPR6tjY5uYJh8K/Zrv/RMZ5VOlOWvtZdEHYSTFKZfIBPQa9tOAEeAWhd+AnIneLJ22w5fjOYtoutpWq5w==}
     engines: {node: '>=18'}
-
-  logform@2.7.0:
-    resolution: {integrity: sha512-TFYA4jnP7PVbmlBIfhlSe+WKxs9dklXMTEGcBCIvLhE/Tn3H6Gk1norupVW7m5Cnd4bLcr08AytbyV/xj7f/kQ==}
-    engines: {node: '>= 12.0.0'}
 
   long@5.3.2:
     resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
@@ -9175,10 +9147,6 @@ packages:
     resolution: {integrity: sha512-x/+Cz4YrimQxQccJf5mKEbIa1NzeCRNI5Ecl/ekmlYaampdNLPalVyIcCZNNH3MvmqBugV5TMYZXv0ljslUlaw==}
     engines: {node: '>= 0.4'}
 
-  safe-stable-stringify@2.5.0:
-    resolution: {integrity: sha512-b3rppTKm9T+PsVCBEOUR46GWI7fdOs00VKZ1+9c1EWDaDMvjQc6tUwuFyIprgGgTcWoVHSKrU8H31ZHA2e0RHA==}
-    engines: {node: '>=10'}
-
   safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
 
@@ -9817,9 +9785,6 @@ packages:
     resolution: {integrity: sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ==}
     engines: {node: '>=8.0'}
 
-  to-time@1.0.2:
-    resolution: {integrity: sha512-+wqaiQvnido2DI1bpiQ/Zv1LiOE9Fd0v35ySnNeqFmKNYJTJY/+ENI+3sHXCMzbAAOR/43aNyLM0XTpi0/zSQg==}
-
   toidentifier@1.0.1:
     resolution: {integrity: sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA==}
     engines: {node: '>=0.6'}
@@ -9865,10 +9830,6 @@ packages:
 
   trim-lines@3.0.1:
     resolution: {integrity: sha512-kRj8B+YHZCc9kQYdWfJB2/oUl9rA99qbowYYBtr4ui4mZyAQ2JpvVBd/6U2YloATfqBhBTSMhTpgBHtU0Mf3Rg==}
-
-  triple-beam@1.4.1:
-    resolution: {integrity: sha512-aZbgViZrg1QNcG+LULa7nhZpJTZSLm/mXnHXnbAbjmN5aSa0y7V+wvv6+4WaBtpISJzThKy+PIPxc1Nq1EJ9mg==}
-    engines: {node: '>= 14.0.0'}
 
   trough@2.2.0:
     resolution: {integrity: sha512-tmMpK00BjZiUyVyvrBK7knerNgmgvcV/KLVyuma/SC+TQN167GrMRciANTz09+k3zW8L8t60jWO1GpfkZdjTaw==}
@@ -10459,10 +10420,6 @@ packages:
   widest-line@5.0.0:
     resolution: {integrity: sha512-c9bZp7b5YtRj2wOe6dlj32MK+Bx/M/d+9VB2SHM1OtsUHR0aV0tdP6DWh/iMt0kWi1t5g1Iudu6hQRNd1A4PVA==}
     engines: {node: '>=18'}
-
-  winston-transport@4.9.0:
-    resolution: {integrity: sha512-8drMJ4rkgaPo1Me4zD/3WLfI/zPdA9o2IipKODunnGDcuqbHwjsbB79ylv04LCGGzU0xQ6vTznOMpQGaLhhm6A==}
-    engines: {node: '>= 12.0.0'}
 
   word-wrap@1.2.5:
     resolution: {integrity: sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==}
@@ -11308,15 +11265,6 @@ snapshots:
       '@smithy/types': 4.3.2
       tslib: 2.8.1
 
-  '@axiomhq/axiom-node@0.12.0':
-    dependencies:
-      axios: 1.11.0
-      axios-retry: 3.9.1
-      to-time: 1.0.2
-      winston-transport: 4.9.0
-    transitivePeerDependencies:
-      - debug
-
   '@babel/code-frame@7.27.1':
     dependencies:
       '@babel/helper-validator-identifier': 7.28.5
@@ -11542,8 +11490,6 @@ snapshots:
       - fastestsmallesttextencoderdecoder
       - typescript
       - utf-8-validate
-
-  '@colors/colors@1.6.0': {}
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
@@ -14612,8 +14558,6 @@ snapshots:
 
   '@types/tough-cookie@4.0.5': {}
 
-  '@types/triple-beam@1.3.5': {}
-
   '@types/unist@2.0.11': {}
 
   '@types/unist@3.0.3': {}
@@ -15398,11 +15342,6 @@ snapshots:
 
   axe-core@4.10.3: {}
 
-  axios-retry@3.9.1:
-    dependencies:
-      '@babel/runtime': 7.28.2
-      is-retry-allowed: 2.2.0
-
   axios-retry@4.5.0(axios@1.11.0):
     dependencies:
       axios: 1.11.0
@@ -15482,8 +15421,6 @@ snapshots:
   bigint-buffer@1.1.5:
     dependencies:
       bindings: 1.5.0
-
-  bignumber.js@2.4.0: {}
 
   bignumber.js@9.3.1: {}
 
@@ -17029,8 +16966,6 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.3
 
-  fecha@4.2.3: {}
-
   fetch-blob@3.2.0:
     dependencies:
       node-domexception: 1.0.0
@@ -18389,15 +18324,6 @@ snapshots:
       slice-ansi: 7.1.0
       strip-ansi: 7.1.0
       wrap-ansi: 9.0.0
-
-  logform@2.7.0:
-    dependencies:
-      '@colors/colors': 1.6.0
-      '@types/triple-beam': 1.3.5
-      fecha: 4.2.3
-      ms: 2.1.3
-      safe-stable-stringify: 2.5.0
-      triple-beam: 1.4.1
 
   long@5.3.2: {}
 
@@ -20685,8 +20611,6 @@ snapshots:
       es-errors: 1.3.0
       is-regex: 1.2.1
 
-  safe-stable-stringify@2.5.0: {}
-
   safer-buffer@2.1.2: {}
 
   sanitize-html@2.12.1:
@@ -21413,10 +21337,6 @@ snapshots:
     dependencies:
       is-number: 7.0.0
 
-  to-time@1.0.2:
-    dependencies:
-      bignumber.js: 2.4.0
-
   toidentifier@1.0.1: {}
 
   totalist@3.0.1: {}
@@ -21461,8 +21381,6 @@ snapshots:
   trie-memoize@1.2.0: {}
 
   trim-lines@3.0.1: {}
-
-  triple-beam@1.4.1: {}
 
   trough@2.2.0: {}
 
@@ -22150,12 +22068,6 @@ snapshots:
   widest-line@5.0.0:
     dependencies:
       string-width: 7.2.0
-
-  winston-transport@4.9.0:
-    dependencies:
-      logform: 2.7.0
-      readable-stream: 3.6.2
-      triple-beam: 1.4.1
 
   word-wrap@1.2.5: {}
 
