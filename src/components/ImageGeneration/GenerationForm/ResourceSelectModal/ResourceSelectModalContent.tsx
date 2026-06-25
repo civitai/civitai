@@ -93,7 +93,7 @@ export function ResourceSelectModalContent() {
         />
       )}
 
-      <div className="sticky top-[-48px] z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
+      <div className="sticky top-0 z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
         <div className="flex flex-wrap items-center justify-between gap-4 @sm:gap-10">
           <Text>{title}</Text>
           <CustomSearchBox
@@ -139,12 +139,7 @@ export function ResourceSelectModalContent() {
           </Center>
         </div>
       ) : (
-        <ResourceHitList
-          key={selectedTab}
-          likes={likedModels}
-          featured={featuredModels}
-          selectedTab={selectedTab}
-        />
+        <ResourceHitList key={selectedTab} featured={featuredModels} selectedTab={selectedTab} />
       )}
     </>
   );

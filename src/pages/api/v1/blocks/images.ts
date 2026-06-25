@@ -14,11 +14,7 @@ import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturi
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
-import {
-  isFailfastStatus,
-  MeiliCallTimeoutError,
-  MeilisearchFetchError,
-} from '~/server/meilisearch/client';
+import { isTransientMeiliError } from '~/server/meilisearch/client';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import {
   acquireBulkheadSlot,
@@ -230,11 +226,19 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       if (!res.headersSent) res.status(499).end();
       return;
     }
-    if (
-      error instanceof MeiliCallTimeoutError ||
-      (error instanceof MeilisearchFetchError && isFailfastStatus(error.status))
-    ) {
+    // Transient Meili failure → retryable 503. Use the SAME `isTransientMeiliError`
+    // predicate the public /api/v1/images handler uses (NOT the old raw-SDK
+    // MeiliCallTimeoutError/MeilisearchFetchError-only branch), so the feed
+    // library's inner meilisearch-js SDK errors (MeiliSearchCommunicationError /
+    // MeiliSearchApiError / MeiliSearchTimeOutError) — the dominant 500 source on
+    // the public endpoint — are reclassified here too rather than bubbling as a
+    // hard 500 via the generic tail. no-store + Retry-After: 2 so the 503 carries
+    // the SAME retryable contract as the public endpoint (the doc above claims
+    // this handler mirrors it). withBlockScope already forces `private, no-store`,
+    // but set it explicitly so the contract is self-evident at the response site.
+    if (isTransientMeiliError(error)) {
       if (!res.headersSent) {
+        res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Retry-After', '2');
         res
           .status(503)
@@ -244,7 +248,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     }
     const trpcError = error as TRPCError;
     const statusCode = getHTTPStatusCodeFromError(trpcError);
-    res.status(statusCode).json({ error: trpcError.message, code: trpcError.code });
+
+    // A TRPCError SERVICE_UNAVAILABLE wrapped by the service layer maps to 503 —
+    // attach the same no-store + Retry-After so the retryable contract is
+    // identical to the raw-error branch above (mirrors the public endpoint).
+    if (statusCode === 503 && !res.headersSent) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Retry-After', '2');
+    }
+
+    if (!res.headersSent) {
+      res.status(statusCode).json({ error: trpcError.message, code: trpcError.code });
+    }
     return;
   } finally {
     releaseSlot?.();

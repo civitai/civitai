@@ -81,6 +81,7 @@ export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 export const trainingDetailsBaseModelsAnima = ['anima'] as const;
 export const trainingDetailsBaseModelsBoogu = ['boogu'] as const;
+export const trainingDetailsBaseModelsKrea2 = ['krea2'] as const;
 export const trainingDetailsBaseModelsAcestep15 = ['acestep_15'] as const;
 export const trainingDetailsBaseModelsAcestep15Xl = [
   'acestep_15_xl_base',
@@ -101,6 +102,7 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsHiDreamO1,
   ...trainingDetailsBaseModelsAnima,
   ...trainingDetailsBaseModelsBoogu,
+  ...trainingDetailsBaseModelsKrea2,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,

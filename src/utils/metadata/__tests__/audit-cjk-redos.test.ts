@@ -5,6 +5,7 @@ import {
   includesMinorAge,
   includesNsfw,
 } from '~/utils/metadata/audit';
+import { ABSOLUTE_HANG_CEILING_MS, expectSubQuadraticScaling } from './redos-perf-helpers';
 
 /**
  * Non-Latin (CJK) catastrophic-backtracking regression guard.
@@ -42,33 +43,43 @@ function buildCjkPrompt(cjkCharsEachSide: number): string {
   return `${a} 3d render ${b} Unity masterpiece ${c} best quality`;
 }
 
-const PERF_BUDGET_MS = 100;
+// Build the same prompt SHAPE parametrized purely by per-side CJK length, so the
+// scaling guards can grow the long non-Latin run (the O(n²) driver) directly.
+function buildCjkPromptByLen(cjkCharsEachSide: number): string {
+  return buildCjkPrompt(cjkCharsEachSide);
+}
 
 describe('audit: long non-Latin (CJK) prompts do not pin the event loop (ReDoS guard)', () => {
-  // ~1306-char shape (the proven prod case) plus a deliberately larger one — the
-  // OLD O(n²) cost grows quadratically, so the bigger input is where it really bit.
+  // The OLD consuming-boundary regexes were O(regexes × n²) on this shape (one giant
+  // [^a-zA-Z0-9] run): a 1306-char prompt → ~1.6s, bigger ones up to ~84s. The
+  // zero-width-boundary fix made it linear. We assert that ALGORITHMIC property via
+  // input-size scaling (hardware-independent) rather than an absolute wall-clock
+  // budget — the old `< 100ms` flaked on slower/loaded runners while the code was
+  // demonstrably linear (see redos-perf-helpers).
+  it('auditPrompt scales linearly on growing CJK prompts (not O(n²))', () => {
+    expectSubQuadraticScaling(
+      'auditPrompt CJK',
+      (n) => buildCjkPromptByLen(n),
+      (input) => auditPrompt(input)
+    );
+  });
+
+  it('auditPromptEnriched scales linearly on growing CJK prompts (not O(n²))', () => {
+    expectSubQuadraticScaling(
+      'auditPromptEnriched CJK',
+      (n) => buildCjkPromptByLen(n),
+      (input) => auditPromptEnriched(input, undefined, true)
+    );
+  });
+
+  // Correctness (separate from cost): a benign CJK shape must NOT be blocked, at the
+  // proven prod size and a larger one.
   for (const cjkEach of [650, 1500, 4000]) {
     const prompt = buildCjkPrompt(cjkEach);
-    it(`auditPrompt finishes < ${PERF_BUDGET_MS}ms on a ${prompt.length}-char CJK prompt`, () => {
-      const start = performance.now();
+    it(`auditPrompt does not falsely block a benign ${prompt.length}-char CJK prompt`, () => {
       const result = auditPrompt(prompt);
-      const ms = performance.now() - start;
-      expect(ms, `auditPrompt too slow (${ms.toFixed(1)}ms) on ${prompt.length}-char CJK`).toBeLessThan(
-        PERF_BUDGET_MS
-      );
-      // Benign CJK shape — must NOT be blocked.
       expect(result.success).toBe(true);
       expect(result.blockedFor).toEqual([]);
-    });
-
-    it(`auditPromptEnriched finishes < ${PERF_BUDGET_MS}ms on a ${prompt.length}-char CJK prompt`, () => {
-      const start = performance.now();
-      auditPromptEnriched(prompt, undefined, true);
-      const ms = performance.now() - start;
-      expect(
-        ms,
-        `auditPromptEnriched too slow (${ms.toFixed(1)}ms) on ${prompt.length}-char CJK`
-      ).toBeLessThan(PERF_BUDGET_MS);
     });
   }
 
@@ -80,7 +91,8 @@ describe('audit: long non-Latin (CJK) prompts do not pin the event loop (ReDoS g
     const start = performance.now();
     const result = auditPrompt(prompt);
     const ms = performance.now() - start;
-    expect(ms, `slow CJK+age (${ms.toFixed(1)}ms)`).toBeLessThan(PERF_BUDGET_MS);
+    // Generous absolute backstop (hardware-independent) — a single call must not hang.
+    expect(ms, `slow CJK+age (${ms.toFixed(1)}ms)`).toBeLessThan(ABSOLUTE_HANG_CEILING_MS);
     expect(includesMinorAge(prompt)).toEqual({ found: true, age: 9 });
     expect(result.success).toBe(false);
   });

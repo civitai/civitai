@@ -7,6 +7,7 @@ import {
   getTagsFromPrompt,
   MAX_AUDIT_PROMPT_LENGTH,
 } from '~/utils/metadata/audit';
+import { ABSOLUTE_HANG_CEILING_MS, expectSubQuadraticScaling } from './redos-perf-helpers';
 
 /**
  * ReDoS (catastrophic regex backtracking) regression guard.
@@ -46,13 +47,16 @@ import {
  * reconstructs the brute-force per-word oracle and asserts the public API agrees.
  */
 
-// Per-call upper bound. The gateless per-word loop over the full blocklist is
-// linear-to-mildly-polynomial in input length and finishes in a few ms to low
-// tens of ms on realistic-sized prompts; the removed exponential gate took 11-47
-// SECONDS on a single call in prod. 500ms gives generous headroom for a loaded
-// CI runner over linear work while still tripping orders of magnitude before a
-// true ReDoS hang.
-const MAX_MS = 500;
+// Per-call upper bound on these SMALL (≤~300-char) adversarial inputs. There's no
+// input size to scale here (the ReDoS blows up on STRUCTURE, not length), so the
+// guard is a single generous absolute ceiling rather than a scaling ratio. The
+// removed exponential gate took 11-47 SECONDS on a single call in prod; the
+// gateless per-word loop is a few ms to low-tens-of-ms even on a loaded runner. We
+// use the shared hang ceiling (multiple seconds) so a true catastrophic backtrack
+// trips on ANY hardware while transient CPU contention never flakes it — a tighter
+// (e.g. 500ms) line measured "this CPU is fast", not "this regex is linear", and
+// flaked PASS→FAIL on a loaded worker pool.
+const MAX_MS = ABSOLUTE_HANG_CEILING_MS;
 
 // Inputs are kept to realistic generation-prompt sizes (<= ~300 chars). A ReDoS
 // blows up on input STRUCTURE, not raw length, so a normal-length prompt is
@@ -152,42 +156,48 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
   //       of length. Exercised via `includesMinor`, which is NOT length-capped.
   //   (b) `auditPrompt` BLOCKS input beyond MAX_AUDIT_PROMPT_LENGTH (#2727 M2) →
   //       blanket bound + closes the truncate-then-scan evasion.
-  const LATIN_RUN_MAX_MS = 100;
   describe('Latin \\w-run composed-noun quadratic (residual ReDoS lever)', () => {
-    it('includesMinor is fast on a long Latin \\w run after the adjective (quantifier bound)', () => {
+    // Asserts the ALGORITHMIC invariant (linear, not O(n^2)) via input-size
+    // scaling rather than an absolute wall-clock budget — see redos-perf-helpers
+    // for why the old `< 100ms` flaked on slower/loaded runners while the code was
+    // demonstrably linear. The {0,200} gap bound is what makes this linear; a
+    // reintroduced unbounded gap (the ~2800ms@24k O(n^2) regression) trips the
+    // sub-quadratic ratio on any hardware.
+    it('includesMinor scales linearly on a long Latin \\w run after the adjective (quantifier bound)', () => {
       // Goes straight to the bounded young-noun regexes (no length cap on this path),
-      // so this proves the {0,40} gap bound — not just the cap — defuses the O(n^2).
-      const input = 'young ' + 'a'.repeat(24000);
-      const ms = timeCall(() => includesMinor(input));
-      expect(
-        ms,
-        `includesMinor too slow on Latin \\w-run (${ms.toFixed(1)}ms — was ~2800ms unbounded)`
-      ).toBeLessThan(LATIN_RUN_MAX_MS);
+      // so this proves the gap bound — not just the cap — defuses the O(n^2).
+      expectSubQuadraticScaling(
+        'includesMinor Latin \\w-run',
+        (n) => 'young ' + 'a'.repeat(n),
+        (input) => includesMinor(input)
+      );
       // The bound preserves matching: realistic close-proximity phrasings still flag.
       expect(includesMinor('young girl')).toBeTruthy();
       expect(includesMinor('young pretty little girl')).toBeTruthy();
     });
 
-    it('includesMinor is fast across several adjective+long-run shapes', () => {
+    it('includesMinor scales linearly across several adjective+long-run shapes', () => {
       for (const adj of ['young', 'little', 'small', 'teeny', 'loli']) {
         for (const sep of ['a', ' a', '.-_']) {
-          const input = adj + ' ' + sep.repeat(8000);
-          const ms = timeCall(() => includesMinor(input));
-          expect(
-            ms,
-            `includesMinor too slow on "${adj}"+run("${sep}") (${ms.toFixed(1)}ms)`
-          ).toBeLessThan(LATIN_RUN_MAX_MS);
+          expectSubQuadraticScaling(
+            `includesMinor "${adj}"+run("${sep}")`,
+            (n) => adj + ' ' + sep.repeat(n),
+            (input) => includesMinor(input)
+          );
         }
       }
     });
 
     it('auditPrompt is fast on a long Latin \\w run (quantifier bound + length cap)', () => {
+      // auditPrompt length-caps the scan, so cost is bounded regardless of input
+      // size — a single generous absolute ceiling (hardware-independent) is the
+      // right guard here, not a scaling ratio.
       const input = 'young ' + 'a'.repeat(60000); // > MAX_AUDIT_PROMPT_LENGTH
       const ms = timeCall(() => auditPrompt(input));
       expect(
         ms,
         `auditPrompt too slow on Latin \\w-run (${ms.toFixed(1)}ms)`
-      ).toBeLessThan(LATIN_RUN_MAX_MS);
+      ).toBeLessThan(ABSOLUTE_HANG_CEILING_MS);
     });
 
     it('auditPrompt BLOCKS input beyond MAX_AUDIT_PROMPT_LENGTH (#2727 M2: no truncate-then-scan evasion)', () => {
@@ -240,15 +250,19 @@ describe('audit ReDoS regression (no catastrophic backtracking)', () => {
 
   it('the whole adversarial battery audits in well under a true-hang timeout', () => {
     // Belt-and-suspenders: a single exponential call took 11-47s in prod; the
-    // entire battery here must finish in a fraction of a second. If a quadratic/
-    // exponential pre-filter is reintroduced this aggregate bound trips long
-    // before any individual 250ms check could mask it.
+    // entire linear battery here finishes in a fraction of a second on any runner.
+    // A reintroduced quadratic/exponential pre-filter would blow the hang ceiling
+    // on the very FIRST pathological input — so the generous aggregate ceiling
+    // (hardware-independent) trips on a real regression while transient contention
+    // over linear work never flakes it.
     const ms = timeCall(() => {
       for (const { input } of pathological) {
         auditPrompt(input);
         includesNsfw(input);
       }
     });
-    expect(ms, `full adversarial battery too slow (${ms.toFixed(1)}ms)`).toBeLessThan(3000);
+    expect(ms, `full adversarial battery too slow (${ms.toFixed(1)}ms)`).toBeLessThan(
+      ABSOLUTE_HANG_CEILING_MS
+    );
   });
 });

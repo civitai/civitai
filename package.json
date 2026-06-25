@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1901",
+  "version": "5.0.1908",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {
@@ -85,7 +85,7 @@
     "@axiomhq/axiom-node": "^0.12.0",
     "@civitai/app-sdk": "^0.6.0",
     "@civitai/blocks-react": "^0.4.0",
-    "@civitai/client": "0.2.0-beta.74",
+    "@civitai/client": "0.2.0-beta.75",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/next-axiom": "^0.17.0",
     "@clavata/sdk": "^0.2.3",

@@ -179,7 +179,7 @@ export default function AppDetailPage() {
       */}
       <Meta
         title={`${name} — Civitai Apps`}
-        description={description || `${name} on the Civitai App Blocks marketplace.`}
+        description={description || `${name} on the Civitai Apps marketplace.`}
         deIndex
       />
       <Container size="md" py="md">

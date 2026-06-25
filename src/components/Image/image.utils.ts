@@ -64,6 +64,7 @@ export const imagesQueryParamSchema = z
     modelVersionId: numericString(),
     notPublished: booleanString(),
     publishedOnly: booleanString(),
+    pendingReviewOnly: booleanString(),
     period: z.enum(MetricTimeframe),
     periodMode: z.enum(['stats', 'published']).optional(),
     postId: numericString(),

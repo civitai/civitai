@@ -24,7 +24,18 @@ export default defineConfig({
           include: ['src/**/*.test.ts'],
           exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
           setupFiles: ['src/__tests__/setup.ts'],
-          testTimeout: 10000,
+          // Several unit tests cold-`await import(...)` a large Next API-page / service
+          // module graph (mocked I/O, but a real ~9–16s TS transform). With the suite's
+          // worker pool saturated, that legitimate cold transform races for CPU and
+          // overran the old 10s default — a PASS→FAIL that tracked CI load, not code.
+          // 60s absorbs that contention while still bounding a genuine hang (these are
+          // mocked-I/O tests; nothing should legitimately approach a minute).
+          testTimeout: 60000,
+          // Same cold-`await import()` graph is paid in some suites' beforeAll/beforeEach
+          // (e.g. file-download-lookup, listForModel.behavior). Vitest's default
+          // hookTimeout is 10s — too tight for that transform on a saturated CI box — so
+          // match testTimeout. Without this a hoisted import flakes the hook instead.
+          hookTimeout: 60000,
           deps: {
             inline: [/@civitai\/client/],
           },

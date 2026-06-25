@@ -5,7 +5,6 @@ import {
   Button,
   Card,
   Code,
-  Container,
   FileInput,
   Group,
   Loader,
@@ -25,7 +24,7 @@ import Link from 'next/link';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { AppsSubNav } from '~/components/Apps/AppsSubNav';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { CliSubmitCta } from '~/components/Apps/CliSubmitCta';
 import { ManualUploadSection } from '~/components/Apps/ManualUploadSection';
 import { Meta } from '~/components/Meta/Meta';
@@ -303,23 +302,22 @@ export default function SubmitAppPage() {
   return (
     <>
       <Meta title="Submit an app — Civitai" deIndex />
-      <Container size="sm" py="xl">
-        <Stack gap="lg">
-          <AppsSubNav />
-          <Stack gap={4}>
-            <Title order={2}>Submit an app</Title>
-            <Text c="dimmed" size="sm">
-              The recommended way to author and submit an app is the <Code>civitai</Code> CLI — it
-              scaffolds your block and submits it for you. A moderator reviews the manifest + change
-              summary, then approves or rejects with feedback. Approved submissions deploy
-              automatically. Prefer to do it by hand? You can still upload a ZIP.
-            </Text>
-          </Stack>
-
-          {submitted ? (
-            <SuccessCard submitted={submitted} />
-          ) : (
-            <>
+      <AppsPageLayout
+        size="sm"
+        title="Submit an app"
+        subtitle={
+          <>
+            The recommended way to author and submit an app is the <Code>civitai</Code> CLI — it
+            scaffolds your block and submits it for you. A moderator reviews the manifest + change
+            summary, then approves or rejects with feedback. Approved submissions deploy
+            automatically. Prefer to do it by hand? You can still upload a ZIP.
+          </>
+        }
+      >
+        {submitted ? (
+          <SuccessCard submitted={submitted} />
+        ) : (
+          <>
               {/* PRIMARY: the recommended CLI flow. */}
               <CliSubmitCta />
 
@@ -407,8 +405,7 @@ export default function SubmitAppPage() {
               </ManualUploadSection>
             </>
           )}
-        </Stack>
-      </Container>
+      </AppsPageLayout>
     </>
   );
 }
