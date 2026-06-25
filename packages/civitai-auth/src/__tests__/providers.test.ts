@@ -1,7 +1,23 @@
 import { describe, it, expect } from 'vitest';
-import { hubLoginUrl } from '../providers';
+import { hubLoginUrl, hubLogoutUrl } from '../providers';
 
 const HUB = 'https://auth.civitai.com';
+
+describe('hubLogoutUrl', () => {
+  it('builds the hub /logout landing URL', () => {
+    expect(hubLogoutUrl(HUB)).toBe('https://auth.civitai.com/logout');
+  });
+
+  it('encodes an absolute cross-site returnUrl (validated hub-side before redirect)', () => {
+    const url = new URL(hubLogoutUrl(HUB, 'https://test-auth.civitai.red/foo?x=1'));
+    expect(url.pathname).toBe('/logout');
+    expect(url.searchParams.get('returnUrl')).toBe('https://test-auth.civitai.red/foo?x=1');
+  });
+
+  it('omits returnUrl when not provided', () => {
+    expect(new URL(hubLogoutUrl(HUB)).searchParams.has('returnUrl')).toBe(false);
+  });
+});
 
 describe('hubLoginUrl', () => {
   it('defaults to the login picker (no provider segment)', () => {

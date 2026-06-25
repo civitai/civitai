@@ -44,6 +44,12 @@ export function rollDeviceCookie(cookies: Cookies, deviceId: string): void {
   cookies.set(DEVICE_COOKIE, deviceId, { ...cookieOpts, maxAge: DEVICE_TTL_S });
 }
 
+/** Clear the device cookie on logout — like clearSession, the seamless-switch account set must not survive a
+ *  sign-out on a shared machine. Same scope (path + cookieDomain) it was set with so the browser drops it. */
+export function clearDeviceCookie(cookies: Cookies): void {
+  cookies.delete(DEVICE_COOKIE, { path: '/', domain: cookieDomain() });
+}
+
 /** Add or refresh an account on this device's set (login + each switch touch `lastSwitchedAt`). */
 export async function touchAccount(deviceId: string, userId: number): Promise<void> {
   const sys = getSysRedis();

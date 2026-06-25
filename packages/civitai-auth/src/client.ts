@@ -10,7 +10,7 @@
 // Browser-safe re-exports of the pure contracts (hub login-URL + shared constants) — so client components import
 // these from `@civitai/auth/client` and never pull the main entry's server-only graph (session-registry →
 // @civitai/redis → node:net) into the browser bundle.
-export { hubLoginUrl, type HubLoginUrlOptions } from './providers';
+export { hubLoginUrl, hubLogoutUrl, type HubLoginUrlOptions } from './providers';
 export * from './constants';
 
 /** A linked account on the browser's device set — display only (mirrors the hub's `/api/auth/accounts` row). */

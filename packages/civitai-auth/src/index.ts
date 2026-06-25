@@ -69,5 +69,5 @@ export {
 } from './trusted-domains';
 export * from './constants';
 export { firstPartyClientId, FIRST_PARTY_ID_PREFIX, SPOKE_CALLBACK_PATH } from './first-party'; // shared first-party client-id contract (hub + spoke; pure, browser-safe)
-export { hubLoginUrl, type ProviderId, type HubLoginUrlOptions } from './providers';
+export { hubLoginUrl, hubLogoutUrl, type ProviderId, type HubLoginUrlOptions } from './providers';
 export type { SessionUser, SessionClaims } from './types';

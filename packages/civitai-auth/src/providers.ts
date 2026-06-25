@@ -38,3 +38,16 @@ export function hubLoginUrl(hubBase: string, opts: HubLoginUrlOptions = {}): str
   if (opts.error) url.searchParams.set('error', opts.error);
   return url.toString();
 }
+
+/**
+ * Build the hub LOGOUT landing URL (a top-level GET). A cross-site spoke (e.g. civitai.red) can't clear the
+ * hub's `.civitai.com` cookies or revoke the hub session itself, and can't POST the hub's logout directly
+ * (cross-origin form POST is CSRF-blocked), so it sends the browser HERE; the hub's GET landing then auto-POSTs
+ * same-origin to finish logout and redirects back to `returnUrl`. `returnUrl` is the absolute spoke URL to land
+ * on after — the hub validates it against the trusted-spoke registry before redirecting (no open redirect).
+ */
+export function hubLogoutUrl(hubBase: string, returnUrl?: string): string {
+  const url = new URL('/logout', hubBase);
+  if (returnUrl) url.searchParams.set('returnUrl', returnUrl);
+  return url.toString();
+}

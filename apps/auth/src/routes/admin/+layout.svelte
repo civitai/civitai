@@ -36,7 +36,10 @@
       <span class="uid">
         {data.admin.username ?? `user #${data.admin.id}`}
       </span>
-      <a class="logout" href="/logout">Sign out</a>
+      <!-- POST (not a GET link) so logout matches the login page's form and isn't CSRF-able via a bare GET. -->
+      <form method="POST" action="/logout" class="logout-form">
+        <button type="submit" class="logout">Sign out</button>
+      </form>
     </div>
   </aside>
 
@@ -126,7 +129,16 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .logout-form {
+    display: inline;
+  }
   .logout {
+    /* styled to read as the former text link, but it's a real submit button */
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    cursor: pointer;
     color: #9aa0a6;
     text-decoration: none;
   }
