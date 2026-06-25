@@ -665,9 +665,11 @@ describe('POST /api/v1/blocks/dev-token', () => {
       expect(arg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
       // Synthetic, revocable instance id derived from the publish-request id.
       expect(arg.blockInstanceId).toBe('page_pubreq_pubreq_01HXYZ');
-      // sign blockId = the slug; appId = the deterministic appblk-<slug> placeholder.
+      // sign blockId = the slug; appId = the SYNTHETIC non-colliding id (audit S1).
+      // NOT `appblk-<slug>` — that would resolve to a real OauthClient on spend.
       expect(arg.blockId).toBe('my-pending-app');
-      expect(arg.appId).toBe('appblk-my-pending-app');
+      expect(arg.appId).toBe('pending-pubreq_01HXYZ');
+      expect(arg.appId).not.toBe('appblk-my-pending-app');
       expect(arg.appBlockId).toBe('pubreq_01HXYZ');
       // Ownership was enforced in the query.
       expect(mockPublishRequestFindFirst).toHaveBeenCalledWith(
@@ -810,6 +812,50 @@ describe('POST /api/v1/blocks/dev-token', () => {
       await handler(req as never, res as never);
       expect(res._getStatusCode()).toBe(429);
       expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('S1: a foreign-owned APPROVED app for the same slug does NOT pin the token appId to appblk-<slug> (no forged attribution row)', async () => {
+      // ADVERSARIAL: a mod-tier dev files a *pending* request for a slug that an
+      // APPROVED app owned by a DIFFERENT user already holds. The submit guard
+      // blocks only same-slug *pending* collisions, not pending-vs-approved, so
+      // this is reachable. The dev-token APPROVED branch is skipped (the approved
+      // row's owner != caller), so the caller falls through to the PENDING branch.
+      // Were the pending path to mint appId=`appblk-<slug>`, recordSpendAttribution
+      // would resolve the VICTIM's real OauthClient on spend and write a forged
+      // blockSpendAttribution row (the #2605 payout rail reads exactly that row).
+      // The fix mints a synthetic `pending-<pubreqId>` instead, which can never
+      // resolve to a real OauthClient.id → the attribution write is skipped.
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      // The approved lookup by blockId=slug FINDS a row — but owned by user 999,
+      // NOT the caller (OWNER_ID). The same `appId` a real approved app would hold.
+      mockAppBlockFindUnique.mockResolvedValueOnce(
+        pageApp({
+          blockId: 'contested-slug',
+          appId: 'appblk-contested-slug',
+          app: { allowedScopes: 0x1ffffff, userId: 999 },
+        })
+      );
+      // The caller DOES own a pending request for the SAME slug.
+      mockPublishRequestFindFirst.mockResolvedValueOnce(
+        pendingRequest({ id: 'pubreq_CALLER1', slug: 'contested-slug' })
+      );
+      const { req, res } = authPost({ slug: 'contested-slug' });
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign).toHaveBeenCalledTimes(1);
+      const arg = mockSign.mock.calls[0][0];
+      // (a) The caller reached the PENDING path, not the approved branch: the
+      //     appBlockId claim is the caller's OWN pending-request id, and the
+      //     instance id is derived from it (NOT the foreign approved AppBlock.id).
+      expect(arg.appBlockId).toBe('pubreq_CALLER1');
+      expect(arg.blockInstanceId).toBe('page_pubreq_pubreq_CALLER1');
+      // (b) appId is the SYNTHETIC value — NOT the colliding appblk-<slug> that
+      //     would resolve to the foreign victim's OauthClient on spend.
+      expect(arg.appId).toBe('pending-pubreq_CALLER1');
+      expect(arg.appId).not.toBe('appblk-contested-slug');
+      // Self-bound to the caller (the spend would be the caller's own Buzz).
+      expect(arg.userId).toBe(OWNER_ID);
     });
 
     it('body-narrowing applies on the pending path; user:read:self still force-granted', async () => {

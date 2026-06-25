@@ -9,7 +9,6 @@ import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import {
-  APP_BLOCK_OAUTH_CLIENT_ID_PREFIX,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
@@ -74,6 +73,25 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    moderator pre-GA. The R1-escalation test proves an escalated manifest scope
  *    (`social:tip:self`, `block:settings:write`, an unknown/mature scope) is
  *    STRIPPED, never minted.
+ *
+ *    APPID MISATTRIBUTION (audit S1 — FIXED): the pending path mints a SYNTHETIC
+ *    `appId = pending-<publishRequestId>`, NOT the deterministic `appblk-<slug>`
+ *    an approved app would get. Were it `appblk-<slug>`, an adversarial mod-tier
+ *    dev could file a *pending* request for a slug an APPROVED app owned by a
+ *    DIFFERENT user already holds (the submit guard blocks only same-slug pending
+ *    collisions, not pending-vs-approved), skip the approved branch (not their
+ *    app), reach this pending branch, and mint a token whose `appId` resolves —
+ *    in `recordSpendAttribution` — to the VICTIM's real OauthClient, writing a
+ *    forged `blockSpendAttribution` row (status='tracked', appOwnerUserId=victim,
+ *    real grossValueCents). That row is exactly what the deferred payout rail
+ *    (#2605 Slice-4 backpay) reads to pay `gross × spendSharePct`. Dormant today
+ *    (spendSharePct=0, no money moves) but a forged accrual ledger would persist
+ *    into the payout window. The synthetic `pending-pubreq_<ULID>` can never match
+ *    an `appblk-*` id nor a real `OauthClient.id`, so the attribution lookup MISSES
+ *    → the inert `if (!app)` skip-write path → no row written (correct: a pending
+ *    dev-test spend has no approved app to attribute to). GATE: before #2605 turns
+ *    on a non-zero `spendSharePct`, re-confirm no pending-path mint can ever land a
+ *    real `OauthClient.id` in `appId`.
  *
  *    OWNERSHIP / NO-ORACLE: only the `slug` input can reach the pending path
  *    (pending apps have no `appBlockId`); a row the caller doesn't own — or no
@@ -446,12 +464,33 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         // step 7f (AIServicesWrite spend gate). 7f IS the spend gate here.
         oauthAllowed: null,
         signBlockId: pending.slug,
-        // No OauthClient id exists yet — use the deterministic id a pending app
-        // WOULD get on approve (`appblk-<slug>`, the App-Blocks client prefix).
-        // `appId` is a provenance/billing-attribution TAG only (no FK / no
-        // validation against a row — buildWorkflowTags blocks.router.ts:2978), so
-        // a stable, audit-meaningful placeholder is correct here.
-        signAppId: `${APP_BLOCK_OAUTH_CLIENT_ID_PREFIX}${pending.slug}`,
+        // SYNTHETIC, NON-COLLIDING appId (audit S1 fix). A pending app has NO
+        // OauthClient yet, so there is no real client id to bind. We DELIBERATELY
+        // do NOT use the deterministic `appblk-<slug>` id an approved app WOULD
+        // get: that string is the id a real APPROVED app owned by ANOTHER user
+        // may already hold (the submit guard blocks only same-slug *pending*
+        // collisions, not pending-vs-approved). Minting `appblk-<slug>` here would
+        // let recordSpendAttribution's `oauthClient.findUnique({ where: { id } })`
+        // (buzz-attribution.service.ts) RESOLVE the victim's real client and write
+        // a foreign `blockSpendAttribution` row (status='tracked',
+        // appOwnerUserId=<victim>, real grossValueCents) — the exact row the
+        // deferred payout rail (#2605 Slice-4 backpay) reads to pay
+        // `gross × spendSharePct`. Dormant today (spendSharePct=0) but a forged
+        // accrual ledger would persist into the payout window.
+        //
+        // Instead use `pending-<publishRequestId>` — `pubreq_<ULID>` ids make this
+        // `pending-pubreq_<ULID>`, which can NEVER match an `appblk-*` id NOR a
+        // real `OauthClient.id` shape. The attribution lookup MISSES → it hits the
+        // intended inert `if (!app)` skip-write path (throws
+        // AttributionAppMissingError, swallowed by the void/catch at
+        // blocks.router.ts:2449) — correct: a pending dev-test spend has no
+        // approved app to attribute to, so NO row is written. `appId` has no other
+        // load-bearing use on the pending path: it's only (a) a cosmetic workflow
+        // TAG `app-block:${appId}` (blocks.router.ts:2978 — orchestrator bills
+        // getOrchestratorToken(userId)), (b) this attribution lookup we WANT to
+        // miss, and (c) middleware string-type validation (block-scope.middleware
+        // .ts:393). No FK resolves `appId` on the pending path.
+        signAppId: `pending-${pending.id}`,
         // No AppBlock.id exists — use the pending request id (stable, unique per
         // submission). The JWT `appBlockId` claim is only string-validated by the
         // middleware (block-scope.middleware.ts:394). NOTE: the best-effort
