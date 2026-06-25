@@ -122,9 +122,9 @@ export async function getReplacedTagIds(): Promise<number[]> {
 
 export async function getSystemPermissions(): Promise<Record<string, number[]>> {
   // Throws on sysRedis error. Callers decide fail-open behavior:
-  //   - session-user.ts wraps the call and skips the 4h cache write on
-  //     error, to avoid poisoning the SessionUser cache with empty
-  //     permissions for hours after sysRedis recovers.
+  //   - the hub's produceSessionUser (session-producer.ts) skips the
+  //     SessionUser cache write on error, to avoid poisoning the cache
+  //     with empty permissions for hours after sysRedis recovers.
   //   - addSystemPermission / removeSystemPermission MUST throw to avoid
   //     overwriting the real permission set with a partial mutation
   //     (read returns {} during outage, write later succeeds → wipe).
@@ -174,9 +174,7 @@ const colorPriority = [
   'grey',
 ];
 
-export async function getCategoryTags(
-  type: 'image' | 'model' | 'post' | 'article' | 'model3d'
-) {
+export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'article' | 'model3d') {
   let categories: TypeCategory[] | undefined;
   const categoriesCache = await redis.get(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`);
   if (categoriesCache) categories = JSON.parse(categoriesCache);

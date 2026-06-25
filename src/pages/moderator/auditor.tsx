@@ -19,6 +19,7 @@ import {
 } from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 type AuditResult = {
   highlighted: string;
@@ -215,3 +216,5 @@ export default function MetadataTester() {
     </Container>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });

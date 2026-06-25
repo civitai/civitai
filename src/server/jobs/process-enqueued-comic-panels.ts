@@ -11,7 +11,7 @@ import {
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { SignalMessages } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type { UserTier } from '~/server/schema/user.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';

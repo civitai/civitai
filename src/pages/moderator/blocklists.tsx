@@ -6,6 +6,7 @@ import { TwLoader } from '~/components/TwLoader/TwLoader';
 import { Form, InputTextArea, useForm } from '~/libs/form';
 import { BlocklistType } from '~/server/common/enums';
 import type { BlocklistDTO } from '~/server/services/blocklist.service';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import clsx from 'clsx';
@@ -154,5 +155,7 @@ const AddOrRemoveItems = forwardRef<
 });
 
 AddOrRemoveItems.displayName = 'AddOrRemoveItems';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default Page(BlocklistsPage, { features: (features) => features.blocklists });

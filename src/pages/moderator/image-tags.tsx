@@ -36,6 +36,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import type { ImageModerationReviewQueueImage } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
@@ -46,6 +47,8 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const imageSelectStore = createSelectStore<number>();
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function ImageTags() {
   const filters = { tagReview: true };

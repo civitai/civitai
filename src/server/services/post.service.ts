@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';
@@ -894,10 +894,6 @@ export const updatePost = async ({
   const publishedAt = data.publishedAt instanceof Date ? data.publishedAt : undefined;
   const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
 
-  // Did the anti-bump guard actually (re)write publishedAt this call? Drives the
-  // search-index refresh below.
-  let publishedAtWritten = false;
-
   const post = await dbWrite.$transaction(async (tx) => {
     const updated = await tx.post.update({
       where: { id, userId: !user.isModerator ? user.id : undefined },
@@ -949,7 +945,6 @@ export const updatePost = async ({
       // rather than masking malformed stash data behind a truthy check.
       if (writtenRows.length > 0) {
         updated.publishedAt = writtenRows[0].publishedAt;
-        publishedAtWritten = true;
       }
     }
     return updated;
@@ -957,28 +952,6 @@ export const updatePost = async ({
 
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(post.userId);
-
-  // Re-index the post's images whenever publishedAt is (re)written — scheduling,
-  // rescheduling, or publishing all change the images' index-relevant fields
-  // (publishedAtUnix, sortAt). No other path covers this transition: the
-  // `post_published_at_change` trigger only bumps `Image.updatedAt`, and the
-  // incremental search-index sync that keys off it can drop the update
-  // (publishedAtUnix drift), leaving the post published-but-invisible on
-  // feed/profile/galleries (CU 868k2d05k bug C). Enqueue a durable index update
-  // so the doc is re-pulled with the new publishedAt; for a future (scheduled)
-  // date the read-time `publishedAtUnix <= now` filter then surfaces it
-  // automatically at go-live — no publish-time event required.
-  if (publishedAtWritten) {
-    const images = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT id FROM "Image" WHERE "postId" = ${id}
-    `;
-    if (images.length) {
-      await queueImageSearchIndexUpdate({
-        ids: images.map((i) => i.id),
-        action: SearchIndexUpdateQueueAction.Update,
-      });
-    }
-  }
 
   return post;
 };

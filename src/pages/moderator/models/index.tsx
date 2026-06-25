@@ -26,12 +26,15 @@ import { Meta } from '~/components/Meta/Meta';
 import { FlaggedModelsList } from '~/components/Moderation/FlaggedModelsList';
 
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { ModelGetAllPagedSimple } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 type State = {
   declineReason: string;

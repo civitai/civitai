@@ -122,8 +122,8 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/user.service', () => ({
   getUserById: mockGetUserById,
 }));
-vi.mock('~/server/auth/session-user', () => ({
-  getSessionUser: (...args: unknown[]) => mockGetSessionUser(...args),
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
@@ -341,12 +341,11 @@ beforeEach(() => {
     written: true,
     row: {
       id: 'bsa_x',
-      // TRACK-ONLY: the write records the event + gross only — no rate applied.
-      status: 'tracked',
+      status: 'pending',
       appOwnerShareCents: 0,
       spendSharePct: 0,
       grossValueCents: 0,
-      rateCardVersion: 'unrated',
+      rateCardVersion: 'v4',
       voidedReason: null,
     },
   });

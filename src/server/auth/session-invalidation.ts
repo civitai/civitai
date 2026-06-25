@@ -2,10 +2,10 @@ import { SignalMessages } from '~/server/common/enums';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { hSetMultiWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { clearCacheByPattern } from '~/server/utils/cache-helpers';
 import { createLogger } from '~/utils/logging';
 import { signalClient } from '~/utils/signal-client';
 import { clearSessionCache } from './session-cache';
+import { sessionClient } from './session-client';
 
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
 const log = createLogger('session-invalidation', 'green');
@@ -44,12 +44,11 @@ async function updateSessionState(userId: number, type: 'refresh' | 'invalid') {
         DEFAULT_EXPIRATION * 1000
       );
     } catch (err) {
-      logSysRedisFailOpen(
-        'write-degraded',
-        'session-invalidation.updateSessionState',
-        err,
-        { userId, type, tokenCount: userTokens.length }
-      );
+      logSysRedisFailOpen('write-degraded', 'session-invalidation.updateSessionState', err, {
+        userId,
+        type,
+        tokenCount: userTokens.length,
+      });
     }
   }
   return userTokens;
@@ -75,28 +74,6 @@ export async function refreshSession(userId: number, { sendSignal = true } = {})
   }
 
   log(`Refreshed session for user ${userId} - ${userTokens.length} token(s) marked for refresh`);
-  // Temporary: capture caller stack so we can surface it via response header.
-  // Skips the internal JWT 'update' callback path (next-auth-options.ts) which
-  // re-marks tokens by design and clears its own marker immediately after.
-  const stack = new Error().stack ?? '';
-  if (!stack.includes('next-auth-options')) {
-    console.warn(`[refreshSession] userId=${userId} sendSignal=${sendSignal}\n${stack}`);
-    try {
-      // Compact the stack into a single-line, header-safe string and stash in
-      // Redis. The session callback will read this and surface it to the
-      // client via x-session-refresh-cause.
-      const compact = stack
-        .split('\n')
-        .slice(1, 8)
-        .map((s) => s.trim())
-        .join(' | ')
-        .replace(/[^\x20-\x7E]/g, ' ')
-        .slice(0, 1500);
-      await sysRedis.set(`${REDIS_SYS_KEYS.SESSION.REFRESH_CAUSE}:${userId}`, compact, {
-        EX: 60 * 60,
-      });
-    } catch {}
-  }
 }
 
 /**
@@ -124,10 +101,10 @@ export async function invalidateSession(userId: number) {
   log(`Invalidated session for user ${userId} and ${userTokens.length} token(s)`);
 }
 
-export async function invalidateAllSessions(asOf: Date | undefined = new Date()) {
-  await sysRedis.set(REDIS_SYS_KEYS.SESSION.ALL, asOf.toISOString(), {
-    EX: DEFAULT_EXPIRATION, // 30 days
-  });
-  await clearCacheByPattern(`${REDIS_KEYS.USER.SESSION}:*`);
+export async function invalidateAllSessions() {
+  // Mass invalidation is hub-owned: set the global revocation cutoff (the shared SESSION.ALL marker the hub
+  // registry owns) through the hub rather than writing it directly — revokes every token signed before now.
+  // The shared session:data2 cache is NOT wiped — its 4h TTL bounds data staleness (see the hub handler).
+  await sessionClient.invalidateAll();
   log(`Scheduling session refresh for all users`);
 }

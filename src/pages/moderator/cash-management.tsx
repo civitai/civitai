@@ -20,6 +20,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 type AccountType = 'cashPending' | 'cashSettled';
 type Direction = 'grant' | 'deduct';
@@ -392,6 +393,8 @@ export function CashManagementPage() {
     </div>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default Page(CashManagementPage, {
   features: (features) => features.cashManagement,

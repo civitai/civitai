@@ -5,8 +5,9 @@ import dynamic from 'next/dynamic';
 // before any <Link> mounts — see the file for rationale.
 import '~/utils/disable-router-prefetch';
 import { getCookie, getCookies, deleteCookie } from 'cookies-next';
-import type { Session } from 'next-auth';
-import { SessionProvider } from 'next-auth/react';
+import type { Session } from '~/types/session';
+import { SessionProvider } from '~/providers/SessionProvider';
+import { resolveAuthGuard } from '~/server/auth/route-guard';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -39,7 +40,7 @@ import { ToursProvider } from '~/components/Tours/ToursProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { env } from '~/env/client';
-import { isDev, isProd } from '~/env/other';
+import { isDev, isPreview, isProd } from '~/env/other';
 import { civitaiTokenCookieName } from '~/libs/auth';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
@@ -353,7 +354,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
-  let hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+  // Match BOTH session cookie families: the new hub `civ-token` / `__Secure-civ-token` AND the legacy
+  // next-auth `civitai-token` / `__Secure-civitai-token` (still honored during the cutover). Note the suffixes
+  // don't subsume each other — `civitai-token` does NOT end with `civ-token` — so both checks are required.
+  // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
+  let hasAuthCookie = Object.keys(cookies).some(
+    (x) => x.endsWith('civ-token') || x.endsWith('civitai-token')
+  );
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =
@@ -364,7 +371,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     red: serverDomainMap.red,
   };
   const canIndex = getAllServerHosts().includes((request.headers.host ?? '').toLowerCase());
-  const availableOAuthProviders = getAvailableOAuthProviders(request.headers.host);
+  // Provider list comes from the hub (single source of provider config/secrets), cached + fail-open.
+  const availableOAuthProviders = await getAvailableOAuthProviders();
 
   const region = getRegion(request);
 
@@ -539,6 +547,25 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // → client refetch when hasAuthCookie is true and session is null).
     deleteCookie(civitaiTokenCookieName, appContext.ctx);
     hasAuthCookie = false;
+  }
+
+  // Auth route guards, moved off the edge middleware (the thin hub civ-token can't resolve the full user in the
+  // edge runtime — see preview-access.ts / route-guards). Runs here in Node with the resolved session, catching
+  // direct/SSR loads. A non-mod can't client-nav to these (the nav isn't shown to them) and the tRPC procedures
+  // are the real data gate, so the client-nav gap is harmless.
+  const guardPath = (request.url ?? '').split('?')[0];
+  const guard = resolveAuthGuard(guardPath, session, { isProd, isPreview });
+  let guardTo: string | undefined;
+  if (guard && 'redirect' in guard) {
+    guardTo = guard.redirect;
+  } else if (guard && 'needsPreviewCheck' in guard && session?.user) {
+    // Logged-in non-moderator on a preview deploy → resolve the allowlist via Flipt (async, kept out of the guard).
+    const { checkPreviewAccess } = await import('~/server/auth/preview-access');
+    if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
+  }
+  if (guardTo && appContext.ctx.res) {
+    appContext.ctx.res.writeHead(302, { Location: guardTo });
+    appContext.ctx.res.end();
   }
 
   return {

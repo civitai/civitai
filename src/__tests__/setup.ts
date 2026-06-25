@@ -116,6 +116,13 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   S3_IMAGE_UPLOAD_SECRET: 'test-secret',
 };
 
+// The @civitai/redis package validates its own env from `process.env` directly (its own schema),
+// NOT `~/env/server`, so the mock below doesn't reach it. Set the two required vars (the rest have
+// defaults) so loadRedisEnv() succeeds when a test imports the redis shim/package — the `redis`
+// driver itself is still mocked per-test, so no real connection is opened.
+process.env.REDIS_URL ??= 'redis://localhost:6379';
+process.env.REDIS_SYS_URL ??= 'redis://localhost:6379';
+
 vi.mock('~/env/server', () => ({
   env: new Proxy(TEST_ENV_DEFAULTS, {
     get(target, prop: string) {
