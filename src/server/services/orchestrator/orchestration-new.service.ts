@@ -1014,7 +1014,9 @@ export async function createWorkflowStepsFromGraph({
   // Span localizes the gen-path park: graph→steps assembly sub-step — builds the
   // per-overlay steps (createStepInputs), the request-wrapped steps, the
   // workflow-level metadata, and the extra tags from the resolved data.
-  const { wrappedSteps, workflowMetadata, extraTags } = await withSpan(
+  // Return the assembled result directly as this function's result so the span
+  // wraps the whole assembly and no fragile re-destructure/rename is needed.
+  return withSpan(
     'gen:createSteps:assemble',
     async () => {
       const steps: StepInput[] = [];
@@ -1123,15 +1125,13 @@ export async function createWorkflowStepsFromGraph({
       const extraTags: string[] = [];
       if (snippetsExpanded) extraTags.push(WORKFLOW_TAGS.WILDCARDS);
 
-      return { wrappedSteps, workflowMetadata, extraTags };
+      return {
+        steps: wrappedSteps,
+        workflowMetadata,
+        tags: extraTags,
+      };
     }
   );
-
-  return {
-    steps: wrappedSteps,
-    workflowMetadata,
-    tags: extraTags,
-  };
 }
 
 /**
