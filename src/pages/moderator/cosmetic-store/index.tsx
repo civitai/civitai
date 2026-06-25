@@ -16,6 +16,9 @@ import {
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconEdit, IconRosette } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function Rewards() {
   return (

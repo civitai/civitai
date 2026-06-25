@@ -214,15 +214,37 @@ export function createBuzzEvent<T>({
 
   const apply = async (input: T, tracking?: { ip?: string }) => {
     if (!clickhouse) return;
-    const definedKey = await getKey(input, { ch: clickhouse, db: dbWrite });
-    if (!definedKey) return;
+
+    // Fail-soft (resolution): getKey / getMultipliersForUser / getTransactionDetails hit the DB/Redis/CH and
+    // run SYNCHRONOUSLY inside the triggering user mutation (collection.saveItem, toggleFollow, post.update,
+    // ...). A throw here — e.g. a getKey query that returns no rows and gets destructured — must NEVER 500
+    // that mutation, so resolve inside a fail-soft envelope and skip the reward on failure. Safe: nothing is
+    // committed until processOnDemand below (no dedup entry yet), so an early throw leaves no side effects and
+    // no double-award. The grant path (addBuzzEvent / sendAward) is separately fail-soft further down.
+    const resolved = await (async () => {
+      const definedKey = await getKey(input, { ch: clickhouse, db: dbWrite });
+      if (!definedKey) return null;
+      const { rewardsMultiplier } = await getMultipliersForUser(definedKey.toUserId);
+      const transactionDetails = buzzEvent.getTransactionDetails
+        ? await buzzEvent.getTransactionDetails(input, { ch: clickhouse, db: dbWrite })
+        : undefined;
+      return { definedKey, rewardsMultiplier, transactionDetails };
+    })().catch((error) => {
+      logToAxiom({
+        name: 'buzz-rewards',
+        type: 'error',
+        message: 'Reward resolution failed (fail-soft)',
+        rewardType: type,
+        error: (error as Error)?.message,
+        stack: (error as Error)?.stack,
+      }).catch();
+      rewardFailedCounter?.inc?.();
+      return null;
+    });
+    if (!resolved) return;
+    const { definedKey, rewardsMultiplier, transactionDetails } = resolved;
 
     const { ip } = tracking ?? {};
-    const { rewardsMultiplier } = await getMultipliersForUser(definedKey.toUserId);
-
-    const transactionDetails = buzzEvent.getTransactionDetails
-      ? await buzzEvent.getTransactionDetails(input, { ch: clickhouse, db: dbWrite })
-      : undefined;
 
     const key = { type, ...definedKey } as BuzzEventKey;
     const event: BuzzEventLog = {

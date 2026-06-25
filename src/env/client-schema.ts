@@ -39,6 +39,9 @@ export const clientSchema = z.object({
   // Auth proxy URL for PR previews - when set, OAuth flows redirect through this URL
   // instead of handling locally (e.g., "https://auth.civitaic.com")
   NEXT_PUBLIC_AUTH_PROXY_URL: z.string().optional(),
+  // (NEXT_PUBLIC_AUTH_HUB_URL removed: every client-initiated hub flow — login full-page + popup, account
+  // connect, discord-link — now routes through a same-origin main-app endpoint that builds the hub URL from
+  // the SERVER's AUTH_JWT_ISSUER, so the client no longer needs a build-time hub origin.)
 });
 
 /**

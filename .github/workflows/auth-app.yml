@@ -1,0 +1,110 @@
+name: Auth App Image
+
+# Builds + publishes the login hub image ghcr.io/civitai/civitai-auth.
+#
+# WHY this exists: the hub image was hand-built (manually `docker build` + `docker push`
+# of 0.0.1). This is the first per-app CI in the monorepo. It mirrors the sibling-app
+# pattern (civitai/civitai-chat, civitai/civitai-image-cacher both build GH Actions -> ghcr)
+# rather than Tekton, which only the main civitai-web image uses.
+#
+# RELEASE FLOW: push a tag `auth-app-vX.Y.Z` (e.g. auth-app-v0.1.0). This workflow builds
+# apps/auth/Dockerfile and pushes ghcr.io/civitai/civitai-auth:X.Y.Z (+ :sha-<short>).
+# Flux in datapacket-talos has an ImagePolicy (semver >=0.0.1) on that ghcr repo; its
+# ImageUpdateAutomation then bumps the tag on trunk and the deploy rolls out.
+#
+# The monorepo tag PREFIX (auth-app-v) scopes releases to this app — other apps can take
+# their own prefix (e.g. chat-app-v) without colliding on a shared `v*` namespace.
+
+on:
+  # PR gate: any change under the hub or shared packages must still build. Does NOT push.
+  pull_request:
+    paths:
+      - 'apps/auth/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'patches/**'
+      - '.github/workflows/auth-app.yml'
+  # Release: a semver-prefixed tag builds AND pushes.
+  push:
+    tags:
+      - 'auth-app-v*'
+  # Manual rebuild (e.g. re-push a tag's image). Pushes only when run from a release tag ref.
+  workflow_dispatch:
+
+# Least privilege: read source, write the ghcr package. Nothing else.
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: auth-app-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (push on tag)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Whether this run publishes: true only for a `auth-app-v*` tag (push or dispatch-from-tag).
+      - name: Decide push + tags
+        id: meta
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          IMAGE=ghcr.io/civitai/civitai-auth
+          SHA_TAG="sha-$(git rev-parse --short HEAD)"
+
+          if [ "$REF_TYPE" = "tag" ] && [[ "$REF_NAME" == auth-app-v* ]]; then
+            # Derive the semver from the tag: auth-app-v0.1.0 -> 0.1.0
+            VERSION="${REF_NAME#auth-app-v}"
+            if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+].+)?$ ]]; then
+              echo "::error::Tag '$REF_NAME' did not yield a valid semver ('$VERSION'). Use auth-app-vX.Y.Z."
+              exit 1
+            fi
+            # No :latest from a tag build — Flux selects by semver ImagePolicy, and a moving
+            # :latest could auto-deploy an unintended digest.
+            TAGS="${IMAGE}:${VERSION}"$'\n'"${IMAGE}:${SHA_TAG}"
+            PUSH=true
+            echo "Release build: pushing ${IMAGE}:${VERSION} (+ ${SHA_TAG})"
+          else
+            # PR / branch / non-tag dispatch: build only, no push. Tag value is cosmetic
+            # (build-push-action needs *a* tag even when push=false).
+            TAGS="${IMAGE}:pr-${SHA_TAG}"
+            PUSH=false
+            echo "Non-release build: compiling the image without pushing."
+          fi
+
+          {
+            echo "push=${PUSH}"
+            echo "tags<<EOF"
+            echo "${TAGS}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # Only authenticate when we intend to push (avoids needing the token on PR gate runs).
+      - name: Log in to ghcr
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (+ push on tag)
+        uses: docker/build-push-action@v6
+        with:
+          # Context = repo ROOT (the Dockerfile COPYs pnpm-lock.yaml, packages/, patches/, apps/auth/).
+          context: .
+          file: apps/auth/Dockerfile
+          platforms: linux/amd64
+          push: ${{ steps.meta.outputs.push == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

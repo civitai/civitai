@@ -166,17 +166,16 @@ export const getArticleRatingReviewsSchema = z.object({
 });
 
 export type ResolveArticleRatingReviewInput = z.infer<typeof resolveArticleRatingReviewSchema>;
-export const resolveArticleRatingReviewSchema = z
-  .object({
-    reviewId: z.number(),
-    status: z.enum(['Actioned', 'Unactioned']),
-    appliedLevel: z.number().int().positive().optional(),
-    modComment: z.string().max(1000).optional(),
-  })
-  .refine((data) => data.status !== 'Actioned' || data.appliedLevel != null, {
-    message: 'appliedLevel is required when actioning a review',
-    path: ['appliedLevel'],
-  });
+// Single-action resolution: every resolve pins the article at `appliedLevel`
+// (override). The Actioned/Unactioned status is no longer a client input — the
+// server derives it from `appliedLevel` vs the review's `suggestedLevel`
+// (granted vs overrode-differently). See
+// docs/superpowers/specs/2026-06-25-article-rating-review-single-action-design.md
+export const resolveArticleRatingReviewSchema = z.object({
+  reviewId: z.number(),
+  appliedLevel: z.number().int().positive(),
+  modComment: z.string().max(1000).optional(),
+});
 
 export type GetMyArticleRatingReviewInput = z.infer<typeof getMyArticleRatingReviewSchema>;
 export const getMyArticleRatingReviewSchema = z.object({

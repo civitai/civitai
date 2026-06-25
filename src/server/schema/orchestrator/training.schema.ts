@@ -1,4 +1,4 @@
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';

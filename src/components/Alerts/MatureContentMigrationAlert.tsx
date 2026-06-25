@@ -1,7 +1,7 @@
 import { useCallback, useRef } from 'react';
 import { Button, CloseButton, Text, ThemeIcon } from '@mantine/core';
 import { IconArrowRight, IconPepper } from '@tabler/icons-react';
-import { useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import { useFeatureFlags, useFeatureFlagsReady } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';

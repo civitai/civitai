@@ -12,6 +12,9 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function ReviewTrainingDataPage() {
   const features = useFeatureFlags();

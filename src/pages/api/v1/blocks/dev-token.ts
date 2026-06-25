@@ -1,7 +1,7 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbWrite } from '~/server/db/client';
@@ -35,12 +35,79 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  * protocol to real endpoints) is the larger half and is EXPLICITLY OUT OF SCOPE
  * — documented follow-up (scope doc §5.2, Phase 2).
  *
- * ## "Existing-app" mode (the ONLY mode shipped here — scope doc §3.3)
- * The dev names an app they OWN (by `appBlockId` or `slug`). Scopes/budget are
- * pinned to that APPROVED `AppBlock` row + its app's OAuth ceiling, so the blast
- * radius ≈ prod and there is no escalation via an un-reviewed local manifest.
- * The "local-manifest" mode (no approved row) is the higher-risk Phase 4 work
- * and is NOT implemented.
+ * ## Two resolution modes (scope doc §3.3, §4, Phase 4)
+ *
+ * 1. "Existing-app" mode — the dev names an app they OWN (by `appBlockId` or
+ *    `slug`) that has an APPROVED `AppBlock` row. Scopes/budget are pinned to
+ *    that approved snapshot + its app's OAuth ceiling, so the blast radius ≈
+ *    prod and there is no escalation via an un-reviewed local manifest.
+ *
+ * 2. "Local-manifest" mode (NOW IMPLEMENTED — the documented Phase 4 work) —
+ *    reached ONLY when no owned APPROVED row exists AND the caller passed a
+ *    `slug` that matches a `AppBlockPublishRequest` with `status='pending'`
+ *    that THEY submitted (`submittedByUserId === user.id`). This unblocks the
+ *    `dev:live` real-Buzz path for a BRAND-NEW (pending) app — before today
+ *    that 404'd because the mint required an approved row. The scope SOURCE is
+ *    the pending request's UN-REVIEWED `manifest.scopes` (developer-controlled,
+ *    NOT moderator-approved) — the §4 R1 escalation surface — so it is clamped
+ *    by the IDENTICAL belt as the approved path WITH ONE SUBSTITUTION:
+ *      - a pending app has NO OauthClient → there is no OAuth-bitmask ceiling
+ *        (step 7c). Passing `oauthAllowed: 0` into
+ *        validateBlockScopesAgainstOauthClient would WRONGLY STRIP every
+ *        non-SKIP_OAUTH_CHECK scope (`(0 & bit) !== bit`), so the step is simply
+ *        OMITTED for the pending path. The CORRECT substitute ceiling is the
+ *        dev's OWN credential, ALREADY enforced at step 7f (the
+ *        bearer-credential spend ceiling: `ai:write:budgeted` survives only if
+ *        the bearer carries `AIServicesWrite`). 7f is the authoritative spend
+ *        gate here. Every OTHER clamp (isKnownBlockScope, DEV_TOKEN_SCOPE_-
+ *        ALLOWLIST, PAGE_FORBIDDEN_SCOPES, body-narrowing, force-grant
+ *        `user:read:self`) and EVERY hard cap (DEV_BUZZ_BUDGET_CAP, forced SFW,
+ *        self-bound `sub`, short TTL, rate limit, mod-only pre-GA) is applied
+ *        IDENTICALLY — the pending path relaxes NOTHING.
+ *
+ *    Residual risk (honest): the manifest is un-reviewed, so a developer could
+ *    declare any scope. But each declared scope is bounded by ≤ the dev's own
+ *    credential authority (7f for spend), ⊆ DEV_TOKEN_SCOPE_ALLOWLIST, and minus
+ *    PAGE_FORBIDDEN_SCOPES; spend is the dev's OWN budget-capped Buzz against the
+ *    untouched per-user daily cap; the runtime spend belt still asserts
+ *    moderator pre-GA. The R1-escalation test proves an escalated manifest scope
+ *    (`social:tip:self`, `block:settings:write`, an unknown/mature scope) is
+ *    STRIPPED, never minted.
+ *
+ *    APPID MISATTRIBUTION (audit S1 — FIXED): the pending path mints a SYNTHETIC
+ *    `appId = pending-<publishRequestId>`, NOT the deterministic `appblk-<slug>`
+ *    an approved app would get. Were it `appblk-<slug>`, an adversarial mod-tier
+ *    dev could file a *pending* request for a slug an APPROVED app owned by a
+ *    DIFFERENT user already holds (the submit guard blocks only same-slug pending
+ *    collisions, not pending-vs-approved), skip the approved branch (not their
+ *    app), reach this pending branch, and mint a token whose `appId` resolves —
+ *    in `recordSpendAttribution` — to the VICTIM's real OauthClient, writing a
+ *    forged `blockSpendAttribution` row (status='tracked', appOwnerUserId=victim,
+ *    real grossValueCents). That row is exactly what the deferred payout rail
+ *    (#2605 Slice-4 backpay) reads to pay `gross × spendSharePct`. Dormant today
+ *    (spendSharePct=0, no money moves) but a forged accrual ledger would persist
+ *    into the payout window. The synthetic `pending-pubreq_<ULID>` can never match
+ *    an `appblk-*` id nor a real `OauthClient.id`, so the attribution lookup MISSES
+ *    → the inert `if (!app)` skip-write path → no row written (correct: a pending
+ *    dev-test spend has no approved app to attribute to). GATE: before #2605 turns
+ *    on a non-zero `spendSharePct`, re-confirm no pending-path mint can ever land a
+ *    real `OauthClient.id` in `appId`.
+ *
+ *    PENDING-PATH AUDIT GATE (FIX 🟡-1): a pending-app dev mint has NO
+ *    AppBlock-backed audit rows — recordSpendAttribution throws+swallows on the
+ *    synthetic appId and recordScopeInvocation FK-fails on the synthetic
+ *    appBlockId, so the ONLY durable trail is the structured
+ *    `blocks.dev-token.pending-mint` log event (userId/slug/publishRequestId/
+ *    scopes/spendGranted) emitted at mint time (queryable in Axiom/Loki). GATE:
+ *    durable, per-spend audit rows for pending apps (e.g. a nullable-appBlockId
+ *    schema change so recordScopeInvocation can persist) is a GA-gate item before
+ *    pending-app dev spend is widened past the mod-only pre-GA posture.
+ *
+ *    OWNERSHIP / NO-ORACLE: only the `slug` input can reach the pending path
+ *    (pending apps have no `appBlockId`); a row the caller doesn't own — or no
+ *    row at all — returns the SAME bare `404 { message: 'App not found' }` as
+ *    the approved path (never an existence/ownership/state oracle). Only a row
+ *    the caller demonstrably owns surfaces an actionable message.
  *
  * ## Auth — Bearer, resolved via the same `getSessionFromBearerToken` path the
  * `/api/v1/*` REST routes use. TWO credential shapes accepted:
@@ -70,10 +137,14 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    pre-GA mod posture. The runtime spend procedures already call
  *    `assertViewerIsModerator`, so a non-mod could mint but not spend; we keep
  *    mint mod-gated anyway. RELAX in lockstep with the runtime belt at GA.
- *  - SCOPE CLAMP: granted ⊆ the app's approved scopes ⊆ DEV_TOKEN_SCOPE_ALLOWLIST
- *    (EXCLUDES `social:tip:self` + `block:settings:*`) ⊆ the app's OAuth ceiling
- *    ⊆ requested (if the body narrows). Unknown / out-of-allowlist scopes are
- *    STRIPPED, never error.
+ *  - SCOPE CLAMP: granted ⊆ the scope source ⊆ DEV_TOKEN_SCOPE_ALLOWLIST
+ *    (EXCLUDES `social:tip:self` + `block:settings:*`) ⊆ [the app's OAuth
+ *    ceiling — approved path ONLY] ⊆ requested (if the body narrows), then the
+ *    bearer-credential spend ceiling (7f) gates `ai:write:budgeted`. The scope
+ *    SOURCE is the app's APPROVED snapshot (existing-app mode) OR the OWNED
+ *    pending request's un-reviewed `manifest.scopes` (local-manifest mode, where
+ *    the absent OAuth ceiling is replaced by 7f). Unknown / out-of-allowlist
+ *    scopes are STRIPPED, never error.
  *  - BUDGET CAP: a LOWER dev cap (DEV_BUZZ_BUDGET_CAP) than the prod 1000. The
  *    existing per-user daily cumulative cap (reserveBlockBuzzSpend) is untouched.
  *  - FORCED SFW: maxBrowsingLevel = domainBrowsingCeiling(null) UNCONDITIONALLY
@@ -291,11 +362,24 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     return;
   }
 
-  // 6. Resolve the APPROVED AppBlock the dev OWNS. Ownership = the app's
-  // OauthClient.userId (the AppBlock → app → user relation). We use dbWrite so a
-  // freshly-approved/suspended app can't slip through a replication-lag window.
-  // The lookup also fetches `app.userId` (owner) which resolvePageBlock doesn't
-  // expose, so we read the row directly here (we do NOT modify the prod path).
+  // 6. Resolve the block to mint for. TWO resolution paths (scope doc §3.3, §4,
+  // Phase 4). The result is a uniform `resolved` shape consumed by the shared
+  // clamp belt (step 7) so neither path can relax a cap:
+  //
+  //   - scopeSource:      the scopes to clamp DOWN from. Approved snapshot
+  //                       (existing-app) OR the OWNED pending request's
+  //                       un-reviewed manifest.scopes (local-manifest).
+  //   - oauthAllowed:     the OAuth-bitmask ceiling, or null to SKIP that clamp
+  //                       step (pending apps have no OauthClient — see 7c below).
+  //   - signBlockId/appId/appBlockId/blockInstanceId: the sign + revocation ids.
+  //
+  // Resolution order is APPROVED-FIRST so the safer (server-pinned) path always
+  // wins; the pending path is reached ONLY when no owned approved row exists.
+
+  // 6a. APPROVED path. Ownership = the app's OauthClient.userId (AppBlock → app →
+  // user). dbWrite so a freshly-approved/suspended app can't slip a replica-lag
+  // window. Lookup also reads `app.userId` (owner) which resolvePageBlock doesn't
+  // expose; we read the row directly here (we do NOT modify the prod path).
   const where = appBlockId ? { id: appBlockId } : { blockId: slug! };
   const block = await dbWrite.appBlock.findUnique({
     where: where as { id: string } | { blockId: string },
@@ -309,67 +393,186 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       app: { select: { allowedScopes: true, userId: true } },
     },
   });
-  // 404 (never leak which) for a row that doesn't exist or isn't owned by the
-  // caller. We check EXISTENCE+OWNERSHIP first (collapsed into one bare 404 so a
-  // non-owner can't probe which appBlockIds exist OR their approval state), and
-  // ONLY THEN — for a row the caller demonstrably owns — surface the actionable
-  // not-yet-live message. A non-owner therefore still gets the indistinguishable
-  // bare 404 regardless of the app's status (no probe oracle); approval-state
-  // detail is revealed exclusively to the confirmed owner.
-  if (!block || !block.app || block.app.userId !== user.id) {
+
+  // A `resolved` block (either path) carries everything the clamp + sign below
+  // need. `oauthAllowed: null` ⇒ skip the OAuth-ceiling clamp (no client exists).
+  type Resolved = {
+    scopeSource: string[];
+    oauthAllowed: number | null;
+    signBlockId: string;
+    signAppId: string;
+    signAppBlockId: string;
+    blockInstanceId: string;
+  };
+  let resolved: Resolved | null = null;
+  // Set ONLY on the local-manifest (pending) path so the structured mint-audit
+  // log (FIX 🟡-1) can fire for pending mints — the only path WITHOUT durable
+  // AppBlock-backed audit rows (recordSpendAttribution throws+swallows on the
+  // synthetic appId; recordScopeInvocation FK-fails on the synthetic appBlockId).
+  let pendingPublishRequestId: string | null = null;
+
+  if (block && block.app && block.app.userId === user.id) {
+    // Owned approved row → existing-app mode. But an OWNED-yet-not-approved row
+    // (e.g. status: pending with an appBlockId already linked) is NOT live: the
+    // dev-token mint resolves a DEPLOYED instance. Surface the ACTIONABLE
+    // no-live-deployment message (owner-only) instead of the bare "App not found".
+    if (block.status !== 'approved') {
+      res.status(404).json({
+        message:
+          `block '${block.blockId}' has no live deployment — dev:live requires an ` +
+          `approved + deployed version (deployState: live). Until your first ` +
+          `version is live, validate locally with dev:harness (mock).`,
+      });
+      return;
+    }
+    // The app MUST declare a page block — dev-token mints PAGE tokens only (the
+    // live-local target is a page app; no model binding).
+    const manifest = (block.manifest ?? {}) as { page?: unknown };
+    if (
+      typeof manifest.page !== 'object' ||
+      manifest.page === null ||
+      Array.isArray(manifest.page)
+    ) {
+      res
+        .status(422)
+        .json({ message: 'dev-token mints page tokens; this app declares no page block' });
+      return;
+    }
+    const approvedRaw: unknown[] = Array.isArray(block.approvedScopes)
+      ? block.approvedScopes
+      : [];
+    resolved = {
+      scopeSource: approvedRaw.filter((s): s is string => typeof s === 'string'),
+      oauthAllowed: block.app.allowedScopes ?? 0,
+      signBlockId: block.blockId,
+      signAppId: block.appId,
+      signAppBlockId: block.id,
+      // Synthetic, revocable PAGE instance id — same shape as the prod page mint.
+      blockInstanceId: `${PAGE_INSTANCE_PREFIX}${block.id}`,
+    };
+  } else if (slug) {
+    // 6b. LOCAL-MANIFEST path (Phase 4). Reached ONLY when no owned approved row
+    // exists AND the caller passed a `slug` (pending apps have NO appBlockId, so
+    // an `appBlockId`-only request can never reach here). Find the caller's OWN
+    // pending submission for this slug. dbWrite (no replica lag). OWNERSHIP is
+    // enforced in the query (`submittedByUserId === user.id`) so the row is, by
+    // construction, the caller's — we never read another user's pending row.
+    const pending = await dbWrite.appBlockPublishRequest.findFirst({
+      where: { slug, status: 'pending', submittedByUserId: user.id },
+      orderBy: { submittedAt: 'desc' },
+      select: { id: true, slug: true, manifest: true },
+    });
+    if (pending) {
+      // The un-reviewed manifest MUST declare a page block — same 422 as the
+      // approved path (dev-token mints page tokens only).
+      const manifest = (pending.manifest ?? {}) as { page?: unknown; scopes?: unknown };
+      if (
+        typeof manifest.page !== 'object' ||
+        manifest.page === null ||
+        Array.isArray(manifest.page)
+      ) {
+        res
+          .status(422)
+          .json({ message: 'dev-token mints page tokens; this app declares no page block' });
+        return;
+      }
+      const manifestScopesRaw: unknown[] = Array.isArray(manifest.scopes) ? manifest.scopes : [];
+      pendingPublishRequestId = pending.id;
+      resolved = {
+        // Scope SOURCE is the UN-REVIEWED manifest.scopes (§4 R1) — clamped by the
+        // IDENTICAL belt below (allowlist + page-forbidden + 7f spend ceiling).
+        scopeSource: manifestScopesRaw.filter((s): s is string => typeof s === 'string'),
+        // No OauthClient for a pending app → SKIP the OAuth-ceiling clamp. Passing
+        // 0 would WRONGLY strip every non-SKIP_OAUTH_CHECK scope (`(0 & bit) !== bit`);
+        // the correct substitute ceiling is the dev's OWN credential, enforced at
+        // step 7f (AIServicesWrite spend gate). 7f IS the spend gate here.
+        oauthAllowed: null,
+        signBlockId: pending.slug,
+        // SYNTHETIC, NON-COLLIDING appId (audit S1 fix). A pending app has NO
+        // OauthClient yet, so there is no real client id to bind. We DELIBERATELY
+        // do NOT use the deterministic `appblk-<slug>` id an approved app WOULD
+        // get: that string is the id a real APPROVED app owned by ANOTHER user
+        // may already hold (the submit guard blocks only same-slug *pending*
+        // collisions, not pending-vs-approved). Minting `appblk-<slug>` here would
+        // let recordSpendAttribution's `oauthClient.findUnique({ where: { id } })`
+        // (buzz-attribution.service.ts) RESOLVE the victim's real client and write
+        // a foreign `blockSpendAttribution` row (status='tracked',
+        // appOwnerUserId=<victim>, real grossValueCents) — the exact row the
+        // deferred payout rail (#2605 Slice-4 backpay) reads to pay
+        // `gross × spendSharePct`. Dormant today (spendSharePct=0) but a forged
+        // accrual ledger would persist into the payout window.
+        //
+        // Instead use `pending-<publishRequestId>` — `pubreq_<ULID>` ids make this
+        // `pending-pubreq_<ULID>`, which can NEVER match an `appblk-*` id NOR a
+        // real `OauthClient.id` shape. The attribution lookup MISSES → it hits the
+        // intended inert `if (!app)` skip-write path (throws
+        // AttributionAppMissingError, swallowed by the void/catch at
+        // blocks.router.ts:2449) — correct: a pending dev-test spend has no
+        // approved app to attribute to, so NO row is written. `appId` has no other
+        // load-bearing use on the pending path: it's only (a) a cosmetic workflow
+        // TAG `app-block:${appId}` (blocks.router.ts:2978 — orchestrator bills
+        // getOrchestratorToken(userId)), (b) this attribution lookup we WANT to
+        // miss, and (c) middleware string-type validation (block-scope.middleware
+        // .ts:393). No FK resolves `appId` on the pending path.
+        signAppId: `pending-${pending.id}`,
+        // No AppBlock.id exists — use the pending request id (stable, unique per
+        // submission). The JWT `appBlockId` claim is only string-validated by the
+        // middleware (block-scope.middleware.ts:394). NOTE: the best-effort
+        // BlockScopeInvocation audit-log write (a NOT-NULL FK → AppBlock.id) will
+        // FK-fail for this value and is silently swallowed (fire-and-forget,
+        // catch-all) — acceptable, documented residual; verification + revocation
+        // are unaffected.
+        signAppBlockId: pending.id,
+        // Stable, BlockRevocation-checkable synthetic instance id derived from the
+        // publish-request id (no AppBlock.id to key on).
+        blockInstanceId: `${PAGE_INSTANCE_PREFIX}pubreq_${pending.id}`,
+      };
+    }
+  }
+
+  // No owned approved AppBlock AND no owned pending request → the SAME bare 404
+  // as the approved path. We never reveal existence/ownership/state of a row the
+  // caller doesn't own (no probe oracle). Note an OWNED-but-not-approved row
+  // already returned its own actionable 404 above; an OWNED pending row resolved.
+  if (!resolved) {
     res.status(404).json({ message: 'App not found' });
     return;
   }
-  // Owned, but no LIVE deployment yet (the dev-token mint resolves a DEPLOYED
-  // block instance — deployState: live, i.e. an `approved` AppBlock row). A
-  // brand-new app — even right after a successful submit (status: pending) —
-  // legitimately exists and is owned here but has nothing live to mint against.
-  // Return an ACTIONABLE message instead of the misleading bare "App not found".
-  if (block.status !== 'approved') {
-    res.status(404).json({
-      message:
-        `block '${block.blockId}' has no live deployment — dev:live requires an ` +
-        `approved + deployed version (deployState: live). Until your first ` +
-        `version is live, validate locally with dev:harness (mock).`,
-    });
-    return;
-  }
 
-  // The app MUST declare a page block — dev-token mints PAGE tokens only (the
-  // live-local target is a page app; no model binding). A region/model-only app
-  // has no page surface to mint for.
-  const manifest = (block.manifest ?? {}) as { page?: unknown; scopes?: unknown };
-  if (typeof manifest.page !== 'object' || manifest.page === null) {
-    res.status(422).json({ message: 'dev-token mints page tokens; this app declares no page block' });
-    return;
-  }
-
-  // 7. SCOPE CLAMP. Start from the app's APPROVED snapshot (authoritative — the
-  // same pin the prod mint uses), then:
+  // 7. SCOPE CLAMP. Start from the resolved scope SOURCE — the app's APPROVED
+  // snapshot (existing-app) OR the OWNED pending request's un-reviewed
+  // manifest.scopes (local-manifest, §4 R1) — then apply the IDENTICAL belt:
   //   a) keep only KNOWN block scopes,
   //   b) keep only scopes within the DEV_TOKEN_SCOPE_ALLOWLIST (excludes
   //      social:tip:self + block:settings:*),
-  //   c) keep only scopes within the app's OAuth ceiling (allowedScopes),
+  //   c) keep only scopes within the app's OAuth ceiling (allowedScopes) — ONLY
+  //      for the approved path. The pending path has NO OauthClient
+  //      (`oauthAllowed === null`) → this step is OMITTED; 7f is the spend gate.
   //   d) drop the PAGE_FORBIDDEN money/spend scopes (the page hard rule),
   //   e) if the body requested a subset, intersect with it.
   // Every step is a STRIP (no error) so a partially-disallowed request still
-  // mints a usable, safely-clamped token.
-  const approvedRaw: unknown[] = Array.isArray(block.approvedScopes) ? block.approvedScopes : [];
-  const approved: string[] = approvedRaw.filter((s): s is string => typeof s === 'string');
-  const oauthAllowed: number = block.app.allowedScopes ?? 0;
+  // mints a usable, safely-clamped token. The clamp belt is byte-identical
+  // across both paths bar the OAuth-ceiling substitution — an un-reviewed
+  // manifest can never escalate past the allowlist, the page-forbidden set, or
+  // the dev's own credential (7f).
   const forbidden = new Set<string>(PAGE_FORBIDDEN_SCOPES);
 
-  let granted: string[] = approved
+  let granted: string[] = resolved.scopeSource
     .filter((s) => isKnownBlockScope(s))
     .filter((s) => DEV_TOKEN_SCOPE_ALLOWLIST.has(s))
     .filter((s) => !forbidden.has(s));
 
-  // OAuth-ceiling clamp — drop any scope the app's OauthClient bitmask doesn't
-  // allow. validateBlockScopesAgainstOauthClient treats SKIP_OAUTH_CHECK scopes
-  // (apps:storage:*) as always-allowed, so per-scope re-validation keeps those.
-  granted = granted.filter(
-    (s: string) => validateBlockScopesAgainstOauthClient([s], oauthAllowed).valid
-  );
+  // OAuth-ceiling clamp (approved path ONLY) — drop any scope the app's
+  // OauthClient bitmask doesn't allow. validateBlockScopesAgainstOauthClient
+  // treats SKIP_OAUTH_CHECK scopes (apps:storage:*) as always-allowed, so
+  // per-scope re-validation keeps those. SKIPPED when oauthAllowed is null (the
+  // pending path — no client; passing 0 would wrongly strip every non-skip scope).
+  if (resolved.oauthAllowed !== null) {
+    const ceiling = resolved.oauthAllowed;
+    granted = granted.filter(
+      (s: string) => validateBlockScopesAgainstOauthClient([s], ceiling).valid
+    );
+  }
 
   // Body narrowing — the dev may request a subset of the above.
   if (requestedScopes && requestedScopes.length > 0) {
@@ -435,10 +638,34 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     ? Math.min(requestedBudget ?? DEV_BUZZ_BUDGET_DEFAULT, DEV_BUZZ_BUDGET_CAP)
     : undefined;
 
-  // 9. Synthetic, revocable PAGE instance id — same shape as the prod page mint
-  // (`page_<appBlockId>`), so BlockRevocation per blockInstanceId works
-  // unchanged and the harness uses the identical token-handling.
-  const blockInstanceId = `${PAGE_INSTANCE_PREFIX}${block.id}`;
+  // 8b. PENDING-PATH MINT AUDIT (FIX 🟡-1). The pending (local-manifest) path is
+  // the ONLY mint without durable, queryable audit rows: recordSpendAttribution
+  // throws+swallows on the synthetic `pending-<id>` appId, and recordScopeInvocation
+  // FK-fails on the synthetic `appBlockId` (no AppBlock row). Without this, a dev
+  // minting a spend-capable token against an UN-REVIEWED app leaves no forensic
+  // trail. Emit a structured event (Axiom/Loki-queryable) with the mint metadata —
+  // NEVER the token/secret. Placed AFTER the final scope clamp + budget resolution
+  // so `scopes`/`spendGranted` reflect the actual minted outcome (7f clamp included).
+  // PENDING-PATH ONLY: the approved path already has durable AppBlock-backed audit
+  // rows (recordSpendAttribution / recordScopeInvocation persist there), so it does
+  // not emit this event. The `mode: 'pending'` field is carried so a future
+  // approved-side log could reuse the same schema.
+  if (pendingPublishRequestId) {
+    req.log?.info('blocks.dev-token.pending-mint', {
+      mode: 'pending',
+      userId: user.id,
+      slug: resolved.signBlockId,
+      publishRequestId: pendingPublishRequestId,
+      scopes: granted,
+      spendGranted: granted.includes('ai:write:budgeted'),
+    });
+  }
+
+  // 9. The synthetic, revocable PAGE instance id was resolved in step 6:
+  //    - approved path:  `page_<appBlockId>` (same shape as the prod page mint),
+  //    - pending path:   `page_pubreq_<publishRequestId>` (stable, unique).
+  // Both are BlockRevocation-checkable; the harness token-handling is identical.
+  const blockInstanceId = resolved.blockInstanceId;
 
   // 10. PAGE ctx (entity=none, no model binding) — byte-identical shape to the
   // prod page mint, so a dev page token can NEVER satisfy a model-bound check.
@@ -457,9 +684,9 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // read) — advisory only; the AUTHORITATIVE ceiling is maxBrowsingLevel.
   const result = await BlockTokenService.sign({
     userId: user.id,
-    blockId: block.blockId,
-    appId: block.appId,
-    appBlockId: block.id,
+    blockId: resolved.signBlockId,
+    appId: resolved.signAppId,
+    appBlockId: resolved.signAppBlockId,
     blockInstanceId,
     scopes: granted,
     ctx,

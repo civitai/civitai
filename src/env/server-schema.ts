@@ -323,17 +323,15 @@ export const serverSchema = z.object({
   CLICKHOUSE_USERNAME: isProd ? z.string() : z.string().optional(),
   CLICKHOUSE_PASSWORD: isProd ? z.string() : z.string().optional(),
   CLICKHOUSE_TRACKER_URL: z.url().optional(),
+  // OAuth LOGIN provider secrets now live ONLY in the hub (apps/auth) — the spoke fetches the enabled-provider
+  // list from GET {hub}/api/auth/providers and never holds login secrets. Discord's creds REMAIN here because
+  // the Discord ROLE-CONNECTION integration (src/server/integrations/discord.ts) uses them — that's a separate
+  // feature from login, not a civitai sign-in secret.
   DISCORD_CLIENT_ID: z.string(),
   DISCORD_CLIENT_SECRET: z.string(),
   DISCORD_BOT_TOKEN: z.string().optional(),
   DISCORD_GUILD_ID: z.string().optional(),
   DISCORD_WEBHOOK_MOD_ALERTS: z.string().optional(),
-  GITHUB_CLIENT_ID: z.string(),
-  GITHUB_CLIENT_SECRET: z.string(),
-  GOOGLE_CLIENT_ID: z.string(),
-  GOOGLE_CLIENT_SECRET: z.string(),
-  REDDIT_CLIENT_ID: z.string(),
-  REDDIT_CLIENT_SECRET: z.string(),
   EMAIL_HOST: z.string(),
   EMAIL_PORT: z.preprocess((x) => parseInt(String(x)), z.number()),
   EMAIL_SECURE: zc.booleanString,

@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { createFreshdeskToken } from '~/server/integrations/freshdesk';

@@ -1,4 +1,4 @@
-// Example of a restricted endpoint that only authenticated users can access from https://next-auth.js.org/getting-started/example
+// Example of a restricted endpoint that only authenticated users can access.
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';

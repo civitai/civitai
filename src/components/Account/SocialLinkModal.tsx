@@ -1,6 +1,6 @@
 import { Stack, Button, Modal, Group } from '@mantine/core';
 import { LinkType } from '~/shared/utils/prisma/enums';
-import { useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import { useEffect } from 'react';
 import * as z from 'zod';
 import { useForm, Form, InputText } from '~/libs/form';

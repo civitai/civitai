@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'http';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { isDev } from '~/env/other';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -118,6 +118,13 @@ const featureFlags = createFeatureFlags({
     default: false,
     displayName: 'Events in Navigation',
     description: `Show the Events item in the main site navigation.`,
+    availability: ['public'],
+  },
+  nativeVideoControls: {
+    toggleable: true,
+    default: false,
+    displayName: 'Native Video Controls',
+    description: `Use your browser's built-in video player controls (with a seek bar) for all videos.`,
     availability: ['public'],
   },
   alternateHome: ['public'],

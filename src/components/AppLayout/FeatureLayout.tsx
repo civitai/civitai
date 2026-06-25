@@ -1,4 +1,4 @@
-import { useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import React from 'react';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import FourOhFour from '~/pages/404';

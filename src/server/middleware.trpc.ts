@@ -11,7 +11,7 @@ import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
-import type { ExtendedUser } from '~/types/next-auth';
+import type { SessionUser } from '~/types/session';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
 import { booleanString } from '~/utils/zod-helpers';
@@ -109,7 +109,7 @@ export function cacheIt<TInput extends object>({
 export type RateLimit = {
   limit: number;
   period: number; // seconds
-  userReq?: (user: ExtendedUser) => boolean;
+  userReq?: (user: SessionUser) => boolean;
   errorMessage?: string;
 };
 export type RateLimitOptions = {

@@ -44,6 +44,17 @@ import {
 const ORCHESTRATOR_UNAVAILABLE_MESSAGE =
   'Generation services are temporarily unavailable. Please try again.';
 
+// Backstop deadline for the orchestrator workflow READ (queryWorkflows). A read is
+// safe to bound — the polling client simply re-fetches — so this caps a runaway
+// query that would otherwise hang unbounded and pin a request. Sized well above the
+// observed latency tail (max ~17.7s on the queryGeneratedImages feed) so it 503s
+// essentially nothing today and only fires on a true runaway. A fired
+// AbortSignal.timeout() throws a `TimeoutError`, which the existing
+// `isUpstreamNetworkError` catch below classifies → retry-able 503 (no new handling
+// needed). Bounds ALL queryWorkflows callers (queryGeneratedImages feed,
+// queryWorkflowsByTags, queue-status, admin) — every one a request-scoped read.
+const ORCHESTRATOR_QUERY_TIMEOUT_MS = 20_000;
+
 export async function queryWorkflows({
   token,
   fromDate,
@@ -54,6 +65,9 @@ export async function queryWorkflows({
 
   const { data, error } = await clientQueryWorkflows({
     client,
+    // Read backstop: abort a runaway orchestrator query (see constant above). The
+    // resulting TimeoutError is caught below and mapped to a retry-able 503.
+    signal: AbortSignal.timeout(ORCHESTRATOR_QUERY_TIMEOUT_MS),
     query: {
       ...query,
       tags: ['civitai', ...(query.tags ?? [])],

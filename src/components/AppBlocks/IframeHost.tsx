@@ -30,11 +30,9 @@ import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/base
 import { trpc } from '~/utils/trpc';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { openLoginPopup } from '~/utils/auth-helpers';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
-// Login flow for anonymous-conversion (REQUEST_SIGN_IN). SSR-disabled to match
-// requireLogin()'s own dynamic import — LoginContent touches window/router.
-const LoginModal = dynamic(() => import('~/components/Login/LoginModal'), { ssr: false });
 // Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
 // clicks an action whose consent-gated scope the token is missing.
 const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: false });
@@ -710,23 +708,19 @@ export function IframeHost({
   // flow when the user clicks an action that needs auth/money (e.g. Generate).
   // usePostMessage already pins origin + event.source; we additionally gate on
   // status === 'ready' (post-BLOCK_READY) so a pre-handshake block can't pop a
-  // login modal before any interaction, matching the OPEN_BUZZ_PURCHASE posture.
+  // login popup before any interaction, matching the OPEN_BUZZ_PURCHASE posture.
   //
   // returnUrl: an untrusted same-origin path the block may supply (must begin
   // with a single '/', no protocol-relative '//', so it can't redirect off-site
-  // after login). When absent or unsafe we fall through to undefined and
-  // LoginModal defaults returnUrl to the current page (router.asPath).
+  // after login). When absent or unsafe we fall through to the current page.
   useEffect(() => {
     const off = onMessage<{ returnUrl?: unknown } | undefined>('REQUEST_SIGN_IN', (raw) => {
       const resolved = resolveRequestSignIn(status, raw);
       if (resolved == null) return; // not ready — drop (gate centralises the rules)
-      dialogStore.trigger({
-        component: LoginModal,
-        props: {
-          reason: 'image-gen',
-          ...(resolved.returnUrl ? { returnUrl: resolved.returnUrl } : {}),
-        },
-      });
+      // Open the hub login in a popup (replaces the old in-page LoginModal). The host runs at TOP level — not
+      // inside the sandboxed block iframe — so the popup works here; on completion it navigates back.
+      const here = window.location.pathname + window.location.search + window.location.hash;
+      openLoginPopup(resolved.returnUrl ?? here, 'image-gen');
     });
     return off;
   }, [onMessage, status]);
@@ -1201,7 +1195,8 @@ export function IframeHost({
           requestId,
           keys: result.keys.map((k) => ({
             key: k.key,
-            updatedAt: k.updatedAt instanceof Date ? k.updatedAt.toISOString() : String(k.updatedAt),
+            updatedAt:
+              k.updatedAt instanceof Date ? k.updatedAt.toISOString() : String(k.updatedAt),
           })),
           nextCursor: result.nextCursor,
         });
@@ -1217,32 +1212,29 @@ export function IframeHost({
   }, [onMessage, send, token, trpcUtils]);
 
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown } | undefined>(
-      'APP_STORAGE_QUOTA',
-      async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string') return;
-        const requestId = raw.requestId;
-        try {
-          const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token });
-          send('APP_STORAGE_QUOTA_RESULT', {
-            requestId,
-            usedBytes: result.usedBytes,
-            rowCount: result.rowCount,
-            limitBytes: result.limitBytes,
-            limitRows: result.limitRows,
-          });
-        } catch (err) {
-          send('APP_STORAGE_QUOTA_RESULT', {
-            requestId,
-            usedBytes: 0,
-            rowCount: 0,
-            limitBytes: 0,
-            limitRows: 0,
-            error: storageErrorMessage(err),
-          });
-        }
+    const off = onMessage<{ requestId?: unknown } | undefined>('APP_STORAGE_QUOTA', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      try {
+        const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token });
+        send('APP_STORAGE_QUOTA_RESULT', {
+          requestId,
+          usedBytes: result.usedBytes,
+          rowCount: result.rowCount,
+          limitBytes: result.limitBytes,
+          limitRows: result.limitRows,
+        });
+      } catch (err) {
+        send('APP_STORAGE_QUOTA_RESULT', {
+          requestId,
+          usedBytes: 0,
+          rowCount: 0,
+          limitBytes: 0,
+          limitRows: 0,
+          error: storageErrorMessage(err),
+        });
       }
-    );
+    });
     return off;
   }, [onMessage, send, token, trpcUtils]);
 

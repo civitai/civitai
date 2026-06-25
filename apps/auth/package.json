@@ -1,0 +1,41 @@
+{
+  "name": "@civitai/auth-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "svelte-kit sync && vite build",
+    "preview": "vite preview",
+    "prepare": "svelte-kit sync",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run",
+    "smoke:identity": "node scripts/identity-smoke.mjs"
+  },
+  "dependencies": {
+    "@civitai/auth": "workspace:*",
+    "@civitai/brand": "workspace:*",
+    "@civitai/db": "workspace:*",
+    "@civitai/db-schema": "workspace:*",
+    "@civitai/email": "workspace:*",
+    "@civitai/redis": "workspace:*",
+    "@node-oauth/oauth2-server": "^5.3.0",
+    "@tabler/icons-svelte": "^3.28.1",
+    "kysely": "^0.28.7",
+    "msgpackr": "^1.11.5",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "^5.3.2",
+    "@sveltejs/kit": "^2.43.2",
+    "@sveltejs/vite-plugin-svelte": "^6.0.0",
+    "@types/node": "^20.19.9",
+    "@types/pg": "^8.11.10",
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.0.4",
+    "vitest": "^4.0.18"
+  }
+}

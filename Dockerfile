@@ -7,14 +7,13 @@ WORKDIR /app
 # Enable corepack for pnpm
 RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
-# Copy Prisma schema for client generation (postinstall generates schema.prisma from this)
-COPY prisma/schema.full.prisma ./prisma/
-
-# Install dependencies — lockfile and scripts rarely change, so they go first.
-# package.json changes on every version bump but pnpm only needs it for the
-# workspace root name; the store cache mount lets pnpm reuse downloaded packages
-# even when this layer is invalidated.
-COPY pnpm-lock.yaml package.json ./
+# Install dependencies. Workspace manifests (root + pnpm-workspace.yaml + packages/*)
+# and the lockfile go first; the store cache mount lets pnpm reuse downloads even when
+# this layer is invalidated. `postinstall` runs db:generate, which needs the Prisma
+# schema (now in packages/civitai-db-schema) and the scripts. Copying all of packages/
+# also ensures --frozen-lockfile sees every workspace project.
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY packages ./packages
 COPY scripts ./scripts
 COPY patches ./patches
 
@@ -23,19 +22,25 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
 
 ##### BUILDER
 
-FROM node:20-alpine3.20 AS builder
+# FROM deps (NOT a fresh node image) so the builder INHERITS the complete node_modules from the install stage
+# — including the nested packages/*/node_modules pnpm creates for each workspace package's OWN deps (e.g.
+# @civitai/db-schema's `kysely`). The old approach copied only the ROOT node_modules, which dropped those
+# nested trees; since the workspace packages are consumed as SOURCE, `next build`'s TypeScript pass then
+# couldn't resolve their deps and failed with "Cannot find module 'kysely'". Mirrors apps/auth/Dockerfile,
+# whose build stage is also `FROM deps`. corepack/pnpm and the postinstall-generated Prisma client are
+# inherited too, so they don't need re-running here.
+FROM deps AS builder
 ARG NEXT_PUBLIC_IMAGE_LOCATION
 ARG NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION
 ARG NEXT_PUBLIC_MAINTENANCE_MODE
 WORKDIR /app
 
-# Enable corepack for pnpm
-RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
-
-COPY --from=deps /app/node_modules ./node_modules
+# Overlay the full source. node_modules is dockerignored, so this never clobbers the node_modules inherited
+# from deps (root OR nested).
 COPY . .
-# Restore generated schema.prisma from deps (COPY . . overwrites it with source which doesn't have it)
-COPY --from=deps /app/prisma/schema.prisma ./prisma/schema.prisma
+# schema.prisma is generated (gitignored) so `COPY . .` doesn't carry it. It's inherited via FROM deps, but
+# re-copy explicitly so the build never depends on that inheritance subtlety.
+COPY --from=deps /app/packages/civitai-db-schema/prisma/schema.prisma ./packages/civitai-db-schema/prisma/schema.prisma
 
 ENV NEXT_TELEMETRY_DISABLED=1
 

@@ -1,66 +1,45 @@
 import type { GetServerSidePropsContext, NextApiRequest, NextApiResponse } from 'next';
-import type { Session } from 'next-auth';
-import { getServerSession } from 'next-auth/next';
+// FINAL-CLEANUP: `Session` is the app-wide session return type; replace it with a first-party type when the
+// `next-auth` dependency is dropped. This is the only remaining next-auth reference here, and it's type-only.
+import type { Session } from '~/types/session';
+import {
+  sessionCookieName,
+  deviceCookieName,
+  decodeLegacySessionCookie,
+  legacySessionCookieName,
+} from '@civitai/auth';
 import { env } from '~/env/server';
-import { createAuthOptions } from './next-auth-options';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
-import { SESSION_REFRESH_HEADER, SESSION_REFRESH_COOKIE } from '~/shared/constants/auth.constants';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
-import { callbackCookieName } from '~/libs/auth';
-
-function isValidCallbackUrl(value: string | undefined): boolean {
-  if (!value) return false;
-  try {
-    if (value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\')) return true;
-    const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
+import {
+  getHubSession,
+  maybeRollHubCookie,
+  maybeUpgradeLegacySession,
+  sessionClient,
+} from './session-client';
 
 type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
   context?: Record<string, unknown>;
 };
 type AuthResponse = GetServerSidePropsContext['res'] | NextApiResponse;
 
-/**
- * Check if session has needsCookieRefresh flag and set response header/cookie if so.
- * This signals to the client that it should refresh its session cookie.
- * The flag is deleted after use so it doesn't appear in the returned session.
- */
-async function checkAndSetSessionHeaders(
-  session: Session | null,
-  res: AuthResponse
-): Promise<Session | null> {
-  if (session?.needsCookieRefresh) {
-    res.setHeader(SESSION_REFRESH_HEADER, 'true');
-    // Also set a cookie that persists across page refreshes (5 min expiry)
-    res.setHeader(
-      'Set-Cookie',
-      `${SESSION_REFRESH_COOKIE}=true; Path=/; Max-Age=300; SameSite=Lax`
-    );
-    // Best-effort: surface the original refreshSession() caller stack to the
-    // client so we can identify unexpected sources from DevTools.
-    try {
-      const userId = session.user?.id;
-      if (userId) {
-        // Wall-clock deadline so a silent sysRedis half-open can't park this read (the
-        // sys client has no socketTimeout, and a per-command timeout can't abort a
-        // written command). The surrounding try/catch keeps the best-effort contract.
-        const cause = await withSysReadDeadline(
-          sysRedis.get(`${REDIS_SYS_KEYS.SESSION.REFRESH_CAUSE}:${userId}`)
-        );
-        if (cause) res.setHeader('x-session-refresh-cause', cause);
-      }
-    } catch {}
-    delete session.needsCookieRefresh;
-  }
-  return session;
+// Legacy next-auth session cookie (`civitai-token` / prod `__Secure-civitai-token`) — READ-ONLY during the
+// cutover, decoded via jose (no next-auth). The cookie name is resolved with the SAME dev/prod secure logic as
+// the hub cookie (`legacySessionCookieName()`), so prod reads the `__Secure-` variant. Resolves the embedded
+// userId to a FRESH session user (cache/DB); sunsets as these cookies age out. New sessions are the hub's ES256.
+async function getLegacySession(req: AuthRequest): Promise<Session | null> {
+  const secret = env.NEXTAUTH_SECRET;
+  if (!secret) return null;
+  const token = req.cookies?.[legacySessionCookieName()];
+  if (!token) return null;
+  const claims = await decodeLegacySessionCookie(token, secret);
+  const userId = Number(claims?.sub ?? claims?.user?.id);
+  if (!Number.isFinite(userId)) return null;
+  const user = await sessionClient.getSessionUserById(userId);
+  if (!user) return null;
+  return { user } as Session;
 }
 
-// Next API route example - /pages/api/restricted.ts
 export const getServerAuthSession = async ({
   req,
   res,
@@ -70,7 +49,7 @@ export const getServerAuthSession = async ({
 }): Promise<Session | null> => {
   if (req.context?.session) return req.context.session as Session | null;
 
-  // Try getting session based on token
+  // API/bearer token (Authorization header or `?token=`, excluding the webhook token).
   let token: string | undefined;
   if (req.headers.authorization) token = req.headers.authorization.split(' ')[1];
   else if (req.url) {
@@ -93,43 +72,26 @@ export const getServerAuthSession = async ({
     }
     return req.context.session as Session | null;
   }
-  try {
-    // Strip any malformed next-auth.callback-url cookie before next-auth's
-    // assertConfig rejects the request with INVALID_CALLBACK_URL_ERROR.
-    const reqCookies = (req as NextApiRequest).cookies as
-      | Record<string, string | undefined>
-      | undefined;
-    if (reqCookies) {
-      const candidates = [
-        callbackCookieName,
-        'next-auth.callback-url',
-        '__Secure-next-auth.callback-url',
-      ];
-      const clearCookies: string[] = [];
-      for (const name of candidates) {
-        const value = reqCookies[name];
-        if (value && !isValidCallbackUrl(value)) {
-          delete reqCookies[name];
-          clearCookies.push(
-            `${name}=; Path=/; Max-Age=0; SameSite=Lax${
-              name.startsWith('__Secure-') ? '; Secure' : ''
-            }`
-          );
-        }
-      }
-      if (clearCookies.length) {
-        try {
-          (res as NextApiResponse).setHeader?.('Set-Cookie', clearCookies);
-        } catch {}
-      }
-    }
 
-    const authOptions = createAuthOptions(req);
-    const session = await getServerSession(req, res, authOptions);
-    req.context.session = await checkAndSetSessionHeaders(session, res);
-
-    return req.context.session as Session | null;
-  } catch (error) {
-    return null;
+  // 1. Hub civ-token: verify locally → shared cache → hub on miss. Rolling-refresh on activity.
+  const hub = await getHubSession(req).catch(() => null);
+  if (hub) {
+    req.context.session = hub;
+    const civ = req.cookies?.[sessionCookieName()];
+    const device = req.cookies?.[deviceCookieName()];
+    if (civ) await maybeRollHubCookie(civ, device, res, req.headers.host);
+    return hub;
   }
+
+  // 2. Legacy next-auth cookie (jose decode → fresh user). Sunsets as the old cookies age out.
+  const legacy = await getLegacySession(req).catch(() => null);
+  req.context.session = legacy;
+  // Upgrade-on-read: migrate this legacy user to a civ-token (+ de-crud the next-auth cookies) for next time.
+  // Best-effort; this request is still served from the legacy decode above.
+  if (legacy) {
+    const legacyToken = req.cookies?.[legacySessionCookieName()];
+    const device = req.cookies?.[deviceCookieName()];
+    await maybeUpgradeLegacySession(legacyToken, device, res, req.headers.host).catch(() => {});
+  }
+  return legacy;
 };

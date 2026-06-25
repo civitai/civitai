@@ -1,0 +1,11 @@
+{
+  "name": "@civitai/telemetry",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "prom-client": "^14.2.0"
+  }
+}

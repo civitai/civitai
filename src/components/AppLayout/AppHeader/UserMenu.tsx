@@ -287,7 +287,7 @@ function AccountSwitcher({ onAccountClick }: { onAccountClick: () => void }) {
       {Object.entries(accounts).map(([k, v]) => (
         <MenuItemButton
           key={k}
-          onClick={v.active ? undefined : () => swapAccount(v.token)}
+          onClick={v.active ? undefined : () => swapAccount(v.id)}
           className={clsx('flex items-center justify-between gap-2.5', {
             ['cursor-auto']: v.active,
           })}
@@ -296,7 +296,12 @@ function AccountSwitcher({ onAccountClick }: { onAccountClick: () => void }) {
             <CustomUserAvatar data={v} />
             <Username username={v.username} />
           </div>
-          {v.active && <IconCircleCheck size={20} color="green" />}
+          {v.active ? (
+            <IconCircleCheck size={20} color="green" />
+          ) : v.needsLogin ? (
+            // Aged out of the seamless-switch window — clicking re-authenticates at the hub.
+            <span className="text-xs opacity-60">Sign in</span>
+          ) : null}
         </MenuItemButton>
       ))}
       <Divider />

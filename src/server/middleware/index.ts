@@ -1,24 +1,20 @@
-import type { SessionUser } from 'next-auth';
-import { getToken } from 'next-auth/jwt';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { civitaiTokenCookieName } from '~/libs/auth';
 import { apiCacheMiddleware } from '~/server/middleware/api-cache.middleware';
 import { apiRegionBlockMiddleware } from '~/server/middleware/api-region-block.middleware';
 import { botDetectionMiddleware } from '~/server/middleware/bot-detection.middleware';
 import type { Middleware } from '~/server/middleware/middleware-utils';
 import { regionBlockMiddleware } from '~/server/middleware/region-block.middleware';
 import { regionRestrictionMiddleware } from '~/server/middleware/region-restriction.middleware';
-import { previewAuthMiddleware } from '~/server/middleware/preview-auth.middleware';
 import { routeGuardsMiddleware } from '~/server/middleware/route-guards.middleware';
 
-// NOTE: order matters! Preview auth first, then region blocking, then restriction redirect.
-// botDetectionMiddleware is last because it returns `NextResponse.next({ request })`
-// to inject a request header for downstream handlers — the runner below merges any
-// response-header-only passthroughs (like apiCacheMiddleware's Cache-Control) into
+// NOTE: order matters! Region blocking, then restriction redirect. botDetectionMiddleware is last because it
+// returns `NextResponse.next({ request })` to inject a request header for downstream handlers — the runner
+// below merges any response-header-only passthroughs (like apiCacheMiddleware's Cache-Control) into
 // botDetection's terminal-with-request-mods response so both effects apply.
+// (Session-based guards — /moderator, /testing, preview-auth — moved to _app getInitialProps: the edge runtime
+// can't resolve the thin hub civ-token to a full user.)
 const middlewares: Middleware[] = [
-  previewAuthMiddleware,
   regionBlockMiddleware,
   regionRestrictionMiddleware,
   apiRegionBlockMiddleware,
@@ -53,8 +49,6 @@ export async function runMiddlewares(
   request: NextRequest,
   middlewareList: Middleware[] = middlewares
 ) {
-  let user: SessionUser | null = null;
-  let hasToken = true;
   const redirect = (to: string) => NextResponse.redirect(new URL(to, request.url));
 
   // Response headers from passthrough middlewares (e.g. apiCacheMiddleware's
@@ -63,19 +57,9 @@ export async function runMiddlewares(
 
   for (const middleware of middlewareList) {
     if (middleware.shouldRun && !middleware.shouldRun(request)) continue;
-    if (middleware.useSession && !user && hasToken) {
-      const token = await getToken({
-        req: request,
-        secret: process.env.NEXTAUTH_SECRET,
-        cookieName: civitaiTokenCookieName,
-      });
-      if (!token) hasToken = false;
-      user = token?.user as SessionUser;
-    }
 
     const response = await middleware.handler({
       request,
-      user,
       redirect,
     });
     if (!response) continue;

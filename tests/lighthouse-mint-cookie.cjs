@@ -25,13 +25,19 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { encode } = require('next-auth/jwt');
+const { EncryptJWT } = require('jose');
+const { hkdfSync } = require('node:crypto');
 const { v4: uuid } = require('uuid');
 
 const SECRET = process.env.NEXTAUTH_SECRET;
 const BASE_URL = process.env.BASE_URL;
 const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https => __Secure- prefix
 const MAX_AGE_S = 30 * 24 * 60 * 60;
+
+// Mint the legacy next-auth v4 session JWE WITHOUT next-auth (removed); the app still accepts it via
+// @civitai/auth's decodeLegacySessionCookie. dir/A256GCM with an HKDF-derived key — mirrors that decoder.
+const ENC_INFO = 'NextAuth.js Generated Encryption Key';
+const derivedKey = (secret) => new Uint8Array(hkdfSync('sha256', secret, '', ENC_INFO, 32));
 
 // Representative authed routes (kept small so 5 runs x N routes stays inside the
 // build pool's time budget). All reachable by ci-smoke-gold. `/` = SSR home,
@@ -63,7 +69,11 @@ async function main() {
   if (!BASE_URL) throw new Error('BASE_URL is required (e.g. https://pr-123.civitaic.com)');
 
   const token = { user: GOLD, sub: String(GOLD.id), id: uuid(), signedAt: Date.now() };
-  const value = await encode({ token, secret: SECRET, maxAge: MAX_AGE_S });
+  const value = await new EncryptJWT(token)
+    .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
+    .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) + MAX_AGE_S)
+    .encrypt(derivedKey(SECRET));
 
   const base = JSON.parse(
     fs.readFileSync(path.join(process.cwd(), 'lighthouserc.json'), 'utf8')

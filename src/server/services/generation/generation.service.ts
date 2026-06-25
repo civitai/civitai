@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
@@ -35,6 +35,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
   fluxKreaAir,
@@ -1236,9 +1237,15 @@ export async function getResourceData(
     typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
   ) as { id: number; epoch?: number }[];
 
-  const unavailableResources = await getUnavailableResources();
-  const featuredModels = await getFeaturedModels();
-  const hiddenGates = await getCanGenerateHiddenGates(user);
+  // Spans localize the gen-path park: getResourceData does these as SEQUENTIAL
+  // awaits, so wrapping each shows which prelim lookup dominates.
+  const unavailableResources = await withSpan('gen:getResourceData:unavailable', () =>
+    getUnavailableResources()
+  );
+  const featuredModels = await withSpan('gen:getResourceData:featured', () => getFeaturedModels());
+  const hiddenGates = await withSpan('gen:getResourceData:hiddenGates', () =>
+    getCanGenerateHiddenGates(user)
+  );
 
   function transformGenerationData(
     { settings, ...item }: GenerationResourceDataModel,
@@ -1421,41 +1428,47 @@ export async function getResourceData(
   // The cache deduplicates by model version ID, but different epochs of the same
   // model version need separate entries with their own epochDetails.
   const uniqueIds = [...new Set(args.map((x) => x.id))];
-  const resources = await resourceDataCache
-    .fetch(uniqueIds)
-    .then((cachedResources) => {
-      const resourceById = new Map(cachedResources.map((r) => [r.id, r]));
-      return args
-        .map((arg) => {
-          const cached = resourceById.get(arg.id);
-          if (!cached) return null;
-          return transformGenerationData(cached, arg.epoch);
-        })
-        .filter(isDefined);
-    })
-    .then(async (resources) => {
-      const substitutes = await getResourceDataSubstitutes(resources);
-      const entityAccess = await getEntityAccess([...resources, ...substitutes]);
+  // Span localizes the gen-path park: this is the main resource-data fetch
+  // (cache/DB lookup + substitutes + entity access + model files) — the
+  // dominant work in getResourceData. Wrapping the whole .fetch().then().then()
+  // chain so its total time shows as one sub-step.
+  const resources = await withSpan('gen:getResourceData:fetch', () =>
+    resourceDataCache
+      .fetch(uniqueIds)
+      .then((cachedResources) => {
+        const resourceById = new Map(cachedResources.map((r) => [r.id, r]));
+        return args
+          .map((arg) => {
+            const cached = resourceById.get(arg.id);
+            if (!cached) return null;
+            return transformGenerationData(cached, arg.epoch);
+          })
+          .filter(isDefined);
+      })
+      .then(async (resources) => {
+        const substitutes = await getResourceDataSubstitutes(resources);
+        const entityAccess = await getEntityAccess([...resources, ...substitutes]);
 
-      for (const resource of [...resources, ...substitutes]) {
-        if (!resource.hasAccess) {
-          // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
-          resource.hasAccess = !!(
-            entityAccess.find((e) => e.entityId === resource.id)?.hasAccess ||
-            !!resource.earlyAccessConfig?.generationTrialLimit
-          );
-          resource.canGenerate = resource.hasAccess && resource.canGenerate;
+        for (const resource of [...resources, ...substitutes]) {
+          if (!resource.hasAccess) {
+            // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
+            resource.hasAccess = !!(
+              entityAccess.find((e) => e.entityId === resource.id)?.hasAccess ||
+              !!resource.earlyAccessConfig?.generationTrialLimit
+            );
+            resource.canGenerate = resource.hasAccess && resource.canGenerate;
+          }
         }
-      }
 
-      const modelFilesCached = await getModelFiles([...resources, ...substitutes]);
+        const modelFilesCached = await getModelFiles([...resources, ...substitutes]);
 
-      return resources.map((resource) => {
-        const modelFiles = modelFilesCached[resource.id]?.files ?? [];
-        const substitute = getSubstituteData(resource, substitutes, modelFiles);
-        return removeNulls({ ...bringItAllTogether(resource, modelFiles), substitute });
-      });
-    });
+        return resources.map((resource) => {
+          const modelFiles = modelFilesCached[resource.id]?.files ?? [];
+          const substitute = getSubstituteData(resource, substitutes, modelFiles);
+          return removeNulls({ ...bringItAllTogether(resource, modelFiles), substitute });
+        });
+      })
+  );
 
   if (withPreview) {
     const imageCache = await imagesForModelVersionsCache.fetch(resources.map((r) => r.id));

@@ -1,5 +1,5 @@
 import type { NextApiRequest } from 'next';
-import type { Session } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import requestIp from 'request-ip';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -66,7 +66,7 @@ export type RunImageSearchContext = {
    */
   browsingLevel: number;
   /** The viewer (session user) — undefined for anon. */
-  user?: Session['user'];
+  user?: SessionUser;
   /** Used for feature flags, region read by the caller, and the BitDex/search actor. */
   req: NextApiRequest;
 };

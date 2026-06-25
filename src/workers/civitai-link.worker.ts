@@ -8,12 +8,12 @@ import type {
   ResponseStatus,
   ActivitiesResponse,
 } from '~/components/CivitaiLink/shared-types';
-import { env } from '~/env/client';
 import { v4 as uuid } from 'uuid';
 import type { CivitaiLinkInstance } from '~/components/CivitaiLink/civitai-link-api';
 import {
   createLinkInstance,
   deleteLinkInstance,
+  getCivitaiLinkBaseUrl,
   getLinkInstances,
   updateLinkInstance,
 } from '~/components/CivitaiLink/civitai-link-api';
@@ -36,7 +36,9 @@ const _self: SharedWorkerGlobalScope = self as any;
 // Setup Socket
 // --------------------------------
 
-const socket: SocketClient = io(env.NEXT_PUBLIC_CIVITAI_LINK ?? 'http://localhost:3000', {
+// Domain-aware base so .red users connect to link.civitai.red (same-origin to
+// their .civitai.red session cookie) instead of the hardcoded .com host.
+const socket: SocketClient = io(getCivitaiLinkBaseUrl() ?? 'http://localhost:3000', {
   path: '/api/socketio',
   autoConnect: false,
 });

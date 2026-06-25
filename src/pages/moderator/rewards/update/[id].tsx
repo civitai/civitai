@@ -14,6 +14,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 const querySchema = z.object({ id: z.coerce.number() });
 
 export const getServerSideProps = createServerSideProps({
+  requireModerator: true,
   useSession: true,
   useSSG: true,
   resolver: async ({ session, ctx, ssg }) => {

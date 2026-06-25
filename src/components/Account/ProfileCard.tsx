@@ -15,7 +15,7 @@ import { IconPencilMinus, IconInfoSquareRounded, IconMail } from '@tabler/icons-
 import { useDisclosure } from '@mantine/hooks';
 import * as z from 'zod';
 
-import { useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputText, useForm } from '~/libs/form';
 import { usernameInputSchema } from '~/server/schema/user.schema';

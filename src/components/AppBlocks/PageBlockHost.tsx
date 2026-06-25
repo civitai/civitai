@@ -22,6 +22,7 @@ import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openLoginPopup } from '~/utils/auth-helpers';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
@@ -40,9 +41,9 @@ const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
 // so a block can ask the host to start the civitai login flow when the user
-// clicks an action that needs auth/money. SSR-disabled to match IframeHost's
-// dynamic import (the modal pulls in client-only providers).
-const LoginModal = dynamic(() => import('~/components/Login/LoginModal'), { ssr: false });
+// clicks an action that needs auth/money. Login is now hub-driven (a popup to
+// auth.civitai.com) — see openLoginPopup; the old in-page LoginModal was removed
+// in the auth cutover.
 
 // Normalise a thrown storage error into a string the block can surface. Mirrors
 // IframeHost.storageErrorMessage EXACTLY — the apps.storage.* procs throw
@@ -729,13 +730,11 @@ export function PageBlockHost({
       const gateStatus = status === 'error' ? 'no_token' : status;
       const resolved = resolveRequestSignIn(gateStatus, raw);
       if (resolved == null) return; // not ready — drop (gate centralises the rules)
-      dialogStore.trigger({
-        component: LoginModal,
-        props: {
-          reason: 'image-gen',
-          ...(resolved.returnUrl ? { returnUrl: resolved.returnUrl } : {}),
-        },
-      });
+      // Hub-driven login (popup to auth.civitai.com). Falls back to the current page when the
+      // block didn't supply a sanitised same-origin returnUrl. `reason` rides to the hub for the
+      // LoginRedirect funnel analytics.
+      const here = window.location.pathname + window.location.search + window.location.hash;
+      openLoginPopup(resolved.returnUrl ?? here, 'image-gen');
     });
     return off;
   }, [onMessage, status]);

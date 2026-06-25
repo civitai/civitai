@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { comicProjectMetaSchema, parseComicProjectMeta } from '~/server/schema/comics.schema';
 import {
   router,

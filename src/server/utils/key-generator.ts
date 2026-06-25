@@ -1,19 +1,9 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
-import { env } from '~/env/server';
+import { createCipheriv, createDecipheriv } from 'crypto';
 
-/**
- * Generates a random public key. Can be send to user.
- */
-export function generateKey(length = 32) {
-  return randomBytes(length / 2).toString('hex');
-}
-
-/**
- * Generates a secret hash based on a public key. Should be stored in the db.
- */
-export function generateSecretHash(key: string) {
-  return createHash('sha512').update(`${key}${env.NEXTAUTH_SECRET}`).digest('hex');
-}
+// generateKey + generateSecretHash moved to @civitai/auth/secret-hash so the hub and the main app derive
+// the SAME hash from the same key (shared NEXTAUTH_SECRET salt). Re-exported here so existing call sites
+// import from '~/server/utils/key-generator' unchanged. encryptText/decryptText stay — main-app only.
+export { generateKey, generateSecretHash } from '@civitai/auth/secret-hash';
 
 export function encryptText({ text, key, iv }: { text: string; key: string; iv: string }) {
   // Create a cipher using the key and IV

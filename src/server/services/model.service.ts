@@ -4,7 +4,7 @@ import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import type { SearchParams, SearchResponse } from 'meilisearch';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { env } from '~/env/server';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import type { BaseModelType } from '~/server/common/constants';
