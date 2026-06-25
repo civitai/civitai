@@ -22,7 +22,12 @@ export const resetToDraftWithoutRequirements = createJob(
         AND m."userId" != -1
         AND mv."usageControl" != 'ExternalGeneration'
         AND NOT EXISTS (SELECT 1 FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId")
-        AND m."deletedAt" IS NULL;
+        AND m."deletedAt" IS NULL
+        -- Private models aren't publicly discoverable, so the showcase-post
+        -- requirement doesn't apply. Their training sample images getting
+        -- moderation-blocked would otherwise empty the auto-created post and
+        -- silently unpublish a privately-published trained LoRA.
+        AND m."availability" != 'Private'::"Availability";
     `;
 
     if (modelVersionsWithoutPosts.length) {
@@ -52,6 +57,8 @@ export const resetToDraftWithoutRequirements = createJob(
       WHERE
         mv.status = 'Published'
         AND m."deletedAt" IS NULL
+        -- Private models are never publicly listed; don't sweep them. See no-posts branch.
+        AND m."availability" != 'Private'::"Availability"
         AND mv."usageControl" != 'ExternalGeneration'
         AND NOT EXISTS (SELECT 1 FROM "ModelFile" f WHERE f."modelVersionId" = mv.id);
     `;
@@ -84,6 +91,8 @@ export const resetToDraftWithoutRequirements = createJob(
       WHERE
         m."status" = 'Published'
         AND m."deletedAt" IS NULL
+        -- Private models are never publicly listed; don't sweep them. See no-posts branch.
+        AND m."availability" != 'Private'::"Availability"
         AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND mv.status = 'Published');
     `;
   }

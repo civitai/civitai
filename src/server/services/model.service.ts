@@ -2427,7 +2427,12 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
 
   // Build where clause with filters
   const where: Prisma.ModelVersionFindManyArgs['where'] = {
-    status: { in: [ModelStatus.Draft, ModelStatus.Training] },
+    // Draft/Training are in-flight trainings. Unpublished is included so a model
+    // that was published then swept (e.g. the requirements cron removed it after
+    // its showcase post was emptied/deleted) stays visible in the trainer with a
+    // republish path, instead of silently vanishing. UnpublishedViolation is
+    // intentionally excluded — genuine ToS removals should not resurface here.
+    status: { in: [ModelStatus.Draft, ModelStatus.Training, ModelStatus.Unpublished] },
     uploadType: ModelUploadType.Trained,
     model: {
       userId,
@@ -3735,6 +3740,26 @@ export const publishPrivateModel = async ({
 
   const versionIds = versions.map((v) => v.id);
   const now = new Date();
+
+  // Going public requires a showcase post on each version. A privately-published
+  // trained LoRA can be postless (its auto-created post may have been emptied by
+  // sample-image moderation, then deleted by clean-if-empty). Without this guard
+  // it would go public with no post and the nightly requirements cron would
+  // immediately re-unpublish it. Block instead, directing the user to add images.
+  if (publishVersions) {
+    const versionsWithPost = await dbRead.post.findMany({
+      where: { modelVersionId: { in: versionIds }, userId: model.userId },
+      select: { modelVersionId: true },
+      distinct: ['modelVersionId'],
+    });
+    const havePost = new Set(versionsWithPost.map((p) => p.modelVersionId));
+    const missingPost = versionIds.filter((id) => !havePost.has(id));
+    if (missingPost.length) {
+      throw throwBadRequestError(
+        'Add example images before making this model public. Each version must include a showcase post.'
+      );
+    }
+  }
 
   await dbWrite.$transaction(async (tx) => {
     // Availability + demotion to null flip unconditionally; the publish

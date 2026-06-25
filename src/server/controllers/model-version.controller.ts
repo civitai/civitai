@@ -1083,10 +1083,15 @@ export async function publishPrivateModelVersionHandler({
   }
 
   if (!version.posts.length) {
-    await createModelVersionPostFromTraining({
+    const post = await createModelVersionPostFromTraining({
       modelVersionId: version.id,
       user: ctx.user,
     });
+    // createPost (service) doesn't emit the post-create ClickHouse event, so do it
+    // here, tagged 'training' to mark the origin.
+    if (post) {
+      await ctx.track.post({ type: 'Create', postId: post.id, nsfw: false, tags: ['training'] });
+    }
   }
 
   const modelVersion = await updateModelVersionById({

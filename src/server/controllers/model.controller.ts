@@ -1145,8 +1145,19 @@ export const getMyTrainingModelsHandler = async ({
         trainingStatus: true,
         trainedWords: true,
         name: true,
+        // Publish status — distinguishes an in-flight training (Draft/Training)
+        // from one that was published then unpublished (swept). Drives the
+        // "Unpublished" indicator + republish CTA in the trainer.
+        status: true,
         createdAt: true,
         updatedAt: true,
+        // Whether a showcase post still exists for this version. When 0 on an
+        // unpublished version, the republish CTA routes to post creation.
+        _count: {
+          select: {
+            posts: true,
+          },
+        },
 
         model: {
           select: {
@@ -1970,6 +1981,22 @@ export const privateModelFromTrainingHandler = async ({
       user: ctx.user,
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    // The showcase post(s) auto-created from training go through the service-level
+    // createPost, which doesn't emit the post-create ClickHouse event — so emit it
+    // here for each, tagged 'training' to mark the origin.
+    const trainingVersionIds = model.modelVersions?.map((v) => v.id) ?? [];
+    if (trainingVersionIds.length) {
+      const createdPosts = await dbRead.post.findMany({
+        where: { modelVersionId: { in: trainingVersionIds }, userId: ctx.user.id },
+        select: { id: true },
+      });
+      await Promise.all(
+        createdPosts.map((p) =>
+          ctx.track.post({ type: 'Create', postId: p.id, nsfw: false, tags: ['training'] })
+        )
+      );
+    }
 
     if (input.id) await dataForModelsCache.refresh(input.id);
 
