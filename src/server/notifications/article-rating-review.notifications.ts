@@ -31,15 +31,22 @@ export const articleRatingReviewNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: ({ details }) => {
       if (!details) return undefined;
-      const { articleTitle, articleId, appliedLevel, modComment } = details as {
+      // `prepareMessage` runs at render time over the stored `details`, so this
+      // must handle both shapes: pre-single-action rows carry `currentLevel`
+      // (the rating that was kept on a decline); new rows carry `appliedLevel`
+      // (the level the moderator now always sets). Without the `currentLevel`
+      // fallback, legacy rows would render "...set the rating to undefined".
+      const { articleTitle, articleId, appliedLevel, currentLevel, modComment } = details as {
         articleTitle: string;
         articleId: number;
-        appliedLevel: number | string;
+        appliedLevel?: number | string;
+        currentLevel?: number | string;
         modComment?: string;
       };
-      // A moderator now always applies a level on resolution; a declined dispute
-      // means the owner's suggestion wasn't granted but a ruling level was set.
-      const base = `Your rating dispute on "${articleTitle}" was reviewed — a moderator set the rating to ${appliedLevel}.`;
+      const base =
+        appliedLevel != null
+          ? `Your rating dispute on "${articleTitle}" was reviewed — a moderator set the rating to ${appliedLevel}.`
+          : `Your rating dispute on "${articleTitle}" was declined — the current rating (${currentLevel}) was kept.`;
       return {
         message: modComment ? `${base} Reason: ${modComment}` : base,
         url: `/articles/${articleId}`,
