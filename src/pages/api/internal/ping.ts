@@ -3,6 +3,11 @@ import { Tracker } from '~/server/clickhouse/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getMatchingPathname } from '~/shared/constants/pathname.constants';
 
+// Page-view beacon. Deliberately named generically (NOT "page-view"/"track"):
+// ad/privacy blockers (EasyPrivacy, uBlock) match those keywords in the request
+// path and cancel the request client-side with ERR_BLOCKED_BY_CLIENT before it
+// ever reaches the origin — silently dropping a large share of page views. The
+// client caller lives in src/components/TrackView/TrackPageView.tsx.
 export default PublicEndpoint(
   async (req, res) => {
     if (isDev) return res.status(200).end();

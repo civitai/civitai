@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 /**
- * Coverage for POST /api/track/view — the lightweight beacon that replaces the
+ * Coverage for POST /api/internal/pulse — the lightweight beacon that replaces the
  * track.addView tRPC mutation for the browser <TrackView> component.
  *
  * Verifies the behavior-preserving contract:
@@ -93,14 +93,14 @@ const validInput = {
   details: { foo: 'bar' },
 };
 
-describe('POST /api/track/view', () => {
+describe('POST /api/internal/pulse', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     devStore.isDev = false;
   });
 
   it('dispatches Tracker.view with the full parsed payload on a same-origin request', async () => {
-    const handler = (await import('~/pages/api/track/view')).default;
+    const handler = (await import('~/pages/api/internal/pulse')).default;
     const req = makeReq({ host: 'civitai.com', origin: 'https://civitai.com', body: validInput });
     const res = makeRes();
 
@@ -116,7 +116,7 @@ describe('POST /api/track/view', () => {
     // so Next's body parser hands the handler an OBJECT, not a string. A naive
     // JSON.parse(req.body) would throw on the object → 400 → drop EVERY production
     // view. This must dispatch the insert exactly like the string path.
-    const handler = (await import('~/pages/api/track/view')).default;
+    const handler = (await import('~/pages/api/internal/pulse')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: validInput, objectBody: true });
     const res = makeRes();
 
@@ -128,7 +128,7 @@ describe('POST /api/track/view', () => {
   });
 
   it('preserves false/0-valued fields (nsfw:false, nsfwLevel:0) in the insert', async () => {
-    const handler = (await import('~/pages/api/track/view')).default;
+    const handler = (await import('~/pages/api/internal/pulse')).default;
     const body = { type: 'ModelView', entityType: 'Model', entityId: 7, nsfw: false, nsfwLevel: 0 };
     const req = makeReq({ origin: 'https://civitai.com', body });
     const res = makeRes();
@@ -141,7 +141,7 @@ describe('POST /api/track/view', () => {
   });
 
   it('accepts the referer host as the origin fallback', async () => {
-    const handler = (await import('~/pages/api/track/view')).default;
+    const handler = (await import('~/pages/api/internal/pulse')).default;
     const req = makeReq({ host: 'civitai.com', referer: 'https://civitai.com/models/1', body: validInput });
     const res = makeRes();
 
@@ -152,7 +152,7 @@ describe('POST /api/track/view', () => {
   });
 
   it('rejects a cross-origin request (host mismatch) with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/track/view')).default;
+    const handler = (await import('~/pages/api/internal/pulse')).default;
     const req = makeReq({ host: 'civitai.com', origin: 'https://evil.example', body: validInput });
     const res = makeRes();
 
@@ -163,7 +163,7 @@ describe('POST /api/track/view', () => {
   });
 
   it('rejects a request with no origin/referer with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/track/view')).default;
+    const handler = (await import('~/pages/api/internal/pulse')).default;
     const req = makeReq({ host: 'civitai.com', body: validInput });
     const res = makeRes();
 
@@ -174,7 +174,7 @@ describe('POST /api/track/view', () => {
   });
 
   it('rejects an unparseable body with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/track/view')).default;
+    const handler = (await import('~/pages/api/internal/pulse')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: '{not json' });
     const res = makeRes();
 
@@ -185,7 +185,7 @@ describe('POST /api/track/view', () => {
   });
 
   it('rejects schema-invalid input (bad enum) with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/track/view')).default;
+    const handler = (await import('~/pages/api/internal/pulse')).default;
     const req = makeReq({
       origin: 'https://civitai.com',
       body: { type: 'NotAView', entityType: 'Image', entityId: 1 },
@@ -200,7 +200,7 @@ describe('POST /api/track/view', () => {
 
   it('short-circuits to 200 in dev without inserting', async () => {
     devStore.isDev = true;
-    const handler = (await import('~/pages/api/track/view')).default;
+    const handler = (await import('~/pages/api/internal/pulse')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: validInput });
     const res = makeRes();
 

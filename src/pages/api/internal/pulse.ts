@@ -13,15 +13,21 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 // fires the identical `views` ClickHouse insert, so the analytics payload shape
 // and volume are unchanged.
 //
+// Deliberately named generically (NOT "track"/"view"): ad/privacy blockers
+// (EasyPrivacy, uBlock) match those keywords in the request path and cancel the
+// request client-side with ERR_BLOCKED_BY_CLIENT before it reaches the origin,
+// silently dropping views. The client caller lives in
+// src/components/TrackView/TrackView.tsx.
+//
 // Same-origin only: validated by referer/origin host == request host, matching
-// the sibling /api/page-view beacon. The browser <TrackView> is always
+// the sibling /api/internal/ping beacon. The browser <TrackView> is always
 // cookie-authenticated; bearer/API-key callers keep using the tRPC
 // `track.addView` procedure (which still enforces UserWrite scope).
 export default PublicEndpoint(
   async (req, res) => {
     if (isDev) return res.status(200).end();
 
-    // Same-origin guard (mirrors /api/page-view). Origin preferred, referer
+    // Same-origin guard (mirrors /api/internal/ping). Origin preferred, referer
     // fallback for clients that suppress Origin.
     const source = req.headers.origin ?? req.headers.referer;
     const sourceHost = source
@@ -40,7 +46,7 @@ export default PublicEndpoint(
     // into an object (the <TrackView> client sends that Content-Type), but a
     // client that omits Content-Type (text/plain) leaves it a raw string. Handle
     // BOTH — JSON.parse(<object>) would throw ("[object Object]") and 400 every
-    // real browser beacon. (The /api/page-view sibling only does JSON.parse
+    // real browser beacon. (The /api/internal/ping sibling only does JSON.parse
     // because ITS client sends no Content-Type.)
     let parsed: unknown;
     try {
