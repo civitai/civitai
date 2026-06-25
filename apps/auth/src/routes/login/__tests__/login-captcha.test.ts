@@ -48,4 +48,13 @@ describe('login Turnstile widget (invisible mode + token-gated submit)', () => {
     expect(pageSource).toMatch(/captchaUnavailable/);
     expect(pageSource).toMatch(/!captchaToken && !captchaUnavailable/);
   });
+
+  it('binds the email input to local state (not a one-way form value the captcha re-render wipes)', () => {
+    // The captchaPending flip re-renders the form; a one-way `value={form?.email ?? ''}` (='' pre-submit)
+    // would re-assert empty and clear what the user typed. The input must use bind:value to own its value.
+    const input = pageSource.match(/<input\b[\s\S]*?name="email"[\s\S]*?\/>/)?.[0] ?? '';
+    expect(input, 'email input not found').not.toBe('');
+    expect(input).toMatch(/bind:value=\{email\}/);
+    expect(input).not.toMatch(/value=\{form\?\.email/);
+  });
 });
