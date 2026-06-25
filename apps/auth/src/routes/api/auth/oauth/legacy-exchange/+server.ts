@@ -32,7 +32,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
   // Re-decode to PROVE identity (mirrors the main app's getLegacySession: `sub`, falling back to `user.id`).
   const claims = await verifier.verifyToken(legacyToken).catch(() => null);
-  const userId = Number(claims?.sub ?? (claims as { user?: { id?: number } } | null)?.user?.id);
+  const userId = Number(claims?.sub ?? claims?.user?.id);
   if (!claims || !Number.isFinite(userId)) return json({ error: 'unauthorized' }, { status: 401 });
 
   const user = await getOrProduceSessionUser(userId);

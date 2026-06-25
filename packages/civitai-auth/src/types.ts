@@ -44,7 +44,7 @@ export interface SessionUser {
   filePreferences?: Record<string, unknown>;
 }
 
-/** The decoded JWT payload. `user` is the SessionUser; the rest are next-auth/JWT fields. */
+/** The decoded JWT payload (thin civ-token, or a decoded legacy next-auth cookie). The rest are JWT fields. */
 export interface SessionClaims {
   sub?: string;
   /** Standard JWS token id — the session id (single-session logout). */
@@ -57,7 +57,14 @@ export interface SessionClaims {
    * reads it to re-mint the moderator's own session. Identity-only — no extra credential. See cutover (F).
    */
   impersonatedBy?: number;
-  user?: SessionUser;
+  /**
+   * id ONLY. The thin civ-token carries identity in `sub`; a decoded LEGACY next-auth cookie (the only place
+   * `user` is populated) embedded a full enriched user, but it is STALE — captured at login — so we deliberately
+   * narrow the type to `{ id }`. Every consumer resolves the rich, current user FRESH by id/sub
+   * (getSessionUserById / getOrProduceSessionUser); reading e.g. `claims.user.tier` off the token must stay a
+   * compile error, not a stale-data footgun.
+   */
+  user?: { id?: number | string };
   iss?: string;
   aud?: string | string[];
   iat?: number;

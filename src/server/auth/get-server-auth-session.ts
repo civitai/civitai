@@ -33,7 +33,7 @@ async function getLegacySession(req: AuthRequest): Promise<Session | null> {
   const token = req.cookies?.[legacySessionCookieName()];
   if (!token) return null;
   const claims = await decodeLegacySessionCookie(token, secret);
-  const userId = Number(claims?.sub ?? (claims?.user as { id?: number } | undefined)?.id);
+  const userId = Number(claims?.sub ?? claims?.user?.id);
   if (!Number.isFinite(userId)) return null;
   const user = await sessionClient.getSessionUserById(userId);
   if (!user) return null;
