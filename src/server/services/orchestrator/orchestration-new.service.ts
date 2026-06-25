@@ -62,6 +62,7 @@ import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflow
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -370,7 +371,12 @@ async function validateAndEnrichResources(
     };
   }
 
-  const resources = await getResourceData(resourceRefs, { user });
+  // Span localizes the gen-path park: resource resolution is the heavy lookup
+  // inside validateAndEnrichResources (delegates to getResourceData, which has
+  // its own finer-grained sub-spans).
+  const resources = await withSpan('gen:validateResources:getResourceData', () =>
+    getResourceData(resourceRefs, { user })
+  );
 
   // Check for private/epoch resources requiring subscription
   const hasPrivateOrEpoch = resources.some(
@@ -378,7 +384,10 @@ async function validateAndEnrichResources(
   );
 
   if (hasPrivateOrEpoch && user?.id && !user?.isModerator) {
-    const subscription = await getHighestTierSubscription(user.id);
+    // Span localizes the gen-path park: subscription lookup for private/epoch use.
+    const subscription = await withSpan('gen:validateResources:subscription', () =>
+      getHighestTierSubscription(user.id!)
+    );
     if (!subscription) {
       throw throwBadRequestError('Using Private resources require an active subscription.');
     }
@@ -916,8 +925,11 @@ export async function createWorkflowStepsFromGraph({
 }> {
   // Validate and enrich resources
   const resourceIds = collectResourceIds(data);
-  const { enrichedResources, isPrivateGeneration, hasPoiResource } =
-    await validateAndEnrichResources(resourceIds, user);
+  // Span localizes the gen-path park: resource validation/enrichment sub-step.
+  const { enrichedResources, isPrivateGeneration, hasPoiResource } = await withSpan(
+    'gen:createSteps:validateResources',
+    () => validateAndEnrichResources(resourceIds, user)
+  );
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
@@ -990,115 +1002,130 @@ export async function createWorkflowStepsFromGraph({
   // returns `[{}]` — a single empty overlay — so the loop runs exactly once
   // and behaves identically to a pre-snippets build. What-if requests always
   // get the trivial overlay (cost estimation runs against the template).
+  // Span localizes the gen-path park: snippet-overlay resolution sub-step
+  // (only runs for non-what-if submissions).
   const snippetResult = isWhatIf
     ? { overlays: [{} as Record<string, string>], parsedTargets: {}, expanded: false }
-    : await getSnippetOverlays({ resolvedData, userId: user?.id, isGreen });
+    : await withSpan('gen:createSteps:snippetOverlays', () =>
+        getSnippetOverlays({ resolvedData, userId: user?.id, isGreen })
+      );
   const { overlays, parsedTargets, expanded: snippetsExpanded } = snippetResult;
 
-  const steps: StepInput[] = [];
-  for (const overlay of overlays) {
-    const isSnippetVariant = !isEmptyObject(overlay);
-    const variantData = isSnippetVariant
-      ? ({ ...resolvedData, ...overlay } as typeof resolvedData)
-      : resolvedData;
-    const variantStepMetadata = isSnippetVariant
-      ? buildVariantStepMetadata(variantData, computedKeys)
-      : stepMetadata;
+  // Span localizes the gen-path park: graph→steps assembly sub-step — builds the
+  // per-overlay steps (createStepInputs), the request-wrapped steps, the
+  // workflow-level metadata, and the extra tags from the resolved data.
+  const { wrappedSteps, workflowMetadata, extraTags } = await withSpan(
+    'gen:createSteps:assemble',
+    async () => {
+      const steps: StepInput[] = [];
+      for (const overlay of overlays) {
+        const isSnippetVariant = !isEmptyObject(overlay);
+        const variantData = isSnippetVariant
+          ? ({ ...resolvedData, ...overlay } as typeof resolvedData)
+          : resolvedData;
+        const variantStepMetadata = isSnippetVariant
+          ? buildVariantStepMetadata(variantData, computedKeys)
+          : stepMetadata;
 
-    // Advance baseStepIndex per variant so cross-step `$ref` objects (e.g.
-    // preprocess → gen wiring inside controlnet handlers) resolve to the
-    // correct global step position after concatenation.
-    const variantSteps = await createStepInputs(
-      variantData,
-      { ...handlerCtx, baseStepIndex: steps.length },
-      {
-        stepMetadata: variantStepMetadata,
-        isWhatIf,
-        sourceCtx,
-      }
-    );
+        // Advance baseStepIndex per variant so cross-step `$ref` objects (e.g.
+        // preprocess → gen wiring inside controlnet handlers) resolve to the
+        // correct global step position after concatenation.
+        const variantSteps = await createStepInputs(
+          variantData,
+          { ...handlerCtx, baseStepIndex: steps.length },
+          {
+            stepMetadata: variantStepMetadata,
+            isWhatIf,
+            sourceCtx,
+          }
+        );
 
-    // Per-step metadata for snippet variants records ONLY the substituted
-    // snippet-target fields (e.g. `prompt`, `negativePrompt`) — a small DELTA — in
-    // `params`, plus `partialParams: true` to flag it as such. The workflow-level
-    // metadata already carries the full template + params snapshot, so we keep the
-    // per-step payload tiny (no full params duplicated per variant) and let the
-    // client spread the delta over the workflow params when reading.
-    // See docs/generation-metadata-architecture.md.
-    if (isSnippetVariant) {
-      for (const step of variantSteps) {
-        const existingMeta = (step.metadata ?? {}) as Record<string, unknown>;
-        const existingParams = (existingMeta.params as Record<string, unknown> | undefined) ?? {};
-        step.metadata = {
-          ...existingMeta,
-          params: { ...existingParams, ...overlay },
-          partialParams: true,
-        };
+        // Per-step metadata for snippet variants records ONLY the substituted
+        // snippet-target fields (e.g. `prompt`, `negativePrompt`) — a small DELTA — in
+        // `params`, plus `partialParams: true` to flag it as such. The workflow-level
+        // metadata already carries the full template + params snapshot, so we keep the
+        // per-step payload tiny (no full params duplicated per variant) and let the
+        // client spread the delta over the workflow params when reading.
+        // See docs/generation-metadata-architecture.md.
+        if (isSnippetVariant) {
+          for (const step of variantSteps) {
+            const existingMeta = (step.metadata ?? {}) as Record<string, unknown>;
+            const existingParams =
+              (existingMeta.params as Record<string, unknown> | undefined) ?? {};
+            step.metadata = {
+              ...existingMeta,
+              params: { ...existingParams, ...overlay },
+              partialParams: true,
+            };
+          }
+        }
+
+        steps.push(...variantSteps);
       }
+
+      // Wrap with request-level concerns: priority, timeout, outputFormat
+      // isPrivateGeneration lives on workflow.metadata, not per-step.
+      // `remixOfId` is ALSO copied onto each step's metadata: the orchestrator's
+      // `WorkflowStepHandler.GenerateJobsAsync` reads `workflowStep.Metadata["remixOfId"]`
+      // (not workflow-level metadata) to thread the remix source id into the job
+      // record → MongoDB `prod.jobs.Properties.remixOfId` → CDC → ClickHouse
+      // `orchestration.jobs`, which is what makes the remix product loop measurable.
+      // See civitai-orchestration#216. Kept on workflow.metadata as well for the
+      // app's own replay/normalization path (NormalizedWorkflowMetadata.remixOfId).
+      // Intermediate steps (videoInterpolation) don't get outputFormat injected.
+      const wrappedSteps = steps.map((step) => ({
+        $type: step.$type,
+        input: {
+          ...(step.input as object),
+          outputFormat: data.outputFormat,
+        },
+        priority: data.priority,
+        timeout,
+        metadata: isWhatIf
+          ? undefined
+          : ({
+              ...((step.metadata as object) ?? {}),
+              ...(remixOfId != null ? { remixOfId } : {}),
+            } as object),
+      })) as WorkflowStepTemplate[];
+
+      // Build workflow-level metadata — the form input snapshot for workflow-level
+      // replay. `params.snippets` rides along automatically because it's a
+      // graph-level node captured by `toStepMetadata`.
+      //
+      // Snippet-specific persistence cleanup:
+      // - When the resolver didn't fire (snippets node at defaults, no refs, no
+      //   batch request), strip the entire `snippets` entry so non-snippet
+      //   generations don't carry an unused blob. The `wildcards` workflow tag
+      //   remains the canonical "did this use snippets" signal.
+      // - When the resolver did fire, overwrite `snippets.targets` with the
+      //   parsed-refs snapshot (each `#ref` as `{ category, selections: [] }`)
+      //   so workflow.metadata records exactly which refs the submission used.
+      //   And drop `snippets.seed` — that field is preview-only and remixes
+      //   should re-roll the random picks.
+      const persistedParams = removeEmpty(stepMetadata.params as Record<string, unknown>);
+      if (!snippetsExpanded) {
+        delete persistedParams.snippets;
+      } else if (persistedParams.snippets && typeof persistedParams.snippets === 'object') {
+        const persistedSnippets = persistedParams.snippets as Record<string, unknown>;
+        persistedSnippets.targets = parsedTargets;
+        delete persistedSnippets.seed;
+      }
+      const workflowMetadata = isWhatIf
+        ? undefined
+        : removeEmpty({
+            params: persistedParams,
+            resources: stepMetadata.resources,
+            remixOfId,
+            isPrivateGeneration,
+          });
+
+      const extraTags: string[] = [];
+      if (snippetsExpanded) extraTags.push(WORKFLOW_TAGS.WILDCARDS);
+
+      return { wrappedSteps, workflowMetadata, extraTags };
     }
-
-    steps.push(...variantSteps);
-  }
-
-  // Wrap with request-level concerns: priority, timeout, outputFormat
-  // isPrivateGeneration lives on workflow.metadata, not per-step.
-  // `remixOfId` is ALSO copied onto each step's metadata: the orchestrator's
-  // `WorkflowStepHandler.GenerateJobsAsync` reads `workflowStep.Metadata["remixOfId"]`
-  // (not workflow-level metadata) to thread the remix source id into the job
-  // record → MongoDB `prod.jobs.Properties.remixOfId` → CDC → ClickHouse
-  // `orchestration.jobs`, which is what makes the remix product loop measurable.
-  // See civitai-orchestration#216. Kept on workflow.metadata as well for the
-  // app's own replay/normalization path (NormalizedWorkflowMetadata.remixOfId).
-  // Intermediate steps (videoInterpolation) don't get outputFormat injected.
-  const wrappedSteps = steps.map((step) => ({
-    $type: step.$type,
-    input: {
-      ...(step.input as object),
-      outputFormat: data.outputFormat,
-    },
-    priority: data.priority,
-    timeout,
-    metadata: isWhatIf
-      ? undefined
-      : ({
-          ...((step.metadata as object) ?? {}),
-          ...(remixOfId != null ? { remixOfId } : {}),
-        } as object),
-  })) as WorkflowStepTemplate[];
-
-  // Build workflow-level metadata — the form input snapshot for workflow-level
-  // replay. `params.snippets` rides along automatically because it's a
-  // graph-level node captured by `toStepMetadata`.
-  //
-  // Snippet-specific persistence cleanup:
-  // - When the resolver didn't fire (snippets node at defaults, no refs, no
-  //   batch request), strip the entire `snippets` entry so non-snippet
-  //   generations don't carry an unused blob. The `wildcards` workflow tag
-  //   remains the canonical "did this use snippets" signal.
-  // - When the resolver did fire, overwrite `snippets.targets` with the
-  //   parsed-refs snapshot (each `#ref` as `{ category, selections: [] }`)
-  //   so workflow.metadata records exactly which refs the submission used.
-  //   And drop `snippets.seed` — that field is preview-only and remixes
-  //   should re-roll the random picks.
-  const persistedParams = removeEmpty(stepMetadata.params as Record<string, unknown>);
-  if (!snippetsExpanded) {
-    delete persistedParams.snippets;
-  } else if (persistedParams.snippets && typeof persistedParams.snippets === 'object') {
-    const persistedSnippets = persistedParams.snippets as Record<string, unknown>;
-    persistedSnippets.targets = parsedTargets;
-    delete persistedSnippets.seed;
-  }
-  const workflowMetadata = isWhatIf
-    ? undefined
-    : removeEmpty({
-        params: persistedParams,
-        resources: stepMetadata.resources,
-        remixOfId,
-        isPrivateGeneration,
-      });
-
-  const extraTags: string[] = [];
-  if (snippetsExpanded) extraTags.push(WORKFLOW_TAGS.WILDCARDS);
+  );
 
   return {
     steps: wrappedSteps,
