@@ -6,7 +6,7 @@ import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
-import { withdrawRequest } from '~/server/services/blocks/publish-request.service';
+import { withdrawRequest, WithdrawRequestError } from '~/server/services/blocks/publish-request.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -201,31 +201,39 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
 
   // 6. SELF-SCOPED mutation. `withdrawRequest` enforces ownership internally
   // (compares the row's `submittedByUserId` to `user.id`) and is idempotent on
-  // an already-withdrawn row. We map its outcomes onto HTTP WITHOUT an ownership
-  // oracle:
-  //   - success (incl. idempotent already-withdrawn) → 200 { ok: true }
-  //   - not-found OR not-owned → 404 (SAME body for both — never reveal that a
-  //     row exists but belongs to another user)
-  //   - non-pending (approved/rejected) → 409 (Conflict). This branch is only
-  //     reachable AFTER the service's ownership check passes, so the row is
-  //     provably the CALLER'S own — disclosing its status to its owner is safe.
+  // an already-withdrawn row. It throws a TYPED `WithdrawRequestError` carrying
+  // a stable `.code` — we switch on the CODE, never on the free-text message, so
+  // a service-side reword can't silently re-introduce the ownership oracle.
+  // Mapping (the response body is ALWAYS `{ message }` on error):
+  //   - success (incl. idempotent already-withdrawn / lost-race-into-withdrawn)
+  //     → 200 { ok: true }
+  //   - NOT_FOUND OR NOT_OWNED → 404 with the IDENTICAL body — never reveal that
+  //     a row exists but belongs to another user (no ownership oracle).
+  //   - NOT_PENDING (approved/rejected) → 409 (Conflict). Only reachable AFTER
+  //     the service's ownership check passes, so the row is provably the
+  //     CALLER'S own — disclosing its status to its owner is safe.
   try {
     await withdrawRequest({ publishRequestId, userId: user.id });
     res.status(200).json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    // Ownership / existence collapse to one indistinguishable 404 (no oracle).
-    if (message.includes('not found') || message.includes('you can only withdraw your own')) {
-      res.status(404).json({ message: 'Publish request not found' });
-      return;
-    }
-    // The caller owns this row (ownership check already passed inside the
-    // service) but it's no longer pending — disclose the conflict to its owner.
-    if (message.includes('cannot withdraw a request in status')) {
-      res.status(409).json({ error: message });
-      return;
+    if (err instanceof WithdrawRequestError) {
+      switch (err.code) {
+        // Ownership / existence collapse to one indistinguishable 404 (no
+        // oracle) — SAME status AND SAME body for both.
+        case 'NOT_FOUND':
+        case 'NOT_OWNED':
+          res.status(404).json({ message: 'Publish request not found' });
+          return;
+        // The caller owns this row but it's no longer pending — disclose the
+        // conflict to its owner. `{ message }` (not `{ error }`) so the endpoint
+        // ALWAYS returns `{ message }` on error.
+        case 'NOT_PENDING':
+          res.status(409).json({ message: err.message });
+          return;
+      }
     }
     // Unexpected — log + 500, like submissions' catch-all.
+    const message = err instanceof Error ? err.message : String(err);
     req.log?.error('blocks/withdraw: unexpected error', { message, userId: user.id });
     res.status(500).json({ message: 'Internal server error' });
   }

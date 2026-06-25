@@ -56,7 +56,15 @@ const {
       // `updateMany` added (no-trust-on-push fix): approveRequest now supersedes
       // any stray pending review request the git-push webhook may have parked for
       // the slug while racing the approve commit.
-      appBlockPublishRequest: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+      // `findUnique` added (S1 TOCTOU fix): withdrawRequest re-reads the row from
+      // the PRIMARY when its status-guarded updateMany matches 0 rows, to resolve
+      // a lost race without being fooled by replica lag.
+      appBlockPublishRequest: {
+        create: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn(),
+        findUnique: vi.fn(),
+      },
       appBlock: { create: vi.fn(), update: vi.fn() },
       // `update` added 2026-06-02 (audit A1 fix): approveRequest now re-caps
       // the app-block OauthClient's allowedScopes to the manifest-derived
@@ -584,21 +592,27 @@ describe('submitVersion', () => {
 // ---- withdrawRequest -------------------------------------------------------
 
 describe('withdrawRequest', () => {
-  it('moves pending → withdrawn for the owner', async () => {
+  it('moves pending → withdrawn for the owner via a status-guarded updateMany', async () => {
     const { withdrawRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: 'pubreq_x',
       status: 'pending',
       submittedByUserId: 42,
     });
+    // Guarded write matched the still-pending row.
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
     await withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 });
-    expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledWith({
-      where: { id: 'pubreq_x' },
+    // S1 fix: the write is keyed on { id, status: 'pending' }, NOT id alone, so
+    // a concurrent approve that flipped status can't be clobbered.
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith({
+      where: { id: 'pubreq_x', status: 'pending' },
       data: { status: 'withdrawn' },
     });
+    // The unconditional single-row update path must be gone.
+    expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
   });
 
-  it('is idempotent on already-withdrawn', async () => {
+  it('is idempotent on already-withdrawn (no write at all)', async () => {
     const { withdrawRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: 'pubreq_x',
@@ -606,51 +620,118 @@ describe('withdrawRequest', () => {
       submittedByUserId: 42,
     });
     await withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
   });
 
-  it('throws for a request owned by a different user', async () => {
-    const { withdrawRequest } = await import('../publish-request.service');
+  it('throws NOT_OWNED for a request owned by a different user', async () => {
+    const { withdrawRequest, WithdrawRequestError } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: 'pubreq_x',
       status: 'pending',
       submittedByUserId: 1,
     });
-    await expect(withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })).rejects.toThrow(
-      /can only withdraw your own/
-    );
+    await expect(
+      withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })
+    ).rejects.toMatchObject({
+      code: 'NOT_OWNED',
+      message: expect.stringMatching(/can only withdraw your own/),
+    });
+    // No write is attempted on a not-owned row.
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
+    // The thrown value is the typed class.
+    await expect(
+      withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })
+    ).rejects.toBeInstanceOf(WithdrawRequestError);
   });
 
-  it('throws for already-approved', async () => {
+  it('throws NOT_PENDING for already-approved', async () => {
     const { withdrawRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: 'pubreq_x',
       status: 'approved',
       submittedByUserId: 42,
     });
-    await expect(withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })).rejects.toThrow(
-      /cannot withdraw a request in status approved/
-    );
+    await expect(
+      withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })
+    ).rejects.toMatchObject({
+      code: 'NOT_PENDING',
+      message: expect.stringMatching(/cannot withdraw a request in status approved/),
+    });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
   });
 
-  it('throws for already-rejected', async () => {
+  it('throws NOT_PENDING for already-rejected', async () => {
     const { withdrawRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: 'pubreq_x',
       status: 'rejected',
       submittedByUserId: 42,
     });
-    await expect(withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })).rejects.toThrow(
-      /cannot withdraw a request in status rejected/
-    );
+    await expect(
+      withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })
+    ).rejects.toMatchObject({
+      code: 'NOT_PENDING',
+      message: expect.stringMatching(/cannot withdraw a request in status rejected/),
+    });
   });
 
-  it('throws when the request is not found', async () => {
+  it('throws NOT_FOUND when the request is not found', async () => {
     const { withdrawRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(null);
-    await expect(withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })).rejects.toThrow(
-      /not found/
-    );
+    await expect(
+      withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND', message: expect.stringMatching(/not found/) });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  // S1 (TOCTOU) — findUnique classified `pending`, but the guarded updateMany
+  // matched 0 rows because a concurrent approveRequest flipped status between
+  // the read and the write. A re-read showing `approved` MUST surface as
+  // NOT_PENDING (the row is NOT clobbered approved→withdrawn).
+  it('S1: lost the race to a concurrent approve → updateMany count:0, primary re-read approved → NOT_PENDING', async () => {
+    const { withdrawRequest } = await import('../publish-request.service');
+    // Classify read (replica): still pending. Re-read (PRIMARY): approved.
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_x',
+      status: 'pending',
+      submittedByUserId: 42,
+    });
+    mockDbWrite.appBlockPublishRequest.findUnique.mockResolvedValue({ status: 'approved' });
+    // Guarded write matched 0 rows (the row is no longer pending).
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })
+    ).rejects.toMatchObject({
+      code: 'NOT_PENDING',
+      message: expect.stringMatching(/cannot withdraw a request in status approved/),
+    });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith({
+      where: { id: 'pubreq_x', status: 'pending' },
+      data: { status: 'withdrawn' },
+    });
+    // The race is resolved against the PRIMARY, not the (lag-prone) replica.
+    expect(mockDbWrite.appBlockPublishRequest.findUnique).toHaveBeenCalledWith({
+      where: { id: 'pubreq_x' },
+      select: { status: true },
+    });
+  });
+
+  // S1 idempotency under the race — if the row raced into `withdrawn` (a
+  // concurrent withdraw won), count:0 + a re-read of `withdrawn` resolves as
+  // idempotent SUCCESS, no throw.
+  it('S1: lost the race to a concurrent withdraw → updateMany count:0, primary re-read withdrawn → idempotent success', async () => {
+    const { withdrawRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_x',
+      status: 'pending',
+      submittedByUserId: 42,
+    });
+    mockDbWrite.appBlockPublishRequest.findUnique.mockResolvedValue({ status: 'withdrawn' });
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 })
+    ).resolves.toBeUndefined();
   });
 
   // H-2 regression — withdraw does NOT delete the S3 bundle. Long-tail
@@ -662,6 +743,7 @@ describe('withdrawRequest', () => {
       status: 'pending',
       submittedByUserId: 42,
     });
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
     await withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 });
     expect(mockS3Send).not.toHaveBeenCalled();
   });
