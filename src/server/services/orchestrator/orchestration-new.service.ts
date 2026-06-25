@@ -57,6 +57,7 @@ import {
   getWorkflow,
   submitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
+  WHATIF_SUBMIT_TIMEOUT_MS,
 } from '~/server/services/orchestrator/workflows';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
@@ -1518,9 +1519,10 @@ export async function whatIfFromGraph({
   //     orchestrator hanging ~30s on an img2img source-image step, returning 5xx;
   //     the default 3-retry path turned that one hiccup into ~93s (3 × ~30s + backoff)
   //     before failing with INTERNAL_SERVER_ERROR. There is nothing to recover here.
-  //   - `timeoutMs: 30_000` — a generous backstop so even the single attempt can't
-  //     hang indefinitely; a fired timeout maps to a retry-able 503 (the orchestrator
-  //     root-cause fix is handled separately, so whatIf should normally be fast).
+  //   - `timeoutMs` (WHATIF_SUBMIT_TIMEOUT_MS, 45s) — a generous backstop so even the
+  //     single attempt can't hang indefinitely; a fired timeout maps to a retry-able
+  //     503. 45s (not 30s) clears the legitimate slow-but-ok 30-40s whatIf cluster so
+  //     those don't wrongly 503 while still catching the ~93s hang (see the constant).
   const workflow = await submitWorkflow({
     token,
     body: {
@@ -1533,7 +1535,7 @@ export async function whatIfFromGraph({
       whatif: true,
     },
     maxAttempts: 1,
-    timeoutMs: 30_000,
+    timeoutMs: WHATIF_SUBMIT_TIMEOUT_MS,
   });
 
   // Check if all jobs are ready (have available support)

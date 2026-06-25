@@ -30,7 +30,7 @@ vi.mock('~/server/services/orchestrator/client', () => ({
 
 vi.mock('~/env/other', () => ({ isDev: false, isProd: true }));
 
-import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { submitWorkflow, WHATIF_SUBMIT_TIMEOUT_MS } from '~/server/services/orchestrator/workflows';
 
 const baseBody = { steps: [] } as any;
 
@@ -137,6 +137,33 @@ describe('submitWorkflow — timeout budget (bounded caller)', () => {
     expect(err).toBeInstanceOf(TRPCError);
     expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
     expect((err as TRPCError).cause).toBe(timeoutErr);
+  });
+
+  it('the shared whatIf timeout constant is 45s (above the legit slow-but-ok 30-40s cluster)', () => {
+    // Sizing is load-bearing: 30s would wrongly 503 the slow-but-successful whatIf
+    // cluster; 45s clears it while still catching the ~93s hang. If this changes,
+    // re-check the live duration distribution before lowering it.
+    expect(WHATIF_SUBMIT_TIMEOUT_MS).toBe(45_000);
+  });
+
+  it('a whatIf bounded with the shared constant + maxAttempts:1 makes exactly ONE attempt', async () => {
+    // Guards the App Blocks whatIf call sites (blocks.router estimateWorkflow +
+    // submitWorkflow cost preflight) and whatIfFromGraph: they all pass
+    // { maxAttempts: 1, timeoutMs: WHATIF_SUBMIT_TIMEOUT_MS }, so a transient 5xx
+    // is NOT 3x-retry-amplified to ~93s. Asserts the exact args those sites thread.
+    mockSubmitWorkflow.mockResolvedValue(fail5xx());
+
+    const err = await submitWorkflow({
+      token: 'tok',
+      body: baseBody,
+      query: { whatif: true },
+      maxAttempts: 1,
+      timeoutMs: WHATIF_SUBMIT_TIMEOUT_MS,
+    }).catch((e) => e);
+
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockSubmitWorkflow.mock.calls[0][0].signal).toBeInstanceOf(AbortSignal);
+    expect(err).toBeInstanceOf(TRPCError);
   });
 
   it('threads an AbortSignal to the client only when timeoutMs is set', async () => {

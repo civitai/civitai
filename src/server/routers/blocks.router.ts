@@ -90,7 +90,12 @@ import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
-import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
+import {
+  cancelWorkflow,
+  getWorkflow,
+  submitWorkflow,
+  WHATIF_SUBMIT_TIMEOUT_MS,
+} from '~/server/services/orchestrator/workflows';
 import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
@@ -2095,6 +2100,10 @@ export const blocksRouter = router({
         checkpointBaseModel: checkpoint.baseModel,
       });
       const step = await createBlockTextToImageStep({ input: generateInput, user, whatIf: true });
+      // estimateWorkflow is a side-effect-free COST ESTIMATE (whatif: true) — same
+      // class as the submitWorkflow cost preflight below and whatIfFromGraph. Bound
+      // it identically (single attempt, 45s timeout) so a transient orchestrator
+      // hiccup isn't 3x-retry-amplified to ~93s.
       const workflow = await submitWorkflow({
         token,
         body: {
@@ -2104,6 +2113,8 @@ export const blocksRouter = router({
           ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         },
         query: { whatif: true },
+        maxAttempts: 1,
+        timeoutMs: WHATIF_SUBMIT_TIMEOUT_MS,
       });
       return { snapshot: snapshotFromWorkflow(workflow) };
     }),
@@ -2259,6 +2270,10 @@ export const blocksRouter = router({
         whatIf: true,
       });
       const tags = buildWorkflowTags(claims, resolved.baseModel);
+      // App Blocks whatIf is the same side-effect-free COST ESTIMATE as
+      // whatIfFromGraph — bound it identically (single attempt, 45s timeout) so a
+      // transient orchestrator hiccup surfaces ONCE rather than the default 3x
+      // retry amplifying one ~30s park to ~93s. Mirrors whatIfFromGraph's args.
       const whatIfResult = await submitWorkflow({
         token,
         body: {
@@ -2268,6 +2283,8 @@ export const blocksRouter = router({
           ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         },
         query: { whatif: true },
+        maxAttempts: 1,
+        timeoutMs: WHATIF_SUBMIT_TIMEOUT_MS,
       });
       const cost = whatIfResult.cost?.total ?? 0;
       if (cost > claims.buzzBudget) {

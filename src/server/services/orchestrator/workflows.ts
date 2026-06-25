@@ -44,6 +44,15 @@ import {
 const ORCHESTRATOR_UNAVAILABLE_MESSAGE =
   'Generation services are temporarily unavailable. Please try again.';
 
+// Per-attempt timeout for a side-effect-free whatIf COST ESTIMATE submit.
+// Sized 45s (not 30s) off the live duration distribution: there is a legitimate
+// slow-but-successful cluster at 30-40s (~81 ok calls/12h observed sizing #2770),
+// which a 30s budget would wrongly 503; 45s sits above that cluster (only ~15/12h
+// are >=45s, already broken-feeling) while still backstopping a true hang (the
+// failure mode this bounds was ~93s). Shared by every whatIf submit caller so the
+// budget is one place. NOT for real submits — those keep the unbounded default.
+export const WHATIF_SUBMIT_TIMEOUT_MS = 45_000;
+
 export async function queryWorkflows({
   token,
   fromDate,
