@@ -53,10 +53,6 @@ export type EdgeVideoRef = {
   stop: () => void;
 };
 
-type State = {
-  muted: boolean;
-};
-
 // `fullscreenchange` is a document-level event (no JSX prop for it), so we subscribe via
 // useSyncExternalStore instead of useEffect to read fullscreen state reactively.
 function subscribeFullscreen(callback: () => void) {
@@ -65,6 +61,10 @@ function subscribeFullscreen(callback: () => void) {
 }
 const getFullscreenSnapshot = () => typeof document !== 'undefined' && !!document.fullscreenElement;
 const getFullscreenServerSnapshot = () => false;
+
+// Safari needs special handling (forced width, eager preload). userAgent is stable, so compute once.
+const IN_SAFARI =
+  typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
 
 export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
   (
@@ -95,9 +95,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
   ) => {
     const ref = useRef<HTMLVideoElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
-    const [state, setState] = useState<State>({
-      muted: initialMuted,
-    });
+    const [muted, setMuted] = useState(initialMuted);
     const [loaded, setLoaded] = useState(false);
     const [showPlayIndicator, setShowPlayIndicator] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -112,17 +110,26 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     );
     const [volume, setVolume] = useLocalStorage({
       key: 'global-volume',
-      defaultValue: state.muted ? 0 : 0.5,
+      defaultValue: muted ? 0 : 0.5,
     });
 
+    // Re-sync muted when the forcing prop flips or the persisted volume resolves to 0 (volume
+    // hydrates from localStorage after mount). Render-phase adjust replaces a prop-sync effect;
+    // `video.muted` follows via the JSX `muted={muted}` binding, so no imperative write is needed.
+    // Does not clobber a manual "mute but remember level" (muted=true while volume>0).
+    const shouldForceMute = initialMuted || volume === 0;
+    const [lastForceMute, setLastForceMute] = useState(shouldForceMute);
+    if (lastForceMute !== shouldForceMute) {
+      setLastForceMute(shouldForceMute);
+      setMuted(shouldForceMute);
+    }
+
+    // React only controls the muted *attribute* (the initial default), not the live `.muted`
+    // *property* — so a persisted unmute won't reach the element on its own, and autoplay/refresh
+    // can leave the video stuck muted. Sync the property imperatively whenever muted changes.
     useEffect(() => {
-      const video = ref.current;
-      if (!video) return;
-      // When prop forces mute, always mute. When prop allows audio, respect user's volume preference.
-      const shouldMute = initialMuted || volume === 0;
-      video.muted = shouldMute;
-      setState((current) => ({ ...current, muted: shouldMute }));
-    }, [initialMuted]); // eslint-disable-line react-hooks/exhaustive-deps
+      if (ref.current) ref.current.muted = muted;
+    }, [muted]);
 
     useImperativeHandle(forwardedRef, () => ({
       stop: () => {
@@ -133,6 +140,12 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       },
     }));
 
+    // mantine useTimeout auto-clears on unmount, so the indicator timer needs no cleanup effect.
+    const { start: startHideIndicator, clear: clearHideIndicator } = useTimeout(
+      () => setShowPlayIndicator(false),
+      500
+    );
+
     const handleTogglePlayPause = useCallback(() => {
       if (controls && !html5Controls && ref.current) {
         if (ref.current.paused) {
@@ -142,9 +155,11 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         }
 
         setShowPlayIndicator(true);
-        setTimeout(() => setShowPlayIndicator(false), 500);
+        // clear() then start() restarts the hide timer on rapid re-toggles.
+        clearHideIndicator();
+        startHideIndicator();
       }
-    }, [controls, html5Controls]);
+    }, [controls, html5Controls, startHideIndicator, clearHideIndicator]);
 
     const handleToggleFullscreen = useCallback(() => {
       const container = containerRef.current;
@@ -181,7 +196,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const handleLoadedData = useCallback(
       (e: React.SyntheticEvent<HTMLVideoElement>) => {
         onLoadedData?.(e);
-        e.currentTarget.style.opacity = '1';
+        // Opacity is now driven declaratively by `loaded` (see the <video> style prop).
         markVideoReady();
       },
       [onLoadedData, markVideoReady]
@@ -200,7 +215,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         video.volume = restored;
         setVolume(restored);
       }
-      setState((current) => ({ ...current, muted: nextMuted }));
+      setMuted(nextMuted);
       onMutedChange?.(nextMuted);
     }, [onMutedChange, setVolume, volume]);
 
@@ -211,24 +226,20 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
         video.volume = value;
         // Raising the slider must also unmute, otherwise scrubbing does nothing audible.
-        video.muted = value === 0;
+        const nextMuted = value === 0;
+        video.muted = nextMuted;
         setVolume(value);
-        setState((current) => ({ ...current, muted: value === 0 }));
+        setMuted(nextMuted);
+        // Notify parent so the external mute toggle stays in sync when the slider crosses 0.
+        onMutedChange?.(nextMuted);
       },
-      [setVolume]
+      [onMutedChange, setVolume]
     );
 
     const showCustomControls = loaded && controls && !html5Controls;
-    const inSafari =
-      typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
-
-    useEffect(() => {
-      // Hard set the width to 100% for Safari because it doesn't render in full size otherwise ¯\_(ツ)_/¯ -Manuel
-      if (inSafari && ref.current) {
-        ref.current.classList.add('w-full');
-      }
-      if (fadeIn && ref.current?.readyState === 4) ref.current.style.opacity = '1';
-    }, [fadeIn, inSafari]);
+    // Drag-to-add is for control-less previews. Any controls (custom or native) take over pointer
+    // interaction — disable drag so scrubbing/volume don't get hijacked into a video drag.
+    const draggableEnabled = !!imageId && !controls && !html5Controls;
 
     const { url: videoUrl } = useEdgeUrl(src, { ...options, anim: true });
     const { url: coverUrl } = useEdgeUrl(thumbnailUrl ?? src, {
@@ -308,12 +319,11 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         <video
           key={videoUrl}
           ref={ref}
-          // Drag source lives on the video body only. If it were on the container, the browser
-          // would walk up from the volume slider to the draggable ancestor and start a drag while
-          // scrubbing — draggable={false} on the controls does NOT block that ancestor walk-up.
-          draggable={!!imageId}
+          // Drag is only enabled when no controls are shown (see draggableEnabled), so scrubbing/
+          // volume on custom or native controls can never get hijacked into a video drag.
+          draggable={draggableEnabled}
           onDragStart={
-            imageId
+            draggableEnabled
               ? (e) => {
                   e.dataTransfer.setData('text/uri-list', videoUrl);
                   e.dataTransfer.setData('application/x-civitai-media-id', String(imageId));
@@ -322,8 +332,15 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
               : undefined
           }
           className={clsx(`block cursor-pointer ${contain ? 'h-full' : 'h-auto'}`)}
-          muted={state.muted}
-          style={style}
+          muted={muted}
+          style={{
+            ...style,
+            // Safari won't render full size without an explicit width ¯\_(ツ)_/¯ -Manuel
+            ...(IN_SAFARI ? { width: '100%' } : {}),
+            // fadeIn videos start transparent (the .fadeIn class supplies the transition) and
+            // reveal once loaded — declarative replacement for the old imperative opacity writes.
+            ...(fadeIn ? { opacity: loaded ? 1 : 0 } : {}),
+          }}
           onLoadedMetadata={markVideoReady}
           onLoadedData={handleLoadedData}
           onCanPlay={markVideoReady}
@@ -337,7 +354,9 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           }}
           onPause={() => setIsPlaying(false)}
           onVolumeChange={(e) => {
-            !initialMuted ? handleVolumeChange(e.currentTarget.volume) : undefined;
+            // Browser-native controls are the only volume source here; the custom slider/toggle
+            // update state directly, so forwarding them too would double-fire handleVolumeChange.
+            if (html5Controls && !initialMuted) handleVolumeChange(e.currentTarget.volume);
           }}
           playsInline
           onMouseOver={!options?.anim ? handleMouseEnter : undefined}
@@ -346,7 +365,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           loop
           poster={!disablePoster ? coverUrl : undefined}
           disablePictureInPicture
-          preload={inSafari ? 'auto' : controls && !html5Controls ? 'metadata' : 'none'}
+          preload={IN_SAFARI ? 'auto' : controls && !html5Controls ? 'metadata' : 'none'}
           onError={onError}
           {...props}
         >
@@ -387,7 +406,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                       size="lg"
                       radius="xl"
                     >
-                      {state.muted || volume === 0 ? (
+                      {muted || volume === 0 ? (
                         <IconVolumeOff size={16} />
                       ) : (
                         <IconVolume size={16} />
@@ -405,7 +424,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                       min="0"
                       max="1"
                       step="0.05"
-                      value={state.muted ? 0 : volume}
+                      value={muted ? 0 : volume}
                       onChange={(e) => handleVolumeChange(e.currentTarget.valueAsNumber)}
                     />
                   </HoverCard.Dropdown>
@@ -425,7 +444,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         )}
         {showPlayIndicator && (
           <ThemeIcon className={styles.playIndicator} size={64} radius="xl" color="dark">
-            {ref.current?.paused ? <IconPlayerPauseFilled /> : <IconPlayerPlayFilled />}
+            {!isPlaying ? <IconPlayerPauseFilled /> : <IconPlayerPlayFilled />}
           </ThemeIcon>
         )}
       </div>
