@@ -31,13 +31,15 @@ export const articleRatingReviewNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: ({ details }) => {
       if (!details) return undefined;
-      const { articleTitle, articleId, currentLevel, modComment } = details as {
+      const { articleTitle, articleId, appliedLevel, modComment } = details as {
         articleTitle: string;
         articleId: number;
-        currentLevel: number | string;
+        appliedLevel: number | string;
         modComment?: string;
       };
-      const base = `Your rating dispute on "${articleTitle}" was declined — the current rating (${currentLevel}) was kept.`;
+      // A moderator now always applies a level on resolution; a declined dispute
+      // means the owner's suggestion wasn't granted but a ruling level was set.
+      const base = `Your rating dispute on "${articleTitle}" was reviewed — a moderator set the rating to ${appliedLevel}.`;
       return {
         message: modComment ? `${base} Reason: ${modComment}` : base,
         url: `/articles/${articleId}`,
