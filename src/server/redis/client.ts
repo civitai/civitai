@@ -1651,6 +1651,15 @@ export const REDIS_SYS_KEYS = {
      * submission/review/deploy status from `civitai app status`.
      */
     SUBMISSIONS_RATE_LIMIT: 'system:blocks:submissions-rate-limit',
+    /**
+     * Per-user (fallback per-IP) rate-limit counter for the token-auth
+     * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
+     * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
+     * created with its TTL), on `sysRedis`. Bounds a dev pulling their own
+     * pending submission back from review via `civitai app withdraw`. Tighter
+     * window than the submissions read since this is a write.
+     */
+    WITHDRAW_RATE_LIMIT: 'system:blocks:withdraw-rate-limit',
   },
 } as const;
 

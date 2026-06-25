@@ -454,7 +454,7 @@ describe('submitVersion', () => {
         submittedByUserId: 42,
       })
     ).rejects.toThrow(
-      /you already have a pending submission for slug .* \(pubreq_existing\); withdraw it/
+      /you already have a pending submission for slug .* \(pubreq_existing\); withdraw it first with `civitai app withdraw pubreq_existing` before resubmitting/
     );
     expect(mockS3Send).not.toHaveBeenCalled();
     expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();

@@ -784,7 +784,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   if (conflicting) {
     if (conflicting.submittedByUserId === submittedByUserId) {
       throw new Error(
-        `you already have a pending submission for slug ${slug} (${conflicting.id}); withdraw it before resubmitting`
+        `you already have a pending submission for slug ${slug} (${conflicting.id}); withdraw it first with \`civitai app withdraw ${conflicting.id}\` before resubmitting`
       );
     }
     throw new Error(
