@@ -45,7 +45,21 @@ export function isSecureOrLoopbackOrigin(origin: string | URL): boolean {
 /** returnUrl ?? callbackUrl ?? '/', with the /login recursion guard applied. */
 export function readReturnUrl(url: URL): string {
   const raw = url.searchParams.get('returnUrl') ?? url.searchParams.get('callbackUrl') ?? '/';
-  return raw.startsWith('/login') ? '/' : raw;
+  // Recursion guard: only collapse a returnUrl that points back at the login FORM
+  // itself (/login). The /login/oauth/{device,authorize} interaction pages are
+  // legitimate post-login destinations and MUST survive. Parse the pathname so a
+  // ?code=… query or fragment can't change which path we compare. This guard is
+  // ONLY about the /login→/login loop; protocol-relative/external targets (e.g.
+  // //evil.com, https://evil.com) are rejected downstream by isSafeReturnTarget,
+  // not here.
+  let path: string;
+  try {
+    path = new URL(raw, 'https://placeholder.invalid').pathname;
+  } catch {
+    return '/';
+  }
+  if (path === '/login' || path === '/login/') return '/';
+  return raw;
 }
 
 /** The cross-domain sync marker (`sync-account`). */

@@ -17,8 +17,17 @@ describe('readReturnUrl', () => {
     expect(readReturnUrl(u('?callbackUrl=/b'))).toBe('/b');
     expect(readReturnUrl(u(''))).toBe('/');
   });
-  it('collapses /login recursion to /', () => {
-    expect(readReturnUrl(u('?returnUrl=/login/oauth'))).toBe('/');
+  it('collapses only the bare /login form, blocking the form recursion loop', () => {
+    expect(readReturnUrl(u('?returnUrl=/login'))).toBe('/');
+    expect(readReturnUrl(u('?returnUrl=/login?foo=1'))).toBe('/');
+  });
+  it('preserves the /login/oauth interaction pages (device + authorize)', () => {
+    expect(readReturnUrl(u('?returnUrl=/login/oauth/device?code=ABCD-1234'))).toBe(
+      '/login/oauth/device?code=ABCD-1234'
+    );
+    expect(readReturnUrl(u('?returnUrl=/login/oauth/authorize?client_id=x'))).toBe(
+      '/login/oauth/authorize?client_id=x'
+    );
   });
 });
 
@@ -68,8 +77,11 @@ describe('buildPostLoginRedirect', () => {
   it('returns a validated target unchanged without sync', () => {
     expect(buildPostLoginRedirect('/dash', null, ORIGIN, civitai)).toBe('/dash');
   });
-  it('collapses an unsafe target to /', () => {
+  it('collapses an unsafe target to / (open-redirect guard unchanged by the recursion-guard fix)', () => {
+    // Narrowing readReturnUrl's /login recursion guard must NOT widen the open-redirect surface:
+    // absolute external + protocol-relative targets still collapse to '/' here.
     expect(buildPostLoginRedirect('https://evil.com', null, ORIGIN, civitai)).toBe('/');
+    expect(buildPostLoginRedirect('//evil.com', null, ORIGIN, civitai)).toBe('/');
   });
   it('re-attaches sync as sync-account on a relative target', () => {
     expect(buildPostLoginRedirect('/dash', 'green', ORIGIN, civitai)).toBe(
