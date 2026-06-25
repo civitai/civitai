@@ -61,6 +61,7 @@ const {
   mockIsAppBlocksEnabled,
   mockSign,
   mockAppBlockFindUnique,
+  mockPublishRequestFindFirst,
   mockSysRedis,
   mockMultiIncr,
 } = vi.hoisted(() => {
@@ -84,6 +85,7 @@ const {
     mockIsAppBlocksEnabled: vi.fn(),
     mockSign: vi.fn(),
     mockAppBlockFindUnique: vi.fn(),
+    mockPublishRequestFindFirst: vi.fn(),
     mockSysRedis: {
       multi: vi.fn(multiFactory),
       ttl: vi.fn().mockResolvedValue(60),
@@ -100,7 +102,10 @@ vi.mock('~/server/services/block-token.service', () => ({
   BlockTokenService: { sign: mockSign },
 }));
 vi.mock('~/server/db/client', () => ({
-  dbWrite: { appBlock: { findUnique: mockAppBlockFindUnique } },
+  dbWrite: {
+    appBlock: { findUnique: mockAppBlockFindUnique },
+    appBlockPublishRequest: { findFirst: mockPublishRequestFindFirst },
+  },
 }));
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
@@ -182,6 +187,22 @@ function pageApp(over: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+// A pending AppBlockPublishRequest the caller owns (local-manifest mode). There
+// is NO AppBlock row + NO OauthClient yet — scopes come from the un-reviewed
+// manifest and the OAuth-ceiling clamp is SKIPPED (7f is the spend gate).
+function pendingRequest(over: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 'pubreq_01HXYZ',
+    slug: 'my-pending-app',
+    submittedByUserId: OWNER_ID,
+    manifest: {
+      page: { title: 'My Pending Page' },
+      scopes: ['models:read:self', 'user:read:self', 'ai:write:budgeted', 'apps:storage:read'],
+    },
+    ...over,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockMultiIncr.value = 1;
@@ -191,6 +212,8 @@ beforeEach(() => {
   mockSysRedis.expire.mockResolvedValue(1);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
   mockAppBlockFindUnique.mockResolvedValue(pageApp());
+  // Default: no pending request. The local-manifest path tests set this per-case.
+  mockPublishRequestFindFirst.mockResolvedValue(null);
   mockSign.mockResolvedValue({
     token: 'jwt.signed.value',
     expiresAt: '2099-01-01T00:00:00Z',
@@ -603,5 +626,203 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(res._getStatusCode()).toBe(200);
     const arg = mockSign.mock.calls[0][0];
     expect(arg.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+  });
+
+  // -------------------------------------------------------------------------
+  // Local-manifest mode (Phase 4): mint against a caller's OWN pending app
+  // before it is moderator-approved. Scopes come from the un-reviewed manifest,
+  // clamped by the SAME belt minus the OAuth ceiling (7f is the spend gate).
+  // -------------------------------------------------------------------------
+  describe('local-manifest mode (owned pending app)', () => {
+    // The approved lookup MUST find nothing so the pending path is reached.
+    function noApprovedRow() {
+      mockAppBlockFindUnique.mockResolvedValueOnce(null);
+    }
+
+    it('200: owned pending request + page manifest → mints from manifest.scopes (OAuth ceiling SKIPPED), spend-capable when bearer has AIServicesWrite', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION); // personal key, Full → can spend
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+      const { req, res } = authPost({ slug: 'my-pending-app' });
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign).toHaveBeenCalledTimes(1);
+      const arg = mockSign.mock.calls[0][0];
+      // Self-bound subject = the caller.
+      expect(arg.userId).toBe(OWNER_ID);
+      // Granted = manifest.scopes ∩ allowlist ∩ (¬page-forbidden), + force-granted
+      // user:read:self. ai:write:budgeted survives (bearer has AIServicesWrite).
+      expect(arg.scopes).toEqual([
+        'ai:write:budgeted',
+        'apps:storage:read',
+        'models:read:self',
+        'user:read:self',
+      ]);
+      // Budget defaulted + capped; forced SFW; page ctx.
+      expect(arg.buzzBudget).toBe(50);
+      expect(arg.maxBrowsingLevel).toBe(SFW);
+      expect(arg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
+      // Synthetic, revocable instance id derived from the publish-request id.
+      expect(arg.blockInstanceId).toBe('page_pubreq_pubreq_01HXYZ');
+      // sign blockId = the slug; appId = the deterministic appblk-<slug> placeholder.
+      expect(arg.blockId).toBe('my-pending-app');
+      expect(arg.appId).toBe('appblk-my-pending-app');
+      expect(arg.appBlockId).toBe('pubreq_01HXYZ');
+      // Ownership was enforced in the query.
+      expect(mockPublishRequestFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { slug: 'my-pending-app', status: 'pending', submittedByUserId: OWNER_ID },
+        })
+      );
+    });
+
+    it('200: owned pending request but bearer LACKS AIServicesWrite → ai:write:budgeted STRIPPED (7f spend gate), no budget claim', async () => {
+      mockGetSession.mockResolvedValueOnce(READONLY_MOD_SESSION);
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+      const { req, res } = authPost({ slug: 'my-pending-app' });
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(200);
+      const arg = mockSign.mock.calls[0][0];
+      // ai:write:budgeted stripped by 7f; read/catalog/storage survive.
+      expect(arg.scopes).toEqual(['apps:storage:read', 'models:read:self', 'user:read:self']);
+      expect(arg.scopes).not.toContain('ai:write:budgeted');
+      expect(arg.buzzBudget).toBeUndefined();
+    });
+
+    it('R1: an un-reviewed manifest declaring ESCALATED scopes has them STRIPPED, not minted', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(
+        pendingRequest({
+          manifest: {
+            page: { title: 'evil' },
+            scopes: [
+              'models:read:self', // legit → kept
+              'social:tip:self', // dev-excluded + page-forbidden → stripped
+              'block:settings:write', // dev-excluded → stripped
+              'buzz:read:self', // page-forbidden → stripped
+              'totally:unknown:scope', // not a known block scope → stripped
+            ],
+          },
+        })
+      );
+      const { req, res } = authPost({ slug: 'my-pending-app' });
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(200);
+      const arg = mockSign.mock.calls[0][0];
+      // Only the legit scope + the force-granted user:read:self survive — proving
+      // the un-reviewed manifest cannot escalate past the dev belt.
+      expect(arg.scopes).toEqual(['models:read:self', 'user:read:self']);
+      expect(arg.scopes).not.toContain('social:tip:self');
+      expect(arg.scopes).not.toContain('block:settings:write');
+      expect(arg.scopes).not.toContain('buzz:read:self');
+      expect(arg.scopes).not.toContain('totally:unknown:scope');
+    });
+
+    it('404 (bare, no oracle) when the pending request is owned by ANOTHER user', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noApprovedRow();
+      // The ownership filter is in the QUERY (submittedByUserId === user.id), so a
+      // row owned by another user simply does not match → findFirst returns null.
+      mockPublishRequestFindFirst.mockResolvedValueOnce(null);
+      const { req, res } = authPost({ slug: 'someone-elses-app' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(404);
+      // IDENTICAL body to the no-row-at-all case — no existence/ownership oracle.
+      expect((res._getJSONData() as { message: string }).message).toBe('App not found');
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('404 (bare) when neither an approved row NOR an owned pending request exists', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(null);
+      const { req, res } = authPost({ slug: 'no-such-app' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(404);
+      expect((res._getJSONData() as { message: string }).message).toBe('App not found');
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('422 when the owned pending manifest declares NO page block', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(
+        pendingRequest({ manifest: { scopes: ['models:read:self'] } }) // no page
+      );
+      const { req, res } = authPost({ slug: 'my-pending-app' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(422);
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('an appBlockId-only request can NEVER reach the pending path (pending apps have no appBlockId)', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      // approved lookup misses; no slug → pending findFirst must not be consulted.
+      mockAppBlockFindUnique.mockResolvedValueOnce(null);
+      const { req, res } = authPost({ appBlockId: 'apb_missing' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(404);
+      expect((res._getJSONData() as { message: string }).message).toBe('App not found');
+      expect(mockPublishRequestFindFirst).not.toHaveBeenCalled();
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('CAPS an over-cap budget on the pending path to DEV_BUZZ_BUDGET_CAP', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+      const { req, res } = authPost({ slug: 'my-pending-app', buzzBudget: 100000 });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250);
+    });
+
+    it('forced SFW + self-bound sub hold on the pending path', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+      const { req, res } = authPost({ slug: 'my-pending-app' });
+      await handler(req as never, res as never);
+      const arg = mockSign.mock.calls[0][0];
+      expect(arg.maxBrowsingLevel).toBe(SFW);
+      expect(arg.domain).toBeNull();
+      expect(arg.userId).toBe(OWNER_ID);
+    });
+
+    it('mod-only: a NON-mod is blocked BEFORE the pending lookup', async () => {
+      mockGetSession.mockResolvedValueOnce(NONMOD_SESSION);
+      const { req, res } = authPost({ slug: 'my-pending-app' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(403);
+      expect(mockPublishRequestFindFirst).not.toHaveBeenCalled();
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('rate-limit applies to the pending path too', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockMultiIncr.value = 31;
+      const { req, res } = authPost({ slug: 'my-pending-app' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(429);
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('body-narrowing applies on the pending path; user:read:self still force-granted', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+      const { req, res } = authPost({
+        slug: 'my-pending-app',
+        scopes: ['models:read:self'], // subset; excludes user:read:self
+      });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign.mock.calls[0][0].scopes).toEqual(['models:read:self', 'user:read:self']);
+    });
   });
 });
