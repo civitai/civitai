@@ -1508,7 +1508,19 @@ export async function whatIfFromGraph({
     user: userId ? { id: userId, isModerator } : undefined,
   });
 
-  // Submit what-if request to orchestrator
+  // Submit what-if request to orchestrator.
+  //
+  // whatIf is a side-effect-free COST ESTIMATE — it creates nothing. So unlike the
+  // generate/submit WRITE path (which keeps the default 3 retries to recover a
+  // transient 5xx that may have actually created the workflow), an estimate must NOT
+  // retry a transient orchestrator failure:
+  //   - `maxAttempts: 1` — surface a transient failure ONCE, fast. Prod showed the
+  //     orchestrator hanging ~30s on an img2img source-image step, returning 5xx;
+  //     the default 3-retry path turned that one hiccup into ~93s (3 × ~30s + backoff)
+  //     before failing with INTERNAL_SERVER_ERROR. There is nothing to recover here.
+  //   - `timeoutMs: 30_000` — a generous backstop so even the single attempt can't
+  //     hang indefinitely; a fired timeout maps to a retry-able 503 (the orchestrator
+  //     root-cause fix is handled separately, so whatIf should normally be fast).
   const workflow = await submitWorkflow({
     token,
     body: {
@@ -1520,6 +1532,8 @@ export async function whatIfFromGraph({
     query: {
       whatif: true,
     },
+    maxAttempts: 1,
+    timeoutMs: 30_000,
   });
 
   // Check if all jobs are ready (have available support)

@@ -164,9 +164,39 @@ export async function submitWorkflow({
   token,
   body,
   query,
-}: Options<SubmitWorkflowData> & { token: string }) {
+  maxAttempts,
+  timeoutMs,
+}: Options<SubmitWorkflowData> & {
+  token: string;
+  /**
+   * Max total submit attempts (initial + retries), forwarded to
+   * {@link submitWorkflowWithRetry}. OMIT for the default of 3 — the generate/submit
+   * WRITE path MUST keep its 3-retry behavior so a transient 5xx that the orchestrator
+   * may have actually acted on still gets re-submitted (idempotent via `externalId`).
+   *
+   * Pass `maxAttempts: 1` ONLY for a side-effect-free caller (e.g. `whatIfFromGraph`,
+   * a pure COST ESTIMATE): retrying a transient orchestrator failure there amplifies a
+   * single ~30s upstream hiccup into ~93s (3 × 30s + backoff) before surfacing a 500.
+   * Surfacing it once, fast, is correct for an estimate that creates nothing.
+   */
+  maxAttempts?: number;
+  /**
+   * Optional overall per-attempt timeout budget (ms) for a side-effect-free caller.
+   * When set, an `AbortSignal.timeout(timeoutMs)` bounds a single client attempt so it
+   * can't hang 30s+. A fired `TimeoutError` is classified by `isUpstreamNetworkError`
+   * and (when this option — or `maxAttempts` — is provided) remapped to a retry-able
+   * 503 instead of a raw 500, mirroring the `queryWorkflows`/`getWorkflow` catch. OMIT
+   * on the WRITE path so its behavior stays byte-identical (no signal, no 503-remap).
+   */
+  timeoutMs?: number;
+}) {
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
+
+  // Whether the caller opted into the bounded/no-retry behavior. When false, the
+  // write path below is behaviorally IDENTICAL to before (no signal threaded, no
+  // network-error → 503 remap) — only the explicit estimate callers get the new path.
+  const boundedCaller = maxAttempts !== undefined || timeoutMs !== undefined;
 
   // const steps = body.steps;
   // if (steps.length > 0) {
@@ -185,10 +215,29 @@ export async function submitWorkflow({
     console.log('------');
   }
 
-  const result = await submitWorkflowWithRetry({
-    client,
-    body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
-    query,
+  const result = await submitWorkflowWithRetry(
+    {
+      client,
+      body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
+      query,
+      // Bound a single attempt for estimate callers so even one attempt can't hang
+      // 30s+. Left undefined on the write path → no AbortSignal → identical behavior.
+      ...(timeoutMs !== undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+    },
+    // `maxAttempts: undefined` falls back to the wrapper's default (3), so the write
+    // path is unchanged; estimate callers pass `1` to skip retries.
+    { maxAttempts }
+  ).catch((thrown) => {
+    // Only the bounded (estimate) callers get the network/timeout → 503 remap. A fired
+    // `AbortSignal.timeout` rejects with a `TimeoutError`, which `isUpstreamNetworkError`
+    // recognizes — surface it as a retry-able 503 (mirrors queryWorkflows/getWorkflow)
+    // instead of letting tRPC flatten the raw throw to a 500. The write path never
+    // reaches here for a network error in a way that changes its prior behavior: it
+    // passes no signal (so no TimeoutError) and `boundedCaller` is false, so any throw
+    // re-bubbles exactly as before.
+    if (boundedCaller && isUpstreamNetworkError(thrown))
+      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, thrown);
+    throw thrown;
   });
 
   // Narrow on `result.data` (not a destructured copy) so this always-throwing
