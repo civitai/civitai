@@ -120,6 +120,13 @@ const featureFlags = createFeatureFlags({
     description: `Show the Events item in the main site navigation.`,
     availability: ['public'],
   },
+  nativeVideoControls: {
+    toggleable: true,
+    default: false,
+    displayName: 'Native Video Controls',
+    description: `Use your browser's built-in video player controls (with a seek bar) for all videos.`,
+    availability: ['public'],
+  },
   alternateHome: ['public'],
   collections: ['public'],
   air: {

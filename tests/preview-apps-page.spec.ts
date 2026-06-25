@@ -33,7 +33,7 @@ import { trpcQuery } from './preview-trpc';
  *  - Page route `/apps/run/[slug]/[[...path]]` SSR-gates on
  *    `features.appBlocks && features.appBlocksPages`, resolves the approved app
  *    by `block_id`, and renders `<PageBlockHost>`: the W7 trust chrome
- *    (`AppBlockChrome`, with an "App block menu" button) above the block
+ *    (`AppBlockChrome`, with an "App menu" button) above the block
  *    `<iframe>` (`title=<appName>`, `data-block-instance-id="page_<appBlockId>"`,
  *    `data-block-ready` flipping to "true" on BLOCK_READY).
  *
@@ -43,7 +43,7 @@ import { trpcQuery } from './preview-trpc';
  * So `getByTestId('app-page-iframe' | 'app-block-chrome' | 'app-page-frame')`
  * NEVER matches against a deployed preview — the elements render fine, the
  * attribute is just gone. We therefore assert on attributes the production build
- * KEEPS: the chrome's accessible "App block menu" button, and the iframe's
+ * KEEPS: the chrome's accessible "App menu" button, and the iframe's
  * `data-block-instance-id` (a `page_*` id) + `data-block-ready`. (`reactRemove
  * Properties` only strips `^data-testid$`, so other `data-*` attrs survive.)
  * This mirrors the sibling preview-apps-* specs, which assert via tRPC + ARIA
@@ -96,7 +96,7 @@ test.describe('App Blocks full-page app surface (mod)', () => {
     // menu" button is unique to AppBlockChrome and uses a production-safe
     // accessible name (NOT a stripped data-testid).
     await expect(
-      page.getByRole('button', { name: 'App block menu' }),
+      page.getByRole('button', { name: 'App menu' }),
       'the full-page host should render the W7 trust chrome'
     ).toBeVisible();
 

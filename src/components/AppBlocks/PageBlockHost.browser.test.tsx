@@ -145,9 +145,16 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
 
     // The block claims a WIDER set than the host withheld — the host must ignore
     // the claim and grant only its server-known missingScopes.
-    postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted', 'buzz:spend:self'] });
-
+    //
+    // Re-post REQUEST_CONSENT INSIDE the waitFor: driveToReady only guarantees the
+    // DOM `data-block-ready` attribute, but the host's message-gate state can lag
+    // it by a tick — so a single fire-once REQUEST_CONSENT can land while the gate
+    // still reads "not ready", get dropped (see the "before BLOCK_READY is dropped"
+    // test), and never retried → the dialog never opens (a 10s CI-contention flake).
+    // Re-posting until the dialog appears mirrors driveToReady's BLOCK_READY retry;
+    // waitFor exits on the first success, so exactly one post opens exactly one dialog.
     await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted', 'buzz:spend:self'] });
       expect(useDialogStore.getState().dialogs).toHaveLength(1);
     });
 
