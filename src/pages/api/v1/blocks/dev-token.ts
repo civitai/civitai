@@ -93,6 +93,16 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    on a non-zero `spendSharePct`, re-confirm no pending-path mint can ever land a
  *    real `OauthClient.id` in `appId`.
  *
+ *    PENDING-PATH AUDIT GATE (FIX 🟡-1): a pending-app dev mint has NO
+ *    AppBlock-backed audit rows — recordSpendAttribution throws+swallows on the
+ *    synthetic appId and recordScopeInvocation FK-fails on the synthetic
+ *    appBlockId, so the ONLY durable trail is the structured
+ *    `blocks.dev-token.pending-mint` log event (userId/slug/publishRequestId/
+ *    scopes/spendGranted) emitted at mint time (queryable in Axiom/Loki). GATE:
+ *    durable, per-spend audit rows for pending apps (e.g. a nullable-appBlockId
+ *    schema change so recordScopeInvocation can persist) is a GA-gate item before
+ *    pending-app dev spend is widened past the mod-only pre-GA posture.
+ *
  *    OWNERSHIP / NO-ORACLE: only the `slug` input can reach the pending path
  *    (pending apps have no `appBlockId`); a row the caller doesn't own — or no
  *    row at all — returns the SAME bare `404 { message: 'App not found' }` as
@@ -395,6 +405,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     blockInstanceId: string;
   };
   let resolved: Resolved | null = null;
+  // Set ONLY on the local-manifest (pending) path so the structured mint-audit
+  // log (FIX 🟡-1) can fire for pending mints — the only path WITHOUT durable
+  // AppBlock-backed audit rows (recordSpendAttribution throws+swallows on the
+  // synthetic appId; recordScopeInvocation FK-fails on the synthetic appBlockId).
+  let pendingPublishRequestId: string | null = null;
 
   if (block && block.app && block.app.userId === user.id) {
     // Owned approved row → existing-app mode. But an OWNED-yet-not-approved row
@@ -413,7 +428,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // The app MUST declare a page block — dev-token mints PAGE tokens only (the
     // live-local target is a page app; no model binding).
     const manifest = (block.manifest ?? {}) as { page?: unknown };
-    if (typeof manifest.page !== 'object' || manifest.page === null) {
+    if (
+      typeof manifest.page !== 'object' ||
+      manifest.page === null ||
+      Array.isArray(manifest.page)
+    ) {
       res
         .status(422)
         .json({ message: 'dev-token mints page tokens; this app declares no page block' });
@@ -447,13 +466,18 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       // The un-reviewed manifest MUST declare a page block — same 422 as the
       // approved path (dev-token mints page tokens only).
       const manifest = (pending.manifest ?? {}) as { page?: unknown; scopes?: unknown };
-      if (typeof manifest.page !== 'object' || manifest.page === null) {
+      if (
+        typeof manifest.page !== 'object' ||
+        manifest.page === null ||
+        Array.isArray(manifest.page)
+      ) {
         res
           .status(422)
           .json({ message: 'dev-token mints page tokens; this app declares no page block' });
         return;
       }
       const manifestScopesRaw: unknown[] = Array.isArray(manifest.scopes) ? manifest.scopes : [];
+      pendingPublishRequestId = pending.id;
       resolved = {
         // Scope SOURCE is the UN-REVIEWED manifest.scopes (§4 R1) — clamped by the
         // IDENTICAL belt below (allowlist + page-forbidden + 7f spend ceiling).
@@ -613,6 +637,29 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   const buzzBudget = granted.includes('ai:write:budgeted')
     ? Math.min(requestedBudget ?? DEV_BUZZ_BUDGET_DEFAULT, DEV_BUZZ_BUDGET_CAP)
     : undefined;
+
+  // 8b. PENDING-PATH MINT AUDIT (FIX 🟡-1). The pending (local-manifest) path is
+  // the ONLY mint without durable, queryable audit rows: recordSpendAttribution
+  // throws+swallows on the synthetic `pending-<id>` appId, and recordScopeInvocation
+  // FK-fails on the synthetic `appBlockId` (no AppBlock row). Without this, a dev
+  // minting a spend-capable token against an UN-REVIEWED app leaves no forensic
+  // trail. Emit a structured event (Axiom/Loki-queryable) with the mint metadata —
+  // NEVER the token/secret. Placed AFTER the final scope clamp + budget resolution
+  // so `scopes`/`spendGranted` reflect the actual minted outcome (7f clamp included).
+  // PENDING-PATH ONLY: the approved path already has durable AppBlock-backed audit
+  // rows (recordSpendAttribution / recordScopeInvocation persist there), so it does
+  // not emit this event. The `mode: 'pending'` field is carried so a future
+  // approved-side log could reuse the same schema.
+  if (pendingPublishRequestId) {
+    req.log?.info('blocks.dev-token.pending-mint', {
+      mode: 'pending',
+      userId: user.id,
+      slug: resolved.signBlockId,
+      publishRequestId: pendingPublishRequestId,
+      scopes: granted,
+      spendGranted: granted.includes('ai:write:budgeted'),
+    });
+  }
 
   // 9. The synthetic, revocable PAGE instance id was resolved in step 6:
   //    - approved path:  `page_<appBlockId>` (same shape as the prod page mint),

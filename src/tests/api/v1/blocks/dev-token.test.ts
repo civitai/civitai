@@ -385,6 +385,27 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(mockSign).not.toHaveBeenCalled();
   });
 
+  it('422 (approved path) when manifest.page is an ARRAY (not a plain object) — FIX 🟡-2', async () => {
+    // `typeof [] === 'object'` and `[] !== null`, so the old check ACCEPTED an
+    // array. The tightened check rejects arrays: a "declares a page block" gate
+    // must require a plain object, never attacker-supplied non-object JSON.
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockAppBlockFindUnique.mockResolvedValueOnce(pageApp({ manifest: { page: [] } }));
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(422);
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it('200 (approved path) when manifest.page is a plain object {} — still mints (FIX 🟡-2 regression guard)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockAppBlockFindUnique.mockResolvedValueOnce(pageApp({ manifest: { page: {} } }));
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign).toHaveBeenCalledTimes(1);
+  });
+
   it('429 when the per-user rate limit is exceeded', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockMultiIncr.value = 31; // > RATE_LIMIT.max (30)
@@ -760,6 +781,91 @@ describe('POST /api/v1/blocks/dev-token', () => {
       await handler(req as never, res as never);
       expect(res._getStatusCode()).toBe(422);
       expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('422 when the owned pending manifest sets page to an ARRAY — FIX 🟡-2', async () => {
+      // On the PENDING path the manifest is developer-controlled + un-reviewed, so
+      // a dev could set `page: []` (an array is `typeof 'object'`, non-null) to
+      // satisfy the old "declares a page block" gate. The tightened check rejects
+      // it → 422, never a mint.
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(
+        pendingRequest({ manifest: { page: [], scopes: ['models:read:self'] } })
+      );
+      const { req, res } = authPost({ slug: 'my-pending-app' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(422);
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('200 when the owned pending manifest page is a plain object {} (FIX 🟡-2 regression guard)', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(
+        pendingRequest({ manifest: { page: {}, scopes: ['models:read:self'] } })
+      );
+      const { req, res } = authPost({ slug: 'my-pending-app' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign).toHaveBeenCalledTimes(1);
+    });
+
+    it('FIX 🟡-1: emits the structured blocks.dev-token.pending-mint log with spendGranted=true (bearer has AIServicesWrite)', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION); // Full → AIServicesWrite → can spend
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+      const { req, res } = authPost({ slug: 'my-pending-app' });
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(200);
+      const log = (req as unknown as { log: { info: ReturnType<typeof vi.fn> } }).log;
+      expect(log.info).toHaveBeenCalledWith(
+        'blocks.dev-token.pending-mint',
+        expect.objectContaining({
+          mode: 'pending',
+          userId: OWNER_ID,
+          slug: 'my-pending-app',
+          publishRequestId: 'pubreq_01HXYZ',
+          spendGranted: true,
+        })
+      );
+      // The granted scopes are logged for forensics; the token/secret is NEVER logged.
+      const call = log.info.mock.calls.find((c) => c[0] === 'blocks.dev-token.pending-mint');
+      expect(call?.[1].scopes).toEqual([
+        'ai:write:budgeted',
+        'apps:storage:read',
+        'models:read:self',
+        'user:read:self',
+      ]);
+      expect(JSON.stringify(call?.[1])).not.toContain('jwt.signed.value');
+    });
+
+    it('FIX 🟡-1: pending-mint log reflects spendGranted=false when the bearer LACKS AIServicesWrite (7f clamp)', async () => {
+      mockGetSession.mockResolvedValueOnce(READONLY_MOD_SESSION); // no AIServicesWrite
+      noApprovedRow();
+      mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+      const { req, res } = authPost({ slug: 'my-pending-app' });
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(200);
+      const log = (req as unknown as { log: { info: ReturnType<typeof vi.fn> } }).log;
+      const call = log.info.mock.calls.find((c) => c[0] === 'blocks.dev-token.pending-mint');
+      expect(call).toBeDefined();
+      expect(call?.[1].spendGranted).toBe(false);
+      expect(call?.[1].scopes).not.toContain('ai:write:budgeted');
+    });
+
+    it('FIX 🟡-1: the APPROVED path does NOT emit the pending-mint log', async () => {
+      // The approved path has durable AppBlock-backed audit rows, so the structured
+      // pending-mint event must not fire for it (it is pending-path-only).
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      const { req, res } = authPost({ appBlockId: 'apb_abc' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const log = (req as unknown as { log: { info: ReturnType<typeof vi.fn> } }).log;
+      const call = log.info.mock.calls.find((c) => c[0] === 'blocks.dev-token.pending-mint');
+      expect(call).toBeUndefined();
     });
 
     it('an appBlockId-only request can NEVER reach the pending path (pending apps have no appBlockId)', async () => {
