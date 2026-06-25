@@ -3,6 +3,7 @@ import { dev } from '$app/environment';
 import type { RequestHandler } from './$types';
 import { clearSession } from '$lib/server/auth/session';
 import { clearDeviceCookie } from '$lib/server/auth/device';
+import { clearLegacyCookies } from '$lib/server/auth/legacy-cookies';
 import { sessions } from '$lib/server/auth/registry';
 import { readReturnUrl, buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
@@ -59,9 +60,12 @@ export const POST: RequestHandler = async ({ cookies, locals, url }) => {
     await sessions.invalidateToken(locals.tokenId, locals.user?.id).catch(() => {});
   }
   // Clear the hub's `.civitai.com` session AND device cookies (the seamless-switch account set must not survive
-  // logout on a shared machine — mirrors the spoke's buildLogoutCookies).
+  // logout on a shared machine — mirrors the spoke's buildLogoutCookies). Also clear any leftover LEGACY
+  // next-auth cookies on `.civitai.com` — the main app's hybrid fallback still honors the legacy session cookie,
+  // so leaving it would silently re-authenticate the user after a cross-domain logout.
   clearSession(cookies);
   clearDeviceCookie(cookies);
+  clearLegacyCookies(cookies);
 
   // The returnUrl can be a CROSS-SITE spoke absolute URL (the .red logout sends the browser here), so it MUST be
   // validated against the trusted-spoke registry — an unvalidated redirect here would be an open redirect. Same
