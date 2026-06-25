@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import {
@@ -74,9 +74,20 @@ function fakeRes() {
   return res as NextApiResponse & { statusCode?: number; body?: any; headers: Record<string, any> };
 }
 
-async function invoke(query: Record<string, unknown>) {
+// The handler module (`~/pages/api/v1/models/index`) cold-transforms a sizable
+// graph (~9s in isolation); a PER-TEST `await import(...)` of it races the suite's
+// worker pool for CPU and blew the 10s default timeout under full-suite contention
+// (cascading the next test into a half-loaded-module assertion). Import it ONCE here
+// with a generous import-only timeout; the per-test `invoke` then just calls the
+// already-loaded handler. The mocked deps make this a pure in-memory call.
+let handler: (req: NextApiRequest, res: NextApiResponse) => Promise<void> | void;
+
+beforeAll(async () => {
   const mod = await import('~/pages/api/v1/models/index');
-  const handler = mod.default as any;
+  handler = mod.default as any;
+}, 120000);
+
+async function invoke(query: Record<string, unknown>) {
   const req = {
     method: 'GET',
     query,

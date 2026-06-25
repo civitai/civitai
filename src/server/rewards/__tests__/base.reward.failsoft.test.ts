@@ -11,14 +11,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // failure, the CH brownout 500'd those user actions.
 //
 // A non-critical analytics/reward tracking write must NEVER take down a user
-// action. This suite pins the fail-soft contract on the INLINE `apply` path:
-//   (a) a thrown CH error from addBuzzEvent inside `apply` does NOT propagate
-//       (the surrounding user mutation would succeed)
-//   (b) the rewardFailedCounter increments on that failure
+// action *when the failure is a transient CH infra brownout*. This suite pins the
+// fail-soft contract on the INLINE `apply` path:
+//   (a) a TRANSIENT CH error (socket hang up) from addBuzzEvent inside `apply` does
+//       NOT propagate (the surrounding user mutation would succeed)
+//   (b) the rewardFailedCounter + clickhouseFailSoftCounter increment on that failure
 //   (c) no double-award: when the audit insert fails, sendAward is NOT called
 //       (the actual Buzz grant is skipped, not duplicated)
 //   (d) a sendAward failure inside `apply` ALSO does not propagate (and no rethrow)
 //   (e) the batch `process` path STILL rethrows (background cron — unchanged)
+//   (f) NARROWING: a NON-transport CH error (UNKNOWN_TABLE / a real query bug) from
+//       addBuzzEvent RETHROWS — it must surface as a 500 so a schema break / missing
+//       table can't be silently swallowed (the 2026-06-24 missing-table incident).
 //
 // MONEY-CORRECTNESS (verified from code, documented in PR body): the ClickHouse
 // `buzzEvents` insert from addBuzzEvent is an AUDIT row and does not move money.
@@ -39,6 +43,7 @@ const h = vi.hoisted(() => {
     getMultipliersForUser: vi.fn(async () => ({ rewardsMultiplier: 1 })),
     rewardFailedInc: vi.fn(),
     rewardGivenInc: vi.fn(),
+    chFailSoftInc: vi.fn(),
     logToAxiom: vi.fn(async () => {}),
   };
 });
@@ -72,6 +77,7 @@ vi.mock('~/server/logging/client', () => ({
 vi.mock('~/server/prom/client', () => ({
   rewardFailedCounter: { inc: (...a: any[]) => h.rewardFailedInc(...a) },
   rewardGivenCounter: { inc: (...a: any[]) => h.rewardGivenInc(...a) },
+  clickhouseFailSoftCounter: { inc: (...a: any[]) => h.chFailSoftInc(...a) },
 }));
 
 vi.mock('~/server/services/buzz.service', () => ({
@@ -115,26 +121,35 @@ function makeOnDemandReward() {
 }
 
 describe('base.reward inline apply() fail-soft (CH brownout)', () => {
-  it('(a) does NOT propagate a ClickHouse insert error out of apply()', async () => {
-    h.insertImpl.mockRejectedValue(new Error('Too many simultaneous queries for all users'));
+  it('(a) does NOT propagate a TRANSIENT CH insert error out of apply()', async () => {
+    // socket hang up = the canonical CH Cloud transport flap (the 2026-06-24 issue).
+    h.insertImpl.mockRejectedValue(new Error('socket hang up'));
     const reward = makeOnDemandReward();
 
     // Must resolve (not reject) — the surrounding user mutation would succeed.
     await expect(reward.apply({ userId: 1, entityId: 42 })).resolves.toBeUndefined();
   });
 
-  it('(b) increments rewardFailedCounter when the insert fails', async () => {
-    h.insertImpl.mockRejectedValue(new Error('CH down'));
+  it('(a2) also fail-softs the transient CAPACITY brownout (Code 202)', async () => {
+    h.insertImpl.mockRejectedValue(new Error('Too many simultaneous queries for all users'));
+    const reward = makeOnDemandReward();
+    await expect(reward.apply({ userId: 1, entityId: 42 })).resolves.toBeUndefined();
+    expect(h.chFailSoftInc).toHaveBeenCalledWith({ path: 'buzz-reward' });
+  });
+
+  it('(b) increments rewardFailedCounter + clickhouseFailSoftCounter on a transient failure', async () => {
+    h.insertImpl.mockRejectedValue(new Error('socket hang up'));
     const reward = makeOnDemandReward();
 
     await reward.apply({ userId: 1, entityId: 42 });
 
     expect(h.rewardFailedInc).toHaveBeenCalledTimes(1);
+    expect(h.chFailSoftInc).toHaveBeenCalledWith({ path: 'buzz-reward' });
   });
 
-  it('(c) does NOT send the award (no double-award) when the audit insert fails', async () => {
+  it('(c) does NOT send the award (no double-award) when the audit insert fails transiently', async () => {
     h.evalImpl.mockResolvedValue(100); // would be an "awarded" event
-    h.insertImpl.mockRejectedValue(new Error('CH down'));
+    h.insertImpl.mockRejectedValue(new Error('socket hang up'));
     const reward = makeOnDemandReward();
 
     await reward.apply({ userId: 1, entityId: 42 });
@@ -146,13 +161,28 @@ describe('base.reward inline apply() fail-soft (CH brownout)', () => {
   });
 
   it('(c2) limits inline insert retries (does not block ~2.5s with 5 retries)', async () => {
-    h.insertImpl.mockRejectedValue(new Error('CH down'));
+    h.insertImpl.mockRejectedValue(new Error('socket hang up'));
     const reward = makeOnDemandReward();
 
     await reward.apply({ userId: 1, entityId: 42 });
 
     // INLINE_RETRY_COUNT = 1 → 2 total attempts. (Batch path uses 5 → 6 attempts.)
     expect(h.insertImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('(f) RETHROWS a non-transport CH error (UNKNOWN_TABLE) so a schema break surfaces', async () => {
+    // Code 60 UNKNOWN_TABLE — the missing-table deploy break. Must NOT be swallowed.
+    const tableError = Object.assign(new Error('Table default.buzzEvents does not exist'), {
+      code: '60',
+    });
+    h.insertImpl.mockRejectedValue(tableError);
+    const reward = makeOnDemandReward();
+
+    await expect(reward.apply({ userId: 1, entityId: 42 })).rejects.toThrow(/does not exist/);
+    // Fail-soft counter must NOT increment — this isn't a transient brownout.
+    expect(h.chFailSoftInc).not.toHaveBeenCalled();
+    // The award is never sent (we threw before reaching sendAward).
+    expect(h.createBuzzTransactionMany).not.toHaveBeenCalled();
   });
 
   it('happy path: records the event and sends the award', async () => {

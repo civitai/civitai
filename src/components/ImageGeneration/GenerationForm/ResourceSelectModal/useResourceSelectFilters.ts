@@ -18,8 +18,11 @@ export function useResourceSelectQueries(selectedTab: Tabs) {
   const currentUser = useCurrentUser();
   const { selectSource } = useResourceSelectContext();
 
+  // Fetch for any logged-in user (not just the 'liked' tab) so the favorite
+  // state renders correctly on every tab and the toggle's optimistic cache
+  // update propagates back to the cards for immediate feedback.
   const { data: likedModels } = trpc.user.getBookmarkedModels.useQuery(undefined, {
-    enabled: !!currentUser && selectedTab === 'liked',
+    enabled: !!currentUser,
   });
 
   const { data: featuredModels, isFetching: isLoadingFeatured } =

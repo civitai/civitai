@@ -51,14 +51,9 @@ import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
 import { ModelType, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
-import { getDefaultTrainingParams, trainingStore } from '~/store/training.store';
+import { buildContinuationRunUpdate, trainingStore } from '~/store/training.store';
 import { basePath as trainWizardBasePath } from '~/components/Training/Form/TrainingCommon';
-import {
-  AI_TOOLKIT_EPOCHS,
-  aiToolkitStepDefault,
-  aiToolkitSaveEveryDefault,
-  type TrainingBaseModelType,
-} from '~/utils/training';
+import type { TrainingBaseModelType } from '~/utils/training';
 import type { ModelVersionById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
@@ -535,28 +530,22 @@ export default function TrainingSelectFile({
       await continueFileMutation.mutateAsync(fileData);
 
       // Seed the submit form: steps-pricing defaults + continueFrom, reusing the source
-      // run's base model and prompts. "Save every" seeds to ~10 checkpoints; maxTrainEpochs
-      // (sent as `epochs`) is derived from it in the submit form.
-      const params = getDefaultTrainingParams(base, 'ai-toolkit');
-      params.engine = 'ai-toolkit';
-      params.trainBatchSize = 1;
-      params.targetSteps = aiToolkitStepDefault(baseType);
-      params.saveEvery = aiToolkitSaveEveryDefault(params.targetSteps);
-      params.maxTrainEpochs = AI_TOOLKIT_EPOCHS.default;
-      params.continueFrom = continueFromAir;
-
+      // run's base model and prompts. The same seeding runs reload-safe on Step 3
+      // (TrainingSubmit) via the shared helper, so the in-memory store being cleared on a
+      // refresh/deep-link can't silently fall back to the default SDXL base.
       trainingStore.resetRuns(model.id, mediaType);
-      trainingStore.updateRun(model.id, mediaType, 1, {
-        base,
-        baseType,
-        params,
-        ...(thisTrainingDetails.samplePrompts?.length && {
+      trainingStore.updateRun(
+        model.id,
+        mediaType,
+        1,
+        buildContinuationRunUpdate({
+          base,
+          baseType,
+          continueFromAir,
           samplePrompts: thisTrainingDetails.samplePrompts,
-        }),
-        ...(thisTrainingDetails.negativePrompt && {
           negativePrompt: thisTrainingDetails.negativePrompt,
-        }),
-      });
+        })
+      );
 
       await queryUtils.training.getModelBasic.invalidate({ id: model.id });
       // Explicit version handoff — the train wizard pins this version rather than
