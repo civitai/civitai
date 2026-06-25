@@ -5,6 +5,14 @@ The auth hub (`apps/auth`, deployed at **auth.civitai.com**) ships as its own im
 `civitai-web` release. This mirrors the main app's `pnpm run release` ergonomics with a
 parallel `release:auth` family of scripts.
 
+## Prerequisites
+
+- Run from a checkout that is **on `main`** with a **clean working tree**. The release script
+  refuses to run otherwise (it commits + tags the bump onto `main` and pushes it).
+- You must have **push access to `main`** (it is a protected branch with a push allowlist). The
+  final `git push` lands the bump commit + tag directly on `main`; if you cannot push to `main`
+  the push will be rejected — see *If the push fails* below.
+
 ## How to cut a release
 
 From the repo root:
@@ -15,16 +23,34 @@ pnpm run release:auth:minor    # minor
 pnpm run release:auth:major    # major
 ```
 
-Each script:
+Each script runs `scripts/release-app.mjs apps/auth auth-app-v <bump>`, which:
 
-1. `git pull` (so the tag lands on top of the latest `main`),
-2. `npm --prefix apps/auth version <bump> --tag-version-prefix=auth-app-v` — bumps **only**
-   `apps/auth/package.json` (the root `package.json` is untouched) and creates an annotated
-   git tag named **`auth-app-vX.Y.Z`**,
-3. `git push --follow-tags` — pushes the commit + the new tag.
+1. verifies you are on `main` with a clean tree, then `git pull --rebase`,
+2. bumps **only** `apps/auth/package.json` (`npm version --no-git-tag-version`; the root
+   `package.json` is untouched),
+3. commits **only** `apps/auth/package.json` and creates an annotated tag **`auth-app-vX.Y.Z`**,
+4. `git push --follow-tags` — pushes the commit + the new tag.
+
+> The script does the commit/tag explicitly rather than via `npm version`'s built-in git step:
+> in this monorepo `.git` is at the **root**, and `npm --prefix apps/auth version` would
+> *silently skip* the commit + tag (it only creates them when `.git` lives in the package dir).
 
 Unlike the main app's `release`, this flow does **not** touch the `release` branch — the hub
 deploys straight off the tag via ghcr + Flux (see below), so there is no `release:base` step.
+
+Release **one app at a time** (concurrent releases race on the `main` push).
+
+## If the push fails
+
+If `git push` is rejected (no `main` access, or `main` advanced mid-release), the commit + tag
+were created **locally** but not pushed. Undo and retry from a clean state:
+
+```bash
+git tag -d auth-app-vX.Y.Z      # the version it printed
+git reset --hard origin/main
+```
+
+then re-run the release (ideally as someone with `main` push access).
 
 ## What happens after the push
 
