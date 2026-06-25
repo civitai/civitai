@@ -74,4 +74,15 @@ describe('checkRateLimit', () => {
     h.getRedis.mockReturnValue(redis);
     expect(await checkRateLimit('login', 'ip-1', 1, 60)).toBe(true);
   });
+
+  it('skips the limit when the identifier is empty/null — per-client or not at all, never a shared bucket', async () => {
+    const redis = makeRedis();
+    h.getRedis.mockReturnValue(redis);
+    // No resolvable per-client identifier → allow without ever touching redis (so unidentified callers
+    // can't pile into one global counter and 429 everyone). limit=0 would otherwise block immediately.
+    expect(await checkRateLimit('login', null, 0, 60)).toBe(true);
+    expect(await checkRateLimit('login', undefined, 0, 60)).toBe(true);
+    expect(await checkRateLimit('login', '', 0, 60)).toBe(true);
+    expect(redis.incr).not.toHaveBeenCalled();
+  });
 });

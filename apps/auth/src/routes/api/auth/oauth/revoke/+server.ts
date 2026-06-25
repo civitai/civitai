@@ -5,6 +5,7 @@ import { db } from '$lib/server/db/db';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { parseBody, setWildcardCors, setPublicClientCors } from '$lib/server/oauth/http';
+import { getClientIp } from '$lib/server/auth/request';
 
 // POST /api/auth/oauth/revoke — RFC 7009 token revocation. Ported from src/pages/api/auth/oauth/revoke.ts.
 // Session-cookie OR client-secret auth; ALWAYS returns 200 (even for unknown/expired tokens — never
@@ -21,14 +22,17 @@ export const OPTIONS: RequestHandler = () => {
   return new Response(null, { status: 204, headers });
 };
 
-export const POST: RequestHandler = async ({ request, getClientAddress, locals }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
   const body = await parseBody(request);
   const { token, token_type_hint, client_id, client_secret } = body;
-  const ip = getClientAddress() || 'unknown';
+  // Real CLIENT IP from proxy headers (not the shared ingress peer) — keyed per-client, or null →
+  // limit skipped, never one global bucket. `'unknown'` is for the audit log only, not the limiter.
+  const clientIp = getClientIp(request);
+  const ip = clientIp ?? 'unknown';
   const origin = request.headers.get('origin') ?? undefined;
 
   // Rate-limit by IP before any DB work.
-  if (!(await checkOAuthRateLimit('revoke', ip))) {
+  if (!(await checkOAuthRateLimit('revoke', clientIp))) {
     const headers = new Headers();
     setWildcardCors(headers);
     return json({ error: 'rate_limited' }, { status: 429, headers });
@@ -48,7 +52,12 @@ export const POST: RequestHandler = async ({ request, getClientAddress, locals }
   // Public clients sending an Origin must match the allowlist; a missing Origin is allowed (native).
   if (client && !client.isConfidential && origin) {
     if (!client.allowedOrigins.includes(origin)) {
-      logOAuthEvent({ type: 'origin.rejected', clientId: client.id, ip, metadata: { origin, endpoint: 'revoke' } });
+      logOAuthEvent({
+        type: 'origin.rejected',
+        clientId: client.id,
+        ip,
+        metadata: { origin, endpoint: 'revoke' },
+      });
       return json(
         {
           error: 'origin_not_allowed',
@@ -63,7 +72,10 @@ export const POST: RequestHandler = async ({ request, getClientAddress, locals }
   }
 
   if (!token) {
-    return json({ error: 'invalid_request', error_description: 'Missing token parameter' }, { status: 400, headers });
+    return json(
+      { error: 'invalid_request', error_description: 'Missing token parameter' },
+      { status: 400, headers }
+    );
   }
 
   // Authenticate: a valid session OR matching client credentials.

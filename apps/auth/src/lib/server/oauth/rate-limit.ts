@@ -25,7 +25,7 @@ export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;
  */
 export async function checkOAuthRateLimit(
   bucket: OAuthRateLimitBucket,
-  identifier: string
+  identifier: string | null | undefined
 ): Promise<boolean> {
   const cfg = OAUTH_RATE_LIMITS[bucket];
   return checkRateLimit(`oauth:${bucket}`, identifier, cfg.limit, cfg.windowSeconds);

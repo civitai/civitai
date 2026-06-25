@@ -11,12 +11,13 @@ import { sendVerificationEmail } from '$lib/server/email/verification.email';
 import { captchaSiteKey, verifyCaptchaToken } from '$lib/server/auth/captcha';
 import { getBlockedEmailDomains } from '$lib/server/auth/blocklist';
 import { checkRateLimit } from '$lib/server/auth/rate-limit';
+import { getClientIp } from '$lib/server/auth/request';
 import { trackLoginRedirect } from '$lib/server/tracking';
 import { userExistsByEmail } from '$lib/server/auth/users';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const load: PageServerLoad = async ({ url, locals, getClientAddress, request }) => {
+export const load: PageServerLoad = async ({ url, locals, request }) => {
   const returnUrl = readReturnUrl(url);
   const sync = readSync(url);
   const reason = url.searchParams.get('reason');
@@ -44,7 +45,7 @@ export const load: PageServerLoad = async ({ url, locals, getClientAddress, requ
   if (reason) {
     void trackLoginRedirect(reason, {
       userId: locals.user?.id,
-      ip: getClientAddress(),
+      ip: getClientIp(request) ?? undefined,
       userAgent: request.headers.get('user-agent'),
     });
   }
@@ -69,7 +70,7 @@ export const actions: Actions = {
   // + sync ride along in the link so post-verify honors them (validated at verify time).
   // Abuse controls mirror the main app's isAllowedToSignIn: rate limit by IP, Turnstile captcha,
   // and the blocked-email-domain list.
-  email: async ({ request, url, getClientAddress }) => {
+  email: async ({ request, url }) => {
     const data = await request.formData();
     const email = String(data.get('email') ?? '')
       .trim()
@@ -79,7 +80,9 @@ export const actions: Actions = {
 
     if (!EMAIL_RE.test(email)) return fail(400, { email, invalid: true });
 
-    const ip = getClientAddress();
+    // Resolve the real client IP from proxy headers (not the shared ingress socket peer) so the per-IP
+    // limit is genuinely per-client; null behind a misconfigured proxy → checkRateLimit skips the limit.
+    const ip = getClientIp(request);
 
     // 1. Rate limit (per IP) — cheap gate before any captcha/DB work.
     if (!(await checkRateLimit('email-login', ip, 5, 600))) {
@@ -89,7 +92,7 @@ export const actions: Actions = {
     // 2. Turnstile — the widget injects `cf-turnstile-response` into the form. Passes through when
     //    captcha is disabled (dev / no secret).
     const captchaToken = data.get('cf-turnstile-response')?.toString();
-    if (!(await verifyCaptchaToken(captchaToken, ip))) {
+    if (!(await verifyCaptchaToken(captchaToken, ip ?? undefined))) {
       return fail(400, { email, captcha: true });
     }
 

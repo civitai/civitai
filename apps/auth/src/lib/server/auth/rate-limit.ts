@@ -5,10 +5,13 @@ import { getRedis } from '../redis';
 // so cast past @civitai/redis's typed-key surface like the main app does.
 export async function checkRateLimit(
   bucket: string,
-  identifier: string,
+  identifier: string | null | undefined,
   limit: number,
   windowSeconds: number
 ): Promise<boolean> {
+  // No per-client identifier (e.g. the real client IP couldn't be resolved behind the proxy) → do NOT
+  // apply a shared global bucket. Per-client or not at all; skip the limit rather than throttle everyone.
+  if (!identifier) return true;
   const redis = getRedis();
   if (!redis) return true;
   const key = `auth:rate-limit:${bucket}:${identifier}`;

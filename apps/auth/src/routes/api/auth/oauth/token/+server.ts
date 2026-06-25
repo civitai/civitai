@@ -16,6 +16,7 @@ import {
   setWildcardCors,
   setPublicClientCors,
 } from '$lib/server/oauth/http';
+import { getClientIp } from '$lib/server/auth/request';
 
 // POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants.
 // Ported from src/pages/api/auth/oauth/token.ts.
@@ -31,16 +32,19 @@ export const OPTIONS: RequestHandler = () => {
   return new Response(null, { status: 204, headers });
 };
 
-export const POST: RequestHandler = async ({ request, getClientAddress }) => {
+export const POST: RequestHandler = async ({ request }) => {
   const body = await parseBody(request);
   const clientId =
     typeof body.client_id === 'string' && body.client_id ? body.client_id : 'unknown';
-  const ip = getClientAddress() || 'unknown';
+  // Real CLIENT IP from proxy headers (not the shared ingress peer) — keyed per-client, or null →
+  // limit skipped, never one global bucket. `'unknown'` is for the audit log only, not the limiter.
+  const clientIp = getClientIp(request);
+  const ip = clientIp ?? 'unknown';
   const origin = request.headers.get('origin') ?? undefined;
 
   // Rate-limit by IP before any DB work — keying on client_id would let an attacker rotate ids for a
   // fresh bucket each request.
-  if (!(await checkOAuthRateLimit('token', ip))) {
+  if (!(await checkOAuthRateLimit('token', clientIp))) {
     const headers = new Headers();
     setWildcardCors(headers);
     return json(

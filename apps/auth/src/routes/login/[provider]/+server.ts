@@ -5,14 +5,17 @@ import type { RequestHandler } from './$types';
 import { getProvider, createPkce, buildAuthorizeUrl } from '$lib/server/auth/providers';
 import { readReturnUrl, readSync } from '$lib/server/auth/redirect';
 import { checkRateLimit } from '$lib/server/auth/rate-limit';
+import { getClientIp } from '$lib/server/auth/request';
 
 // Start the upstream OAuth flow: stash state/PKCE-verifier + the returnUrl/sync we must honor
 // after login, in short-lived cookies, then redirect to the provider's consent screen.
 // `?link=true` is the account-LINKING intent (the "Connect <provider>" flow): it requires an active session
 // and tells the callback to attach the provider to the CURRENT user instead of logging in / creating one.
-export const GET: RequestHandler = async ({ params, url, cookies, locals, getClientAddress }) => {
-  // Rate limit per IP — bounds redirect/cookie churn from someone hammering the login start.
-  if (!(await checkRateLimit('oauth-start', getClientAddress(), 30, 60))) {
+export const GET: RequestHandler = async ({ params, url, cookies, locals, request }) => {
+  // Rate limit per CLIENT IP — bounds redirect/cookie churn from someone hammering the login start.
+  // Use the proxy-resolved client IP (not the ingress socket peer) so this never throttles all users
+  // through one shared bucket; getClientIp returns null behind a misconfigured proxy → limit is skipped.
+  if (!(await checkRateLimit('oauth-start', getClientIp(request), 30, 60))) {
     error(429, 'Too many requests');
   }
 
