@@ -2664,9 +2664,19 @@ export async function queryGeneratedImageWorkflows2({
   cache?: boolean;
 }) {
   const fetchAndFormat = async () => {
-    const { nextCursor, items } = await queryWorkflows(props);
+    // The queryGeneratedImages feed has a latency tail (slow >5s events). It splits
+    // into two awaits — the orchestrator HTTP read (`queryWorkflows`) and the
+    // resource-enrichment mapping (`formatGenerationResponse2`) — and we don't yet
+    // know which dominates. Wrap each in its own span (transparent withSpan, same
+    // pattern as the `gen:createSteps:*` spans above) to localize the tail for a
+    // follow-up optimization. Both the cached and uncached paths run through here.
+    const { nextCursor, items } = await withSpan('gen:queryGI:queryWorkflows', () =>
+      queryWorkflows(props)
+    );
     return {
-      items: await formatGenerationResponse2(items as Workflow[], user),
+      items: await withSpan('gen:queryGI:format', () =>
+        formatGenerationResponse2(items as Workflow[], user)
+      ),
       nextCursor,
     };
   };
