@@ -784,7 +784,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   if (conflicting) {
     if (conflicting.submittedByUserId === submittedByUserId) {
       throw new Error(
-        `you already have a pending submission for slug ${slug} (${conflicting.id}); withdraw it before resubmitting`
+        `you already have a pending submission for slug ${slug} (${conflicting.id}); withdraw it first with \`civitai app withdraw ${conflicting.id}\` before resubmitting`
       );
     }
     throw new Error(
@@ -940,9 +940,56 @@ export async function getMyPendingForSlug(opts: {
 }
 
 /**
+ * Stable, typed failure modes for {@link withdrawRequest}. Callers (the
+ * `POST /api/v1/blocks/withdraw` endpoint, the `withdrawPublishRequest` tRPC
+ * procedure) switch on `.code` rather than substring-matching the human
+ * `message` — so the HTTP/TRPC status mapping can't silently drift if a
+ * message string is reworded (a free-text `.includes('own')` map was an
+ * ownership-oracle footgun). The `message` is preserved verbatim for logs +
+ * the tRPC BAD_REQUEST passthrough.
+ *
+ *   - NOT_FOUND   — no such row.
+ *   - NOT_OWNED   — the row exists but belongs to another user (the endpoint
+ *                   collapses this to the SAME response as NOT_FOUND — never an
+ *                   ownership oracle).
+ *   - NOT_PENDING — the caller owns the row but it is no longer `pending`
+ *                   (approved / rejected), so it cannot be withdrawn.
+ */
+export type WithdrawRequestErrorCode = 'NOT_FOUND' | 'NOT_OWNED' | 'NOT_PENDING';
+
+export class WithdrawRequestError extends Error {
+  readonly code: WithdrawRequestErrorCode;
+  constructor(code: WithdrawRequestErrorCode, message: string) {
+    super(message);
+    this.name = 'WithdrawRequestError';
+    this.code = code;
+  }
+}
+
+/**
  * Dev-facing withdrawal of their own pending request. Idempotent
- * (re-withdrawing is a no-op if already withdrawn). Throws on attempting
- * to withdraw someone else's request.
+ * (re-withdrawing is a no-op if already withdrawn). Throws a typed
+ * {@link WithdrawRequestError} on a missing row, another user's row, or a
+ * non-`pending` row.
+ *
+ * CONCURRENCY (audit S1 — TOCTOU): the `findUnique` only CLASSIFIES the
+ * outcome; the actual mutation is a status-guarded `updateMany` keyed on
+ * `{ id, status: 'pending' }`, so a withdraw that read `pending` can no longer
+ * clobber a row a concurrent `approveRequest` flipped to `approved` between the
+ * read and the write (which would desync the live block from its request row
+ * and silently break the deploy state machine — `markRequestDeployState`
+ * filters on `status='approved'`). If the guarded write matches 0 rows despite
+ * the earlier pending classification, we re-read and resolve the race: now
+ * `withdrawn` → idempotent success; now `approved`/`rejected` → NOT_PENDING.
+ * This makes the "refuses to withdraw a non-pending request" guarantee TRUE
+ * under concurrency.
+ *
+ * NOTE: a withdraw landing in the MIDDLE of an in-flight `approveRequest` (the
+ * dev withdraws at the exact instant a mod approves) can still leave an
+ * approved/withdrawn split — that direction is mod-initiated, lower severity,
+ * pre-existing, and NOT worsened here; the dangerous scriptable
+ * (dev-self-service) direction is the one closed by the guard above. Tracked as
+ * a follow-up to harden `approveRequest` symmetrically.
  */
 export async function withdrawRequest(opts: {
   publishRequestId: string;
@@ -954,18 +1001,46 @@ export async function withdrawRequest(opts: {
     where: { id: publishRequestId },
     select: { id: true, status: true, submittedByUserId: true },
   });
-  if (!row) throw new Error(`publish request ${publishRequestId} not found`);
+  if (!row) {
+    throw new WithdrawRequestError('NOT_FOUND', `publish request ${publishRequestId} not found`);
+  }
   if (row.submittedByUserId !== userId) {
-    throw new Error('you can only withdraw your own publish requests');
+    throw new WithdrawRequestError('NOT_OWNED', 'you can only withdraw your own publish requests');
   }
   if (row.status === 'withdrawn') return;
   if (row.status !== 'pending') {
-    throw new Error(`cannot withdraw a request in status ${row.status}`);
+    throw new WithdrawRequestError(
+      'NOT_PENDING',
+      `cannot withdraw a request in status ${row.status}`
+    );
   }
-  await dbWrite.appBlockPublishRequest.update({
-    where: { id: publishRequestId },
+
+  // Status-guarded write: only flip a STILL-`pending` row. This is the atomic
+  // step that closes the TOCTOU window against a concurrent approve.
+  const { count } = await dbWrite.appBlockPublishRequest.updateMany({
+    where: { id: publishRequestId, status: 'pending' },
     data: { status: 'withdrawn' },
   });
+  if (count === 0) {
+    // The row changed under us between the classify-read and the guarded write
+    // (lost the race). Re-read from the PRIMARY (`dbWrite`) — a replica read
+    // could be lag-stale and still report `pending`, which would mis-resolve
+    // the race — and decide the authoritative outcome.
+    const after = await dbWrite.appBlockPublishRequest.findUnique({
+      where: { id: publishRequestId },
+      select: { status: true },
+    });
+    if (!after || after.status === 'withdrawn') {
+      // Raced into withdrawn (or vanished) → idempotent success, no throw.
+      return;
+    }
+    // Raced into approved/rejected → the not-pending guarantee, now true under
+    // concurrency.
+    throw new WithdrawRequestError(
+      'NOT_PENDING',
+      `cannot withdraw a request in status ${after.status}`
+    );
+  }
 }
 
 /**

@@ -35,29 +35,27 @@
   pointer-events: none;
 }
 
-.volumeControl {
-  z-index: 10;
-  display: flex;
-  position: relative;
-  flex-direction: column;
-  gap: 8px;
-
-  &:hover {
-    .volumeSlider {
-      display: block;
-    }
-  }
+.volumeDropdown {
+  // No box — prod shows the bare track floating over the video. Tight padding keeps the slider
+  // close to the volume button.
+  padding: 2px 4px;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  min-height: unset;
 }
 
 .volumeSlider {
-  display: none;
-  position: absolute;
-  line-height: 1;
-  padding: var(--mantine-spacing-xs);
-  top: 0;
-  left: 0;
-  transform: translate(-33%, -170%) rotate(270deg);
-  z-index: 10;
+  // Native vertical range — let the browser handle thumb centering + the fill indicator (this is
+  // what prod does). Do NOT set appearance:none or a tiny width, or the thumb renders outside the
+  // track with no fill (the bug we hit). writing-mode is the modern vertical orientation.
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 1.5rem;
+  height: 100px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--mantine-color-blue-5);
 }
 
 .playButton {
