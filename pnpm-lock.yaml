@@ -38,8 +38,8 @@ importers:
         specifier: ^0.4.0
         version: 0.4.2(@civitai/app-sdk@0.6.0)(react@18.3.1)
       '@civitai/client':
-        specifier: 0.2.0-beta.75
-        version: 0.2.0-beta.75
+        specifier: 0.2.0-beta.76
+        version: 0.2.0-beta.76
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -1449,8 +1449,8 @@ packages:
       '@civitai/app-sdk': ^0.6.0
       react: ^18.0.0 || ^19.0.0
 
-  '@civitai/client@0.2.0-beta.75':
-    resolution: {integrity: sha512-fCTqT4TvDwXU/qlB3k4yMoCbKM9RLcslP6JBYWRQxp4tdph1SSJwOBG8fC5nuVz45hnQ98anVuUaYrB99RfREA==}
+  '@civitai/client@0.2.0-beta.76':
+    resolution: {integrity: sha512-Wnd1QkDoKahPTETAHYIv9xxqdr0lylknYz1p+nk+LAbaBPwj4MaJYuRtz5LL6lu0LVTUm992hqsXD9bzIr0NQg==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/cybertipline-tools@0.1.0':
@@ -11791,7 +11791,7 @@ snapshots:
       '@civitai/app-sdk': 0.6.0
       react: 18.3.1
 
-  '@civitai/client@0.2.0-beta.75':
+  '@civitai/client@0.2.0-beta.76':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
