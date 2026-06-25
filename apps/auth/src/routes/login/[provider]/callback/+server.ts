@@ -6,6 +6,7 @@ import { getProvider, exchangeCode, fetchProfile } from '$lib/server/auth/provid
 import { findOrCreateUser, linkAccountToUser } from '$lib/server/auth/users';
 import { establishSession } from '$lib/server/auth/session';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
+import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 
 export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   const provider = getProvider(params.provider);
@@ -20,7 +21,13 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   const linkIntent = cookies.get('oauth_link') === '1';
 
   // Clear flow cookies regardless of outcome.
-  for (const name of ['oauth_state', 'oauth_verifier', 'oauth_return', 'oauth_sync', 'oauth_link']) {
+  for (const name of [
+    'oauth_state',
+    'oauth_verifier',
+    'oauth_return',
+    'oauth_sync',
+    'oauth_link',
+  ]) {
     cookies.delete(name, { path: '/' });
   }
 
@@ -40,12 +47,15 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   // sync). On conflict, bounce back with an error the account page surfaces. The session must STILL be present
   // (it rides the callback as a Lax cookie) — if it was lost between start and callback, fail rather than fall
   // through to login/create, which could silently switch the user to a different account.
+  // Resolve the registry-aware origin allow-check once (cached); reused by both redirect paths below.
+  const isAllowedOrigin = await buildPostLoginOriginCheck();
+
   if (linkIntent) {
     if (!locals.user) error(401, 'Session expired — sign in and try linking again');
     const result = await linkAccountToUser(locals.user.id, provider.id, profile, scope);
     const target =
       result === 'conflict' ? appendQuery(returnUrl, 'error', 'AccountNotLinked') : returnUrl;
-    redirect(302, buildPostLoginRedirect(target, null, url.origin, dev));
+    redirect(302, buildPostLoginRedirect(target, null, url.origin, dev, isAllowedOrigin));
   }
 
   // Standard login / signup — the hub sets the session cookie here.
@@ -56,7 +66,7 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   // to the main app via AUTH_DEFAULT_RETURN_URL, falling back to the hub-relative default when unset.
   const loginReturn =
     returnUrl === '/' && env.AUTH_DEFAULT_RETURN_URL ? env.AUTH_DEFAULT_RETURN_URL : returnUrl;
-  redirect(302, buildPostLoginRedirect(loginReturn, sync, url.origin, dev));
+  redirect(302, buildPostLoginRedirect(loginReturn, sync, url.origin, dev, isAllowedOrigin));
 };
 
 // Append a query param to a (relative or absolute) returnUrl, preserving any hash.

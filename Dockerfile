@@ -22,19 +22,24 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
 
 ##### BUILDER
 
-FROM node:20-alpine3.20 AS builder
+# FROM deps (NOT a fresh node image) so the builder INHERITS the complete node_modules from the install stage
+# — including the nested packages/*/node_modules pnpm creates for each workspace package's OWN deps (e.g.
+# @civitai/db-schema's `kysely`). The old approach copied only the ROOT node_modules, which dropped those
+# nested trees; since the workspace packages are consumed as SOURCE, `next build`'s TypeScript pass then
+# couldn't resolve their deps and failed with "Cannot find module 'kysely'". Mirrors apps/auth/Dockerfile,
+# whose build stage is also `FROM deps`. corepack/pnpm and the postinstall-generated Prisma client are
+# inherited too, so they don't need re-running here.
+FROM deps AS builder
 ARG NEXT_PUBLIC_IMAGE_LOCATION
 ARG NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION
 ARG NEXT_PUBLIC_MAINTENANCE_MODE
 WORKDIR /app
 
-# Enable corepack for pnpm
-RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
-
-COPY --from=deps /app/node_modules ./node_modules
+# Overlay the full source. node_modules is dockerignored, so this never clobbers the node_modules inherited
+# from deps (root OR nested).
 COPY . .
-# Restore generated slim schema.prisma from deps (it's gitignored, so COPY . . above
-# brings the package dir without it)
+# schema.prisma is generated (gitignored) so `COPY . .` doesn't carry it. It's inherited via FROM deps, but
+# re-copy explicitly so the build never depends on that inheritance subtlety.
 COPY --from=deps /app/packages/civitai-db-schema/prisma/schema.prisma ./packages/civitai-db-schema/prisma/schema.prisma
 
 ENV NEXT_TELEMETRY_DISABLED=1

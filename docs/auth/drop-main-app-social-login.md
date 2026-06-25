@@ -88,11 +88,12 @@ Audited every LoginContent behavior against the hub (2026-06-17). Branding, titl
     gate-time toast** over teaching the hub (keeps reason vocabulary main-app-side; avoids arbitrary copy through
     the hub URL). **Hub stays reason-agnostic.**
   - `loginRedirectReasons` itself STAYS — it's the source of `type LoginRedirectReason = keyof typeof …`.
-- [ ] **`prompt=select_account` (`forceAccountSelection`)** — hub does NOT forward `prompt` to the provider
-  ([login/[provider]/+server.ts](../../apps/auth/src/routes/login/[provider]/+server.ts) / `buildAuthorizeUrl`
-  read no `prompt`). LoginContent passes it for `reason==='switch-accounts'` so a user can pick a *different*
-  identity on the same provider. Without it, "add account" silently reuses the existing provider session. Add
-  `prompt` passthrough to the hub authorize URL, or accept the regression.
+- [x] **`prompt=select_account` (`forceAccountSelection`)** — **DONE.** The hub now forwards `prompt` to the
+  provider: `buildAuthorizeUrl` accepts `prompt` and sets the query param
+  ([providers.ts](../../apps/auth/src/lib/server/auth/providers.ts)), and
+  [login/[provider]/+server.ts](../../apps/auth/src/routes/login/[provider]/+server.ts) reads it from the
+  request. LoginContent passes it for `reason==='switch-accounts'` so a user can pick a *different* identity on
+  the same provider.
 - [ ] **Referrer card** — LoginContent shows a "you were referred by X (+500 Buzz)" card. Pure display; the
   referral itself still applies main-app-side (post-login attribution + onboarding code), so dropping the card
   is a UX nicety loss, not a functional regression. Decide: reproduce somewhere or drop.

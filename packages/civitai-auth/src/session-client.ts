@@ -22,10 +22,26 @@ export interface SessionClient {
    * cold-miss path returns date fields as ISO strings (HTTP JSON). Coerce dates rather than assume `Date`.
    */
   getSessionUser(token: string): Promise<SessionUser | null>;
+  /**
+   * Read-through resolve BY userId (no token) — for consumer paths that start from a userId rather than a
+   * verifiable session token: API-key/bearer auth and the legacy-cookie fallback. Same shared-cache read +
+   * per-pod single-flight as getSessionUser(token), but the hub fetch is the INTERNAL-authed read-through
+   * identity endpoint (`GET /api/auth/identity?userId=`, gated by AUTH_INTERNAL_TOKEN), since there's no token
+   * to present. Null when there's no such user, the secret is unset, or the hub is unreachable. This is a READ
+   * (getOrProduce) — use refresh(userId) to force a recompute/bust.
+   */
+  getSessionUserById(userId: number): Promise<SessionUser | null>;
   /** Bust the user's cached session — the next read re-produces (lazy). */
   invalidate(userId: number): Promise<void>;
   /** Bust AND re-produce now (eager); returns the fresh user, or null if there's no such user. */
   refresh(userId: number): Promise<SessionUser | null>;
+  /**
+   * Mass invalidation (logout everyone): set the global token-revocation cutoff (now) through the hub (which
+   * owns the SESSION.ALL marker) — revokes every token signed before this call. Does NOT wipe the shared
+   * session:data2 cache (its 4h TTL bounds data staleness; a cluster-wide wipe isn't worth the cost).
+   * Service-authed (AUTH_INTERNAL_TOKEN). Throws on a non-ok hub response.
+   */
+  invalidateAll(): Promise<void>;
 }
 
 export interface SessionClientConfig {
@@ -46,8 +62,21 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     (_verifier ??= createAuthVerifier({ isRevoked: config.isRevoked })).verifyToken(token);
 
   // Per-pod single-flight: collapse concurrent read-misses for the same user into ONE hub fetch, so a cache
-  // bust / cold cache doesn't fan out into N identical HTTP hops to the hub (stampede protection).
+  // bust / cold cache doesn't fan out into N identical HTTP hops to the hub (stampede protection). One map per
+  // read path (token vs userId) — they hit the same shared cache key but are keyed/fetched differently.
   const inflight = new Map<number, Promise<SessionUser | null>>();
+  const inflightById = new Map<number, Promise<SessionUser | null>>();
+
+  // Shared-cache read for `session:data2:{userId}`, fail-open (a blip falls through to the hub fetch). The
+  // `clearedAt` tombstone + non-object guard mirror the token path. Returns undefined on miss/blip.
+  async function readCachedUser(userId: number): Promise<SessionUser | null | undefined> {
+    try {
+      const cached = await getCacheRedis().packed.get<SessionUser>(sessionCacheKey(userId));
+      return cached && typeof cached === 'object' && !('clearedAt' in cached) ? cached : undefined;
+    } catch {
+      return undefined;
+    }
+  }
 
   async function getSessionUser(token: string): Promise<SessionUser | null> {
     const claims = await verify(token);
@@ -56,15 +85,8 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     if (!Number.isFinite(userId)) return null;
 
     // 1. Shared-cache read — fail-open: a cache blip falls through to the hub fetch rather than throwing.
-    let cached: SessionUser | null | undefined;
-    try {
-      cached = await getCacheRedis().packed.get<SessionUser>(sessionCacheKey(userId));
-    } catch {
-      cached = null;
-    }
-    // `clearedAt` marks a tombstoned entry — treat as a miss. The `typeof === 'object'` guard also
-    // prevents an `in`-operator TypeError on a non-object value.
-    if (cached && typeof cached === 'object' && !('clearedAt' in cached)) return cached;
+    const cached = await readCachedUser(userId);
+    if (cached) return cached;
 
     // 2. Single-flight the miss → hub identity fetch. The hub URL is the VERIFIED token's issuer.
     const existing = inflight.get(userId);
@@ -82,11 +104,39 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     return p;
   }
 
+  // READ-THROUGH by userId — for consumer paths with no session token (API-key/bearer auth, legacy cookie).
+  // Shared-cache read → single-flight the miss to the INTERNAL-authed GET identity?userId= (read-through, NOT
+  // a bust — refresh() is the bust path). The hub URL is AUTH_JWT_ISSUER (no token whose `iss` to read).
+  async function getSessionUserById(userId: number): Promise<SessionUser | null> {
+    if (!Number.isFinite(userId)) return null;
+    const cached = await readCachedUser(userId);
+    if (cached) return cached;
+
+    const existing = inflightById.get(userId);
+    if (existing) return existing;
+    const p = (async () => {
+      const internal = loadAuthEnv().AUTH_INTERNAL_TOKEN; // by-userId read is service-authed (no user token)
+      if (!internal) return null;
+      try {
+        const res = await hubFetch(`/api/auth/identity?userId=${userId}`, {
+          headers: { authorization: `Bearer ${internal}` },
+        });
+        if (!res.ok) return null; // 401 (bad secret) / 404 (no such user) / 5xx → treat as unauthenticated
+        return (await res.json()) as SessionUser;
+      } catch {
+        return null; // hub unreachable / not configured
+      }
+    })().finally(() => inflightById.delete(userId));
+    inflightById.set(userId, p);
+    return p;
+  }
+
   // WRITE: POST the hub's /api/auth/identity (service-authed) to bust (and optionally re-produce). Targets
   // an arbitrary userId, so it's authed by AUTH_INTERNAL_TOKEN — not a user session token.
   async function postInvalidate(userId: number, reproduce: boolean): Promise<SessionUser | null> {
     const token = loadAuthEnv().AUTH_INTERNAL_TOKEN; // shared service secret
-    if (!token) throw new Error('[@civitai/auth] createSessionClient: AUTH_INTERNAL_TOKEN is not set');
+    if (!token)
+      throw new Error('[@civitai/auth] createSessionClient: AUTH_INTERNAL_TOKEN is not set');
 
     const res = await hubFetch('/api/auth/identity', {
       method: 'POST',
@@ -98,10 +148,26 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     return ((await res.json()) ?? null) as SessionUser | null;
   }
 
+  // WRITE: mass invalidation. POST the hub with `scope: 'all'` — the hub sets the global token-revocation
+  // cutoff (it owns the SESSION.ALL marker). Service-authed, like postInvalidate.
+  async function invalidateAll(): Promise<void> {
+    const token = loadAuthEnv().AUTH_INTERNAL_TOKEN;
+    if (!token)
+      throw new Error('[@civitai/auth] createSessionClient: AUTH_INTERNAL_TOKEN is not set');
+    const res = await hubFetch('/api/auth/identity', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ scope: 'all' }),
+    });
+    if (!res.ok) throw new Error(`[@civitai/auth] session invalidateAll failed: ${res.status}`);
+  }
+
   return {
     getSessionUser,
+    getSessionUserById,
     invalidate: (userId) => postInvalidate(userId, false).then(() => undefined),
     refresh: (userId) => postInvalidate(userId, true),
+    invalidateAll,
   };
 }
 

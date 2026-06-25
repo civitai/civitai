@@ -1,5 +1,7 @@
 # Auth Login — Simplification Roadmap
 
+> **SUPERSEDED / HISTORICAL** — The migration shipped. The swap-token bridge and `USE_HUB_SESSION` have been removed; the TL;DR below calling the swap bridge "the long-term production mechanism" is now false. Cross-domain login is now the OAuth authorization-code + PKCE first-party bridge. See [spoke-integration-guide.md](./spoke-integration-guide.md) and [auth-hub-spoke-overview.md](./auth-hub-spoke-overview.md) for the current state.
+
 **Author:** Claude (Opus 4.8) · **Date:** 2026-06-17 · **Status:** roadmap / decision-of-record
 **Companions:** [auth-hub-actual-flows.html](./auth-hub-actual-flows.html) (what exists today) ·
 [auth-hub-cutover-review-2026-06-17.md](./auth-hub-cutover-review-2026-06-17.md) (findings, incl. B1/B4) ·

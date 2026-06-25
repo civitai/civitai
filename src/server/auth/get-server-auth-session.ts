@@ -11,8 +11,12 @@ import {
 import { env } from '~/env/server';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
-import { getHubSession, maybeRollHubCookie } from './session-client';
-import { getSessionUser } from './session-user';
+import {
+  getHubSession,
+  maybeRollHubCookie,
+  maybeUpgradeLegacySession,
+  sessionClient,
+} from './session-client';
 
 type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
   context?: Record<string, unknown>;
@@ -29,11 +33,11 @@ async function getLegacySession(req: AuthRequest): Promise<Session | null> {
   const token = req.cookies?.[legacySessionCookieName()];
   if (!token) return null;
   const claims = await decodeLegacySessionCookie(token, secret);
-  const userId = Number(claims?.sub ?? (claims?.user as { id?: number } | undefined)?.id);
+  const userId = Number(claims?.sub ?? claims?.user?.id);
   if (!Number.isFinite(userId)) return null;
-  const user = await getSessionUser({ userId });
+  const user = await sessionClient.getSessionUserById(userId);
   if (!user) return null;
-  return { user } as unknown as Session;
+  return { user } as Session;
 }
 
 export const getServerAuthSession = async ({
@@ -82,5 +86,12 @@ export const getServerAuthSession = async ({
   // 2. Legacy next-auth cookie (jose decode → fresh user). Sunsets as the old cookies age out.
   const legacy = await getLegacySession(req).catch(() => null);
   req.context.session = legacy;
+  // Upgrade-on-read: migrate this legacy user to a civ-token (+ de-crud the next-auth cookies) for next time.
+  // Best-effort; this request is still served from the legacy decode above.
+  if (legacy) {
+    const legacyToken = req.cookies?.[legacySessionCookieName()];
+    const device = req.cookies?.[deviceCookieName()];
+    await maybeUpgradeLegacySession(legacyToken, device, res, req.headers.host).catch(() => {});
+  }
   return legacy;
 };

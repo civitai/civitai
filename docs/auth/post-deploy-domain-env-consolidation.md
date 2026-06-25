@@ -44,12 +44,18 @@ this deploy serves and their canonical primaries. Everything origin-shaped shoul
 | `NEXTAUTH_COOKIE_DOMAIN` | legacy cookie domain | **retire** after legacy cookies age out |
 | `AUTH_JWT_ISSUER` | hub origin / JWT `iss` | keep (distinct concern — the hub identity) |
 | `AUTH_COOKIE_DOMAIN` | session cookie `Domain` | keep, but now **defaulted** (see below) |
-| `AUTH_SPOKE_ORIGINS` | hub's cross-site spoke allowlist | keep; consider deriving (see below) |
+| `AUTH_SPOKE_ORIGINS` | *(was)* hub's cross-site spoke allowlist | **RETIRED** — replaced by the `TrustedSpokeDomain` DB table (see below) |
+| `AUTH_SWAP_MAX_AGE` | *(was)* swap-token TTL | **RETIRED** — the swap-token bridge was deleted; first-party login now rides the OAuth auth-code flow |
+| `AUTH_JWT_AUDIENCE`, `AUTH_SESSION_COOKIE` | *(never wired)* | **RETIRED** — drop from any deploy env: the hub emits no `aud`, and the cookie name is the hardcoded `civ-token` constant |
 
 ## Migration plan
 
 ### Phase 0 — done
-- `sync.ts` builds the callback from the request's color primary, not `NEXT_PUBLIC_BASE_URL`.
+- Cross-domain login no longer touches `NEXT_PUBLIC_BASE_URL`: `sync.ts` was **removed** with the
+  swap-token bridge, and its replacement — the spoke `/api/auth/callback` — derives this spoke's origin
+  from the ACTUAL request host (`resolveSelfOrigin`), which the hub validates against `TrustedSpokeDomain`.
+- `AUTH_SPOKE_ORIGINS` retired → `TrustedSpokeDomain` DB table + `createTrustedDomainRegistry` (see
+  *Related consolidations*).
 - Hub cookie `Domain` is defaulted via a single `cookieDomain()` helper
   ([apps/auth/src/lib/server/auth/cookie.ts](../../apps/auth/src/lib/server/auth/cookie.ts)):
   `AUTH_COOKIE_DOMAIN` override, else `.civitai.com` on HTTPS, else host-only on localhost. Used by
@@ -86,10 +92,17 @@ this deploy serves and their canonical primaries. Everything origin-shaped shoul
 
 ## Related consolidations (same theme, optional)
 
-- **`AUTH_SPOKE_ORIGINS`** (hub) is a hand-kept allowlist of the family's cross-site `.red`/`.com`
-  origins. It could be **derived** from the shared `domain.constants` so adding a host in one place
-  flows through, instead of a parallel list that drifts (this is what bit the `test-auth.*` env: the
-  host was live but not in the allowlist).
+- **`AUTH_SPOKE_ORIGINS` — RETIRED (done, 2026-06-22).** The hand-kept env allowlist was replaced by the
+  `TrustedSpokeDomain` DB table (migration `20260622180000_add_trusted_spoke_domain`), managed in-app via
+  the hub `/admin` UI and read through a ~60s in-memory cache (`createTrustedDomainRegistry` in
+  `@civitai/auth`). The hub resolves a first-party client by the request's redirect_uri **origin** against
+  that registry (exact host, or any subdomain when `includeSubdomains` — e.g. the `civitaic.com` preview
+  wildcard for ephemeral PR hosts), so enabling a login host is now **one DB row**, not an env edit. This
+  fixes the old **F5** silent-per-color-login failure at the root (no parallel list to drift). The
+  companion post-login redirect guard `isCivitaiOrigin` reads `CIVITAI_OWNED_DOMAINS` in `@civitai/auth`
+  (the family eTLD+1s: `civitai.com`, `civitai.red`, `civitaic.com`) — **keep that list aligned** with the
+  registry's owned domains, since the two gates answer different questions (registrable-domain ownership
+  vs. per-host authorization) but must both recognize every family domain.
 - **`AUTH_COOKIE_DOMAIN`** now has a sane default; a fuller version could derive the parent domain from
   the hub's `ORIGIN` registrable domain rather than the hardcoded `.civitai.com`.
 

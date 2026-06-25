@@ -7,7 +7,12 @@ vi.mock('../env', () => ({ loadAuthEnv: h.loadAuthEnv }));
 import { createSessionTokenClient } from '../session-token-client';
 
 type Res = { ok: boolean; status: number; json: () => Promise<unknown> };
-function stubFetch(impl: (url: string, init: { method?: string; headers: Record<string, string> }) => Promise<Res>) {
+function stubFetch(
+  impl: (
+    url: string,
+    init: { method?: string; headers: Record<string, string>; body?: string }
+  ) => Promise<Res>
+) {
   const fn = vi.fn(impl);
   vi.stubGlobal('fetch', fn);
   return fn;
@@ -61,5 +66,69 @@ describe('createSessionTokenClient', () => {
     expect(await createSessionTokenClient().refresh('cur')).toBeNull();
     await createSessionTokenClient().revoke('tok');
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  describe('exchangeLegacy', () => {
+    beforeEach(() => {
+      h.loadAuthEnv.mockReturnValue({
+        AUTH_JWT_ISSUER: 'https://auth.test',
+        AUTH_INTERNAL_TOKEN: 'svc-secret',
+      });
+    });
+
+    it('posts the legacy token under the service-secret bearer and returns the fresh civ-token + deviceId', async () => {
+      const fetch = stubFetch(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ token: 'civ.jwt', deviceId: 'dev-9' }),
+      }));
+      // deviceId rides back so the spoke sets the (hub-minted) civ-device on the upgraded session.
+      expect(await createSessionTokenClient().exchangeLegacy('legacy.jwe')).toEqual({
+        token: 'civ.jwt',
+        deviceId: 'dev-9',
+      });
+      const [url, init] = fetch.mock.calls[0];
+      expect(url).toBe('https://auth.test/api/auth/oauth/legacy-exchange');
+      expect(init.method).toBe('POST');
+      // Service secret authenticates the CALLER; the legacy cookie (in the body) proves WHO.
+      expect(init.headers.authorization).toBe('Bearer svc-secret');
+      expect(JSON.parse(init.body ?? '{}')).toEqual({ legacyToken: 'legacy.jwe' });
+    });
+
+    it('forwards an existing device cookie so the hub reuses this browser device set', async () => {
+      const fetch = stubFetch(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ token: 'civ.jwt', deviceId: 'dev-existing' }),
+      }));
+      await createSessionTokenClient().exchangeLegacy('legacy.jwe', { deviceCookie: 'dev-existing' });
+      const [, init] = fetch.mock.calls[0];
+      expect(init.headers.cookie).toContain('dev-existing');
+    });
+
+    it('returns null (no fetch) when AUTH_INTERNAL_TOKEN is unset', async () => {
+      h.loadAuthEnv.mockReturnValue({ AUTH_JWT_ISSUER: 'https://auth.test' });
+      const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+      expect(await createSessionTokenClient().exchangeLegacy('legacy.jwe')).toBeNull();
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('returns null when the hub declines', async () => {
+      stubFetch(async () => ({ ok: false, status: 401, json: async () => ({}) }));
+      expect(await createSessionTokenClient().exchangeLegacy('legacy.jwe')).toBeNull();
+    });
+
+    it('returns null (never throws) on a hub blip', async () => {
+      stubFetch(async () => {
+        throw new Error('down');
+      });
+      await expect(createSessionTokenClient().exchangeLegacy('legacy.jwe')).resolves.toBeNull();
+    });
+
+    it('returns null for an empty token without fetching', async () => {
+      const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+      expect(await createSessionTokenClient().exchangeLegacy('')).toBeNull();
+      expect(fetch).not.toHaveBeenCalled();
+    });
   });
 });

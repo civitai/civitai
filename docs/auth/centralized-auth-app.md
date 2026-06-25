@@ -1,5 +1,7 @@
 # Centralized Login/Authorization App + `@civitai/auth` SDK
 
+> **SUPERSEDED / HISTORICAL** — This is the pre-thin / pre-OAuth-bridge proposal. The migration shipped: the swap-token bridge and `USE_HUB_SESSION` are gone, and cross-domain login now uses the OAuth authorization-code + PKCE first-party bridge. See [spoke-integration-guide.md](./spoke-integration-guide.md) and [auth-hub-spoke-overview.md](./auth-hub-spoke-overview.md) for the current state.
+
 **Status:** analysis / proposal · **Date:** 2026-06-09
 **Related:** base-package rules (auto-memory: `monorepo-bootstrap-base-package-rules`) · [moderator-app-package-boundary.md](../moderator-app-package-boundary.md) · [monorepo-split-overview.md](../monorepo-split-overview.md) · [sync-account-utility-migration.md](../sync-account-utility-migration.md)
 

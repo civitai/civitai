@@ -16,8 +16,6 @@ import {
   IconBrandGoogle,
   IconBrandReddit,
 } from '@tabler/icons-react';
-import { hubLoginUrl } from '@civitai/auth/client';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useAppContext } from '~/providers/AppProvider';
 import { trpc } from '~/utils/trpc';
@@ -32,17 +30,16 @@ const oauthProviderMeta = {
 } as const;
 type OAuthProviderId = keyof typeof oauthProviderMeta;
 
-// Start the hub's account-LINKING flow: navigate to auth.civitai.com/login/<provider>?link=true. The hub gates
-// on the active session, runs the OAuth, attaches the provider to the CURRENT user, and returns here (with
+// Start the hub's account-LINKING flow via the MAIN SERVER: /api/auth/connect builds the hub link URL with the
+// server's AUTH_JWT_ISSUER (no client-side hub env var) and 302s to it. The hub gates on the active session,
+// runs the OAuth, attaches the provider to the CURRENT user, and returns to /user/account#accounts (with
 // ?error=AccountNotLinked when that identity already belongs to another account).
 function connectAccount(providerId: string) {
-  const hub = env.NEXT_PUBLIC_AUTH_HUB_URL;
-  if (typeof window === 'undefined' || !hub) return;
-  window.location.href = hubLoginUrl(hub, {
-    provider: providerId,
-    link: true,
-    returnUrl: `${window.location.origin}/user/account#accounts`,
-  });
+  if (typeof window === 'undefined') return;
+  const returnUrl = '/user/account#accounts';
+  window.location.href = `/api/auth/connect?provider=${encodeURIComponent(
+    providerId
+  )}&returnUrl=${encodeURIComponent(returnUrl)}`;
 }
 
 export function AccountsCard() {

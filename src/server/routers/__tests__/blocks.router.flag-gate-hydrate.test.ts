@@ -86,9 +86,9 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/user.service', () => ({
   getUserById: (...a: unknown[]) => mockGetUserById(...a),
 }));
-// The NEW dependency under test: the gate now resolves the full SessionUser.
-vi.mock('~/server/auth/session-user', () => ({
-  getSessionUser: (...a: unknown[]) => mockGetSessionUser(...a),
+// The NEW dependency under test: the gate now resolves the full SessionUser via the hub-backed sessionClient.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: (...a: unknown[]) => mockGetSessionUser(...a) },
 }));
 // REAL app-blocks-flag + REAL buildFliptContext run; only the Flipt edge is
 // stubbed so we can CAPTURE the context the gate built.
@@ -209,7 +209,7 @@ describe('assertAppBlocksEnabledForTokenUser — Flipt context is hydrated from 
     await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
 
     // The gate resolved the full SessionUser for the TOKEN subject (42), not ctx.user.
-    expect(mockGetSessionUser).toHaveBeenCalledWith({ userId: 42 });
+    expect(mockGetSessionUser).toHaveBeenCalledWith(42);
 
     // Find the app-blocks-enabled Flipt eval and assert its context is faithful.
     const appBlocksCall = mockIsFlipt.mock.calls.find((c) => c[0] === 'app-blocks-enabled');

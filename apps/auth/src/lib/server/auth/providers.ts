@@ -28,6 +28,12 @@ interface ProviderDef {
   tokenUrl: string;
   userinfoUrl: string;
   scope: string;
+  /** A server-defined EXTRA scope requested ONLY on explicit user intent (`?roles=true`), never at plain login.
+   *  Discord's `role_connections.write` (Linked Roles) lives here: requesting it at every login made the whole
+   *  authorize fail with `invalid_scope` unless the app had a Linked Roles verification URL configured, so it's
+   *  now incremental — only the /discord/link-role flow asks for it. Server-defined (not a raw query value) so
+   *  a client can't inject arbitrary scopes. */
+  incrementalScope?: string;
   /** Reddit wants HTTP Basic auth on the token endpoint + a User-Agent. */
   basicAuthTokenRequest?: boolean;
   userAgent?: string;
@@ -46,9 +52,11 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
     authorizeUrl: 'https://discord.com/oauth2/authorize',
     tokenUrl: 'https://discord.com/api/oauth2/token',
     userinfoUrl: 'https://discord.com/api/users/@me',
-    // `role_connections.write` powers the Discord Linked Roles flow (/discord/link-role) — the granted scope
-    // is stored on the Account so that page can detect it. Mirrors the legacy next-auth Discord scope.
-    scope: 'identify email role_connections.write',
+    // Plain login/connect requests only identify+email (always valid). `role_connections.write` (Linked Roles)
+    // is requested ON DEMAND via incrementalScope — only the /discord/link-role flow (`?roles=true`) asks for
+    // it, so a login no longer fails with `invalid_scope` when the Discord app has no Linked Roles config.
+    scope: 'identify email',
+    incrementalScope: 'role_connections.write',
     clientId: () => env.DISCORD_CLIENT_ID,
     clientSecret: () => env.DISCORD_CLIENT_SECRET,
     mapProfile: (p) => ({
@@ -58,9 +66,7 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
       username: p.username as string | undefined,
       name: (p.global_name as string) ?? (p.username as string | undefined),
       image:
-        p.avatar && p.id
-          ? `https://cdn.discordapp.com/avatars/${p.id}/${p.avatar}.png`
-          : undefined,
+        p.avatar && p.id ? `https://cdn.discordapp.com/avatars/${p.id}/${p.avatar}.png` : undefined,
     }),
   },
   google: {
@@ -118,8 +124,7 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
       providerAccountId: String(p.id),
       name: p.name as string | undefined,
       username: p.name as string | undefined,
-      image:
-        typeof p.icon_img === 'string' ? (p.icon_img as string).split('?')[0] : undefined,
+      image: typeof p.icon_img === 'string' ? (p.icon_img as string).split('?')[0] : undefined,
     }),
   },
 };
@@ -147,13 +152,25 @@ export function createPkce() {
 
 export function buildAuthorizeUrl(
   provider: ProviderDef,
-  opts: { redirectUri: string; state: string; codeChallenge: string; prompt?: string | null }
+  opts: {
+    redirectUri: string;
+    state: string;
+    codeChallenge: string;
+    prompt?: string | null;
+    /** Request the provider's server-defined incrementalScope too (e.g. Discord role_connections.write). */
+    incremental?: boolean;
+  }
 ): string {
   const url = new URL(provider.authorizeUrl);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('client_id', provider.clientId()!);
   url.searchParams.set('redirect_uri', opts.redirectUri);
-  url.searchParams.set('scope', provider.scope);
+  // Append the incremental scope only on explicit intent — server-defined, so the query can't inject scopes.
+  const scope =
+    opts.incremental && provider.incrementalScope
+      ? `${provider.scope} ${provider.incrementalScope}`
+      : provider.scope;
+  url.searchParams.set('scope', scope);
   url.searchParams.set('state', opts.state);
   url.searchParams.set('code_challenge', opts.codeChallenge);
   url.searchParams.set('code_challenge_method', 'S256');
@@ -181,7 +198,9 @@ export async function exchangeCode(
   };
   if (provider.userAgent) headers['user-agent'] = provider.userAgent;
   if (provider.basicAuthTokenRequest) {
-    const basic = Buffer.from(`${provider.clientId()}:${provider.clientSecret()}`).toString('base64');
+    const basic = Buffer.from(`${provider.clientId()}:${provider.clientSecret()}`).toString(
+      'base64'
+    );
     headers['authorization'] = `Basic ${basic}`;
   } else {
     body.set('client_id', provider.clientId()!);
@@ -220,8 +239,7 @@ export async function fetchProfile(
           primary?: boolean;
           verified?: boolean;
         }>;
-        const best =
-          emails.find((e) => e.primary && e.verified) ?? emails.find((e) => e.verified);
+        const best = emails.find((e) => e.primary && e.verified) ?? emails.find((e) => e.verified);
         if (best) {
           profile.email = best.email;
           profile.emailVerified = true;

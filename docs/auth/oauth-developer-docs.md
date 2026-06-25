@@ -41,8 +41,12 @@ const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('b
 
 ### Step 2: Redirect User to Authorization
 
+> **Note:** OAuth endpoints are served from the hub origin `https://auth.civitai.com`. The old `https://civitai.com/api/auth/oauth/...` URLs are legacy 308-redirect shims kept for back-compat — point new integrations at `auth.civitai.com`.
+>
+> **OIDC issuer:** if you integrated "Sign in with Civitai" (OpenID Connect) against the `https://civitai.com` issuer, update your configured issuer to `https://auth.civitai.com` — the discovery doc, `id_token.iss`, and JWKS are all served from the hub now. (Plain OAuth API-token integrations are unaffected — only OIDC clients that validate `iss` need this change.)
+
 ```
-GET https://civitai.com/api/auth/oauth/authorize
+GET https://auth.civitai.com/api/auth/oauth/authorize
   ?client_id=YOUR_CLIENT_ID
   &redirect_uri=https://yourapp.com/callback
   &response_type=code
@@ -67,7 +71,7 @@ The user will see a consent screen listing the requested permissions. If they ap
 ### Step 3: Exchange Code for Token
 
 ```
-POST https://civitai.com/api/auth/oauth/token
+POST https://auth.civitai.com/api/auth/oauth/token
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=authorization_code
@@ -93,7 +97,7 @@ Response:
 ### Step 4: Use the Access Token
 
 ```
-GET https://civitai.com/api/auth/oauth/userinfo
+GET https://auth.civitai.com/api/auth/oauth/userinfo
 Authorization: Bearer civitai_abc123...
 ```
 
@@ -126,7 +130,7 @@ Authorization: Bearer civitai_abc123...
 Access tokens expire after 1 hour. Use the refresh token to get a new one:
 
 ```
-POST https://civitai.com/api/auth/oauth/token
+POST https://auth.civitai.com/api/auth/oauth/token
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=refresh_token
@@ -144,7 +148,7 @@ For CLI tools and devices without a browser:
 ### Step 1: Request Device Code
 
 ```
-POST https://civitai.com/api/auth/oauth/device
+POST https://auth.civitai.com/api/auth/oauth/device
 Content-Type: application/x-www-form-urlencoded
 
 client_id=YOUR_CLIENT_ID
@@ -157,8 +161,8 @@ Response:
 {
   "device_code": "abc123...",
   "user_code": "ABCD-EFGH",
-  "verification_uri": "https://civitai.com/login/oauth/device",
-  "verification_uri_complete": "https://civitai.com/login/oauth/device?code=ABCD-EFGH",
+  "verification_uri": "https://auth.civitai.com/login/oauth/device",
+  "verification_uri_complete": "https://auth.civitai.com/login/oauth/device?code=ABCD-EFGH",
   "expires_in": 900,
   "interval": 5
 }
@@ -173,7 +177,7 @@ Show the user the `user_code` and `verification_uri`. They visit the URL in a br
 Poll the token endpoint every `interval` seconds:
 
 ```
-POST https://civitai.com/api/auth/oauth/device-token
+POST https://auth.civitai.com/api/auth/oauth/device-token
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=urn:ietf:params:oauth:grant-type:device_code
@@ -193,7 +197,7 @@ Responses:
 For server-to-server communication (no user context):
 
 ```
-POST https://civitai.com/api/auth/oauth/token
+POST https://auth.civitai.com/api/auth/oauth/token
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=client_credentials
@@ -207,7 +211,7 @@ The token acts on behalf of the client owner's account, scoped to the client's a
 ## Revoking Tokens
 
 ```
-POST https://civitai.com/api/auth/oauth/revoke
+POST https://auth.civitai.com/api/auth/oauth/revoke
 Content-Type: application/x-www-form-urlencoded
 
 token=civitai_abc123...
@@ -269,7 +273,10 @@ Scopes are represented as a bitmask integer. Combine scopes with bitwise OR.
 | `/api/auth/oauth/revoke`                | POST   | Revoke a token                         |
 | `/api/auth/oauth/device`                | POST   | Start device authorization             |
 | `/api/auth/oauth/device-token`          | POST   | Poll for device token                  |
-| `/api/.well-known/openid-configuration` | GET    | OpenID Connect discovery               |
+| `/.well-known/openid-configuration`     | GET    | OpenID Connect discovery               |
+| `/.well-known/jwks.json`                | GET    | JSON Web Key Set (token-signing keys)  |
+
+> Endpoints are served from `https://auth.civitai.com` (e.g. `https://auth.civitai.com/api/auth/oauth/authorize`). Discovery: `https://auth.civitai.com/.well-known/openid-configuration`; JWKS: `https://auth.civitai.com/.well-known/jwks.json`. The matching `https://civitai.com/api/auth/oauth/...` paths are legacy 308-redirect shims.
 
 ## Rate Limits
 

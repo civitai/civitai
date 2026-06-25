@@ -47,7 +47,6 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_SYS_KEYS: {
     SESSION: {
       TOKEN_STATE: 'sys:session:token-state',
-      REFRESH_CAUSE: 'sys:session:refresh-cause',
       ALL: 'sys:session:all',
     },
   },
@@ -99,7 +98,7 @@ describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
   });
 
   it('swallows EVAL throws and logs sysredis-fail-open with the right context', async () => {
-    const synthetic = new Error('READONLY You can\'t write against a read only replica.');
+    const synthetic = new Error("READONLY You can't write against a read only replica.");
     mockHSetMultiWithTTL.mockRejectedValueOnce(synthetic);
 
     // Must NOT throw — this is the property the PR #2332 audit asked for.

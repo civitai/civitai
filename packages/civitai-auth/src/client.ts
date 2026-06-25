@@ -10,7 +10,7 @@
 // Browser-safe re-exports of the pure contracts (hub login-URL + shared constants) — so client components import
 // these from `@civitai/auth/client` and never pull the main entry's server-only graph (session-registry →
 // @civitai/redis → node:net) into the browser bundle.
-export { hubLoginUrl, type HubLoginUrlOptions } from './providers';
+export { hubLoginUrl, hubLogoutUrl, type HubLoginUrlOptions } from './providers';
 export * from './constants';
 
 /** A linked account on the browser's device set — display only (mirrors the hub's `/api/auth/accounts` row). */
@@ -69,7 +69,10 @@ export function createAuthBrowserClient(hubBase: string): AuthBrowserClient {
       if (!res.ok) throw new Error(await errorMessage(res, 'Could not impersonate'));
     },
     async exitImpersonation() {
-      const res = await hub('/api/auth/impersonate', { method: 'DELETE' });
+      // POST /api/auth/impersonate/exit — the hub serves exit at its own route (the /impersonate route is
+      // POST-only). Must match createImpersonationClient.exit() so the same-site browser path and the
+      // cross-site proxy path hit ONE hub contract.
+      const res = await hub('/api/auth/impersonate/exit', { method: 'POST' });
       if (!res.ok) throw new Error(await errorMessage(res, 'Could not exit impersonation'));
     },
   };

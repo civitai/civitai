@@ -17,8 +17,8 @@ export function setServerDomains(domains: ServerDomains) {
 
 /**
  * Append `sync-account={sourceColor}` to a URL when navigating to a different
- * color domain. The destination uses this to pull the user's session via
- * `/api/auth/sync` (see useDomainSync).
+ * color domain. The destination's `useDomainSync` reads it and bootstraps a session there via the
+ * auth-code flow (`/api/auth/authorize`).
  *
  * Returns the URL unchanged when:
  * - called outside the browser (SSR) or before AppProvider has mounted
@@ -26,7 +26,7 @@ export function setServerDomains(domains: ServerDomains) {
  * - either host can't be matched to a known color (external URLs)
  * - source and destination resolve to the same color
  */
-export function syncAccount(url: string, redirectUrl?: string): string {
+export function syncAccount(url: string): string {
   if (typeof window === 'undefined' || !serverDomains) return url;
 
   const urlHost = extractHost(url);
@@ -39,7 +39,7 @@ export function syncAccount(url: string, redirectUrl?: string): string {
 
   return QS.stringifyUrl({
     url,
-    query: { [SYNC_PARAM]: currentColor, 'sync-redirect': redirectUrl },
+    query: { [SYNC_PARAM]: currentColor },
   });
 }
 

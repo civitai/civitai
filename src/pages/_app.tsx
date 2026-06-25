@@ -371,7 +371,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     red: serverDomainMap.red,
   };
   const canIndex = getAllServerHosts().includes((request.headers.host ?? '').toLowerCase());
-  const availableOAuthProviders = getAvailableOAuthProviders(request.headers.host);
+  // Provider list comes from the hub (single source of provider config/secrets), cached + fail-open.
+  const availableOAuthProviders = await getAvailableOAuthProviders();
 
   const region = getRegion(request);
 

@@ -16,8 +16,17 @@ export const LEGACY_SESSION_COOKIE_BASE = 'civitai-token';
 export const SECURE_COOKIE_PREFIX = '__Secure-';
 
 // Cross-domain account sync query param — the single marker the hub re-attaches after login and the
-// destination's useDomainSync reads to kick off /api/auth/sync.
+// destination's useDomainSync reads to kick off the auth-code flow (/api/auth/authorize).
 export const SYNC_PARAM = 'sync-account';
+
+// The registrable domains (eTLD+1) the Civitai family owns. The single source of truth for "is this one of
+// our hosts" — the post-login redirect guard (isCivitaiOrigin) and any other family-host check reference THIS
+// list so they can't drift. `civitaic.com` is the auto-deploy PREVIEW domain (ephemeral per-PR hosts like
+// pr-2468.civitaic.com) — it MUST be here or the unified login funnel drops the spoke's returnUrl on previews.
+// NB: this is the registrable-domain OWNERSHIP list (a static, DB-free security guard); the OAuth
+// `TrustedSpokeDomain` table is the SEPARATE per-host AUTHORIZATION registry (async, DB-backed, finer-grained).
+// Both must know about every family domain, but they answer different questions — see isCivitaiOrigin.
+export const CIVITAI_OWNED_DOMAINS = ['civitai.com', 'civitai.red', 'civitaic.com'] as const;
 
 // Credentials-provider id the cross-root receiver registers; the client signIn() id must match.
 export const ACCOUNT_SWITCH_PROVIDER_ID = 'account-switch';

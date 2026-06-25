@@ -27,6 +27,7 @@ export { getHoliday, getThanksgivingDate, type Holiday } from './holiday';
 export {
   buildWordmarkSvg,
   buildBadgeSvg,
+  buildFaviconSvg,
   type WordmarkOptions,
   type BadgeOptions,
 } from './svg';

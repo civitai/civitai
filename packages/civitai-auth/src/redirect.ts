@@ -1,8 +1,26 @@
-import { SYNC_PARAM } from './constants';
+import { CIVITAI_OWNED_DOMAINS, SYNC_PARAM } from './constants';
 
 // The login redirect contract — returnUrl handling + cross-domain sync — shared by the hub, the
-// main app, and every spoke so they can't drift. Pure functions, framework-agnostic. The
-// civitai-origin policy is INJECTED (isAllowedOrigin) rather than hardcoded.
+// main app, and every spoke so they can't drift. Pure functions, framework-agnostic. `buildPostLoginRedirect`
+// keeps the origin policy INJECTED (isAllowedOrigin) so it stays generic + unit-testable; the canonical
+// Civitai policy (isCivitaiOrigin) lives here too so every caller injects the SAME one instead of redefining.
+
+/**
+ * True when `origin`'s host is an owned eTLD+1 (CIVITAI_OWNED_DOMAINS) or a subdomain of one. An EXACT host
+ * check, NOT a substring test: `origin.includes('civitai')` would accept civitai.evil.com / evil-civitai.com /
+ * civitai.com.attacker.io (open redirect). The leading dot in the suffix check enforces the subdomain boundary,
+ * so xcivitai.com / notcivitai.red are rejected. This is the canonical `isAllowedOrigin` for the post-login
+ * redirect — distinct from the OAuth `TrustedSpokeDomain` registry (per-host authorization); see constants.ts.
+ */
+export function isCivitaiOrigin(origin: string): boolean {
+  let host: string;
+  try {
+    host = new URL(origin).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return CIVITAI_OWNED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+}
 
 /** returnUrl ?? callbackUrl ?? '/', with the /login recursion guard applied. */
 export function readReturnUrl(url: URL): string {
@@ -22,9 +40,10 @@ export interface ReturnTargetOptions {
   isAllowedOrigin?: (origin: string) => boolean;
 }
 
-/** True for same-origin paths or absolute URLs whose origin is allowed. Rejects `//host`. */
+/** True for same-origin paths or absolute URLs whose origin is allowed. Rejects `//host` AND `/\host`
+ * (some agents normalize `\`→`/`, making the latter a protocol-relative external redirect). */
 export function isSafeReturnTarget(target: string, opts: ReturnTargetOptions = {}): boolean {
-  if (target.startsWith('/') && !target.startsWith('//')) return true;
+  if (target.startsWith('/') && !/^\/[/\\]/.test(target)) return true;
   try {
     const { origin } = new URL(target);
     return !!opts.allowAllOrigins || !!opts.isAllowedOrigin?.(origin);

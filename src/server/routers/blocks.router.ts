@@ -96,7 +96,7 @@ import {
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { getUserById } from '~/server/services/user.service';
-import { getSessionUser } from '~/server/auth/session-user';
+import { sessionClient } from '~/server/auth/session-client';
 import {
   guardedProcedure,
   moderatorProcedure,
@@ -182,9 +182,9 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
  * (budget cap, daily Buzz cap, reserveBlockBuzzSpend, getOrchestratorToken,
  * forced-SFW) are unchanged — this only swaps which identity the FLAG sees.
  *
- * Resolves the FULL server-side SessionUser via `getSessionUser` (never a
- * client-supplied value) so the segment match can't be spoofed AND every
- * property `buildFliptContext` consumes is real.
+ * Resolves the FULL server-side SessionUser via `sessionClient.getSessionUserById`
+ * (the hub-backed resolver; never a client-supplied value) so the segment match
+ * can't be spoofed AND every property `buildFliptContext` consumes is real.
  *
  * ## Why the full SessionUser, not a trimmed `{ id, isModerator }` cast
  *
@@ -207,8 +207,10 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
   // not type-defaults. A vanished user → undefined → global eval → flag false
   // → blocked (fail-closed; the subsequent assertViewerIsModerator would also
   // reject).
-  const user = await getSessionUser({ userId });
-  if (!(await isAppBlocksEnabled({ user }))) {
+  // getSessionUserById returns the package SessionUser (loosely typed at this boundary — cast as bearer-token.ts
+  // does) or null for a vanished user. null → undefined → isAppBlocksEnabled's global eval → flag false → blocked.
+  const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
+  if (!(await isAppBlocksEnabled({ user: user ?? undefined }))) {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
   }
 }

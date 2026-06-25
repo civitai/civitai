@@ -49,6 +49,7 @@ via JWKS. See the architecture spec and actual-flows first if you're new to it.
 |---|---|
 | [first-party-sso-vs-oauth-analysis.md](./first-party-sso-vs-oauth-analysis.md) | Argues the swap-token flow is a hand-rolled auth-code flow; recommends converging onto OIDC while keeping the thin session cookie (BFF). (2026-06-17) |
 | [auth-login-simplification.md](./auth-login-simplification.md) | Roadmap: harden + slim the swap bridge **now**, converge to OIDC auth-code **at the OAuth migration**. (2026-06-17) |
+| [oauth-first-party-migration-plan.md](./oauth-first-party-migration-plan.md) | **Execution plan** for the convergence — sequenced phases (provider-into-hub → trusted clients → spoke auth-code bridge → dual-run → delete swap), with the cookie-safety invariant + rollback. |
 
 ## Cutover execution (NextAuth → hub)
 

@@ -1,35 +1,22 @@
-import { hubLoginUrl } from '@civitai/auth/client';
-import { env } from '~/env/client';
-
 // All authentication is centralized at the hub (auth.civitai.com) — the HUB's login UI sets the session cookie;
-// the main app never mints one. These helpers just navigate (or pop up) to the hub login.
-const HUB = env.NEXT_PUBLIC_AUTH_HUB_URL;
+// the main app never mints one. These helpers navigate (or pop up) to login via the MAIN SERVER: /login and
+// /api/auth/login-popup build the hub URL with the server's AUTH_JWT_ISSUER, so there's no client-side hub env
+// var to set (or to silently no-op when missing).
 
-// 2-label registrable domain (civitai.com / civitai.red), to tell same-site from cross-site relative to the hub.
-function registrableDomain(hostname: string): string {
-  const parts = hostname.toLowerCase().split('.');
-  return parts.length >= 2 ? parts.slice(-2).join('.') : hostname.toLowerCase();
+/** Same-origin POPUP login entry — the main server redirects to the hub, landing on /login/popup-done. */
+function loginPopupUrl(callbackUrl: string, reason?: string): string {
+  const u = new URL('/api/auth/login-popup', window.location.origin);
+  u.searchParams.set('cb', callbackUrl);
+  if (reason) u.searchParams.set('reason', reason);
+  return u.toString();
 }
 
-/**
- * The hub login entry URL that lands back on `dest` once login completes. The hub sets its own `.civitai.com`
- * cookie; on a CROSS-SITE host (civitai.red) that cookie isn't readable here, so the landing first runs the
- * existing swap-token sync (/api/auth/sync) to mint THIS domain's cookie — then post-login side-effects, then
- * `dest`. Same hub mechanism that works full-page; we just choose where it lands.
- */
-function hubLoginEntryUrl(hub: string, dest: string, reason?: string): string {
-  const origin = window.location.origin;
-  // `reason` is embedded in the post-login path (attribution on completion) AND passed as a hub param below
-  // (the hub's LoginRedirect analytics).
-  const postLoginPath = `/api/auth/post-login?dest=${encodeURIComponent(dest)}${
-    reason ? `&reason=${encodeURIComponent(reason)}` : ''
-  }`;
-  const crossSite =
-    registrableDomain(window.location.hostname) !== registrableDomain(new URL(hub).hostname);
-  const landing = crossSite
-    ? `${origin}/api/auth/sync?returnUrl=${encodeURIComponent(postLoginPath)}`
-    : `${origin}${postLoginPath}`;
-  return hubLoginUrl(hub, { returnUrl: landing, reason });
+/** Same-origin FULL-PAGE login — the main server's /login redirect, landing back on `dest`. */
+function fullPageLoginUrl(dest: string, reason?: string): string {
+  const u = new URL('/login', window.location.origin);
+  u.searchParams.set('returnUrl', dest);
+  if (reason) u.searchParams.set('reason', reason);
+  return u.toString();
 }
 
 /** Same-origin BroadcastChannel the popup-done page signals on, so the opener (and the email magic-link tab, which
@@ -45,14 +32,8 @@ export const LOGIN_POPUP_DONE = 'civitai-login-popup-done';
  */
 export function openLoginPopup(callbackUrl: string, reason?: string) {
   if (typeof window === 'undefined') return;
-  if (!HUB) {
-    // eslint-disable-next-line no-console
-    console.error('[auth] NEXT_PUBLIC_AUTH_HUB_URL is not set — login cannot start.');
-    return;
-  }
-  // popup-done sends the email magic-link tab back to where login started — carry it as `cb`.
-  const dest = `/login/popup-done?cb=${encodeURIComponent(callbackUrl)}`;
-  const url = hubLoginEntryUrl(HUB, dest, reason);
+  // The main server builds the hub URL (whose post-login dest is /login/popup-done) — we just open same-origin.
+  const url = loginPopupUrl(callbackUrl, reason);
   // Center the popup on the current browser window (screenX/Y + outer size handle multi-monitor setups).
   const width = 480;
   const height = 760;
@@ -64,7 +45,7 @@ export function openLoginPopup(callbackUrl: string, reason?: string) {
     `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no`
   );
   if (!popup) {
-    window.location.href = hubLoginEntryUrl(HUB, callbackUrl, reason); // blocked → full-page, lands on callbackUrl
+    window.location.href = fullPageLoginUrl(callbackUrl, reason); // blocked → full-page, lands on callbackUrl
     return;
   }
   const channel = new BroadcastChannel(LOGIN_POPUP_CHANNEL);

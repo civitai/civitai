@@ -1,45 +1,21 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { maybeCreateSessionSigner } from '@civitai/auth';
-import { env } from '~/env/server';
-import { tokenScopeLabels } from '~/shared/constants/token-scope.constants';
 
-// Advertise id_token signing only when the hub RS256 keys are actually configured — otherwise
-// the JWKS endpoint 404s and no id_token is issued, so claiming RS256 would be a lie to RPs.
-const oidcSigningEnabled = !!maybeCreateSessionSigner();
+// Legacy OIDC discovery shim. The OAuth/OIDC provider moved to the hub (auth.civitai.com); the old
+// civitai.com discovery doc was removed. A legacy relying party still pinned to the civitai.com issuer
+// fetches discovery here (the edge maps the public /.well-known/openid-configuration to this api route, as
+// it did pre-migration); 308-redirect it to the hub's canonical discovery, which advertises the hub's
+// authorization/token/userinfo/revoke/device + jwks endpoints. New integrations point at auth.civitai.com
+// directly. Sibling of src/pages/api/auth/oauth/[...path].ts, which forwards the protocol endpoints.
+//
+// NOTE: the hub's `issuer` is auth.civitai.com, so an RP that STRICTLY validates `iss`/`id_token.iss`
+// against the old civitai.com issuer must update its configured issuer — forwarding fixes transport (the
+// client reaches the hub's endpoints), not the issuer identity. See docs/auth/oauth-security-review-2026-06-22.md.
+const HUB = (process.env.AUTH_JWT_ISSUER ?? '').replace(/\/+$/, '');
 
 export default function handler(_req: NextApiRequest, res: NextApiResponse) {
-  const issuer = env.NEXTAUTH_URL;
-
-  res.setHeader('Cache-Control', 'public, max-age=86400');
-  res.status(200).json({
-    issuer,
-    authorization_endpoint: `${issuer}/api/auth/oauth/authorize`,
-    token_endpoint: `${issuer}/api/auth/oauth/token`,
-    userinfo_endpoint: `${issuer}/api/auth/oauth/userinfo`,
-    revocation_endpoint: `${issuer}/api/auth/oauth/revoke`,
-    device_authorization_endpoint: `${issuer}/api/auth/oauth/device`,
-    // JWKS for verifying id_tokens (and first-party session JWTs). Only advertised when signing
-    // is enabled. Note: served at /api/auth/jwks (the .well-known path needs a rewrite).
-    ...(oidcSigningEnabled
-      ? {
-          jwks_uri: `${issuer}/api/auth/jwks`,
-          // Must match the hub signer's algorithm (@civitai/auth sign.ts → ES256 / EC P-256).
-          id_token_signing_alg_values_supported: ['ES256'],
-        }
-      : {}),
-    response_types_supported: ['code'],
-    grant_types_supported: [
-      'authorization_code',
-      'refresh_token',
-      'client_credentials',
-      'urn:ietf:params:oauth:grant-type:device_code',
-    ],
-    code_challenge_methods_supported: ['S256'],
-    token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
-    scopes_supported: Object.keys(tokenScopeLabels),
-    subject_types_supported: ['public'],
-    // Claims returned by the userinfo endpoint. `email`/`email_verified` and
-    // the profile claims are released under the UserRead scope.
-    claims_supported: ['sub', 'name', 'preferred_username', 'picture', 'email', 'email_verified'],
-  });
+  if (!HUB) {
+    res.status(500).json({ error: 'server_error', error_description: 'OAuth hub not configured' });
+    return;
+  }
+  res.redirect(308, `${HUB}/.well-known/openid-configuration`);
 }

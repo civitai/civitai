@@ -1,5 +1,20 @@
 # Auth Hub — Pre-Launch Action Checklist
 
+> ## ⚠️ SUPERSEDED (2026-06-23)
+> This checklist is from the **swap-bridge era** and is **out of date**. The swap/exchange/sync bridge it
+> centers on has been **replaced by first-party OAuth authorization-code + PKCE** (the "deferred OIDC
+> convergence" below actually happened), so several blockers here are moot: `AUTH_SPOKE_ORIGINS` is **retired**
+> (replaced by the `TrustedSpokeDomain` DB registry), the "swap dance / re-bounce" items no longer exist, and
+> the swap-token blockers (B4) are gone with the swap flow. **Do not drive a release from this file.**
+>
+> For the current release/cutover process use:
+> - [oauth-post-deploy-checklist.md](./oauth-post-deploy-checklist.md) — verify + watch + cleanup after cutover
+> - [auth-hub-launch-checklist.md](./auth-hub-launch-checklist.md) — pre-deploy env/infra setup
+> - [oauth-security-review-2026-06-22.md](./oauth-security-review-2026-06-22.md) — current security posture + deferred hardening
+> - [post-deploy-domain-env-consolidation.md](./post-deploy-domain-env-consolidation.md) — `NEXT_PUBLIC_BASE_URL` cleanup
+>
+> Kept for historical context only (the §1 security fixes B1–B5 and their reasoning remain accurate history).
+
 **Date:** 2026-06-17 · **Derived from:** the auth doc set (see [../auth-index.md](./auth-index.md)).
 Consolidates the actionable recommendations across the reviews/roadmaps into one to-do list, with source
 file locations verified against HEAD. Ownership noted where it crosses session/app boundaries.

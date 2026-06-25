@@ -77,16 +77,6 @@ describe('mintIdToken', () => {
   });
 });
 
-describe('mintSwapToken', () => {
-  it('signs a short-lived swap token with purpose=swap', async () => {
-    const token = await signer.mintSwapToken(42);
-    const { payload } = await jwtVerify(token, await pub(), { issuer, audience });
-    expect(payload.purpose).toBe('swap');
-    expect(payload.sub).toBe('42');
-    expect(payload.exp! - payload.iat!).toBeLessThanOrEqual(61); // ~60s
-  });
-});
-
 describe('publicJwks', () => {
   it('exports a JWK with kid/use/alg', async () => {
     const jwks = await signer.publicJwks();

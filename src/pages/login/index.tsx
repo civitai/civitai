@@ -1,6 +1,7 @@
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { buildHubLoginRedirect } from '~/server/auth/login-redirect';
+import { getAllServerHosts } from '~/server/utils/server-domain';
 import { isDev } from '~/env/other';
 
 // /login is now just a server-side redirect to the centralized hub (auth.civitai.com) — the hub owns the login
@@ -11,9 +12,15 @@ export default function Login() {
   return null;
 }
 
+// Only redirect to an absolute URL whose host is one this deploy actually serves (the color map's
+// primaries + aliases). An EXACT host match — NOT `origin.includes('civitai')`, which accepted
+// civitai.evil.com / evil-civitai.com / civitai.com.attacker.io (open redirect, review B1). Relative
+// returnUrls never reach here (the caller redirects those directly).
 function isSafeCrossOriginRedirect(url: string): boolean {
   try {
-    return isDev || new URL(url).origin.includes('civitai');
+    if (isDev) return true;
+    const host = new URL(url).hostname.toLowerCase();
+    return getAllServerHosts().includes(host);
   } catch {
     return false;
   }
@@ -53,8 +60,8 @@ export const getServerSideProps = createServerSideProps({
     if (!hubIssuer) return { redirect: { destination: '/', permanent: false } };
 
     // Land back on the user's OWN origin (the request host), not a fixed primary — so a civitai.red user stays
-    // on .red instead of bouncing to green. Cross-site relative to the hub, wrap in /api/auth/sync first so this
-    // domain mints its own cookie before post-login runs (mirrors the popup path's hubLoginEntryUrl).
+    // on .red instead of bouncing to green. The landing runs this domain's /api/auth/authorize (the unified
+    // auth-code flow) so it mints its own cookie before post-login runs (mirrors the popup path's hubLoginEntryUrl).
     const host = (ctx.req.headers['x-forwarded-host'] ?? ctx.req.headers.host) as string | undefined;
     const proto =
       (ctx.req.headers['x-forwarded-proto'] as string | undefined) ??

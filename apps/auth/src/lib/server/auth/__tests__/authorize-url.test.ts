@@ -12,7 +12,8 @@ const def = (overrides: Partial<ProviderDef> = {}): ProviderDef => ({
   authorizeUrl: 'https://discord.com/oauth2/authorize',
   tokenUrl: 'https://discord.com/api/oauth2/token',
   userinfoUrl: 'https://discord.com/api/users/@me',
-  scope: 'identify email role_connections.write',
+  scope: 'identify email',
+  incrementalScope: 'role_connections.write',
   clientId: () => 'client-123',
   clientSecret: () => 'secret',
   mapProfile: () => ({ providerAccountId: 'x' }),
@@ -37,15 +38,32 @@ describe('buildAuthorizeUrl', () => {
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
   });
 
-  it('carries the provider scope (Discord role_connections.write for linked-roles)', () => {
+  it('carries the base provider scope (no incremental scope at plain login)', () => {
     expect(new URL(buildAuthorizeUrl(def(), baseOpts)).searchParams.get('scope')).toBe(
-      'identify email role_connections.write'
+      'identify email'
     );
+  });
+
+  it('appends the incrementalScope ONLY when incremental=true (Discord Linked Roles on demand)', () => {
+    // On demand → base + incremental (the full legacy Discord scope), so /discord/link-role still works.
+    expect(
+      new URL(buildAuthorizeUrl(def(), { ...baseOpts, incremental: true })).searchParams.get(
+        'scope'
+      )
+    ).toBe('identify email role_connections.write');
+    // incremental=true but no incrementalScope defined → just the base scope (no trailing space/garbage).
+    expect(
+      new URL(
+        buildAuthorizeUrl(def({ incrementalScope: undefined }), { ...baseOpts, incremental: true })
+      ).searchParams.get('scope')
+    ).toBe('identify email');
   });
 
   it('forwards a prompt (select_account) when set; omits it when absent/null', () => {
     expect(
-      new URL(buildAuthorizeUrl(def(), { ...baseOpts, prompt: 'select_account' })).searchParams.get('prompt')
+      new URL(buildAuthorizeUrl(def(), { ...baseOpts, prompt: 'select_account' })).searchParams.get(
+        'prompt'
+      )
     ).toBe('select_account');
     expect(new URL(buildAuthorizeUrl(def(), baseOpts)).searchParams.has('prompt')).toBe(false);
     expect(
@@ -56,7 +74,11 @@ describe('buildAuthorizeUrl', () => {
   it('adds duration=temporary only for reddit', () => {
     const reddit = new URL(
       buildAuthorizeUrl(
-        def({ id: 'reddit', authorizeUrl: 'https://www.reddit.com/api/v1/authorize', scope: 'identity' }),
+        def({
+          id: 'reddit',
+          authorizeUrl: 'https://www.reddit.com/api/v1/authorize',
+          scope: 'identity',
+        }),
         baseOpts
       )
     );

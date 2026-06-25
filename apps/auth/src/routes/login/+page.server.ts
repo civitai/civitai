@@ -5,6 +5,7 @@ import { isEmailConfigured } from '@civitai/email';
 import type { Actions, PageServerLoad } from './$types';
 import { listEnabledProviders } from '$lib/server/auth/providers';
 import { readReturnUrl, readSync, buildPostLoginRedirect } from '$lib/server/auth/redirect';
+import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 import { createVerificationToken } from '$lib/server/auth/email-tokens';
 import { sendVerificationEmail } from '$lib/server/email/verification.email';
 import { captchaSiteKey, verifyCaptchaToken } from '$lib/server/auth/captcha';
@@ -15,7 +16,7 @@ import { userExistsByEmail } from '$lib/server/auth/users';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const load: PageServerLoad = ({ url, locals, getClientAddress, request }) => {
+export const load: PageServerLoad = async ({ url, locals, getClientAddress, request }) => {
   const returnUrl = readReturnUrl(url);
   const sync = readSync(url);
   const reason = url.searchParams.get('reason');
@@ -23,12 +24,18 @@ export const load: PageServerLoad = ({ url, locals, getClientAddress, request })
   // Forwarded to each provider link so e.g. the add-account flow (prompt=select_account) reaches the provider.
   const prompt = url.searchParams.get('prompt');
 
+  // The add/switch-account intent — either signal sets it (the main app sends both; OAuth standard is
+  // `prompt=select_account`). When set, a signed-in user is NOT bounced to their destination and the page
+  // shows the login form (so they can sign in as a *different* identity) instead of the signed-in card.
+  const addAccount = reason === 'switch-accounts' || prompt === 'select_account';
+
   // Already signed in → bounce straight back to the real destination (with the sync marker
   // re-attached), unless the user wants to add/switch accounts. If there's no real returnUrl
   // (they came to the hub directly), STAY and show the signed-in state — redirecting to '/'
   // would just loop back here via the root redirect.
-  if (locals.user && reason !== 'switch-accounts') {
-    const target = buildPostLoginRedirect(returnUrl, sync, url.origin, dev);
+  if (locals.user && !addAccount) {
+    const isAllowedOrigin = await buildPostLoginOriginCheck();
+    const target = buildPostLoginRedirect(returnUrl, sync, url.origin, dev, isAllowedOrigin);
     if (target && target !== '/') redirect(302, target);
   }
 
@@ -49,6 +56,7 @@ export const load: PageServerLoad = ({ url, locals, getClientAddress, request })
     sync,
     error,
     prompt,
+    addAccount,
     // Public Turnstile site key (delivered via SSR data, not a PUBLIC_ env var). The page renders
     // the widget only when it's set; the email action verifies the token server-side.
     turnstileSiteKey: captchaSiteKey() ?? null,
