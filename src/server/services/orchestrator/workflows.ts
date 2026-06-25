@@ -56,8 +56,17 @@ const ORCHESTRATOR_UNAVAILABLE_MESSAGE =
 // Read (queryWorkflows → queryGeneratedImages) and what-if (cost estimate) only;
 // the generate/submit WRITE path is deliberately left unbounded (retry-without-
 // idempotency dup-safety is a separate follow-up).
+//
+// Ceilings are sized off the live prod slow-tRPC distribution (12h):
+//  - queryGeneratedImages ok=true tops out ~10s (0 calls >=20s) → 20s caps the
+//    unbounded park while 503-ing ~nothing.
+//  - whatIfFromGraph ok=true has a legitimate slow cluster at 30-40s (81 calls)
+//    then a thin tail; the worst park was ~93s. 45s sits ABOVE that cluster so it
+//    preserves the slow-but-working estimates and only 503s the ~15/12h (1.2/hr)
+//    that were already >=45s (broken-feeling anyway), capping the tail to ~47s.
+//    A tighter 25s would have wrongly 503'd ~112 successful estimates/12h.
 const ORCHESTRATOR_QUERY_TIMEOUT_MS = 20_000;
-export const ORCHESTRATOR_WHATIF_TIMEOUT_MS = 25_000;
+export const ORCHESTRATOR_WHATIF_TIMEOUT_MS = 45_000;
 
 export async function queryWorkflows({
   token,
