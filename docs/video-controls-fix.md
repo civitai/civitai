@@ -2,6 +2,11 @@
 
 ClickUp: [868k412h2 "Audio Slider Is Not Great"](https://app.clickup.com/t/868k412h2)
 
+> **Status: historical planning doc.** The implementation has since diverged from the approach
+> sketched below (e.g. `useSyncExternalStore` for fullscreen, Mantine `HoverCard` for the volume
+> popover, render-phase mute sync). Treat any `file:line` references as approximate — the source of
+> truth is `src/components/EdgeMedia/EdgeVideo.tsx`.
+
 All custom video controls live in a single component: `src/components/EdgeMedia/EdgeVideo.tsx`
 (+ `EdgeVideo.module.scss`). Every video render routes through it via `EdgeMedia`. No duplicate
 implementations.

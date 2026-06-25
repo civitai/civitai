@@ -354,9 +354,16 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           }}
           onPause={() => setIsPlaying(false)}
           onVolumeChange={(e) => {
-            // Browser-native controls are the only volume source here; the custom slider/toggle
-            // update state directly, so forwarding them too would double-fire handleVolumeChange.
-            if (html5Controls && !initialMuted) handleVolumeChange(e.currentTarget.volume);
+            // Native controls own the element's volume/mute here (custom slider/toggle update state
+            // directly, so forwarding them would double-fire). Mirror BOTH volume and muted from the
+            // element — deriving muted from volume alone fights the native mute button, which mutes
+            // while keeping volume > 0.
+            if (!html5Controls || initialMuted) return;
+            const video = e.currentTarget;
+            const nextMuted = video.muted || video.volume === 0;
+            if (video.volume > 0) setVolume(video.volume); // remember level across mute
+            setMuted(nextMuted);
+            onMutedChange?.(nextMuted);
           }}
           playsInline
           onMouseOver={!options?.anim ? handleMouseEnter : undefined}
@@ -420,6 +427,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                   >
                     <input
                       type="range"
+                      aria-label="Volume"
+                      aria-orientation="vertical"
                       className={styles.volumeSlider}
                       min="0"
                       max="1"
