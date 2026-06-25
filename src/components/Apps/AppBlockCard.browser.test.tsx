@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -22,6 +22,12 @@ import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema'
  *  - Card cleanup: the install count is HIDDEN, the review indicator is hidden
  *    when reviewCount=0 (shown when >0), the mod-assigned category (+ icon) is
  *    shown, and the scopes were MOVED off the card face into the modal.
+ *  - Round-2 cleanup (2026-06): the slot/location badge and the "by {author}"
+ *    attribution line were DROPPED from the card face (launch is page-only →
+ *    slot badge is noise; both still on the detail page/modal), and the
+ *    "View details" CTA is now a LINK-STYLE (Mantine `variant="subtle"`) button
+ *    — still always rendered (never-empty-card invariant) and still opens the
+ *    modal.
  *
  * The install predicate is the shared `hasInstallSlot(manifest)` (slot-registry,
  * the single source of truth shared with the detail page) — it scans ALL targets
@@ -94,9 +100,11 @@ function pageBlock(manifestOverrides: ManifestShape = {}): AvailableBlock {
 }
 
 const onOpen = vi.fn();
+const onRecentOpen = vi.fn();
 
 beforeEach(() => {
   onOpen.mockClear();
+  onRecentOpen.mockClear();
   detailsModalSpy.mockClear();
 });
 
@@ -258,6 +266,80 @@ describe('AppBlockCard action CTA gate', () => {
     await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
     expect(page.getByRole('link', { name: /^view$/i }).query()).toBeNull();
     expectAtLeastOneAffordance();
+  });
+});
+
+describe('AppBlockCard — onRecentOpen on route/title open paths (M1)', () => {
+  // A page app never fires the install `onOpen` (no install slot), so its open
+  // path is the "Open app" route link + the detail-page title/description links.
+  // These must call `onRecentOpen` so the page app populates "Recently opened".
+  //
+  // These paths are real Next `<Link>` anchors (`<a href>`). In the browser-mode
+  // test a click would actually navigate the test iframe and crash the runner —
+  // so we install a capture-phase guard that `preventDefault()`s the navigation.
+  // The card's `onClick` (which calls onRecentOpen) fires in the BUBBLE phase
+  // BEFORE the browser's default navigation, so this faithfully exercises the
+  // fire-and-navigate wiring without leaving the page.
+  const stopNav = (e: Event) => {
+    if ((e.target as HTMLElement)?.closest('a')) e.preventDefault();
+  };
+  beforeEach(() => document.addEventListener('click', stopNav, true));
+  afterEach(() => document.removeEventListener('click', stopNav, true));
+
+  test('clicking "Open app" (route link) on a PAGE app calls onRecentOpen', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={pageBlock()}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        onRecentOpen={onRecentOpen}
+        canOpenPage
+      />
+    );
+
+    const openApp = page.getByRole('link', { name: /open app/i });
+    await expect.element(openApp).toBeInTheDocument();
+    await openApp.click();
+
+    // The route open recorded the app to recents (fire-and-navigate).
+    expect(onRecentOpen).toHaveBeenCalledTimes(1);
+    expect(onRecentOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'app-1' }));
+    // It did NOT route the install/settings open (that's a separate CTA absent
+    // for page apps).
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  test('clicking the title link records the open via onRecentOpen', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={pageBlock({ name: 'Titled App' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        onRecentOpen={onRecentOpen}
+        canOpenPage={false}
+      />
+    );
+
+    // The title is a link to the detail page; clicking it is an "open".
+    const titleLink = page.getByRole('link', { name: /Titled App/i });
+    await expect.element(titleLink).toBeInTheDocument();
+    await titleLink.click();
+
+    expect(onRecentOpen).toHaveBeenCalledTimes(1);
+    expect(onRecentOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'app-1' }));
+  });
+
+  test('onRecentOpen is optional — omitting it does not crash the open paths', async () => {
+    // Existing callers (and other tests) that don't track recents must keep
+    // working; the `?.()` call is a no-op when the prop is absent.
+    renderWithProviders(
+      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage />
+    );
+    const openApp = page.getByRole('link', { name: /open app/i });
+    await expect.element(openApp).toBeInTheDocument();
+    // No throw on click without an onRecentOpen handler.
+    await openApp.click();
+    expect(onOpen).not.toHaveBeenCalled();
   });
 });
 
@@ -426,5 +508,143 @@ describe('AppBlockCard — 2026-06 card cleanup', () => {
     // The scope ids must NOT appear on the card face.
     expect(page.getByText('user:read:self', { exact: false }).query()).toBeNull();
     expect(page.getByText('ai:write:budgeted', { exact: false }).query()).toBeNull();
+  });
+});
+
+describe('AppBlockCard — round-2 card cleanup (slot badge + author dropped, View details link-styled)', () => {
+  // ── Slot/location badge REMOVED from the card face ──────────────────────────
+  // The launch is page-only, so the slot/location badge is noise. It was dropped
+  // from the card (still available on the detail page / modal). Assert NONE of
+  // the slot labels render — for each install-slot value AND the page-app value.
+  test('slot badge is NOT rendered (model.sidebar_top → no "Model sidebar")', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ targets: [{ slotId: 'model.sidebar_top' }] })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    // The old slot-badge copy ("Model sidebar") must not appear anywhere.
+    expect(page.getByText('Model sidebar', { exact: false }).query()).toBeNull();
+  });
+
+  test('slot badge is NOT rendered (model.below_images → no "Below images")', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ targets: [{ slotId: 'model.below_images' }] })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    expect(page.getByText('Below images', { exact: false }).query()).toBeNull();
+  });
+
+  test('slot badge is NOT rendered on a PAGE app (no slot label leaks)', async () => {
+    renderWithProviders(
+      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
+    );
+
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    // None of the known slot labels render for a page app either.
+    expect(page.getByText('Model sidebar', { exact: false }).query()).toBeNull();
+    expect(page.getByText('Below images', { exact: false }).query()).toBeNull();
+    expect(page.getByText('Model actions', { exact: false }).query()).toBeNull();
+  });
+
+  // ── "by {author}" attribution line REMOVED from the card face ───────────────
+  // The publisher attribution ("by My App") was dropped from the card face
+  // (still shown on the detail page). Use a DISTINCTIVE author name so the
+  // assertion can't collide with the title (which is `manifest.name`).
+  test('"by {author}" attribution line is NOT rendered', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock(
+          { name: 'Cool Block' },
+          { appName: 'Acme Publisher Co' }
+        )}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    // The card title (manifest.name) still renders…
+    await expect.element(page.getByText('Cool Block', { exact: false })).toBeInTheDocument();
+    // …but the "by {appName}" attribution does NOT. Match the literal "by …"
+    // copy AND the bare author name — neither should be on the card face.
+    expect(page.getByText(/by\s+Acme Publisher Co/i).query()).toBeNull();
+    expect(page.getByText('Acme Publisher Co', { exact: false }).query()).toBeNull();
+  });
+
+  test('"by {author}" falls back to appId when appName is missing — STILL not rendered', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({}, { appName: undefined as unknown as string, appId: 'acme-app-id' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    // Neither the "by acme-app-id" line nor the bare id leaks onto the face.
+    expect(page.getByText(/by\s+acme-app-id/i).query()).toBeNull();
+    expect(page.getByText('acme-app-id', { exact: false }).query()).toBeNull();
+  });
+
+  // ── "View details" is a LINK-STYLE (subtle) button ──────────────────────────
+  // Round-2: View details is de-emphasised vs the filled Install/Open-app run
+  // affordances — it's a Mantine `variant="subtle"` button (the Apps-dir
+  // link-button convention). Still a real button, still opens the modal, still
+  // ALWAYS rendered (the never-empty-card invariant). Mantine encodes the
+  // variant as the `data-variant` attribute on the button element.
+  test('"View details" is rendered as the link-style (subtle) variant', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ targets: [{ slotId: 'model.sidebar_top' }] })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    const viewDetails = page.getByRole('button', { name: /view details/i });
+    await expect.element(viewDetails).toBeInTheDocument();
+    // Mantine renders `variant` to the `data-variant` attribute.
+    expect(viewDetails.element().getAttribute('data-variant')).toBe('subtle');
+  });
+
+  test('link-styled "View details" still opens the modal on click (functionality preserved)', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ targets: [{ slotId: 'model.sidebar_top' }] })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+
+    const viewDetails = page.getByRole('button', { name: /view details/i });
+    await expect.element(viewDetails).toBeInTheDocument();
+    // Closed initially.
+    expect(page.getByTestId('details-modal').query()).toBeNull();
+    expect(viewDetails.element().getAttribute('data-variant')).toBe('subtle');
+    await viewDetails.click();
+
+    // The subtle button still drives the modal open.
+    await expect.element(page.getByTestId('details-modal')).toBeInTheDocument();
+    expect(detailsModalSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ opened: true, blockId: 'app-1' })
+    );
+  });
+
+  test('"View details" is rendered on a PAGE app too (invariant preserved) and is link-styled', async () => {
+    renderWithProviders(
+      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
+    );
+
+    const viewDetails = page.getByRole('button', { name: /view details/i });
+    await expect.element(viewDetails).toBeInTheDocument();
+    expect(viewDetails.element().getAttribute('data-variant')).toBe('subtle');
   });
 });

@@ -1418,15 +1418,20 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const colorScheme = useComputedColorScheme('dark');
   const currentUser = useCurrentUser();
   const mobile = useIsMobile();
+  const isModerator = currentUser?.isModerator ?? false;
 
   const [judgeReviewedOnly, setJudgeReviewedOnly] = useState(false);
   const [myEntriesOnly, setMyEntriesOnly] = useState(false);
+  const [pendingReviewOnly, setPendingReviewOnly] = useState(false);
   const [opened, setOpened] = useState(false);
   const isActive = challenge.status === ChallengeStatus.Active;
   const hasCollection = !!challenge.collectionId;
   const displaySubmitAction = isActive && hasCollection && !currentUser?.muted;
 
-  const filterCount = (judgeReviewedOnly ? 1 : 0) + (myEntriesOnly ? 1 : 0);
+  const filterCount =
+    (judgeReviewedOnly ? 1 : 0) +
+    (myEntriesOnly ? 1 : 0) +
+    (isModerator && pendingReviewOnly ? 1 : 0);
 
   const judgeInfo = useMemo(
     () =>
@@ -1477,6 +1482,14 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
           <FilterChip checked={myEntriesOnly} onChange={() => setMyEntriesOnly((v) => !v)}>
             <span>My Entries</span>
           </FilterChip>
+          {isModerator && (
+            <FilterChip
+              checked={pendingReviewOnly}
+              onChange={() => setPendingReviewOnly((v) => !v)}
+            >
+              <span>Pending Review</span>
+            </FilterChip>
+          )}
         </Group>
       </Stack>
 
@@ -1487,6 +1500,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
           onClick={() => {
             setJudgeReviewedOnly(false);
             setMyEntriesOnly(false);
+            setPendingReviewOnly(false);
           }}
           fullWidth
         >
@@ -1602,6 +1616,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                     ? challenge.judgedTagId ?? undefined
                     : undefined,
                   userId: myEntriesOnly ? currentUser?.id : undefined,
+                  pendingReviewOnly: isModerator && pendingReviewOnly ? true : undefined,
                   period: 'AllTime',
                   sort: ImageSort.Random,
                 }}

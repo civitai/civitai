@@ -51,7 +51,10 @@ vi.mock('~/server/utils/request-bulkhead', () => ({
 }));
 
 describe('block catalog endpoints — opaque-origin CORS wiring (PR #2681)', () => {
-  it('both /api/v1/blocks/{models,images} opt into allowOpaqueOrigin', async () => {
+  // The two `await import(...)` cold-transform a Next API page graph (~10s on a
+  // loaded box) — right at the 10s global default, so worker-pool contention pushed
+  // it over and flaked. Give this import-bound test a generous explicit budget.
+  it('both /api/v1/blocks/{models,images} opt into allowOpaqueOrigin', { timeout: 60000 }, async () => {
     // Import order: models then images → captured = [modelsOpts, imagesOpts].
     await import('~/pages/api/v1/blocks/models');
     await import('~/pages/api/v1/blocks/images');

@@ -135,6 +135,14 @@ export interface PageBlockHostProps {
    *  granted scopes (pushed to the iframe via TOKEN_REFRESH). Mirrors
    *  IframeHost.onConsentGranted → useBlockToken.refresh. */
   onConsentGranted?: () => void;
+  /** Re-mint the page token on a Retry from an AUTH-failure terminal state
+   *  (`error` / `no_token`). The token is a PROP minted by useBlockToken in the
+   *  route; `handleRetry`'s local reset alone can never clear an auth failure
+   *  because `token`/`tokenError` are owned upstream — only re-minting can. Wired
+   *  to the same useBlockToken.refresh as onConsentGranted (it aborts any
+   *  in-flight mint; the endpoint is rate-limited 60/min). Omitted → Retry on an
+   *  auth error only remounts (the pre-fix dead-end), so the route MUST pass it. */
+  onRetryToken?: () => void;
 }
 
 export function PageBlockHost({
@@ -158,10 +166,21 @@ export function PageBlockHost({
   viewer,
   theme,
   onConsentGranted,
+  onRetryToken,
 }: PageBlockHostProps) {
   const router = useRouter();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
+  // Mirror of `status` for the Retry handler to read the prior terminal state
+  // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater
+  // (which React may double-invoke under StrictMode → a double re-mint). Kept in
+  // sync via the effect below.
+  const statusRef = useRef<Status>('loading');
+  // #4 Retry: bumped by the terminal-fallback Retry button to re-key the
+  // <iframe> below. Re-keying forces React to unmount + remount the iframe (a
+  // fresh `contentWindow`), so the re-armed init handshake talks to a clean
+  // frame instead of a wedged one. See `handleRetry`.
+  const [reloadNonce, setReloadNonce] = useState<number>(0);
   const initSentRef = useRef<boolean>(false);
   const controllerRef = useRef<IframeInitController | null>(null);
   const buildInitPayloadRef = useRef<() => BlockInitPayload>();
@@ -171,6 +190,12 @@ export function PageBlockHost({
   // 'ready' state could each still observe `current === 'loading'`. This ref
   // makes the per-mount emit deterministic regardless of ack timing.
   const blockRenderEmittedRef = useRef<boolean>(false);
+
+  // Keep statusRef tracking the live status so handleRetry can branch on the
+  // prior terminal state without reading it inside the setStatus updater.
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const expectedOrigin = useMemo(() => {
     try {
@@ -1027,6 +1052,56 @@ export function PageBlockHost({
   // for the status→reason mapping + the anti-spoof rationale.
   const fallbackReason = pageFallbackReason(status);
 
+  // #4 Retry: re-attempt the load from a terminal fallback. The full re-arm in
+  // one place so there's no stuck state and no timer leak across retries:
+  //   1. Dispose any controller the terminal cleanup may not have torn down yet
+  //      (defensive — the init effect's cleanup already disposes + nulls it when
+  //      status left 'loading'; this guarantees no orphaned interval/timeout
+  //      survives a retry).
+  //   2. Reset the per-mount handshake/analytics guards so init re-fires and a
+  //      successful retry re-emits exactly one impression.
+  //   3. Bump `reloadNonce` → re-keys the <iframe> → React remounts it (fresh
+  //      contentWindow), so the re-armed handshake talks to a clean frame.
+  //   4. Flip status back to 'loading'. shouldStartInit then re-passes and the
+  //      init effect (controllerRef now null) builds a NEW controller whose
+  //      start() re-posts BLOCK_INIT and re-arms the readiness timeout — so a
+  //      second failure routes back to the fallback (no stuck state), and a
+  //      BLOCK_READY clears it (success-after-retry).
+  // Only meaningful from a terminal state; a no-op while loading/ready (status
+  // stays put, nonce churn is harmless but we still gate to avoid a spurious
+  // iframe remount mid-handshake).
+  //
+  // AUTH-FAILURE branch (the HIGH this fix closes): the `error` (hard mint
+  // failure) and `no_token` (token never arrived) terminals are AUTH failures —
+  // the iframe never received a usable token. A local-only retry (reset +
+  // reloadNonce) can NEVER recover them: the token is a PROP minted upstream by
+  // useBlockToken (route), and `shouldStartInit` gates on `hasToken`. With
+  // `token`/`tokenError` unchanged, the re-armed handshake just times out to the
+  // SAME terminal again (the 15s dead-end). So for `error`/`no_token` we ALSO
+  // call onRetryToken (= useBlockToken.refresh) to re-mint the token; the rotated
+  // token flips the props, init re-fires, and a successful mint loads the block.
+  // For `fatal`/`timeout` the token was fine — the block crashed or didn't ack —
+  // so remount-only (no re-mint) is the right, unchanged behavior. refresh()
+  // aborts any in-flight mint and the endpoint is rate-limited (60/min); Retry is
+  // user-initiated, so no auto-retry loop is added.
+  const handleRetry = useCallback(() => {
+    const prior = statusRef.current;
+    // Double-click no-op guard (mirrors the pre-fix gate): a Retry while the
+    // status is already loading/ready does nothing — no re-mint, no remount.
+    if (prior === 'loading' || prior === 'ready') return;
+    // AUTH failures (`error`/`no_token`) need a token re-mint — the local reset
+    // below alone can't change the upstream `token`/`tokenError` props. Fire it
+    // BEFORE the local re-arm (the rotated token then flips props → init
+    // re-fires). `fatal`/`timeout` are not auth failures → remount only.
+    if (prior === 'error' || prior === 'no_token') onRetryToken?.();
+    controllerRef.current?.dispose();
+    controllerRef.current = null;
+    initSentRef.current = false;
+    blockRenderEmittedRef.current = false;
+    setReloadNonce((n) => n + 1);
+    setStatus('loading');
+  }, [onRetryToken]);
+
   return (
     <Box
       style={{
@@ -1062,6 +1137,10 @@ export function PageBlockHost({
         // never spin forever.
         <Box style={{ position: 'relative', flex: 1, display: 'flex' }}>
           <iframe
+            // #4 Retry: re-key on `reloadNonce` so a retry UNMOUNTS + REMOUNTS
+            // the iframe (fresh contentWindow), not just reloads its src — the
+            // re-armed init handshake then talks to a clean frame.
+            key={reloadNonce}
             ref={iframeRef}
             src={iframeSrc}
             sandbox={effectiveSandbox}
@@ -1105,7 +1184,11 @@ export function PageBlockHost({
         </Box>
       ) : fallbackReason ? (
         <Box style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }} data-testid="app-page-fallback">
-          <BlockFallback reason={fallbackReason} blockName={appName} />
+          <BlockFallback
+            reason={fallbackReason}
+            blockName={sanitizeAppChromeName(appName) || blockId}
+            onRetry={handleRetry}
+          />
         </Box>
       ) : null}
     </Box>

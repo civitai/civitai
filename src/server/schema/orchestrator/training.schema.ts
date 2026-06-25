@@ -105,6 +105,10 @@ const aiToolkitTrainingParams = z
       ecosystem: z.literal('boogu'),
       modelVariant: z.undefined().optional(),
     }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('krea2'),
+      modelVariant: z.undefined().optional(),
+    }),
     // SD3, Flux1, Flux2Klein, and Wan require modelVariant
     aiToolkitBaseParams.extend({
       ecosystem: z.literal('sd3'),

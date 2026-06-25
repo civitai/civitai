@@ -8,11 +8,7 @@ import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import client from 'prom-client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
-import {
-  isFailfastStatus,
-  MeiliCallTimeoutError,
-  MeilisearchFetchError,
-} from '~/server/meilisearch/client';
+import { isTransientMeiliError } from '~/server/meilisearch/client';
 import { runImageSearch } from '~/server/services/image-search.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
@@ -199,19 +195,23 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
       if (!res.headersSent) res.status(499).end();
       return;
     }
-    // Meili saturation / timeout / upstream 5xx (feeds-proxy shed or backend
-    // brownout) → 503 SERVICE_UNAVAILABLE, retryable. Without this the raw
-    // MeiliCallTimeoutError / MeilisearchFetchError is not a TRPCError, so the
-    // generic mapping below defaults it to 500 — the dominant mislabeled-500
-    // source on this endpoint. no-store so an edge layer can't cache the error,
-    // Retry-After so clients/CF retry the (typically seconds-long) flap.
-    // Mirrors the tRPC image feed + the /api/v1/models handler. 4xx-other
-    // (malformed filter / auth) is NOT failfast-eligible and still bubbles to
-    // the generic mapping below.
-    if (
-      error instanceof MeiliCallTimeoutError ||
-      (error instanceof MeilisearchFetchError && isFailfastStatus(error.status))
-    ) {
+    // Meili saturation / timeout / upstream 408/429/5xx (feeds-proxy shed or
+    // backend brownout) → 503 SERVICE_UNAVAILABLE, retryable. `isTransientMeiliError`
+    // matches BOTH civitai's own wrapper errors (MeiliCallTimeoutError /
+    // MeilisearchFetchError) AND the meilisearch-js SDK's own error types
+    // (MeiliSearchCommunicationError / MeiliSearchApiError / MeiliSearchTimeOutError)
+    // that the feed library's inner SDK calls throw — none of which are
+    // TRPCErrors, so the generic mapping below would otherwise default them to
+    // 500. Those SDK errors (a 408 "Request Timeout" / 503 "Service Unavailable"
+    // from the proxy) were the dominant mislabeled-500 source on this endpoint.
+    // The service layer (getImagesFromFeedSearch / getAllImagesIndex) now wraps
+    // them as TRPCError SERVICE_UNAVAILABLE before they reach here, but this
+    // branch is kept as defense-in-depth (a raw SDK error escaping the wrap
+    // still becomes 503-with-headers, not a hard 500). no-store so an edge
+    // layer can't cache the error; Retry-After so clients/CF retry the
+    // (typically seconds-long) flap. 4xx-other (malformed filter / auth) is NOT
+    // transient and still bubbles to the generic mapping below.
+    if (isTransientMeiliError(error)) {
       if (!res.headersSent) {
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Retry-After', '2');
@@ -223,6 +223,15 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     }
     const trpcError = error as TRPCError;
     const statusCode = getHTTPStatusCodeFromError(trpcError);
+
+    // A TRPCError SERVICE_UNAVAILABLE wrapped by the service layer (the normal
+    // path for a transient Meili failure now) maps to 503 here — attach the
+    // same no-store + Retry-After so the retryable contract is identical to the
+    // raw-error branch above.
+    if (statusCode === 503 && !res.headersSent) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Retry-After', '2');
+    }
 
     return res.status(statusCode).json({
       error: trpcError.message,

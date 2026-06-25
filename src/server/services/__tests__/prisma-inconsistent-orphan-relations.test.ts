@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The modules under test (model.service, article.selector → tag.selector, etc.)
 // call `Prisma.validator<...>()(...)` and the `Prisma.sql`/`raw`/`join` tagged-
@@ -95,16 +95,29 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: {},
 }));
 
-// timeout: the first `await import('../model.service')` cold-transforms a large
-// module graph (~10s) which exceeds the 10s default on the loaded CI node.
-describe('getRecentlyManuallyAdded — orphaned ImageResourceNew.modelVersion', { timeout: 30000 }, () => {
+describe('getRecentlyManuallyAdded — orphaned ImageResourceNew.modelVersion', () => {
+  // `../model.service` is a ~2500-line module that transitively imports the heavy
+  // image/event-engine service graph; its first cold transform+import takes ~16s in
+  // isolation and balloons further when it has to race the rest of the suite's worker
+  // pool for CPU — which made a PER-TEST `await import(...)` blow even a 30s timeout
+  // under full-suite parallelism (and cascade the later tests into "not a function").
+  // Pay that real-module load ONCE here, off the per-test budget, with a generous
+  // import-only timeout that absorbs worst-case contention. The actual assertions
+  // (the regression guard on the real `{ is: {} }` filter) stay instant + unchanged.
+  let getRecentlyManuallyAdded: (
+    args: { take: number; userId: number }
+  ) => Promise<number[]>;
+
+  beforeAll(async () => {
+    ({ getRecentlyManuallyAdded } = await import('../model.service'));
+  }, 120000);
+
   beforeEach(() => {
     findManyMock.mockReset();
   });
 
   it('passes a relation-existence filter so orphaned modelVersion rows are excluded at the DB', async () => {
     findManyMock.mockResolvedValue([{ modelVersion: { modelId: 11 } }]);
-    const { getRecentlyManuallyAdded } = await import('../model.service');
 
     await getRecentlyManuallyAdded({ take: 10, userId: 42 });
 
@@ -125,7 +138,6 @@ describe('getRecentlyManuallyAdded — orphaned ImageResourceNew.modelVersion', 
       { modelVersion: { modelId: 7 } }, // dup → uniq
       { modelVersion: { modelId: 9 } },
     ]);
-    const { getRecentlyManuallyAdded } = await import('../model.service');
 
     const result = await getRecentlyManuallyAdded({ take: 10, userId: 42 });
     expect(result).toEqual([7, 9]);
@@ -135,7 +147,6 @@ describe('getRecentlyManuallyAdded — orphaned ImageResourceNew.modelVersion', 
     // With the fix, an all-orphan result set comes back empty from the DB
     // instead of throwing "Inconsistent query result".
     findManyMock.mockResolvedValue([]);
-    const { getRecentlyManuallyAdded } = await import('../model.service');
 
     const result = await getRecentlyManuallyAdded({ take: 10, userId: 42 });
     expect(result).toEqual([]);

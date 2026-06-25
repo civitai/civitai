@@ -21,14 +21,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const logToAxiom = vi.hoisted(() => vi.fn(() => Promise.resolve(undefined)));
 vi.mock('~/server/logging/client', () => ({ logToAxiom }));
 
-import { AuditTimer } from '~/utils/metadata/audit-slow-log';
+import { AuditTimer, __flushPendingEmitsForTest } from '~/utils/metadata/audit-slow-log';
 import { auditPrompt, auditPromptEnriched } from '~/utils/metadata/audit';
 
-// Flush the fire-and-forget async tail inside emitSlowLog: it awaits two dynamic
-// imports (node:crypto + the logging client) before calling logToAxiom, so a
-// couple of macrotask hops are needed for it to settle.
+// Drain the fire-and-forget async tail inside emitSlowLog deterministically: it
+// awaits two dynamic imports (node:crypto + the logging client) before calling
+// logToAxiom, so a fixed wall-clock wait races the imports and FLAKES on a
+// loaded CI box (they resolve slower than the timeout → 0 calls). Await the
+// actual in-flight emit instead.
 async function flush() {
-  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 5));
+  await __flushPendingEmitsForTest();
 }
 
 const ENV_KEYS = ['AUDIT_SLOW_LOG_MS', 'AUDIT_SLOW_LOG_RAW', 'AUDIT_SLOW_LOG_RAW_MAX'] as const;
