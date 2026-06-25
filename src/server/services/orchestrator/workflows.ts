@@ -63,7 +63,9 @@ const ORCHESTRATOR_UNAVAILABLE_MESSAGE =
 //  - whatIfFromGraph ok=true has a legitimate slow cluster at 30-40s (81 calls)
 //    then a thin tail; the worst park was ~93s. 45s sits ABOVE that cluster so it
 //    preserves the slow-but-working estimates and only 503s the ~15/12h (1.2/hr)
-//    that were already >=45s (broken-feeling anyway), capping the tail to ~47s.
+//    that were already >=45s (broken-feeling anyway), capping the tail to ~45s
+//    (the retry loop short-circuits once the shared budget fires, so backoff
+//    sleeps don't push total past the deadline).
 //    A tighter 25s would have wrongly 503'd ~112 successful estimates/12h.
 const ORCHESTRATOR_QUERY_TIMEOUT_MS = 20_000;
 export const ORCHESTRATOR_WHATIF_TIMEOUT_MS = 45_000;
@@ -333,6 +335,12 @@ export async function submitWorkflowWithRetry(
       // Network failure / no response. Out of retries → surface it like a direct call would.
       lastError = e;
       if (attempt >= maxAttempts) throw e;
+      // If the caller's overall timeout budget (a shared AbortSignal) has already
+      // fired, this throw IS the abort — every further attempt would abort instantly
+      // and the backoff sleeps would just burn wall-clock PAST the deadline. Surface
+      // it now so total latency stays within the budget (~budget, not budget + the
+      // leftover backoff sleeps). No-op on the write path (no signal → never aborted).
+      if (options.signal?.aborted) throw e;
       await submitWorkflowBackoff({ attempt, status: undefined, baseDelayMs, onRetry });
       continue;
     }
