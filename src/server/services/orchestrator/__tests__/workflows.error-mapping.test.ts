@@ -134,6 +134,21 @@ describe('queryWorkflows error mapping (queryGeneratedImages path)', () => {
     expect((err as TRPCError).code).toBe('NOT_FOUND');
   });
 
+  it('maps the read-backstop AbortSignal.timeout TimeoutError to 503', async () => {
+    // The ORCHESTRATOR_QUERY_TIMEOUT_MS backstop aborts a runaway query via
+    // AbortSignal.timeout(), which rejects with a DOMException named 'TimeoutError'.
+    // isUpstreamNetworkError matches `.name === 'TimeoutError'` → retry-able 503.
+    mockQueryWorkflows.mockRejectedValue(
+      Object.assign(new Error('The operation was aborted due to timeout'), {
+        name: 'TimeoutError',
+      })
+    );
+    const err = await queryWorkflows(baseQueryArgs).catch((e) => e);
+    expect(err).toBeInstanceOf(TRPCError);
+    expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect((err as TRPCError).message).toMatch(/temporarily unavailable/i);
+  });
+
   it('does NOT 503 a genuine code-bug throw', async () => {
     const bug = new TypeError('boom is not a function');
     mockQueryWorkflows.mockRejectedValue(bug);
