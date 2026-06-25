@@ -9,8 +9,8 @@ vi.mock('$app/environment', () => ({ dev: false }));
 import { isCaptchaEnabled, captchaSiteKey, verifyCaptchaToken } from '../captcha';
 
 beforeEach(() => {
-  delete process.env.CF_MANAGED_TURNSTILE_SECRET;
-  delete process.env.CF_MANAGED_TURNSTILE_SITEKEY;
+  delete process.env.CF_INVISIBLE_TURNSTILE_SECRET;
+  delete process.env.CF_INVISIBLE_TURNSTILE_SITEKEY;
   vi.restoreAllMocks();
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -20,7 +20,7 @@ describe('isCaptchaEnabled (not dev)', () => {
     expect(isCaptchaEnabled()).toBe(false);
   });
   it('enabled when the secret is set', () => {
-    process.env.CF_MANAGED_TURNSTILE_SECRET = 's3cret';
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
     expect(isCaptchaEnabled()).toBe(true);
   });
 });
@@ -28,11 +28,11 @@ describe('isCaptchaEnabled (not dev)', () => {
 describe('captchaSiteKey', () => {
   it('returns the key when set, undefined otherwise', () => {
     expect(captchaSiteKey()).toBeUndefined();
-    process.env.CF_MANAGED_TURNSTILE_SITEKEY = 'site-key';
+    process.env.CF_INVISIBLE_TURNSTILE_SITEKEY = 'site-key';
     expect(captchaSiteKey()).toBe('site-key');
   });
   it('coerces an empty-string key to undefined (no widget rendered)', () => {
-    process.env.CF_MANAGED_TURNSTILE_SITEKEY = '';
+    process.env.CF_INVISIBLE_TURNSTILE_SITEKEY = '';
     expect(captchaSiteKey()).toBeUndefined();
   });
 });
@@ -47,7 +47,7 @@ describe('verifyCaptchaToken', () => {
   });
 
   it('fails closed (false) on a missing token when enabled', async () => {
-    process.env.CF_MANAGED_TURNSTILE_SECRET = 's3cret';
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     expect(await verifyCaptchaToken(undefined)).toBe(false);
@@ -55,7 +55,7 @@ describe('verifyCaptchaToken', () => {
   });
 
   it('returns true on a successful Cloudflare siteverify', async () => {
-    process.env.CF_MANAGED_TURNSTILE_SECRET = 's3cret';
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
     const fetchSpy = vi.fn(
       async () => new Response(JSON.stringify({ success: true }), { status: 200 })
     );
@@ -71,7 +71,7 @@ describe('verifyCaptchaToken', () => {
   });
 
   it('returns false when Cloudflare reports success:false', async () => {
-    process.env.CF_MANAGED_TURNSTILE_SECRET = 's3cret';
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({ success: false }), { status: 200 }))
@@ -80,13 +80,13 @@ describe('verifyCaptchaToken', () => {
   });
 
   it('returns false on a non-2xx siteverify response', async () => {
-    process.env.CF_MANAGED_TURNSTILE_SECRET = 's3cret';
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
     vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
     expect(await verifyCaptchaToken('good-token')).toBe(false);
   });
 
   it('returns false (fail-closed) when fetch throws', async () => {
-    process.env.CF_MANAGED_TURNSTILE_SECRET = 's3cret';
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {

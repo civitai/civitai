@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { isCaptchaEnabled, verifyCaptchaToken } from '../captcha';
 
 beforeEach(() => {
-  process.env.CF_MANAGED_TURNSTILE_SECRET = 's3cret'; // secret set, but dev should still disable
+  process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret'; // secret set, but dev should still disable
 });
 afterEach(() => vi.unstubAllGlobals());
 
