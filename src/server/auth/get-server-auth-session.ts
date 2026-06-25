@@ -9,6 +9,7 @@ import {
   legacySessionCookieName,
 } from '@civitai/auth';
 import { env } from '~/env/server';
+import { isPreview } from '~/env/other';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
 import {
@@ -36,8 +37,21 @@ async function getLegacySession(req: AuthRequest): Promise<Session | null> {
   const userId = Number(claims?.sub ?? claims?.user?.id);
   if (!Number.isFinite(userId)) return null;
   const user = await sessionClient.getSessionUserById(userId);
-  if (!user) return null;
-  return { user } as Session;
+  if (user) return { user } as Session;
+  // PREVIEW-ONLY fallback. getSessionUserById resolves a user from the shared
+  // session cache then the centralized hub (auth.civitai.com) — both of which read
+  // the PRODUCTION identity store. A PR preview runs against the dev DB clone, where
+  // the ci-smoke-* smoke users are seeded (datapacket-talos seed-smoke-test-users
+  // CronJob) but the hub has no row for them, so the lookup returns null and every
+  // authenticated smoke request would loop back to /login. On a preview deploy we
+  // therefore trust the rich `user` embedded in the minted legacy cookie — exactly
+  // what the pre-cutover gate did (it read token.user straight from the cookie, no
+  // DB hit). Gated on IS_PREVIEW: production NEVER trusts the embedded user (it must
+  // resolve via the hub), so this has zero production blast radius.
+  if (isPreview && claims?.user && claims.user.id != null) {
+    return { user: claims.user } as unknown as Session;
+  }
+  return null;
 }
 
 export const getServerAuthSession = async ({
