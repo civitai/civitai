@@ -88,12 +88,16 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     const cached = await readCachedUser(userId);
     if (cached) return cached;
 
-    // 2. Single-flight the miss → hub identity fetch. The hub URL is the VERIFIED token's issuer.
+    // 2. Single-flight the miss → hub identity fetch. The fetch target is the token's issuer, but ONLY after
+    // it's validated against a CONFIGURED trusted hub origin (AUTH_JWT_ISSUER / the AUTH_JWKS_URI origin) — see
+    // trustedHubBase. Without this the bearer token would be sent to whatever origin `iss` names, and a spoke
+    // that doesn't pin `issuer` in its verifier (jose only checks `iss` when issuer is set) wouldn't catch a
+    // mismatched issuer. Mismatch / unconfigured → null (fail closed), no fetch.
     const existing = inflight.get(userId);
     if (existing) return existing;
-    const baseUrl = claims.iss;
+    const baseUrl = trustedHubBase(claims.iss);
     const p = (async () => {
-      if (!baseUrl) return null; // no issuer to resolve against
+      if (!baseUrl) return null; // no trusted issuer to resolve against
       try {
         return await fetchIdentity(baseUrl, token);
       } catch {
@@ -169,6 +173,35 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     refresh: (userId) => postInvalidate(userId, true),
     invalidateAll,
   };
+}
+
+/**
+ * Validate a token's `iss` against the spoke's CONFIGURED trusted hub origin(s) before it's used as an
+ * identity-fetch base, so the session token (sent as a Bearer) can only ever go to a host the operator
+ * configured — never an arbitrary origin named by the token. The trusted set is the origin of AUTH_JWT_ISSUER
+ * and/or AUTH_JWKS_URI (the JWKS endpoint a verify-only spoke configures even when it doesn't set the issuer).
+ * Returns the normalized base (trailing slashes stripped) when `iss`'s origin matches, else null (fail closed).
+ */
+function trustedHubBase(iss: string | undefined): string | null {
+  if (!iss) return null;
+  let issOrigin: string;
+  try {
+    issOrigin = new URL(iss).origin;
+  } catch {
+    return null;
+  }
+  const env = loadAuthEnv();
+  const trusted = new Set<string>();
+  for (const v of [env.AUTH_JWT_ISSUER, env.AUTH_JWKS_URI]) {
+    if (!v) continue;
+    try {
+      trusted.add(new URL(v).origin);
+    } catch {
+      /* ignore an unparseable env value */
+    }
+  }
+  if (!trusted.has(issOrigin)) return null;
+  return iss.replace(/\/+$/, '');
 }
 
 /** Read source: GET `{iss}/api/auth/identity` with the session token as a Bearer. */

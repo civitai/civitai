@@ -37,7 +37,11 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   }
 
   const redis = getRedis();
-  if (!redis) return json({ error: 'expired_token', error_description: 'Device code expired' }, { status: 400, headers });
+  if (!redis)
+    return json(
+      { error: 'expired_token', error_description: 'Device code expired' },
+      { status: 400, headers }
+    );
 
   const data = await redis.packed.hGet<{
     clientId: string;
@@ -48,8 +52,13 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
     expiresAt: string;
   }>(DEVICE_CODE_KEY, device_code);
 
-  if (!data) return json({ error: 'expired_token', error_description: 'Device code expired' }, { status: 400, headers });
-  if (data.clientId !== client_id) return json({ error: 'invalid_grant' }, { status: 400, headers });
+  if (!data)
+    return json(
+      { error: 'expired_token', error_description: 'Device code expired' },
+      { status: 400, headers }
+    );
+  if (data.clientId !== client_id)
+    return json({ error: 'invalid_grant' }, { status: 400, headers });
   if (new Date(data.expiresAt) < new Date()) {
     await redis.hDel(DEVICE_CODE_KEY, device_code);
     return json({ error: 'expired_token' }, { status: 400, headers });
@@ -81,15 +90,33 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   // Fail closed: the client may have been deleted within the device-code TTL window. Never mint a token
   // for an unknown client (the main app proceeded here — tightened for the reusable provider).
   if (!client) {
-    return json({ error: 'invalid_grant', error_description: 'Unknown client' }, { status: 400, headers });
+    return json(
+      { error: 'invalid_grant', error_description: 'Unknown client' },
+      { status: 400, headers }
+    );
   }
   // Allow UserRead as the mandatory baseline (consistent with /device init), then enforce the ceiling.
   if (!hasScope(client.allowedScopes | TokenScope.UserRead, scope)) {
-    return json({ error: 'invalid_scope', error_description: 'Requested scope exceeds client permissions' }, { status: 400, headers });
+    return json(
+      { error: 'invalid_scope', error_description: 'Requested scope exceeds client permissions' },
+      { status: 400, headers }
+    );
+  }
+
+  // Atomically CLAIM the device code BEFORE minting. HDEL is atomic in Redis, so under two concurrent polls of
+  // the same (still-approved) device_code — the normal interval poll racing itself, or a deliberately raced
+  // stolen code — exactly one caller gets a non-zero count and proceeds; the loser sees 0 and is rejected as
+  // already-consumed. Claiming AFTER minting (the previous order) let both polls pass the approved-status check
+  // and mint a token pair each. Mirrors revokeAuthorizationCode's single-use gate on the auth-code path.
+  const claimed = await redis.hDel(DEVICE_CODE_KEY, device_code);
+  if (Number(claimed) === 0) {
+    return json(
+      { error: 'expired_token', error_description: 'Device code already used' },
+      { status: 400, headers }
+    );
   }
 
   const pair = await createOAuthTokenPair(data.userId, client_id, scope);
-  await redis.hDel(DEVICE_CODE_KEY, device_code);
 
   logOAuthEvent({
     type: 'token.issued',

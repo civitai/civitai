@@ -45,9 +45,14 @@ export function rollDeviceCookie(cookies: Cookies, deviceId: string): void {
 }
 
 /** Clear the device cookie on logout — like clearSession, the seamless-switch account set must not survive a
- *  sign-out on a shared machine. Same scope (path + cookieDomain) it was set with so the browser drops it. */
+ *  sign-out on a shared machine. Clears the Domain-scoped cookie it was set with AND a host-only one of the same
+ *  name (SvelteKit 2.x keys cookies by (domain, path, name), so both Set-Cookies emit) — a Domain-scoped delete
+ *  can't remove a host-only `civ-device` of the same name, which would otherwise survive logout. */
 export function clearDeviceCookie(cookies: Cookies): void {
-  cookies.delete(DEVICE_COOKIE, { path: '/', domain: cookieDomain() });
+  const domain = cookieDomain();
+  const secure = isSecureCookie();
+  cookies.delete(DEVICE_COOKIE, { path: '/', secure, domain });
+  if (domain) cookies.delete(DEVICE_COOKIE, { path: '/', secure });
 }
 
 /** Add or refresh an account on this device's set (login + each switch touch `lastSwitchedAt`). */

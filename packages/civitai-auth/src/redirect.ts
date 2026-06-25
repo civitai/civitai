@@ -13,13 +13,33 @@ import { CIVITAI_OWNED_DOMAINS, SYNC_PARAM } from './constants';
  * redirect — distinct from the OAuth `TrustedSpokeDomain` registry (per-host authorization); see constants.ts.
  */
 export function isCivitaiOrigin(origin: string): boolean {
-  let host: string;
+  let url: URL;
   try {
-    host = new URL(origin).hostname.toLowerCase();
+    url = new URL(origin);
   } catch {
     return false;
   }
+  if (!isSecureOrLoopbackOrigin(url)) return false; // no https→http downgrade on an owned host
+  const host = url.hostname.toLowerCase();
   return CIVITAI_OWNED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+/**
+ * True for an `https` origin, or any scheme on a loopback host (dev). The post-login redirect guards gate on
+ * this so a validated owned/trusted host can't be redirected to over plaintext `http` (which would expose the
+ * session cookie to a network MITM). Accepts a parsed URL or an origin string.
+ */
+export function isSecureOrLoopbackOrigin(origin: string | URL): boolean {
+  let url: URL;
+  try {
+    url = typeof origin === 'string' ? new URL(origin) : origin;
+  } catch {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1')
+    return true;
+  return url.protocol === 'https:';
 }
 
 /** returnUrl ?? callbackUrl ?? '/', with the /login recursion guard applied. */

@@ -1,5 +1,5 @@
 import { CIVITAI_OWNED_DOMAINS } from './constants';
-import { isCivitaiOrigin } from './redirect';
+import { isCivitaiOrigin, isSecureOrLoopbackOrigin } from './redirect';
 
 // TRUSTED-DOMAIN REGISTRY — the in-memory-cached "is this one of our hosts" source, shared by every app that
 // talks to the hub. The DB read is INJECTED (`load`) so the package keeps ZERO infra deps (same convention as
@@ -95,7 +95,11 @@ export function createTrustedDomainRegistry(
     return (origin: string): boolean => {
       const host = hostOf(origin);
       if (!host) return false;
-      return always.includes(host) || matchesEntries(host, entries) || isCivitaiOrigin(origin);
+      // Always-trust hosts (loopback dev) bypass the scheme gate; every other origin must be https so a
+      // post-login redirect can't downgrade an otherwise-trusted host to plaintext http.
+      if (always.includes(host)) return true;
+      if (!isSecureOrLoopbackOrigin(origin)) return false;
+      return matchesEntries(host, entries) || isCivitaiOrigin(origin);
     };
   }
 

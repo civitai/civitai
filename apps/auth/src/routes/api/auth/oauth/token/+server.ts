@@ -9,7 +9,13 @@ import { OriginNotAllowedError } from '$lib/server/oauth/errors';
 import { ACCESS_TOKEN_TTL } from '$lib/server/oauth/constants';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { hasScope } from '$lib/server/oauth/scope';
-import { parseBody, toOAuthRequest, newOAuthResponse, setWildcardCors, setPublicClientCors } from '$lib/server/oauth/http';
+import {
+  parseBody,
+  toOAuthRequest,
+  newOAuthResponse,
+  setWildcardCors,
+  setPublicClientCors,
+} from '$lib/server/oauth/http';
 
 // POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants.
 // Ported from src/pages/api/auth/oauth/token.ts.
@@ -27,7 +33,8 @@ export const OPTIONS: RequestHandler = () => {
 
 export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   const body = await parseBody(request);
-  const clientId = typeof body.client_id === 'string' && body.client_id ? body.client_id : 'unknown';
+  const clientId =
+    typeof body.client_id === 'string' && body.client_id ? body.client_id : 'unknown';
   const ip = getClientAddress() || 'unknown';
   const origin = request.headers.get('origin') ?? undefined;
 
@@ -36,7 +43,10 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   if (!(await checkOAuthRateLimit('token', ip))) {
     const headers = new Headers();
     setWildcardCors(headers);
-    return json({ error: 'rate_limited', error_description: 'Too many token requests' }, { status: 429, headers });
+    return json(
+      { error: 'rate_limited', error_description: 'Too many token requests' },
+      { status: 429, headers }
+    );
   }
 
   // §D.x #2 — refresh grant must NOT forward a `scope` param. Scope is a bitmask-as-decimal-string; the
@@ -51,7 +61,10 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
   // content-type error. The endpoint is form-urlencoded-only by spec, so forcing the type is correct.
   const oauthHeaders = new Headers(request.headers);
   oauthHeaders.set('content-type', 'application/x-www-form-urlencoded');
-  oauthHeaders.set('content-length', String(Buffer.byteLength(new URLSearchParams(body).toString())));
+  oauthHeaders.set(
+    'content-length',
+    String(Buffer.byteLength(new URLSearchParams(body).toString()))
+  );
 
   const oauthReq = toOAuthRequest({ method: 'POST', headers: oauthHeaders, body });
   const respHeaders = new Headers();
@@ -77,7 +90,12 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
     }
     // §D.x #3 — only echo the request Origin when it's actually in the client's allowlist (defense in
     // depth: getClient already throws OriginNotAllowedError on a mismatch on the success path).
-    if (attached && !attached.isConfidential && origin && attached.allowedOrigins.includes(origin)) {
+    if (
+      attached &&
+      !attached.isConfidential &&
+      origin &&
+      attached.allowedOrigins.includes(origin)
+    ) {
       setPublicClientCors(respHeaders, origin);
     } else {
       setWildcardCors(respHeaders);
@@ -147,9 +165,17 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
     console.error('[oauth/token] handler error:', err);
     setWildcardCors(respHeaders);
     const e = err as { code?: number; statusCode?: number; name?: string; message?: string };
-    const status = typeof e.statusCode === 'number' ? e.statusCode : typeof e.code === 'number' ? e.code : 500;
+    const status =
+      typeof e.statusCode === 'number' ? e.statusCode : typeof e.code === 'number' ? e.code : 500;
+    // Echo the library's spec error name + message for client-actionable 4xx (invalid_grant, invalid_client,
+    // …), but NEVER surface a raw internal error message (DB/driver/stack details) on a 5xx — return a generic
+    // description instead so an unexpected failure can't leak internals to the client.
+    const isClientError = status >= 400 && status < 500;
     return json(
-      { error: e.name || 'server_error', error_description: e.message },
+      {
+        error: isClientError && e.name ? e.name : 'server_error',
+        error_description: isClientError && e.message ? e.message : 'Internal error',
+      },
       { status, headers: respHeaders }
     );
   }

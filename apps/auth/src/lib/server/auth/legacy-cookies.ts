@@ -11,23 +11,38 @@ import { cookieDomain } from './cookie';
 // `.civitai.com` legacy cookies get torn down. Mirrors the main app's clearLegacyCookies (src/server/auth/
 // civ-cookie.ts). Drop this whole helper once legacy cookies have aged out post-cutover.
 //
-// Cleared over the single domain next-auth scoped them to: NEXTAUTH_COOKIE_DOMAIN if set, else the registrable
-// domain (these are Domain-scoped to `.civitai.com` — that's why the hub can see them at all). One scope per
-// name because SvelteKit's cookies API keys by name, so a second delete of the same name would overwrite the
-// first. The host-only CSRF cookie (`__Host-` prefix forbids a Domain attribute) is cleared host-only.
-// `secure: true` is set explicitly for `__Secure-`/`__Host-` names so SvelteKit doesn't reject the prefix in a
-// dev (http) build where it would otherwise default secure to false.
+// Cleared across EVERY scope next-auth could have set them on: host-only (undefined), the explicit
+// NEXTAUTH_COOKIE_DOMAIN, and the hub's registrable domain (Domain-scoped to `.civitai.com` — that's why the
+// hub can see them at all). The host-only scope is the load-bearing one: a Domain-scoped delete CANNOT remove a
+// host-only cookie of the same name, and a surviving host-only legacy SESSION cookie silently re-authenticates
+// the user via the main app's hybrid fallback after logout (the documented "stale host-only cookie shadow"
+// hazard). SvelteKit 2.x keys queued cookies by (domain, path, name) — see generate_cookie_key in
+// runtime/server/cookie.js — so clearing the same name on multiple Domain scopes emits a Set-Cookie for EACH
+// (they no longer overwrite, unlike the older API this comment used to assume). Mirrors the main app's
+// legacyClearScopes (src/server/auth/civ-cookie.ts). The host-only CSRF cookie (`__Host-` prefix forbids a
+// Domain attribute) is cleared host-only. `secure: true` is set explicitly for `__Secure-`/`__Host-` names so
+// SvelteKit doesn't reject the prefix in a dev (http) build where it would otherwise default secure to false.
 export function clearLegacyCookies(cookies: Cookies): void {
-  const domain = env.NEXTAUTH_COOKIE_DOMAIN || cookieDomain();
-  const del = (name: string, secure: boolean, scoped: boolean) =>
-    cookies.delete(name, { path: '/', secure, ...(scoped && domain ? { domain } : {}) });
+  // Distinct Domain scopes, host-only (undefined) first. `cookieDomain()` is the registrable `.civitai.com`.
+  const scopes = Array.from(
+    new Set<string | undefined>([
+      undefined,
+      env.NEXTAUTH_COOKIE_DOMAIN || undefined,
+      cookieDomain(),
+    ])
+  );
+  const del = (name: string, secure: boolean, domain?: string) =>
+    cookies.delete(name, { path: '/', secure, ...(domain ? { domain } : {}) });
+  const delAllScopes = (name: string, secure: boolean) => {
+    for (const domain of scopes) del(name, secure, domain);
+  };
 
-  // CSRF — host-only (next-auth set it host-only; the `__Host-` variant's prefix forbids Domain anyway).
-  del('next-auth.csrf-token', false, false);
-  del('__Host-next-auth.csrf-token', true, false);
+  // CSRF — host-only only (next-auth set the plain one host-only; the `__Host-` variant's prefix forbids Domain).
+  del('next-auth.csrf-token', false);
+  del('__Host-next-auth.csrf-token', true);
 
-  // Session cookie + the transient OAuth/OIDC cruft — Domain-scoped.
-  const scopedPairs: ReadonlyArray<readonly [string, boolean]> = [
+  // Session cookie + the transient OAuth/OIDC cruft — clear across every scope (incl. host-only).
+  const names: ReadonlyArray<readonly [string, boolean]> = [
     ['civitai-token', false],
     ['__Secure-civitai-token', true],
     ['next-auth.callback-url', false],
@@ -39,5 +54,5 @@ export function clearLegacyCookies(cookies: Cookies): void {
     ['next-auth.nonce', false],
     ['__Secure-next-auth.nonce', true],
   ];
-  for (const [name, secure] of scopedPairs) del(name, secure, true);
+  for (const [name, secure] of names) delAllScopes(name, secure);
 }

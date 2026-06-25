@@ -116,5 +116,13 @@ export async function establishSession(cookies: Cookies, user: SessionUser): Pro
 }
 
 export function clearSession(cookies: Cookies): void {
-  cookies.delete(SESSION_COOKIE, { path: '/', domain: cookieDomain() });
+  const domain = cookieDomain();
+  const secure = isSecureCookie();
+  // Clear the Domain-scoped cookie AND a host-only one of the same name. SvelteKit 2.x keys queued cookies by
+  // (domain, path, name), so these don't overwrite — both Set-Cookie headers go out. The host-only clear
+  // matters because a Domain-scoped delete can't remove a host-only `civ-token` of the same name (e.g. one set
+  // during a transitional deploy where cookieDomain() was momentarily host-only); a surviving host-only copy
+  // would shadow the cleared domain cookie and keep the session alive after logout.
+  cookies.delete(SESSION_COOKIE, { path: '/', secure, domain });
+  if (domain) cookies.delete(SESSION_COOKIE, { path: '/', secure });
 }

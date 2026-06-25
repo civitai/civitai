@@ -175,7 +175,11 @@ export const oauthModel = {
       throw new Error('OAuth authorization code store unavailable (REDIS_URL not configured)');
 
     const hashedCode = hashCode(code.authorizationCode);
-    const scopeValue = Array.isArray(code.scope) ? code.scope[0] : String(code.scope ?? '0');
+    // Normalize to the canonical single decimal-string bitmask via the shared scope decoder, rather than blindly
+    // taking scope[0]: stringToScope validates + range-clamps (out-of-range/NaN → 0/deny) and collapses the
+    // string|string[] representation consistently with how getAuthorizationCode reads it back. Avoids silently
+    // storing an unvalidated or multi-element scope value.
+    const scopeValue = String(stringToScope(code.scope as string | string[] | undefined));
 
     const data = {
       clientId: client.id,
