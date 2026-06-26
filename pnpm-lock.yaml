@@ -869,6 +869,9 @@ importers:
       pg:
         specifier: ^8.13.1
         version: 8.16.3
+      prom-client:
+        specifier: ^14.2.0
+        version: 14.2.0
     devDependencies:
       '@sveltejs/adapter-node':
         specifier: ^5.3.2

@@ -7,6 +7,7 @@ import { findOrCreateUser, linkAccountToUser } from '$lib/server/auth/users';
 import { establishSession } from '$lib/server/auth/session';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
+import { loginsTotal } from '$lib/server/metrics';
 
 export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   const provider = getProvider(params.provider);
@@ -61,6 +62,9 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   // Standard login / signup — the hub sets the session cookie here.
   const user = await findOrCreateUser(provider.id, profile, scope);
   await establishSession(cookies, user);
+
+  // Count the successful login AFTER the session is established (best-effort; never blocks the redirect).
+  loginsTotal.inc({ provider: provider.id });
 
   // Honor returnUrl (validated + sync marker re-attached). No real returnUrl (user hit the hub directly) → send
   // to the main app via AUTH_DEFAULT_RETURN_URL, falling back to the hub-relative default when unset.
