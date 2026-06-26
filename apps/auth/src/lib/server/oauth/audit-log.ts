@@ -1,6 +1,8 @@
 // Ported from the main app's src/server/oauth/audit-log.ts. (The original imported `dbWrite` but never
 // used it — dropped here.) Structured JSON to stdout for log aggregation (Axiom, etc.); fire-and-forget.
 
+import { oauthEventsTotal } from '../metrics';
+
 export type OAuthEventType =
   | 'client.created'
   | 'client.updated'
@@ -38,4 +40,9 @@ export function logOAuthEvent(event: OAuthAuditEvent): void {
 
   // Log as structured JSON for log aggregation (Axiom, etc.)
   console.log(`[oauth-audit] ${JSON.stringify(entry)}`);
+
+  // Mirror to a bounded-cardinality counter. The label is the event type with dots→underscores
+  // (e.g. token.issued → token_issued) so it's a valid, stable Prometheus label value. This is the
+  // single central place every logOAuthEvent caller flows through.
+  oauthEventsTotal.inc({ type: event.type.replace(/\./g, '_') });
 }

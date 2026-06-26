@@ -1,5 +1,6 @@
 import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
+import { captchaVerificationsTotal } from '$lib/server/metrics';
 
 // Cloudflare Turnstile verification, mirroring the main app's verifyCaptchaToken (recaptcha/client.ts).
 // Uses the INVISIBLE widget (CF dashboard widget-mode = Invisible):
@@ -52,8 +53,12 @@ export function captchaSiteKey(): string | undefined {
  *   - action must equal "login" (the value the login widget tags its token with).
  *  Any rejection logs one structured line incl. CF's error-codes (never the token/secret). */
 export async function verifyCaptchaToken(token: string | undefined, ip?: string): Promise<boolean> {
+  // Pass-through when captcha is disabled — NOT counted (no verification actually happened).
   if (!isCaptchaEnabled()) return true;
-  if (!token) return false;
+  if (!token) {
+    captchaVerificationsTotal.inc({ result: 'no_token' });
+    return false;
+  }
   try {
     const res = await fetch(SITEVERIFY, {
       method: 'POST',
@@ -62,6 +67,7 @@ export async function verifyCaptchaToken(token: string | undefined, ip?: string)
     });
     if (!res.ok) {
       console.error('captcha verify rejected', { reason: 'siteverify-http', status: res.status });
+      captchaVerificationsTotal.inc({ result: 'http_error' });
       return false;
     }
     const outcome = (await res.json()) as {
@@ -71,7 +77,7 @@ export async function verifyCaptchaToken(token: string | undefined, ip?: string)
       'error-codes'?: string[];
     };
 
-    const logReject = (reason: string) =>
+    const logReject = (reason: string) => {
       console.error('captcha verify rejected', {
         reason,
         success: !!outcome.success,
@@ -79,6 +85,10 @@ export async function verifyCaptchaToken(token: string | undefined, ip?: string)
         action: outcome.action,
         'error-codes': outcome['error-codes'],
       });
+      // Mirror the reject reason to the counter (dash→underscore for a valid label value:
+      // siteverify-failed→siteverify_failed, hostname-mismatch→hostname_mismatch, …).
+      captchaVerificationsTotal.inc({ result: reason.replace(/-/g, '_') });
+    };
 
     if (!outcome.success) {
       logReject('siteverify-failed');
@@ -102,6 +112,7 @@ export async function verifyCaptchaToken(token: string | undefined, ip?: string)
       return false;
     }
 
+    captchaVerificationsTotal.inc({ result: 'success' });
     return true;
   } catch {
     return false;

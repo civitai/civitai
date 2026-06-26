@@ -14,6 +14,7 @@ import { checkRateLimit } from '$lib/server/auth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
 import { trackLoginRedirect } from '$lib/server/tracking';
 import { userExistsByEmail } from '$lib/server/auth/users';
+import { emailLoginFailuresTotal } from '$lib/server/metrics';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -122,6 +123,7 @@ export const actions: Actions = {
       // Don't let a token/email failure bubble up to SvelteKit's full-page 500.
       // Return it as form state so the page can show an inline error instead.
       console.error('email login action failed', e);
+      emailLoginFailuresTotal.inc();
       return fail(500, { email, serverError: true });
     }
   },

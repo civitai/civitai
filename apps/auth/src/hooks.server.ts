@@ -1,8 +1,9 @@
-import type { Handle } from '@sveltejs/kit';
+import type { Handle, HandleServerError } from '@sveltejs/kit';
 import { SESSION_COOKIE } from '$lib/server/auth/session';
 import { verifier } from '$lib/server/auth/verifier';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { allowedCorsOrigin } from '$lib/server/cors';
+import { unhandledErrorsTotal } from '$lib/server/metrics';
 
 // CORS preflight headers — credentialed, so Allow-Origin MUST echo the exact origin (never `*`).
 const preflightHeaders = (origin: string) => ({
@@ -48,4 +49,13 @@ export const handle: Handle = async ({ event, resolve }) => {
     response.headers.append('vary', 'Origin');
   }
   return response;
+};
+
+// Count unhandled server errors (any uncaught throw in a load/action/endpoint that reaches SvelteKit),
+// then return a safe, non-leaking message. The counter inc is best-effort and runs before we build the
+// response so a metrics hiccup can't change what the client sees.
+export const handleError: HandleServerError = ({ error }) => {
+  unhandledErrorsTotal.inc();
+  console.error('unhandled server error', error);
+  return { message: 'Internal Error' };
 };

@@ -7,6 +7,7 @@ import { findOrCreateUserByEmail } from '$lib/server/auth/users';
 import { establishSession } from '$lib/server/auth/session';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
 import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
+import { loginsTotal } from '$lib/server/metrics';
 
 // Magic-link landing: validate + consume the token, establish the session, honor returnUrl/sync.
 export const GET: RequestHandler = async ({ url, cookies }) => {
@@ -22,6 +23,9 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 
   const user = await findOrCreateUserByEmail(email);
   await establishSession(cookies, user);
+
+  // Count the successful email login (best-effort; never blocks the redirect).
+  loginsTotal.inc({ provider: 'email' });
 
   const isAllowedOrigin = await buildPostLoginOriginCheck();
   redirect(302, buildPostLoginRedirect(returnUrl, sync, url.origin, dev, isAllowedOrigin));
