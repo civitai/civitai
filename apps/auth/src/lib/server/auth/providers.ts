@@ -212,6 +212,8 @@ function validatedStubUrl(raw: string | undefined): string {
     return '';
   }
   // <service>.<namespace>.svc.cluster.local — the canonical in-cluster Service DNS name, nothing else.
+  // CONSTRAINT: the stub MUST be a plain ClusterIP Service (2-label host). A headless/StatefulSet pod
+  // FQDN (<pod>.<svc>.<ns>.svc.cluster.local, 3 labels) does NOT match and would fail-close the provider.
   const clusterServiceFqdn = /^[a-z0-9-]+\.[a-z0-9-]+\.svc\.cluster\.local$/;
   if ((u.protocol === 'http:' || u.protocol === 'https:') && clusterServiceFqdn.test(u.hostname)) return raw;
   return '';
