@@ -33,13 +33,8 @@ import { generationGraphPanel, generationGraphStore } from '~/store/generation-g
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
-import { useLegacyGeneratorStore } from '~/store/legacy-generator.store';
-import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
-import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
-import { VideoInterpolationModal } from '~/components/Orchestrator/components/VideoInterpolationModal';
-import { UpscaleVideoModal } from '~/components/Orchestrator/components/UpscaleVideoModal';
-import { getImageDimensions, getSourceImageFromUrl } from '~/utils/image-utils';
+import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { getImageDimensions } from '~/utils/image-utils';
 import { showWarningNotification } from '~/utils/notifications';
 
 // =============================================================================
@@ -289,90 +284,11 @@ async function applyWorkflowToForm({
   });
 }
 
-// =============================================================================
-// Modal Handlers for Legacy Generator
-// =============================================================================
-
-/** Workflows that have dedicated modals for legacy generator users */
-const MODAL_WORKFLOWS = [
-  'img2img:upscale',
-  'img2img:remove-background',
-  'vid2vid:interpolate',
-  'vid2vid:upscale',
-];
-
-/**
- * Check if a workflow should open a modal for legacy generator users.
- */
-function shouldOpenModal(workflowId: string): boolean {
-  const useLegacy = useLegacyGeneratorStore.getState().useLegacy;
-  return useLegacy && MODAL_WORKFLOWS.includes(workflowId);
-}
-
-/**
- * Get source metadata for an image/video from the step.
- * metadata.params/resources are always the original generation (resolved).
- */
-function getSourceMetadataFromImage(
-  image: BlobData
-): Omit<SourceMetadata, 'extractedAt'> | undefined {
-  if (!image.params && !image.resources) return undefined;
-  return { params: image.params, resources: image.resources };
-}
-
-/**
- * Open the appropriate modal for an enhancement workflow.
- * Returns true if a modal was opened, false otherwise.
- */
-async function openEnhancementModal(workflowId: string, image: BlobData): Promise<boolean> {
-  const metadata = getSourceMetadataFromImage(image);
-
-  switch (workflowId) {
-    case 'img2img:upscale': {
-      const sourceImage = await getSourceImageFromUrl({ url: image.url, upscale: true });
-      dialogStore.trigger({
-        component: UpscaleImageModal,
-        props: { sourceImage, metadata },
-      });
-      return true;
-    }
-
-    case 'img2img:remove-background': {
-      const sourceImage = await getSourceImageFromUrl({ url: image.url });
-      dialogStore.trigger({
-        component: BackgroundRemovalModal,
-        props: { sourceImage, metadata },
-      });
-      return true;
-    }
-
-    case 'vid2vid:interpolate': {
-      dialogStore.trigger({
-        component: VideoInterpolationModal,
-        props: { videoUrl: image.url, metadata },
-      });
-      return true;
-    }
-
-    case 'vid2vid:upscale': {
-      dialogStore.trigger({
-        component: UpscaleVideoModal,
-        props: { videoUrl: image.url, metadata },
-      });
-      return true;
-    }
-
-    default:
-      return false;
-  }
-}
-
 /**
  * Apply a workflow to the form with ecosystem selection.
  * For non-enhancement workflows, always shows an ecosystem selection modal
  * so the user can choose which ecosystem to use. Incompatible ecosystems
  * show a warning message; compatible ones just show the picker.
- * For legacy generator users, opens dedicated modals for enhancement workflows.
  */
 export async function applyWorkflowWithCheck({
   workflowId: rawWorkflowId,
@@ -387,12 +303,6 @@ export async function applyWorkflowWithCheck({
   // For aliases, capture their specific ecosystem constraint (e.g., First/Last Frame → Vidu only)
   const isAlias = option && option.id !== option.graphKey;
   const aliasEcosystemIds = isAlias ? option.ecosystemIds : undefined;
-
-  // For legacy generator users, check if we should open a modal instead
-  if (shouldOpenModal(workflowId)) {
-    const modalOpened = await openEnhancementModal(workflowId, image);
-    if (modalOpened) return;
-  }
 
   // Close the lightbox if we're in the lightbox context (enhancement modals stay on top)
   if (isLightbox) dialogStore.closeById('generated-image');
