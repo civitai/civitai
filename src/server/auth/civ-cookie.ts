@@ -79,6 +79,29 @@ function legacyClearScopes(host?: string): (string | undefined)[] {
   ];
 }
 
+// The legacy next-auth cookie names clearLegacyCookies expires. Used to SKIP the (large) de-crud entirely when
+// the browser carries NONE of them (the common post-cutover case), so the hot login-callback response isn't
+// bloated with ~24 useless Set-Cookie headers (header bloat can get a real Set-Cookie dropped at the edge).
+const LEGACY_COOKIE_NAMES = [
+  'civitai-token',
+  '__Secure-civitai-token',
+  'next-auth.csrf-token',
+  '__Host-next-auth.csrf-token',
+  'next-auth.callback-url',
+  '__Secure-next-auth.callback-url',
+  'next-auth.state',
+  '__Secure-next-auth.state',
+  'next-auth.pkce.code_verifier',
+  '__Secure-next-auth.pkce.code_verifier',
+  'next-auth.nonce',
+  '__Secure-next-auth.nonce',
+];
+
+/** True if the request carries any legacy next-auth cookie — i.e. clearLegacyCookies is worth emitting. */
+export function hasAnyLegacyCookie(cookies: Partial<Record<string, string>>): boolean {
+  return LEGACY_COOKIE_NAMES.some((name) => cookies[name] != null);
+}
+
 /**
  * Expire EVERY legacy next-auth cookie a returning pre-cutover user's browser might still carry, across every
  * scope next-auth could have set them on:
@@ -165,12 +188,37 @@ export function postLoginMarkerCookie(): string {
   return `${POST_LOGIN_MARKER}=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=60`;
 }
 
+/** Expire the one-shot post-login marker. */
+export function clearPostLoginMarker(): string {
+  return `${POST_LOGIN_MARKER}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
+// First-party login RETRY budget, paired with POST_LOGIN_MARKER. When /api/auth/authorize sees the marker but
+// NO session cookie, the callback set a civ-token that didn't arrive — EITHER an intermittent cookie-landing
+// miss (transient: e.g. the edge dropped a Set-Cookie) OR a real Domain/Secure misconfig (permanent). We RETRY
+// the login once (consume the marker, re-enter the flow) so a transient miss self-heals; only on a SECOND
+// consecutive miss do we show the terminal "couldn't sign you in" page — that's a genuine redirect loop.
+// Host-only + non-secure like the marker so it always lands; short TTL (the whole login chain is a few hops).
+export const LOGIN_RETRY_COOKIE = 'civ_login_retry';
+const LOGIN_RETRY_TTL_S = 120;
+
+/** Set-Cookie recording the current login-retry count (host-only; always lands, like the marker). */
+export function loginRetryCookie(count: number): string {
+  return `${LOGIN_RETRY_COOKIE}=${count}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${LOGIN_RETRY_TTL_S}`;
+}
+
+/** Expire the login-retry counter (on success, terminal error, or the start of a fresh login chain). */
+export function clearLoginRetryCookie(): string {
+  return `${LOGIN_RETRY_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
 /**
  * Expire the civ-token session cookie (BOTH name prefixes) across every plausible Domain scope — host-only and
  * the registrable domain we'd set — plus the marker. A stale, wrong-scope cookie can wedge the session (the
  * spoke reads the bad one and never authenticates); this removes it no matter how it was scoped, so the next
  * login attempt is clean. The registrable scope also clears a hub-set `.civitai.com` cookie (a Max-Age=0 over
- * `civitai.com` deletes a `.civitai.com` cookie — RFC 6265 same scope). Used by the loop-recovery path.
+ * `civitai.com` deletes a `.civitai.com` cookie — RFC 6265 same scope). Also clears the loop-recovery marker +
+ * retry counter so the next attempt starts from zero. Used by the loop-recovery path.
  */
 export function clearAllSessionCookies(host?: string): string[] {
   const h = (host ?? '').split(':')[0].toLowerCase();
@@ -188,6 +236,6 @@ export function clearAllSessionCookies(host?: string): string[] {
       );
     }
   }
-  out.push(`${POST_LOGIN_MARKER}=; Path=/; Max-Age=0; SameSite=Lax`);
+  out.push(clearPostLoginMarker(), clearLoginRetryCookie());
   return out;
 }

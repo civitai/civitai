@@ -5,6 +5,11 @@ import {
   clearAllSessionCookies,
   clearLegacyCookies,
   POST_LOGIN_MARKER,
+  LOGIN_RETRY_COOKIE,
+  loginRetryCookie,
+  clearLoginRetryCookie,
+  clearPostLoginMarker,
+  hasAnyLegacyCookie,
 } from '../civ-cookie';
 
 // Parse a Set-Cookie string into trimmed attribute tokens for order-independent assertions.
@@ -77,8 +82,11 @@ describe('clearAllSessionCookies — cross-scope session-cookie wipe', () => {
     expect(secure.every((c) => has(c, 'Secure'))).toBe(true);
     expect(secure.some((c) => domainOf(c) === 'civitai.com')).toBe(true);
 
-    // The one-shot marker is cleared as part of recovery.
+    // The one-shot marker AND the login-retry counter are cleared as part of recovery.
     expect(cleared.some((c) => c.startsWith(`${POST_LOGIN_MARKER}=`) && has(c, 'Max-Age=0'))).toBe(
+      true
+    );
+    expect(cleared.some((c) => c.startsWith(`${LOGIN_RETRY_COOKIE}=`) && has(c, 'Max-Age=0'))).toBe(
       true
     );
   });
@@ -90,6 +98,40 @@ describe('clearAllSessionCookies — cross-scope session-cookie wipe', () => {
     expect(cleared.some((c) => c.startsWith('civ-token='))).toBe(true);
     expect(cleared.some((c) => c.startsWith('__Secure-civ-token='))).toBe(true);
     expect(cleared.some((c) => c.startsWith(`${POST_LOGIN_MARKER}=`))).toBe(true);
+  });
+});
+
+describe('login retry budget (retry-tolerant loop recovery)', () => {
+  it('records the retry count host-only + non-secure so it always lands, short TTL', () => {
+    const c = loginRetryCookie(1);
+    expect(c.startsWith(`${LOGIN_RETRY_COOKIE}=1`)).toBe(true);
+    expect(domainOf(c)).toBeUndefined(); // host-only
+    expect(has(c, 'Secure')).toBe(false); // lands regardless of the session cookie's fate
+    expect(has(c, 'HttpOnly')).toBe(true);
+    expect(has(c, 'SameSite=Lax')).toBe(true);
+    expect(c).toMatch(/Max-Age=\d+/);
+  });
+
+  it('clearLoginRetryCookie + clearPostLoginMarker expire host-only', () => {
+    for (const c of [clearLoginRetryCookie(), clearPostLoginMarker()]) {
+      expect(has(c, 'Max-Age=0')).toBe(true);
+      expect(domainOf(c)).toBeUndefined();
+    }
+    expect(clearLoginRetryCookie().startsWith(`${LOGIN_RETRY_COOKIE}=;`)).toBe(true);
+    expect(clearPostLoginMarker().startsWith(`${POST_LOGIN_MARKER}=;`)).toBe(true);
+  });
+});
+
+describe('hasAnyLegacyCookie — gate the callback de-crud', () => {
+  it('false when the browser carries no legacy next-auth cookie (common post-cutover login)', () => {
+    expect(hasAnyLegacyCookie({})).toBe(false);
+    expect(hasAnyLegacyCookie({ '__Secure-civ-token': 'x', civ_postlogin: '1' })).toBe(false);
+  });
+
+  it('true when any legacy next-auth cookie is present (returning pre-cutover user)', () => {
+    expect(hasAnyLegacyCookie({ 'civitai-token': 'x' })).toBe(true);
+    expect(hasAnyLegacyCookie({ '__Secure-civitai-token': 'x' })).toBe(true);
+    expect(hasAnyLegacyCookie({ 'next-auth.state': 'x' })).toBe(true);
   });
 });
 

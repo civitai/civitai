@@ -15,6 +15,7 @@ vi.mock('~/shared/constants/generation.constants', () => ({
 
 // Pull the cookie-name helpers from the same source the handler uses, so the test tracks the real names.
 import { sessionCookieName, deviceCookieName } from '@civitai/auth';
+import { POST_LOGIN_MARKER } from '../civ-cookie';
 
 describe('buildLogoutCookies', () => {
   const ORIGINAL_ENV = { ...process.env };
@@ -54,6 +55,15 @@ describe('buildLogoutCookies', () => {
     expect(clears(headers, '__Secure-civitai-token')).toBe(true);
     // orchestrator service-auth cookie
     expect(headers.some((h) => /Max-Age=0/i.test(h) && h.includes('=;'))).toBe(true);
+  });
+
+  // Regression: logout MUST clear the post-login loop-recovery marker. Otherwise a logout-then-login within the
+  // marker's 60s TTL leaves it set while civ-token is (correctly) gone, and /api/auth/authorize false-fires its
+  // "cookie didn't stick" recovery — the "We couldn't sign you in" page on civitai.red.
+  it('clears the post-login loop-recovery marker (civ_postlogin)', async () => {
+    const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
+    const headers = buildLogoutCookies(undefined);
+    expect(clears(headers, POST_LOGIN_MARKER)).toBe(true);
   });
 
   it('also de-cruds the ancillary next-auth cookies (CSRF / callback-url / state / pkce / nonce)', async () => {

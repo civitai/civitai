@@ -5,7 +5,11 @@ import {
   createSessionTokenClient,
   hubLogoutUrl,
 } from '@civitai/auth';
-import { cookieDomainForHost, clearLegacyCookies } from '~/server/auth/civ-cookie';
+import {
+  cookieDomainForHost,
+  clearLegacyCookies,
+  POST_LOGIN_MARKER,
+} from '~/server/auth/civ-cookie';
 import { resolveSelfOrigin } from '~/server/auth/oauth-bridge';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
@@ -72,6 +76,11 @@ export function buildLogoutCookies(host: string | undefined): string[] {
     ...clearLegacyCookies(host),
     // orchestrator service-auth cookie (host-only)
     `${generationServiceCookie.name}=; Path=/; Max-Age=0; SameSite=Lax`,
+    // post-login loop-recovery marker (host-only). MUST be cleared on logout: it's a one-shot "did the session
+    // cookie land?" probe with a 60s TTL, set by /api/auth/callback. If logout wipes civ-token but leaves this,
+    // a logout-then-login WITHIN that 60s window looks identical to "the cookie didn't stick" — so
+    // /api/auth/authorize false-fires its loop-recovery and shows "We couldn't sign you in".
+    `${POST_LOGIN_MARKER}=; Path=/; Max-Age=0; SameSite=Lax`,
   ];
 }
 

@@ -3,6 +3,7 @@ import {
   setSessionCookie,
   postLoginMarkerCookie,
   clearLegacyCookies,
+  hasAnyLegacyCookie,
 } from '~/server/auth/civ-cookie';
 import {
   resolveSelfOrigin,
@@ -63,8 +64,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   all.push(postLoginMarkerCookie());
   // De-crud the browser at the legacy->civ-token transition: expire every leftover next-auth cookie — the
   // SESSION cookie (so the hybrid fallback can't keep a migrated user on the stale legacy identity) AND the
-  // ancillary cruft (CSRF / callback-url / OAuth state + PKCE).
-  all.push(...clearLegacyCookies(req.headers.host));
+  // ancillary cruft (CSRF / callback-url / OAuth state + PKCE). ONLY when the browser actually still carries a
+  // legacy cookie — otherwise this would add ~24 useless Set-Cookie headers to every login, bloating this hot
+  // response near the edge header limit and risking the real civ-token Set-Cookie getting dropped.
+  if (hasAnyLegacyCookie(req.cookies)) all.push(...clearLegacyCookies(req.headers.host));
   res.setHeader('Set-Cookie', all);
   res.redirect(302, result.returnUrl);
 }
