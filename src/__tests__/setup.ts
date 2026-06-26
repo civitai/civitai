@@ -123,6 +123,21 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
 process.env.REDIS_URL ??= 'redis://localhost:6379';
 process.env.REDIS_SYS_URL ??= 'redis://localhost:6379';
 
+// The @civitai/db package (packages/civitai-db/src/env.ts) has the SAME pattern: it owns its env
+// schema and validates `process.env` directly via loadDbEnv(), NOT `~/env/server`, so the Proxy mock
+// below doesn't reach it. Any test whose module graph transitively imports a db factory (e.g.
+// db-lag-helpers → notifDb → getClient → loadDbEnv) throws "[@civitai/db] Invalid environment
+// variables" the moment that import is evaluated — and because that import can race the heavy
+// event-engine graph across the worker pool, the failure was INTERMITTENT (green on lighter-loaded
+// runs, red under CPU pressure / certain run-order). It also surfaced indirectly as the
+// "No 'dbRead' export is defined on the mock" error in fail-soft code paths. Seed the four required
+// URLs (the rest have schema defaults) so loadDbEnv() always succeeds in tests; the Prisma clients
+// themselves are still mocked per-test (or never connected), so no real DB connection is opened.
+process.env.DATABASE_URL ??= 'postgres://user:pass@localhost:5432/db';
+process.env.DATABASE_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/db';
+process.env.NOTIFICATION_DB_URL ??= 'postgres://user:pass@localhost:5432/notif';
+process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/notif';
+
 vi.mock('~/env/server', () => ({
   env: new Proxy(TEST_ENV_DEFAULTS, {
     get(target, prop: string) {

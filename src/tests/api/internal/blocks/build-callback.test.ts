@@ -84,7 +84,15 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerApply: mockTriggerApply,
   waitForApplyJob: mockWaitApply,
 }));
-vi.mock('~/server/services/blocks/forgejo.service', () => ({ setCommitStatus: mockSetCommitStatus }));
+// Include listRepoTreeAtRef + getBlobContent: build-callback itself only needs setCommitStatus, but a
+// saturated worker pool let this partial factory leak into a co-resident file (push-diff-enrichment)
+// whose REAL publish-request.service reaches them via reconstructBundleFromForgejo → surfacing as
+// "No 'listRepoTreeAtRef' export is defined on the mock". Completing the surface removes that leak.
+vi.mock('~/server/services/blocks/forgejo.service', () => ({
+  setCommitStatus: mockSetCommitStatus,
+  listRepoTreeAtRef: vi.fn(),
+  getBlobContent: vi.fn(),
+}));
 // Phase 2: build-callback marks the per-request deploy lifecycle. Mock the
 // helper so we can assert the transitions (the real one writes to the DB).
 vi.mock('~/server/services/blocks/publish-request.service', () => ({

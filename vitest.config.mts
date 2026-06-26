@@ -65,7 +65,19 @@ export default defineConfig({
         // Pre-bundle deps the component setup mocks/imports so Vitest doesn't
         // discover them mid-run and trigger a "Vite unexpectedly reloaded a
         // test" warning (a flake vector).
-        optimizeDeps: { include: ['next/router'] },
+        //
+        // On a COLD optimizeDeps cache (every fresh CI/preview run), Vite was
+        // discovering `vitest-browser-react` + `react/jsx-dev-runtime` only when
+        // `test/component-setup.tsx` first imported them — mid-run — and reloading.
+        // The reload tears down the module context while component-setup is still
+        // importing `vitest-browser-react`, so that package evaluates OUTSIDE a live
+        // vitest runner → "Vitest failed to find the runner" → "Failed to import test
+        // file test/component-setup.tsx" → EVERY component test fails to load. (Warm
+        // cache hid it: the 2nd local run always passed.) Pre-bundling them here makes
+        // the optimize pass happen BEFORE the run starts, so there's no mid-run reload.
+        optimizeDeps: {
+          include: ['next/router', 'vitest-browser-react', 'react/jsx-dev-runtime', 'react/jsx-runtime'],
+        },
         test: {
           name: 'component',
           globals: true,
