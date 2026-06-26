@@ -11,9 +11,23 @@ import { isCaptchaEnabled, captchaSiteKey, verifyCaptchaToken } from '../captcha
 beforeEach(() => {
   delete process.env.CF_INVISIBLE_TURNSTILE_SECRET;
   delete process.env.CF_INVISIBLE_TURNSTILE_SITEKEY;
+  delete process.env.ORIGIN;
   vi.restoreAllMocks();
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete process.env.ORIGIN;
+});
+
+// Stub a single Cloudflare siteverify outcome (the JSON body CF returns).
+function stubSiteverify(outcome: Record<string, unknown>, status = 200) {
+  const fetchSpy = vi.fn(async () => new Response(JSON.stringify(outcome), { status }));
+  vi.stubGlobal('fetch', fetchSpy);
+  return fetchSpy;
+}
+
+const HUB_ORIGIN = 'https://auth.civitai.com';
+const HUB_HOST = 'auth.civitai.com';
 
 describe('isCaptchaEnabled (not dev)', () => {
   it('disabled when the secret is unset', () => {
@@ -54,12 +68,10 @@ describe('verifyCaptchaToken', () => {
     expect(fetchSpy).not.toHaveBeenCalled(); // short-circuits before the network call
   });
 
-  it('returns true on a successful Cloudflare siteverify', async () => {
+  it('returns true on success + correct hostname + correct action', async () => {
     process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
-    const fetchSpy = vi.fn(
-      async () => new Response(JSON.stringify({ success: true }), { status: 200 })
-    );
-    vi.stubGlobal('fetch', fetchSpy);
+    process.env.ORIGIN = HUB_ORIGIN;
+    const fetchSpy = stubSiteverify({ success: true, hostname: HUB_HOST, action: 'login' });
     expect(await verifyCaptchaToken('good-token', '1.2.3.4')).toBe(true);
     // sends secret + response + remoteip to the siteverify endpoint
     const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
@@ -70,19 +82,75 @@ describe('verifyCaptchaToken', () => {
     });
   });
 
-  it('returns false when Cloudflare reports success:false', async () => {
+  it('returns false (and logs) on a WRONG hostname — the cross-property replay gap', async () => {
     process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ success: false }), { status: 200 }))
+    process.env.ORIGIN = HUB_ORIGIN;
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // token solved on the main app (shared sitekey+secret) reports civitai.com, not the hub host
+    stubSiteverify({ success: true, hostname: 'civitai.com', action: 'login' });
+    expect(await verifyCaptchaToken('replayed-token')).toBe(false);
+    expect(errSpy).toHaveBeenCalledWith(
+      'captcha verify rejected',
+      expect.objectContaining({ reason: 'hostname-mismatch', hostname: 'civitai.com' })
     );
+  });
+
+  it('returns false on a WRONG action', async () => {
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
+    process.env.ORIGIN = HUB_ORIGIN;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubSiteverify({ success: true, hostname: HUB_HOST, action: 'signup' });
+    expect(await verifyCaptchaToken('wrong-action-token')).toBe(false);
+  });
+
+  it('returns false on a MISSING hostname (when ORIGIN is set)', async () => {
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
+    process.env.ORIGIN = HUB_ORIGIN;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubSiteverify({ success: true, action: 'login' }); // no hostname field
+    expect(await verifyCaptchaToken('no-hostname-token')).toBe(false);
+  });
+
+  it('returns false on a MISSING action', async () => {
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
+    process.env.ORIGIN = HUB_ORIGIN;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubSiteverify({ success: true, hostname: HUB_HOST }); // no action field
+    expect(await verifyCaptchaToken('no-action-token')).toBe(false);
+  });
+
+  it('SKIPS the hostname check when ORIGIN is unset (still true on success + action)', async () => {
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
+    // ORIGIN deleted in beforeEach → expectedHostname() is undefined → hostname not enforced.
+    stubSiteverify({ success: true, hostname: 'whatever.example', action: 'login' });
+    expect(await verifyCaptchaToken('good-token')).toBe(true);
+  });
+
+  it('returns false (and logs error-codes) when Cloudflare reports success:false', async () => {
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
+    process.env.ORIGIN = HUB_ORIGIN;
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    stubSiteverify({ success: false, 'error-codes': ['timeout-or-duplicate'] });
     expect(await verifyCaptchaToken('bad-token')).toBe(false);
+    expect(errSpy).toHaveBeenCalledWith(
+      'captcha verify rejected',
+      expect.objectContaining({
+        reason: 'siteverify-failed',
+        success: false,
+        'error-codes': ['timeout-or-duplicate'],
+      })
+    );
   });
 
   it('returns false on a non-2xx siteverify response', async () => {
     process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
     expect(await verifyCaptchaToken('good-token')).toBe(false);
+    expect(errSpy).toHaveBeenCalledWith(
+      'captcha verify rejected',
+      expect.objectContaining({ reason: 'siteverify-http', status: 500 })
+    );
   });
 
   it('returns false (fail-closed) when fetch throws', async () => {
