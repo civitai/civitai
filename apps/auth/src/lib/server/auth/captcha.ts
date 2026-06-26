@@ -92,8 +92,12 @@ export async function verifyCaptchaToken(token: string | undefined, ip?: string)
       return false;
     }
 
-    // Pin the token to the login flow.
-    if (outcome.action !== EXPECTED_ACTION) {
+    // Pin the token to the login flow — but TOLERATE an empty/absent action. The hostname check
+    // above already closes the cross-property replay gap, and auth.civitai.com hosts only the login
+    // widget, so an action-less token solved on our host (e.g. a tab loaded before data-action="login"
+    // shipped) is still a real human on our domain. Only reject a token explicitly stamped with a
+    // DIFFERENT action. (Strict `!== EXPECTED_ACTION` blocked stale pre-deploy tabs in a retry loop.)
+    if (outcome.action && outcome.action !== EXPECTED_ACTION) {
       logReject('action-mismatch');
       return false;
     }

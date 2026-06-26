@@ -111,12 +111,18 @@ describe('verifyCaptchaToken', () => {
     expect(await verifyCaptchaToken('no-hostname-token')).toBe(false);
   });
 
-  it('returns false on a MISSING action', async () => {
+  it('TOLERATES a MISSING action (still true) — an action-less token on the right host is a real user', async () => {
     process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
     process.env.ORIGIN = HUB_ORIGIN;
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    stubSiteverify({ success: true, hostname: HUB_HOST }); // no action field
-    expect(await verifyCaptchaToken('no-action-token')).toBe(false);
+    stubSiteverify({ success: true, hostname: HUB_HOST }); // no action field (e.g. stale pre-deploy tab)
+    expect(await verifyCaptchaToken('no-action-token')).toBe(true);
+  });
+
+  it('TOLERATES an EMPTY-string action (still true) — the exact shape stale tabs produced in prod', async () => {
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
+    process.env.ORIGIN = HUB_ORIGIN;
+    stubSiteverify({ success: true, hostname: HUB_HOST, action: '' });
+    expect(await verifyCaptchaToken('empty-action-token')).toBe(true);
   });
 
   it('SKIPS the hostname check when ORIGIN is unset (still true on success + action)', async () => {
