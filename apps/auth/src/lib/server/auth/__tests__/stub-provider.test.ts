@@ -17,11 +17,13 @@ const STUB_KEYS = [
   'STUB_CLIENT_SECRET',
 ] as const;
 
+// URLs must pass validatedStubUrl (https, or http to an in-cluster .svc host) — use the real shape.
+const STUB_BASE = 'http://stub-oidc.civitai-auth-staging.svc.cluster.local:8080';
 const FULL = {
   AUTH_ENABLE_STUB_PROVIDER: '1',
-  STUB_AUTHORIZE_URL: 'http://stub-oidc.test/authorize',
-  STUB_TOKEN_URL: 'http://stub-oidc.test/token',
-  STUB_USERINFO_URL: 'http://stub-oidc.test/userinfo',
+  STUB_AUTHORIZE_URL: `${STUB_BASE}/authorize`,
+  STUB_TOKEN_URL: `${STUB_BASE}/token`,
+  STUB_USERINFO_URL: `${STUB_BASE}/userinfo`,
   STUB_CLIENT_ID: 'stub-client',
   STUB_CLIENT_SECRET: 'stub-secret',
 };
@@ -85,27 +87,58 @@ describe('stub provider — wiring', () => {
     expect(stub!.scope).toContain('openid');
   });
 
-  it('maps the stub-oidc-server STUB_PROFILE shape onto the normalized profile', async () => {
+  it('SECURITY: forces a synthetic, UNVERIFIED, non-colliding identity regardless of what the stub returns', async () => {
     const p = await load(FULL);
     const stub = p.getProvider('stub')!;
-    // Mirrors stub-oidc-server.mjs STUB_PROFILE: { sub|id, email, email_verified, name, preferred_username }.
+    // Even if the stub upstream claims a real moderator's VERIFIED email, mapProfile must NOT pass it
+    // through — emailVerified:false (no link-by-verified-email → no takeover) and a `.invalid` email
+    // (no unique-constraint collision on create).
     const mapped = stub.mapProfile({
       sub: 'stub-user-42',
-      email: 'ci-smoke-tester@civitai.test',
-      email_verified: true,
+      email: 'admin@civitai.com', // hostile claim
+      email_verified: true, // hostile claim
       name: 'CI Smoke Tester',
       preferred_username: 'ci-smoke-tester',
     });
     expect(mapped.providerAccountId).toBe('stub-user-42');
-    expect(mapped.email).toBe('ci-smoke-tester@civitai.test');
-    expect(mapped.emailVerified).toBe(true);
+    expect(mapped.emailVerified).toBe(false); // never links into an existing account
+    expect(mapped.email).toBe('stub+stub-user-42@stub.invalid'); // namespaced; can't collide with a real user
+    expect(mapped.email).not.toContain('civitai.com'); // the claimed real email is dropped
     expect(mapped.username).toBe('ci-smoke-tester');
     expect(mapped.name).toBe('CI Smoke Tester');
   });
 
-  it('falls back to `id` when the profile has no `sub`', async () => {
+  it('namespaces the synthetic email per providerAccountId, falling back to `id` then `anon`', async () => {
     const p = await load(FULL);
-    const mapped = p.getProvider('stub')!.mapProfile({ id: 7, email: 'x@y.z' });
-    expect(mapped.providerAccountId).toBe('7');
+    const stub = p.getProvider('stub')!;
+    expect(stub.mapProfile({ id: 7 }).providerAccountId).toBe('7');
+    expect(stub.mapProfile({ id: 7 }).email).toBe('stub+7@stub.invalid');
+    expect(stub.mapProfile({}).providerAccountId).toBe('anon');
+  });
+});
+
+describe('stub provider — SSRF-safe URL validation (fail closed)', () => {
+  it('accepts https and in-cluster .svc http URLs', async () => {
+    const p = await load(FULL); // FULL uses .svc.cluster.local http
+    const stub = p.getProvider('stub')!;
+    expect(stub.authorizeUrl).toBe(FULL.STUB_AUTHORIZE_URL);
+    expect(stub.tokenUrl).toBe(FULL.STUB_TOKEN_URL);
+    expect(stub.userinfoUrl).toBe(FULL.STUB_USERINFO_URL);
+
+    const https = await load({ ...FULL, STUB_TOKEN_URL: 'https://stub.example.com/token' });
+    expect(https.getProvider('stub')!.tokenUrl).toBe('https://stub.example.com/token');
+  });
+
+  it('rejects plain-http external hosts, IP literals, the metadata endpoint, and junk → empty string', async () => {
+    for (const bad of [
+      'http://evil.example.com/token', // plain http to an external host
+      'http://169.254.169.254/latest/meta-data/', // cloud metadata SSRF
+      'http://10.0.0.1:6379/', // internal IP literal
+      'not-a-url',
+      'file:///etc/passwd',
+    ]) {
+      const p = await load({ ...FULL, STUB_TOKEN_URL: bad });
+      expect(p.getProvider('stub')!.tokenUrl, `${bad} must be rejected`).toBe('');
+    }
   });
 });

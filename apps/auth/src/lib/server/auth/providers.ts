@@ -143,21 +143,35 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
   ['stub' as ProviderId]: {
     id: 'stub' as ProviderId,
     name: 'Stub',
-    authorizeUrl: env.STUB_AUTHORIZE_URL ?? '',
-    tokenUrl: env.STUB_TOKEN_URL ?? '',
-    userinfoUrl: env.STUB_USERINFO_URL ?? '',
+    // URLs are env-controlled, and tokenUrl/userinfoUrl are SERVER-SIDE fetches (the hub sends the
+    // client_secret / bearer token to them) → an SSRF sink if the env were hostile. validatedStubUrl
+    // fails CLOSED: only https, or http to an in-cluster Service (.svc[.cluster.local]), is accepted —
+    // an IP literal / metadata endpoint / arbitrary http host yields '' (provider non-functional).
+    authorizeUrl: validatedStubUrl(env.STUB_AUTHORIZE_URL),
+    tokenUrl: validatedStubUrl(env.STUB_TOKEN_URL),
+    userinfoUrl: validatedStubUrl(env.STUB_USERINFO_URL),
     scope: 'openid email profile',
     clientId: () => env.STUB_CLIENT_ID,
     clientSecret: () => env.STUB_CLIENT_SECRET,
-    // Maps the stub-oidc-server's STUB_PROFILE shape (id/sub, email, email_verified, name,
-    // preferred_username) onto the hub's NormalizedProfile — mirroring the google/github mappers.
-    mapProfile: (p) => ({
-      providerAccountId: String(p.sub ?? p.id),
-      email: p.email as string | undefined,
-      emailVerified: p.email_verified as boolean | undefined,
-      name: p.name as string | undefined,
-      username: p.preferred_username as string | undefined,
-    }),
+    // SECURITY: the stub is a TEST upstream — it must NEVER be able to link into or impersonate a real
+    // account. We force a synthetic, namespaced, UNVERIFIED identity regardless of what the stub upstream
+    // returns, so findOrCreateUser can ONLY ever create a fresh stub-scoped user:
+    //   - emailVerified:false skips the link-by-VERIFIED-email branch (users.ts) — the account-takeover
+    //     vector (a stub claiming a moderator's email would otherwise log in AS them; the staging hub runs
+    //     against a clone of prod user data, so that collision is real once the flag is on).
+    //   - the reserved `.invalid` email (RFC 6761) can never collide with a real user's, so the create
+    //     branch can't unique-constraint-clash either.
+    // The e2e round-trip only needs A session, not a real-user one, so this costs the test nothing.
+    mapProfile: (p) => {
+      const sub = String(p.sub ?? p.id ?? 'anon');
+      return {
+        providerAccountId: sub,
+        email: `stub+${sub}@stub.invalid`,
+        emailVerified: false,
+        name: p.name as string | undefined,
+        username: p.preferred_username as string | undefined,
+      };
+    },
   },
 };
 
@@ -174,6 +188,28 @@ const isTruthy = (v: string | undefined): boolean =>
  *  truthy (the credential check below still applies on top). */
 export function isStubProviderEnabled(): boolean {
   return isTruthy(env.AUTH_ENABLE_STUB_PROVIDER);
+}
+
+/**
+ * Fail-closed validator for the env-controlled stub provider URLs. tokenUrl/userinfoUrl are server-side
+ * fetches from the hub pod, so an unvalidated env is an SSRF primitive (fetch arbitrary internal hosts /
+ * the cloud metadata endpoint; leak the client_secret/bearer). Accept ONLY https (any host) or http to an
+ * in-cluster Service (`*.svc` / `*.svc.cluster.local`) — the only shapes the stub legitimately takes.
+ * Anything else (bare IP, plain-http external host, junk) returns '' so the provider is non-functional.
+ * (A function declaration so it's hoisted for the PROVIDERS literal above.)
+ */
+function validatedStubUrl(raw: string | undefined): string {
+  if (!raw) return '';
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return '';
+  }
+  if (u.protocol === 'https:') return raw;
+  if (u.protocol === 'http:' && (u.hostname.endsWith('.svc') || u.hostname.endsWith('.svc.cluster.local')))
+    return raw;
+  return '';
 }
 
 /** A provider's gate beyond having client credentials. Real providers have none; `stub` requires the flag. */
