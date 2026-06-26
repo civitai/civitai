@@ -2,7 +2,12 @@ import { error, redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import type { RequestHandler } from './$types';
-import { getProvider, exchangeCode, fetchProfile } from '$lib/server/auth/providers';
+import {
+  getProvider,
+  exchangeCode,
+  fetchProfile,
+  isStubProviderEnabled,
+} from '$lib/server/auth/providers';
 import { findOrCreateUser, linkAccountToUser } from '$lib/server/auth/users';
 import { establishSession } from '$lib/server/auth/session';
 import { buildPostLoginRedirect } from '$lib/server/auth/redirect';
@@ -12,6 +17,9 @@ import { loginsTotal } from '$lib/server/metrics';
 export const GET: RequestHandler = async ({ params, url, cookies, locals }) => {
   const provider = getProvider(params.provider);
   if (!provider) error(404, 'Unknown provider');
+  // The e2e-only `stub` provider's callback is inert unless AUTH_ENABLE_STUB_PROVIDER is set (prod-inert),
+  // matching the start route + listEnabledProviders.
+  if (params.provider === 'stub' && !isStubProviderEnabled()) error(404, 'Unknown provider');
 
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');

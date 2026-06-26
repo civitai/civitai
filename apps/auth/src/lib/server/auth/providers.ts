@@ -127,16 +127,108 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
       image: typeof p.icon_img === 'string' ? (p.icon_img as string).split('?')[0] : undefined,
     }),
   },
+  // --- stub (e2e ONLY — prod-inert) ---
+  // A deterministic upstream OIDC provider for the hub e2e environment: its three URLs point at the
+  // in-cluster stub-oidc-server (apps/auth/e2e/stub-oidc-server.mjs), so a login through it drives the
+  // GENUINE Authorization-Code + PKCE callback path without a live external provider.
+  //
+  // `stub` is deliberately NOT part of the shared `ProviderId` union (packages/civitai-auth) — keeping it
+  // out means the main app's AccountsCard surface never learns about it. We add it to this hub-local table
+  // via a contained cast (`'stub' as ProviderId`); getProvider / listEnabledProviders / the start+callback
+  // routes read the table generically, so they accept it without widening the exported type.
+  //
+  // It is enabled ONLY when AUTH_ENABLE_STUB_PROVIDER is truthy AND its STUB_CLIENT_ID/SECRET are set
+  // (see listEnabledProviders' stubEnabled gate) — so with the flag unset (prod) it never appears in the
+  // provider list and /login/stub 404s (the start route rejects an unconfigured provider).
+  ['stub' as ProviderId]: {
+    id: 'stub' as ProviderId,
+    name: 'Stub',
+    // URLs are env-controlled, and tokenUrl/userinfoUrl are SERVER-SIDE fetches (the hub sends the
+    // client_secret / bearer token to them) → an SSRF sink if the env were hostile. validatedStubUrl
+    // fails CLOSED: only https, or http to an in-cluster Service (.svc[.cluster.local]), is accepted —
+    // an IP literal / metadata endpoint / arbitrary http host yields '' (provider non-functional).
+    authorizeUrl: validatedStubUrl(env.STUB_AUTHORIZE_URL),
+    tokenUrl: validatedStubUrl(env.STUB_TOKEN_URL),
+    userinfoUrl: validatedStubUrl(env.STUB_USERINFO_URL),
+    scope: 'openid email profile',
+    clientId: () => env.STUB_CLIENT_ID,
+    clientSecret: () => env.STUB_CLIENT_SECRET,
+    // SECURITY: the stub is a TEST upstream — it must NEVER be able to link into or impersonate a real
+    // account. We force a synthetic, namespaced, UNVERIFIED identity regardless of what the stub upstream
+    // returns, so findOrCreateUser can ONLY ever create a fresh stub-scoped user:
+    //   - emailVerified:false skips the link-by-VERIFIED-email branch (users.ts) — the account-takeover
+    //     vector (a stub claiming a moderator's email would otherwise log in AS them; the staging hub runs
+    //     against a clone of prod user data, so that collision is real once the flag is on).
+    //   - the reserved `.invalid` email (RFC 6761) can never collide with a real user's, so the create
+    //     branch can't unique-constraint-clash either.
+    // The e2e round-trip only needs A session, not a real-user one, so this costs the test nothing.
+    mapProfile: (p) => {
+      const sub = String(p.sub ?? p.id ?? 'anon');
+      return {
+        providerAccountId: sub,
+        email: `stub+${sub}@stub.invalid`,
+        emailVerified: false,
+        name: p.name as string | undefined,
+        username: p.preferred_username as string | undefined,
+      };
+    },
+  },
 };
 
 export function getProvider(id: string): ProviderDef | undefined {
   return (PROVIDERS as Record<string, ProviderDef>)[id];
 }
 
-/** Providers whose client credentials are actually configured — drives the login buttons. */
+/** Truthy env flag check (1/true/yes/on, case-insensitive). */
+const isTruthy = (v: string | undefined): boolean =>
+  v != null && ['1', 'true', 'yes', 'on'].includes(v.trim().toLowerCase());
+
+/** The e2e-only `stub` provider is additionally gated behind an explicit flag so it can NEVER turn on in
+ *  prod just because some STUB_* env happens to be set. It enables ONLY when AUTH_ENABLE_STUB_PROVIDER is
+ *  truthy (the credential check below still applies on top). */
+export function isStubProviderEnabled(): boolean {
+  return isTruthy(env.AUTH_ENABLE_STUB_PROVIDER);
+}
+
+/**
+ * Fail-closed validator for the env-controlled stub provider URLs. tokenUrl/userinfoUrl are server-side
+ * fetches from the hub pod, so an unvalidated env is an SSRF primitive (fetch arbitrary internal hosts /
+ * the cloud metadata endpoint; leak the client_secret/bearer). The legitimate stub upstream is ALWAYS the
+ * one in-cluster Service we deploy, so we PIN the host to the canonical Service FQDN
+ * `<svc>.<ns>.svc.cluster.local` (http or https; an optional :port is not part of `hostname`).
+ *
+ * `.cluster.local` is the reserved, non-delegatable cluster domain — no PUBLIC host can ever satisfy this,
+ * which closes BOTH a naive suffix bypass (a bare `*.svc` external host like `evil.com.svc`) AND the
+ * https-to-anywhere SSRF reach (an arbitrary `https://attacker/` or `https://169.254.169.254/`). Anything
+ * else (IP literal, external host, plain junk, bad scheme) returns '' → the provider is non-functional and
+ * `buildAuthorizeUrl('')` fail-closes. (Function declaration so it's hoisted for the PROVIDERS literal.)
+ */
+function validatedStubUrl(raw: string | undefined): string {
+  if (!raw) return '';
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return '';
+  }
+  // <service>.<namespace>.svc.cluster.local — the canonical in-cluster Service DNS name, nothing else.
+  // CONSTRAINT: the stub MUST be a plain ClusterIP Service (2-label host). A headless/StatefulSet pod
+  // FQDN (<pod>.<svc>.<ns>.svc.cluster.local, 3 labels) does NOT match and would fail-close the provider.
+  const clusterServiceFqdn = /^[a-z0-9-]+\.[a-z0-9-]+\.svc\.cluster\.local$/;
+  if ((u.protocol === 'http:' || u.protocol === 'https:') && clusterServiceFqdn.test(u.hostname)) return raw;
+  return '';
+}
+
+/** A provider's gate beyond having client credentials. Real providers have none; `stub` requires the flag. */
+function providerExtraGate(p: ProviderDef): boolean {
+  return (p.id as string) === 'stub' ? isStubProviderEnabled() : true;
+}
+
+/** Providers whose client credentials are actually configured — drives the login buttons. The e2e-only
+ *  `stub` provider is additionally gated behind AUTH_ENABLE_STUB_PROVIDER (prod-inert by default). */
 export function listEnabledProviders(): { id: ProviderId; name: string }[] {
   return Object.values(PROVIDERS)
-    .filter((p) => !!p.clientId() && !!p.clientSecret())
+    .filter((p) => !!p.clientId() && !!p.clientSecret() && providerExtraGate(p))
     .map((p) => ({ id: p.id, name: p.name }));
 }
 
