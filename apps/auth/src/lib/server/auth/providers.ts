@@ -127,16 +127,65 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
       image: typeof p.icon_img === 'string' ? (p.icon_img as string).split('?')[0] : undefined,
     }),
   },
+  // --- stub (e2e ONLY — prod-inert) ---
+  // A deterministic upstream OIDC provider for the hub e2e environment: its three URLs point at the
+  // in-cluster stub-oidc-server (apps/auth/e2e/stub-oidc-server.mjs), so a login through it drives the
+  // GENUINE Authorization-Code + PKCE callback path without a live external provider.
+  //
+  // `stub` is deliberately NOT part of the shared `ProviderId` union (packages/civitai-auth) — keeping it
+  // out means the main app's AccountsCard surface never learns about it. We add it to this hub-local table
+  // via a contained cast (`'stub' as ProviderId`); getProvider / listEnabledProviders / the start+callback
+  // routes read the table generically, so they accept it without widening the exported type.
+  //
+  // It is enabled ONLY when AUTH_ENABLE_STUB_PROVIDER is truthy AND its STUB_CLIENT_ID/SECRET are set
+  // (see listEnabledProviders' stubEnabled gate) — so with the flag unset (prod) it never appears in the
+  // provider list and /login/stub 404s (the start route rejects an unconfigured provider).
+  ['stub' as ProviderId]: {
+    id: 'stub' as ProviderId,
+    name: 'Stub',
+    authorizeUrl: env.STUB_AUTHORIZE_URL ?? '',
+    tokenUrl: env.STUB_TOKEN_URL ?? '',
+    userinfoUrl: env.STUB_USERINFO_URL ?? '',
+    scope: 'openid email profile',
+    clientId: () => env.STUB_CLIENT_ID,
+    clientSecret: () => env.STUB_CLIENT_SECRET,
+    // Maps the stub-oidc-server's STUB_PROFILE shape (id/sub, email, email_verified, name,
+    // preferred_username) onto the hub's NormalizedProfile — mirroring the google/github mappers.
+    mapProfile: (p) => ({
+      providerAccountId: String(p.sub ?? p.id),
+      email: p.email as string | undefined,
+      emailVerified: p.email_verified as boolean | undefined,
+      name: p.name as string | undefined,
+      username: p.preferred_username as string | undefined,
+    }),
+  },
 };
 
 export function getProvider(id: string): ProviderDef | undefined {
   return (PROVIDERS as Record<string, ProviderDef>)[id];
 }
 
-/** Providers whose client credentials are actually configured — drives the login buttons. */
+/** Truthy env flag check (1/true/yes/on, case-insensitive). */
+const isTruthy = (v: string | undefined): boolean =>
+  v != null && ['1', 'true', 'yes', 'on'].includes(v.trim().toLowerCase());
+
+/** The e2e-only `stub` provider is additionally gated behind an explicit flag so it can NEVER turn on in
+ *  prod just because some STUB_* env happens to be set. It enables ONLY when AUTH_ENABLE_STUB_PROVIDER is
+ *  truthy (the credential check below still applies on top). */
+export function isStubProviderEnabled(): boolean {
+  return isTruthy(env.AUTH_ENABLE_STUB_PROVIDER);
+}
+
+/** A provider's gate beyond having client credentials. Real providers have none; `stub` requires the flag. */
+function providerExtraGate(p: ProviderDef): boolean {
+  return (p.id as string) === 'stub' ? isStubProviderEnabled() : true;
+}
+
+/** Providers whose client credentials are actually configured — drives the login buttons. The e2e-only
+ *  `stub` provider is additionally gated behind AUTH_ENABLE_STUB_PROVIDER (prod-inert by default). */
 export function listEnabledProviders(): { id: ProviderId; name: string }[] {
   return Object.values(PROVIDERS)
-    .filter((p) => !!p.clientId() && !!p.clientSecret())
+    .filter((p) => !!p.clientId() && !!p.clientSecret() && providerExtraGate(p))
     .map((p) => ({ id: p.id, name: p.name }));
 }
 
