@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -81,13 +81,20 @@ export function ApiKeysCard() {
     buzzLimit: BuzzLimit | null;
   } | null>(null);
 
+  // Latch so the deeplink is handled at most once per page load, independent of
+  // the effect's dep array. The param-strip below already prevents re-entry on
+  // the current deps, but this keeps correctness if the deps ever change (e.g. a
+  // future edit adds `router.query`, which the shallow replace would re-trigger).
+  const deeplinkHandled = useRef(false);
+
   // Deeplink: `?addApiKey=1&name=...&scope=AIServices` opens the Add-API-Key
   // modal pre-filled, then strips the params so a refresh/back doesn't re-open.
   // Prefill only — the user still reviews + clicks Generate (no silent mint).
   useEffect(() => {
-    if (!router.isReady) return;
+    if (!router.isReady || deeplinkHandled.current) return;
     const parsed = parseApiKeyDeeplink(router.query);
     if (!parsed) return;
+    deeplinkHandled.current = true;
     setPrefill(parsed);
     open();
     const nextQuery = { ...router.query };
@@ -95,7 +102,7 @@ export function ApiKeysCard() {
     void router.replace({ pathname: router.pathname, query: nextQuery }, undefined, {
       shallow: true,
     });
-    // Run once when routing is ready; the param strip prevents re-entry.
+    // Latched above; safe to run on isReady transitions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.isReady]);
 

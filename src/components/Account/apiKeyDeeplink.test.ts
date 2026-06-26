@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseApiKeyDeeplink } from '~/components/Account/apiKeyDeeplink';
-import { TokenScope, TokenScopePresets } from '~/shared/constants/token-scope.constants';
+import { TokenScopePresets } from '~/shared/constants/token-scope.constants';
 
 describe('parseApiKeyDeeplink', () => {
   it('returns null without the addApiKey trigger', () => {
@@ -15,19 +15,31 @@ describe('parseApiKeyDeeplink', () => {
     ).toEqual({ name: 'App Blocks dev:live', tokenScope: TokenScopePresets.AIServices });
   });
 
-  it('falls back to Full for a missing or unknown scope (never an invalid bitmask)', () => {
+  it('falls back to the least-privilege ReadOnly preset for a missing/unknown scope', () => {
     expect(parseApiKeyDeeplink({ addApiKey: '1' })).toEqual({
       name: '',
-      tokenScope: TokenScope.Full,
+      tokenScope: TokenScopePresets.ReadOnly,
     });
     expect(parseApiKeyDeeplink({ addApiKey: '1', scope: 'Nope' })?.tokenScope).toBe(
-      TokenScope.Full
+      TokenScopePresets.ReadOnly
     );
+  });
+
+  it('NEVER pre-selects Full via a URL — a crafted scope=Full degrades to ReadOnly', () => {
+    expect(parseApiKeyDeeplink({ addApiKey: '1', scope: 'Full' })?.tokenScope).toBe(
+      TokenScopePresets.ReadOnly
+    );
+  });
+
+  it('trims + length-clamps the name to the input maxLength (64)', () => {
+    const long = 'x'.repeat(200);
+    const r = parseApiKeyDeeplink({ addApiKey: '1', name: `  ${long}  `, scope: 'AIServices' });
+    expect(r?.name).toBe('x'.repeat(64));
   });
 
   it('ignores array-valued name/scope params gracefully', () => {
     expect(
       parseApiKeyDeeplink({ addApiKey: '1', name: ['a', 'b'], scope: ['AIServices'] })
-    ).toEqual({ name: '', tokenScope: TokenScope.Full });
+    ).toEqual({ name: '', tokenScope: TokenScopePresets.ReadOnly });
   });
 });

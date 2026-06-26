@@ -118,7 +118,9 @@ export function budgetsToSimpleBuzzLimit(
 }
 
 export const addApiKeyInputSchema = z.object({
-  name: z.string(),
+  // Server-authoritative bound matching the UI input's maxLength (the name can be
+  // seeded via the account deeplink, which bypasses the input's keystroke limit).
+  name: z.string().trim().max(64),
   tokenScope: z.number().int().min(0).max(TokenScope.Full).default(TokenScope.Full),
   buzzLimit: buzzLimitSchema.nullable().optional(),
 });
