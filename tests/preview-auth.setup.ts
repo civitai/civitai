@@ -15,18 +15,20 @@ import { PREVIEW_USERS, type PreviewRole, storageStatePath } from './preview-fix
  * because previews run NODE_ENV=production, which disables both the
  * `testing-login` credentials provider and the `/testing/*` route.
  *
- * Instead we mint the NextAuth session cookie directly with the preview's
- * shared NEXTAUTH_SECRET — the same `encode()` the app signs with, so JWE parity
- * is guaranteed. Two distinct things then happen, and the distinction matters:
- *   1. The GATE (preview-auth.middleware) reads `token.user` straight from the
- *      cookie (no DB hit) — so the MINTED `id`/`isModerator` are what clear it.
- *   2. SSR page renders call the session() callback → refreshToken(), which sees
- *      an untracked token id and refreshes `token.user` from the DB
- *      (getSessionUser). So past the gate, the SEEDED DB row — not the minted
- *      fields — is the authoritative session user.
- * Net: the minted cookie authenticates as the seeded user. The minted object
- * below only needs `id` + `isModerator` (+ `tier` for the gate's Flipt context);
- * the rest is informational and is superseded by the DB row on first render. The
+ * Instead we mint the LEGACY next-auth session cookie directly with the preview's
+ * shared NEXTAUTH_SECRET — the same JWE the app's `decodeLegacySessionCookie`
+ * reads, so parity is guaranteed.
+ *
+ * IMPORTANT (post first-party-OAuth cutover): `getSessionUserById` now resolves a
+ * user from the shared session cache then the centralized hub (auth.civitai.com),
+ * which read the PRODUCTION identity store — they have NO row for these dev-clone-
+ * only smoke users, so a minted cookie would resolve to a null session and every
+ * authed request would loop to /login. `get-server-auth-session.ts` therefore has a
+ * PREVIEW-ONLY fallback (gated on IS_PREVIEW) that trusts the rich `user` embedded
+ * in this minted legacy cookie when the hub lookup misses — restoring the pre-cutover
+ * "gate reads token.user straight from the cookie" behaviour for previews only.
+ * So the minted `user` object below (id + isModerator + tier + the profile fields)
+ * IS the authoritative session user on a preview. The backing User rows (and the
  * backing User rows (and the gold subscription) are seeded into cnpg-cluster-dev
  * by the datapacket-talos `seed-smoke-test-users` CronJob; ci-smoke-tester /
  * ci-smoke-gold are in the flipt `testers` allowlist so they pass the gate.
