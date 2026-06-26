@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { trpc } from '~/utils/trpc';
@@ -27,6 +28,11 @@ import {
 } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import { ApiKeyModal } from '~/components/Account/ApiKeyModal';
+import {
+  API_KEY_DEEPLINK_PARAMS,
+  parseApiKeyDeeplink,
+  type ApiKeyDeeplinkPrefill,
+} from '~/components/Account/apiKeyDeeplink';
 import { EditBuzzLimitModal } from '~/components/Account/EditBuzzLimitModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -62,12 +68,41 @@ export function ApiKeysCard() {
   const utils = trpc.useUtils();
   const features = useFeatureFlags();
 
-  const [opened, { toggle }] = useDisclosure(false);
+  const router = useRouter();
+  const [opened, { open, close }] = useDisclosure(false);
+  // When the modal was opened via a deeplink (e.g. the App Blocks CLI scaffold's
+  // "create an API key" link), this carries the prefilled name + scope; null for
+  // a normal manual open. Remounting the modal on this (the `key` below) lets its
+  // internal form pick up the prefill.
+  const [prefill, setPrefill] = useState<ApiKeyDeeplinkPrefill | null>(null);
   const [editLimitFor, setEditLimitFor] = useState<{
     id: number;
     name: string;
     buzzLimit: BuzzLimit | null;
   } | null>(null);
+
+  // Deeplink: `?addApiKey=1&name=...&scope=AIServices` opens the Add-API-Key
+  // modal pre-filled, then strips the params so a refresh/back doesn't re-open.
+  // Prefill only — the user still reviews + clicks Generate (no silent mint).
+  useEffect(() => {
+    if (!router.isReady) return;
+    const parsed = parseApiKeyDeeplink(router.query);
+    if (!parsed) return;
+    setPrefill(parsed);
+    open();
+    const nextQuery = { ...router.query };
+    for (const key of API_KEY_DEEPLINK_PARAMS) delete nextQuery[key];
+    void router.replace({ pathname: router.pathname, query: nextQuery }, undefined, {
+      shallow: true,
+    });
+    // Run once when routing is ready; the param strip prevents re-entry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.isReady]);
+
+  const handleCloseModal = () => {
+    close();
+    setPrefill(null);
+  };
 
   const { data: apiKeys = [], isLoading } = trpc.apiKey.getAllUserKeys.useQuery({});
   const { data: spendEntries = [] } = trpc.apiKey.getSpend.useQuery(undefined, {
@@ -108,7 +143,10 @@ export function ApiKeysCard() {
             <Button
               size="compact-sm"
               leftSection={<IconPlus size={14} stroke={1.5} />}
-              onClick={() => toggle()}
+              onClick={() => {
+                setPrefill(null);
+                open();
+              }}
             >
               Add API key
             </Button>
@@ -244,7 +282,16 @@ export function ApiKeysCard() {
           )}
         </Box>
       </Card>
-      <ApiKeyModal title="Create API Key" opened={opened} onClose={toggle} />
+      <ApiKeyModal
+        // Remount when switching between a manual open and a deeplink prefill so
+        // the modal's internal form re-initializes from initialName/scope.
+        key={prefill ? 'deeplink' : 'manual'}
+        title="Create API Key"
+        opened={opened}
+        onClose={handleCloseModal}
+        initialName={prefill?.name}
+        initialTokenScope={prefill?.tokenScope}
+      />
       {features.apiKeyBuzzLimit && editLimitFor && (
         <EditBuzzLimitModal
           opened={!!editLimitFor}
