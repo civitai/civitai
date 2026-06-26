@@ -1242,14 +1242,18 @@ describe('POST /api/v1/blocks/dev-token', () => {
       expect(mockSign).not.toHaveBeenCalled();
     });
 
-    // audit N1 (slug-regex hardening): a malformed slug that the OLD
-    // `min(1).max(128)` accepted but SLUG_REGEX rejects must 400 at body
-    // validation — BEFORE any lookup or synthetic-id construction. This makes
-    // the "`local-<slug>` can never collide with a real OauthClient.id"
-    // guarantee airtight BY CONSTRUCTION rather than by prefix-collision
-    // reasoning: a non-conforming slug never reaches the `local-<slug>`
-    // constructor at all. Real app slugs are SLUG_REGEX-validated at
-    // submit/create time, so no legitimate approved/pending slug regresses.
+    // audit N1 + 🟡-1 (slug bounds): a malformed OR out-of-bounds slug that the
+    // OLD `min(1).max(128)` accepted but the canonical `min(3).max(40).regex(
+    // SLUG_REGEX)` rejects must 400 at body validation — BEFORE any lookup or
+    // synthetic-id construction. This makes the "`local-<slug>` can never collide
+    // with a real OauthClient.id" guarantee airtight BY CONSTRUCTION rather than
+    // by prefix-collision reasoning: a non-conforming slug never reaches the
+    // `local-<slug>` constructor at all. The bounds now MATCH the canonical app-
+    // slug schema (publish-request.schema.ts min(3).max(40)) — real app slugs are
+    // min(3).max(40).regex(SLUG_REGEX) at submit/create time, so no legitimate
+    // approved/pending slug regresses; the 'ab' (2-char) and 41-char cases below
+    // pass SLUG_REGEX shape but fail the min(3)/max(40) bound a real app can't
+    // violate.
     it.each([
       ['-leading', 'leading hyphen'],
       ['trailing-', 'trailing hyphen'],
@@ -1258,7 +1262,9 @@ describe('POST /api/v1/blocks/dev-token', () => {
       ['has space', 'whitespace'],
       ['under_score', 'underscore'],
       ['emoji😀', 'non-alnum'],
-    ])('400 (audit N1) for malformed slug %p (%s) — no mint, no lookup', async (slug) => {
+      ['ab', 'too short (2 chars, < min(3))'],
+      ['a'.repeat(41), 'too long (41 chars, > max(40))'],
+    ])('400 (audit N1/🟡-1) for malformed slug %p (%s) — no mint, no lookup', async (slug) => {
       mockGetSession.mockResolvedValueOnce(MOD_SESSION);
       const { req, res } = authPost({ slug, scopes: ['models:read:self'] });
       await handler(req as never, res as never);

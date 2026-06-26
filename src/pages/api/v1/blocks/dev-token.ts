@@ -158,6 +158,15 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    Same GA-gate as the pending path: durable per-spend audit rows are required
  *    before no-row dev spend is widened past the mod-only pre-GA posture.
  *
+ *    ENUMERATION ORACLE (audit 🟡-2 — GA-gate, no code change pre-GA): the no-row
+ *    path returns a 200 read-only mint for an UNREGISTERED slug but a bare 404 for
+ *    a slug owned by a *different* account's APPROVED app (the `block == null`
+ *    guard sends a foreign-owned approved row to the bare 404, not the no-row
+ *    branch). That 200-vs-404 difference is a mod-only existence oracle for
+ *    approved-slug occupancy. Acceptable pre-GA (this endpoint is mod-gated and
+ *    approved-app slugs are already semi-public at `<slug>.civit.ai`), but
+ *    re-confirm this is tolerable before widening dev-token past moderators.
+ *
  * ## Auth — Bearer, resolved via the same `getSessionFromBearerToken` path the
  * `/api/v1/*` REST routes use. TWO credential shapes accepted:
  *  - PERSONAL API key (not cookie) → there is NO ambient credential to ride, so
@@ -263,16 +272,25 @@ const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
 const requestSchema = z
   .object({
     appBlockId: z.string().min(1).max(128).optional(),
-    // SLUG_REGEX-validated (audit N1): the no-row path builds synthetic
-    // `local-<slug>` / `page_local_<slug>` ids from this value, so a malformed
-    // slug must 400 BEFORE any lookup or synthetic-id construction. This makes
-    // the "`local-<slug>` can never collide with a real OauthClient.id"
+    // SLUG_REGEX + canonical app-slug BOUNDS (audit N1 + 🟡-1): the no-row path
+    // builds synthetic `local-<slug>` / `page_local_<slug>` ids from this value,
+    // so a malformed slug must 400 BEFORE any lookup or synthetic-id construction.
+    // This makes the "`local-<slug>` can never collide with a real OauthClient.id"
     // guarantee airtight BY CONSTRUCTION (only lowercase alnum+hyphen slugs
     // reach the constructor) rather than resting on prefix-collision reasoning.
-    // Real app slugs are SLUG_REGEX-validated at submit/create time, so every
-    // legitimate approved/pending slug already conforms — a malformed slug would
-    // only ever have 404'd anyway.
-    slug: z.string().min(1).max(128).regex(SLUG_REGEX).optional(),
+    //
+    // The bounds MATCH the canonical platform app-slug schema (publish-request
+    // .schema.ts submitVersionSchema/getMyPendingForSlugSchema/backfill —
+    // `min(3).max(40).regex(SLUG_REGEX)`), NOT a looser `min(1).max(128)`. A real
+    // approved/pending app slug is min(3).max(40) BY CONSTRUCTION (validated at
+    // submit/create time), so every legitimate slug already conforms and no
+    // approved/pending path regresses — but the lax bound would have let dev-token
+    // mint a synthetic id for a 2-char / >40-char slug NO real app could ever
+    // hold. Aligning the bounds removes that two-definitions-of-valid-slug split
+    // on this money-path endpoint. (There is no exported shared slugSchema /
+    // SLUG_MIN_LENGTH constant to reuse — publish-request.schema.ts inlines these
+    // same bounds at lines 70/116; matched inline here to mirror it.)
+    slug: z.string().min(3).max(40).regex(SLUG_REGEX).optional(),
     // DUAL ROLE:
     //  - approved / pending paths: OPTIONAL narrowing — a subset of the app's
     //    approved (or pending-manifest) scopes the dev wants for this token.
