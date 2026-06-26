@@ -193,6 +193,7 @@
               <div
                 class="cf-turnstile"
                 data-sitekey={data.turnstileSiteKey}
+                data-action="login"
                 data-callback="onAuthCaptcha"
                 data-expired-callback="onAuthCaptchaExpired"
                 data-error-callback="onAuthCaptchaError"
