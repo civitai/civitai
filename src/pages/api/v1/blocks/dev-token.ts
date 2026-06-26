@@ -6,6 +6,7 @@ import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbWrite } from '~/server/db/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import {
@@ -262,7 +263,16 @@ const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
 const requestSchema = z
   .object({
     appBlockId: z.string().min(1).max(128).optional(),
-    slug: z.string().min(1).max(128).optional(),
+    // SLUG_REGEX-validated (audit N1): the no-row path builds synthetic
+    // `local-<slug>` / `page_local_<slug>` ids from this value, so a malformed
+    // slug must 400 BEFORE any lookup or synthetic-id construction. This makes
+    // the "`local-<slug>` can never collide with a real OauthClient.id"
+    // guarantee airtight BY CONSTRUCTION (only lowercase alnum+hyphen slugs
+    // reach the constructor) rather than resting on prefix-collision reasoning.
+    // Real app slugs are SLUG_REGEX-validated at submit/create time, so every
+    // legitimate approved/pending slug already conforms — a malformed slug would
+    // only ever have 404'd anyway.
+    slug: z.string().min(1).max(128).regex(SLUG_REGEX).optional(),
     // DUAL ROLE:
     //  - approved / pending paths: OPTIONAL narrowing — a subset of the app's
     //    approved (or pending-manifest) scopes the dev wants for this token.
