@@ -8,6 +8,10 @@ The migration deploys **`apps/auth`** to **auth.civitai.com** as the sole login 
 through it. Sessions are a thin **ES256 `civ-token`** cookie + shared-Redis `SessionUser`, verified by spokes
 via JWKS. See the architecture spec and actual-flows first if you're new to it.
 
+> 🚀 **Deploying?** Go straight to **[auth-hub-deployment-plan.md](./auth-hub-deployment-plan.md)** — the
+> single consolidated, current deployment runbook (what ships, DB prereq, env, ordered cutover, hazards,
+> verification, rollback). The per-phase checklists below feed into it.
+
 ---
 
 ## Current state (2026-06-17)

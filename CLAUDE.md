@@ -173,6 +173,19 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 const currentUser = useCurrentUser();
 ```
 
+#### Comments
+
+Comments are not type-checked, so they rot silently and become misleading. Write the minimum comment needed and bias toward none.
+
+- Default to no comment. If the code is clear on its own, leave it alone. Prefer a clearer name, smaller method, or better type over a comment that explains confusing code.
+- Only comment the non-obvious why: a rationale, tradeoff, gotcha, invariant, or workaround that the reader cannot recover from the code itself. Link an issue/PR when relevant.
+- Never narrate the what. No comments that restate the next line, label obvious steps (`// loop over items`), or describe what a well-named symbol already says.
+- Don't describe nearby code's current behavior (e.g. "this gates on X so Y happens"). That is exactly what goes stale when the other code changes. Comment the surprising fact, not the mechanics.
+- No process/banner noise: no change-log narration (`// added to fix...`), no "I changed X", no section-divider banners, no commented-out code.
+- When you do comment, keep it to a line or two. A long block almost always means the code or naming should be clearer instead.
+
+**Clean up as you go.** When you edit code that already has stale, redundant, or what-narrating comments, delete or fix them — don't preserve them just because they were there. The repo already has many such comments (a lot of them mine); treat touching nearby code as license to remove the noise, but keep edits scoped to what you're already working on rather than going on a separate comment-cleanup sweep.
+
 ## Environment Setup
 
 ### Required Environment Variables
