@@ -193,10 +193,15 @@ export function isStubProviderEnabled(): boolean {
 /**
  * Fail-closed validator for the env-controlled stub provider URLs. tokenUrl/userinfoUrl are server-side
  * fetches from the hub pod, so an unvalidated env is an SSRF primitive (fetch arbitrary internal hosts /
- * the cloud metadata endpoint; leak the client_secret/bearer). Accept ONLY https (any host) or http to an
- * in-cluster Service (`*.svc` / `*.svc.cluster.local`) — the only shapes the stub legitimately takes.
- * Anything else (bare IP, plain-http external host, junk) returns '' so the provider is non-functional.
- * (A function declaration so it's hoisted for the PROVIDERS literal above.)
+ * the cloud metadata endpoint; leak the client_secret/bearer). The legitimate stub upstream is ALWAYS the
+ * one in-cluster Service we deploy, so we PIN the host to the canonical Service FQDN
+ * `<svc>.<ns>.svc.cluster.local` (http or https; an optional :port is not part of `hostname`).
+ *
+ * `.cluster.local` is the reserved, non-delegatable cluster domain — no PUBLIC host can ever satisfy this,
+ * which closes BOTH a naive suffix bypass (a bare `*.svc` external host like `evil.com.svc`) AND the
+ * https-to-anywhere SSRF reach (an arbitrary `https://attacker/` or `https://169.254.169.254/`). Anything
+ * else (IP literal, external host, plain junk, bad scheme) returns '' → the provider is non-functional and
+ * `buildAuthorizeUrl('')` fail-closes. (Function declaration so it's hoisted for the PROVIDERS literal.)
  */
 function validatedStubUrl(raw: string | undefined): string {
   if (!raw) return '';
@@ -206,9 +211,9 @@ function validatedStubUrl(raw: string | undefined): string {
   } catch {
     return '';
   }
-  if (u.protocol === 'https:') return raw;
-  if (u.protocol === 'http:' && (u.hostname.endsWith('.svc') || u.hostname.endsWith('.svc.cluster.local')))
-    return raw;
+  // <service>.<namespace>.svc.cluster.local — the canonical in-cluster Service DNS name, nothing else.
+  const clusterServiceFqdn = /^[a-z0-9-]+\.[a-z0-9-]+\.svc\.cluster\.local$/;
+  if ((u.protocol === 'http:' || u.protocol === 'https:') && clusterServiceFqdn.test(u.hostname)) return raw;
   return '';
 }
 

@@ -117,23 +117,33 @@ describe('stub provider — wiring', () => {
   });
 });
 
-describe('stub provider — SSRF-safe URL validation (fail closed)', () => {
-  it('accepts https and in-cluster .svc http URLs', async () => {
-    const p = await load(FULL); // FULL uses .svc.cluster.local http
+describe('stub provider — SSRF-safe URL validation (pinned to the in-cluster Service FQDN)', () => {
+  it('accepts http AND https to a <svc>.<ns>.svc.cluster.local host (with or without a port)', async () => {
+    const p = await load(FULL); // FULL uses http://…svc.cluster.local:8080
     const stub = p.getProvider('stub')!;
     expect(stub.authorizeUrl).toBe(FULL.STUB_AUTHORIZE_URL);
     expect(stub.tokenUrl).toBe(FULL.STUB_TOKEN_URL);
     expect(stub.userinfoUrl).toBe(FULL.STUB_USERINFO_URL);
 
-    const https = await load({ ...FULL, STUB_TOKEN_URL: 'https://stub.example.com/token' });
-    expect(https.getProvider('stub')!.tokenUrl).toBe('https://stub.example.com/token');
+    const https = await load({
+      ...FULL,
+      STUB_TOKEN_URL: 'https://stub-oidc.civitai-auth-staging.svc.cluster.local/token',
+    });
+    expect(https.getProvider('stub')!.tokenUrl).toBe(
+      'https://stub-oidc.civitai-auth-staging.svc.cluster.local/token'
+    );
   });
 
-  it('rejects plain-http external hosts, IP literals, the metadata endpoint, and junk → empty string', async () => {
+  it('rejects EVERY non-in-cluster shape → empty string (closes the suffix + https-to-anywhere bypasses)', async () => {
     for (const bad of [
+      'https://stub.example.com/token', // https to an arbitrary external host (the leak-the-secret reach)
+      'https://169.254.169.254/latest/meta-data/', // metadata endpoint over https
+      'http://evil.com.svc/token', // `.svc` SUFFIX bypass — a public host ending in .svc
+      'http://attacker.svc.cluster.local.evil.com/token', // suffix-prefix trick
       'http://evil.example.com/token', // plain http to an external host
       'http://169.254.169.254/latest/meta-data/', // cloud metadata SSRF
       'http://10.0.0.1:6379/', // internal IP literal
+      'http://stub-oidc.svc/token', // bare `.svc` (too few labels / not the cluster domain)
       'not-a-url',
       'file:///etc/passwd',
     ]) {
