@@ -2609,6 +2609,11 @@ export type OauthClient = {
   grants: Generated<string[]>;
   allowedScopes: Generated<number>;
   isConfidential: Generated<boolean>;
+  /**
+   * Login gating: "open" (anyone), "testers" (only users holding the "tester" UserRole), "disabled" (no one).
+   * Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
+   */
+  accessMode: Generated<string>;
   userId: number;
   isVerified: Generated<boolean>;
   createdAt: Generated<Timestamp>;
@@ -3534,6 +3539,13 @@ export type UserRestriction = {
   userMessage: string | null;
   userMessageAt: Timestamp | null;
 };
+export type UserRole = {
+  userId: number;
+  role: string;
+  note: string | null;
+  addedById: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type UserStat = {
   userId: number;
   uploadCountAllTime: number;
@@ -3915,6 +3927,7 @@ export type DB = {
   UserReferralCode: UserReferralCode;
   UserReport: UserReport;
   UserRestriction: UserRestriction;
+  UserRole: UserRole;
   UserStat: UserStat;
   UserStrike: UserStrike;
   Vault: Vault;

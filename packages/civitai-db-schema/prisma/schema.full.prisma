@@ -440,6 +440,7 @@ model User {
   keys                 ApiKey[]
   oauthClients         OauthClient[]
   oauthConsents        OauthConsent[]
+  roles                UserRole[]
   links                UserLink[]
   comments             Comment[]
   commentReactions     CommentReaction[]
@@ -2239,6 +2240,9 @@ model OauthClient {
   grants         String[]       @default(["authorization_code", "refresh_token"])
   allowedScopes  Int            @default(33554431)
   isConfidential Boolean        @default(true)
+  /// Login gating: "open" (anyone), "testers" (only users holding the "tester" UserRole), "disabled" (no one).
+  /// Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
+  accessMode     String         @default("open")
   userId         Int
   user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   isVerified     Boolean        @default(false)
@@ -2252,6 +2256,21 @@ model OauthClient {
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
 
   @@index([userId])
+}
+
+/// Generic per-user role grants (e.g. "tester"). Read directly by the auth hub — the OAuth /authorize gate
+/// treats accessMode "testers" as "must hold the 'tester' role". Managed from the auth hub admin UI
+/// (/admin/access). Keyed by (userId, role) so a user can hold multiple roles.
+model UserRole {
+  userId    Int
+  role      String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note      String?
+  addedById Int?
+  createdAt DateTime @default(now())
+
+  @@id([userId, role])
+  @@index([role])
 }
 
 /// App Blocks — v1 substrate. Registry of all blocks across all apps (OauthClients).

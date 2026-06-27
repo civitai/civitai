@@ -10,6 +10,7 @@ import { redirectUriMatches } from '$lib/server/oauth/redirect-uri';
 import { hasScope } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import { resolveClientLite, authorizeRedirectUriStore } from '$lib/server/oauth/model';
+import { checkClientAccess } from '$lib/server/oauth/access';
 import { parseBody, toOAuthRequest, newOAuthResponse } from '$lib/server/oauth/http';
 
 // GET /api/auth/oauth/authorize — return-after-consent + issue the authorization code.
@@ -70,6 +71,27 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
 
   if (!redirectUri || !redirectUriMatches(client.redirectUris, redirectUri)) {
     return oauthError(400, 'invalid_request', 'redirect_uri does not match any registered URI');
+  }
+
+  // Login gating (admin-managed per client). "disabled" → nobody; "testers" → only users holding the
+  // "tester" role. First-party (spoke) clients resolve to accessMode "open", so the main-site login is never
+  // gated here — only third-party clients like the Comfy app. Managed at /admin/access.
+  const access = await checkClientAccess(client.accessMode, user.id);
+  if (!access.allowed) {
+    logOAuthEvent({
+      type: 'authorization.denied',
+      userId: user.id,
+      clientId,
+      ip: getClientAddress(),
+      metadata: { reason: access.reason },
+    });
+    return oauthError(
+      403,
+      'access_denied',
+      access.reason === 'disabled'
+        ? 'This application is not currently available.'
+        : 'Access to this application is currently limited to testers.'
+    );
   }
 
   // PKCE required + S256-only (§D.x #1). Never enable plain PKCE.

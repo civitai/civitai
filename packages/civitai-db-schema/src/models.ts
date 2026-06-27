@@ -495,6 +495,7 @@ export interface User {
   keys?: ApiKey[];
   oauthClients?: OauthClient[];
   oauthConsents?: OauthConsent[];
+  roles?: UserRole[];
   links?: UserLink[];
   comments?: Comment[];
   commentReactions?: CommentReaction[];
@@ -1746,6 +1747,7 @@ export interface OauthClient {
   grants: string[];
   allowedScopes: number;
   isConfidential: boolean;
+  accessMode: string;
   userId: number;
   user?: User;
   isVerified: boolean;
@@ -1757,6 +1759,15 @@ export interface OauthClient {
   buzzAttributions?: BlockBuzzAttribution[];
   spendAttributions?: BlockSpendAttribution[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
+}
+
+export interface UserRole {
+  userId: number;
+  role: string;
+  user?: User;
+  note: string | null;
+  addedById: number | null;
+  createdAt: Date;
 }
 
 export interface AppBlock {
