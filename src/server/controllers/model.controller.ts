@@ -10,7 +10,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
@@ -1151,11 +1151,14 @@ export const getMyTrainingModelsHandler = async ({
         status: true,
         createdAt: true,
         updatedAt: true,
-        // Whether a showcase post still exists for this version. When 0 on an
-        // unpublished version, the republish CTA routes to post creation.
+        // Whether a showcase post by the model owner still exists for this
+        // version. Filter by userId to match the requirements sweep
+        // (reset-to-draft-without-requirements) and the publish guard, which
+        // both key off an owner-authored post. When 0 on an unpublished
+        // version, the republish CTA routes to post creation.
         _count: {
           select: {
-            posts: true,
+            posts: { where: { userId } },
           },
         },
 
@@ -1987,7 +1990,9 @@ export const privateModelFromTrainingHandler = async ({
     // here for each, tagged 'training' to mark the origin.
     const trainingVersionIds = model.modelVersions?.map((v) => v.id) ?? [];
     if (trainingVersionIds.length) {
-      const createdPosts = await dbRead.post.findMany({
+      // Read from primary: these posts were just created in privateModelFromTraining
+      // above, so a replica read could miss them and silently skip the events.
+      const createdPosts = await dbWrite.post.findMany({
         where: { modelVersionId: { in: trainingVersionIds }, userId: ctx.user.id },
         select: { id: true },
       });

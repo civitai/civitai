@@ -3747,7 +3747,10 @@ export const publishPrivateModel = async ({
   // it would go public with no post and the nightly requirements cron would
   // immediately re-unpublish it. Block instead, directing the user to add images.
   if (publishVersions) {
-    const versionsWithPost = await dbRead.post.findMany({
+    // Read from primary: this gates the write transaction below, and a user who
+    // just added the showcase post then immediately publishes could otherwise
+    // hit replica lag → false "missing post" → incorrect hard block.
+    const versionsWithPost = await dbWrite.post.findMany({
       where: { modelVersionId: { in: versionIds }, userId: model.userId },
       select: { modelVersionId: true },
       distinct: ['modelVersionId'],
