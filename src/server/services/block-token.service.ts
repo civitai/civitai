@@ -10,7 +10,10 @@ export const BLOCK_TOKEN_AUDIENCE = 'civitai-app-block';
 
 const TOKEN_LIFETIME_SECONDS = 900; // 15 minutes — default
 const SETTINGS_TOKEN_LIFETIME_SECONDS = 300; // 5 minutes for block:settings:*
-const DEV_TOKEN_LIFETIME_SECONDS = 4 * 60 * 60; // 4h — dev:live pasted tokens (self-bound, budget-capped, mod-only)
+// Exported so the verifier (block-scope.middleware.ts) caps the dev max-age off
+// the SAME constant the signer uses — if these desynced, dev tokens between the
+// two values would silently 401 (fail-closed but confusing).
+export const DEV_TOKEN_LIFETIME_SECONDS = 4 * 60 * 60; // 4h — dev:live pasted tokens (self-bound, budget-capped, mod-only)
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 const RATE_LIMIT_MAX = 60;
 
@@ -116,6 +119,11 @@ export function getBlockTokenVerificationKeys(): KeyObject[] {
  * the header's kid. With this, the middleware reads the JWT header, looks
  * up the exact key, and verifies once. Falls back to all-keys if the
  * header carries no kid (e.g. tokens minted before kid was added).
+ *
+ * KEY-ROTATION OVERLAP must be >= the MAX token lifetime (now 4h for dev:live
+ * tokens — DEV_TOKEN_LIFETIME_SECONDS — not 15min). Keep the retiring public key
+ * in BLOCK_TOKEN_PUBLIC_KEY / BLOCK_TOKEN_PUBLIC_KEY_NEXT for >= 4h after the
+ * last token signed with it, or in-flight dev tokens 401 across rotation.
  */
 export function getBlockTokenVerificationKeysByKid(): Map<string, KeyObject> {
   const out = new Map<string, KeyObject>();

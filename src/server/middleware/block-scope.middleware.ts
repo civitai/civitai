@@ -6,6 +6,7 @@ import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
+  DEV_TOKEN_LIFETIME_SECONDS,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
@@ -358,7 +359,10 @@ function isBlockJwt(token: string): boolean {
 // allowed while every other token type stays capped at 15min. The 30s slack
 // matches the prior `clockTolerance: '30s'`.
 const MAX_TOKEN_AGE_DEFAULT_SECONDS = 15 * 60; // 15min — production/all non-dev tokens
-const MAX_TOKEN_AGE_DEV_SECONDS = 4 * 60 * 60; // 4h — dev:live tokens (dev:true claim)
+// 4h — dev:live tokens (dev:true claim). Imported from the SIGNER
+// (block-token.service.ts DEV_TOKEN_LIFETIME_SECONDS) so the verify cap can
+// never silently desync from the lifetime the signer actually stamps.
+const MAX_TOKEN_AGE_DEV_SECONDS = DEV_TOKEN_LIFETIME_SECONDS;
 const MAX_TOKEN_AGE_CLOCK_TOLERANCE_SECONDS = 30;
 
 export async function verifyBlockToken(token: string): Promise<BlockTokenClaims | null> {
