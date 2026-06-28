@@ -1748,8 +1748,9 @@ export const modelVersionDonationGoals = async ({
     })
     .catch((error) => {
       // Genuinely not found on the primary too (P2025) is a client/not-found
-      // condition — surface as 404 instead of letting findFirstOrThrow's P2025
-      // bubble up as INTERNAL_SERVER_ERROR.
+      // condition — surface 404 at the source. (The controller handler also
+      // maps P2025→NOT_FOUND via throwDbError, but only once its `return` is
+      // awaited; throwing here makes the 404 correct regardless of that.)
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
         throw throwNotFoundError(`No model version with id ${id}`);
       }
