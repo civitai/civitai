@@ -10,6 +10,10 @@ export const BLOCK_TOKEN_AUDIENCE = 'civitai-app-block';
 
 const TOKEN_LIFETIME_SECONDS = 900; // 15 minutes — default
 const SETTINGS_TOKEN_LIFETIME_SECONDS = 300; // 5 minutes for block:settings:*
+// Exported so the verifier (block-scope.middleware.ts) caps the dev max-age off
+// the SAME constant the signer uses — if these desynced, dev tokens between the
+// two values would silently 401 (fail-closed but confusing).
+export const DEV_TOKEN_LIFETIME_SECONDS = 4 * 60 * 60; // 4h — dev:live pasted tokens (self-bound, budget-capped, mod-only)
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 const RATE_LIMIT_MAX = 60;
 
@@ -115,6 +119,11 @@ export function getBlockTokenVerificationKeys(): KeyObject[] {
  * the header's kid. With this, the middleware reads the JWT header, looks
  * up the exact key, and verifies once. Falls back to all-keys if the
  * header carries no kid (e.g. tokens minted before kid was added).
+ *
+ * KEY-ROTATION OVERLAP must be >= the MAX token lifetime (now 4h for dev:live
+ * tokens — DEV_TOKEN_LIFETIME_SECONDS — not 15min). Keep the retiring public key
+ * in BLOCK_TOKEN_PUBLIC_KEY / BLOCK_TOKEN_PUBLIC_KEY_NEXT for >= 4h after the
+ * last token signed with it, or in-flight dev tokens 401 across rotation.
  */
 export function getBlockTokenVerificationKeysByKid(): Map<string, KeyObject> {
   const out = new Map<string, KeyObject>();
@@ -158,6 +167,27 @@ export interface SignBlockTokenInput {
    * (treat absent as SFW), so omit the claim only for that legacy path.
    */
   maxBrowsingLevel?: number;
+  /**
+   * DEV-TOKEN marker. Set ONLY by the mod-gated dev-token mint endpoint
+   * (`/api/v1/blocks/dev-token`) for the `dev:live` localhost harness. When
+   * true:
+   *   1. the token's lifetime is DEV_TOKEN_LIFETIME_SECONDS (4h) so a developer
+   *      can paste a token once and iterate without re-minting every 15min, and
+   *   2. a `dev: true` claim is stamped into the signed payload so the verifier
+   *      (block-scope.middleware.ts) can apply the per-token-type max-age cap
+   *      (4h for dev tokens, 15min for everything else) instead of a single
+   *      global 15min cap.
+   *
+   * PRECEDENCE: `dev` OVERRIDES the settings-scope 5min branch. Dev page tokens
+   * never carry block:settings:* scopes (the dev-token endpoint excludes them
+   * via DEV_TOKEN_SCOPE_ALLOWLIST), so this collision can't occur in practice;
+   * the precedence is made explicit here only so the lifetime selection is
+   * unambiguous. The blast radius of the 4h lifetime is bounded by the
+   * endpoint's own caps (mod-only, self-bound `sub`, per-call budget cap,
+   * forced SFW). Absent/false → byte-identical to the prior behaviour
+   * (900s, or 300s for settings scopes).
+   */
+  dev?: boolean;
 }
 
 export interface SignBlockTokenResult {
@@ -190,9 +220,20 @@ export class BlockTokenService {
     // security posture wins over the 3× refresh load. Publishers wanting
     // long-lived read scopes can request a separate token without settings
     // scopes; the issuance endpoint handles that cleanly.
-    const lifetime = input.scopes.some(isSettingsScope)
-      ? SETTINGS_TOKEN_LIFETIME_SECONDS
-      : TOKEN_LIFETIME_SECONDS;
+    // Lifetime precedence (most-specific wins):
+    //   1. dev tokens (4h)        — explicit dev:live marker, OVERRIDES settings
+    //   2. settings-scope (5min)  — tightest replay window for installer scopes
+    //   3. default (15min)        — every other token
+    // Dev page tokens never carry settings scopes (the mint endpoint excludes
+    // block:settings:* via DEV_TOKEN_SCOPE_ALLOWLIST), so the dev/settings
+    // branches are mutually exclusive in practice; ordering dev first only makes
+    // the precedence unambiguous.
+    const lifetime =
+      input.dev === true
+        ? DEV_TOKEN_LIFETIME_SECONDS
+        : input.scopes.some(isSettingsScope)
+        ? SETTINGS_TOKEN_LIFETIME_SECONDS
+        : TOKEN_LIFETIME_SECONDS;
     const exp = iat + lifetime;
     const sub = input.userId == null ? 'anon' : `user:${input.userId}`;
 
@@ -217,6 +258,13 @@ export class BlockTokenService {
     }
     if (input.domain != null) {
       claims.domain = input.domain;
+    }
+    // DEV marker — stamped ONLY for dev:live tokens. The verifier reads this
+    // (after signature + iss/aud/exp validation) to pick the per-token-type
+    // max-age cap (4h for dev, 15min otherwise). Stamped only when explicitly
+    // true so a non-dev token never carries the claim (absent → 15min cap).
+    if (input.dev === true) {
+      claims.dev = true;
     }
 
     const token = await new SignJWT(claims)
