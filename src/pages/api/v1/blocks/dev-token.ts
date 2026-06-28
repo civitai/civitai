@@ -838,6 +838,14 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // 11. SIGN — reuse BlockTokenService.sign VERBATIM. Self-bound sub (userId),
   // forced-SFW ceiling, dev-capped budget, page ctx. domain is null (no host
   // read) — advisory only; the AUTHORITATIVE ceiling is maxBrowsingLevel.
+  //
+  // dev: true → a 4h lifetime + a `dev:true` claim (block-token.service.ts).
+  // The longer TTL lets a developer paste one token and iterate without
+  // re-minting every 15min; the verifier (block-scope.middleware.ts) keys the
+  // 4h max-age cap off the signed `dev` claim, leaving every PRODUCTION token
+  // at 15min. The 4h blast radius is bounded by THIS endpoint's caps — mod-only
+  // (step 2), self-bound `sub` (set from the authenticated caller, never the
+  // body), per-call budget cap (step 8), forced SFW ceiling — all unchanged.
   const result = await BlockTokenService.sign({
     userId: user.id,
     blockId: resolved.signBlockId,
@@ -849,6 +857,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     buzzBudget,
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
+    dev: true,
   });
 
   // The body carries a bearer JWT — never let an intermediary cache it.
