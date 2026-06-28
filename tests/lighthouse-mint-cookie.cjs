@@ -25,7 +25,8 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { EncryptJWT } = require('jose');
+// jose is ESM-only since v6 — require() throws ERR_REQUIRE_ESM from this .cjs,
+// so load it via dynamic import() inside main() (the only EncryptJWT consumer).
 const { hkdfSync } = require('node:crypto');
 const { v4: uuid } = require('uuid');
 
@@ -67,6 +68,8 @@ const GOLD = {
 async function main() {
   if (!SECRET) throw new Error('NEXTAUTH_SECRET is required to mint the preview cookie');
   if (!BASE_URL) throw new Error('BASE_URL is required (e.g. https://pr-123.civitaic.com)');
+
+  const { EncryptJWT } = await import('jose');
 
   const token = { user: GOLD, sub: String(GOLD.id), id: uuid(), signedAt: Date.now() };
   const value = await new EncryptJWT(token)
