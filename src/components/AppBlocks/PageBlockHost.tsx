@@ -11,6 +11,7 @@ import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   grantedPageScopes,
   pageFallbackReason,
+  resolveCheckpointPickerRequest,
   resolveResourcePickerRequest,
 } from './pageBlockHostLogic';
 import { projectBlockInitMaturity } from './projectBlockInit';
@@ -1038,6 +1039,70 @@ export function PageBlockHost({
           // spurious cancel.
           if (answered) return;
           send('RESOURCE_PICKER_RESULT', { requestId });
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send]);
+
+  // ── OPEN_CHECKPOINT_PICKER → CHECKPOINT_PICKER_RESULT (dev:live↔prod parity) ─
+  //
+  // The SDK hook `useCheckpointPicker()` posts OPEN_CHECKPOINT_PICKER. The
+  // model-slot host (IframeHost) handles it, AND the dev:live SDK host serves it
+  // — but this PAGE host only ever handled the newer/wider OPEN_RESOURCE_PICKER,
+  // so a page block calling `useCheckpointPicker()` had its request hit NO host
+  // handler (gotcha-#73): the "Change model" button spun forever — no network
+  // call, no error. Authors tested it working locally (dev:live serves it) then
+  // it silently broke in prod. This handler MIRRORS IframeHost's so that hook
+  // works identically on pages; it is purely additive (OPEN_RESOURCE_PICKER is
+  // unchanged) and a deliberately narrow checkpoint-only superset of it.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_CHECKPOINT_PICKER', (raw) => {
+      const req = resolveCheckpointPickerRequest(raw);
+      if (!req) return; // missing / non-string requestId → drop, never open the modal
+      const { requestId, baseModelGroup } = req;
+
+      // Normalize the optional family hint through getBaseModelGroup (accepts an
+      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). Empty /
+      // unresolved group → baseModels:[] → no checkpoints rather than all
+      // families (matching IframeHost: "all" would include incompatible families
+      // that 400 at submit).
+      const groupKey = baseModelGroup ? getBaseModelGroup(baseModelGroup) : null;
+      const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
+
+      let answered = false;
+      openResourceSelectModal({
+        title: 'Choose a checkpoint',
+        options: {
+          canGenerate: true,
+          resources: [{ type: 'Checkpoint', baseModels }],
+        },
+        onSelect: (resource) => {
+          answered = true;
+          // Same name/id-only projection IframeHost's CHECKPOINT_PICKER_RESULT
+          // uses — the public display names of the user-picked resource plus the
+          // body-building IDs; NO full GenerationResource spread, so no
+          // availability/access/early-access/nsfw/poi/minor internals reach the
+          // iframe.
+          send('CHECKPOINT_PICKER_RESULT', {
+            requestId,
+            selected: {
+              // GenerationResource.id is the modelVersionId at the wire.
+              versionId: resource.id,
+              modelId: resource.model.id,
+              modelName: resource.model.name,
+              versionName: resource.name,
+              baseModel: resource.baseModel,
+            },
+          });
+        },
+        onClose: () => {
+          // Dialog dismiss fires after onSelect when the user picks (the modal
+          // closes itself); only emit the "closed without picking" result if
+          // onSelect never ran. answered=true short-circuits so a pick isn't
+          // followed by a spurious cancel.
+          if (answered) return;
+          send('CHECKPOINT_PICKER_RESULT', { requestId });
         },
       });
     });
