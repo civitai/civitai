@@ -1,19 +1,10 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
-// The revocation marker must outlive the WORST-CASE remaining lifetime of any
-// token type at the moment of revocation, or a still-valid token could pass the
-// `isRevoked` check again once the marker expires. The longest-lived token is
-// the dev:live token (DEV_TOKEN_LIFETIME_SECONDS = 4h, block-token.service.ts);
-// production/settings tokens (900s/300s) are far shorter and reusing the larger
-// TTL is harmless (per-instance, coarse — and `clearInstance` on re-enable drops
-// a stale marker immediately). Keep this >= the max token lifetime: if the dev
-// lifetime ever changes, bump this in lockstep.
-//
-// NOTE: dev-token instances are distinct synthetic ids
-// (page_<appBlockId>/page_pubreq_<id>/page_local_<slug>), so the 4h marker only
-// ever lingers for those; a re-enabled production install is cleared via
-// clearInstance regardless of this TTL (audit B1).
-const REVOCATION_TTL_SECONDS = 4 * 60 * 60;
+// 15 minutes — the worst-case remaining lifetime of any token at the moment
+// of revocation (block-token.service.ts TOKEN_LIFETIME_SECONDS = 900).
+// Settings tokens have a shorter lifetime (300s) but reusing the larger TTL
+// is harmless and keeps the schema simple.
+const REVOCATION_TTL_SECONDS = 900;
 
 function revokedKey(blockInstanceId: string) {
   return `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE}:${blockInstanceId}` as const;

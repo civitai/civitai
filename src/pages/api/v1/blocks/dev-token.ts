@@ -540,6 +540,14 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       signAppId: block.appId,
       signAppBlockId: block.id,
       // Synthetic, revocable PAGE instance id — same shape as the prod page mint.
+      // NOTE (revocation-wiring caveat): dev page tokens share the
+      // `page_<appBlockId>` instanceId shape with PRODUCTION page mints. The
+      // revocation WRITE path (block-revocation.service.ts revokeInstance /
+      // clearInstance) is currently UNWIRED (no callers). If it is ever wired,
+      // dev instance ids on THIS path must be namespaced distinctly (e.g.
+      // `devpage_`) and/or the revocation marker TTL must cover the 4h dev token
+      // lifetime — otherwise a dev revocation (or a 4h marker) would bleed into
+      // production page tokens for the SAME app (collision on `page_<appBlockId>`).
       blockInstanceId: `${PAGE_INSTANCE_PREFIX}${block.id}`,
     };
   } else if (slug) {
