@@ -244,7 +244,7 @@ export async function runModelSearch(
           // be widened by a client nsfw flag.
           images: includeImages
             ? images
-                .filter((x) => nsfwImagePassthrough || Flags.hasFlag(x.nsfwLevel, browsingLevel))
+                .filter((x) => nsfwImagePassthrough || Flags.intersects(x.nsfwLevel, browsingLevel))
                 .map(({ url, id, ...image }) => ({
                   id,
                   url: getEdgeUrl(url, {
