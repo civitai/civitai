@@ -59,6 +59,21 @@ function makeSys() {
       ttl.set(k, seconds);
       return true;
     }),
+    // Atomic materialize primitive (mirrors @civitai/redis hSetMultiWithExpire): writes every
+    // [field, value, …] pair AND the TTL in one operation, so the in-memory store models the
+    // real client's "never a TTL-less key" guarantee.
+    hSetMultiWithExpire: vi.fn(async (k: string, fields: string[], seconds: number) => {
+      if (fields.length === 0) return 0;
+      if (!store.has(k)) store.set(k, new Map());
+      const map = store.get(k)!;
+      let added = 0;
+      for (let i = 0; i < fields.length; i += 2) {
+        if (!map.has(fields[i])) added++;
+        map.set(fields[i], fields[i + 1]);
+      }
+      ttl.set(k, seconds);
+      return added;
+    }),
   };
 }
 
@@ -74,6 +89,7 @@ describe('linkAccount — lazy materialization', () => {
     await linkAccount(DEVICE, 100, 100); // re-login as the SAME user (not a 2nd account)
 
     expect(sys.hSet).not.toHaveBeenCalled();
+    expect(sys.hSetMultiWithExpire).not.toHaveBeenCalled();
     expect(sys.expire).not.toHaveBeenCalled();
     expect(sys._store.has(KEY)).toBe(false);
   });
@@ -104,6 +120,83 @@ describe('linkAccount — lazy materialization', () => {
   it('is a best-effort no-op when sysRedis is not configured', async () => {
     h.getSysRedis.mockReturnValue(null);
     await expect(linkAccount(DEVICE, 200, 100)).resolves.toBeUndefined();
+  });
+});
+
+describe('linkAccount — materialize is ATOMIC (no TTL-less key window)', () => {
+  it('materializes the BOTH-accounts set via a SINGLE atomic hSetMultiWithExpire call', async () => {
+    const sys = makeSys();
+    h.getSysRedis.mockReturnValue(sys);
+
+    await linkAccount(DEVICE, 200, 100);
+
+    // The whole point of the hardening: the field-writes + TTL go out as ONE op, so a process death
+    // between an hSet and the expire can't leave a TTL-less key. Assert the non-atomic primitives are
+    // NEVER used on the create path (a regression to hSet→hSet→expire would re-open the orphan window).
+    expect(sys.hSetMultiWithExpire).toHaveBeenCalledTimes(1);
+    expect(sys.hSetMultiWithExpire).toHaveBeenCalledWith(
+      KEY,
+      [String(100), expect.any(String), String(200), expect.any(String)],
+      DEVICE_TTL_S
+    );
+    expect(sys.hSet).not.toHaveBeenCalled();
+    expect(sys.expire).not.toHaveBeenCalled();
+  });
+
+  it('never leaves a key whose TTL was not set: every materialized key has a recorded TTL', async () => {
+    const sys = makeSys();
+    h.getSysRedis.mockReturnValue(sys);
+
+    await linkAccount(DEVICE, 200, 100);
+
+    // The atomic op sets fields AND ttl together. So any key that exists in the store MUST also have a
+    // TTL recorded — there is no interleaving in which the key is created without one.
+    expect(sys._store.has(KEY)).toBe(true);
+    expect(sys._ttl.has(KEY)).toBe(true);
+    expect(sys._ttl.get(KEY)).toBe(DEVICE_TTL_S);
+  });
+
+  it('a redis throw on the atomic op is swallowed (best-effort) and resolves', async () => {
+    const sys = makeSys();
+    sys.hSetMultiWithExpire.mockRejectedValueOnce(new Error('redis blip'));
+    h.getSysRedis.mockReturnValue(sys);
+
+    // A blip during materialize must not fail the login it rides on. And because the field-writes and TTL
+    // were a single op, a failed attempt leaves NO key at all (not a TTL-less one).
+    await expect(linkAccount(DEVICE, 200, 100)).resolves.toBeUndefined();
+    expect(sys._store.has(KEY)).toBe(false);
+  });
+});
+
+describe('refresh-only paths create ZERO keys (coverage-gap guarantee)', () => {
+  // Pin the lazy-materialization invariant at the caller granularity: the refresh paths (touchAccount,
+  // isLinkedAndFresh, listAccounts, removeAccount) must NEVER issue a field-creating write against a
+  // non-existent set — only linkAccount may create the `device:accounts:*` key. A future change that
+  // started writing a singleton through any of these would re-grow the keyspace this PR shrank.
+  it('touchAccount on a non-existent set issues NO hSet / hSetMultiWithExpire / expire', async () => {
+    const sys = makeSys();
+    h.getSysRedis.mockReturnValue(sys);
+
+    await touchAccount(DEVICE, 100);
+
+    expect(sys.hSet).not.toHaveBeenCalled();
+    expect(sys.hSetMultiWithExpire).not.toHaveBeenCalled();
+    expect(sys.expire).not.toHaveBeenCalled();
+    expect(sys._store.has(KEY)).toBe(false);
+  });
+
+  it('isLinkedAndFresh / listAccounts / removeAccount on a non-existent set create no key', async () => {
+    const sys = makeSys();
+    h.getSysRedis.mockReturnValue(sys);
+
+    expect(await isLinkedAndFresh(DEVICE, 100)).toBe(false);
+    expect(await listAccounts(DEVICE)).toEqual([]);
+    await removeAccount(DEVICE, 100);
+
+    expect(sys.hSet).not.toHaveBeenCalled();
+    expect(sys.hSetMultiWithExpire).not.toHaveBeenCalled();
+    expect(sys.expire).not.toHaveBeenCalled();
+    expect(sys._store.has(KEY)).toBe(false);
   });
 });
 

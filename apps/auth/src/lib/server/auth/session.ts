@@ -122,7 +122,11 @@ export async function establishSession(cookies: Cookies, user: SessionUser): Pro
   // Link this account to the browser's device set (the account-switch list, section E). LAZY: only writes a
   // `device:accounts:*` key when this is a genuine 2nd distinct account (priorUserId set + != user.id), or when
   // the set already exists. An ordinary single-account login writes nothing. Best-effort.
-  await linkAccount(getOrCreateDeviceId(cookies), user.id, priorUserId).catch(() => {});
+  // Resolve the device id on its own line FIRST: getOrCreateDeviceId is SYNCHRONOUS and (re)sets the device
+  // cookie — keeping it outside the `.catch(...)` chain ensures the cookie-roll always lands and can't be
+  // swallowed as if it were part of linkAccount's best-effort redis write.
+  const deviceId = getOrCreateDeviceId(cookies);
+  await linkAccount(deviceId, user.id, priorUserId).catch(() => {});
 }
 
 /** The userId of the valid session already on this request's civ-token cookie, or undefined. Best-effort. */

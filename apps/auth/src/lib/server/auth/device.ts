@@ -119,9 +119,16 @@ export async function linkAccount(
     // Backfill the FIRST account (existingUserId) alongside the new one — the set was never written for it
     // (single-account users get no key), so this is the moment to record both. Same timestamp is fine: both
     // are active right now, and listAccounts sorts by it (ties are arbitrary but both are fresh).
-    await sys.hSet(key(deviceId), String(existingUserId), now);
-    await sys.hSet(key(deviceId), String(newUserId), now);
-    await sys.expire(key(deviceId), DEVICE_TTL_S);
+    //
+    // ATOMIC materialize: write BOTH fields AND the TTL in a single EVAL. A non-atomic hSet→hSet→expire
+    // sequence that died mid-way would leave a TTL-LESS key — reintroducing the exact unbounded-growth
+    // failure this PR exists to fix. hSetMultiWithExpire guarantees the key is never observable with
+    // fields but no TTL.
+    await sys.hSetMultiWithExpire(
+      key(deviceId),
+      [String(existingUserId), now, String(newUserId), now],
+      DEVICE_TTL_S
+    );
   } catch {
     // best-effort — a redis blip must not fail login
   }
