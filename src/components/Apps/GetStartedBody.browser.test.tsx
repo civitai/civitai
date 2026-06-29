@@ -5,13 +5,12 @@ import {
   BLOCKS_REACT_NPM_URL,
   CIVITAI_CLI_GITHUB_URL,
   CLI_CREATE_COMMAND,
-  CLI_DEV_HARNESS_COMMAND,
   CLI_INSTALL_BREW,
   CLI_INSTALL_GO,
+  CLI_RUN_COMMAND,
   CLI_SUBMIT_COMMAND,
   GetStartedBody,
   REQUEST_ACCESS_HREF,
-  SDK_INSTALL_COMMAND,
 } from '~/components/Apps/GetStartedBody';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -20,7 +19,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // (props-only, no tRPC / no network) so it renders in isolation.
 //
 // NOTE: this env does not load `@mantine/core/styles.css`, so we assert
-// presence / hrefs / accessible names — never computed styles.
+// presence / hrefs / accessible names / text — never computed styles.
 describe('GetStartedBody (public App builders landing)', () => {
   test('renders the hero heading', async () => {
     renderWithProviders(<GetStartedBody />);
@@ -29,49 +28,51 @@ describe('GetStartedBody (public App builders landing)', () => {
       .toBeInTheDocument();
   });
 
-  test('renders the three content section headings (tools / process / today)', async () => {
+  test('renders the three section headings (quickstart / what you get / publish)', async () => {
     renderWithProviders(<GetStartedBody />);
-    await expect.element(page.getByRole('heading', { name: 'The tools' })).toBeInTheDocument();
-    await expect.element(page.getByRole('heading', { name: 'The process' })).toBeInTheDocument();
-    await expect
-      .element(page.getByRole('heading', { name: 'What you can do today' }))
-      .toBeInTheDocument();
+    await expect.element(page.getByRole('heading', { name: 'Quickstart' })).toBeInTheDocument();
+    await expect.element(page.getByRole('heading', { name: 'What you get' })).toBeInTheDocument();
+    await expect.element(page.getByRole('heading', { name: 'Publish' })).toBeInTheDocument();
   });
 
   test('honest framing: states publishing is in private beta', async () => {
     renderWithProviders(<GetStartedBody />);
-    await expect
-      .element(page.getByText('Publishing is in private beta.'))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('Publishing is in private beta.')).toBeInTheDocument();
   });
 
-  test('shows the CLI install one-liners (brew + go), scaffold, harness, and submit commands', async () => {
+  test('shows the quickstart commands (brew install, scaffold, run) and the submit command', async () => {
     renderWithProviders(<GetStartedBody />);
+    // Copyable commands render prefixed with a shell prompt ("$ ").
     for (const command of [
       CLI_INSTALL_BREW,
-      CLI_INSTALL_GO,
       CLI_CREATE_COMMAND,
-      CLI_DEV_HARNESS_COMMAND,
-      SDK_INSTALL_COMMAND,
+      CLI_RUN_COMMAND,
       CLI_SUBMIT_COMMAND,
     ]) {
-      // Commands render prefixed with a shell prompt ("$ ").
       await expect.element(page.getByText(`$ ${command}`)).toBeInTheDocument();
     }
+    // The Go install is shown inline (secondary option), not as a copyable block.
+    await expect.element(page.getByText(CLI_INSTALL_GO)).toBeInTheDocument();
+  });
+
+  test('the run command installs deps before dev:harness (the CLI does not auto-install)', () => {
+    // Guards the correctness fix: `create` does NOT install deps, so the run step
+    // MUST include `npm install`, and uses `dev:harness` (mock host), not `dev`.
+    expect(CLI_RUN_COMMAND).toContain('npm install');
+    expect(CLI_RUN_COMMAND).toContain('npm run dev:harness');
   });
 
   test('command constants are the real, verified one-liners', () => {
     expect(CLI_INSTALL_BREW).toBe('brew install civitai/tap/civitai');
     expect(CLI_INSTALL_GO).toBe('go install github.com/civitai/cli/cmd/civitai@latest');
-    expect(CLI_CREATE_COMMAND).toBe('civitai app create');
-    expect(CLI_DEV_HARNESS_COMMAND).toBe('npm run dev:harness');
+    expect(CLI_CREATE_COMMAND).toBe('civitai app create my-app');
+    expect(CLI_RUN_COMMAND).toBe('cd my-app && npm install && npm run dev:harness');
     expect(CLI_SUBMIT_COMMAND).toBe('civitai app submit');
-    expect(SDK_INSTALL_COMMAND).toBe('npm install @civitai/blocks-react @civitai/app-sdk');
   });
 
   test('links to the real CLI repo and both npm packages', async () => {
     renderWithProviders(<GetStartedBody />);
-    const cli = page.getByRole('link', { name: 'github.com/civitai/cli' });
+    const cli = page.getByRole('link', { name: 'Civitai CLI' });
     await expect.element(cli).toBeInTheDocument();
     expect(cli.element().getAttribute('href')).toBe(CIVITAI_CLI_GITHUB_URL);
 
@@ -84,17 +85,11 @@ describe('GetStartedBody (public App builders landing)', () => {
     expect(appSdk.element().getAttribute('href')).toBe(APP_SDK_NPM_URL);
   });
 
-  test('renders a Request-access CTA', async () => {
+  test('renders the Request-access CTA wired to the placeholder href', async () => {
     renderWithProviders(<GetStartedBody />);
-    // The hero has an inline "Request access" anchor; the primary CTA button is
-    // labeled distinctly ("Request publishing access") so the two never collide.
-    await expect
-      .element(page.getByRole('link', { name: 'Request access' }))
-      .toBeInTheDocument();
-    const cta = page.getByRole('link', { name: 'Request publishing access' });
+    const cta = page.getByRole('link', { name: 'Request access' });
     await expect.element(cta).toBeInTheDocument();
-    // The request-access link is a deliberate placeholder until the real form
-    // exists — this pins that it is wired to the documented placeholder href.
+    // Deliberate placeholder until the real form exists.
     expect(cta.element().getAttribute('href')).toBe(REQUEST_ACCESS_HREF);
     expect(REQUEST_ACCESS_HREF).toBe('#');
   });
