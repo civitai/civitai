@@ -41,6 +41,8 @@ function makeSys() {
     _store: store,
     _ttl: ttl,
     exists: vi.fn(async (k: string) => (store.has(k) && store.get(k)!.size > 0 ? 1 : 0)),
+    // Field count of the stored hash (0 if absent) — mirrors redis HLEN, which touchAccount now gates on.
+    hLen: vi.fn(async (k: string) => store.get(k)?.size ?? 0),
     hSet: vi.fn(async (k: string, field: string, value: string) => {
       if (!store.has(k)) store.set(k, new Map());
       store.get(k)!.set(field, value);
@@ -212,10 +214,34 @@ describe('touchAccount — refresh-only', () => {
     expect(sys._store.has(KEY)).toBe(false);
   });
 
-  it('refreshes lastSwitchedAt + rolls the 30d TTL when the set already exists', async () => {
+  // THE DRAIN FIX (core of this PR): an EXISTING single-account (hlen=1) set must NOT be refreshed. The old
+  // `exists`-gated code WOULD have re-`expire`d it, re-rolling the 30d TTL on every login → the ~7.9M legacy
+  // single-account keys never drained. Gating on hLen<2 lets those keys (and any 2→1 remnant) expire naturally.
+  it('does NOT refresh an EXISTING single-account (hlen=1) set — lets legacy singletons drain', async () => {
     const sys = makeSys();
     h.getSysRedis.mockReturnValue(sys);
-    // Seed an existing multi-account set.
+    // Simulate a pre-existing legacy single-account key (written before lazy-materialization) with a TTL.
+    const seededTs = String(Date.now() - 60_000);
+    sys._store.set(KEY, new Map([['100', seededTs]]));
+    sys._ttl.set(KEY, 12345); // an arbitrary already-set TTL we must NOT touch
+    vi.clearAllMocks();
+
+    await touchAccount(DEVICE, 100);
+
+    // No write of any kind — the singleton must be left to expire.
+    expect(sys.hLen).toHaveBeenCalledWith(KEY);
+    expect(sys.hSet).not.toHaveBeenCalled();
+    expect(sys.hSetMultiWithExpire).not.toHaveBeenCalled();
+    expect(sys.expire).not.toHaveBeenCalled();
+    // TTL untouched (no roll), field value untouched.
+    expect(sys._ttl.get(KEY)).toBe(12345);
+    expect(sys._store.get(KEY)!.get('100')).toBe(seededTs);
+  });
+
+  it('refreshes lastSwitchedAt + rolls the 30d TTL when the set is multi-account (hlen ≥ 2)', async () => {
+    const sys = makeSys();
+    h.getSysRedis.mockReturnValue(sys);
+    // Seed an existing multi-account set (hlen = 2) so the refresh path is exercised.
     await linkAccount(DEVICE, 200, 100);
     sys.expire.mockClear();
 

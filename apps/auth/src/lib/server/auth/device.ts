@@ -66,21 +66,31 @@ export function clearDeviceCookie(cookies: Cookies): void {
 }
 
 /**
- * REFRESH an account's `lastSwitchedAt` on this device's set — but ONLY if the set already EXISTS (i.e. the
- * browser is already in multi-account mode). On a set that doesn't exist yet (the common single-account login),
- * this is a NO-OP: it deliberately does NOT create a singleton hash. The set is first materialized by
- * `linkAccount` once a genuine 2nd distinct account appears. Callers that just want to keep the active account
- * fresh (authorize / session / legacy-exchange / refresh / switch) use this; the explicit switch path always
- * has an existing set (it's gated by `isLinkedAndFresh`), so its refresh still lands. Best-effort.
+ * REFRESH an account's `lastSwitchedAt` on this device's set — but ONLY if the set holds ≥2 accounts (i.e. the
+ * browser is genuinely in multi-account mode, the only case where the switcher has any value). On a set with
+ * <2 fields — a single-account set or no set at all — this is a NO-OP: it deliberately neither creates a
+ * singleton hash nor refreshes one. Gating on hLen rather than `exists` is deliberate: ~7.9M PRE-EXISTING
+ * single-account keys (legacy bloat written before LAZY MATERIALIZATION) still EXIST, and an `exists` gate
+ * would re-roll their 30-day TTL on every login → the bloat would never drain. Letting <2-field keys fall
+ * through to TTL expiry drains that legacy keyspace (and any 2→1 remnant) over ≤30 days. A genuine multi-
+ * account set is first materialized by `linkAccount` once a 2nd distinct account appears. Callers that just
+ * want to keep the active account fresh (authorize / session / legacy-exchange / refresh / switch) use this;
+ * the explicit switch path always has a ≥2-account set (it's gated by `isLinkedAndFresh`), so its refresh
+ * still lands. Best-effort.
  */
 export async function touchAccount(deviceId: string, userId: number): Promise<void> {
   const sys = getSysRedis();
   if (!sys) return;
   try {
-    // Atomic-enough for a hash field: hSet only when at least one field already exists. We can't conditionally
-    // hSet a single field, so gate on key existence first. A racing first-create between the two calls is
-    // harmless — the set being created concurrently is exactly the case where we DO want the refresh to land.
-    if (!(await sys.exists(key(deviceId)))) return; // no set yet ⇒ single-account ⇒ write nothing
+    // Refresh ONLY a genuine multi-account set (≥2 accounts). Gating on hLen — not `exists` — is the drain
+    // fix: the ~7.9M PRE-EXISTING single-account keys (legacy bloat from before LAZY MATERIALIZATION) still
+    // EXIST, so an `exists` gate would re-`expire` (roll the 30d TTL on) every legacy singleton a returning
+    // user logs in with → the bloat never drains, the keyspace just plateaus. hLen<2 means there's no
+    // switcher value (one account can't be switched away from), so we write NOTHING and let that key expire
+    // naturally — draining the legacy singletons (and any 2→1 remnant) over ≤30d. hLen on a missing key is 0,
+    // so this also covers the ordinary single-account login (no key yet) the old `exists` check handled. One
+    // O(1) redis call. A racing first-create is handled by linkAccount (the only writer that creates a set).
+    if ((await sys.hLen(key(deviceId))) < 2) return; // <2 accounts ⇒ no switcher value ⇒ write nothing
     await sys.hSet(key(deviceId), String(userId), String(Date.now()));
     await sys.expire(key(deviceId), DEVICE_TTL_S);
   } catch {
