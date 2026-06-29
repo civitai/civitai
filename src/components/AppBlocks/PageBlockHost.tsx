@@ -1109,6 +1109,55 @@ export function PageBlockHost({
     return off;
   }, [onMessage, send]);
 
+  // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
+  //
+  // `useCheckpointPicker().persist(versionId)` posts SET_USER_CHECKPOINT and
+  // AWAITS USER_CHECKPOINT_SET (it's a request, not fire-and-forget). The
+  // model-slot host (IframeHost) handles it by writing `checkpoint_version_id`
+  // into `block_user_settings` for the (blockInstance, viewer) row, AND the
+  // dev:live SDK host serves it — so a block author who calls `persist()` sees
+  // it resolve locally, then (before this handler existed) had the SAME call
+  // hit NO page-host handler in prod: the persist promise hung to the SDK's
+  // request timeout (gotcha-#73, the "spins forever, no network call, no
+  // console error" class). This handler closes that silent hang.
+  //
+  // CRUCIAL: a page CANNOT persist a checkpoint override the way the model slot
+  // can. The server proc `blocks.updateUserSettings` HARD-REQUIRES `modelId`
+  // in the block-token ctx (it resolves a model-bound install via
+  // resolveBlockInstance({ modelId, slotId, ... })). A PAGE token's ctx is
+  // `{ slotId, entityType:'none' }` with NO modelId (isPageToken) — a page is
+  // stateless and binds to no model — so driving updateUserSettings with the
+  // page token would throw BAD_REQUEST ("block token lacks modelId context").
+  // There is no page-scoped user-settings row to write into today.
+  //
+  // So rather than INVENT a persistence target (a guess), this replies with an
+  // explicit, KNOWN-shape NACK: `USER_CHECKPOINT_SET { ok:false, error }`. That
+  // is the exact reply type+shape `persist()` awaits (it throws the `error`
+  // string when `ok:false`), so the block fails FAST and surfaces a clear
+  // message instead of hanging. The page's checkpoint flow is the in-memory
+  // OPEN_CHECKPOINT_PICKER result (above), which the block already holds — it
+  // does not need a persisted override.
+  //
+  // OPEN DECISION for a human (documented in
+  // claudedocs/app-blocks-host-handler-parity-2026-06-29.md): if pages should
+  // ever persist a viewer checkpoint preference, that needs a NEW page-scoped
+  // storage target (e.g. via the app-storage KV the page token already
+  // authorises) + a server proc that doesn't demand modelId — out of scope
+  // here. Until then a NACK is the correct, non-guessing behavior.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>('SET_USER_CHECKPOINT', (raw) => {
+      // Mirror IframeHost's drop rule: a missing / non-string requestId can't be
+      // answered (no correlation id), so drop it silently rather than reply.
+      if (!raw || typeof raw.requestId !== 'string' || raw.requestId.length === 0) return;
+      send('USER_CHECKPOINT_SET', {
+        requestId: raw.requestId,
+        ok: false,
+        error: 'page blocks cannot persist a checkpoint override (no model binding)',
+      });
+    });
+    return off;
+  }, [onMessage, send]);
+
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';
 
