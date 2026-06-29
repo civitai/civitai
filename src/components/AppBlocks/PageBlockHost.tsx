@@ -1146,6 +1146,9 @@ export function PageBlockHost({
   // here. Until then a NACK is the correct, non-guessing behavior.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown } | undefined>('SET_USER_CHECKPOINT', (raw) => {
+      // NOTE: `payload.versionId` is intentionally NOT read or validated here —
+      // the page path always NACKs regardless of which checkpoint was requested
+      // (there is no page-scoped persistence target), so the versionId is moot.
       // Mirror IframeHost's drop rule: a missing / non-string requestId can't be
       // answered (no correlation id), so drop it silently rather than reply.
       if (!raw || typeof raw.requestId !== 'string' || raw.requestId.length === 0) return;
