@@ -31,7 +31,7 @@ import {
 
 const DEVICE = 'dev-1';
 const KEY = `device:accounts:${DEVICE}`;
-const DEVICE_TTL_S = 7 * 24 * 60 * 60;
+const DEVICE_TTL_S = 30 * 24 * 60 * 60;
 
 // Minimal in-memory sys-redis: hash-of-hashes keyed by redis key, plus a per-key TTL recorder.
 function makeSys() {
@@ -94,7 +94,7 @@ describe('linkAccount — lazy materialization', () => {
     expect(sys._store.has(KEY)).toBe(false);
   });
 
-  it('a 2nd DISTINCT account materializes the hash with BOTH accounts + a 7d TTL', async () => {
+  it('a 2nd DISTINCT account materializes the hash with BOTH accounts + a 30d TTL', async () => {
     const sys = makeSys();
     h.getSysRedis.mockReturnValue(sys);
 
@@ -212,7 +212,7 @@ describe('touchAccount — refresh-only', () => {
     expect(sys._store.has(KEY)).toBe(false);
   });
 
-  it('refreshes lastSwitchedAt + rolls the 7d TTL when the set already exists', async () => {
+  it('refreshes lastSwitchedAt + rolls the 30d TTL when the set already exists', async () => {
     const sys = makeSys();
     h.getSysRedis.mockReturnValue(sys);
     // Seed an existing multi-account set.
@@ -250,22 +250,22 @@ describe('switch / list / remove still work on an existing set', () => {
     expect(await isLinkedAndFresh(DEVICE, 999)).toBe(false); // never linked
   });
 
-  it('isLinkedAndFresh rejects an account idle longer than the 7d TTL', async () => {
+  it('isLinkedAndFresh rejects an account idle longer than the TTL', async () => {
     const sys = makeSys();
     h.getSysRedis.mockReturnValue(sys);
     await linkAccount(DEVICE, 200, 100);
-    // Backdate account 100 to 8 days ago (> 7d idle).
-    await sys.hSet(KEY, '100', String(Date.now() - 8 * 24 * 60 * 60 * 1000));
+    // Backdate account 100 to just past the idle window (TTL + 1 day) — robust to the TTL value.
+    await sys.hSet(KEY, '100', String(Date.now() - (DEVICE_TTL_S * 1000 + 24 * 60 * 60 * 1000)));
 
     expect(await isLinkedAndFresh(DEVICE, 100)).toBe(false);
     expect(await isLinkedAndFresh(DEVICE, 200)).toBe(true);
   });
 
-  it('listAccounts prunes accounts idle > 7d', async () => {
+  it('listAccounts prunes accounts idle past the TTL', async () => {
     const sys = makeSys();
     h.getSysRedis.mockReturnValue(sys);
     await linkAccount(DEVICE, 200, 100);
-    await sys.hSet(KEY, '100', String(Date.now() - 8 * 24 * 60 * 60 * 1000)); // stale
+    await sys.hSet(KEY, '100', String(Date.now() - (DEVICE_TTL_S * 1000 + 24 * 60 * 60 * 1000))); // stale
 
     const accounts = await listAccounts(DEVICE);
     expect(accounts.map((a) => a.userId)).toEqual([200]); // 100 pruned
@@ -285,10 +285,10 @@ describe('switch / list / remove still work on an existing set', () => {
 });
 
 describe('TTL value', () => {
-  it('uses a 7-day device TTL (capacity: shortened from 30d)', async () => {
+  it('uses a 30-day device TTL (matches AUTH_SESSION_MAX_AGE; keyspace bounded by lazy-create, not the TTL)', async () => {
     const sys = makeSys();
     h.getSysRedis.mockReturnValue(sys);
     await linkAccount(DEVICE, 200, 100);
-    expect(sys._ttl.get(KEY)).toBe(7 * 24 * 60 * 60);
+    expect(sys._ttl.get(KEY)).toBe(DEVICE_TTL_S);
   });
 });

@@ -9,22 +9,23 @@ import { cookieDomain } from './cookie';
 // httpOnly `device` cookie; the hub keeps a per-device set of accounts that have authenticated on it, each
 // with a `lastSwitchedAt`. Account-switch is authorized against THIS set (+ an active session) — never a
 // client-held credential and never a User-to-User DB link, so there's no cross-device association and XSS
-// can't read the device id. Accounts idle for >7d are pruned → a switch into them requires a fresh login.
+// can't read the device id. Accounts idle for >30d are pruned → a switch into them requires a fresh login.
 //
 // LAZY MATERIALIZATION (capacity): the set is ONLY written once a browser actually has ≥2 distinct linked
 // accounts — the only case where the switcher is useful. A plain single-account login writes NOTHING (it would
-// otherwise leave a 7-day per-browser hash for the ~84% of users who never switch, which had grown the
+// otherwise leave a per-browser hash for the ~84% of users who never switch, which had grown the
 // `device:accounts:*` keyspace into the bulk of sysRedis). The "2nd account" signal is a session mint for
 // userId X on a request whose existing valid session (the incoming civ-token cookie) belongs to a DIFFERENT
 // userId Y → linkAccount materializes BOTH X and Y at that moment. touchAccount only REFRESHES an existing set.
 
 const DEVICE_COOKIE = deviceCookieName(); // `__Secure-civ-device` in prod, `civ-device` in dev (env-derived)
-// 7-day ROLLING TTL — refreshed on every login/switch/refresh while ≥2 accounts are linked. A browser that
-// goes 7 days without any switcher activity forgets its account set entirely; nothing in the device store
-// outlives the session it supports. (Shortened from 30d: the set is a convenience cache for the multi-account
-// switcher, not a durable record — and a shorter horizon caps the keyspace this fills in sysRedis.)
-const DEVICE_TTL_S = 7 * 24 * 60 * 60;
-const ACCOUNT_IDLE_MS = DEVICE_TTL_S * 1000; // per-account: "hasn't switched to this account in 7 days → re-login"
+// 30-day ROLLING TTL — matches AUTH_SESSION_MAX_AGE (the session lifetime). Refreshed on every
+// login/switch/refresh while ≥2 accounts are linked; a browser idle 30 days forgets its account set and a
+// switch-into requires a fresh login. The keyspace is bounded by LAZY MATERIALIZATION above (only ~0.01% of
+// browsers are ever multi-account → ~1k keys steady-state), NOT by this TTL — so it's purely the shared-device
+// "seamless switch-back" / re-auth window (a security/UX knob), not a capacity lever.
+const DEVICE_TTL_S = 30 * 24 * 60 * 60;
+const ACCOUNT_IDLE_MS = DEVICE_TTL_S * 1000; // per-account: "hasn't switched to this account in 30 days → re-login"
 const key = (deviceId: string) => `${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${deviceId}` as const;
 
 const cookieOpts = {
