@@ -1092,7 +1092,11 @@ export async function publishPrivateModelVersionHandler({
       user: ctx.user,
     });
     // createPost (service) doesn't emit the post-create ClickHouse event, so do it
-    // here, tagged 'training' to mark the origin.
+    // here, tagged 'training' to mark the origin. nsfw is hardcoded false rather
+    // than derived from nsfwLevel (as other track.post calls do): the sample
+    // images were just uploaded and aren't scanned yet, so the post's nsfwLevel
+    // is still 0 and !getIsSafeBrowsingLevel(0) would flag every training post as
+    // NSFW. The scan pipeline sets the real level later.
     if (post) {
       await ctx.track.post({ type: 'Create', postId: post.id, nsfw: false, tags: ['training'] });
     }

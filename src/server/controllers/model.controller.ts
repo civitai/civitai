@@ -1984,6 +1984,11 @@ export const privateModelFromTrainingHandler = async ({
         where: { modelVersionId: { in: trainingVersionIds }, userId: ctx.user.id },
         select: { id: true },
       });
+      // nsfw is hardcoded false rather than derived from nsfwLevel (as other
+      // track.post calls do): the sample images were just uploaded and aren't
+      // scanned yet, so each post's nsfwLevel is still 0 and
+      // !getIsSafeBrowsingLevel(0) would flag every training post as NSFW. The
+      // scan pipeline sets the real level later.
       await Promise.all(
         createdPosts.map((p) =>
           ctx.track.post({ type: 'Create', postId: p.id, nsfw: false, tags: ['training'] })
