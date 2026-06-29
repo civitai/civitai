@@ -150,6 +150,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     }
 
     const metadata: ImageMetaProps = {
+      engine: isCivitComfy ? 'Civitai' : 'ComfyUI',
       models,
       upscalers,
       vaes,
@@ -171,6 +172,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         sampler,
         denoise,
         workflowId,
+        workflow,
         resources,
         ...extra
       } = exif.extraMetadata;
@@ -181,7 +183,11 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       metadata.seed = seed;
       metadata.sampler = sampler;
       metadata.denoise = denoise;
-      metadata.workflow = workflowId;
+      let finalWorkflow = workflowId ?? workflow;
+      if (typeof finalWorkflow === 'string' && finalWorkflow.includes(':')) {
+        finalWorkflow = finalWorkflow.split(':')[0];
+      }
+      metadata.workflow = finalWorkflow;
       metadata.civitaiResources = resources.map((x: any) => {
         if (x.strength) {
           x.weight = x.strength;
