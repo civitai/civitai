@@ -31,10 +31,13 @@
  *
  * Actions (see the switch below for authoritative param list):
  *   count   - {modelId?}          Preview how many trained versions / models match (no write).
- *   apply   - {limit?, modelId?}  Reset matching versions (and their orphaned parent
- *                                 models) to Draft.
+ *   apply   - {limit?, modelId?, batchSize?, concurrency?}
+ *                                 Reset matching versions (and their orphaned parent
+ *                                 models) to Draft, in chunked autocommit batches.
  *                                 - limit caps the number of versions per run (staged rollouts).
  *                                 - modelId scopes to one model for spot-fixes.
+ *                                 - batchSize rows per UPDATE (default 250, max 1000).
+ *                                 - concurrency parallel batches (default 4, max 10).
  *
  * Target predicate (a swept, still-postless trained version):
  *   mv.status = 'Unpublished' AND mv.uploadType = 'Trained'
@@ -54,16 +57,20 @@
  * unpublishedAt won't re-trigger the unpublish notification (keys off
  * unpublishedAt > lastSent), and both flip back on the next publish.
  *
- * apply re-asserts the full predicate (not just the selected id list), so a row
- * that changed between selection and write is skipped, never clobbered; re-running
- * is safe. Both actions are gated by WEBHOOK_TOKEN; count never writes.
+ * apply runs chunked autocommit UPDATEs (NOT one interactive $transaction —
+ * Prisma caps those at 5s and the full cohort exceeds it). Each batch re-asserts
+ * the full predicate, so a row that changed since selection is skipped, never
+ * clobbered, and the backfill is idempotent — a partial run is finished by
+ * re-running. Both actions are gated by WEBHOOK_TOKEN; count never writes.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Prisma } from '@prisma/client';
+import { chunk } from 'lodash-es';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const actionSchema = z.enum(['count', 'apply']);
 
@@ -71,6 +78,8 @@ const schema = z.object({
   action: actionSchema,
   modelId: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(50_000).optional(),
+  batchSize: z.coerce.number().int().positive().max(1_000).default(250),
+  concurrency: z.coerce.number().int().min(1).max(10).default(4),
 });
 
 // A swept trained version: was published, lost its owner post, got unpublished
@@ -117,27 +126,46 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     }
 
     case 'apply': {
-      const result = await dbWrite.$transaction(async (tx) => {
-        // Select candidates on the primary inside the tx (current data, no
-        // replica lag). limit applies here for staged rollouts.
-        const targets = await tx.$queryRawUnsafe<{ id: number }[]>(`
-          SELECT mv.id
-          FROM "ModelVersion" mv
-          JOIN "Model" m ON m.id = mv."modelId"
-          WHERE ${TARGET_PREDICATE} ${modelFilter}
-          ${limitClause}
-        `);
-        const ids = targets.map((t) => t.id);
-        if (!ids.length) return { versions: 0, models: 0, sample: [] as number[] };
+      // No interactive $transaction: Prisma caps those at 5s and the full
+      // cohort (~2.7k rows + correlated NOT EXISTS) blows past it. Instead select
+      // the candidate ids once, then drive chunked autocommit UPDATEs (each its
+      // own statement, bound only by statement_timeout). Cross-batch atomicity
+      // isn't needed — every batch re-asserts the predicate, so the backfill is
+      // idempotent and a partial run is finished by re-running.
+      const { batchSize, concurrency } = input;
 
-        // Re-assert the full predicate in the write so a row that changed since
-        // selection is skipped rather than clobbered (idempotent on re-run).
-        const draftedVersions = await tx.$queryRaw<{ id: number; modelId: number }[]>`
+      // Candidate selection on the primary (no replica lag). limit caps the run.
+      const targets = await dbWrite.$queryRawUnsafe<{ id: number }[]>(`
+        SELECT mv.id
+        FROM "ModelVersion" mv
+        JOIN "Model" m ON m.id = mv."modelId"
+        WHERE ${TARGET_PREDICATE} ${modelFilter}
+        ${limitClause}
+      `);
+      const ids = targets.map((t) => t.id);
+      if (!ids.length) {
+        return res.status(200).json({
+          action: 'apply',
+          modelId: input.modelId ?? null,
+          limit: input.limit ?? null,
+          draftedVersions: 0,
+          draftedModels: 0,
+          sampleVersionIds: [],
+        });
+      }
+
+      // Draft the versions in chunks. Each batch re-asserts the full predicate so
+      // a row that changed since selection is skipped, never clobbered.
+      const draftedModelIds = new Set<number>();
+      const sample: number[] = [];
+      let draftedVersions = 0;
+      const versionTasks = chunk(ids, batchSize).map((batch) => async () => {
+        const rows = await dbWrite.$queryRaw<{ id: number; modelId: number }[]>`
           UPDATE "ModelVersion" mv
           SET status = 'Draft'
           FROM "Model" m
           WHERE mv."modelId" = m.id
-            AND mv.id IN (${Prisma.join(ids)})
+            AND mv.id IN (${Prisma.join(batch)})
             AND mv.status = 'Unpublished'
             AND mv."uploadType" = 'Trained'
             AND mv.meta->>'unpublishedReason' = 'no-posts'
@@ -146,42 +174,43 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
             )
           RETURNING mv.id, mv."modelId"
         `;
-
-        const modelIds = [...new Set(draftedVersions.map((v) => v.modelId))];
-        let draftedModels = 0;
-        if (modelIds.length) {
-          // Only models the no-versions sweep left Unpublished with no published
-          // version — a model still holding a live published version is untouched.
-          // Scoped to the cron's 'no-versions' reason so a moderator-unpublished
-          // parent (different reason) is never resurfaced.
-          const models = await tx.$queryRaw<{ id: number }[]>`
-            UPDATE "Model" m
-            SET status = 'Draft'
-            WHERE m.id IN (${Prisma.join(modelIds)})
-              AND m.status = 'Unpublished'
-              AND m.meta->>'unpublishedReason' = 'no-versions'
-              AND NOT EXISTS (
-                SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND mv.status = 'Published'
-              )
-            RETURNING m.id
-          `;
-          draftedModels = models.length;
+        draftedVersions += rows.length;
+        for (const r of rows) {
+          draftedModelIds.add(r.modelId);
+          if (sample.length < 10) sample.push(r.id);
         }
-
-        return {
-          versions: draftedVersions.length,
-          models: draftedModels,
-          sample: draftedVersions.slice(0, 10).map((v) => v.id),
-        };
       });
+      await limitConcurrency(versionTasks, concurrency);
+
+      // Draft the parent models the no-versions sweep left Unpublished with no
+      // published version. Scoped to the cron's 'no-versions' reason so a
+      // moderator-unpublished parent (different reason) is never resurfaced.
+      let draftedModels = 0;
+      const modelTasks = chunk([...draftedModelIds], batchSize).map((batch) => async () => {
+        const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+          UPDATE "Model" m
+          SET status = 'Draft'
+          WHERE m.id IN (${Prisma.join(batch)})
+            AND m.status = 'Unpublished'
+            AND m.meta->>'unpublishedReason' = 'no-versions'
+            AND NOT EXISTS (
+              SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND mv.status = 'Published'
+            )
+          RETURNING m.id
+        `;
+        draftedModels += rows.length;
+      });
+      await limitConcurrency(modelTasks, concurrency);
 
       return res.status(200).json({
         action: 'apply',
         modelId: input.modelId ?? null,
         limit: input.limit ?? null,
-        draftedVersions: result.versions,
-        draftedModels: result.models,
-        sampleVersionIds: result.sample,
+        batchSize,
+        concurrency,
+        draftedVersions,
+        draftedModels,
+        sampleVersionIds: sample,
       });
     }
   }
