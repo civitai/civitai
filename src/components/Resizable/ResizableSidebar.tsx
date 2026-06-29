@@ -37,7 +37,16 @@ export function ResizableSidebar({
   return (
     <div
       {...props}
-      style={{ ...props.style }}
+      style={{
+        // Seed --sidebar-default-width so the CSS rule `width: var(--sidebar-default-width)`
+        // on .sidebar reserves space in the SSR HTML / first paint.  After mount, useResize
+        // sets element.style.width directly (inline style wins over stylesheet), so resize
+        // behaviour is unaffected and React re-renders never stomp the user's dragged width.
+        ...(defaultWidth !== undefined && {
+          '--sidebar-default-width': `${defaultWidth}px`,
+        }),
+        ...props.style,
+      } as React.CSSProperties}
       className={cx(classes.sidebar, classes[resizePosition], props.className)}
       ref={containerRef}
     >
