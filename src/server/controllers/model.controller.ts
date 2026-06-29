@@ -1818,7 +1818,9 @@ export async function toggleCheckpointCoverageHandler({
 }) {
   try {
     const affectedVersionIds = await toggleCheckpointCoverage(input);
-    if (affectedVersionIds) await bustMvCache(affectedVersionIds);
+    // Forward the model id (input.id) so bustMvCache also drops the origin-side
+    // public GET /api/v1/models/[id] response cache for this model.
+    if (affectedVersionIds) await bustMvCache(affectedVersionIds, input.id);
 
     await modelsSearchIndex.queueUpdate([
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },

@@ -1431,6 +1431,15 @@ export const updateModelById = async ({
   });
 
   await userModelCountCache.refresh(model.userId);
+  // Flag replica-lag on the model BEFORE busting so a concurrent edge-miss read
+  // (getModelsWithVersions -> dataForModelsCache.lookupFn -> getDbWithoutLagBatch)
+  // routes to primary during the replication window instead of repopulating the
+  // just-busted response cache with the pre-takedown version state. Mirrors the
+  // publish/unpublish paths. Model-only flag is sufficient here:
+  // dataForModelsCache (which carries the safety-determining version status/
+  // availability) keys its lag-aware lookup off the 'model' flag, and version
+  // ids aren't cheaply in scope on this path.
+  await preventModelVersionLagBatch(id, []);
   // Drop the origin-side public GET /api/v1/models/[id] response cache. This is
   // the path takedown/archive (changeModelModifierHandler sets `mode`) flows
   // through, and the cached body's images/files/downloadUrl depend on
@@ -1512,6 +1521,13 @@ export const deleteModelById = async ({
     await userModelCountCache.refresh(deletedModel.userId);
   }
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  // Flag replica-lag BEFORE busting so a concurrent edge-miss read can't
+  // repopulate the just-busted response cache with the pre-delete state from a
+  // lagging replica (dataForModelsCache.lookupFn routes to primary while the
+  // flag is set). Mirrors the publish/unpublish paths; version ids are in scope
+  // here from the delete transaction.
+  const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
+  await preventModelVersionLagBatch(id, deletedVersionIds);
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
   // deleted model stops serving a stale 200 (it would 404 on rebuild).
   await bustPublicModelResponseCache(id);
@@ -2040,6 +2056,14 @@ export const upsertModel = async (
         );
       }
     }
+
+    // Drop the origin-side public GET /api/v1/models/[id] response cache so an
+    // owner/mod edit (name/description/nsfw/tags/gallery — all carried in the
+    // cached body) stops serving a stale 200 on an edge-miss for up to the cache
+    // TTL. preventReplicationLag('model', id) above already guards the rebuild
+    // read against the replication window. Fail-open (the helper swallows Redis
+    // errors); the only post-commit write left in this branch.
+    await bustPublicModelResponseCache(result.id);
 
     return result;
   }
