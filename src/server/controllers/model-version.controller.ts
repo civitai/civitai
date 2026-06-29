@@ -862,7 +862,11 @@ export const modelVersionDonationGoalsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return modelVersionDonationGoals({
+    // `await` is load-bearing: without it the rejected promise escapes this
+    // try/catch (so a Prisma error bypassed the P2025→NOT_FOUND mapping in
+    // throwDbError and surfaced as INTERNAL_SERVER_ERROR). The service now also
+    // throws NOT_FOUND at the source, so this is belt-and-suspenders.
+    return await modelVersionDonationGoals({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,

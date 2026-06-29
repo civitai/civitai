@@ -222,9 +222,18 @@ export const toggleModelVersionEngagement = async ({
     return;
   }
 
-  await dbWrite.modelVersionEngagement.create({
-    data: { type, modelVersionId: versionId, userId },
-  });
+  await dbWrite.modelVersionEngagement
+    .create({
+      data: { type, modelVersionId: versionId, userId },
+    })
+    .catch((error) => {
+      // A toggle racing itself: both calls see no engagement and both create,
+      // so the second hits the (userId, modelVersionId) unique constraint
+      // (P2002). The engagement already exists — a toggle is idempotent, so
+      // treat this as success instead of bubbling a 500.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return;
+      throw error;
+    });
   return;
 };
 
@@ -1729,10 +1738,24 @@ export const modelVersionDonationGoals = async ({
       },
     },
   } as const;
-  const version = await dbRead.modelVersion.findFirstOrThrow(donationFindArgs).catch(() => {
-    dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
-    return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
-  });
+  const version = await dbRead.modelVersion
+    .findFirstOrThrow(donationFindArgs)
+    .catch(() => {
+      // Replica miss (often replica lag) — retry against the primary before
+      // deciding the record is truly gone.
+      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
+      return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
+    })
+    .catch((error) => {
+      // Genuinely not found on the primary too (P2025) is a client/not-found
+      // condition — surface 404 at the source. (The controller handler also
+      // maps P2025→NOT_FOUND via throwDbError, but only once its `return` is
+      // awaited; throwing here makes the 404 correct regardless of that.)
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw throwNotFoundError(`No model version with id ${id}`);
+      }
+      throw error;
+    });
 
   const canSeeAllGoals = userId === version.model.userId || isModerator;
 
@@ -2181,6 +2204,14 @@ export const mergeVersions = async ({
   }
   if (sourceVersionIds.includes(targetVersionId)) {
     throw throwBadRequestError('Target version cannot be in the source versions list.');
+  }
+  // Defensive: every raw query below interpolates `Prisma.join(sourceVersionIds)`,
+  // which throws "Expected join([]) to be called with an array of multiple
+  // elements" on an empty array. The tRPC schema enforces `.min(1)`, but guard
+  // here too so any non-router caller gets a clean 400 (nothing to merge) rather
+  // than an INTERNAL_SERVER_ERROR.
+  if (sourceVersionIds.length === 0) {
+    throw throwBadRequestError('No source versions to merge.');
   }
 
   // Block if any source version has active monetization or early access purchases
