@@ -2618,6 +2618,7 @@ export class BlockRegistry {
       manifest: unknown;
       install_count: bigint;
       category: string | null;
+      external_url: string | null;
       approved_scopes: string[] | null;
       avg_rating: number | null;
       review_count: bigint;
@@ -2681,6 +2682,7 @@ export class BlockRegistry {
         oc.name AS app_name,
         ab.manifest,
         ab.category,
+        ab.external_url,
         ab.approved_scopes,
         -- Post kill_per_model_installs: "install count" = how many distinct
         -- USERS use this app, not how many subscription rows exist. A single
@@ -2746,6 +2748,10 @@ export class BlockRegistry {
         // Public, mod-assigned category (NULL until the E3 migration + a mod set
         // it). Display-only.
         category: r.category ?? null,
+        // Off-site (external-link) app: the off-platform URL the card opens in a
+        // new tab. NULL = a normal on-platform app. Validated https:// at
+        // registration; display/navigation-only (no token/scope attached).
+        externalUrl: r.external_url ?? null,
         // F-E E3 scopes-on-cards: the FIRST N APPROVED scope ids (the same
         // permission-disclosure list E2 surfaces). Defensive against a NULL
         // column (pre-approval rows) → empty list. NEVER the manifest's raw
@@ -2801,6 +2807,7 @@ export class BlockRegistry {
       content_rating: string | null;
       version: string | null;
       approved_scopes: string[] | null;
+      external_url: string | null;
       install_count: bigint;
       avg_rating: number | null;
       review_count: bigint;
@@ -2820,6 +2827,7 @@ export class BlockRegistry {
         ab.content_rating,
         ab.version,
         ab.approved_scopes,
+        ab.external_url,
         ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count,
@@ -2862,8 +2870,13 @@ export class BlockRegistry {
       avgRating: row.avg_rating ?? null,
       reviewCount: Number(row.review_count),
       // Already-public standalone origin (no token/scope). Same host the webhook
-      // validates the submitted bundle's iframe.src against.
+      // validates the submitted bundle's iframe.src against. For an external
+      // (off-site) app this origin doesn't host anything — the client uses
+      // `externalUrl` as the open target instead (and hides install/preview).
       liveUrl: `https://${row.block_id}.${env.APPS_DOMAIN}`,
+      // Off-site (external-link) app: the off-platform URL. NULL = on-platform.
+      // Validated https:// at registration; display/navigation-only.
+      externalUrl: row.external_url ?? null,
       // F-E E5 screenshot gallery — PUBLIC display URLs only (the gated app
       // route), built server-side from appBlockId + index + ext. The stored
       // MinIO key is never exposed; a NULL column (pre-migration / no screenshots)
@@ -2905,6 +2918,7 @@ export class BlockRegistry {
       manifest: unknown;
       install_count: bigint;
       category: string | null;
+      external_url: string | null;
       approved_scopes: string[] | null;
       avg_rating: number | null;
       review_count: bigint;
@@ -2917,6 +2931,7 @@ export class BlockRegistry {
         oc.name AS app_name,
         ab.manifest,
         ab.category,
+        ab.external_url,
         ab.approved_scopes,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count,
@@ -2942,6 +2957,7 @@ export class BlockRegistry {
       manifest: toPublicBlockManifest(r.manifest),
       installCount: Number(r.install_count),
       category: r.category ?? null,
+      externalUrl: r.external_url ?? null,
       scopesSummary: Array.isArray(r.approved_scopes)
         ? r.approved_scopes
             .filter((s): s is string => typeof s === 'string')

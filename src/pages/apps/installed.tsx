@@ -748,6 +748,9 @@ export default function InstalledAppsPage() {
       // E3 marketplace-card fields — unused on the Manage path (modal-only).
       category: null,
       scopesSummary: [],
+      // An installed app is on-platform by definition (external-link apps have
+      // no install) — never an external listing on this path.
+      externalUrl: null,
       // Marketplace reviews — unused on the Manage path (modal-only).
       avgRating: null,
       reviewCount: 0,

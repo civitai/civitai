@@ -266,6 +266,7 @@ export type AppBlock = {
   featured: Generated<boolean>;
   featured_order: number | null;
   screenshots: unknown | null;
+  external_url: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };

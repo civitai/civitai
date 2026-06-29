@@ -211,6 +211,7 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
         'avgRating',
         'blockId',
         'contentRating',
+        'externalUrl',
         'id',
         'installCount',
         'liveUrl',

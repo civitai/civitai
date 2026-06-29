@@ -169,6 +169,12 @@ export type AvailableBlock = {
   installCount: number;
   category: string | null;
   scopesSummary: string[];
+  // Off-site (external-link) app — PURE EXTERNAL LINK. When non-null, this
+  // listing opens an external URL in a new tab (NO install / scopes / token /
+  // subscription). The card uses this as the "open" target instead of the
+  // computed `https://<slug>.<APPS_DOMAIN>` liveUrl, hides Install + scopes, and
+  // flags the app as off-site. NULL = a normal on-platform app. Always https://.
+  externalUrl: string | null;
   // Marketplace reviews (F-E "marketplace" cluster). avgRating is NULL when the
   // app has no aggregate-eligible reviews (0-review apps); reviewCount excludes
   // mod-excluded + self-reviews. Both display-safe (aggregate numbers only).
@@ -433,4 +439,9 @@ export type PublicAppDetail = {
   reviewCount: number;
   liveUrl: string;
   screenshots: PublicScreenshot[];
+  // Off-site (external-link) app — PURE EXTERNAL LINK. When non-null, the detail
+  // surfaces this as the primary CTA (open in a new tab) and hides install /
+  // scopes / iframe-preview. NULL = a normal on-platform app (liveUrl is the
+  // canonical standalone origin as before). Always https://.
+  externalUrl: string | null;
 };
