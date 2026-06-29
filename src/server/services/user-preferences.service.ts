@@ -5,6 +5,7 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import { getModeratedTags } from '~/server/services/system-cache';
+import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 
@@ -545,8 +546,12 @@ async function toggleHiddenTags({
       });
     }
     if (toCreate.length) {
+      // skipDuplicates so a concurrent toggle that already inserted some of these
+      // (userId, tagId) rows doesn't blow up the WHOLE batch with a P2002 (which
+      // would drop the legitimately-new rows too) — bulk-insert is idempotent.
       await dbWrite.tagEngagement.createMany({
         data: toCreate.map((tagId) => ({ userId, tagId, type: 'Hide' })),
+        skipDuplicates: true,
       });
     }
 
@@ -602,7 +607,13 @@ async function toggleHideModel({
   });
 
   if (!engagement)
-    await dbWrite.modelEngagement.create({ data: { userId, modelId, type: 'Hide' } });
+    await dbWrite.modelEngagement
+      .create({ data: { userId, modelId, type: 'Hide' } })
+      // Toggle racing itself → P2002 on the (userId, modelId) PK. The Hide row
+      // already exists, so it's idempotent — fall through to the cache refresh.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Hide')
     await dbWrite.modelEngagement.delete({ where: { userId_modelId: { userId, modelId } } });
   else
@@ -639,7 +650,13 @@ async function toggleHideModel3D({
   });
 
   if (!engagement)
-    await dbWrite.model3DEngagement.create({ data: { userId, model3dId, type: 'Hide' } });
+    await dbWrite.model3DEngagement
+      .create({ data: { userId, model3dId, type: 'Hide' } })
+      // Toggle racing itself → P2002 on the (userId, model3dId) PK. Idempotent
+      // (Hide already exists) — fall through to the cache refresh.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Hide')
     await dbWrite.model3DEngagement.delete({
       where: { userId_model3dId: { userId, model3dId } },
@@ -672,9 +689,16 @@ async function toggleHideUser({
     select: { type: true },
   });
   if (!engagement)
-    await dbWrite.userEngagement.create({
-      data: { userId, targetUserId, type: 'Hide' },
-    });
+    await dbWrite.userEngagement
+      .create({
+        data: { userId, targetUserId, type: 'Hide' },
+      })
+      // Toggle racing itself → P2002 on the (userId, targetUserId) PK. The row
+      // already exists — idempotent, so fall through to the cache refreshes
+      // (which read DB truth) instead of bubbling a 500.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Hide' && setTo !== true)
     await dbWrite.userEngagement.delete({
       where: { userId_targetUserId: { userId, targetUserId } },
@@ -719,9 +743,16 @@ async function toggleBlockUser({
     select: { type: true },
   });
   if (!engagement)
-    await dbWrite.userEngagement.create({
-      data: { userId, targetUserId, type: 'Block' },
-    });
+    await dbWrite.userEngagement
+      .create({
+        data: { userId, targetUserId, type: 'Block' },
+      })
+      // Toggle racing itself → P2002 on the (userId, targetUserId) PK. The row
+      // already exists — idempotent, so fall through to the cache refreshes
+      // (which read DB truth) instead of bubbling a 500.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Block' && setTo !== true)
     await dbWrite.userEngagement.delete({
       where: { userId_targetUserId: { userId, targetUserId } },
@@ -754,7 +785,13 @@ async function toggleHideImage({
     select: { type: true },
   });
   if (!engagement)
-    await dbWrite.imageEngagement.create({ data: { userId, imageId, type: 'Hide' } });
+    await dbWrite.imageEngagement
+      .create({ data: { userId, imageId, type: 'Hide' } })
+      // Toggle racing itself → P2002 on the (userId, imageId) PK. Idempotent
+      // (Hide already exists) — fall through to the cache refresh.
+      .catch((error) => {
+        if (!isPrismaUniqueViolation(error)) throw error;
+      });
   else if (engagement.type === 'Hide')
     await dbWrite.imageEngagement.delete({
       where: { userId_imageId: { userId, imageId } },
