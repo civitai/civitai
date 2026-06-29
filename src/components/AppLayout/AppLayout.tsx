@@ -9,7 +9,6 @@ import { SubNav2 } from '~/components/AppLayout/SubNav';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { MatureContentMigrationAlert } from '~/components/Alerts/MatureContentMigrationAlert';
 import { Announcements } from '~/components/Announcements/Announcements';
 import type { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
@@ -131,7 +130,6 @@ export function MainContent({
         )}
         {!subNav && <RewardsBonusBanner />}
         {announcements && <Announcements className="mb-3" />}
-        {announcements && <MatureContentMigrationAlert />}
         {children}
       </main>
       {footer}
