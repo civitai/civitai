@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'http';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { isDev } from '~/env/other';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -242,6 +242,17 @@ const featureFlags = createFeatureFlags({
   // gate. The page route + page-token mint require BOTH `appBlocks` AND
   // `appBlocksPages`. Mod-only today; widened (Flipt segment) at W10 launch.
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
+  // App Blocks — "App builders" get-started landing page (`/apps/get-started`).
+  // Scope A soft launch: a single marketing/funnel page that explains the
+  // platform to would-be app developers. INDEPENDENT of the mod-only `appBlocks`
+  // gate — this flag controls ONLY the get-started page + its nav entry, NOT
+  // any other `/apps/*` surface (those stay gated on `appBlocks`). Staged
+  // mod-only today (like `appBlocks` / `appBlocksPages`) so it deploys dark-to-
+  // public and mods can review the page live on prod; widened to `['public']`
+  // (a one-line flag change) when launch copy + the real Request-access link
+  // land. The Flipt key stays the kill-switch / future-widen lever (flip it off
+  // to drop the page + nav entry without a deploy).
+  appBlocksGetStarted: { availability: ['mod'], fliptKey: 'app-blocks-get-started' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

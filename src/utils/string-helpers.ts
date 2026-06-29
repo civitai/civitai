@@ -185,8 +185,9 @@ export function getModelUrl({
 export function removeTags(str: string) {
   if (!str) return '';
 
-  // Replace all HTML tags with a single space
-  const stringWithoutTags = str.replace(/<[^>]*>/g, ' ');
+  // Replace all HTML tags with a single space. `[^<>]` (not `[^>]`) so an unterminated run of
+  // `<` can't force quadratic backtracking (ReDoS) — a `<` always starts a fresh potential tag.
+  const stringWithoutTags = str.replace(/<[^<>]*>/g, ' ');
 
   // Replace multiple spaces with a single space
   const stringWithoutExtraSpaces = stringWithoutTags.replace(/\s+/g, ' ');

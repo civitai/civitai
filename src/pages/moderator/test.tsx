@@ -15,6 +15,7 @@ import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvi
 import { SourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { ImageCropperContent } from '~/components/Generation/Input/ImageCropModal';
 import { trpc } from '~/utils/trpc';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 
@@ -467,6 +468,8 @@ function ExamplePopover() {
     </div>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default Test;
 // export default Page(Test, { getLayout: (page) => <main className="size-full">{page}</main> });

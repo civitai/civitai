@@ -24,6 +24,7 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
+import { getCardBaseModels } from '~/components/Cards/model-card.utils';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useElementInView } from '~/components/IntersectionObserver/ElementInView';
@@ -94,15 +95,25 @@ function ModelCardContent({ data }: Props) {
     [isEarlyAccess, isUpdated, theme, colorScheme]
   );
 
-  const { useModelVersionRedirect } = useModelCardContext();
+  const { useModelVersionRedirect, activeBaseModels } = useModelCardContext();
+  const cardBaseModels = getCardBaseModels(data as Parameters<typeof getCardBaseModels>[0], activeBaseModels);
+  // In search, data.version is the primary version; data.versions[] carries all of
+  // them, so link to the version that matched the active base-model filter. The feed
+  // has no versions[] (data.version is already the matched one), so it falls back.
+  const targetVersionId =
+    (activeBaseModels?.length
+      ? (data as { versions?: { id: number; baseModel: string }[] }).versions?.find((v) =>
+          activeBaseModels.includes(v.baseModel)
+        )?.id
+      : undefined) ?? data.version.id;
   const href = useMemo(
     () =>
       getModelUrl({
         modelId: data.id,
         modelName: data.name,
-        modelVersionId: useModelVersionRedirect ? data.version.id : null,
+        modelVersionId: useModelVersionRedirect ? targetVersionId : null,
       }),
-    [data.id, data.name, data.version.id, useModelVersionRedirect]
+    [data.id, data.name, targetVersionId, useModelVersionRedirect]
   );
 
   return (
@@ -132,6 +143,7 @@ function ModelCardContent({ data }: Props) {
               className={clsx(cardClasses.infoChip, cardClasses.chip)}
               type={data.type}
               baseModel={data.version.baseModel}
+              baseModels={cardBaseModels}
             />
 
             {(isNew || isUpdated || isEarlyAccess) && (

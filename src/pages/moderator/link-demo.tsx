@@ -13,20 +13,9 @@ import {
 } from '@mantine/core';
 import { IconCheck, IconCopy } from '@tabler/icons-react';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
-// export const getServerSideProps = createServerSideProps({
-//   useSession: true,
-//   resolver: async ({ session }) => {
-//     if (!session?.user?.isModerator || session.user?.bannedAt) {
-//       return {
-//         redirect: {
-//           destination: '/',
-//           permanent: false,
-//         },
-//       };
-//     }
-//   },
-// });
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 function Home() {
   // const activities = useCivitaiLinkStore((state) => state.activities);

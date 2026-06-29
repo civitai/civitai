@@ -746,29 +746,36 @@ describe('POST /api/v1/blocks/dev-token', () => {
       expect(arg.scopes).not.toContain('totally:unknown:scope');
     });
 
-    it('404 (bare, no oracle) when the pending request is owned by ANOTHER user', async () => {
+    it('no oracle when a pending request is owned by ANOTHER user: the foreign pending does not match the caller query, so it falls to the NO-ROW path (mints a read-only token, identical to no-row-at-all — never reveals the foreign row)', async () => {
       mockGetSession.mockResolvedValueOnce(MOD_SESSION);
       noApprovedRow();
       // The ownership filter is in the QUERY (submittedByUserId === user.id), so a
-      // row owned by another user simply does not match → findFirst returns null.
+      // pending row owned by another user simply does not match → findFirst null.
+      // With the no-row local-manifest path live, `block == null` + no owned
+      // pending → the caller reaches the NO-ROW mint, NOT a 404. With NO body
+      // scopes the granted set is read-only (user:read:self) — INDISTINGUISHABLE
+      // from a brand-new slug, so a foreign pending row is still never an oracle.
       mockPublishRequestFindFirst.mockResolvedValueOnce(null);
       const { req, res } = authPost({ slug: 'someone-elses-app' });
       await handler(req as never, res as never);
-      expect(res._getStatusCode()).toBe(404);
-      // IDENTICAL body to the no-row-at-all case — no existence/ownership oracle.
-      expect((res._getJSONData() as { message: string }).message).toBe('App not found');
-      expect(mockSign).not.toHaveBeenCalled();
+      expect(res._getStatusCode()).toBe(200);
+      const arg = mockSign.mock.calls[0][0];
+      // Read-only (no body scopes) → no oracle: same outcome as a slug with no row.
+      expect(arg.scopes).toEqual(['user:read:self']);
+      expect(arg.appId).toBe('local-someone-elses-app');
     });
 
-    it('404 (bare) when neither an approved row NOR an owned pending request exists', async () => {
+    it('no-row mint when neither an approved row NOR an owned pending request exists (the no-row local-manifest path)', async () => {
       mockGetSession.mockResolvedValueOnce(MOD_SESSION);
       noApprovedRow();
       mockPublishRequestFindFirst.mockResolvedValueOnce(null);
       const { req, res } = authPost({ slug: 'no-such-app' });
       await handler(req as never, res as never);
-      expect(res._getStatusCode()).toBe(404);
-      expect((res._getJSONData() as { message: string }).message).toBe('App not found');
-      expect(mockSign).not.toHaveBeenCalled();
+      // `block == null` + no owned pending → no-row mint (read-only, no body scopes).
+      expect(res._getStatusCode()).toBe(200);
+      const arg = mockSign.mock.calls[0][0];
+      expect(arg.scopes).toEqual(['user:read:self']);
+      expect(arg.appId).toBe('local-no-such-app');
     });
 
     it('422 when the owned pending manifest declares NO page block', async () => {
@@ -975,6 +982,299 @@ describe('POST /api/v1/blocks/dev-token', () => {
       await handler(req as never, res as never);
       expect(res._getStatusCode()).toBe(200);
       expect(mockSign.mock.calls[0][0].scopes).toEqual(['models:read:self', 'user:read:self']);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // No-row local-manifest mode (Phase 4 — deferred): mint for a BRAND-NEW app
+  // the dev has NOT submitted. NO approved AppBlock + NO owned pending request.
+  // The scope SOURCE is the CLIENT-SUPPLIED body `scopes` (the dev's local
+  // manifest, sent by the CLI), clamped by the SAME belt minus the OAuth ceiling
+  // (7f is the spend gate). Synthetic non-resolving appId `local-<slug>` so no
+  // forged attribution row. GUARDED: never fires when an approved row exists.
+  // -------------------------------------------------------------------------
+  describe('no-row local-manifest mode (brand-new, unsubmitted app)', () => {
+    // Both server lookups MUST miss so the no-row path is reached.
+    function noRow() {
+      mockAppBlockFindUnique.mockResolvedValueOnce(null); // no approved row
+      mockPublishRequestFindFirst.mockResolvedValueOnce(null); // no owned pending
+    }
+
+    it('200: no approved row + no pending + body scopes → mints from the body scopes, appId=local-<slug>, spend-capable when bearer has AIServicesWrite', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION); // personal key, Full → can spend
+      noRow();
+      const { req, res } = authPost({
+        slug: 'brand-new-app',
+        scopes: ['ai:write:budgeted', 'user:read:self'],
+      });
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign).toHaveBeenCalledTimes(1);
+      const arg = mockSign.mock.calls[0][0];
+      // Self-bound subject = the caller (never from the body).
+      expect(arg.userId).toBe(OWNER_ID);
+      // Granted = body.scopes ∩ allowlist ∩ (¬page-forbidden), + force-granted
+      // user:read:self. ai:write:budgeted survives (bearer has AIServicesWrite).
+      expect(arg.scopes).toContain('ai:write:budgeted');
+      expect(arg.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+      // Budget defaulted + capped; forced SFW; page ctx.
+      expect(arg.buzzBudget).toBe(50);
+      expect(arg.maxBrowsingLevel).toBe(SFW);
+      expect(arg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
+      // sign blockId = the slug; SYNTHETIC non-resolving appId; synthetic ids.
+      expect(arg.blockId).toBe('brand-new-app');
+      expect(arg.appId).toBe('local-brand-new-app');
+      expect(arg.appBlockId).toBe('page_local_brand-new-app');
+      expect(arg.blockInstanceId).toBe('page_local_brand-new-app');
+    });
+
+    it('GUARD (no-shadow): an APPROVED app for the slug owned by ANOTHER user → no-row path does NOT fire → bare 404 (NOT a local mint)', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      // An approved row for the slug EXISTS but is owned by user 999, not the
+      // caller. `block != null`, so the no-row branch (gated on `block == null`)
+      // must NOT fire even though the caller passes body scopes.
+      mockAppBlockFindUnique.mockResolvedValueOnce(
+        pageApp({
+          blockId: 'owned-by-someone',
+          appId: 'appblk-owned-by-someone',
+          app: { allowedScopes: 0x1ffffff, userId: 999 },
+        })
+      );
+      // No caller-owned pending request either.
+      mockPublishRequestFindFirst.mockResolvedValueOnce(null);
+      const { req, res } = authPost({
+        slug: 'owned-by-someone',
+        scopes: ['ai:write:budgeted', 'user:read:self'],
+      });
+      await handler(req as never, res as never);
+      // Bare 404 — NOT a local mint, no shadowing of a real published app.
+      expect(res._getStatusCode()).toBe(404);
+      expect((res._getJSONData() as { message: string }).message).toBe('App not found');
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('7f on the no-row path: bearer LACKS AIServicesWrite → ai:write:budgeted STRIPPED, no budget claim', async () => {
+      mockGetSession.mockResolvedValueOnce(READONLY_MOD_SESSION); // no AIServicesWrite
+      noRow();
+      const { req, res } = authPost({
+        slug: 'brand-new-app',
+        scopes: ['ai:write:budgeted', 'models:read:self', 'user:read:self'],
+      });
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(200);
+      const arg = mockSign.mock.calls[0][0];
+      // ai:write:budgeted stripped by 7f; read/catalog survive.
+      expect(arg.scopes).toEqual(['models:read:self', 'user:read:self']);
+      expect(arg.scopes).not.toContain('ai:write:budgeted');
+      expect(arg.buzzBudget).toBeUndefined();
+    });
+
+    it('R1: an un-reviewed body manifest declaring ESCALATED scopes has them STRIPPED, not minted', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noRow();
+      const { req, res } = authPost({
+        slug: 'brand-new-app',
+        scopes: [
+          'models:read:self', // legit → kept
+          'social:tip:self', // dev-excluded + page-forbidden → stripped
+          'block:settings:write', // dev-excluded → stripped
+          'buzz:read:self', // page-forbidden → stripped
+          'totally:unknown', // not a known block scope → stripped
+        ],
+      });
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(200);
+      const arg = mockSign.mock.calls[0][0];
+      // Only the legit scope + force-granted user:read:self survive — proving the
+      // un-reviewed CLIENT manifest cannot escalate past the dev belt.
+      expect(arg.scopes).toEqual(['models:read:self', 'user:read:self']);
+      expect(arg.scopes).not.toContain('social:tip:self');
+      expect(arg.scopes).not.toContain('block:settings:write');
+      expect(arg.scopes).not.toContain('buzz:read:self');
+      expect(arg.scopes).not.toContain('totally:unknown');
+    });
+
+    it('200: absent body scopes → a read-only token (user:read:self only), NOT a 404', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noRow();
+      const { req, res } = authPost({ slug: 'brand-new-app' }); // no scopes
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const arg = mockSign.mock.calls[0][0];
+      // Empty source → only the force-granted read scope; no spend, no budget.
+      expect(arg.scopes).toEqual(['user:read:self']);
+      expect(arg.buzzBudget).toBeUndefined();
+      expect(arg.appId).toBe('local-brand-new-app');
+    });
+
+    it('synthetic appId never equals appblk-<slug> (no real OauthClient resolves → no attribution row)', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noRow();
+      const { req, res } = authPost({
+        slug: 'brand-new-app',
+        scopes: ['ai:write:budgeted'],
+      });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const arg = mockSign.mock.calls[0][0];
+      // The S1 protection: `local-<slug>` can never collide with the deterministic
+      // `appblk-<slug>` an approved app holds, so recordSpendAttribution misses.
+      expect(arg.appId).toBe('local-brand-new-app');
+      expect(arg.appId).not.toBe('appblk-brand-new-app');
+    });
+
+    it('CAPS an over-cap budget on the no-row path to DEV_BUZZ_BUDGET_CAP', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noRow();
+      const { req, res } = authPost({
+        slug: 'brand-new-app',
+        scopes: ['ai:write:budgeted'],
+        buzzBudget: 100000,
+      });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(250);
+    });
+
+    it('forced SFW + self-bound sub hold on the no-row path', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      noRow();
+      const { req, res } = authPost({ slug: 'brand-new-app', scopes: ['models:read:self'] });
+      await handler(req as never, res as never);
+      const arg = mockSign.mock.calls[0][0];
+      expect(arg.maxBrowsingLevel).toBe(SFW);
+      expect(arg.domain).toBeNull();
+      expect(arg.userId).toBe(OWNER_ID);
+    });
+
+    it('mod-only: a NON-mod is blocked BEFORE any lookup on the no-row path', async () => {
+      mockGetSession.mockResolvedValueOnce(NONMOD_SESSION);
+      const { req, res } = authPost({ slug: 'brand-new-app', scopes: ['models:read:self'] });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(403);
+      expect(mockAppBlockFindUnique).not.toHaveBeenCalled();
+      expect(mockPublishRequestFindFirst).not.toHaveBeenCalled();
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('rate-limit applies to the no-row path too', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockMultiIncr.value = 31;
+      const { req, res } = authPost({ slug: 'brand-new-app', scopes: ['models:read:self'] });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(429);
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('emits the structured blocks.dev-token.local-mint log (spendGranted reflects the 7f clamp)', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION); // Full → can spend
+      noRow();
+      const { req, res } = authPost({
+        slug: 'brand-new-app',
+        scopes: ['ai:write:budgeted', 'models:read:self'],
+      });
+      await handler(req as never, res as never);
+
+      expect(res._getStatusCode()).toBe(200);
+      const log = (req as unknown as { log: { info: ReturnType<typeof vi.fn> } }).log;
+      expect(log.info).toHaveBeenCalledWith(
+        'blocks.dev-token.local-mint',
+        expect.objectContaining({
+          mode: 'local',
+          userId: OWNER_ID,
+          slug: 'brand-new-app',
+          spendGranted: true,
+        })
+      );
+      const call = log.info.mock.calls.find((c) => c[0] === 'blocks.dev-token.local-mint');
+      expect(call?.[1].scopes).toEqual([
+        'ai:write:budgeted',
+        'models:read:self',
+        'user:read:self',
+      ]);
+      // The token/secret is NEVER logged.
+      expect(JSON.stringify(call?.[1])).not.toContain('jwt.signed.value');
+      // The pending-mint event must NOT fire on the no-row path.
+      const pendingCall = log.info.mock.calls.find(
+        (c) => c[0] === 'blocks.dev-token.pending-mint'
+      );
+      expect(pendingCall).toBeUndefined();
+    });
+
+    it('the local-mint log reflects spendGranted=false when the bearer LACKS AIServicesWrite', async () => {
+      mockGetSession.mockResolvedValueOnce(READONLY_MOD_SESSION);
+      noRow();
+      const { req, res } = authPost({
+        slug: 'brand-new-app',
+        scopes: ['ai:write:budgeted'],
+      });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const log = (req as unknown as { log: { info: ReturnType<typeof vi.fn> } }).log;
+      const call = log.info.mock.calls.find((c) => c[0] === 'blocks.dev-token.local-mint');
+      expect(call).toBeDefined();
+      expect(call?.[1].spendGranted).toBe(false);
+      expect(call?.[1].scopes).not.toContain('ai:write:budgeted');
+    });
+
+    it('the APPROVED path does NOT emit the local-mint log', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      const { req, res } = authPost({ appBlockId: 'apb_abc' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const log = (req as unknown as { log: { info: ReturnType<typeof vi.fn> } }).log;
+      const call = log.info.mock.calls.find((c) => c[0] === 'blocks.dev-token.local-mint');
+      expect(call).toBeUndefined();
+    });
+
+    it('an appBlockId-only request can NEVER reach the no-row path (it returns the bare 404)', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockAppBlockFindUnique.mockResolvedValueOnce(null); // approved miss
+      const { req, res } = authPost({ appBlockId: 'apb_missing', scopes: ['ai:write:budgeted'] });
+      await handler(req as never, res as never);
+      // No slug → the `else if (slug)` branch is skipped entirely → bare 404.
+      expect(res._getStatusCode()).toBe(404);
+      expect((res._getJSONData() as { message: string }).message).toBe('App not found');
+      expect(mockPublishRequestFindFirst).not.toHaveBeenCalled();
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    // audit N1 + 🟡-1 (slug bounds): a malformed OR out-of-bounds slug that the
+    // OLD `min(1).max(128)` accepted but the canonical `min(3).max(40).regex(
+    // SLUG_REGEX)` rejects must 400 at body validation — BEFORE any lookup or
+    // synthetic-id construction. This makes the "`local-<slug>` can never collide
+    // with a real OauthClient.id" guarantee airtight BY CONSTRUCTION rather than
+    // by prefix-collision reasoning: a non-conforming slug never reaches the
+    // `local-<slug>` constructor at all. The bounds now MATCH the canonical app-
+    // slug schema (publish-request.schema.ts min(3).max(40)) — real app slugs are
+    // min(3).max(40).regex(SLUG_REGEX) at submit/create time, so no legitimate
+    // approved/pending slug regresses; the 'ab' (2-char) and 41-char cases below
+    // pass SLUG_REGEX shape but fail the min(3)/max(40) bound a real app can't
+    // violate.
+    it.each([
+      ['-leading', 'leading hyphen'],
+      ['trailing-', 'trailing hyphen'],
+      ['UPPER', 'uppercase'],
+      ['BadSlug', 'mixed case'],
+      ['has space', 'whitespace'],
+      ['under_score', 'underscore'],
+      ['emoji😀', 'non-alnum'],
+      ['ab', 'too short (2 chars, < min(3))'],
+      ['a'.repeat(41), 'too long (41 chars, > max(40))'],
+    ])('400 (audit N1/🟡-1) for malformed slug %p (%s) — no mint, no lookup', async (slug) => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      const { req, res } = authPost({ slug, scopes: ['models:read:self'] });
+      await handler(req as never, res as never);
+      // Rejected at step-4 body validation (zod .regex), before step-5 rate
+      // limit and BOTH server lookups — and before the synthetic-id builder.
+      expect(res._getStatusCode()).toBe(400);
+      expect((res._getJSONData() as { message: string }).message).toBe('Invalid request body');
+      expect(mockAppBlockFindUnique).not.toHaveBeenCalled();
+      expect(mockPublishRequestFindFirst).not.toHaveBeenCalled();
+      expect(mockSign).not.toHaveBeenCalled();
     });
   });
 });

@@ -17,6 +17,7 @@ const metricSets = {
   collections: [metrics.collectionMetrics],
   articles: [metrics.articleMetrics],
   model3ds: [metrics.model3dMetrics],
+  comics: [metrics.comicProjectMetrics],
   // other: [
   //   metrics.answerMetrics, metrics.questionMetrics // disable questions and answers
   // ],

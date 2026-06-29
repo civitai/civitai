@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
@@ -1390,6 +1390,7 @@ export async function getResourceData(
       fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
       additionalResourceCost,
       epochDetails,
+      primaryFileType: primaryFile?.type,
     };
   }
 
@@ -1397,7 +1398,7 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    const { fileSizeKB, additionalResourceCost, epochDetails } = getModelFileProps(
+    const { fileSizeKB, additionalResourceCost, epochDetails, primaryFileType } = getModelFileProps(
       resource,
       modelFiles
     );
@@ -1406,6 +1407,9 @@ export async function getResourceData(
       type: resource.model.type,
       modelId: epochDetails ? epochDetails.jobId : resource.model.id,
       id: epochDetails ? epochDetails.fileName : resource.id,
+      // epoch resources resolve to an orchestrator-hosted file, not the version's
+      // primary model file, so only forward the file type for civitai sources.
+      fileType: epochDetails ? undefined : primaryFileType,
       source: epochDetails ? 'orchestrator' : 'civitai',
     });
 

@@ -8,12 +8,15 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { NsfwLevel } from '~/server/common/enums';
 import type { getIngestionErrorImages } from '~/server/services/image.service';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { browsingLevels, getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const limitsData = [10, 25, 50, 100].map((num) => ({ value: String(num), label: `${num} items` }));
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function IngestionErrorReview() {
   const [limit, setLimit] = useState<string>('50');

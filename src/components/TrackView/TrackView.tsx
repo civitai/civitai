@@ -6,16 +6,18 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import type { AddViewSchema } from '~/server/schema/track.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 
-// Fire a view event at the lightweight /api/track/view beacon instead of the
+// Fire a view event at the lightweight /api/internal/pulse beacon instead of the
 // track.addView tRPC mutation. addView was the #1 request-count source on
 // api-primary (~71 req/s) and paid the full tRPC middleware chain + superjson
 // encode per call for an empty, fire-and-forget response. The beacon route runs
 // the same Tracker.view() (same ClickHouse `views` insert, same payload shape)
 // without any of that fixed per-request cost. `keepalive: true` lets the request
-// survive a page unload/navigation (mirrors /api/page-view), so the event isn't
-// lost if the user clicks through immediately after the 1s debounce fires.
+// survive a page unload/navigation (mirrors /api/internal/ping), so the event isn't
+// lost if the user clicks through immediately after the 1s debounce fires. The
+// path is deliberately generic (not "track"/"view") so ad/privacy blockers don't
+// cancel it client-side with ERR_BLOCKED_BY_CLIENT.
 function sendView(input: AddViewSchema) {
-  void fetch('/api/track/view', {
+  void fetch('/api/internal/pulse', {
     method: 'POST',
     keepalive: true,
     headers: { 'Content-Type': 'application/json' },

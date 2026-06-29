@@ -5,7 +5,7 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
 import { isArray } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { Session, SessionUser } from 'next-auth';
+import type { Session, SessionUser } from '~/types/session';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { checkNotUpToDate } from '~/server/db/db-helpers';

@@ -30,7 +30,7 @@ export default PublicEndpoint(
   async (req, res) => {
     if (isDev) return res.status(200).end();
 
-    // Same-origin guard (mirrors /api/track/view). Origin preferred, referer
+    // Same-origin guard (mirrors /api/internal/pulse). Origin preferred, referer
     // fallback for clients that suppress Origin.
     const source = req.headers.origin ?? req.headers.referer;
     const sourceHost = source

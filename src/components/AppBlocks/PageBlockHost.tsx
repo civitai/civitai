@@ -11,6 +11,7 @@ import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   grantedPageScopes,
   pageFallbackReason,
+  resolveCheckpointPickerRequest,
   resolveResourcePickerRequest,
 } from './pageBlockHostLogic';
 import { projectBlockInitMaturity } from './projectBlockInit';
@@ -22,6 +23,7 @@ import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openLoginPopup } from '~/utils/auth-helpers';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
@@ -40,9 +42,9 @@ const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
 // so a block can ask the host to start the civitai login flow when the user
-// clicks an action that needs auth/money. SSR-disabled to match IframeHost's
-// dynamic import (the modal pulls in client-only providers).
-const LoginModal = dynamic(() => import('~/components/Login/LoginModal'), { ssr: false });
+// clicks an action that needs auth/money. Login is now hub-driven (a popup to
+// auth.civitai.com) — see openLoginPopup; the old in-page LoginModal was removed
+// in the auth cutover.
 
 // Normalise a thrown storage error into a string the block can surface. Mirrors
 // IframeHost.storageErrorMessage EXACTLY — the apps.storage.* procs throw
@@ -729,13 +731,11 @@ export function PageBlockHost({
       const gateStatus = status === 'error' ? 'no_token' : status;
       const resolved = resolveRequestSignIn(gateStatus, raw);
       if (resolved == null) return; // not ready — drop (gate centralises the rules)
-      dialogStore.trigger({
-        component: LoginModal,
-        props: {
-          reason: 'image-gen',
-          ...(resolved.returnUrl ? { returnUrl: resolved.returnUrl } : {}),
-        },
-      });
+      // Hub-driven login (popup to auth.civitai.com). Falls back to the current page when the
+      // block didn't supply a sanitised same-origin returnUrl. `reason` rides to the hub for the
+      // LoginRedirect funnel analytics.
+      const here = window.location.pathname + window.location.search + window.location.hash;
+      openLoginPopup(resolved.returnUrl ?? here, 'image-gen');
     });
     return off;
   }, [onMessage, status]);
@@ -1040,6 +1040,122 @@ export function PageBlockHost({
           if (answered) return;
           send('RESOURCE_PICKER_RESULT', { requestId });
         },
+      });
+    });
+    return off;
+  }, [onMessage, send]);
+
+  // ── OPEN_CHECKPOINT_PICKER → CHECKPOINT_PICKER_RESULT (dev:live↔prod parity) ─
+  //
+  // The SDK hook `useCheckpointPicker()` posts OPEN_CHECKPOINT_PICKER. The
+  // model-slot host (IframeHost) handles it, AND the dev:live SDK host serves it
+  // — but this PAGE host only ever handled the newer/wider OPEN_RESOURCE_PICKER,
+  // so a page block calling `useCheckpointPicker()` had its request hit NO host
+  // handler (gotcha-#73): the "Change model" button spun forever — no network
+  // call, no error. Authors tested it working locally (dev:live serves it) then
+  // it silently broke in prod. This handler MIRRORS IframeHost's so that hook
+  // works identically on pages; it is purely additive (OPEN_RESOURCE_PICKER is
+  // unchanged) and a deliberately narrow checkpoint-only superset of it.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_CHECKPOINT_PICKER', (raw) => {
+      const req = resolveCheckpointPickerRequest(raw);
+      if (!req) return; // missing / non-string requestId → drop, never open the modal
+      const { requestId, baseModelGroup } = req;
+
+      // Normalize the optional family hint through getBaseModelGroup (accepts an
+      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). Empty /
+      // unresolved group → baseModels:[] → no checkpoints rather than all
+      // families (matching IframeHost: "all" would include incompatible families
+      // that 400 at submit).
+      const groupKey = baseModelGroup ? getBaseModelGroup(baseModelGroup) : null;
+      const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
+
+      let answered = false;
+      openResourceSelectModal({
+        title: 'Choose a checkpoint',
+        options: {
+          canGenerate: true,
+          resources: [{ type: 'Checkpoint', baseModels }],
+        },
+        onSelect: (resource) => {
+          answered = true;
+          // Same name/id-only projection IframeHost's CHECKPOINT_PICKER_RESULT
+          // uses — the public display names of the user-picked resource plus the
+          // body-building IDs; NO full GenerationResource spread, so no
+          // availability/access/early-access/nsfw/poi/minor internals reach the
+          // iframe.
+          send('CHECKPOINT_PICKER_RESULT', {
+            requestId,
+            selected: {
+              // GenerationResource.id is the modelVersionId at the wire.
+              versionId: resource.id,
+              modelId: resource.model.id,
+              modelName: resource.model.name,
+              versionName: resource.name,
+              baseModel: resource.baseModel,
+            },
+          });
+        },
+        onClose: () => {
+          // Dialog dismiss fires after onSelect when the user picks (the modal
+          // closes itself); only emit the "closed without picking" result if
+          // onSelect never ran. answered=true short-circuits so a pick isn't
+          // followed by a spurious cancel.
+          if (answered) return;
+          send('CHECKPOINT_PICKER_RESULT', { requestId });
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send]);
+
+  // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
+  //
+  // `useCheckpointPicker().persist(versionId)` posts SET_USER_CHECKPOINT and
+  // AWAITS USER_CHECKPOINT_SET (it's a request, not fire-and-forget). The
+  // model-slot host (IframeHost) handles it by writing `checkpoint_version_id`
+  // into `block_user_settings` for the (blockInstance, viewer) row, AND the
+  // dev:live SDK host serves it — so a block author who calls `persist()` sees
+  // it resolve locally, then (before this handler existed) had the SAME call
+  // hit NO page-host handler in prod: the persist promise hung to the SDK's
+  // request timeout (gotcha-#73, the "spins forever, no network call, no
+  // console error" class). This handler closes that silent hang.
+  //
+  // CRUCIAL: a page CANNOT persist a checkpoint override the way the model slot
+  // can. The server proc `blocks.updateUserSettings` HARD-REQUIRES `modelId`
+  // in the block-token ctx (it resolves a model-bound install via
+  // resolveBlockInstance({ modelId, slotId, ... })). A PAGE token's ctx is
+  // `{ slotId, entityType:'none' }` with NO modelId (isPageToken) — a page is
+  // stateless and binds to no model — so driving updateUserSettings with the
+  // page token would throw BAD_REQUEST ("block token lacks modelId context").
+  // There is no page-scoped user-settings row to write into today.
+  //
+  // So rather than INVENT a persistence target (a guess), this replies with an
+  // explicit, KNOWN-shape NACK: `USER_CHECKPOINT_SET { ok:false, error }`. That
+  // is the exact reply type+shape `persist()` awaits (it throws the `error`
+  // string when `ok:false`), so the block fails FAST and surfaces a clear
+  // message instead of hanging. The page's checkpoint flow is the in-memory
+  // OPEN_CHECKPOINT_PICKER result (above), which the block already holds — it
+  // does not need a persisted override.
+  //
+  // OPEN DECISION for a human (documented in
+  // claudedocs/app-blocks-host-handler-parity-2026-06-29.md): if pages should
+  // ever persist a viewer checkpoint preference, that needs a NEW page-scoped
+  // storage target (e.g. via the app-storage KV the page token already
+  // authorises) + a server proc that doesn't demand modelId — out of scope
+  // here. Until then a NACK is the correct, non-guessing behavior.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>('SET_USER_CHECKPOINT', (raw) => {
+      // NOTE: `payload.versionId` is intentionally NOT read or validated here —
+      // the page path always NACKs regardless of which checkpoint was requested
+      // (there is no page-scoped persistence target), so the versionId is moot.
+      // Mirror IframeHost's drop rule: a missing / non-string requestId can't be
+      // answered (no correlation id), so drop it silently rather than reply.
+      if (!raw || typeof raw.requestId !== 'string' || raw.requestId.length === 0) return;
+      send('USER_CHECKPOINT_SET', {
+        requestId: raw.requestId,
+        ok: false,
+        error: 'page blocks cannot persist a checkpoint override (no model binding)',
       });
     });
     return off;

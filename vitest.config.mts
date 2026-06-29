@@ -2,7 +2,21 @@ import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import path from 'path';
 
-const alias = { '~': path.resolve(__dirname, './src') };
+// Mirror the workspace `@civitai/*` package mappings from tsconfig.json `paths` so Vitest
+// (which doesn't read tsconfig paths, and these packages aren't symlinked into the root
+// node_modules) resolves them the same way the app build does. `@civitai/auth` is omitted —
+// it IS symlinked in node_modules and resolves via its own exports map. Subpath regex must come
+// before the bare entry so `@civitai/redis/client` doesn't get caught by the bare `@civitai/redis`.
+const civitaiWorkspacePkgs = ['db-schema', 'db', 'redis', 'clickhouse', 'axiom', 'telemetry', 'brand'];
+const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
+  const src = path.resolve(__dirname, `packages/civitai-${p}/src`).replace(/\\/g, '/');
+  return [
+    { find: new RegExp(`^@civitai/${p}/(.*)$`), replacement: `${src}/$1` },
+    { find: `@civitai/${p}`, replacement: `${src}/index` },
+  ];
+});
+
+const alias = [{ find: '~', replacement: path.resolve(__dirname, './src') }, ...civitaiAlias];
 
 // Two Vitest projects sharing one config/runner:
 //  - `unit`      = the existing node-env suite, unchanged.
@@ -51,7 +65,19 @@ export default defineConfig({
         // Pre-bundle deps the component setup mocks/imports so Vitest doesn't
         // discover them mid-run and trigger a "Vite unexpectedly reloaded a
         // test" warning (a flake vector).
-        optimizeDeps: { include: ['next/router'] },
+        //
+        // On a COLD optimizeDeps cache (every fresh CI/preview run), Vite was
+        // discovering `vitest-browser-react` + `react/jsx-dev-runtime` only when
+        // `test/component-setup.tsx` first imported them — mid-run — and reloading.
+        // The reload tears down the module context while component-setup is still
+        // importing `vitest-browser-react`, so that package evaluates OUTSIDE a live
+        // vitest runner → "Vitest failed to find the runner" → "Failed to import test
+        // file test/component-setup.tsx" → EVERY component test fails to load. (Warm
+        // cache hid it: the 2nd local run always passed.) Pre-bundling them here makes
+        // the optimize pass happen BEFORE the run starts, so there's no mid-run reload.
+        optimizeDeps: {
+          include: ['next/router', 'vitest-browser-react', 'react/jsx-dev-runtime', 'react/jsx-runtime'],
+        },
         test: {
           name: 'component',
           globals: true,

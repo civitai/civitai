@@ -1,7 +1,7 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { submitVersionSchema } from '~/server/schema/blocks/publish-request.schema';

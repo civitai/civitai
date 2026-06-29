@@ -31,10 +31,13 @@ import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import type { CosmeticGetById } from '~/types/router';
 
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export const CosmeticPreview = ({
   cosmetic,

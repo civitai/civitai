@@ -3,7 +3,7 @@ import { Button, Container, Paper, Title, Stack, Text } from '@mantine/core';
 import { Meta } from '~/components/Meta/Meta';
 import Image from 'next/image';
 import { IconLock, IconLogout } from '@tabler/icons-react';
-import { signOut } from 'next-auth/react';
+import { handleSignOut } from '~/utils/auth-helpers';
 
 export default function PreviewRestrictedPage() {
   return (
@@ -41,7 +41,7 @@ export default function PreviewRestrictedPage() {
             <Button
               variant="light"
               leftSection={<IconLogout size={16} />}
-              onClick={() => signOut({ callbackUrl: '/login' })}
+              onClick={() => handleSignOut({ callbackUrl: '/login' })}
             >
               Sign out and switch accounts
             </Button>

@@ -1,4 +1,4 @@
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import {
   commonAspectRatios,
   grokSizes,

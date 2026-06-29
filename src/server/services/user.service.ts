@@ -86,6 +86,7 @@ import { createCachedObject } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
 import {
   handleLogError,
+  isPrismaUniqueViolation,
   throwBadRequestError,
   throwConflictError,
   throwNotFoundError,
@@ -731,7 +732,13 @@ export const toggleModelEngagement = async ({
     return true; // no change
   } else if (setTo === false) return false;
 
-  await dbWrite.modelEngagement.create({ data: { type, modelId, userId } });
+  await dbWrite.modelEngagement.create({ data: { type, modelId, userId } }).catch((error) => {
+    // Toggle racing itself: both calls saw no engagement and both create, so the
+    // loser hits the (userId, modelId) unique constraint (P2002). The engagement
+    // now exists — a toggle is idempotent, so treat it as success (still run the
+    // Hide cache-refresh + return true) instead of bubbling a 500.
+    if (!isPrismaUniqueViolation(error)) throw error;
+  });
   if (type === 'Hide') await HiddenModels.refreshCache({ userId });
   return true;
 };
@@ -773,23 +780,35 @@ export const toggleFollowUser = async ({
     return false;
   }
 
-  const ret = await dbWrite.userEngagement.create({
-    data: { type: 'Follow', targetUserId, userId },
-    select: { user: { select: { username: true } } },
-  });
+  const ret = await dbWrite.userEngagement
+    .create({
+      data: { type: 'Follow', targetUserId, userId },
+      select: { user: { select: { username: true } } },
+    })
+    .catch((error) => {
+      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
+      // constraint (P2002). The follow already exists — idempotent, so return
+      // null and fall through to the cache refresh. The racing winner already
+      // created the follow-notification (deduped by `key`), so we skip it here
+      // rather than bubble a 500.
+      if (!isPrismaUniqueViolation(error)) throw error;
+      return null;
+    });
   await userFollowsCache.refresh(userId);
 
-  const details: NotifDetailsFollowedBy = {
-    username: ret.user.username,
-    userId,
-  };
-  await createNotification({
-    category: NotificationCategory.Update,
-    type: 'followed-by',
-    userId: targetUserId,
-    key: `followed-by:${userId}:${targetUserId}`,
-    details,
-  });
+  if (ret) {
+    const details: NotifDetailsFollowedBy = {
+      username: ret.user.username,
+      userId,
+    };
+    await createNotification({
+      category: NotificationCategory.Update,
+      type: 'followed-by',
+      userId: targetUserId,
+      key: `followed-by:${userId}:${targetUserId}`,
+      details,
+    });
+  }
 
   return true;
 };
@@ -820,7 +839,14 @@ export const toggleHideUser = async ({
     return false;
   }
 
-  await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
+  await dbWrite.userEngagement
+    .create({ data: { type: 'Hide', targetUserId, userId } })
+    .catch((error) => {
+      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
+      // constraint (P2002). The engagement now exists — idempotent, so still
+      // refresh the cache + return true instead of bubbling a 500.
+      if (!isPrismaUniqueViolation(error)) throw error;
+    });
   await userFollowsCache.refresh(userId);
   return true;
 };
@@ -1771,7 +1797,15 @@ export const toggleUserArticleEngagement = async ({
   }
 
   if (!exists) {
-    await dbWrite.articleEngagement.create({ data: { userId, articleId, type } });
+    await dbWrite.articleEngagement.create({ data: { userId, articleId, type } }).catch((error) => {
+      // Toggle racing itself → P2002 on the articleEngagement PK. NOTE the PK is
+      // (userId, articleId) — it does NOT include `type` — so the dominant case
+      // (same-type double-click) is cleanly idempotent, but a concurrent
+      // DIFFERENT-type write (Favorite vs Hide) on the same article can also
+      // trip this. Either way the row exists and the client re-reads engagement
+      // state, so swallowing P2002 is strictly better than a 500.
+      if (!isPrismaUniqueViolation(error)) throw error;
+    });
   }
 
   return !exists;
@@ -1955,7 +1989,12 @@ export const toggleUserBountyEngagement = async ({
   });
 
   if (!engagement) {
-    await dbWrite.bountyEngagement.create({ data: { userId, bountyId, type } });
+    await dbWrite.bountyEngagement.create({ data: { userId, bountyId, type } }).catch((error) => {
+      // Toggle racing itself → P2002 on the (type, bountyId, userId) PK. The
+      // engagement already exists — idempotent, so return true (toggled on)
+      // instead of bubbling a 500.
+      if (!isPrismaUniqueViolation(error)) throw error;
+    });
     return true;
   } else {
     await dbWrite.bountyEngagement.delete({

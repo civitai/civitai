@@ -1580,6 +1580,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         type={model.type}
                         modelId={model.id}
                         modelVersionId={version.id}
+                        fileType={primaryFile?.type}
                       />
                     </Group>
                   )}

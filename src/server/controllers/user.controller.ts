@@ -408,6 +408,13 @@ export const completeOnboardingHandler = async ({
         break;
       }
     }
+
+    // The session user carries `onboarding` (and username/email) from the SHARED session cache: post-cutover the
+    // main app READS the cached SessionUser, it no longer recomputes it per request. Bust that cache so the
+    // client's next session read reflects the advanced step — without this the stale cached `onboarding` makes a
+    // NEW user repeat the same step forever ("can't get through account creation"). Mirrors updateUserHandler.
+    if (changed) await refreshSession(id);
+
     const isComplete = onboarding === OnboardingComplete;
     if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
   } catch (e) {

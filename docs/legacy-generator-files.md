@@ -54,23 +54,35 @@ src/components/Generation/Video/
 ### Supporting Components
 
 ```
-src/components/Generation/Form/
-└── GenForm.tsx                     # Form wrapper with queue validation
-
-src/components/Generation/Alerts/
-└── WhatIfAlert.tsx                 # Error display for whatIf queries
-
 src/components/ImageGeneration/GenerationForm/
 ├── InputQuantity.tsx               # Quantity input component
 └── BaseModelSelect.tsx             # Base model selector modal
 ```
 
-### Stores
+> `GenForm.tsx` and `WhatIfAlert.tsx` were removed along with the legacy enhancement
+> modals (see "Legacy enhancement modals" below). `generation-form.store.ts` is **kept** —
+> it's now shared infra (the v2 `FormFooter` reads `buzzType` from it).
+
+### Legacy enhancement modals
+
+Removed once the legacy form was gone — they were only reachable when
+`useLegacyGeneratorStore.useLegacy` was true, and now everyone routes through the
+in-form enhancement flow (`applyWorkflowWithCheck` in `useGeneratedItemWorkflows.ts`):
 
 ```
-src/store/
-└── generation-form.store.ts        # UI preferences (media type, engine selection)
+src/components/Orchestrator/components/UpscaleImageModal.tsx
+src/components/Orchestrator/components/UpscaleVideoModal.tsx
+src/components/Orchestrator/components/BackgroundRemovalModal.tsx
+src/components/Orchestrator/components/VideoInterpolationModal.tsx
+src/components/Generation/Form/GenForm.tsx          # only used by those modals
+src/components/Generation/Alerts/WhatIfAlert.tsx    # only used by those modals
+src/components/Generation/Input/SourceImageUpscale.tsx  # only used by UpscaleImageModal
+src/store/legacy-generator.store.ts                 # only consumer was the modal branch
 ```
+
+Also dropped: the `ModalSubmitButton` export in `Orchestrator/components/GenerateButton.tsx`
+and the modal-handler block (`MODAL_WORKFLOWS` / `shouldOpenModal` / `openEnhancementModal`)
+in `useGeneratedItemWorkflows.ts`.
 
 ---
 
@@ -98,12 +110,10 @@ src/server/routers/orchestrator.router.ts
 
 ## Temporary Legacy Sync in Shared Files
 
-These are temporary hooks in shared code that should be removed with the legacy generator:
-
-```
-src/store/generation-graph.store.ts
-```
-- `syncLegacyFormStore()` — called from `setData` to sync the legacy form store (type, engine) whenever graph data changes. Remove this function and its call when the legacy generator is removed.
+~~`syncLegacyFormStore()` in `src/store/generation-graph.store.ts`~~ — **removed.** Along
+with it: `isNewFormOnly` / `NEW_FORM_ONLY` in
+`src/shared/data-graph/generation/config/workflows.ts` (its only consumer) and the
+legacy-sync mocks in `generation-graph.store.test.ts`.
 
 ---
 
@@ -113,6 +123,7 @@ These are shared infrastructure used by both old and new generators:
 
 ```
 src/store/generation-graph.store.ts          # Shared data store
+src/store/generation-form.store.ts           # UI prefs (buzzType) — read by v2 FormFooter
 src/store/remix.store.ts                     # Remix tracking
 src/server/services/orchestrator/legacy-metadata-mapper.ts  # Data conversion utils
 ```
@@ -121,26 +132,21 @@ src/server/services/orchestrator/legacy-metadata-mapper.ts  # Data conversion ut
 
 ## Removal Checklist
 
-When removing legacy generator support:
+Most of this was completed by commit `cd6e16196` (legacy form + orphaned code) and a
+follow-up that removed `syncLegacyFormStore`. Remaining state:
 
-1. [ ] Remove legacy form files from `src/components/ImageGeneration/GenerationForm/`:
-   - `GenerationFormLegacy.tsx`
-   - `GenerationForm.tsx`
-   - `GenerationFormProvider.tsx`
-   - `GenerationForm2.tsx`
-   - `GenerationForm2.module.scss`
-   - `GenerationForm2.module.scss.d.ts`
-   - `TextToImageWhatIfProvider.tsx`
-2. [ ] Remove `src/components/Generation/Video/` directory
-3. [ ] Remove `src/components/Generation/Form/GenForm.tsx`
-4. [ ] Remove `src/components/Generation/Alerts/WhatIfAlert.tsx`
-5. [ ] Remove `src/components/ImageGeneration/GenerationForm/InputQuantity.tsx`
-6. [ ] Remove `src/components/ImageGeneration/GenerationForm/BaseModelSelect.tsx`
-7. [ ] Remove `src/store/generation-form.store.ts`
-8. [ ] Revert `steps` addition in `generation.schema.ts` (if not needed)
-9. [ ] Remove `imageUpload` route from `orchestrator.router.ts` (if not needed elsewhere)
-10. [ ] Remove `syncLegacyFormStore` and its call from `generation-graph.store.ts`
-11. [ ] Update any imports/references to removed components
+1. [x] Remove legacy form files from `src/components/ImageGeneration/GenerationForm/`:
+   `GenerationFormLegacy.tsx`, `GenerationForm.tsx`, `GenerationFormProvider.tsx`,
+   `GenerationForm2.tsx`, `GenerationForm2.module.scss(.d.ts)`, `TextToImageWhatIfProvider.tsx`
+2. [x] Remove `src/components/Generation/Video/` directory
+3. [x] Remove `InputQuantity.tsx` and `BaseModelSelect.tsx`
+4. [x] Remove `syncLegacyFormStore` + `isNewFormOnly`/`NEW_FORM_ONLY` and update references
+5. [x] Remove the legacy enhancement modals + `GenForm.tsx` / `WhatIfAlert.tsx` /
+   `SourceImageUpscale.tsx` / `legacy-generator.store.ts` and the modal branch in
+   `useGeneratedItemWorkflows.ts` (see "Legacy enhancement modals" above)
+6. [~] `generation-form.store.ts` — **kept**, now shared infra (v2 `FormFooter` reads `buzzType`)
+7. [ ] Revert `steps` addition in `generation.schema.ts` (if not needed)
+8. [ ] Remove `imageUpload` route from `orchestrator.router.ts` (if not needed elsewhere)
 
 ---
 

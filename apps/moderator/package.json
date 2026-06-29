@@ -1,0 +1,24 @@
+{
+  "name": "@civitai/moderator-app",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@civitai/auth": "workspace:*",
+    "@civitai/db": "workspace:*",
+    "@civitai/db-schema": "workspace:*",
+    "next": "^16.2.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.9",
+    "@types/react": "18.0.14",
+    "typescript": "^5.9.2"
+  }
+}

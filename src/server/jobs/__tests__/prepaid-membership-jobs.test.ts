@@ -112,6 +112,16 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/server/db/client', () => ({
+  // dbWrite is what the prepaid-token logic under test uses. dbRead must ALSO be present:
+  // unlockPrepaidTokens first calls syncActiveBadgeMetadata() (product-badge.service), which
+  // reads via dbRead.{product,cosmetic}.findMany. Omitting dbRead made vitest throw
+  // "No 'dbRead' export is defined on the mock" inside that (fail-soft) call — the test still
+  // passed but spammed the error and left the badge-sync branch unexercised. A read stub that
+  // returns nothing lets the sync complete as a no-op (0 synced).
+  dbRead: {
+    product: { findMany: vi.fn().mockResolvedValue([]) },
+    cosmetic: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue(null) },
+  },
   dbWrite: mockDbWrite,
 }));
 

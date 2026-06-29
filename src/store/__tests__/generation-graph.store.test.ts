@@ -31,16 +31,6 @@ vi.mock('~/store/generation-panel.store', () => ({
   },
 }));
 
-// Legacy form store: syncLegacyFormStore writes to setType/setEngine. No-op
-// in tests so we don't need to mock prisma enums or the form store state.
-vi.mock('~/store/generation-form.store', () => ({
-  generationFormStore: {
-    setType: vi.fn(),
-    setEngine: vi.fn(),
-    getState: () => ({ buzzType: undefined }),
-  },
-}));
-
 // Remix store: touches localStorage on import via the persist middleware.
 // Stub it out to avoid needing a DOM in the test env.
 vi.mock('~/store/remix.store', () => ({
@@ -49,22 +39,6 @@ vi.mock('~/store/remix.store', () => ({
     clearRemix: vi.fn(),
     getData: () => null,
   },
-}));
-
-// Workflow + ecosystem helpers: syncLegacyFormStore consults these. Return
-// values that disable the legacy-sync codepath so we don't pull a megabyte of
-// shared constants into the test.
-vi.mock('~/shared/data-graph/generation/config/workflows', () => ({
-  getOutputTypeForWorkflow: () => 'image',
-  isNewFormOnly: () => false,
-}));
-
-vi.mock('~/shared/constants/basemodel.constants', () => ({
-  ecosystemByKey: new Map(),
-}));
-
-vi.mock('~/shared/utils/engine.utils', () => ({
-  getEngineFromEcosystem: () => undefined,
 }));
 
 // ---------------------------------------------------------------------------

@@ -31,10 +31,14 @@ import { storageStatePath } from './preview-fixtures';
 
 const ADDONS_PROCEDURE = 'system.getBrowsingSettingAddons';
 
-// A page that is reachable without clearing the preview gate. Anonymous traffic
-// 307s to /login, but _app.getInitialProps (and thus the SSR inject + provider
-// mount) still runs there — exactly the bootstrap path we want to probe.
-const ANON_LANDING = '/login';
+// A page that renders for anonymous traffic without clearing the preview gate, so
+// _app.getInitialProps (and thus the SSR inject + provider mount) runs — exactly
+// the bootstrap path we want to probe. Post first-party-OAuth cutover, /login is a
+// server-side REDIRECT to the hub (no in-app render), so it can't be the landing
+// anymore; /preview-restricted is the gate's other allow-listed exception
+// (resolveAuthGuard: `path !== '/preview-restricted'`) and renders via _app for
+// anyone, anonymous included.
+const ANON_LANDING = '/preview-restricted';
 
 // A core page a gate-passing user lands on directly (no /login bounce).
 const AUTHED_LANDING = '/models';

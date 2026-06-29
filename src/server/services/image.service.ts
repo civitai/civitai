@@ -5,7 +5,7 @@ import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk, truncate, uniq, uniqBy } from 'lodash-es';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server';
@@ -894,7 +894,7 @@ export const ingestImage = async ({
     image.prompt = prompt;
   }
 
-  if ((await isImageScannerNewEnabled()) || userId === 5) {
+  if (await isImageScannerNewEnabled()) {
     const { data: workflowResponse } = await createImageIngestionRequest({
       imageId: id,
       url,

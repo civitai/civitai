@@ -50,9 +50,12 @@ const LIVE_NOW_PROCEDURE = 'system.getLiveNow';
 // /models is representative.
 const AUTHED_LANDING = '/models';
 
-// The anon home 307s to /login, but `_app` getInitialProps still runs and seeds
-// the (non-auth-gated) announcements — same rationale as preview-bootstrap.spec.
-const ANON_LANDING = '/login';
+// Post-cutover /login is a server-side redirect to the hub (no in-app render), so
+// it can't seed __NEXT_DATA__ anymore. /preview-restricted is the preview gate's
+// other allow-listed exception and renders via `_app` for anonymous traffic, so
+// getInitialProps still seeds the (non-auth-gated) announcements — same rationale
+// as preview-bootstrap.spec.
+const ANON_LANDING = '/preview-restricted';
 
 /**
  * Navigate to `path`, recording every tRPC request URL seen during the load and

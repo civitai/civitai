@@ -351,3 +351,156 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     expect(claims?.maxBrowsingLevel).toBeUndefined();
   });
 });
+
+/**
+ * Dev-token 4h lifetime + the per-token-type max-age cap.
+ *
+ * The dev-token endpoint mints with `dev: true` → a 4h lifetime + a `dev:true`
+ * claim. `verifyBlockToken` reads that claim (AFTER the RS256 signature is
+ * verified) to pick the max-age cap: 4h for dev, 15min for everything else.
+ * This replaces the old global `maxTokenAge: '15m'` that would have rejected any
+ * 4h dev token. These tests pin:
+ *   - a dev token verifies < 4h and surfaces dev:true,
+ *   - a dev token is REJECTED past 4h (cap is enforced, not unbounded),
+ *   - a non-dev token is still rejected past 15min (prod lifetime unchanged) and
+ *     accepted under 15min,
+ *   - a non-boolean `dev` claim is rejected (shape guard),
+ *   - a tampered-signature token carrying dev:true fails the signature gate
+ *     (you can't forge dev:true).
+ */
+describe('dev-token 4h lifetime + per-type max-age cap', () => {
+  const HOUR = 60 * 60;
+
+  async function importPrivateKey() {
+    const { importPKCS8 } = await import('jose');
+    const { env } = await import('~/env/server');
+    return importPKCS8(env.BLOCK_TOKEN_PRIVATE_KEY as string, 'RS256');
+  }
+
+  // Derive the kid the verifier expects from a real service-minted token.
+  async function configuredKid(): Promise<string> {
+    const { BlockTokenService } = await import('~/server/services/block-token.service');
+    return BlockTokenService.getJwks().keys[0].kid;
+  }
+
+  const baseClaims = {
+    blockId: 'b',
+    appId: 'a',
+    appBlockId: 'apb_a',
+    blockInstanceId: 'bki_a',
+    scopes: ['models:read:self'],
+    ctx: { modelId: 1 },
+  };
+
+  /**
+   * Sign a token whose `iat`/`exp` are anchored at `ageSeconds` AGO (so we can
+   * simulate a token that has been alive for an arbitrary duration without
+   * waiting). `exp` is set to iat + `lifetimeSeconds` so jwtVerify's own `exp`
+   * check is satisfied independently of the age cap under test. `dev` and other
+   * claim overrides pass through `extra`.
+   */
+  async function signAged(opts: {
+    ageSeconds: number;
+    lifetimeSeconds: number;
+    extra?: Record<string, unknown>;
+  }): Promise<string> {
+    const key = await importPrivateKey();
+    const kid = await configuredKid();
+    const now = Math.floor(Date.now() / 1000);
+    const iat = now - opts.ageSeconds;
+    const exp = iat + opts.lifetimeSeconds;
+    return new SignJWT({ ...baseClaims, sub: 'user:1', ...(opts.extra ?? {}) })
+      .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+      .setIssuer('civitai')
+      .setAudience('civitai-app-block')
+      .setSubject('user:1')
+      .setJti('test-jti')
+      .setIssuedAt(iat)
+      .setNotBefore(iat)
+      .setExpirationTime(exp)
+      .sign(key);
+  }
+
+  it('a real dev-token mint (BlockTokenService.sign dev:true) verifies and carries dev:true at age < 4h', async () => {
+    const { BlockTokenService } = await import('~/server/services/block-token.service');
+    const r = await BlockTokenService.sign({ userId: 1, ...baseClaims, dev: true });
+    // ~4h exp proves the longer lifetime was applied at sign time.
+    const ttl = (new Date(r.expiresAt).getTime() - Date.now()) / 1000;
+    expect(ttl).toBeGreaterThan(4 * HOUR - 120);
+    expect(ttl).toBeLessThanOrEqual(4 * HOUR + 5);
+    const claims = await verifyBlockToken(r.token);
+    expect(claims).not.toBeNull();
+    expect(claims?.dev).toBe(true);
+  });
+
+  it('accepts a dev token aged 3h (under the 4h cap, exp still valid)', async () => {
+    // exp must outlive the age (a 4h-lifetime token at 3h is still valid).
+    const token = await signAged({ ageSeconds: 3 * HOUR, lifetimeSeconds: 4 * HOUR, extra: { dev: true } });
+    const claims = await verifyBlockToken(token);
+    expect(claims).not.toBeNull();
+    expect(claims?.dev).toBe(true);
+  });
+
+  it('REJECTS a dev token aged past 4h (cap is enforced, not unbounded)', async () => {
+    // Sign with a deliberately over-long lifetime (5h) so jwtVerify's exp check
+    // PASSES — isolating the per-type age cap as the thing that rejects. A
+    // 4h05m-old token is past the 4h cap (+30s slack) → null. This is exactly
+    // the "signer bug emitting a too-long exp" the belt defends against.
+    const token = await signAged({
+      ageSeconds: 4 * HOUR + 5 * 60,
+      lifetimeSeconds: 5 * HOUR,
+      extra: { dev: true },
+    });
+    expect(await verifyBlockToken(token)).toBeNull();
+  });
+
+  it('accepts a non-dev (default) token under 15min', async () => {
+    const token = await signAged({ ageSeconds: 10 * 60, lifetimeSeconds: 15 * 60 });
+    const claims = await verifyBlockToken(token);
+    expect(claims).not.toBeNull();
+    expect(claims?.dev).toBeUndefined();
+  });
+
+  it('REJECTS a non-dev (default) token past 15min — prod lifetime unchanged', async () => {
+    // Over-long 4h lifetime so exp passes; the 15min default cap rejects it.
+    // This proves removing the global maxTokenAge did NOT widen production: a
+    // non-dev token still can't outlive 15min even if its exp says otherwise.
+    const token = await signAged({ ageSeconds: 20 * 60, lifetimeSeconds: 4 * HOUR });
+    expect(await verifyBlockToken(token)).toBeNull();
+  });
+
+  it('REJECTS a non-dev token past 15min even with dev:false (fails safe to the short cap)', async () => {
+    const token = await signAged({
+      ageSeconds: 20 * 60,
+      lifetimeSeconds: 4 * HOUR,
+      extra: { dev: false },
+    });
+    expect(await verifyBlockToken(token)).toBeNull();
+  });
+
+  it('REJECTS a token whose dev claim is non-boolean (shape guard)', async () => {
+    // A string/number dev claim is rejected outright so the age-cap branch can
+    // trust the boolean. (And a stringy "true" can never sneak into the 4h cap.)
+    expect(
+      await verifyBlockToken(
+        await signAged({ ageSeconds: 60, lifetimeSeconds: 4 * HOUR, extra: { dev: 'true' } })
+      )
+    ).toBeNull();
+    expect(
+      await verifyBlockToken(
+        await signAged({ ageSeconds: 60, lifetimeSeconds: 4 * HOUR, extra: { dev: 1 } })
+      )
+    ).toBeNull();
+  });
+
+  it('CANNOT forge dev:true — a tampered-signature token with dev:true fails verification', async () => {
+    // Take a valid dev token and corrupt its signature segment. The RS256
+    // signature gate (jwtVerify) runs BEFORE the dev claim is read, so a forged
+    // dev:true never reaches the 4h cap.
+    const good = await signAged({ ageSeconds: 60, lifetimeSeconds: 4 * HOUR, extra: { dev: true } });
+    const [h, p] = good.split('.');
+    // Re-sign nothing — just mangle the signature so the key check fails.
+    const tampered = `${h}.${p}.AAAA${good.split('.')[2].slice(4)}`;
+    expect(await verifyBlockToken(tampered)).toBeNull();
+  });
+});

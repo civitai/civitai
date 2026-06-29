@@ -82,6 +82,47 @@ export function resolveResourcePickerRequest(raw: unknown): ResourcePickerReques
   return { requestId: obj.requestId, resourceType: canonical, ...(baseModelGroup ? { baseModelGroup } : {}) };
 }
 
+// ── OPEN_CHECKPOINT_PICKER (parity with the model-slot IframeHost) ────────────
+//
+// The SDK hook `useCheckpointPicker()` posts OPEN_CHECKPOINT_PICKER and awaits
+// CHECKPOINT_PICKER_RESULT. The model-slot host (IframeHost) handles it; this
+// page host historically did NOT (it only handled the newer, wider
+// OPEN_RESOURCE_PICKER), so the same block that worked in the model slot — and
+// in the dev:live SDK host, which DOES serve it — spun forever on a page. This
+// restores dev:live↔prod parity for `useCheckpointPicker` on pages.
+//
+// Unlike OPEN_RESOURCE_PICKER there is no type allowlist to enforce here — the
+// type is implicitly Checkpoint — so the only validation is: require a string
+// requestId (drop otherwise, never open the modal) and pass through an optional
+// base-model family hint. Kept pure + unit-tested for the same reason as
+// resolveResourcePickerRequest (the drop rule is the security-relevant part).
+
+export type CheckpointPickerRequest = {
+  requestId: string;
+  /** Optional base-model family hint (ecosystem key 'Flux1' or baseModel name 'Flux.1 D'). */
+  baseModelGroup?: string;
+};
+
+/**
+ * Validate + normalize a raw OPEN_CHECKPOINT_PICKER payload from an untrusted
+ * iframe. Returns the sanitized request, or `null` when it must be DROPPED
+ * (missing/non-string requestId). Mirrors IframeHost's inline validation; the
+ * CALLER opens the native checkpoint modal — this only decides whether to, and
+ * with what family filter.
+ */
+export function resolveCheckpointPickerRequest(raw: unknown): CheckpointPickerRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
+
+  const baseModelGroup =
+    typeof obj.baseModelGroup === 'string' && obj.baseModelGroup.length > 0
+      ? obj.baseModelGroup
+      : undefined;
+
+  return { requestId: obj.requestId, ...(baseModelGroup ? { baseModelGroup } : {}) };
+}
+
 export type PageFallbackReason = 'timeout' | 'token_error' | 'fatal_block_error';
 
 /**

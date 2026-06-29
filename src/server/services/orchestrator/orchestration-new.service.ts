@@ -1559,7 +1559,7 @@ import type {
   WorkflowStep,
   WorkflowStepJobQueuePosition,
 } from '@civitai/client';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { queryWorkflows } from './workflows';
