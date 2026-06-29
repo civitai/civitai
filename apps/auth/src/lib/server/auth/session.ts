@@ -8,8 +8,9 @@ import {
   type SessionUser,
 } from '@civitai/auth';
 import { sessions } from './registry';
-import { getOrCreateDeviceId, touchAccount } from './device';
+import { getOrCreateDeviceId, linkAccount } from './device';
 import { cookieDomain } from './cookie';
+import { verifier } from './verifier';
 
 // THE thin-session cookie — a shared contract: every app must use this exact name for SSO to work, so
 // it's a hardcoded constant (via the package's single-source-of-truth helper), NOT configurable.
@@ -108,11 +109,33 @@ export function setSessionCookie(cookies: Cookies, token: string): void {
 }
 
 export async function establishSession(cookies: Cookies, user: SessionUser): Promise<void> {
+  // Detect a 2nd-account login BEFORE we overwrite the session cookie: if the browser already carries a valid
+  // civ-token for a DIFFERENT user, this login is "add another account" → materialize the switcher set (both
+  // accounts). Read it from the incoming cookie (not locals) so this works on every login path uniformly. Done
+  // up front because setSessionCookie below queues the new cookie; reading `cookies.get` after that could echo
+  // the just-set value. Verification failures (no/expired/invalid prior session) → undefined → no materialize.
+  const priorUserId = await resolvePriorSessionUserId(cookies);
+
   const token = await mintUserSession(user);
   setSessionCookie(cookies, token);
 
-  // Link this account to the browser's device set (the account-switch list, section E). Best-effort.
-  await touchAccount(getOrCreateDeviceId(cookies), user.id).catch(() => {});
+  // Link this account to the browser's device set (the account-switch list, section E). LAZY: only writes a
+  // `device:accounts:*` key when this is a genuine 2nd distinct account (priorUserId set + != user.id), or when
+  // the set already exists. An ordinary single-account login writes nothing. Best-effort.
+  await linkAccount(getOrCreateDeviceId(cookies), user.id, priorUserId).catch(() => {});
+}
+
+/** The userId of the valid session already on this request's civ-token cookie, or undefined. Best-effort. */
+async function resolvePriorSessionUserId(cookies: Cookies): Promise<number | undefined> {
+  const token = cookies.get(SESSION_COOKIE);
+  if (!token) return undefined;
+  try {
+    const claims = await verifier.verifyToken(token);
+    const userId = Number(claims?.sub);
+    return Number.isFinite(userId) ? userId : undefined;
+  } catch {
+    return undefined; // no / expired / invalid prior session ⇒ not a 2nd-account login
+  }
 }
 
 export function clearSession(cookies: Cookies): void {
