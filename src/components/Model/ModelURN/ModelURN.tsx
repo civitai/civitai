@@ -8,11 +8,18 @@ import { stringifyAIR } from '~/shared/utils/air';
 import classes from './ModelURN.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
-export const ModelURN = ({ baseModel, type, modelId, modelVersionId, withCopy = true }: Props) => {
+export const ModelURN = ({
+  baseModel,
+  type,
+  modelId,
+  modelVersionId,
+  fileType,
+  withCopy = true,
+}: Props) => {
   const { copied, copy } = useClipboard();
   const urn = useMemo(
-    () => stringifyAIR({ baseModel, type, modelId, id: modelVersionId }),
-    [baseModel, type, modelId, modelVersionId]
+    () => stringifyAIR({ baseModel, type, modelId, id: modelVersionId, fileType }),
+    [baseModel, type, modelId, modelVersionId, fileType]
   );
   if (!urn) return null;
 
@@ -132,5 +139,8 @@ type Props = {
   type: ModelType;
   modelId: number;
   modelVersionId: number;
+  /** Primary `ModelFile.type`; lets diffusion-model checkpoints render the
+   * correct AIR type segment (`diffusionmodel`) instead of `checkpoint`. */
+  fileType?: string;
   withCopy?: boolean;
 };

@@ -189,6 +189,7 @@ export async function prepareModelVersionResponse(
       type: model.type,
       modelId: version.modelId,
       id: version.id,
+      fileType: primaryFile.type,
     }),
     stats: {
       downloadCount: metrics[0]?.downloadCount ?? 0,
