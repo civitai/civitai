@@ -96,6 +96,7 @@ import {
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import {
   bustMvCache,
+  bustPublicModelResponseCache,
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
@@ -1439,6 +1440,31 @@ export const updateModelById = async ({
   });
 
   await userModelCountCache.refresh(model.userId);
+  // Flag replica-lag on the model BEFORE busting so a concurrent edge-miss read
+  // routes the LAG-AWARE parts of the rebuild to primary during the replication
+  // window instead of repopulating the just-busted response cache with pre-takedown
+  // state. Mirrors the publish/unpublish paths.
+  //
+  // SCOPE (important — do not overstate): this flag only covers the data that flows
+  // through dataForModelsCache.lookupFn -> getDbWithoutLagBatch('model', ids) — i.e.
+  // the VERSION-level fields (status/availability/covered). It does NOT cover the
+  // base Model row read by getModelsRaw, which uses pgDbRead unconditionally
+  // (model.service.ts ~910) and is never lag-aware. That base row carries
+  // `model.mode` — the field that gates images/downloadUrl in the cached body
+  // ([id].ts: includeImages/includeDownloadUrl). So a takedown's `mode` can still be
+  // read stale from a lagging replica and repopulate the origin cache for up to the
+  // origin TTL (CacheTTL.sm, 180s). That residual is bounded by — and ⊆ — the
+  // pre-existing Cloudflare edge window (s-maxage=300s), which this Redis-only bust
+  // does NOT purge anyway; so this does not widen takedown exposure beyond the edge.
+  // (To fully close the origin half, getModelsRaw's base read would need to honor
+  // the 'model' lag flag — deliberately not done here to avoid touching that shared
+  // hot path for an origin window already inside the edge window.)
+  await preventModelVersionLagBatch(id, []);
+  // Drop the origin-side public GET /api/v1/models/[id] response cache (Redis only;
+  // not the CF edge). Takedown/archive (changeModelModifierHandler sets `mode`) flows
+  // through here, and the cached body's images/files/downloadUrl depend on
+  // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
+  await bustPublicModelResponseCache(id);
 
   return model;
 };
@@ -1514,6 +1540,18 @@ export const deleteModelById = async ({
     await userModelCountCache.refresh(deletedModel.userId);
   }
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  // Flag replica-lag BEFORE busting so a concurrent edge-miss read routes the
+  // lag-aware version data (dataForModelsCache.lookupFn) to primary instead of
+  // repopulating the just-busted cache with pre-delete state. Mirrors publish/
+  // unpublish; version ids are in scope here from the delete transaction. (Same
+  // scope caveat as updateModelById: the getModelsRaw base row is not lag-aware —
+  // but for a delete the model row is gone, so a fresh read rebuilds to null→404,
+  // never cached, so the base-row gap is benign on this path.)
+  const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
+  await preventModelVersionLagBatch(id, deletedVersionIds);
+  // Drop the origin-side public GET /api/v1/models/[id] response cache so a
+  // deleted model stops serving a stale 200 (it would 404 on rebuild).
+  await bustPublicModelResponseCache(id);
   await deleteBidsForModel({ modelId: id });
 
   return deletedModel;
@@ -2039,6 +2077,14 @@ export const upsertModel = async (
         );
       }
     }
+
+    // Drop the origin-side public GET /api/v1/models/[id] response cache so an
+    // owner/mod edit (name/description/nsfw/tags/gallery — all carried in the
+    // cached body) stops serving a stale 200 on an edge-miss for up to the cache
+    // TTL. preventReplicationLag('model', id) above already guards the rebuild
+    // read against the replication window. Fail-open (the helper swallows Redis
+    // errors); the only post-commit write left in this branch.
+    await bustPublicModelResponseCache(result.id);
 
     return result;
   }

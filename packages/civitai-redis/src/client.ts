@@ -1670,6 +1670,7 @@ export const REDIS_KEYS = {
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',
     DATA_FOR_MODEL: 'packed:caches:data-for-model',
+    PUBLIC_MODEL_RESPONSE: 'packed:caches:public-model-response',
     BLOCKED_USERS: 'packed:caches:blocked-users',
     BLOCKED_BY_USERS: 'packed:caches:blocked-by-users',
     BASIC_USERS: 'packed:caches:basic-users',
