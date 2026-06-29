@@ -96,6 +96,7 @@ import {
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import {
   bustMvCache,
+  bustPublicModelResponseCache,
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
@@ -1430,6 +1431,12 @@ export const updateModelById = async ({
   });
 
   await userModelCountCache.refresh(model.userId);
+  // Drop the origin-side public GET /api/v1/models/[id] response cache. This is
+  // the path takedown/archive (changeModelModifierHandler sets `mode`) flows
+  // through, and the cached body's images/files/downloadUrl depend on
+  // `model.mode` — without this a takedown keeps serving a stale 200 for up to
+  // the cache TTL.
+  await bustPublicModelResponseCache(id);
 
   return model;
 };
@@ -1505,6 +1512,9 @@ export const deleteModelById = async ({
     await userModelCountCache.refresh(deletedModel.userId);
   }
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  // Drop the origin-side public GET /api/v1/models/[id] response cache so a
+  // deleted model stops serving a stale 200 (it would 404 on rebuild).
+  await bustPublicModelResponseCache(id);
   await deleteBidsForModel({ modelId: id });
 
   return deletedModel;

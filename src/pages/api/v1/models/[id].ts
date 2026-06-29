@@ -8,6 +8,7 @@ import { ModelSort } from '~/server/common/enums';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { getModelsWithVersions } from '~/server/services/model.service';
+import { publicModelResponseKey } from '~/server/services/model-version.service';
 import { PublicEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import type { BlockScopedNextApiRequest } from '~/server/middleware/block-scope.middleware';
 import { withBlockScope } from '~/server/middleware/block-scope.middleware';
@@ -23,7 +24,7 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { redis } from '~/server/redis/client';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -44,8 +45,9 @@ const baseUrl = getBaseUrl();
 const PUBLIC_MODEL_RESPONSE_TTL = env.IS_DATAPACKET ? CacheTTL.sm : 0;
 
 // The shaped 200 body for a public GET /api/v1/models/[id]. `null` means the
-// model was not found → the handler returns a 404 (negative-cached as
-// `{ body: null }`; see the handler).
+// model was not found → the handler returns a 404. The not-found case is NEVER
+// cached (see the handler / fetchModelResponseCached) — only positive bodies are
+// stored — so a just-published model can't be pinned to a stale 404.
 async function buildPublicModelResponse(
   id: number,
   browsingLevel: number
@@ -169,43 +171,67 @@ const baseHandler = PublicEndpoint(async function handler(
     // TTL (CacheTTL.sm = 180s) ≤ the edge s-maxage (300s), so the origin cache
     // never serves staler than the edge already would.
     const shouldCache = PUBLIC_MODEL_RESPONSE_TTL > 0 && !isBlockScoped;
-    const envelope = shouldCache
-      ? await fetchThroughCacheEnvelope(id, browsingLevel)
-      : { body: await buildPublicModelResponse(id, browsingLevel) };
+    const body = shouldCache
+      ? await fetchModelResponseCached(id, browsingLevel)
+      : await buildPublicModelResponse(id, browsingLevel);
 
-    // A missing model is cached as `{ body: null }` (negative cache) at the same
-    // ≤-edge TTL — this is the simpler-correct option vs. a separate short TTL:
-    // fetchThroughCache takes one TTL per call, and 180s ≤ the 300s edge TTL the
-    // CDN already serves a 404 with, so it adds no staleness. Only 404 (no row)
-    // is ever cached here — 400 (bad id) is rejected above the cache, and 5xx
-    // throws out of buildPublicModelResponse and is never stored.
-    if (envelope.body === null)
+    // A not-found (null) is NEVER written to the cache (fetchModelResponseCached
+    // only stores positive bodies). The 404 path is not the p99 cost this cache
+    // targets, and not caching it is the simplest correct option: it prevents a
+    // just-published/created model from being pinned to a stale 404 for up to the
+    // full TTL when the build reads a lagging replica. 400 (bad id) is rejected
+    // above the cache; 5xx throws out of buildPublicModelResponse and is never
+    // stored.
+    if (body === null)
       return res.status(404).json({ error: `No model with id ${id}` });
 
-    return res.status(200).json(envelope.body);
+    return res.status(200).json(body);
   } catch (error) {
     return handleEndpointError(res, error);
   }
 });
 
-type CachedModelEnvelope = { body: Record<string, unknown> | null };
-
-// fetchThroughCache wrapper. The cached value is an ENVELOPE `{ body }` rather
-// than the bare body so the found (object) and not-found (null) cases are both
-// representable and distinguishable through msgpack pack/unpack. fetchThroughCache
-// handles packing, the per-pod single-flight, and fail-open (a Redis stall
-// degrades to a direct origin build, never a 500).
-async function fetchThroughCacheEnvelope(
+// Positive-only origin cache for the public body.
+//
+// fetchThroughCache UNCONDITIONALLY caches whatever its fetchFn returns, so it
+// can't be told "build, but don't store a null". To keep the not-found case out
+// of the cache (see FIX 1 / the handler comment) we wrap fetchThroughCache so the
+// fetchFn only ever runs / stores when there is a real body: we read the cache
+// directly first; on a hit return it; on a miss build once — a null short-circuits
+// to a 404 WITHOUT a write, and a positive body is written through
+// fetchThroughCache (reusing its `{ data, cachedAt }` wrapper + best-effort,
+// fail-open Redis set, and matching the key scheme bustPublicModelResponseCache
+// busts). This deliberately forgoes fetchThroughCache's distributed cold-miss
+// single-flight lock; acceptable here because this is a low-volume endpoint
+// (~0.5 req/s) that Cloudflare already fronts (s-maxage=300), so a cold-key
+// thundering herd is negligible. (See FIX 3 in the PR description for the
+// pre-existing ~15s lock-retry 500 on fetchThroughCache itself.)
+async function fetchModelResponseCached(
   id: number,
   browsingLevel: number
-): Promise<CachedModelEnvelope> {
-  const key =
-    `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${id}:${browsingLevel}` as const;
-  return fetchThroughCache<CachedModelEnvelope>(
-    key,
-    async () => ({ body: await buildPublicModelResponse(id, browsingLevel) }),
-    { ttl: PUBLIC_MODEL_RESPONSE_TTL }
-  );
+): Promise<Record<string, unknown> | null> {
+  const key = publicModelResponseKey(id, browsingLevel);
+
+  // Cache READ. Fail OPEN: a Redis stall degrades to a direct origin build rather
+  // than a 500 (mirrors fetchThroughCache's read-fail-open).
+  try {
+    const cached = await redis.packed.get<{ data: Record<string, unknown> }>(key);
+    if (cached) return cached.data;
+  } catch {
+    return buildPublicModelResponse(id, browsingLevel);
+  }
+
+  // MISS: build once. Only a positive body is cached.
+  const body = await buildPublicModelResponse(id, browsingLevel);
+  if (body === null) return null;
+
+  // Write-through via fetchThroughCache so the stored wrapper shape + key match
+  // exactly what bustPublicModelResponseCache reads. The cache was just confirmed
+  // empty above, so fetchThroughCache takes its build-and-store branch and the
+  // fetchFn returns the already-built body (no second buildPublicModelResponse).
+  return fetchThroughCache<Record<string, unknown>>(key, async () => body, {
+    ttl: PUBLIC_MODEL_RESPONSE_TTL,
+  });
 }
 
 // App Blocks: allow this route to be called with an RS256 block JWT carrying
