@@ -943,21 +943,10 @@ export const getModelsRaw = async ({
 
           let modelVersions = data.versions;
 
-          // Apply version filters
+          // Visibility filters first, so the badge's base-model list reflects only
+          // versions the viewer can actually see (no Private/license-restricted leaks).
           if (!sessionUser?.isModerator || !status?.length) {
             modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
-          }
-
-          // Distinct base models across the model's visible versions — surfaced to the
-          // card badge so it can show multi-base support and order matched bases first.
-          const allBaseModels = [...new Set(modelVersions.map((mv) => mv.baseModel))];
-
-          if (baseModels) {
-            modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
-          }
-
-          if (!!modelVersionIds?.length) {
-            modelVersions = modelVersions.filter((mv) => modelVersionIds.includes(mv.id));
           }
 
           // Filter out NSFW versions for license-restricted base models
@@ -976,6 +965,21 @@ export const getModelsRaw = async ({
             modelVersions = modelVersions.filter(
               (mv) => mv.availability === 'Public' || mv.availability === 'EarlyAccess'
             );
+          }
+
+          // Distinct base models across the visible versions — surfaced to the card
+          // badge for multi-base support and matched-first ordering. Computed before
+          // the selection filters below so it covers all of the model's visible bases,
+          // not just the one matched by an active base-model filter.
+          const allBaseModels = [...new Set(modelVersions.map((mv) => mv.baseModel))];
+
+          // Selection filters — narrow to the versions matching the active query.
+          if (baseModels) {
+            modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
+          }
+
+          if (!!modelVersionIds?.length) {
+            modelVersions = modelVersions.filter((mv) => modelVersionIds.includes(mv.id));
           }
 
           // eject if no versions

@@ -50,7 +50,9 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
 
 export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: Props) {
   const [opened, setOpened] = useState(false);
-  const bases = baseModels?.length ? baseModels : [baseModel];
+  // Dedup by base name so the dropdown can't repeat rows even if a caller passes
+  // duplicates; the code-level dedup below further collapses same-indicator bases.
+  const bases = Array.from(new Set(baseModels?.length ? baseModels : [baseModel]));
 
   // Dedup by short code (e.g. SD 1.4 + SD 1.5 -> one "SD1"), preserving order.
   const seen = new Set<string>();
@@ -119,6 +121,7 @@ export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: P
                     here lets the click fall through to the card link and navigate. */}
                 <button
                   type="button"
+                  aria-label="Show all base models"
                   className="flex cursor-pointer items-center gap-2 border-0 bg-transparent p-0 text-inherit"
                   onClick={(e) => {
                     e.preventDefault();
