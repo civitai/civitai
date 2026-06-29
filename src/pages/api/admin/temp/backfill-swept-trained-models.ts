@@ -38,14 +38,21 @@
  *
  * Target predicate (a swept, still-postless trained version):
  *   mv.status = 'Unpublished' AND mv.uploadType = 'Trained'
+ *   AND mv.meta->>'unpublishedReason' = 'no-posts'
  *   AND NOT EXISTS (owner-authored Post for the version)
  *
- * 'Unpublished' (not 'UnpublishedViolation') is required, so genuine ToS
- * removals are never resurfaced. availability is intentionally NOT filtered: the
- * sweep itself stamps availability='Private', so the rows we want are Private.
- * meta.unpublishedReason / unpublishedAt are left untouched — they're old, so
- * they don't re-trigger the unpublish notification (which keys off unpublishedAt
- * > lastSent), and they flip back on the next user-initiated publish.
+ * The unpublishedReason='no-posts' filter is load-bearing for safety: status
+ * 'Unpublished' alone is NOT enough to distinguish the automated requirements
+ * sweep from moderator removals — mods unpublish ToS/CSAM content with
+ * status='Unpublished' + a moderation reason (mature-real-person, *-underage,
+ * beastiality, etc.), not only 'UnpublishedViolation'. Scoping to the cron's
+ * own 'no-posts' reason is what keeps those out (~11k of ~14k matched by the
+ * looser predicate were NOT no-posts). The parent-model update is likewise
+ * scoped to the cron's 'no-versions' reason. availability is intentionally NOT
+ * filtered: the sweep itself stamps availability='Private', so the rows we want
+ * are Private. meta.unpublishedReason / unpublishedAt are left untouched — old
+ * unpublishedAt won't re-trigger the unpublish notification (keys off
+ * unpublishedAt > lastSent), and both flip back on the next publish.
  *
  * apply re-asserts the full predicate (not just the selected id list), so a row
  * that changed between selection and write is skipped, never clobbered; re-running
@@ -67,9 +74,12 @@ const schema = z.object({
 });
 
 // A swept trained version: was published, lost its owner post, got unpublished
-// by reset-to-draft-without-requirements, and still has no owner post.
+// by reset-to-draft-without-requirements (reason 'no-posts'), and still has no
+// owner post. The reason filter excludes moderator removals that also use
+// status='Unpublished' (see header).
 const TARGET_PREDICATE = `mv.status = 'Unpublished'
     AND mv."uploadType" = 'Trained'
+    AND mv.meta->>'unpublishedReason' = 'no-posts'
     AND NOT EXISTS (
       SELECT 1 FROM "Post" p
       WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId"
@@ -130,6 +140,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
             AND mv.id IN (${Prisma.join(ids)})
             AND mv.status = 'Unpublished'
             AND mv."uploadType" = 'Trained'
+            AND mv.meta->>'unpublishedReason' = 'no-posts'
             AND NOT EXISTS (
               SELECT 1 FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId"
             )
@@ -141,11 +152,14 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         if (modelIds.length) {
           // Only models the no-versions sweep left Unpublished with no published
           // version — a model still holding a live published version is untouched.
+          // Scoped to the cron's 'no-versions' reason so a moderator-unpublished
+          // parent (different reason) is never resurfaced.
           const models = await tx.$queryRaw<{ id: number }[]>`
             UPDATE "Model" m
             SET status = 'Draft'
             WHERE m.id IN (${Prisma.join(modelIds)})
               AND m.status = 'Unpublished'
+              AND m.meta->>'unpublishedReason' = 'no-versions'
               AND NOT EXISTS (
                 SELECT 1 FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND mv.status = 'Published'
               )
