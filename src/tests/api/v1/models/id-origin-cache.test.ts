@@ -211,15 +211,23 @@ describe('GET /api/v1/models/[id] — origin-side response cache', () => {
     });
 
     // Faithful fetchThroughCache: read the `{ data, cachedAt }` wrapper from the
-    // mocked redis; on miss run fetchFn and store the wrapper. (The handler only
-    // ever reaches fetchThroughCache on a confirmed miss with a positive body.)
-    mockFetchThroughCache.mockImplementation(async (key: string, fetchFn: () => Promise<unknown>) => {
-      const existing = await redisMock.packed.get(key);
-      if (existing) return (existing as { data: unknown }).data;
-      const data = await fetchFn();
-      await redisMock.packed.set(key, { data, cachedAt: Date.now() });
-      return data;
-    });
+    // mocked redis and serve it ONLY if non-expired (mirrors the real helper's
+    // `cachedExpired = Date.now() - ttl*1000 > cachedAt` gate — a present-but-stale
+    // entry, which can exist because the real write uses EX = ttl*2, must rebuild,
+    // not be served). On miss/expired run fetchFn and store the wrapper.
+    mockFetchThroughCache.mockImplementation(
+      async (key: string, fetchFn: () => Promise<unknown>, options?: { ttl?: number }) => {
+        const ttl = options?.ttl ?? 180; // CacheTTL.sm; literal avoids importing the constants graph into this hermetic suite
+        const existing = (await redisMock.packed.get(key)) as
+          | { data: unknown; cachedAt: number }
+          | null
+          | undefined;
+        if (existing && Date.now() - existing.cachedAt <= ttl * 1000) return existing.data;
+        const data = await fetchFn();
+        await redisMock.packed.set(key, { data, cachedAt: Date.now() });
+        return data;
+      }
+    );
   });
 
   it('(a) cache MISS populates and returns the correct body', async () => {
@@ -352,5 +360,23 @@ describe('GET /api/v1/models/[id] — origin-side response cache', () => {
     // (JSON.stringify drops `undefined` and serializes Date via toJSON — so this
     // also asserts those edge cases survive the msgpack hop the same way.)
     expect(JSON.stringify(roundTripped.data)).toBe(JSON.stringify(body));
+  });
+
+  it('(h) a logically-expired entry (older than the TTL) is NOT served — it rebuilds', async () => {
+    // fetchThroughCache writes with EX = ttl*2, so the physical key can outlive the
+    // 180s logical TTL. The direct read path must re-apply the cachedAt gate and
+    // rebuild rather than serve content >300s-stale past the edge s-maxage (the
+    // "origin TTL ≤ edge TTL ⇒ no new staleness" invariant).
+    const key = `packed:caches:public-model-response:123:${allBrowsingLevelsFlag}`;
+    const staleBody = { id: 123, name: 'STALE', creator: { username: 'old' }, tags: [] };
+    // cachedAt = 200s ago > the 180s (CacheTTL.sm) logical TTL → must be treated as a miss.
+    redisStore.set(key, pack({ data: staleBody, cachedAt: Date.now() - 200_000 }));
+
+    const res = await invoke({ id: '123' });
+    expect(res.statusCode).toBe(200);
+    // Served the fresh rebuild, NOT the stale cached entry.
+    expect(res.body.name).not.toBe('STALE');
+    expect(res.body.id).toBe(123);
+    expect(mockGetModelsWithVersions).toHaveBeenCalledTimes(1);
   });
 });

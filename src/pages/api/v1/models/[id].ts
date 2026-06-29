@@ -215,8 +215,16 @@ async function fetchModelResponseCached(
   // Cache READ. Fail OPEN: a Redis stall degrades to a direct origin build rather
   // than a 500 (mirrors fetchThroughCache's read-fail-open).
   try {
-    const cached = await redis.packed.get<{ data: Record<string, unknown> }>(key);
-    if (cached) return cached.data;
+    const cached = await redis.packed.get<{ data: Record<string, unknown>; cachedAt: number }>(key);
+    // Honor the LOGICAL ttl. fetchThroughCache stores with EX = ttl*2 (the physical
+    // key lives 360s) and normally gates freshness on `cachedAt`, serving older
+    // entries only as stampede-protection stale. A bare presence check here would
+    // serve entries up to 2×ttl (360s) old — PAST the 300s edge s-maxage — breaking
+    // the "origin TTL ≤ edge TTL ⇒ no new staleness" invariant (and could compound
+    // through the edge's stale-while-revalidate). Re-apply the same cachedAt gate so
+    // a logically-expired-but-physically-present entry falls through to a rebuild.
+    if (cached && Date.now() - cached.cachedAt <= PUBLIC_MODEL_RESPONSE_TTL * 1000)
+      return cached.data;
   } catch {
     return buildPublicModelResponse(id, browsingLevel);
   }
