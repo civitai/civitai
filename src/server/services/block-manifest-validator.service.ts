@@ -1,4 +1,7 @@
-import { validateBlockScopesAgainstOauthClient } from '~/shared/constants/block-scope.constants';
+import {
+  isKnownBlockScope,
+  validateBlockScopesAgainstOauthClient,
+} from '~/shared/constants/block-scope.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
 
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
@@ -70,6 +73,19 @@ export const ALLOWED_RENDER_MODES = new Set(['iframe', 'inline', 'hybrid']);
 export const ALLOWED_TRUST_TIERS = new Set(['unverified', 'verified', 'internal']);
 
 const SCOPE_RE = /^[a-z0-9_]+(?::[a-z0-9_]+){1,3}$/;
+
+// CANONICAL blockId rule (single-sourced with the published schema at
+// https://civitai.com/schemas/app-block/v1.json and the `civitai` CLI). blockId
+// becomes the per-app subdomain `<blockId>.civit.ai` (see manifest-normalize.ts /
+// APPS_DOMAIN), so it MUST be a valid DNS label: lowercase a–z/0–9/hyphen, must
+// start with a letter, must not start or end with a hyphen, 3–40 chars.
+const BLOCK_ID_RE = /^[a-z][a-z0-9-]*[a-z0-9]$/;
+const BLOCK_ID_MIN_LENGTH = 3;
+const BLOCK_ID_MAX_LENGTH = 40;
+
+// CANONICAL version rule: semantic version `x.y.z` with an optional
+// `-prerelease` suffix. Single-sourced with the published schema + the CLI.
+const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 
 // Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
 // field comment in RawManifest). The build sandbox is already isolated; this
@@ -303,11 +319,26 @@ export class BlockManifestValidator {
     }
     const m = manifest as RawManifest;
 
-    if (typeof m.blockId !== 'string' || m.blockId.length === 0) {
-      errors.push('blockId must be a non-empty string');
+    // blockId becomes the per-app subdomain `<blockId>.civit.ai`, so it must be
+    // a DNS-label-safe slug (canonical rule, single-sourced with the published
+    // schema + the CLI): lowercase, starts with a letter, no leading/trailing
+    // hyphen, a–z/0–9/hyphen only, 3–40 chars.
+    if (typeof m.blockId !== 'string') {
+      errors.push('blockId must be a string');
+    } else if (
+      m.blockId.length < BLOCK_ID_MIN_LENGTH ||
+      m.blockId.length > BLOCK_ID_MAX_LENGTH ||
+      !BLOCK_ID_RE.test(m.blockId)
+    ) {
+      errors.push(
+        'blockId must be 3–40 chars, lowercase, start with a letter, and contain only a–z, 0–9, hyphen (it becomes <blockId>.civit.ai)'
+      );
     }
-    if (typeof m.version !== 'string' || m.version.length === 0) {
-      errors.push('version must be a non-empty string');
+    // version must be a semantic version (canonical rule, single-sourced).
+    if (typeof m.version !== 'string') {
+      errors.push('version must be a string');
+    } else if (!VERSION_RE.test(m.version)) {
+      errors.push('version must be semver (e.g. 1.0.0)');
     }
     if (typeof m.name !== 'string' || m.name.length === 0) {
       errors.push('name must be a non-empty string');
@@ -340,6 +371,14 @@ export class BlockManifestValidator {
         }
         if (!SCOPE_RE.test(scope)) {
           errors.push(`scope "${scope}" must be lowercase colon-separated (e.g. models:read:self)`);
+          continue;
+        }
+        // Membership check (canonical, single-sourced): the scope must be one of
+        // the known block scopes (BLOCK_SCOPE_TO_OAUTH_BIT — the authoritative
+        // set). A well-formed-but-unknown scope (e.g. models:read:all) is
+        // rejected here rather than silently ignored downstream.
+        if (!isKnownBlockScope(scope)) {
+          errors.push(`scope "${scope}" is not a known block scope`);
         }
       }
       const blockScopes = (m.scopes as unknown[]).filter(

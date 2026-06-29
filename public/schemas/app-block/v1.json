@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://civitai.com/schemas/app-block/v1.json",
+  "title": "Civitai App Block Manifest",
+  "description": "THE canonical, server-published schema for block.manifest.json — the ONLY mandatory file in a Civitai App Block. Published at https://civitai.com/schemas/app-block/v1.json. This is the single source of truth for the block manifest contract: the platform's server-side validator (src/server/services/block-manifest-validator.service.ts) and the `civitai` CLI both validate against these same rules. Set this URL as your manifest's `$schema` for editor validation.",
+  "type": "object",
+  "required": ["blockId", "version", "name", "contentRating", "scopes"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional JSON-Schema reference; ignored by the platform validator."
+    },
+    "blockId": {
+      "type": "string",
+      "description": "The block slug. Becomes the canonical submission slug. Lowercase, starts with a letter, hyphen-separated, 3-40 chars.",
+      "minLength": 3,
+      "maxLength": 40,
+      "pattern": "^[a-z][a-z0-9-]*[a-z0-9]$"
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version (x.y.z, optional -prerelease).",
+      "minLength": 1,
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable display name. The server only requires a non-empty string (no length cap), so the CLI does not impose one either.",
+      "minLength": 1
+    },
+    "type": {
+      "type": "string",
+      "description": "Free-form descriptor used by some examples (e.g. \"block\"). Not validated by the platform.",
+      "enum": ["block"]
+    },
+    "contentRating": {
+      "type": "string",
+      "description": "Content rating of the app surface.",
+      "enum": ["g", "pg", "pg13", "r", "x"]
+    },
+    "renderMode": {
+      "type": "string",
+      "description": "How the block renders. Defaults to \"iframe\". \"inline\"/\"hybrid\" require a verified/internal trust tier (server-assigned), so authors should leave this as iframe.",
+      "enum": ["iframe", "inline", "hybrid"]
+    },
+    "trustTier": {
+      "type": "string",
+      "description": "SERVER-OWNED. Do NOT set this in your manifest — the platform assigns the trust tier during review. Present here only to reject dev-set values.",
+      "$comment": "Rejected via 'not' below.",
+      "enum": ["unverified", "verified", "internal"]
+    },
+    "scopes": {
+      "type": "array",
+      "description": "Capabilities the block requests. Must be a strict subset of what review grants. Each scope is lowercase colon-separated.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "models:read:self",
+          "media:read:owned",
+          "user:read:self",
+          "ai:write:budgeted",
+          "buzz:read:self",
+          "block:settings:read",
+          "block:settings:write",
+          "social:tip:self",
+          "apps:storage:read",
+          "apps:storage:write"
+        ]
+      }
+    },
+    "minApiVersion": {
+      "type": "string",
+      "description": "Minimum App SDK API version the block targets (informational).",
+      "pattern": "^\\d+(\\.\\d+)*$"
+    },
+    "buildCommand": {
+      "type": "string",
+      "description": "Config-as-code: command the platform runs to build the static bundle (e.g. \"npm run build\"). Omit for no-build (static) apps. When set, outputDir must also be set.",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "outputDir": {
+      "type": "string",
+      "description": "Config-as-code: directory (relative to the project root) the buildCommand emits static files into (e.g. \"dist\"). Required when buildCommand is set.",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^/].*"
+    },
+    "publicSettingsKeys": {
+      "type": "array",
+      "description": "Allowlist of settings keys exposed to anonymous viewers. Default (omitted) = none exposed.",
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "assetBundleUrl": {
+      "type": "string",
+      "description": "Optional v2 surface — HTTPS URL to a hosted asset bundle. Must be a public https URL.",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "iframe": {
+      "type": "object",
+      "description": "iframe envelope. NOTE: iframe.src is SERVER-OWNED — do NOT set it; the platform stamps the canonical bundle URL during build/approve.",
+      "additionalProperties": false,
+      "properties": {
+        "src": {
+          "description": "SERVER-OWNED. Do NOT set iframe.src — the platform assigns it. Present here only so the schema can reject dev-set values.",
+          "$comment": "Rejected via 'not' below."
+        },
+        "minHeight": {
+          "type": "integer",
+          "description": "Minimum iframe height in px.",
+          "minimum": 40,
+          "maximum": 4000
+        },
+        "maxHeight": {
+          "description": "Maximum iframe height in px, or null for unbounded.",
+          "type": ["integer", "null"],
+          "minimum": 40,
+          "maximum": 4000
+        },
+        "resizable": {
+          "type": "boolean",
+          "description": "Whether the host honours RESIZE_IFRAME messages."
+        },
+        "sandbox": {
+          "type": "string",
+          "description": "Space-separated iframe sandbox tokens. Unverified tier allows only: allow-scripts, allow-forms. Never combine allow-same-origin with allow-scripts.",
+          "minLength": 1
+        }
+      }
+    },
+    "page": {
+      "type": "object",
+      "description": "Full-page surface descriptor (W10). Page apps mount at /apps/run/<slug>.",
+      "additionalProperties": false,
+      "required": ["path", "title"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Sub-path the page mounts at; must start with '/'.",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^/"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title shown in host chrome.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "icon": {
+          "type": "string",
+          "description": "Optional icon name.",
+          "maxLength": 128
+        },
+        "buzzBudgetPerGen": {
+          "type": "integer",
+          "description": "Optional per-generation Buzz budget for ai:write:budgeted tokens. Positive integer; server-clamped to the per-gen cap.",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "description": "Model-page slot targets. Each target's slotId must be a known registered model slot (not the page slot). Optional for page-only apps.",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["slotId"],
+        "properties": {
+          "slotId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "$comment": "outputDir is required whenever buildCommand is set. NOTE: the server-owned iframe.src and trustTier fields are rejected by the platform validator (and the CLI in Go) with clearer error messages than JSON Schema's `not`; they are declared in `properties` above only so the schema documents them.",
+      "if": {
+        "required": ["buildCommand"]
+      },
+      "then": {
+        "required": ["outputDir"]
+      }
+    }
+  ]
+}

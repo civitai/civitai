@@ -34,6 +34,65 @@ describe('BlockManifestValidator', () => {
     expect(result).toEqual({ valid: true });
   });
 
+  // Canonical blockId rule: DNS-label-safe (becomes <blockId>.civit.ai).
+  describe('blockId (canonical DNS-label rule)', () => {
+    it('accepts a valid DNS-safe blockId', () => {
+      const manifest = { ...VALID_MANIFEST, blockId: 'my-block' };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it.each([
+      ['MyBlock', 'uppercase'],
+      ['-x', 'leading hyphen'],
+      ['x-', 'trailing hyphen'],
+      ['ab', 'too short (<3)'],
+      ['a'.repeat(41), 'too long (>40)'],
+      ['1block', 'does not start with a letter'],
+      ['my_block', 'underscore'],
+      ['my block', 'space'],
+    ])('rejects blockId %j (%s)', (blockId) => {
+      const manifest = { ...VALID_MANIFEST, blockId };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('blockId'))).toBe(true);
+      }
+    });
+
+    it('accepts a 40-char blockId (boundary) and a 3-char one', () => {
+      const max = 'a' + 'b'.repeat(38) + 'c'; // 40 chars
+      expect(BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId: max }, APP_CTX)).toEqual({
+        valid: true,
+      });
+      expect(
+        BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId: 'abc' }, APP_CTX)
+      ).toEqual({ valid: true });
+    });
+  });
+
+  // Canonical version rule: semver x.y.z (optional -prerelease).
+  describe('version (canonical semver rule)', () => {
+    it.each(['1.0.0', '1.2.3-beta.1', '10.20.30', '0.0.1-rc.0'])(
+      'accepts semver version %j',
+      (version) => {
+        const manifest = { ...VALID_MANIFEST, version };
+        expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+      }
+    );
+
+    it.each(['1.0', 'latest', '1', 'v1.0.0', '1.0.0.0', ''])(
+      'rejects non-semver version %j',
+      (version) => {
+        const manifest = { ...VALID_MANIFEST, version };
+        const result = BlockManifestValidator.validate(manifest, APP_CTX);
+        expect(result.valid).toBe(false);
+        if (!result.valid) {
+          expect(result.errors.some((e) => e.includes('version'))).toBe(true);
+        }
+      }
+    );
+  });
+
   it('rejects PascalCase scope strings', () => {
     const manifest = { ...VALID_MANIFEST, scopes: ['Models:Read:Self'] };
     const result = BlockManifestValidator.validate(manifest, TokenScope.ModelsRead);
@@ -169,6 +228,27 @@ describe('BlockManifestValidator', () => {
     if (!result.valid) {
       expect(result.errors.some((e) => e.includes('exceed OAuth client'))).toBe(true);
     }
+  });
+
+  // Canonical scope membership: a well-formed-but-unknown scope is rejected.
+  it('rejects a well-formed but unknown block scope', () => {
+    const manifest = { ...VALID_MANIFEST, scopes: ['models:read:all'] };
+    const result = BlockManifestValidator.validate(manifest, TokenScope.ModelsRead);
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(
+        result.errors.some(
+          (e) => e.includes('not a known block scope') && e.includes('models:read:all')
+        )
+      ).toBe(true);
+    }
+  });
+
+  it('accepts the known SKIP_OAUTH_CHECK scope apps:storage:read', () => {
+    // apps:storage:read maps to SKIP_OAUTH_CHECK, so it passes the OAuth-bit gate
+    // regardless of the client bitmask — but it must still be a KNOWN scope.
+    const manifest = { ...VALID_MANIFEST, scopes: ['apps:storage:read'] };
+    expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
   });
 
   it('rejects inline render mode on the unverified tier', () => {
