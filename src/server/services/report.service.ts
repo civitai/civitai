@@ -37,7 +37,11 @@ import { bustCachesForPosts } from '~/server/services/post.service';
 import { moderationActionEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { addTagVotes } from '~/server/services/tag.service';
-import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  isPrismaUniqueViolation,
+  throwAuthorizationError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import {
@@ -267,13 +271,21 @@ export const createReport = async ({
     if (data.reason === ReportReason.TOSViolation)
       switch (type) {
         case ReportEntity.Image:
-          await dbWrite.imageEngagement.create({
-            data: {
-              imageId: id,
-              userId,
-              type: ImageEngagementType.Hide,
-            },
-          });
+          // Best-effort hide of the reported image. This isn't a toggle, but the
+          // reporter may already have the image hidden → P2002 on the
+          // (userId, imageId) PK. The desired end-state (image hidden) already
+          // holds, so swallow it instead of 500ing the whole report mutation.
+          await dbWrite.imageEngagement
+            .create({
+              data: {
+                imageId: id,
+                userId,
+                type: ImageEngagementType.Hide,
+              },
+            })
+            .catch((error) => {
+              if (!isPrismaUniqueViolation(error)) throw error;
+            });
           break;
       }
 

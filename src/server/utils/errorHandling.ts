@@ -47,6 +47,20 @@ export function isClientAbortError(e: unknown): boolean {
   return false;
 }
 
+/**
+ * True when an error is a Prisma unique-constraint violation (P2002).
+ *
+ * Engagement "toggle" procedures follow a read-then-create pattern (findUnique →
+ * create-if-absent). Two concurrent calls can both observe "absent" and both
+ * create, so the loser hits the row's unique constraint (P2002). Because the row
+ * now exists, the toggle is idempotent: a P2002 there means "already toggled on",
+ * so the caller should treat it as success rather than bubble a 500. Use only at
+ * sites where P2002 unambiguously means "the exact row we wanted already exists".
+ */
+export function isPrismaUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
   P2000: 'BAD_REQUEST',
