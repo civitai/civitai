@@ -382,9 +382,15 @@ beforeEach(() => {
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockAuditPromptServer.mockResolvedValue(undefined);
   mockBuildGenerationContext.mockResolvedValue({ externalCtx: {} });
-  // createWorkflowStepsFromGraphInput returns an ARRAY of steps; the block path
-  // is single-step txt2img, so default to one step (router takes steps[0]).
-  mockCreateStepsFromGraph.mockResolvedValue([{ $type: 'textToImage', name: 's1', input: {} }]);
+  // createWorkflowStepsFromGraphInput returns `{ steps, workflowMetadata }`; the
+  // block path is single-step txt2img, so default to one step (router takes
+  // steps[0]). `workflowMetadata` is the queue/remix metadata the REAL submit
+  // attaches and the whatIf submit omits — the graph yields it ONLY on real
+  // (non-whatIf) calls, so default to undefined here and override per-test.
+  mockCreateStepsFromGraph.mockResolvedValue({
+    steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+    workflowMetadata: undefined,
+  });
   // Daily-boost autoclaim defaults: balance high enough that no claim
   // fires unless a test explicitly drops it. Reward details say boost is
   // unclaimed today with the standard 25 awardAmount. Tests that exercise
@@ -595,6 +601,119 @@ describe('blocks.submitWorkflow', () => {
     expect(mockAuditPromptServer).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: 'a cat', userId: 42 })
     );
+  });
+
+  // ---- workflow metadata parity (queue/remix view) ------------------------
+  //
+  // BUG this proves fixed: block-submitted generations carried NO `metadata` on
+  // the submit body, so the orchestrator queue/remix view (which reads
+  // `WorkflowData.params/resources/remixOfId` ← `workflow.metadata`) showed
+  // blank prompt/seed/sampler/cfg/steps/resources. The normal generation form
+  // (`generateFromGraph`) attaches `metadata: workflowMetadata` on the REAL
+  // submit only — `undefined` on whatIf. These tests pin that parity for the
+  // block path: real submit carries the metadata the graph produced; the whatIf
+  // (cost-preflight) submit omits it.
+  describe('attaches workflow metadata (queue/remix parity)', () => {
+    it('REAL submit carries metadata.params + metadata.resources from the graph', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(125);
+      // The graph yields metadata ONLY on the real (non-whatIf) call. The router
+      // calls createBlockTextToImageStep twice (whatIf cost-check, then real); the
+      // mock returns the same value both times, but only the REAL submit body
+      // should carry `metadata` (the whatIf body must omit it — asserted below).
+      const workflowMetadata = {
+        params: { prompt: 'a cat', seed: 12345, sampler: 'Euler a', cfgScale: 7, steps: 25 },
+        resources: [{ id: 99, strength: 1 }],
+      };
+      mockCreateStepsFromGraph.mockResolvedValue({
+        steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+        workflowMetadata,
+      });
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+
+      // whatIf body (first call) must NOT carry metadata — mirrors the normal
+      // path (`generateFromGraph` builds workflowMetadata only for real submits).
+      const whatIfBody = mockSubmitWorkflow.mock.calls[0][0].body;
+      expect(whatIfBody).not.toHaveProperty('metadata');
+
+      // REAL submit body (second call) carries the graph's metadata so the queue
+      // view's params/resources/remixOfId populate.
+      const realBody = mockSubmitWorkflow.mock.calls[1][0].body;
+      expect(realBody.metadata).toEqual(workflowMetadata);
+      expect(realBody.metadata.params).toMatchObject({
+        prompt: 'a cat',
+        seed: 12345,
+        sampler: 'Euler a',
+        cfgScale: 7,
+        steps: 25,
+      });
+      expect(realBody.metadata.resources).toEqual([{ id: 99, strength: 1 }]);
+    });
+
+    it('passes metadata through verbatim (no fabricated fields) — undefined when the graph omits it', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(125);
+      // Graph returns no metadata (e.g. an entry path that doesn't build it):
+      // the body must carry `metadata: undefined`, NOT a fabricated object.
+      mockCreateStepsFromGraph.mockResolvedValue({
+        steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+        workflowMetadata: undefined,
+      });
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      const realBody = mockSubmitWorkflow.mock.calls[1][0].body;
+      expect(realBody.metadata).toBeUndefined();
+    });
+
+    it('estimateWorkflow (whatIf) never attaches metadata to the body', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      // Even if the graph somehow returned metadata, the whatIf estimate body
+      // must not carry it (parity with the normal whatIf path).
+      mockCreateStepsFromGraph.mockResolvedValue({
+        steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+        workflowMetadata: { params: { prompt: 'a cat' }, resources: [] },
+      });
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockSubmitWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({ query: { whatif: true } })
+      );
+      const estimateBody = mockSubmitWorkflow.mock.calls[0][0].body;
+      expect(estimateBody).not.toHaveProperty('metadata');
+    });
   });
 
   it('returns a failed-shape snapshot (no throw) when cost > budget', async () => {
