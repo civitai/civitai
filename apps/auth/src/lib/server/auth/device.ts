@@ -36,7 +36,7 @@ const cookieOpts = {
   sameSite: 'lax' as const,
 };
 
-/** Read the device id (or mint one) and ALWAYS (re)set the cookie so its 7-day TTL rolls. Call on login. */
+/** Read the device id (or mint one) and ALWAYS (re)set the cookie so its 30-day TTL rolls. Call on login. */
 export function getOrCreateDeviceId(cookies: Cookies): string {
   const id = cookies.get(DEVICE_COOKIE) ?? randomUUID();
   cookies.set(DEVICE_COOKIE, id, { ...cookieOpts, maxAge: DEVICE_TTL_S }); // re-set → rolling
@@ -48,7 +48,7 @@ export function getDeviceId(cookies: Cookies): string | undefined {
   return cookies.get(DEVICE_COOKIE);
 }
 
-/** Re-set the (existing) device cookie to roll its 7-day TTL — pairs with touchAccount on a direct browser
+/** Re-set the (existing) device cookie to roll its 30-day TTL — pairs with touchAccount on a direct browser
  *  switch, so the device cookie doesn't expire while its redis set is still being refreshed. */
 export function rollDeviceCookie(cookies: Cookies, deviceId: string): void {
   cookies.set(DEVICE_COOKIE, deviceId, { ...cookieOpts, maxAge: DEVICE_TTL_S });
@@ -135,7 +135,7 @@ export async function linkAccount(
   }
 }
 
-/** The device's linked accounts (idle >7d pruned). */
+/** The device's linked accounts (idle >30d pruned). */
 export async function listAccounts(
   deviceId: string
 ): Promise<{ userId: number; lastSwitchedAt: number }[]> {
@@ -159,7 +159,7 @@ export async function listAccounts(
   return fresh.sort((a, b) => b.lastSwitchedAt - a.lastSwitchedAt);
 }
 
-/** True iff the target is linked to this device AND fresh (<7d). The switch authorization check. */
+/** True iff the target is linked to this device AND fresh (<30d). The switch authorization check. */
 export async function isLinkedAndFresh(deviceId: string, userId: number): Promise<boolean> {
   const sys = getSysRedis();
   if (!sys) return false;
