@@ -27,8 +27,15 @@ const fs = require('fs');
 const path = require('path');
 // jose is ESM-only since v6 — require() throws ERR_REQUIRE_ESM from this .cjs,
 // so load it via dynamic import() inside main() (the only EncryptJWT consumer).
-const { hkdfSync } = require('node:crypto');
+const nodeCrypto = require('node:crypto');
+const { hkdfSync } = nodeCrypto;
 const { v4: uuid } = require('uuid');
+
+// jose v6 uses Web Crypto via the global `crypto`. The lhci-client image runs
+// Node 18, which doesn't expose `crypto` as a global (it became global in Node
+// 19+), so the import below throws "crypto is not defined". Polyfill from
+// node:crypto.webcrypto when absent — no-op on Node 19+.
+if (!globalThis.crypto) globalThis.crypto = nodeCrypto.webcrypto;
 
 const SECRET = process.env.NEXTAUTH_SECRET;
 const BASE_URL = process.env.BASE_URL;
