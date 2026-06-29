@@ -96,10 +96,6 @@ export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: P
       radius="xl"
       {...badgeProps}
       classNames={{ label: 'flex items-center gap-2' }}
-      onClick={(e: React.MouseEvent<HTMLDivElement>) => {
-        e.stopPropagation();
-        e.preventDefault();
-      }}
     >
       <Text size="xs" tt="capitalize" fw="bold">
         {getDisplayName(type)}
