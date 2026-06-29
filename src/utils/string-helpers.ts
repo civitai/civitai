@@ -83,6 +83,7 @@ const nameOverrides: Record<string, string> = {
   optimism: 'Optimism',
   UNet: 'UNet',
   CLIPVision: 'CLIP Vision',
+  VisionLanguage: 'VLM',
   ControlNet: 'ControlNet',
   // ReportEntity enum value `'model3d'` would otherwise auto-split to
   // "model 3 d" / "3 D Models". Same story for the review variant.

@@ -121,6 +121,7 @@ export const ModelType = {
   Wildcards: 'Wildcards',
   Workflows: 'Workflows',
   Detection: 'Detection',
+  VisionLanguage: 'VisionLanguage',
   Other: 'Other',
 } as const;
 export type ModelType = (typeof ModelType)[keyof typeof ModelType];

@@ -271,6 +271,7 @@ export const primaryFileTypesByModelType: Record<ModelType, readonly ModelFileTy
   TextEncoder: ['Model'],
   UNet: ['Model'],
   CLIPVision: ['Model'],
+  VisionLanguage: ['Model', 'Pruned Model'],
   Poses: ['Archive', 'Config'],
   Wildcards: ['Archive', 'Config'],
   Workflows: ['Archive', 'Config'],

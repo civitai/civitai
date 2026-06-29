@@ -142,6 +142,7 @@ export const ModelType = {
   Wildcards: 'Wildcards',
   Workflows: 'Workflows',
   Detection: 'Detection',
+  VisionLanguage: 'VisionLanguage',
   Other: 'Other',
 } as const;
 

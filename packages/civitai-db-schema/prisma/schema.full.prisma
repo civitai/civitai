@@ -731,6 +731,7 @@ enum ModelType {
   Wildcards
   Workflows
   Detection
+  VisionLanguage
   Other
 }
 
