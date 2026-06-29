@@ -1,5 +1,6 @@
 import type { BadgeProps } from '@mantine/core';
-import { Badge, Divider, Text, Tooltip } from '@mantine/core';
+import { Badge, Divider, Popover, Stack, Text } from '@mantine/core';
+import { useState } from 'react';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { IconHorse } from '@tabler/icons-react';
 import { IconNose } from '~/components/SVG/IconNose';
@@ -48,6 +49,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
 };
 
 export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: Props) {
+  const [opened, setOpened] = useState(false);
   const bases = baseModels?.length ? baseModels : [baseModel];
 
   // Dedup by short code (e.g. SD 1.4 + SD 1.5 -> one "SD1"), preserving order.
@@ -65,6 +67,28 @@ export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: P
   const MAX = 3;
   const visible = codes.slice(0, MAX);
   const overflow = codes.length - visible.length;
+  const isMulti = codes.length > 1;
+
+  const indicators = (
+    <span className="flex items-center gap-2">
+      {visible.map(({ base, node }) =>
+        typeof node === 'string' ? (
+          <Text key={base} size="xs" inherit>
+            {node}
+          </Text>
+        ) : (
+          <span key={base} className="flex items-center">
+            {node}
+          </span>
+        )
+      )}
+      {overflow > 0 && (
+        <Text size="xs" fw={700} inherit>
+          +{overflow}
+        </Text>
+      )}
+    </span>
+  );
 
   return (
     <Badge
@@ -80,26 +104,50 @@ export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: P
       {visible.length > 0 && (
         <>
           <Divider className="border-l-white/30 border-r-black/20" orientation="vertical" />
-          <Tooltip label={bases.join(', ')} withinPortal>
-            <span className="flex items-center gap-2">
-              {visible.map(({ base, node }) =>
-                typeof node === 'string' ? (
-                  <Text key={base} size="xs" inherit>
-                    {node}
+          {isMulti ? (
+            <Popover
+              opened={opened}
+              onChange={setOpened}
+              withinPortal
+              withArrow
+              position="bottom-start"
+              shadow="md"
+            >
+              <Popover.Target>
+                <span
+                  className="flex cursor-pointer items-center gap-2"
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setOpened((o) => !o);
+                  }}
+                >
+                  {indicators}
+                </span>
+              </Popover.Target>
+              <Popover.Dropdown
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
+                <Stack gap={2}>
+                  <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+                    Base models
                   </Text>
-                ) : (
-                  <span key={base} className="flex items-center">
-                    {node}
-                  </span>
-                )
-              )}
-              {overflow > 0 && (
-                <Text size="xs" inherit c="dimmed">
-                  +{overflow}
-                </Text>
-              )}
-            </span>
-          </Tooltip>
+                  {bases.map((base) => (
+                    <Text key={base} size="sm">
+                      {base}
+                    </Text>
+                  ))}
+                </Stack>
+              </Popover.Dropdown>
+            </Popover>
+          ) : (
+            indicators
+          )}
         </>
       )}
     </Badge>
