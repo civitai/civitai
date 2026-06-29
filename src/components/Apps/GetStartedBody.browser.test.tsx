@@ -73,6 +73,13 @@ describe('GetStartedBody (public App builders landing)', () => {
     expect(CLI_SUBMIT_COMMAND).toBe('civitai app submit');
   });
 
+  test('renders the platform-capabilities grid (catalog / hosting / identity)', async () => {
+    renderWithProviders(<GetStartedBody />);
+    await expect.element(page.getByText('A huge model catalog')).toBeInTheDocument();
+    await expect.element(page.getByText('Hosting handled')).toBeInTheDocument();
+    await expect.element(page.getByText('Built-in identity')).toBeInTheDocument();
+  });
+
   test('links to the real CLI repo and both npm packages', async () => {
     renderWithProviders(<GetStartedBody />);
     const cli = page.getByRole('link', { name: 'Civitai CLI' });
