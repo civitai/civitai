@@ -125,8 +125,9 @@ describe('submitWorkflow generate/write path is UNCHANGED (write-path guard)', (
   });
 
   it('generate + client network reject → propagates the RAW error (NOT a 503 TRPCError)', async () => {
-    // Default maxAttempts=3; force fail-fast on the LAST attempt only by failing
-    // all three quickly. baseDelayMs is small here to avoid real long sleeps.
+    // generate uses the default maxAttempts=3, so this exercises all three real
+    // backoff sleeps (~500ms + ~1500ms) before the final throw — the call is not
+    // sped up here; correctness of the raw-rethrow (write-path invariant) > speed.
     const raw = Object.assign(new Error('fetch failed'), { name: 'AbortError' });
     mockSubmit.mockRejectedValue(raw);
 
