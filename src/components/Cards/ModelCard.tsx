@@ -97,14 +97,23 @@ function ModelCardContent({ data }: Props) {
 
   const { useModelVersionRedirect, activeBaseModels } = useModelCardContext();
   const cardBaseModels = getCardBaseModels(data as Parameters<typeof getCardBaseModels>[0], activeBaseModels);
+  // In search, data.version is the primary version; data.versions[] carries all of
+  // them, so link to the version that matched the active base-model filter. The feed
+  // has no versions[] (data.version is already the matched one), so it falls back.
+  const targetVersionId =
+    (activeBaseModels?.length
+      ? (data as { versions?: { id: number; baseModel: string }[] }).versions?.find((v) =>
+          activeBaseModels.includes(v.baseModel)
+        )?.id
+      : undefined) ?? data.version.id;
   const href = useMemo(
     () =>
       getModelUrl({
         modelId: data.id,
         modelName: data.name,
-        modelVersionId: useModelVersionRedirect ? data.version.id : null,
+        modelVersionId: useModelVersionRedirect ? targetVersionId : null,
       }),
-    [data.id, data.name, data.version.id, useModelVersionRedirect]
+    [data.id, data.name, targetVersionId, useModelVersionRedirect]
   );
 
   return (

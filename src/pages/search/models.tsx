@@ -199,7 +199,10 @@ export function ModelsHitList() {
       {hiddenCount > 0 && (
         <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
-      <ModelCardContextProvider activeBaseModels={activeBaseModels}>
+      <ModelCardContextProvider
+        activeBaseModels={activeBaseModels}
+        useModelVersionRedirect={activeBaseModels.length > 0}
+      >
         <MasonryGrid
           data={items as any}
           render={ModelCard}
