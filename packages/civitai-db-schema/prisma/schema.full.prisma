@@ -731,6 +731,8 @@ enum ModelType {
   Wildcards
   Workflows
   Detection
+  VisionLanguage
+  CLIP
   Other
 }
 
@@ -2329,6 +2331,18 @@ model AppBlock {
   // 20260615120000_e5_screenshots; CNPG nvme0 does not auto-apply). NULL until
   // applied — read ONLY by the dark, mod-gated getAppDetail (NOT listAvailable).
   screenshots        Json?     // E5: [{ key, index, ext, contentType }]
+
+  // Off-site (external-link) app — PURE EXTERNAL LINK product model. When set,
+  // this listing is a stateless discovery/marketing entry that opens an external
+  // URL in a new tab: NO install, NO scopes, NO block token, NO subscription,
+  // and NO on-platform iframe/page hosting. Presence of `externalUrl` is the
+  // discriminator (no separate appType enum). Always a well-formed https:// URL
+  // (validated at registration). NULL = a normal on-platform (embedded) app, the
+  // existing flow. Mutually exclusive with on-platform hosting: an external app
+  // declares no page/iframe slot and skips the bundle / `<slug>.<APPS_DOMAIN>`
+  // validation. ADDITIVE + MANUALLY APPLIED (CNPG nvme0 does not auto-apply; see
+  // migration 20260629120000_add_appblock_external_url). NULL until applied.
+  externalUrl        String?   @map("external_url")
 
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)

@@ -178,6 +178,8 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
         'blockId',
         // F-E E3 additions — both public/display-safe.
         'category',
+        // Off-site (external-link) app target — display/navigation-only.
+        'externalUrl',
         'id',
         'installCount',
         'manifest',
@@ -422,6 +424,7 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
         'avgRating',
         'blockId',
         'category',
+        'externalUrl',
         'id',
         'installCount',
         'manifest',

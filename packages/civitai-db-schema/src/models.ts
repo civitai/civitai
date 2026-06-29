@@ -24,7 +24,7 @@ export type UserEngagementType = "Follow" | "Hide" | "Block";
 
 export type LinkType = "Sponsorship" | "Social" | "Other";
 
-export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "AestheticGradient" | "LORA" | "LoCon" | "DoRA" | "Controlnet" | "Upscaler" | "MotionModule" | "VAE" | "TextEncoder" | "UNet" | "CLIPVision" | "Poses" | "Wildcards" | "Workflows" | "Detection" | "Other";
+export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "AestheticGradient" | "LORA" | "LoCon" | "DoRA" | "Controlnet" | "Upscaler" | "MotionModule" | "VAE" | "TextEncoder" | "UNet" | "CLIPVision" | "Poses" | "Wildcards" | "Workflows" | "Detection" | "VisionLanguage" | "CLIP" | "Other";
 
 export type ImportStatus = "Pending" | "Processing" | "Failed" | "Completed";
 
@@ -1795,6 +1795,7 @@ export interface AppBlock {
   featured: boolean;
   featuredOrder: number | null;
   screenshots: JsonValue | null;
+  externalUrl: string | null;
   createdAt: Date;
   updatedAt: Date;
   platformDefault?: PlatformDefaultBlock | null;

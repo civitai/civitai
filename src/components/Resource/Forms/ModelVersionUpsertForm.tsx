@@ -147,7 +147,7 @@ const querySchema = z.object({
   bountyId: z.coerce.number().optional(),
 });
 
-export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
+export function ModelVersionUpsertForm({ id, model, version, children, onSubmit }: Props) {
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -423,7 +423,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
 
   return (
     <>
-      <Form form={form} onSubmit={handleSubmit}>
+      <Form id={id} form={form} onSubmit={handleSubmit}>
         <Stack>
           <InputText
             name="name"
@@ -1043,6 +1043,7 @@ type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
   earlyAccessConfig: ModelVersionEarlyAccessConfig | null;
 };
 type Props = {
+  id?: string;
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;

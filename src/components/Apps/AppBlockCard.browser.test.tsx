@@ -87,6 +87,7 @@ function makeBlock(
     },
     installCount: 3,
     category: null,
+    externalUrl: null,
     scopesSummary: [],
     avgRating: null,
     reviewCount: 0,

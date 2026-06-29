@@ -31,6 +31,7 @@ function makeBlock(id: string, name: string): AvailableBlock {
     manifest: { name, description: 'desc', targets: [{ slotId: 'app.page' }], hasPage: true },
     installCount: 0,
     category: null,
+    externalUrl: null,
     scopesSummary: [],
     avgRating: null,
     reviewCount: 0,

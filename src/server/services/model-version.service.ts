@@ -29,8 +29,13 @@ import {
   modelVersionAccessCache,
   modelVersionResourceCache,
 } from '~/server/redis/caches';
-import { REDIS_KEYS } from '~/server/redis/client';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -1829,6 +1834,37 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
   return { items, nextCursor };
 }
 
+// Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
+// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
+const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
+
+export function publicModelResponseKey(
+  modelId: number,
+  browsingLevel: number
+): RedisKeyTemplateCache {
+  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${modelId}:${browsingLevel}`;
+}
+
+// Best-effort, fail-open invalidation of the origin-side public response cache for
+// GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
+// unpublish / takedown / update / delete drops the cached 200 immediately rather
+// than serving stale for up to the cache TTL globally. Busts BOTH browsing-level
+// keys the handler can write (all-levels for unrestricted regions, sfw-only for
+// region-restricted ones). Deletes the physical key — the handler's read keys off
+// key PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT
+// throw into the mutation path, so it is swallowed (the entry otherwise expires
+// via its TTL).
+export async function bustPublicModelResponseCache(modelId: number | number[]) {
+  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
+  const modelIds = Array.isArray(modelId) ? modelId : [modelId];
+  if (modelIds.length === 0) return;
+  const keys = modelIds.flatMap((id) => [
+    publicModelResponseKey(id, allBrowsingLevelsFlag),
+    publicModelResponseKey(id, sfwBrowsingLevelsFlag),
+  ]);
+  await redis.del(keys).catch(() => undefined);
+}
+
 export const bustMvCache = async (
   ids: number | number[],
   modelIds?: number | number[],
@@ -1849,6 +1885,9 @@ export const bustMvCache = async (
     // separately. Stale entries here filter the model out of feeds (versions
     // with status='Draft' get dropped by the post-fetch transform).
     await dataForModelsCache.refresh(mIds);
+    // Drop the origin-side public GET /api/v1/models/[id] response cache for these
+    // models so a takedown / unpublish / update stops serving a stale 200.
+    await bustPublicModelResponseCache(mIds);
     await modelsSearchIndex.queueUpdate(
       mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );

@@ -1,0 +1,145 @@
+import { describe, expect, it } from 'vitest';
+import {
+  assertNoOnPlatformSurface,
+  MAX_EXTERNAL_URL_LENGTH,
+  registerExternalAppSchema,
+  validateExternalUrl,
+} from '~/server/schema/blocks/external-app.schema';
+
+/**
+ * App Blocks — off-site (external-link) app validation (PURE EXTERNAL LINK).
+ *
+ * Pins the two registration gates:
+ *   (a) the external URL must be a well-formed https:// URL, and
+ *   (b) external-link is MUTUALLY EXCLUSIVE with on-platform hosting (no page /
+ *       iframe / target slot).
+ * Plus the registration input schema shape.
+ */
+
+describe('validateExternalUrl', () => {
+  it('accepts a well-formed https URL and returns the canonical form', () => {
+    const r = validateExternalUrl('https://example.com/app');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.url).toBe('https://example.com/app');
+  });
+
+  it('accepts https with a path, query, and port', () => {
+    const r = validateExternalUrl('https://sub.example.com:8443/path?x=1#frag');
+    expect(r.ok).toBe(true);
+  });
+
+  it('trims surrounding whitespace before validating', () => {
+    const r = validateExternalUrl('  https://example.com  ');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.url).toBe('https://example.com/');
+  });
+
+  it('REJECTS a non-https (http) URL', () => {
+    const r = validateExternalUrl('http://example.com');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/https/i);
+  });
+
+  it('REJECTS dangerous schemes (javascript / data / mailto / ftp)', () => {
+    for (const url of [
+      'javascript:alert(1)',
+      'data:text/html,<script>alert(1)</script>',
+      'mailto:foo@bar.com',
+      'ftp://example.com/file',
+    ]) {
+      const r = validateExternalUrl(url);
+      expect(r.ok, `"${url}" must be rejected`).toBe(false);
+    }
+  });
+
+  it('REJECTS a non-absolute / malformed URL', () => {
+    for (const url of ['example.com', '/relative/path', 'not a url', 'https://']) {
+      const r = validateExternalUrl(url);
+      expect(r.ok, `"${url}" must be rejected`).toBe(false);
+    }
+  });
+
+  it('REJECTS a non-string / empty input', () => {
+    expect(validateExternalUrl(undefined).ok).toBe(false);
+    expect(validateExternalUrl(null).ok).toBe(false);
+    expect(validateExternalUrl(123).ok).toBe(false);
+    expect(validateExternalUrl('').ok).toBe(false);
+    expect(validateExternalUrl('   ').ok).toBe(false);
+  });
+
+  it('REJECTS an over-long URL', () => {
+    const long = 'https://example.com/' + 'a'.repeat(MAX_EXTERNAL_URL_LENGTH);
+    expect(validateExternalUrl(long).ok).toBe(false);
+  });
+});
+
+describe('assertNoOnPlatformSurface (external ⟂ on-platform)', () => {
+  it('accepts a display-only manifest (name + description only)', () => {
+    expect(assertNoOnPlatformSurface({ name: 'Cool', description: 'desc' }).ok).toBe(true);
+    expect(assertNoOnPlatformSurface({}).ok).toBe(true);
+  });
+
+  it('REJECTS a manifest declaring a page surface', () => {
+    const r = assertNoOnPlatformSurface({ name: 'X', page: { path: '/run' } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/page/i);
+  });
+
+  it('REJECTS a manifest declaring target slots', () => {
+    const r = assertNoOnPlatformSurface({ name: 'X', targets: [{ slotId: 'model.sidebar_top' }] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/slot/i);
+  });
+
+  it('REJECTS a manifest declaring an iframe surface', () => {
+    const r = assertNoOnPlatformSurface({ name: 'X', iframe: { src: 'https://x.civit.ai' } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/iframe/i);
+  });
+
+  it('an EMPTY targets array is allowed (declares nothing)', () => {
+    expect(assertNoOnPlatformSurface({ name: 'X', targets: [] }).ok).toBe(true);
+  });
+});
+
+describe('registerExternalAppSchema', () => {
+  it('accepts a valid registration input', () => {
+    const parsed = registerExternalAppSchema.safeParse({
+      slug: 'cool-app',
+      name: 'Cool App',
+      description: 'A cool off-site app',
+      externalUrl: 'https://cool.example.com',
+      category: 'utility',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts without optional description/category', () => {
+    const parsed = registerExternalAppSchema.safeParse({
+      slug: 'cool-app',
+      name: 'Cool App',
+      externalUrl: 'https://cool.example.com',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects a malformed slug (uppercase / leading digit / too short)', () => {
+    for (const slug of ['Cool', '1app', 'ab', 'a_b', '-app']) {
+      const parsed = registerExternalAppSchema.safeParse({
+        slug,
+        name: 'X',
+        externalUrl: 'https://x.com',
+      });
+      expect(parsed.success, `slug "${slug}" should fail`).toBe(false);
+    }
+  });
+
+  it('rejects an empty name', () => {
+    const parsed = registerExternalAppSchema.safeParse({
+      slug: 'cool-app',
+      name: '',
+      externalUrl: 'https://x.com',
+    });
+    expect(parsed.success).toBe(false);
+  });
+});
