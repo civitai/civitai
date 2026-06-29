@@ -1795,6 +1795,7 @@ export interface AppBlock {
   featured: boolean;
   featuredOrder: number | null;
   screenshots: JsonValue | null;
+  externalUrl: string | null;
   createdAt: Date;
   updatedAt: Date;
   platformDefault?: PlatformDefaultBlock | null;

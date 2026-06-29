@@ -90,6 +90,7 @@ function makeBlock(overrides: Partial<AvailableBlock> = {}): AvailableBlock {
     },
     installCount: 3,
     category: null,
+    externalUrl: null,
     scopesSummary: [],
     avgRating: null,
     reviewCount: 0,
@@ -116,6 +117,7 @@ function makeDetail(overrides: Partial<PublicAppDetail> = {}): PublicAppDetail {
     reviewCount: 0,
     liveUrl: 'https://my-block.example.com',
     screenshots: [],
+    externalUrl: null,
     ...overrides,
   };
 }
