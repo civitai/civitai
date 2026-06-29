@@ -30,14 +30,11 @@
  *   Body: { "action": "<action>", ...params }
  *
  * Actions (see the switch below for authoritative param list):
- *   count   - {modelId?}                   Preview how many trained versions / models match.
- *   apply   - {dryRun?, limit?, modelId?}  Reset matching versions (and their orphaned
- *                                           parent models) to Draft.
- *                                           - dryRun!==false previews without writing (default).
- *                                             Pass dryRun:false to actually write.
- *                                           - limit caps the number of versions per run
- *                                             (staged rollouts).
- *                                           - modelId scopes to one model for spot-fixes.
+ *   count   - {modelId?}          Preview how many trained versions / models match (no write).
+ *   apply   - {limit?, modelId?}  Reset matching versions (and their orphaned parent
+ *                                 models) to Draft.
+ *                                 - limit caps the number of versions per run (staged rollouts).
+ *                                 - modelId scopes to one model for spot-fixes.
  *
  * Target predicate (a swept, still-postless trained version):
  *   mv.status = 'Unpublished' AND mv.uploadType = 'Trained'
@@ -50,11 +47,9 @@
  * they don't re-trigger the unpublish notification (which keys off unpublishedAt
  * > lastSent), and they flip back on the next user-initiated publish.
  *
- * The apply write re-asserts the full predicate (not just the selected id list),
- * so a row that changed between selection and write is skipped, never clobbered;
- * re-running is safe.
- *
- * Every write is gated by WEBHOOK_TOKEN and defaults to dry-run.
+ * apply re-asserts the full predicate (not just the selected id list), so a row
+ * that changed between selection and write is skipped, never clobbered; re-running
+ * is safe. Both actions are gated by WEBHOOK_TOKEN; count never writes.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -69,7 +64,6 @@ const schema = z.object({
   action: actionSchema,
   modelId: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(50_000).optional(),
-  dryRun: z.coerce.boolean().optional(),
 });
 
 // A swept trained version: was published, lost its owner post, got unpublished
@@ -113,29 +107,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     }
 
     case 'apply': {
-      if (input.dryRun !== false) {
-        const rows = await dbRead.$queryRawUnsafe<{ versionCount: bigint; modelCount: bigint }[]>(`
-          SELECT
-            COUNT(*)::bigint AS "versionCount",
-            COUNT(DISTINCT s."modelId")::bigint AS "modelCount"
-          FROM (
-            SELECT mv.id, mv."modelId"
-            FROM "ModelVersion" mv
-            JOIN "Model" m ON m.id = mv."modelId"
-            WHERE ${TARGET_PREDICATE} ${modelFilter}
-            ${limitClause}
-          ) s
-        `);
-        return res.status(200).json({
-          action: 'apply',
-          dryRun: true,
-          modelId: input.modelId ?? null,
-          limit: input.limit ?? null,
-          wouldDraftVersions: Number(rows[0]?.versionCount ?? BigInt(0)),
-          wouldTouchModels: Number(rows[0]?.modelCount ?? BigInt(0)),
-        });
-      }
-
       const result = await dbWrite.$transaction(async (tx) => {
         // Select candidates on the primary inside the tx (current data, no
         // replica lag). limit applies here for staged rollouts.
@@ -192,7 +163,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
       return res.status(200).json({
         action: 'apply',
-        dryRun: false,
         modelId: input.modelId ?? null,
         limit: input.limit ?? null,
         draftedVersions: result.versions,
