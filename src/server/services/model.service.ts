@@ -948,6 +948,10 @@ export const getModelsRaw = async ({
             modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
           }
 
+          // Distinct base models across the model's visible versions — surfaced to the
+          // card badge so it can show multi-base support and order matched bases first.
+          const allBaseModels = [...new Set(modelVersions.map((mv) => mv.baseModel))];
+
           if (baseModels) {
             modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
           }
@@ -999,6 +1003,7 @@ export const getModelsRaw = async ({
               [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
             },
             modelVersions,
+            baseModels: allBaseModels,
             hashes: data.hashes,
             tagsOnModels: data.tags,
             user: {
