@@ -23,6 +23,15 @@ import {
   resolvePageResourceContext,
   snapshotFromWorkflow,
 } from '../workflow.service';
+// REAL param-building path (no mocks): the generation graph validator and the
+// step-metadata snapshot fn are the exact functions the orchestrator's
+// `createWorkflowStepsFromGraph` runs to derive `workflowMetadata.params`. Both
+// live in the browser-safe `shared/` tree (no DB/redis), so we import and run
+// them for real in the integration-style test below.
+import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
+import { toStepMetadata } from '~/shared/utils/resource.utils';
+import { removeEmpty } from '~/utils/object-helpers';
+import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 
 function fakeWorkflow(over: Record<string, unknown> = {}) {
   return {
@@ -488,5 +497,163 @@ describe('resolvePageResourceContext', () => {
       model: { id: 8, type: 'LORA', userId: 55 },
     });
     await expect(resolvePageResourceContext(201)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Integration-style: REAL block input → REAL graph validation → REAL params
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// WHY THIS EXISTS (the audit's 🟡 gap): the router-level tests in
+// `src/server/routers/__tests__/blocks.router.workflow.test.ts` mock
+// `createWorkflowStepsFromGraphInput` WHOLESALE — they hand the router a canned
+// `{ workflowMetadata }` and assert the router attaches it to the real submit
+// body / omits it on whatIf. That proves the router PLUMBING but NOT the PR's
+// headline claim: that REAL block input, run through the ACTUAL param-mapping,
+// yields a POPULATED `workflowMetadata.params`. A regression in
+// `buildTextToImageInput` or the param snapshot (e.g. dropping `prompt`/`seed`,
+// or the graph silently blanking them) would leave those plumbing tests green
+// while shipping blank queue/remix metadata. This closes that gap.
+//
+// WHAT IS REAL vs STUBBED, and why:
+//   • REAL  — `buildTextToImageInput` (the block→graph-input translator under
+//             test), `generationGraph.safeParse` (the EXACT validator
+//             `createWorkflowStepsFromGraph` runs via `validateInput`), and
+//             `toStepMetadata` + `removeEmpty` (the EXACT param-snapshot fns
+//             that build `workflowMetadata.params`). This is the whole
+//             param-mapping path the PR touches — nothing about how `params` is
+//             derived is mocked.
+//   • STUBBED (by NOT running it) — resource ENRICHMENT
+//             (`validateAndEnrichResources` → `getResourceData`, a DB/network
+//             lookup) and the orchestrator step-input handlers. Those are
+//             external IO and do NOT contribute to `params` (params come from
+//             the validated graph output minus model/resources/vae). We re-run
+//             `createWorkflowStepsFromGraph`'s param logic faithfully
+//             (safeParse → toStepMetadata → removeEmpty) rather than calling
+//             `createWorkflowStepsFromGraphInput`, which would drag in the real
+//             DB client + event-engine-common import graph (un-runnable on this
+//             host, and the reason the router tests mock it wholesale).
+//
+// HONEST LIMITATION: this asserts the params snapshot + the CHECKPOINT in
+// `resources`. It does NOT assert ADDITIONAL LoRA resources land in
+// `workflowMetadata.resources`, because the graph's `resources` node requires
+// the enriched ResourceData map (from `getResourceData`) to validate unknown
+// version ids — without enrichment `safeParse` rejects them. Faking that map
+// would prove a mock, not real behavior, so the additional-resource→metadata
+// linkage is intentionally left to the (mocked) router test's
+// `realBody.metadata.resources` assertion. The checkpoint anchor, which the
+// graph resolves WITHOUT enrichment, IS covered here.
+describe('block input yields populated workflow metadata params (real graph path)', () => {
+  // A free user's generation context — the same shape `buildGenerationContext`
+  // produces, hand-built so the test stays off sysRedis/DB. The graph validator
+  // reads limits/tier/gateRules from this; nothing here affects how `params` is
+  // snapshotted.
+  const externalCtx: GenerationCtx = {
+    limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
+    user: { isMember: false, tier: 'free' },
+    flags: {},
+    selfHostedDisabledEcosystems: [],
+    selfHostedMode: 'enabled',
+    gateRules: [],
+  };
+
+  // Mirror of the param-snapshot CALCULATION inside
+  // `createWorkflowStepsFromGraph`: validate the graph input, then
+  // `removeEmpty(toStepMetadata(data).params)`. (Computed-key stripping and the
+  // seed default also live there, but our body supplies a literal seed and our
+  // asserted fields are all form inputs, never computed — so this faithfully
+  // reproduces the `workflowMetadata.params` for this body.)
+  function paramsFromRealGraph(input: Record<string, unknown>) {
+    const result = generationGraph.safeParse(input, externalCtx);
+    if (!result.success) {
+      throw new Error(`graph validation failed: ${JSON.stringify(result.errors)}`);
+    }
+    const meta = toStepMetadata(result.data as never);
+    return {
+      params: removeEmpty(meta.params as Record<string, unknown>),
+      resources: meta.resources,
+    };
+  }
+
+  it('populates params (prompt/seed/sampler/cfgScale/steps) from real block input', () => {
+    // A realistic form-shaped textToImage block body — the Extract<…,'textToImage'>
+    // shape the iframe posts: per-image params the user set in the block UI.
+    const body = {
+      kind: 'textToImage' as const,
+      modelId: 7,
+      modelVersionId: 99,
+      params: {
+        prompt: 'a photo of a cat astronaut',
+        negativePrompt: 'blurry, low quality',
+        cfgScale: 7,
+        sampler: 'Euler a',
+        steps: 25,
+        seed: 12345,
+        quantity: 1,
+      },
+    };
+    // checkpoint-bound install: the resolved checkpoint IS body.modelVersionId.
+    const resolved = {
+      baseModel: 'SDXL 1.0',
+      modelType: 'Checkpoint',
+      checkpointVersionId: 99,
+      checkpointBaseModel: 'SDXL 1.0',
+    };
+
+    // REAL translator → REAL graph validation → REAL param snapshot.
+    const input = buildTextToImageInput(body as never, resolved);
+    const { params, resources } = paramsFromRealGraph(input);
+
+    // The headline claim: params is POPULATED with the user's form fields
+    // (verbatim), not blank. A regression that re-blanks block metadata fails here.
+    expect(params).toMatchObject({
+      workflow: 'txt2img',
+      prompt: 'a photo of a cat astronaut',
+      negativePrompt: 'blurry, low quality',
+      cfgScale: 7,
+      sampler: 'Euler a',
+      steps: 25,
+      seed: 12345,
+      quantity: 1,
+    });
+    // ecosystem is derived from the checkpoint baseModel by the real translator.
+    expect(params.ecosystem).toBe('SDXL');
+
+    // The checkpoint anchor shows up in the resources snapshot (this is the part
+    // of `workflowMetadata.resources` the graph resolves without enrichment).
+    expect(resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 99, model: { type: 'Checkpoint' } }),
+      ])
+    );
+  });
+
+  it('snaps SD1 defaults and still populates params for an SD1.5 checkpoint', () => {
+    // Cross-check a second ecosystem so the assertion isn't SDXL-specific: the
+    // real graph must snap SD1.5 to 512² and carry the same form params through.
+    const body = {
+      kind: 'textToImage' as const,
+      modelId: 7,
+      modelVersionId: 99,
+      params: { prompt: 'a dog', sampler: 'DPM++ 2M Karras', steps: 30, seed: 777, quantity: 2 },
+    };
+    const resolved = {
+      baseModel: 'SD 1.5',
+      modelType: 'Checkpoint',
+      checkpointVersionId: 99,
+      checkpointBaseModel: 'SD 1.5',
+    };
+    const input = buildTextToImageInput(body as never, resolved);
+    const { params } = paramsFromRealGraph(input);
+    expect(params).toMatchObject({
+      workflow: 'txt2img',
+      ecosystem: 'SD1',
+      prompt: 'a dog',
+      sampler: 'DPM++ 2M Karras',
+      steps: 30,
+      seed: 777,
+      quantity: 2,
+    });
+    expect(params.aspectRatio).toMatchObject({ width: 512, height: 512 });
   });
 });

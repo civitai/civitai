@@ -1164,16 +1164,22 @@ export async function createWorkflowStepsFromGraphInput({
   user?: { id?: number; isModerator?: boolean };
   isWhatIf?: boolean;
   isGreen?: boolean;
-}): Promise<WorkflowStepTemplate[]> {
+}): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
   const { data, computedKeys } = validateInput(input, externalCtx);
-  const { steps } = await createWorkflowStepsFromGraph({
+  // `workflowMetadata` carries `{ params, resources, remixOfId, isPrivateGeneration }`
+  // (built by `createWorkflowStepsFromGraph`, run through `removeEmpty`) and is
+  // what the queue/remix view reads via `WorkflowData.params/resources/remixOfId`.
+  // It is intentionally `undefined` on whatIf — the caller must only attach it to
+  // the REAL submit body, mirroring `generateFromGraph` (see below). Return it so
+  // the App-Blocks submit path can carry it; the normal path bakes it in directly.
+  const { steps, workflowMetadata } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
     user,
     isWhatIf,
     isGreen,
   });
-  return steps;
+  return { steps, workflowMetadata };
 }
 
 type SnippetsPayloadShape = {

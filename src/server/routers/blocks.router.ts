@@ -690,7 +690,7 @@ async function createBlockTextToImageStep(opts: {
     id: opts.user.id,
     isModerator: opts.user.isModerator,
   });
-  const steps = await createWorkflowStepsFromGraphInput({
+  const { steps, workflowMetadata } = await createWorkflowStepsFromGraphInput({
     input: opts.input,
     externalCtx,
     user: { id: opts.user.id, isModerator: opts.user.isModerator },
@@ -707,7 +707,15 @@ async function createBlockTextToImageStep(opts: {
       message: 'expected a single generation step',
     });
   }
-  return step;
+  // `workflowMetadata` (params/resources/remixOfId/isPrivateGeneration, already
+  // `removeEmpty`-cleaned) is what populates the orchestrator queue/remix view
+  // (`WorkflowData.params/resources/remixOfId`). The normal generation form
+  // attaches it on submit; the block path historically dropped it, leaving
+  // block-generated images with blank queue metadata (no prompt/seed/sampler/
+  // resources). It is `undefined` on whatIf calls (the graph omits it then), so
+  // callers can attach it to the REAL submit body only — mirroring the normal
+  // path's `isWhatIf ? undefined : metadata` semantics — without a separate flag.
+  return { step, workflowMetadata };
 }
 
 export const blocksRouter = router({
@@ -2134,7 +2142,10 @@ export const blocksRouter = router({
         checkpointVersionId: checkpoint.versionId,
         checkpointBaseModel: checkpoint.baseModel,
       });
-      const step = await createBlockTextToImageStep({ input: generateInput, user, whatIf: true });
+      // whatIf: no `metadata` on the body — matches the normal path
+      // (`generateFromGraph` builds workflowMetadata only for real submits) and
+      // `createBlockTextToImageStep` returns `workflowMetadata: undefined` here.
+      const { step } = await createBlockTextToImageStep({ input: generateInput, user, whatIf: true });
       const workflow = await submitWorkflow({
         token,
         body: {
@@ -2293,7 +2304,9 @@ export const blocksRouter = router({
       // two (the graph fills a random seed when none is supplied), but that
       // doesn't affect cost — the estimate is computed against the same
       // resources/params the real submit uses.
-      const stepForCostCheck = await createBlockTextToImageStep({
+      // whatIf cost preflight: `workflowMetadata` is undefined here (graph omits
+      // it on whatIf), and the whatif body never carries `metadata` anyway.
+      const { step: stepForCostCheck } = await createBlockTextToImageStep({
         input: generateInput,
         user,
         whatIf: true,
@@ -2381,13 +2394,24 @@ export const blocksRouter = router({
           ip: ctx.ip,
         });
 
-        const step = await createBlockTextToImageStep({ input: generateInput, user, isGreen });
+        // REAL submit: attach `workflowMetadata` so the orchestrator queue/remix
+        // view shows the prompt/seed/sampler/cfg/steps/resources. This is the
+        // non-whatIf call (no `whatIf` flag), so the graph builds metadata and
+        // `createBlockTextToImageStep` returns it. Mirrors the normal form path
+        // (`generateFromGraph` passes `metadata: workflowMetadata`). `removeEmpty`
+        // already stripped fields the block context lacks (e.g. remixOfId).
+        const { step, workflowMetadata } = await createBlockTextToImageStep({
+          input: generateInput,
+          user,
+          isGreen,
+        });
         const submitted = await submitWorkflow({
           token,
           body: {
             steps: [step],
             tags,
             currencies: BLOCK_CURRENCIES,
+            metadata: workflowMetadata,
             // Authoritative maturity clamp on the REAL submit — the orchestrator
             // rejects mature output when this is false. Token-claim derived.
             ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
