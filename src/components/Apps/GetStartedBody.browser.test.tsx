@@ -1,18 +1,20 @@
 import { describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
 import {
-  APP_SDK_NPM_URL,
-  BLOCKS_REACT_NPM_URL,
-  CIVITAI_CLI_GITHUB_URL,
-  CLI_CREATE_COMMAND,
-  CLI_INSTALL_BREW,
-  CLI_INSTALL_GO,
-  CLI_RUN_COMMAND,
-  CLI_SUBMIT_COMMAND,
   GetStartedBody,
   REQUEST_ACCESS_HREF,
   REQUEST_ACCESS_TITLE,
 } from '~/components/Apps/GetStartedBody';
+import {
+  APP_SDK_NPM_URL,
+  BLOCKS_REACT_NPM_URL,
+  CIVITAI_CLI_GITHUB_URL,
+  CLI_CREATE_SAMPLE_COMMAND,
+  CLI_INSTALL_BREW,
+  CLI_INSTALL_GO,
+  CLI_RUN_COMMAND,
+  CLI_SUBMIT_COMMAND,
+} from '~/components/Apps/cliCommands';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -46,7 +48,7 @@ describe('GetStartedBody (public App builders landing)', () => {
     // Copyable commands render prefixed with a shell prompt ("$ ").
     for (const command of [
       CLI_INSTALL_BREW,
-      CLI_CREATE_COMMAND,
+      CLI_CREATE_SAMPLE_COMMAND,
       CLI_RUN_COMMAND,
       CLI_SUBMIT_COMMAND,
     ]) {
@@ -66,7 +68,7 @@ describe('GetStartedBody (public App builders landing)', () => {
   test('command constants are the real, verified one-liners', () => {
     expect(CLI_INSTALL_BREW).toBe('brew install civitai/tap/civitai');
     expect(CLI_INSTALL_GO).toBe('go install github.com/civitai/cli/cmd/civitai@latest');
-    expect(CLI_CREATE_COMMAND).toBe('civitai app create my-app');
+    expect(CLI_CREATE_SAMPLE_COMMAND).toBe('civitai app create my-app');
     expect(CLI_RUN_COMMAND).toBe('cd my-app && npm install && npm run dev:harness');
     expect(CLI_SUBMIT_COMMAND).toBe('civitai app submit');
   });

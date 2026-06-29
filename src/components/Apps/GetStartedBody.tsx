@@ -14,6 +14,16 @@ import {
   Title,
 } from '@mantine/core';
 import { IconBrandGithub, IconCheck, IconClipboard, IconLock } from '@tabler/icons-react';
+import {
+  APP_SDK_NPM_URL,
+  BLOCKS_REACT_NPM_URL,
+  CIVITAI_CLI_GITHUB_URL,
+  CLI_CREATE_SAMPLE_COMMAND,
+  CLI_INSTALL_BREW,
+  CLI_INSTALL_GO,
+  CLI_RUN_COMMAND,
+  CLI_SUBMIT_COMMAND,
+} from '~/components/Apps/cliCommands';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 /**
@@ -37,19 +47,9 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
  * isolation in component tests.
  */
 
-// --- Real, verified external links / commands (single source for tests) ---
-export const CIVITAI_CLI_GITHUB_URL = 'https://github.com/civitai/cli';
-export const BLOCKS_REACT_NPM_URL = 'https://www.npmjs.com/package/@civitai/blocks-react';
-export const APP_SDK_NPM_URL = 'https://www.npmjs.com/package/@civitai/app-sdk';
-
-export const CLI_INSTALL_BREW = 'brew install civitai/tap/civitai';
-export const CLI_INSTALL_GO = 'go install github.com/civitai/cli/cmd/civitai@latest';
-export const CLI_CREATE_COMMAND = 'civitai app create my-app';
-// The CLI does NOT install deps on `create`; its own next-step prompt is
-// `cd <dir> && npm install && npm run dev:harness`. `dev:harness` serves a MOCK
-// host at localhost:5186 (plain `npm run dev` shows a blank screen — no host).
-export const CLI_RUN_COMMAND = 'cd my-app && npm install && npm run dev:harness';
-export const CLI_SUBMIT_COMMAND = 'civitai app submit';
+// CLI commands + ecosystem links are single-sourced in `./cliCommands` (shared
+// with the submit CTA so the two surfaces can't drift). The quickstart uses the
+// with-sample-name create form (`CLI_CREATE_SAMPLE_COMMAND`).
 
 // Request-access intake = a PREFILLED new-issue on the public `civitai/cli`
 // repo (the dev-native, zero-infra channel the page already links to). The
@@ -118,7 +118,7 @@ export function GetStartedBody() {
         <Text size="xs" c="dimmed">
           or: <Code>{CLI_INSTALL_GO}</Code>
         </Text>
-        <CopyableCommand command={CLI_CREATE_COMMAND} />
+        <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} />
         <CopyableCommand command={CLI_RUN_COMMAND} />
         <Text size="sm" c="dimmed">
           Opens at <Code>localhost:5186</Code> in a mock Civitai — no account, no Buzz needed. Edit{' '}

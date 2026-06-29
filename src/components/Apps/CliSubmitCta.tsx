@@ -13,19 +13,13 @@ import {
   Title,
 } from '@mantine/core';
 import { IconBrandGithub, IconCheck, IconClipboard, IconTerminal2 } from '@tabler/icons-react';
+import {
+  CIVITAI_CLI_GITHUB_URL,
+  CLI_CREATE_COMMAND,
+  CLI_INSTALL_BREW,
+  CLI_SUBMIT_COMMAND,
+} from '~/components/Apps/cliCommands';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-
-/**
- * The canonical public Civitai CLI repository. This is the recommended way to
- * author + submit an App Block — `civitai app create` scaffolds a block and
- * `civitai app submit` packages + uploads it (no hand-rolled ZIP).
- */
-export const CIVITAI_CLI_GITHUB_URL = 'https://github.com/civitai/cli';
-
-/** Install + author + submit one-liners promoted as the primary path. */
-export const CLI_INSTALL_COMMAND = 'brew install civitai/tap/civitai';
-export const CLI_CREATE_COMMAND = 'civitai app create';
-export const CLI_SUBMIT_COMMAND = 'civitai app submit';
 
 function CopyableCommand({ command }: { command: string }) {
   return (
@@ -89,7 +83,7 @@ export function CliSubmitCta() {
           <Text size="sm" fw={600}>
             1. Install
           </Text>
-          <CopyableCommand command={CLI_INSTALL_COMMAND} />
+          <CopyableCommand command={CLI_INSTALL_BREW} />
         </Stack>
 
         <Stack gap={6}>
