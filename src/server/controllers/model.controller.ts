@@ -1145,22 +1145,8 @@ export const getMyTrainingModelsHandler = async ({
         trainingStatus: true,
         trainedWords: true,
         name: true,
-        // Publish status — distinguishes an in-flight training (Draft/Training)
-        // from one that was published then unpublished (swept). Drives the
-        // "Unpublished" indicator + republish CTA in the trainer.
-        status: true,
         createdAt: true,
         updatedAt: true,
-        // Whether a showcase post by the model owner still exists for this
-        // version. Filter by userId to match the requirements sweep
-        // (reset-to-draft-without-requirements) and the publish guard, which
-        // both key off an owner-authored post. When 0 on an unpublished
-        // version, the republish CTA routes to post creation.
-        _count: {
-          select: {
-            posts: { where: { userId } },
-          },
-        },
 
         model: {
           select: {

@@ -58,7 +58,7 @@ import type {
   TrainingDetailsObj,
   TrainingDetailsParamsUnion,
 } from '~/server/schema/model-version.schema';
-import { ModelStatus, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -466,22 +466,6 @@ export default function UserTrainingModels() {
                   <Text>{trainingStatusFields[mv.trainingStatus]?.description ?? 'N/A'}</Text>
                 </HoverCard.Dropdown>
               </HoverCard>
-              {mv.status === ModelStatus.Unpublished && (
-                <HoverCard shadow="md" width={320} zIndex={100} withArrow withinPortal>
-                  <HoverCard.Target>
-                    <Badge color="orange" variant="filled" style={{ cursor: 'pointer' }}>
-                      Unpublished
-                    </Badge>
-                  </HoverCard.Target>
-                  <HoverCard.Dropdown>
-                    <Text size="sm">
-                      This model was removed from your profile because its showcase post is missing
-                      (the example images were removed, or the post was deleted). Re-add example
-                      images to republish it.
-                    </Text>
-                  </HoverCard.Dropdown>
-                </HoverCard>
-              )}
               {isProcessing && (
                 <>
                   <Divider size="sm" orientation="vertical" />
@@ -727,27 +711,6 @@ export default function UserTrainingModels() {
 
           return (
             <Group justify="flex-end" gap={8} pr="xs" wrap="nowrap">
-              {mv.status === ModelStatus.Unpublished && (
-                <Link
-                  legacyBehavior
-                  href={
-                    (mv._count?.posts ?? 0) === 0
-                      ? `/posts/create?modelId=${mv.model.id}&modelVersionId=${mv.id}`
-                      : `/models/${mv.model.id}`
-                  }
-                  passHref
-                >
-                  <Button
-                    component="a"
-                    radius="xl"
-                    color="orange"
-                    onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
-                    size="compact-sm"
-                  >
-                    Republish
-                  </Button>
-                </Link>
-              )}
               {mv.trainingStatus === TrainingStatus.InReview && !isDataPurged && (
                 <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
                   <Button
