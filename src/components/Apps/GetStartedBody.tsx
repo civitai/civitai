@@ -51,10 +51,20 @@ export const CLI_CREATE_COMMAND = 'civitai app create my-app';
 export const CLI_RUN_COMMAND = 'cd my-app && npm install && npm run dev:harness';
 export const CLI_SUBMIT_COMMAND = 'civitai app submit';
 
-// TODO: real request-access link — replace this placeholder with the live
-// request-access form (or a mailto:) before launch. Left as `#` so it is an
-// obvious, non-functional placeholder.
-export const REQUEST_ACCESS_HREF = '#';
+// Request-access intake = a PREFILLED new-issue on the public `civitai/cli`
+// repo (the dev-native, zero-infra channel the page already links to). The
+// title + body below are URL-encoded into the github.com/.../issues/new query
+// so the issue opens pre-populated with a short intake prompt.
+export const REQUEST_ACCESS_TITLE = 'App Blocks: request publishing access';
+export const REQUEST_ACCESS_BODY = `Thanks for your interest in building on Civitai Apps!
+
+- Civitai username:
+- What you'd like to build:
+- Links to anything you've built (repo/demo, optional):
+`;
+export const REQUEST_ACCESS_HREF = `https://github.com/civitai/cli/issues/new?title=${encodeURIComponent(
+  REQUEST_ACCESS_TITLE
+)}&body=${encodeURIComponent(REQUEST_ACCESS_BODY)}`;
 
 function CopyableCommand({ command }: { command: string }) {
   return (
@@ -204,15 +214,17 @@ export function GetStartedBody() {
             Publishing is in private beta.
           </Text>
           <Text size="sm" c="dimmed">
-            Build and test locally today; request access to publish.
+            Build and test locally today; request access on GitHub to publish.
           </Text>
           <Group gap="xs">
             <Button
               component="a"
               href={REQUEST_ACCESS_HREF}
+              target="_blank"
+              rel="noopener noreferrer"
               leftSection={<IconLock size={16} />}
             >
-              Request access
+              Request access on GitHub
             </Button>
           </Group>
         </Stack>

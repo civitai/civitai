@@ -11,6 +11,7 @@ import {
   CLI_SUBMIT_COMMAND,
   GetStartedBody,
   REQUEST_ACCESS_HREF,
+  REQUEST_ACCESS_TITLE,
 } from '~/components/Apps/GetStartedBody';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -85,12 +86,17 @@ describe('GetStartedBody (public App builders landing)', () => {
     expect(appSdk.element().getAttribute('href')).toBe(APP_SDK_NPM_URL);
   });
 
-  test('renders the Request-access CTA wired to the placeholder href', async () => {
+  test('renders the Request-access CTA wired to a prefilled civitai/cli issue', async () => {
     renderWithProviders(<GetStartedBody />);
-    const cta = page.getByRole('link', { name: 'Request access' });
+    const cta = page.getByRole('link', { name: 'Request access on GitHub' });
     await expect.element(cta).toBeInTheDocument();
-    // Deliberate placeholder until the real form exists.
     expect(cta.element().getAttribute('href')).toBe(REQUEST_ACCESS_HREF);
-    expect(REQUEST_ACCESS_HREF).toBe('#');
+    // Points at a well-formed prefilled new-issue on the public CLI repo
+    // (no longer the `#` placeholder).
+    expect(REQUEST_ACCESS_HREF).toMatch(
+      /^https:\/\/github\.com\/civitai\/cli\/issues\/new\?/
+    );
+    expect(REQUEST_ACCESS_HREF).toContain(`title=${encodeURIComponent(REQUEST_ACCESS_TITLE)}`);
+    expect(REQUEST_ACCESS_HREF).toContain('&body=');
   });
 });
