@@ -1538,6 +1538,13 @@ export type ComicChapter = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type ComicChapterRead = {
+  userId: number;
+  chapterId: number;
+  unread: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type ComicPanel = {
   id: Generated<number>;
   projectId: number;
@@ -1581,8 +1588,18 @@ export type ComicProjectEngagement = {
   userId: number;
   projectId: number;
   type: Generated<ComicEngagementType>;
-  readChapters: Generated<number[]>;
   createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
+export type ComicProjectMetric = {
+  comicProjectId: number;
+  updatedAt: Generated<Timestamp>;
+  tippedCount: Generated<number>;
+  tippedAmountCount: Generated<number>;
+  followerCount: Generated<number>;
+  hiddenCount: Generated<number>;
+  readerCount: Generated<number>;
+  chapterReadCount: Generated<number>;
 };
 export type ComicProjectReference = {
   projectId: number;
@@ -3735,10 +3752,12 @@ export type DB = {
   CollectionReport: CollectionReport;
   CollectionStat: CollectionStat;
   ComicChapter: ComicChapter;
+  ComicChapterRead: ComicChapterRead;
   ComicPanel: ComicPanel;
   ComicPanelReference: ComicPanelReference;
   ComicProject: ComicProject;
   ComicProjectEngagement: ComicProjectEngagement;
+  ComicProjectMetric: ComicProjectMetric;
   ComicProjectReference: ComicProjectReference;
   ComicProjectReport: ComicProjectReport;
   ComicReference: ComicReference;
