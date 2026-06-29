@@ -21,7 +21,9 @@ export default MixedAuthEndpoint(async function (
   if (!env.FRESHDESK_JWT_URL) return res.status(500).send('FRESHDESK_JWT_URL not set');
 
   // Parse query
-  const { nonce, state } = schema.parse(req.query);
+  const result = schema.safeParse(req.query);
+  if (!result.success) return res.status(400).json({ error: result.error });
+  const { nonce, state } = result.data;
 
   // Prepare JWT
   const id_token = (await createFreshdeskToken(user, nonce)) as string;
