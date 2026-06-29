@@ -7,13 +7,24 @@ import {
   CopyButton,
   Divider,
   Group,
-  List,
+  SimpleGrid,
   Stack,
   Text,
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconBrandGithub, IconCheck, IconClipboard, IconLock } from '@tabler/icons-react';
+import {
+  IconBrandGithub,
+  IconCheck,
+  IconClipboard,
+  IconDatabase,
+  IconLock,
+  IconPalette,
+  IconPhoto,
+  IconServer,
+  IconSparkles,
+  IconUser,
+} from '@tabler/icons-react';
 import {
   APP_SDK_NPM_URL,
   BLOCKS_REACT_NPM_URL,
@@ -128,30 +139,64 @@ export function GetStartedBody() {
 
       <Divider />
 
-      {/* What you get — 3 lines + the links */}
+      {/* What you get — the platform leverage a dev gets, then the toolkit links */}
       <Stack gap="sm">
         <Title order={2}>What you get</Title>
-        <List
-          size="sm"
-          spacing={6}
-          icon={
-            <ThemeIcon color="blue" size={18} radius="xl" variant="light">
-              <IconCheck size={12} />
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+          <Group gap="xs" align="flex-start" wrap="nowrap">
+            <ThemeIcon size="md" radius="md" variant="light" color="blue">
+              <IconPhoto size={16} />
             </ThemeIcon>
-          }
-        >
-          <List.Item>
-            <Code>civitai</Code> CLI — scaffold, run, and submit your app.
-          </List.Item>
-          <List.Item>
-            <Code>@civitai/blocks-react</Code> — UI components, auto-themed to Civitai.
-          </List.Item>
-          <List.Item>
-            <Code>@civitai/app-sdk</Code> — pick models, run generations, store data.
-          </List.Item>
-        </List>
-        <Text size="xs" c="dimmed">
-          Both SDK packages ship in the scaffold.
+            <Text size="sm">
+              <b>A huge model catalog</b> — search hundreds of thousands of models &amp; images from
+              your app.
+            </Text>
+          </Group>
+          <Group gap="xs" align="flex-start" wrap="nowrap">
+            <ThemeIcon size="md" radius="md" variant="light" color="grape">
+              <IconSparkles size={16} />
+            </ThemeIcon>
+            <Text size="sm">
+              <b>AI generation, no GPUs</b> — run generations on Civitai&apos;s infrastructure, paid
+              in Buzz.
+            </Text>
+          </Group>
+          <Group gap="xs" align="flex-start" wrap="nowrap">
+            <ThemeIcon size="md" radius="md" variant="light" color="teal">
+              <IconServer size={16} />
+            </ThemeIcon>
+            <Text size="sm">
+              <b>Hosting handled</b> — we build and host your app; no Docker, no servers.
+            </Text>
+          </Group>
+          <Group gap="xs" align="flex-start" wrap="nowrap">
+            <ThemeIcon size="md" radius="md" variant="light" color="blue">
+              <IconUser size={16} />
+            </ThemeIcon>
+            <Text size="sm">
+              <b>Built-in identity</b> — your app knows who&apos;s viewing; no auth to wire up.
+            </Text>
+          </Group>
+          <Group gap="xs" align="flex-start" wrap="nowrap">
+            <ThemeIcon size="md" radius="md" variant="light" color="grape">
+              <IconDatabase size={16} />
+            </ThemeIcon>
+            <Text size="sm">
+              <b>Private storage</b> — a per-app key-value store for your data.
+            </Text>
+          </Group>
+          <Group gap="xs" align="flex-start" wrap="nowrap">
+            <ThemeIcon size="md" radius="md" variant="light" color="teal">
+              <IconPalette size={16} />
+            </ThemeIcon>
+            <Text size="sm">
+              <b>Themed UI kit</b> — drop-in components that match Civitai automatically.
+            </Text>
+          </Group>
+        </SimpleGrid>
+
+        <Text size="xs" fw={600} c="dimmed" mt="xs">
+          Your toolkit
         </Text>
         <Group gap="xs">
           <Button
@@ -188,6 +233,9 @@ export function GetStartedBody() {
             @civitai/app-sdk
           </Button>
         </Group>
+        <Text size="xs" c="dimmed">
+          Both SDK packages ship in the scaffold.
+        </Text>
       </Stack>
 
       <Divider />
