@@ -228,6 +228,8 @@ export type Model3DStatus = "Draft" | "Published" | "Unpublished" | "Deleted";
 
 export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
 
+export type ShopifyMerchOrderStatus = "Pending" | "Granted";
+
 export interface Account {
   id: number;
   userId: number;
@@ -4845,4 +4847,28 @@ export interface Model3DMetric {
   minor: boolean;
 }
 
+export interface ShopifyCustomerLink {
+  id: number;
+  shopifyCustomerId: string;
+  email: string;
+  userId: number;
+  createdAt: Date;
+}
+
+export interface ShopifyMerchOrder {
+  id: number;
+  shopifyOrderId: string;
+  email: string;
+  shopifyCustomerId: string | null;
+  subtotal: Decimal;
+  couponCodes: string[];
+  buzzAmount: number;
+  status: ShopifyMerchOrderStatus;
+  userId: number | null;
+  grantedAt: Date | null;
+  createdAt: Date;
+}
+
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;
+
+type Decimal = { valueOf(): string };

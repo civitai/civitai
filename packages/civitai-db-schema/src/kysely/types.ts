@@ -119,6 +119,7 @@ import type {
   ReviewVerdict,
   Model3DStatus,
   Model3DEngagementType,
+  ShopifyMerchOrderStatus,
 } from './enums';
 
 export type Account = {
@@ -3110,6 +3111,26 @@ export type ShadowTagsOnImage = {
   tagId: number;
   confidence: number;
 };
+export type ShopifyCustomerLink = {
+  id: Generated<number>;
+  shopifyCustomerId: string;
+  email: string;
+  userId: number;
+  createdAt: Generated<Timestamp>;
+};
+export type ShopifyMerchOrder = {
+  id: Generated<number>;
+  shopifyOrderId: string;
+  email: string;
+  shopifyCustomerId: string | null;
+  subtotal: string;
+  couponCodes: string[];
+  buzzAmount: number;
+  status: Generated<ShopifyMerchOrderStatus>;
+  userId: number | null;
+  grantedAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+};
 export type Tag = {
   id: Generated<number>;
   name: string;
@@ -3909,6 +3930,8 @@ export type DB = {
   Session: Session;
   SessionInvalidation: SessionInvalidation;
   ShadowTagsOnImage: ShadowTagsOnImage;
+  ShopifyCustomerLink: ShopifyCustomerLink;
+  ShopifyMerchOrder: ShopifyMerchOrder;
   Tag: Tag;
   TagEngagement: TagEngagement;
   TagMetric: TagMetric;

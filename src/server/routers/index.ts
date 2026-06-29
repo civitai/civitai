@@ -29,6 +29,7 @@ export const appRouter = router({
   download: lazy(() => import('./download.router').then((m) => m.downloadRouter)),
   homeBlock: lazy(() => import('./home-block.router').then((m) => m.homeBlockRouter)),
   image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
+  merch: lazy(() => import('./merch.router').then((m) => m.merchRouter)),
   model: lazy(() => import('./model.router').then((m) => m.modelRouter)),
   model3d: lazy(() => import('./model3d.router').then((m) => m.model3dRouter)),
   modelFile: lazy(() => import('./model-file.router').then((m) => m.modelFileRouter)),

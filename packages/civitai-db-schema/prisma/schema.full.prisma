@@ -6717,3 +6717,36 @@ model Model3DMetric {
   poi               Boolean          @default(false)
   minor             Boolean          @default(false)
 }
+
+enum ShopifyMerchOrderStatus {
+  Pending
+  Granted
+}
+
+model ShopifyCustomerLink {
+  id                Int      @id @default(autoincrement())
+  shopifyCustomerId String   @unique
+  email             String
+  userId            Int
+  createdAt         DateTime @default(now())
+
+  @@index([email])
+  @@index([userId])
+}
+
+model ShopifyMerchOrder {
+  id                Int                     @id @default(autoincrement())
+  shopifyOrderId    String                  @unique
+  email             String
+  shopifyCustomerId String?
+  subtotal          Decimal                 @db.Decimal(10, 2)
+  couponCodes       String[]
+  buzzAmount        Int
+  status            ShopifyMerchOrderStatus @default(Pending)
+  userId            Int?
+  grantedAt         DateTime?
+  createdAt         DateTime                @default(now())
+
+  @@index([email])
+  @@index([userId])
+}

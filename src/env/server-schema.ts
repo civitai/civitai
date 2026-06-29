@@ -598,6 +598,12 @@ export const serverSchema = z
     EMERCHANTPAY_PASSWORD: z.string().optional(),
     EMERCHANTPAY_WEBHOOK_SECRET: z.string().optional(),
 
+    // Shopify merch store (shop.civitai.com) — Blue Buzz reward loop.
+    // Webhook secret verifies orders/* HMAC; admin token + domain back the claim flow.
+    SHOPIFY_SHOP_DOMAIN: z.string().optional(),
+    SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
+    SHOPIFY_ADMIN_TOKEN: z.string().optional(),
+
     FLIPT_URL: z.string(),
     FLIPT_FETCHER_SECRET: z.string(),
     FLIPT_DEPLOYMENT_ID: z.string().optional(),
