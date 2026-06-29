@@ -285,7 +285,7 @@ export const getArticles = async ({
         }
       }
       if (!!excludedUserIds?.length) {
-        AND.push(Prisma.sql`a."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
+        AND.push(Prisma.sql`a."userId" != ALL(${excludedUserIds}::int[])`);
       }
       if (!!excludedIds?.length) {
         AND.push(Prisma.sql`a.id NOT IN (${Prisma.join(excludedIds, ',')})`);

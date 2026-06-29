@@ -502,7 +502,7 @@ export const getPagedResourceReviews = async ({
     blockedUsers.map((u) => u.id)
   );
   if (excludedUserIds.length) {
-    AND.push(Prisma.sql`rr."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+    AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
   const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`

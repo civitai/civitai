@@ -345,7 +345,7 @@ export const getUsers = async ({
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
       AND ${
         excludedUserIds && excludedUserIds.length > 0
-          ? Prisma.sql`u.id NOT IN (${Prisma.join(excludedUserIds)})`
+          ? Prisma.sql`u.id != ALL(${excludedUserIds}::int[])`
           : Prisma.sql`TRUE`
       }
       AND u."deletedAt" IS NULL
