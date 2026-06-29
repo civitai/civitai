@@ -16,7 +16,7 @@ import {
   IconClock,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelById } from '~/types/router';
@@ -47,6 +47,7 @@ export function ModelVersionList({
   const colorScheme = useComputedColorScheme('dark');
 
   const viewportRef = useRef<HTMLDivElement>(null);
+  const selectedRef = useRef<HTMLButtonElement>(null);
   const [state, setState] = useState<State>({
     scrollPosition: { x: 0, y: 0 },
     atStart: true,
@@ -66,23 +67,28 @@ export function ModelVersionList({
     }
   }, [state.largerThanViewport]);
 
-  // Callback ref on the selected version button: scrolls it into view when it
-  // attaches (mount) or when the selection changes (e.g. deep-linked to a non-primary
-  // version), but only when it's actually off-screen — so clicking a visible version
-  // doesn't recenter the list.
-  const scrollVersionIntoView = useCallback((el: HTMLButtonElement | null) => {
-    const viewport = viewportRef.current;
-    if (!el || !viewport) return;
+  // Bring the selected version into view (e.g. when deep-linked to a non-primary
+  // version), but only when it's actually off-screen — avoids recentering on clicks
+  // of already-visible versions. rAF lets layout settle before measuring.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const el = selectedRef.current;
+      const viewport = viewportRef.current;
+      if (!el || !viewport) return;
 
-    const elRect = el.getBoundingClientRect();
-    const vpRect = viewport.getBoundingClientRect();
-    const pad = 16;
-    const overflowLeft = elRect.left - vpRect.left;
-    const overflowRight = elRect.right - vpRect.right;
+      const elRect = el.getBoundingClientRect();
+      const vpRect = viewport.getBoundingClientRect();
+      const pad = 16;
+      const overflowLeft = elRect.left - vpRect.left;
+      const overflowRight = elRect.right - vpRect.right;
 
-    if (overflowLeft < 0) viewport.scrollBy({ left: overflowLeft - pad, behavior: 'smooth' });
-    else if (overflowRight > 0) viewport.scrollBy({ left: overflowRight + pad, behavior: 'smooth' });
-  }, []);
+      if (overflowLeft < 0) viewport.scrollBy({ left: overflowLeft - pad, behavior: 'smooth' });
+      else if (overflowRight > 0)
+        viewport.scrollBy({ left: overflowRight + pad, behavior: 'smooth' });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [selected, versions.length]);
 
   return (
     <ScrollArea
@@ -157,7 +163,7 @@ export function ModelVersionList({
           const versionButton = (
             <Button
               key={version.id}
-              ref={active ? scrollVersionIntoView : undefined}
+              ref={active ? selectedRef : undefined}
               miw={40}
               ta="center"
               className="relative"
