@@ -106,8 +106,8 @@ export function GetStartedBody() {
         </Group>
         <Title order={1}>Build apps on Civitai</Title>
         <Text size="lg" c="dimmed">
-          Small web apps that run inside Civitai — read models &amp; images, generate with Buzz, and
-          ship to your own page at <Code>yourapp.civit.ai</Code>.
+          Build on Civitai&apos;s web + AI infrastructure — tap a catalog of hundreds of thousands of
+          models and generate with Buzz. You focus on creating; we handle the rest.
         </Text>
       </Stack>
 
