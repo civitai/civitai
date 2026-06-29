@@ -42,6 +42,7 @@
  * Target predicate (a swept, still-postless trained version):
  *   mv.status = 'Unpublished' AND mv.uploadType = 'Trained'
  *   AND mv.meta->>'unpublishedReason' = 'no-posts'
+ *   AND m.status NOT IN ('UnpublishedViolation', 'Deleted')
  *   AND NOT EXISTS (owner-authored Post for the version)
  *
  * The unpublishedReason='no-posts' filter is load-bearing for safety: status
@@ -50,8 +51,13 @@
  * status='Unpublished' + a moderation reason (mature-real-person, *-underage,
  * beastiality, etc.), not only 'UnpublishedViolation'. Scoping to the cron's
  * own 'no-posts' reason is what keeps those out (~11k of ~14k matched by the
- * looser predicate were NOT no-posts). The parent-model update is likewise
- * scoped to the cron's 'no-versions' reason. availability is intentionally NOT
+ * looser predicate were NOT no-posts). The parent-status filter is the second
+ * guard: a no-posts version can belong to a Model that was itself ToS-removed
+ * (UnpublishedViolation) or deleted; drafting it would resurface that version in
+ * the owner's trainer (which only excludes Deleted parents, not
+ * UnpublishedViolation), so those parents are excluded here. The parent-model
+ * update is likewise scoped to the cron's 'no-versions' reason. availability is
+ * intentionally NOT
  * filtered: the sweep itself stamps availability='Private', so the rows we want
  * are Private. meta.unpublishedReason / unpublishedAt are left untouched — old
  * unpublishedAt won't re-trigger the unpublish notification (keys off
@@ -85,10 +91,13 @@ const schema = z.object({
 // A swept trained version: was published, lost its owner post, got unpublished
 // by reset-to-draft-without-requirements (reason 'no-posts'), and still has no
 // owner post. The reason filter excludes moderator removals that also use
-// status='Unpublished' (see header).
+// status='Unpublished'; the parent-status filter excludes versions whose Model
+// is itself a ToS removal or deleted — drafting those would resurface
+// UnpublishedViolation content in the trainer (see header).
 const TARGET_PREDICATE = `mv.status = 'Unpublished'
     AND mv."uploadType" = 'Trained'
     AND mv.meta->>'unpublishedReason' = 'no-posts'
+    AND m.status NOT IN ('UnpublishedViolation', 'Deleted')
     AND NOT EXISTS (
       SELECT 1 FROM "Post" p
       WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId"
@@ -169,6 +178,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
             AND mv.status = 'Unpublished'
             AND mv."uploadType" = 'Trained'
             AND mv.meta->>'unpublishedReason' = 'no-posts'
+            AND m.status NOT IN ('UnpublishedViolation', 'Deleted')
             AND NOT EXISTS (
               SELECT 1 FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId"
             )
