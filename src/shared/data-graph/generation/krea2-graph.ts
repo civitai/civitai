@@ -234,7 +234,7 @@ const rawVariantGraph = new DataGraph<Krea2VariantCtx, GenerationCtx>()
   .merge(createResourcesGraph())
   .merge(negativePromptGraph)
   .node('cfgScale', sliderNode({ min: 1, max: 10, step: 0.5, defaultValue: 3.5 }))
-  .node('steps', sliderNode({ min: 1, max: 60, defaultValue: 52 }));
+  .node('steps', sliderNode({ min: 1, max: 60, defaultValue: 30 }));
 
 /**
  * Comfy turbo variant: 8-step distilled build. Guidance is baked into the
