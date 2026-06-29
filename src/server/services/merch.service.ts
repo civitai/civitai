@@ -5,6 +5,7 @@ import { dbWrite } from '~/server/db/client';
 import { merchClaimConfirmationEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
+import { setCustomerCivitaiUserId } from '~/server/http/shopify/shopify.caller';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -136,6 +137,9 @@ async function linkAndGrantPending(
       create: { shopifyCustomerId: order.shopifyCustomerId, email: order.email, userId },
       update: { email: order.email, userId },
     });
+    // Stamp the link onto the Shopify customer so the order page stops showing
+    // the claim prompt for them. Best-effort — never blocks the grant.
+    await setCustomerCivitaiUserId(order.shopifyCustomerId, userId);
   }
 
   const pending = await dbWrite.shopifyMerchOrder.findMany({

@@ -27,7 +27,8 @@
 
 ### Shopify order-status page snippet (paste into Settings → Checkout → Additional scripts)
 ```liquid
-{% comment %} Civitai Blue Buzz claim {% endcomment %}
+{% comment %} Civitai Blue Buzz claim — only shown until the customer is linked {% endcomment %}
+{% unless customer.metafields.civitai.user_id %}
 <div style="margin-top:1rem;padding:1rem;border:1px solid #e3e3e3;border-radius:8px;text-align:center;">
   <p style="margin:0 0 .5rem;font-weight:600;">⚡ Claim your Civitai Blue Buzz</p>
   <p style="margin:0 0 .75rem;color:#555;">This merch order earns Blue Buzz on Civitai.</p>
@@ -36,11 +37,14 @@
     Claim my Buzz
   </a>
 </div>
+{% endunless %}
 ```
 **`{{ order.id }}` must equal the webhook payload `id`** (it does — both are the numeric order id we store as
-`shopifyOrderId`). **Caveat:** on Shopify Plus / checkout-extensibility stores the Liquid "Additional scripts"
-order-status page is deprecated — there you'd add this as a Thank-you/Order-status **UI extension** (app block)
-linking to the same URL instead.
+`shopifyOrderId`). The `{% unless %}` hides the prompt for already-linked customers: on first claim we write a
+`civitai.user_id` metafield onto the Shopify customer (`setCustomerCivitaiUserId`, via `SHOPIFY_ADMIN_TOKEN`), and
+their orders auto-grant from then on. **Caveat:** on Shopify Plus / checkout-extensibility stores the Liquid
+"Additional scripts" order-status page is deprecated — there you'd add this as a Thank-you/Order-status **UI
+extension** (app block) reading the same metafield + linking to the same URL.
 
 **Remaining:**
 - Register the Shopify webhook → `/api/webhooks/shopify` for `orders/paid` (needs `SHOPIFY_WEBHOOK_SECRET`).
