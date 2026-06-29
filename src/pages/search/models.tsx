@@ -11,6 +11,7 @@ import {
 } from '~/components/Search/CustomSearchComponents';
 import { useEffect } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
+import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
@@ -118,7 +119,9 @@ const RenderFilters = () => {
 
 export function ModelsHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
-  const { status } = useInstantSearch();
+  const { status, uiState } = useInstantSearch();
+  const activeBaseModels =
+    uiState[MODELS_SEARCH_INDEX]?.refinementList?.['versions.baseModel'] ?? [];
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
 
@@ -196,13 +199,15 @@ export function ModelsHitList() {
       {hiddenCount > 0 && (
         <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
-      <MasonryGrid
-        data={items as any}
-        render={ModelCard}
-        itemId={(x) => x.id}
-        empty={<NoContent />}
-        withAds
-      />
+      <ModelCardContextProvider activeBaseModels={activeBaseModels}>
+        <MasonryGrid
+          data={items as any}
+          render={ModelCard}
+          itemId={(x) => x.id}
+          empty={<NoContent />}
+          withAds
+        />
+      </ModelCardContextProvider>
       {hits.length > 0 && !isLastPage && (
         <InViewLoader
           loadFn={showMore}

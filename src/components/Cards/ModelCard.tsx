@@ -24,6 +24,7 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
+import { getCardBaseModels } from '~/components/Cards/model-card.utils';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useElementInView } from '~/components/IntersectionObserver/ElementInView';
@@ -94,7 +95,8 @@ function ModelCardContent({ data }: Props) {
     [isEarlyAccess, isUpdated, theme, colorScheme]
   );
 
-  const { useModelVersionRedirect } = useModelCardContext();
+  const { useModelVersionRedirect, activeBaseModels } = useModelCardContext();
+  const cardBaseModels = getCardBaseModels(data as Parameters<typeof getCardBaseModels>[0], activeBaseModels);
   const href = useMemo(
     () =>
       getModelUrl({
@@ -132,6 +134,7 @@ function ModelCardContent({ data }: Props) {
               className={clsx(cardClasses.infoChip, cardClasses.chip)}
               type={data.type}
               baseModel={data.version.baseModel}
+              baseModels={cardBaseModels}
             />
 
             {(isNew || isUpdated || isEarlyAccess) && (

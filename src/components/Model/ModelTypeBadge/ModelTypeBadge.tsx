@@ -1,5 +1,5 @@
 import type { BadgeProps } from '@mantine/core';
-import { Badge, Divider, Text } from '@mantine/core';
+import { Badge, Divider, Text, Tooltip } from '@mantine/core';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { IconHorse } from '@tabler/icons-react';
 import { IconNose } from '~/components/SVG/IconNose';
@@ -47,8 +47,25 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   Qwen: 'QW',
 };
 
-export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {
-  const baseModelIndicator = BaseModelIndicator[baseModel];
+export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: Props) {
+  const bases = baseModels?.length ? baseModels : [baseModel];
+
+  // Dedup by short code (e.g. SD 1.4 + SD 1.5 -> one "SD1"), preserving order.
+  const seen = new Set<string>();
+  const codes: { base: BaseModel; node: React.ReactNode | string }[] = [];
+  for (const base of bases) {
+    const node = BaseModelIndicator[base];
+    if (node == null) continue;
+    const key = typeof node === 'string' ? node : base;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    codes.push({ base, node });
+  }
+
+  const MAX = 3;
+  const visible = codes.slice(0, MAX);
+  const overflow = codes.length - visible.length;
+
   return (
     <Badge
       variant="light"
@@ -60,20 +77,37 @@ export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {
         {getDisplayName(type)}
       </Text>
 
-      {baseModelIndicator && (
+      {visible.length > 0 && (
         <>
           <Divider className="border-l-white/30 border-r-black/20" orientation="vertical" />
-          {typeof baseModelIndicator === 'string' ? (
-            <Text size="xs" inherit>
-              {baseModelIndicator}
-            </Text>
-          ) : (
-            baseModelIndicator
-          )}
+          <Tooltip label={bases.join(', ')} withinPortal>
+            <span className="flex items-center gap-2">
+              {visible.map(({ base, node }) =>
+                typeof node === 'string' ? (
+                  <Text key={base} size="xs" inherit>
+                    {node}
+                  </Text>
+                ) : (
+                  <span key={base} className="flex items-center">
+                    {node}
+                  </span>
+                )
+              )}
+              {overflow > 0 && (
+                <Text size="xs" inherit c="dimmed">
+                  +{overflow}
+                </Text>
+              )}
+            </span>
+          </Tooltip>
         </>
       )}
     </Badge>
   );
 }
 
-type Props = Omit<BadgeProps, 'children'> & { type: ModelType; baseModel: BaseModel };
+type Props = Omit<BadgeProps, 'children'> & {
+  type: ModelType;
+  baseModel: BaseModel;
+  baseModels?: BaseModel[];
+};
