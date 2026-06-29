@@ -1,10 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
-import {
-  GetStartedBody,
-  REQUEST_ACCESS_HREF,
-  REQUEST_ACCESS_TITLE,
-} from '~/components/Apps/GetStartedBody';
+import { GetStartedBody } from '~/components/Apps/GetStartedBody';
 import {
   APP_SDK_NPM_URL,
   BLOCKS_REACT_NPM_URL,
@@ -13,7 +9,6 @@ import {
   CLI_INSTALL_BREW,
   CLI_INSTALL_GO,
   CLI_RUN_COMMAND,
-  CLI_SUBMIT_COMMAND,
 } from '~/components/Apps/cliCommands';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -31,27 +26,18 @@ describe('GetStartedBody (public App builders landing)', () => {
       .toBeInTheDocument();
   });
 
-  test('renders the three section headings (quickstart / what you get / publish)', async () => {
+  test('renders the two section headings (quickstart / what you get) and NOT publish', async () => {
     renderWithProviders(<GetStartedBody />);
     await expect.element(page.getByRole('heading', { name: 'Quickstart' })).toBeInTheDocument();
     await expect.element(page.getByRole('heading', { name: 'What you get' })).toBeInTheDocument();
-    await expect.element(page.getByRole('heading', { name: 'Publish' })).toBeInTheDocument();
+    // Publishing was removed from this page entirely.
+    expect(page.getByRole('heading', { name: 'Publish' }).elements()).toHaveLength(0);
   });
 
-  test('honest framing: states publishing is in private beta', async () => {
-    renderWithProviders(<GetStartedBody />);
-    await expect.element(page.getByText('Publishing is in private beta.')).toBeInTheDocument();
-  });
-
-  test('shows the quickstart commands (brew install, scaffold, run) and the submit command', async () => {
+  test('shows the quickstart commands (brew install, scaffold, run)', async () => {
     renderWithProviders(<GetStartedBody />);
     // Copyable commands render prefixed with a shell prompt ("$ ").
-    for (const command of [
-      CLI_INSTALL_BREW,
-      CLI_CREATE_SAMPLE_COMMAND,
-      CLI_RUN_COMMAND,
-      CLI_SUBMIT_COMMAND,
-    ]) {
+    for (const command of [CLI_INSTALL_BREW, CLI_CREATE_SAMPLE_COMMAND, CLI_RUN_COMMAND]) {
       await expect.element(page.getByText(`$ ${command}`)).toBeInTheDocument();
     }
     // The Go install is shown inline (secondary option), not as a copyable block.
@@ -70,7 +56,6 @@ describe('GetStartedBody (public App builders landing)', () => {
     expect(CLI_INSTALL_GO).toBe('go install github.com/civitai/cli/cmd/civitai@latest');
     expect(CLI_CREATE_SAMPLE_COMMAND).toBe('civitai app create my-app');
     expect(CLI_RUN_COMMAND).toBe('cd my-app && npm install && npm run dev:harness');
-    expect(CLI_SUBMIT_COMMAND).toBe('civitai app submit');
   });
 
   test('renders the platform-capabilities grid (catalog / hosting / identity)', async () => {
@@ -82,9 +67,16 @@ describe('GetStartedBody (public App builders landing)', () => {
 
   test('links to the real CLI repo and both npm packages', async () => {
     renderWithProviders(<GetStartedBody />);
-    const cli = page.getByRole('link', { name: 'Civitai CLI' });
-    await expect.element(cli).toBeInTheDocument();
-    expect(cli.element().getAttribute('href')).toBe(CIVITAI_CLI_GITHUB_URL);
+    // Two "Civitai CLI" links render now (the quickstart subtitle Anchor + the
+    // toolkit Button) — both point at the same repo. Assert the toolkit one
+    // (the second match) via the retrying element API, then confirm every
+    // rendered "Civitai CLI" link targets the CLI repo.
+    const toolkitCli = page.getByRole('link', { name: 'Civitai CLI' }).nth(1);
+    await expect.element(toolkitCli).toBeInTheDocument();
+    expect(toolkitCli.element().getAttribute('href')).toBe(CIVITAI_CLI_GITHUB_URL);
+    for (const link of page.getByRole('link', { name: 'Civitai CLI' }).elements()) {
+      expect(link.getAttribute('href')).toBe(CIVITAI_CLI_GITHUB_URL);
+    }
 
     const blocksReact = page.getByRole('link', { name: '@civitai/blocks-react' });
     await expect.element(blocksReact).toBeInTheDocument();
@@ -95,24 +87,13 @@ describe('GetStartedBody (public App builders landing)', () => {
     expect(appSdk.element().getAttribute('href')).toBe(APP_SDK_NPM_URL);
   });
 
-  test('the Quickstart subtitle links to the CLI repo on GitHub', async () => {
+  test('the Quickstart subtitle pitches a 3-step local app and links to the CLI repo', async () => {
     renderWithProviders(<GetStartedBody />);
-    const ghLink = page.getByRole('link', { name: 'view it on GitHub' });
+    await expect
+      .element(page.getByText('Create a local Civitai app in 3 steps', { exact: false }))
+      .toBeInTheDocument();
+    const ghLink = page.getByRole('link', { name: 'Civitai CLI' }).first();
     await expect.element(ghLink).toBeInTheDocument();
     expect(ghLink.element().getAttribute('href')).toBe(CIVITAI_CLI_GITHUB_URL);
-  });
-
-  test('renders the Request-access CTA wired to a prefilled civitai/cli issue', async () => {
-    renderWithProviders(<GetStartedBody />);
-    const cta = page.getByRole('link', { name: 'Request access on GitHub' });
-    await expect.element(cta).toBeInTheDocument();
-    expect(cta.element().getAttribute('href')).toBe(REQUEST_ACCESS_HREF);
-    // Points at a well-formed prefilled new-issue on the public CLI repo
-    // (no longer the `#` placeholder).
-    expect(REQUEST_ACCESS_HREF).toMatch(
-      /^https:\/\/github\.com\/civitai\/cli\/issues\/new\?/
-    );
-    expect(REQUEST_ACCESS_HREF).toContain(`title=${encodeURIComponent(REQUEST_ACCESS_TITLE)}`);
-    expect(REQUEST_ACCESS_HREF).toContain('&body=');
   });
 });
