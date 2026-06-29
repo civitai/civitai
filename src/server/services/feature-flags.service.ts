@@ -242,14 +242,17 @@ const featureFlags = createFeatureFlags({
   // gate. The page route + page-token mint require BOTH `appBlocks` AND
   // `appBlocksPages`. Mod-only today; widened (Flipt segment) at W10 launch.
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
-  // App Blocks — PUBLIC "App builders" get-started landing page (`/apps/get-started`).
-  // Scope A soft launch: a single public marketing/funnel page that explains the
+  // App Blocks — "App builders" get-started landing page (`/apps/get-started`).
+  // Scope A soft launch: a single marketing/funnel page that explains the
   // platform to would-be app developers. INDEPENDENT of the mod-only `appBlocks`
-  // gate — this flag controls ONLY the public get-started page + its nav entry, NOT
-  // any other `/apps/*` surface (those stay gated on `appBlocks`). Public/everyone by
-  // default so the page is live for all users; the Flipt key is purely a kill switch
-  // (flip it off to drop the page + nav entry without a deploy).
-  appBlocksGetStarted: { availability: ['public'], fliptKey: 'app-blocks-get-started' },
+  // gate — this flag controls ONLY the get-started page + its nav entry, NOT
+  // any other `/apps/*` surface (those stay gated on `appBlocks`). Staged
+  // mod-only today (like `appBlocks` / `appBlocksPages`) so it deploys dark-to-
+  // public and mods can review the page live on prod; widened to `['public']`
+  // (a one-line flag change) when launch copy + the real Request-access link
+  // land. The Flipt key stays the kill-switch / future-widen lever (flip it off
+  // to drop the page + nav entry without a deploy).
+  appBlocksGetStarted: { availability: ['mod'], fliptKey: 'app-blocks-get-started' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

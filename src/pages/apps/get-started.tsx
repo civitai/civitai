@@ -1,32 +1,37 @@
 import { Container } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
+import { resolveGetStartedAccess } from '~/components/Apps/resolveGetStartedAccess';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 /**
- * PUBLIC "App builders" get-started landing page — Scope A soft launch.
+ * "App builders" get-started landing page — Scope A soft launch.
  *
- * Gating (deliberately DIFFERENT from every other `/apps/*` page): this page is
- * PUBLIC and gates ONLY on the dedicated `appBlocksGetStarted` flag. It does NOT
- * call `resolveAppsPageAccess` and does NOT gate on the mod-only `appBlocks`
- * flag — that flag (and `resolveAppsPageAccess`) keep guarding all the other
- * `/apps/*` surfaces (marketplace, submit, installed, review, …) exactly as
- * before. This page is purely additive; nothing else's gating changes.
+ * Gating (deliberately DIFFERENT from every other `/apps/*` page): this page
+ * gates ONLY on the dedicated `appBlocksGetStarted` flag. It does NOT call
+ * `resolveAppsPageAccess` and does NOT gate on the mod-only `appBlocks` flag —
+ * that flag (and `resolveAppsPageAccess`) keep guarding all the other `/apps/*`
+ * surfaces (marketplace, submit, installed, review, …) exactly as before. This
+ * page is purely additive; nothing else's gating changes.
  *
- * `appBlocksGetStarted` is public/everyone by default; its Flipt key is a kill
- * switch — flip it off to drop this page + its nav entry without a deploy.
+ * `appBlocksGetStarted` is STAGED MOD-ONLY today (`['mod']`, like `appBlocks` /
+ * `appBlocksPages`) so it deploys dark-to-public: it resolves for moderators
+ * only, who can review the page + its nav entry live on prod. It's widened to
+ * `['public']` (a one-line flag change in feature-flags.service.ts) when launch
+ * copy + the real Request-access link land. The Flipt key stays the kill-switch
+ * / future-widen lever — flip it off to drop this page + its nav entry without a
+ * deploy. The runtime gate below is on `appBlocksGetStarted` REGARDLESS of the
+ * flag's availability value, so widening to public needs no page change.
  *
  * deIndexed for now (private-beta funnel; not ready for organic search).
  * TODO(launch): drop `deIndex` to make indexable when comms is ready.
  */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ features }) => {
-    if (!features?.appBlocksGetStarted) return { notFound: true };
-    return { props: {} };
-  },
+  resolver: async ({ features }) =>
+    resolveGetStartedAccess({ features: { appBlocksGetStarted: features?.appBlocksGetStarted } }),
 });
 
 export default function AppsGetStartedPage() {

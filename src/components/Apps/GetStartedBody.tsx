@@ -29,7 +29,13 @@ import {
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 /**
- * PUBLIC "App builders" get-started body — the Scope-A soft-launch funnel.
+ * "App builders" get-started body — the Scope-A soft-launch funnel.
+ *
+ * The page that renders this is gated on the `appBlocksGetStarted` flag, which
+ * is STAGED MOD-ONLY today (deploys dark-to-public; mods review live on prod)
+ * and widened to `['public']` in a one-line flag change at launch — see
+ * get-started.tsx / feature-flags.service.ts. This body is the copy that goes
+ * live to everyone once the flag is widened.
  *
  * IMPORTANT (honesty / scope): this page explains the platform and points
  * would-be developers at the local build tooling. It does NOT open publishing.
