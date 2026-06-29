@@ -3,6 +3,7 @@ import type {
   Options,
   SubmitWorkflowData,
   UpdateWorkflowRequest,
+  WorkflowTemplate,
 } from '@civitai/client';
 import {
   addWorkflowTag,
@@ -14,9 +15,11 @@ import {
   submitWorkflow as clientSubmitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
   handleError,
+  refreshBlob,
 } from '@civitai/client';
 import type * as z from 'zod';
 import { isDev, isProd } from '~/env/other';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import type {
   PatchWorkflowParams,
   TagsPatchSchema,
@@ -181,6 +184,9 @@ export async function submitWorkflow({
 }: Options<SubmitWorkflowData> & { token: string }) {
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
+
+  // Refresh any expired or unsigned consumer blob URLs in the workflow steps
+  await refreshBlobUrlsInBody(body, client);
 
   // const steps = body.steps;
   // if (steps.length > 0) {
@@ -422,4 +428,88 @@ export async function patchWorkflowTags({
       if (op === 'remove') await removeWorkflowTag({ client, path: { workflowId, tag } });
     })
   );
+}
+
+export async function refreshBlobUrlsInBody(
+  body: WorkflowTemplate,
+  client: ReturnType<typeof createOrchestratorClient>
+) {
+  const blobUrls = findBlobUrls(body);
+  if (blobUrls.length === 0) return;
+
+  await Promise.all(
+    blobUrls.map(async ({ path, blobId }) => {
+      try {
+        const { data } = await refreshBlob({ client, path: { blobId } });
+        if (data?.url) {
+          setValueAtPath(body, path, data.url);
+        } else {
+          throw new Error('Refresh endpoint returned no URL data');
+        }
+      } catch (error) {
+        logToAxiom({ type: 'error', name: 'blob-refresh-failed', blobId, error: safeError(error) });
+        throw throwBadRequestError(
+          `Failed to refresh image URL for blob: ${blobId}. Please try uploading the image again.`
+        );
+      }
+    })
+  );
+}
+
+export function findBlobUrls(obj: unknown): { path: string[]; blobId: string }[] {
+  const results: { path: string[]; blobId: string }[] = [];
+
+  function traverse(current: unknown, path: string[], depth = 0) {
+    if (depth > 20) return; // Prevent stack overflow on pathological/circular structures
+    if (!current) return;
+
+    if (typeof current === 'string') {
+      if (shouldRefreshBlobUrl(current)) {
+        const match = current.match(/\/v\d+\/consumer\/blobs\/(?<blobId>[a-zA-Z0-9_.-]+)/);
+        if (match && match.groups?.blobId) {
+          results.push({ path, blobId: match.groups.blobId });
+        }
+      }
+    } else if (Array.isArray(current)) {
+      for (let i = 0; i < current.length; i++) {
+        traverse(current[i], [...path, String(i)], depth + 1);
+      }
+    } else if (typeof current === 'object') {
+      const keys = Object.keys(current);
+      for (const key of keys) {
+        traverse((current as Record<string, unknown>)[key], [...path, key], depth + 1);
+      }
+    }
+  }
+
+  traverse(obj, []);
+  return results;
+}
+
+export function shouldRefreshBlobUrl(url: string): boolean {
+  try {
+    if (!url.includes('/consumer/blobs/')) return false;
+    const urlObj = new URL(url, 'https://orchestration.civitai.com');
+    const sig = urlObj.searchParams.get('sig');
+    const exp = urlObj.searchParams.get('exp');
+    if (!sig || !exp) return true;
+
+    const expiryDate = new Date(exp);
+    if (isNaN(expiryDate.getTime())) return true; // Unparseable exp → treat as expired
+    const bufferTime = 5 * 60 * 1000;
+    return expiryDate.getTime() - Date.now() < bufferTime;
+  } catch {
+    return false;
+  }
+}
+
+function setValueAtPath(obj: unknown, path: string[], value: unknown) {
+  let current = obj as any;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (!current || typeof current !== 'object') return;
+    current = current[path[i]];
+  }
+  if (current && typeof current === 'object') {
+    current[path[path.length - 1]] = value;
+  }
 }
