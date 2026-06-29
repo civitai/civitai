@@ -2482,6 +2482,11 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
 
   // Build where clause with filters
   const where: Prisma.ModelVersionFindManyArgs['where'] = {
+    // Only in-flight trainings. A model that was published then swept (post
+    // emptied/deleted -> requirements cron) now comes back as Draft (the cron
+    // resets trained versions to Draft, and the one-time backfill did the same
+    // for already-swept ones), so it reappears here without surfacing
+    // Unpublished — which would otherwise also pull in ToS/moderation removals.
     status: { in: [ModelStatus.Draft, ModelStatus.Training] },
     uploadType: ModelUploadType.Trained,
     model: {
@@ -3790,6 +3795,29 @@ export const publishPrivateModel = async ({
 
   const versionIds = versions.map((v) => v.id);
   const now = new Date();
+
+  // Going public requires a showcase post on each version. A privately-published
+  // trained LoRA can be postless (its auto-created post may have been emptied by
+  // sample-image moderation, then deleted by clean-if-empty). Without this guard
+  // it would go public with no post and the nightly requirements cron would
+  // immediately re-unpublish it. Block instead, directing the user to add images.
+  if (publishVersions) {
+    // Read from primary: this gates the write transaction below, and a user who
+    // just added the showcase post then immediately publishes could otherwise
+    // hit replica lag → false "missing post" → incorrect hard block.
+    const versionsWithPost = await dbWrite.post.findMany({
+      where: { modelVersionId: { in: versionIds }, userId: model.userId },
+      select: { modelVersionId: true },
+      distinct: ['modelVersionId'],
+    });
+    const havePost = new Set(versionsWithPost.map((p) => p.modelVersionId));
+    const missingPost = versionIds.filter((id) => !havePost.has(id));
+    if (missingPost.length) {
+      throw throwBadRequestError(
+        'Add example images before making this model public. Each version must include a showcase post.'
+      );
+    }
+  }
 
   await dbWrite.$transaction(async (tx) => {
     // Availability + demotion to null flip unconditionally; the publish

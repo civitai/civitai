@@ -1993,6 +1993,10 @@ export const createModelVersionPostFromTraining = async ({
       })
     )
   );
+
+  // Returned so request handlers can emit the post-create ClickHouse event
+  // (track.post) — the service-level createPost above doesn't track on its own.
+  return post;
 };
 
 export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularityInput) => {
