@@ -732,6 +732,7 @@ enum ModelType {
   Workflows
   Detection
   VisionLanguage
+  CLIP
   Other
 }
 

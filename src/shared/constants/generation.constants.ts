@@ -499,6 +499,7 @@ export const miscModelTypes: ModelType[] = [
   'Workflows',
   'Detection',
   'VisionLanguage',
+  'CLIP',
   'Other',
 ] as const;
 

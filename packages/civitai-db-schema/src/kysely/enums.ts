@@ -122,6 +122,7 @@ export const ModelType = {
   Workflows: 'Workflows',
   Detection: 'Detection',
   VisionLanguage: 'VisionLanguage',
+  CLIP: 'CLIP',
   Other: 'Other',
 } as const;
 export type ModelType = (typeof ModelType)[keyof typeof ModelType];

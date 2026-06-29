@@ -143,6 +143,7 @@ export const ModelType = {
   Workflows: 'Workflows',
   Detection: 'Detection',
   VisionLanguage: 'VisionLanguage',
+  CLIP: 'CLIP',
   Other: 'Other',
 } as const;
 

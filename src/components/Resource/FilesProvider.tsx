@@ -762,7 +762,11 @@ function inferFileType(fileName: string, modelType?: ModelType | null): ModelFil
     case 'gguf':
     case 'sft':
     case 'onnx':
-      return 'Model';
+      // CLIP weights aren't a single "Model" file — they're a text or vision
+      // encoder. Default to Text Encoder (a CLIP primary type) so the dropped
+      // file lands in the primary section; the user switches to Vision Encoder
+      // when appropriate.
+      return modelType === ModelType.CLIP ? 'Text Encoder' : 'Model';
     case 'zip':
       return modelType && archivePrimaryModelTypes.includes(modelType) ? 'Archive' : undefined;
     case 'yaml':
@@ -1053,6 +1057,18 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
       extensions: [...configExts, ...archiveExts, ...ggufExts],
       fileTypes: ['VAE', 'Config', 'Training Data', 'CLIPVision', 'Text Encoder', 'Other'],
       maxFiles: 6,
+    },
+  },
+  CLIP: {
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.CLIP],
+      maxFiles: mainModelMaxFiles,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive', 'Other'],
+      maxFiles: 2,
     },
   },
   Poses: {
