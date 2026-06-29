@@ -8,6 +8,7 @@ import {
   IconBookmarkEdit,
   IconBrush,
   IconCloudLock,
+  IconCode,
   IconCube,
   // IconClubs,
   IconCrown,
@@ -31,6 +32,7 @@ import {
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
+import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -75,6 +77,10 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
       Model: bookmarkedModelsCollection,
     },
   } = useSystemCollections();
+
+  // App Blocks nav entries: public get-started vs mod-only marketplace. Pure
+  // helper (unit-tested in appsNavVisibility.test.ts) is the source of truth.
+  const appsNav = appsNavVisibility(features);
 
   return [
     {
@@ -151,15 +157,29 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-07-20'),
         },
         {
-          // Consolidated apps entry — the per-surface links (installed,
-          // submit, my-submissions, revenue, review) now live in the
-          // in-page AppsSubNav (conditionally shown). One nav item keeps
-          // the dropdown lean; /apps is the marketplace + sub-nav hub.
+          // PUBLIC "App builders" get-started landing page (Scope A soft launch).
+          // Gated on the separate public `appBlocksGetStarted` flag (kill switch),
+          // NOT the mod-only `appBlocks` gate — this is the only `/apps/*` surface
+          // visible to non-mods. Distinct label ("Build apps") from the mod-only
+          // marketplace entry below so a moderator never sees two identical labels.
+          // Visibility comes from the pure `appsNavVisibility` helper (unit-tested).
+          href: '/apps/get-started',
+          visible: appsNav.getStarted,
+          icon: IconCode,
+          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Build apps',
+          newUntil: new Date('2026-08-01'),
+        },
+        {
+          // Mod-only App Blocks marketplace + in-page AppsSubNav hub (installed,
+          // submit, my-submissions, revenue, review). Stays gated on `appBlocks`
+          // (mod-only today). Relabeled "Apps Marketplace" so it reads distinctly
+          // from the public "Build apps" entry above.
           href: '/apps',
-          visible: features.appBlocks,
+          visible: appsNav.marketplace,
           icon: IconPlugConnected,
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Apps',
+          label: 'Apps Marketplace',
           newUntil: new Date('2026-07-01'),
         },
       ],

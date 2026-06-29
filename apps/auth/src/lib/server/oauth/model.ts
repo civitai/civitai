@@ -392,11 +392,12 @@ export async function resolveClientLite(
   clientId: string,
   redirectUri?: string
 ): Promise<
-  { id: string; grants: string[]; redirectUris: string[]; isFirstParty: boolean } | undefined
+  | { id: string; grants: string[]; redirectUris: string[]; isFirstParty: boolean; accessMode: string }
+  | undefined
 > {
   const dbClient = await db
     .selectFrom('OauthClient')
-    .select(['id', 'grants', 'redirectUris'])
+    .select(['id', 'grants', 'redirectUris', 'accessMode'])
     .where('id', '=', clientId)
     .executeTakeFirst();
   if (dbClient) {
@@ -410,6 +411,7 @@ export async function resolveClientLite(
       grants: dbClient.grants,
       redirectUris: dbClient.redirectUris,
       isFirstParty: false,
+      accessMode: dbClient.accessMode,
     };
   }
   // First-party: NO DB row, resolved purely from the redirect_uri ORIGIN (host checked against the registry),
@@ -418,7 +420,14 @@ export async function resolveClientLite(
   const origin = originOf(redirectUri);
   const fp = origin ? await firstPartyClientForOrigin(origin) : undefined;
   return fp && fp.clientId === clientId
-    ? { id: fp.clientId, grants: fp.grants, redirectUris: [fp.redirectUri], isFirstParty: true }
+    ? {
+        id: fp.clientId,
+        grants: fp.grants,
+        redirectUris: [fp.redirectUri],
+        isFirstParty: true,
+        // First-party (spoke) clients are never gated — they're our own login hosts.
+        accessMode: 'open',
+      }
     : undefined;
 }
 

@@ -53,6 +53,15 @@ export const GET: RequestHandler = async ({ request }) => {
     return json({ error: 'invalid_token', error_description: 'Invalid or expired token' }, { status: 401, headers });
   }
 
+  // Role-related claims. `roles` are the generic UserRole grants (e.g. "tester"); moderator/tier come from the
+  // cached session user. Released under the same UserRead scope as the rest of the profile.
+  const roleRows = await db
+    .selectFrom('UserRole')
+    .select('role')
+    .where('userId', '=', user.id)
+    .execute();
+  const roles = roleRows.map((r) => r.role);
+
   // `name`/`preferred_username` intentionally mirror the username rather than the display name — the
   // display name is provider-ingested PII we don't hand to third-party apps. email/email_verified are
   // released under the same UserRead scope (the consent "Read profile & settings" permission).
@@ -65,6 +74,9 @@ export const GET: RequestHandler = async ({ request }) => {
       name: user.username ?? undefined,
       picture: user.image ?? undefined,
       image: user.image,
+      roles,
+      isModerator: !!user.isModerator,
+      tier: user.tier ?? undefined,
       ...(user.email ? { email: user.email, email_verified: !!user.emailVerified } : {}),
     },
     { headers }

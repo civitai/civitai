@@ -1,6 +1,6 @@
 {
   "name": "@civitai/auth-app",
-  "version": "0.1.7",
+  "version": "0.1.11",
   "private": true,
   "type": "module",
   "scripts": {

@@ -540,6 +540,14 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       signAppId: block.appId,
       signAppBlockId: block.id,
       // Synthetic, revocable PAGE instance id — same shape as the prod page mint.
+      // NOTE (revocation-wiring caveat): dev page tokens share the
+      // `page_<appBlockId>` instanceId shape with PRODUCTION page mints. The
+      // revocation WRITE path (block-revocation.service.ts revokeInstance /
+      // clearInstance) is currently UNWIRED (no callers). If it is ever wired,
+      // dev instance ids on THIS path must be namespaced distinctly (e.g.
+      // `devpage_`) and/or the revocation marker TTL must cover the 4h dev token
+      // lifetime — otherwise a dev revocation (or a 4h marker) would bleed into
+      // production page tokens for the SAME app (collision on `page_<appBlockId>`).
       blockInstanceId: `${PAGE_INSTANCE_PREFIX}${block.id}`,
     };
   } else if (slug) {
@@ -838,6 +846,27 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // 11. SIGN — reuse BlockTokenService.sign VERBATIM. Self-bound sub (userId),
   // forced-SFW ceiling, dev-capped budget, page ctx. domain is null (no host
   // read) — advisory only; the AUTHORITATIVE ceiling is maxBrowsingLevel.
+  //
+  // dev: true → a 4h lifetime + a `dev:true` claim (block-token.service.ts).
+  // The longer TTL lets a developer paste one token and iterate without
+  // re-minting every 15min; the verifier (block-scope.middleware.ts) keys the
+  // 4h max-age cap off the signed `dev` claim, leaving every PRODUCTION token
+  // at 15min.
+  //
+  // BLAST RADIUS of the 4h lifetime — the token carries NO mod claim, so step 2
+  // (the mint-TIME moderator check) does NOT bound it. What actually bounds the
+  // money/settings paths is the LIVE per-request moderator re-check
+  // (`assertViewerIsModerator` in apps.router / blocks.router): a demoted/banned
+  // mod's 4h token is rejected there as soon as the demotion lands. The token is
+  // further self-bound (`sub` from the authenticated caller, never the body),
+  // per-call budget capped (step 8), and forced-SFW — all unchanged.
+  //
+  // ONE REAL RESIDUAL: the read-only catalog/`me` surfaces
+  // (`/api/v1/blocks/{models,images,me}`) authorize on token validity + the
+  // forced-SFW clamp, NOT a live mod re-check. So a demoted/banned mod holding a
+  // 4h dev token keeps read access to SFW-clamped PUBLIC catalog data for up to
+  // 4h. Low impact: public, SFW-clamped, self-bound `sub`, no money/settings
+  // scopes — accepted for the dev:live harness.
   const result = await BlockTokenService.sign({
     userId: user.id,
     blockId: resolved.signBlockId,
@@ -849,6 +878,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     buzzBudget,
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
+    dev: true,
   });
 
   // The body carries a bearer JWT — never let an intermediary cache it.

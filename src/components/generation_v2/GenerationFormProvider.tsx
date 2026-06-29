@@ -166,6 +166,7 @@ const TURBO_VARIANT_ECOSYSTEMS = new Set<string>([
   'ZImageTurbo',
   'ZImageBase',
   'Boogu',
+  'Krea2',
 ]);
 
 const storageAdapter = createLocalStorageAdapter({

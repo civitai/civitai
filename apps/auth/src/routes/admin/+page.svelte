@@ -7,6 +7,11 @@
       title: 'Spoke Domains',
       desc: 'Manage the TrustedSpokeDomain registry — the hosts allowed to drive first-party OAuth login (consent-skipped + session exchange).',
     },
+    {
+      href: '/admin/access',
+      title: 'OAuth Access',
+      desc: 'Gate login per OAuth app (open / testers-only / disabled) and manage the global tester allowlist.',
+    },
   ];
 </script>
 

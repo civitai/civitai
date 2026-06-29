@@ -209,6 +209,13 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
   ttl(key: K): Promise<number>;
   type(key: K): Promise<string>;
   setNxKeepTtlWithEx(key: K, value: string, ttl: number): Promise<boolean>;
+  /**
+   * ATOMICALLY set one-or-more hash fields AND (re)apply a whole-key TTL in a single round-trip
+   * Lua EVAL — so a process death between the HSET and the EXPIRE can never leave a TTL-less key
+   * (the `HSET` + `EXPIRE` either both run or neither does). `fields` is an even-length
+   * [field, value, field, value, …] array (the order HSET takes). No-op (returns 0) if `fields`
+   * is empty. Returns the number of fields HSET reports as NEWLY added (HSET's own return). */
+  hSetMultiWithExpire(key: K, fields: string[], ttlSeconds: number): Promise<number>;
   withTypeMapping(mapping: Record<number, any>): any;
 }
 
@@ -1164,6 +1171,26 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       arguments: [value, ttl.toString()],
     });
     return result === 1; // 1 if set, 0 if not set
+  };
+
+  client.hSetMultiWithExpire = async (key, fields, ttlSeconds) => {
+    // No fields ⇒ nothing to write (and an HSET with no field/value pairs is a Redis error). Skip the
+    // round-trip entirely rather than materialize a key with no fields.
+    if (fields.length === 0) return 0;
+    // HSET (one or more field/value pairs) then EXPIRE, atomically in one EVAL — the key is never
+    // observable with fields but no TTL (and never with a TTL but no fields). ARGV[1] is the TTL;
+    // ARGV[2..] are the flat [field, value, …] pairs unpacked into HSET. Returns HSET's reply
+    // (count of NEWLY-added fields).
+    const script = `
+      local added = redis.call('HSET', KEYS[1], unpack(ARGV, 2))
+      redis.call('EXPIRE', KEYS[1], ARGV[1])
+      return added
+    `;
+    const result = await client.eval(script, {
+      keys: [key],
+      arguments: [ttlSeconds.toString(), ...fields],
+    });
+    return Number(result) || 0;
   };
 
   // Implement scanIterator for cluster - it doesn't exist natively on RedisCluster

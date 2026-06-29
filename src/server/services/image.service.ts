@@ -894,7 +894,7 @@ export const ingestImage = async ({
     image.prompt = prompt;
   }
 
-  if ((await isImageScannerNewEnabled()) || userId === 5) {
+  if (await isImageScannerNewEnabled()) {
     const { data: workflowResponse } = await createImageIngestionRequest({
       imageId: id,
       url,

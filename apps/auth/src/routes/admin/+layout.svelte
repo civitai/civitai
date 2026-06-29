@@ -10,6 +10,7 @@
   const nav = [
     { href: '/admin', label: 'Overview' },
     { href: '/admin/spoke-domains', label: 'Spoke Domains' },
+    { href: '/admin/access', label: 'OAuth Access' },
   ];
 
   // Active when the path matches exactly, or (for sub-sections) starts with the nav href + '/'.

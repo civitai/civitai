@@ -2,7 +2,12 @@ import { randomBytes } from 'crypto';
 import { error, redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 import type { RequestHandler } from './$types';
-import { getProvider, createPkce, buildAuthorizeUrl } from '$lib/server/auth/providers';
+import {
+  getProvider,
+  createPkce,
+  buildAuthorizeUrl,
+  isStubProviderEnabled,
+} from '$lib/server/auth/providers';
 import { readReturnUrl, readSync } from '$lib/server/auth/redirect';
 import { checkRateLimit } from '$lib/server/auth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
@@ -21,6 +26,11 @@ export const GET: RequestHandler = async ({ params, url, cookies, locals, reques
 
   const provider = getProvider(params.provider);
   if (!provider || !provider.clientId() || !provider.clientSecret()) {
+    error(404, 'Unknown or unconfigured provider');
+  }
+  // The e2e-only `stub` provider is additionally gated behind AUTH_ENABLE_STUB_PROVIDER, so /login/stub
+  // 404s in prod even if STUB_CLIENT_ID/SECRET happen to be set (matches listEnabledProviders' gate).
+  if (params.provider === 'stub' && !isStubProviderEnabled()) {
     error(404, 'Unknown or unconfigured provider');
   }
 

@@ -335,6 +335,74 @@ describe('Settings-scope tokens get a shorter lifetime (audit H-2 partial)', () 
     expect(ttl).toBeGreaterThan(890);
   });
 
+  it('dev:true tokens carry a ~4h exp + a dev:true claim (overrides the default 15min)', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['models:read:self'],
+      ctx: { modelId: 1 },
+      dev: true,
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    const ttl = (payload.exp as number) - (payload.iat as number);
+    expect(ttl).toBeLessThanOrEqual(4 * 60 * 60);
+    expect(ttl).toBeGreaterThan(4 * 60 * 60 - 10);
+    expect(payload.dev).toBe(true);
+  });
+
+  it('dev:true OVERRIDES the settings-scope 5min branch (4h wins)', async () => {
+    // Defensive precedence assertion — dev page tokens never carry settings
+    // scopes in practice, but if both were ever set, dev (4h) must win.
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['block:settings:read'],
+      ctx: { modelId: 1 },
+      dev: true,
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    const ttl = (payload.exp as number) - (payload.iat as number);
+    expect(ttl).toBeGreaterThan(4 * 60 * 60 - 10);
+  });
+
+  it('omits the dev claim entirely when dev is not set (byte-identical to today)', async () => {
+    const { BlockTokenService } = await import('../block-token.service');
+    const r = await BlockTokenService.sign({
+      userId: 1,
+      blockId: 'b',
+      appId: 'a',
+      appBlockId: 'apb_a',
+      blockInstanceId: 'bki',
+      scopes: ['models:read:self'],
+      ctx: { modelId: 1 },
+    });
+    const { payload } = await jwtVerify(r.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
+    expect(payload.dev).toBeUndefined();
+    const ttl = (payload.exp as number) - (payload.iat as number);
+    expect(ttl).toBeLessThanOrEqual(900);
+    expect(ttl).toBeGreaterThan(890);
+  });
+
   it('sets a not-before claim matching iat (M-3)', async () => {
     const { BlockTokenService } = await import('../block-token.service');
     const r = await BlockTokenService.sign({

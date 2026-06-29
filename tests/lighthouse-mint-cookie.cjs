@@ -14,8 +14,9 @@
  *
  * This is the SAME mechanism tests/preview-auth.setup.ts uses for the smoke
  * suite; kept as a standalone .cjs so the Tekton lighthouse task can run it
- * with plain `node` (no ts/playwright) using the next-auth/jwt + uuid already
- * installed into the shared workspace node_modules by the typecheck task.
+ * with plain `node` (no ts/playwright). Its only external dep is `jose` (loaded
+ * from the shared workspace node_modules the typecheck task installs); the rest
+ * (HKDF key derivation, UUID) uses Node's built-in `node:crypto`.
  *
  * Usage:
  *   NEXTAUTH_SECRET=... BASE_URL=https://pr-123.civitaic.com \
@@ -25,9 +26,16 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { EncryptJWT } = require('jose');
-const { hkdfSync } = require('node:crypto');
-const { v4: uuid } = require('uuid');
+// jose is ESM-only since v6 — require() throws ERR_REQUIRE_ESM from this .cjs,
+// so load it via dynamic import() inside main() (the only EncryptJWT consumer).
+const nodeCrypto = require('node:crypto');
+const { hkdfSync, randomUUID } = nodeCrypto;
+
+// jose v6 uses Web Crypto via the global `crypto`. The lhci-client image runs
+// Node 18, which doesn't expose `crypto` as a global (it became global in Node
+// 19+), so the import below throws "crypto is not defined". Polyfill from
+// node:crypto.webcrypto when absent — no-op on Node 19+.
+if (!globalThis.crypto) globalThis.crypto = nodeCrypto.webcrypto;
 
 const SECRET = process.env.NEXTAUTH_SECRET;
 const BASE_URL = process.env.BASE_URL;
@@ -68,7 +76,9 @@ async function main() {
   if (!SECRET) throw new Error('NEXTAUTH_SECRET is required to mint the preview cookie');
   if (!BASE_URL) throw new Error('BASE_URL is required (e.g. https://pr-123.civitaic.com)');
 
-  const token = { user: GOLD, sub: String(GOLD.id), id: uuid(), signedAt: Date.now() };
+  const { EncryptJWT } = await import('jose');
+
+  const token = { user: GOLD, sub: String(GOLD.id), id: randomUUID(), signedAt: Date.now() };
   const value = await new EncryptJWT(token)
     .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
     .setIssuedAt()

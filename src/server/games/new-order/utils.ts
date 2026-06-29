@@ -221,6 +221,10 @@ function createCounter<TId extends number | string = number | string>({
     const ids = Array.isArray(id) ? id : [id];
     const stringIds = ids.map(String);
 
+    // Redis errors with "wrong number of arguments" if ZREM/HDEL is called with
+    // no members. Empty id arrays are a valid no-op (nothing to remove).
+    if (stringIds.length === 0) return 0;
+
     return ordered ? sysRedis.zRem(key, stringIds) : sysRedis.hDel(key, stringIds);
   }
 
