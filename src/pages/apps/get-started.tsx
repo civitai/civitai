@@ -48,7 +48,7 @@ export default function AppsGetStartedPage() {
           TODO(launch): drop `deIndex` to make indexable when comms is ready. */}
       <Meta
         title="Build apps on Civitai"
-        description="Build small web apps that run inside Civitai. Install the Civitai CLI and runtime SDK, scaffold an app, and test it locally. Publishing is in private beta."
+        description="Build small web apps that run inside Civitai. Install the Civitai CLI and runtime SDK, scaffold an app, and test it locally."
         deIndex
       />
       <Container size="md" py="xl">
