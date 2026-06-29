@@ -1432,19 +1432,29 @@ export const updateModelById = async ({
 
   await userModelCountCache.refresh(model.userId);
   // Flag replica-lag on the model BEFORE busting so a concurrent edge-miss read
-  // (getModelsWithVersions -> dataForModelsCache.lookupFn -> getDbWithoutLagBatch)
-  // routes to primary during the replication window instead of repopulating the
-  // just-busted response cache with the pre-takedown version state. Mirrors the
-  // publish/unpublish paths. Model-only flag is sufficient here:
-  // dataForModelsCache (which carries the safety-determining version status/
-  // availability) keys its lag-aware lookup off the 'model' flag, and version
-  // ids aren't cheaply in scope on this path.
+  // routes the LAG-AWARE parts of the rebuild to primary during the replication
+  // window instead of repopulating the just-busted response cache with pre-takedown
+  // state. Mirrors the publish/unpublish paths.
+  //
+  // SCOPE (important — do not overstate): this flag only covers the data that flows
+  // through dataForModelsCache.lookupFn -> getDbWithoutLagBatch('model', ids) — i.e.
+  // the VERSION-level fields (status/availability/covered). It does NOT cover the
+  // base Model row read by getModelsRaw, which uses pgDbRead unconditionally
+  // (model.service.ts ~910) and is never lag-aware. That base row carries
+  // `model.mode` — the field that gates images/downloadUrl in the cached body
+  // ([id].ts: includeImages/includeDownloadUrl). So a takedown's `mode` can still be
+  // read stale from a lagging replica and repopulate the origin cache for up to the
+  // origin TTL (CacheTTL.sm, 180s). That residual is bounded by — and ⊆ — the
+  // pre-existing Cloudflare edge window (s-maxage=300s), which this Redis-only bust
+  // does NOT purge anyway; so this does not widen takedown exposure beyond the edge.
+  // (To fully close the origin half, getModelsRaw's base read would need to honor
+  // the 'model' lag flag — deliberately not done here to avoid touching that shared
+  // hot path for an origin window already inside the edge window.)
   await preventModelVersionLagBatch(id, []);
-  // Drop the origin-side public GET /api/v1/models/[id] response cache. This is
-  // the path takedown/archive (changeModelModifierHandler sets `mode`) flows
-  // through, and the cached body's images/files/downloadUrl depend on
-  // `model.mode` — without this a takedown keeps serving a stale 200 for up to
-  // the cache TTL.
+  // Drop the origin-side public GET /api/v1/models/[id] response cache (Redis only;
+  // not the CF edge). Takedown/archive (changeModelModifierHandler sets `mode`) flows
+  // through here, and the cached body's images/files/downloadUrl depend on
+  // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
 
   return model;
@@ -1521,11 +1531,13 @@ export const deleteModelById = async ({
     await userModelCountCache.refresh(deletedModel.userId);
   }
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  // Flag replica-lag BEFORE busting so a concurrent edge-miss read can't
-  // repopulate the just-busted response cache with the pre-delete state from a
-  // lagging replica (dataForModelsCache.lookupFn routes to primary while the
-  // flag is set). Mirrors the publish/unpublish paths; version ids are in scope
-  // here from the delete transaction.
+  // Flag replica-lag BEFORE busting so a concurrent edge-miss read routes the
+  // lag-aware version data (dataForModelsCache.lookupFn) to primary instead of
+  // repopulating the just-busted cache with pre-delete state. Mirrors publish/
+  // unpublish; version ids are in scope here from the delete transaction. (Same
+  // scope caveat as updateModelById: the getModelsRaw base row is not lag-aware —
+  // but for a delete the model row is gone, so a fresh read rebuilds to null→404,
+  // never cached, so the base-row gap is benign on this path.)
   const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
   await preventModelVersionLagBatch(id, deletedVersionIds);
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
