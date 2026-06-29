@@ -108,7 +108,9 @@ export async function deleteTagsOnImageNew(args: { imageId: number; tagId: numbe
 
 async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[]) {
   const moderatedTagIds = await getModeratedTags().then((data) => data.map((x) => x.id));
-  const imageIds = args.filter((x) => moderatedTagIds.includes(x.tagId)).map((x) => x.imageId);
+  const imageIds = [...new Set(args.filter((x) => moderatedTagIds.includes(x.tagId)).map((x) => x.imageId))];
+
+  if (!imageIds.length) return;
 
   await Limiter().process(imageIds, async (imageIds) => {
     await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels_new(ARRAY[${imageIds.join(',')}])`);
@@ -116,34 +118,36 @@ async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[])
   });
 }
 
-async function applyTagRules(args: TagsOnImageNewArgs[]) {
+export async function applyTagRules(args: TagsOnImageNewArgs[]) {
   const tagRules = await getTagRules();
 
-  let applied = [...args];
+  const getMap = (items: TagsOnImageNewArgs[]) =>
+    items.reduce<Record<string, TagsOnImageNewArgs>>((acc, tag) => {
+      acc[`${tag.imageId}|${tag.tagId}`] = tag;
+      return acc;
+    }, {});
+
+  const appliedMap = getMap(args);
+
   for (const rule of tagRules) {
-    const nextTags: TagsOnImageNewArgs[] = [];
-    for (const tag of applied) {
+    const toAdd: Record<string, TagsOnImageNewArgs> = {};
+    const toRemove: string[] = [];
+
+    for (const key in appliedMap) {
+      const tag = appliedMap[key];
       if (tag.tagId === rule.toId) {
         if (rule.type === 'Replace') {
-          nextTags.push({ ...tag, tagId: rule.fromId });
+          toRemove.push(key);
+          toAdd[`${tag.imageId}|${rule.fromId}`] = { ...tag, tagId: rule.fromId };
         } else {
-          nextTags.push(tag);
-          nextTags.push({ ...tag, tagId: rule.fromId, confidence: 70, source: 'Computed' });
+          toAdd[`${tag.imageId}|${rule.fromId}`] = { ...tag, tagId: rule.fromId, confidence: 70, source: 'Computed' };
         }
-      } else {
-        nextTags.push(tag);
       }
     }
-    applied = nextTags;
+
+    for (const key of toRemove) delete appliedMap[key];
+    for (const key in toAdd) appliedMap[key] = toAdd[key];
   }
 
-  return Object.values(
-    applied.reduce<Record<string, TagsOnImageNewArgs>>((acc, tag) => {
-      const key = `${tag.imageId}-${tag.tagId}`;
-      if (!acc[key]) {
-        acc[key] = tag;
-      }
-      return acc;
-    }, {})
-  );
+  return Object.values(appliedMap);
 }
