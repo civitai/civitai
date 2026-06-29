@@ -319,16 +319,6 @@ export const redisSelfHealReconnectCounter = registerCounterWithLabels({
   labelNames: ['trigger'] as const,
 });
 
-// Non-critical metric WRITE/LOCK fail-soft counter (FIX #3). Incremented when a metrics:lock setNX/expire
-// or an increment hIncrBy hit the short fail-fast timeout (or a redis error) and the call site skipped the
-// metric/lock so the user mutation could still succeed. A sustained rate means engagement metrics are
-// momentarily under-counting on a wedged pod — never a money/entitlement impact (analytics counters).
-export const redisMetricWriteFailSoftCounter = registerCounterWithLabels({
-  name: 'redis_metric_write_failsoft_total',
-  help: 'Non-critical metric write/lock cluster commands that failed soft (timed out/errored, skipped)',
-  labelNames: ['op'] as const,
-});
-
 // Cluster ROUTING retry-after-rediscover counter (the topology-churn 500 wave). Incremented when a cluster
 // `_execute` hit a TRANSIENT pre-dispatch routing throw and the guard retried after a rediscover. `result`
 // ∈ recovered|exhausted: a rising `recovered` series during a rolling update / failover confirms the fix

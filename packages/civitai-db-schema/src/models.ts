@@ -609,6 +609,7 @@ export interface User {
   comicProjects?: ComicProject[];
   comicReferences?: ComicReference[];
   comicProjectEngagements?: ComicProjectEngagement[];
+  comicChapterReads?: ComicChapterRead[];
   blockUserSettings?: BlockUserSettings[];
   promotedPlatformBlocks?: PlatformDefaultBlock[];
   blockUserSubscriptions?: BlockUserSubscription[];
@@ -4458,6 +4459,19 @@ export interface ComicProject {
   engagements?: ComicProjectEngagement[];
   reports?: ComicProjectReport[];
   projectReferences?: ComicProjectReference[];
+  metric?: ComicProjectMetric | null;
+}
+
+export interface ComicProjectMetric {
+  comicProjectId: number;
+  comicProject?: ComicProject;
+  updatedAt: Date;
+  tippedCount: number;
+  tippedAmountCount: number;
+  followerCount: number;
+  hiddenCount: number;
+  readerCount: number;
+  chapterReadCount: number;
 }
 
 export interface ComicChapter {
@@ -4476,6 +4490,17 @@ export interface ComicChapter {
   updatedAt: Date;
   panels?: ComicPanel[];
   thread?: Thread | null;
+  reads?: ComicChapterRead[];
+}
+
+export interface ComicChapterRead {
+  userId: number;
+  user?: User;
+  chapterId: number;
+  chapter?: ComicChapter;
+  unread: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ComicReference {
@@ -4539,8 +4564,8 @@ export interface ComicProjectEngagement {
   projectId: number;
   project?: ComicProject;
   type: ComicEngagementType;
-  readChapters: number[];
   createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ComicPanelReference {

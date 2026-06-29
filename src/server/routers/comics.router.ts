@@ -99,10 +99,44 @@ import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { comicMetricsCache } from '~/server/redis/entity-metric-populate';
 import { Prisma } from '@prisma/client';
 
 // Feature flag gate — all procedures require the comicCreator flag
+// ALL comic counters come from `ComicProjectMetric` — a Postgres rollup
+// recomputed from the source of truth by the `comicProjectMetrics` cron, exactly
+// like ModelMetric/ArticleMetric:
+//   - tips/followers/hides ← BuzzTip + ComicProjectEngagement
+//   - readers/reads        ← ComicChapterRead (keyed by stable chapter id)
+// There is no ClickHouse read path for comics anymore; the old ClickHouse drift
+// (ClickUp 868k5m8bk) is moot now that every counter is Postgres-owned.
+async function getComicMetricRows(projectIds: number[]) {
+  if (!projectIds.length)
+    return new Map<
+      number,
+      {
+        tippedCount: number;
+        tippedAmountCount: number;
+        followerCount: number;
+        hiddenCount: number;
+        readerCount: number;
+        chapterReadCount: number;
+      }
+    >();
+  const rows = await dbRead.comicProjectMetric.findMany({
+    where: { comicProjectId: { in: projectIds } },
+    select: {
+      comicProjectId: true,
+      tippedCount: true,
+      tippedAmountCount: true,
+      followerCount: true,
+      hiddenCount: true,
+      readerCount: true,
+      chapterReadCount: true,
+    },
+  });
+  return new Map(rows.map((r) => [r.comicProjectId, r]));
+}
+
 const comicFlag = isFlagProtected('comicCreator');
 const comicProtectedProcedure = protectedProcedure.use(comicFlag);
 const comicPublicProcedure = publicProcedure.use(comicFlag);
@@ -1016,12 +1050,8 @@ export const comicsRouter = router({
         ? 'tosViolation'
         : null;
 
-      // Pull watcher-fed metrics so the workspace header can show the
-      // creator the same public counters readers see — reader count,
-      // chapter reads, followers, hides, tips. Same cache the public
-      // listing uses, so a creator opening their workspace right after
-      // publishing typically hits a warm Redis key.
-      const metrics = (await comicMetricsCache.fetch(project.id))[project.id] ?? null;
+      // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
+      const metric = (await getComicMetricRows([project.id])).get(project.id) ?? null;
 
       const { chapters: _chapters, ...projectRest } = project;
       return {
@@ -1030,12 +1060,12 @@ export const comicsRouter = router({
         references,
         hiddenReason: projectHiddenReason,
         metrics: {
-          readerCount: metrics?.readerCount ?? 0,
-          chapterReadCount: metrics?.chapterReadCount ?? 0,
-          followerCount: metrics?.followerCount ?? 0,
-          hiddenCount: metrics?.hiddenCount ?? 0,
-          tippedCount: metrics?.tippedCount ?? 0,
-          tippedAmount: metrics?.tippedAmount ?? 0,
+          readerCount: metric?.readerCount ?? 0,
+          chapterReadCount: metric?.chapterReadCount ?? 0,
+          followerCount: metric?.followerCount ?? 0,
+          hiddenCount: metric?.hiddenCount ?? 0,
+          tippedCount: metric?.tippedCount ?? 0,
+          tippedAmount: metric?.tippedAmountCount ?? 0,
         },
       };
     }),
@@ -1572,16 +1602,9 @@ export const comicsRouter = router({
         }
       }
 
-      // Hydrate ClickHouse-backed counters (reads / followers / tips / hides)
-      // from Redis. The cache lazily populates from `entityMetricDailyAgg_v2`
-      // on miss, so first-page-of-a-cold-comic costs one CH query and
-      // subsequent pages are pure Redis. Fall back to the PG engagement
-      // count for `followerCount` until the watcher has fully backfilled.
+      // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
       const projectIds = projects.map((p) => p.id);
-      const metricsByProject =
-        projectIds.length > 0
-          ? await comicMetricsCache.fetch(projectIds)
-          : ({} as Record<string, Awaited<ReturnType<typeof comicMetricsCache.fetch>>[string]>);
+      const metricRows = await getComicMetricRows(projectIds);
 
       const items = projects.map((p) => {
         const readyPanelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
@@ -1618,7 +1641,7 @@ export const comicsRouter = router({
           publishedAt: ch.publishedAt,
         }));
 
-        const m = metricsByProject[p.id] ?? null;
+        const metric = metricRows.get(p.id) ?? null;
         return {
           id: p.id,
           name: p.name,
@@ -1631,18 +1654,13 @@ export const comicsRouter = router({
           readyPanelCount,
           chapterCount,
           latestChapters,
-          // All counters come from the watcher via `comicMetricsCache`.
-          // We deliberately don't fall back to `_count.engagements` —
-          // that PG aggregate counts every ComicProjectEngagement row
-          // regardless of `type`, so Hide + Notify rows would both
-          // inflate the displayed "follower" number. The watcher
-          // already filters to `type=Notify` on its side.
-          followerCount: m?.followerCount ?? 0,
-          readerCount: m?.readerCount ?? 0,
-          chapterReadCount: m?.chapterReadCount ?? 0,
-          hiddenCount: m?.hiddenCount ?? 0,
-          tippedCount: m?.tippedCount ?? 0,
-          tippedAmount: m?.tippedAmount ?? 0,
+          // All counters from `ComicProjectMetric` (Postgres).
+          followerCount: metric?.followerCount ?? 0,
+          readerCount: metric?.readerCount ?? 0,
+          chapterReadCount: metric?.chapterReadCount ?? 0,
+          hiddenCount: metric?.hiddenCount ?? 0,
+          tippedCount: metric?.tippedCount ?? 0,
+          tippedAmount: metric?.tippedAmountCount ?? 0,
           user: p.user,
           updatedAt: p.updatedAt,
         };
@@ -1894,12 +1912,8 @@ export const comicsRouter = router({
         stripNsfwPanelImages(chapters, !!ctx.user);
       }
 
-      // Pull all watcher-fed counters (tips / reads / followers / hides)
-      // through the cache. Replaces the previous inline aggregate against
-      // BuzzTip — the watcher already rolls those tips up into
-      // `entityMetricDailyAgg_v2` under `entityType = 'ComicProject'`,
-      // and the cache merges them in with the engagement counters.
-      const metrics = (await comicMetricsCache.fetch(project.id))[project.id] ?? null;
+      // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
+      const metric = (await getComicMetricRows([project.id])).get(project.id) ?? null;
 
       return {
         id: project.id,
@@ -1913,18 +1927,12 @@ export const comicsRouter = router({
         user: project.user,
         isOwnerOrMod: canViewDrafts,
         tosViolation: project.tosViolation,
-        // Preserved for back-compat with existing readers — same value the
-        // old BuzzTip aggregate produced, just sourced from ClickHouse now.
-        tippedAmountCount: metrics?.tippedAmount ?? 0,
-        tippedCount: metrics?.tippedCount ?? 0,
-        // All counters come from the watcher. No PG fallback: the
-        // `_count.engagements` aggregate would count every engagement
-        // type (Notify + Hide + None), which doesn't match the
-        // type-filtered `followerCount` the watcher emits.
-        followerCount: metrics?.followerCount ?? 0,
-        readerCount: metrics?.readerCount ?? 0,
-        chapterReadCount: metrics?.chapterReadCount ?? 0,
-        hiddenCount: metrics?.hiddenCount ?? 0,
+        tippedAmountCount: metric?.tippedAmountCount ?? 0,
+        tippedCount: metric?.tippedCount ?? 0,
+        followerCount: metric?.followerCount ?? 0,
+        readerCount: metric?.readerCount ?? 0,
+        chapterReadCount: metric?.chapterReadCount ?? 0,
+        hiddenCount: metric?.hiddenCount ?? 0,
         chapters,
       };
     }),
@@ -2419,11 +2427,9 @@ export const comicsRouter = router({
           }
         }
 
-        // Clear stale readChapters since positions may have shifted
-        await tx.comicProjectEngagement.updateMany({
-          where: { projectId: input.projectId, readChapters: { isEmpty: false } },
-          data: { readChapters: [] },
-        });
+        // Reads of the deleted chapter are removed via the ComicChapterRead FK
+        // cascade; reads of the surviving chapters are keyed by stable id and
+        // unaffected by the position recompaction above.
       });
 
       // Recalculate project NSFW level after chapter removal
@@ -2607,12 +2613,8 @@ export const comicsRouter = router({
           }
         }
 
-        // Clear stale readChapters engagement data
-        await tx.comicProjectEngagement.updateMany({
-          where: { projectId: input.projectId, readChapters: { isEmpty: false } },
-          data: { readChapters: [] },
-        });
-
+        // No read-state cleanup needed: ComicChapterRead is keyed by stable
+        // chapter id, so duplicating a chapter leaves existing reads intact.
         return created;
       });
 
@@ -2642,11 +2644,9 @@ export const comicsRouter = router({
             data: { position: i },
           });
         }
-        // Phase 3: Clear all readChapters for this project (positions are now stale)
-        await tx.comicProjectEngagement.updateMany({
-          where: { projectId, readChapters: { isEmpty: false } },
-          data: { readChapters: [] },
-        });
+        // No read-state cleanup needed: ComicChapterRead is keyed by stable
+        // chapter id, so reordering positions doesn't affect which chapters a
+        // user has read (this is the whole reason reads moved off the position array).
       });
 
       return { success: true };
@@ -5338,27 +5338,16 @@ export const comicsRouter = router({
       });
 
       if (engagement) {
-        if (engagement.type === input.type) {
-          // Same type — toggle off. Set to None instead of deleting if there are readChapters.
-          if (engagement.readChapters.length > 0) {
-            await dbWrite.comicProjectEngagement.update({
-              where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
-              data: { type: ComicEngagementType.None },
-            });
-          } else {
-            await dbWrite.comicProjectEngagement.delete({
-              where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
-            });
-          }
-          return false;
-        } else {
-          // Different type — switch
-          await dbWrite.comicProjectEngagement.update({
-            where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
-            data: { type: input.type, createdAt: new Date() },
-          });
-          return true;
-        }
+        // Toggle off (same type) → set None; switch (different type) → set new type.
+        // We never hard-delete: keeping the row (with its `@updatedAt` bumped) is
+        // what lets `comicProjectMetrics` detect un-follows incrementally. The row
+        // is bounded — one per (userId, projectId) — so it doesn't accumulate.
+        const nextType = engagement.type === input.type ? ComicEngagementType.None : input.type;
+        await dbWrite.comicProjectEngagement.update({
+          where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
+          data: { type: nextType },
+        });
+        return nextType !== ComicEngagementType.None;
       }
 
       await dbWrite.comicProjectEngagement.create({
@@ -5382,7 +5371,13 @@ export const comicsRouter = router({
       return engagement.type;
     }),
 
-  // ──── Phase 3: Chapter Read Tracking (via engagement readChapters) ────
+  // ──── Phase 3: Chapter Read Tracking (via ComicChapterRead) ────
+  // Reads are keyed by the STABLE ComicChapter.id (resolved from the
+  // position the client sends), so they survive reorder/republish. `unread`
+  // is a soft-delete: an un-read flips the flag and bumps `updatedAt` so the
+  // `comicProjectMetrics` cron recomputes readerCount/chapterReadCount
+  // incrementally (a hard delete would be invisible to it). The client
+  // contract stays position-based; resolution happens server-side.
 
   markChapterRead: comicProtectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
@@ -5391,13 +5386,12 @@ export const comicsRouter = router({
       const { projectId, chapterPosition } = input;
       const userId = ctx.user.id;
       await dbWrite.$executeRaw`
-        INSERT INTO "ComicProjectEngagement" ("userId", "projectId", "type", "readChapters", "createdAt")
-        VALUES (${userId}, ${projectId}, 'None', ARRAY[${chapterPosition}]::integer[], NOW())
-        ON CONFLICT ("userId", "projectId")
-        DO UPDATE SET "readChapters" = array_append(
-          array_remove("ComicProjectEngagement"."readChapters", ${chapterPosition}),
-          ${chapterPosition}
-        )
+        INSERT INTO "ComicChapterRead" ("userId", "chapterId", "unread", "createdAt", "updatedAt")
+        SELECT ${userId}, cc.id, false, NOW(), NOW()
+        FROM "ComicChapter" cc
+        WHERE cc."projectId" = ${projectId} AND cc."position" = ${chapterPosition}
+        ON CONFLICT ("userId", "chapterId")
+        DO UPDATE SET "unread" = false, "updatedAt" = NOW()
       `;
       return { success: true };
     }),
@@ -5406,11 +5400,17 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(z.object({ projectId: z.number().int() }))
     .query(async ({ ctx, input }) => {
-      const engagement = await dbRead.comicProjectEngagement.findUnique({
-        where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
-        select: { readChapters: true },
-      });
-      return engagement?.readChapters ?? [];
+      // Return the CURRENT positions of the user's read chapters so the reader
+      // UI keeps working in positions. Derived from the stable-id read records.
+      const rows = await dbRead.$queryRaw<{ position: number }[]>`
+        SELECT cc."position"
+        FROM "ComicChapterRead" cr
+        JOIN "ComicChapter" cc ON cc.id = cr."chapterId"
+        WHERE cr."userId" = ${ctx.user.id}
+          AND cc."projectId" = ${input.projectId}
+          AND cr."unread" = false
+      `;
+      return rows.map((r) => r.position);
     }),
 
   markChapterUnread: comicProtectedProcedure
@@ -5420,9 +5420,13 @@ export const comicsRouter = router({
       const { projectId, chapterPosition } = input;
       const userId = ctx.user.id;
       await dbWrite.$executeRaw`
-        UPDATE "ComicProjectEngagement"
-        SET "readChapters" = array_remove("readChapters", ${chapterPosition})
-        WHERE "userId" = ${userId} AND "projectId" = ${projectId}
+        UPDATE "ComicChapterRead" cr
+        SET "unread" = true, "updatedAt" = NOW()
+        FROM "ComicChapter" cc
+        WHERE cc.id = cr."chapterId"
+          AND cr."userId" = ${userId}
+          AND cc."projectId" = ${projectId}
+          AND cc."position" = ${chapterPosition}
       `;
       return { success: true };
     }),

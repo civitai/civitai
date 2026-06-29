@@ -559,6 +559,7 @@ model User {
   comicProjects              ComicProject[]
   comicReferences            ComicReference[]
   comicProjectEngagements    ComicProjectEngagement[]
+  comicChapterReads          ComicChapterRead[]
 
   // App Blocks back-relations
   blockUserSettings          BlockUserSettings[]
@@ -6059,11 +6060,30 @@ model ComicProject {
   engagements       ComicProjectEngagement[]
   reports           ComicProjectReport[]
   projectReferences ComicProjectReference[]
+  metric            ComicProjectMetric?
 
   @@index([userId])
   @@index([status])
   @@index([coverImageId])
   @@index([heroImageId])
+}
+
+// AllTime-only metric rollup for comics (single row per project, like
+// Model3DMetric). Holds only STATE counters recomputed from their Postgres
+// source of truth by the `comicProjectMetrics` cron (tips from BuzzTip,
+// follows/hides from ComicProjectEngagement). readerCount/chapterReadCount are
+// intentionally absent: readChapters[] is wiped on republish, so they can't be
+// reconstructed from Postgres and remain on the ClickHouse event pipeline.
+model ComicProjectMetric {
+  comicProjectId    Int          @id
+  comicProject      ComicProject @relation(fields: [comicProjectId], references: [id], onDelete: Cascade)
+  updatedAt         DateTime     @default(now())
+  tippedCount       Int          @default(0)
+  tippedAmountCount Int          @default(0)
+  followerCount     Int          @default(0)
+  hiddenCount       Int          @default(0)
+  readerCount       Int          @default(0)
+  chapterReadCount  Int          @default(0)
 }
 
 model ComicChapter {
@@ -6083,8 +6103,30 @@ model ComicChapter {
 
   panels ComicPanel[]
   thread Thread?
+  reads  ComicChapterRead[]
 
   @@id([projectId, position])
+}
+
+// Per-(user, chapter) read record, keyed by the STABLE ComicChapter.id (not the
+// mutable position), so reads survive reorder/republish — unlike the old
+// position-array on ComicProjectEngagement. Drives readerCount/chapterReadCount
+// in ComicProjectMetric. Soft-delete via `unread` (mirrors the engagement
+// soft-delete): an un-read flips `unread = true` and bumps `updatedAt` so the
+// `comicProjectMetrics` cron picks it up incrementally instead of silently
+// drifting on dormant comics.
+model ComicChapterRead {
+  userId    Int
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapterId Int
+  chapter   ComicChapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  unread    Boolean      @default(false)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @default(now()) @updatedAt
+
+  @@id([userId, chapterId])
+  @@index([chapterId])
+  @@index([updatedAt])
 }
 
 model ComicReference {
@@ -6164,11 +6206,12 @@ model ComicProjectEngagement {
   projectId    Int
   project      ComicProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   type         ComicEngagementType @default(None)
-  readChapters Int[]               @default([])
   createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @default(now()) @updatedAt
 
   @@id([userId, projectId])
   @@index([projectId], type: Hash)
+  @@index([updatedAt])
 }
 
 model ComicPanelReference {

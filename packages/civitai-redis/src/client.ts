@@ -525,12 +525,10 @@ type RedisMetricsBridge = {
   sysredisSentinelClientErrorsCounter: {
     labels: (labels: Record<string, string>) => { inc: () => void };
   };
-  // FIX #1 self-heal reconnect counter (labeled by `trigger`: 'deadline' | 'inflight') + FIX #3
-  // metric-write fail-soft counter. Read via the globalThis bridge so this client-bundle-
-  // reachable module avoids a static prom-client import (which drags in fs/cluster). Both may be
-  // undefined until prom/client loads server-side; callers null-check.
+  // FIX #1 self-heal reconnect counter (labeled by `trigger`: 'deadline' | 'inflight'). Read via the
+  // globalThis bridge so this client-bundle-reachable module avoids a static prom-client import (which
+  // drags in fs/cluster). May be undefined until prom/client loads server-side; callers null-check.
   redisSelfHealReconnectCounter?: { inc: (labels: { trigger: string }) => void };
-  redisMetricWriteFailSoftCounter?: { labels: (labels: { op: string }) => { inc: () => void } };
   // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
   // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
   redisRoutingRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
@@ -564,7 +562,11 @@ export function attachSysSentinelListeners(
       event
     );
     ctx.topologyCounter
-      .labels({ type: String(eventType ?? 'unknown'), host: String(host), deployment: ctx.deployment })
+      .labels({
+        type: String(eventType ?? 'unknown'),
+        host: String(host),
+        deployment: ctx.deployment,
+      })
       .inc();
   });
   client.on('client-error', (event: any) => {
@@ -572,11 +574,17 @@ export function attachSysSentinelListeners(
     const host = node?.host ?? '?';
     const port = node?.port ?? '?';
     ctx.log(
-      `Redis sentinel sub-client error [type=${eventType ?? 'unknown'}, host=${host}, port=${port}]`,
+      `Redis sentinel sub-client error [type=${
+        eventType ?? 'unknown'
+      }, host=${host}, port=${port}]`,
       error ?? event
     );
     ctx.errorCounter
-      .labels({ type: String(eventType ?? 'unknown'), host: String(host), deployment: ctx.deployment })
+      .labels({
+        type: String(eventType ?? 'unknown'),
+        host: String(host),
+        deployment: ctx.deployment,
+      })
       .inc();
   });
 }
@@ -788,12 +796,15 @@ function getBaseClient(type: 'cache' | 'system') {
   if (isSysSentinel) {
     const metrics = getRedisMetrics();
     const noopCounter = { labels: () => ({ inc: () => undefined }) };
-    attachSysSentinelListeners(baseClient as unknown as { on: (e: string, l: (e: any) => void) => unknown }, {
-      deployment: process.env.HOSTNAME ?? 'unknown',
-      log,
-      topologyCounter: metrics?.sysredisSentinelTopologyChangesCounter ?? noopCounter,
-      errorCounter: metrics?.sysredisSentinelClientErrorsCounter ?? noopCounter,
-    });
+    attachSysSentinelListeners(
+      baseClient as unknown as { on: (e: string, l: (e: any) => void) => unknown },
+      {
+        deployment: process.env.HOSTNAME ?? 'unknown',
+        log,
+        topologyCounter: metrics?.sysredisSentinelTopologyChangesCounter ?? noopCounter,
+        errorCounter: metrics?.sysredisSentinelClientErrorsCounter ?? noopCounter,
+      }
+    );
   }
 
   // Common event handlers (note: cluster clients don't emit connect/ready events in node-redis v4.x)
@@ -1773,9 +1784,6 @@ export const REDIS_KEYS = {
   },
   NEW_ORDER: {
     RATED: 'new-order:rated',
-  },
-  ENTITY_METRICS: {
-    BASE: 'entitymetric',
   },
   QUEUES: {
     SEEN_IMAGES: 'queues:recent-images',
