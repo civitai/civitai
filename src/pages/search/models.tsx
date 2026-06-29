@@ -80,7 +80,7 @@ const RenderFilters = () => {
       />
       <SearchableMultiSelectRefinementList
         title="Filter by Base Model"
-        attribute="version.baseModel"
+        attribute="versions.baseModel"
         sortBy={['name']}
         limit={100}
         searchable
