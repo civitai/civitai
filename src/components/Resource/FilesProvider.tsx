@@ -37,6 +37,7 @@ type SchemaError = {
 export type FileFromContextProps = {
   id?: number;
   name: string;
+  overrideName?: string | null;
   modelType?: ModelType | null;
   type?: ModelFileType | null;
   sizeKB?: number;
@@ -100,6 +101,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     const initialFiles = (version?.files?.map((file) => ({
       id: file.id,
       name: file.name,
+      overrideName: file.overrideName ?? null,
       type: file.type as ModelFileType,
       sizeKB: file.sizeKB,
       size: file.metadata?.size,
