@@ -182,6 +182,13 @@ export async function submitWorkflow({
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
 
+  // whatIf is a generation COST ESTIMATE (query.whatif=true); the client already
+  // degrades gracefully on a failed whatIf (useWhatIfFromGraph → default cost). So
+  // for whatIf we fail FAST (no 3× retry amplification) and map a transient upstream
+  // brownout (network/timeout throw, or an orchestrator 5xx result) to a retry-able
+  // 503 instead of a 500. The generate/write path keeps today's behavior exactly.
+  const isWhatif = (query as { whatif?: boolean } | undefined)?.whatif === true;
+
   // const steps = body.steps;
   // if (steps.length > 0) {
   //   // At the moment, we mainly have 1 step, but in the future, we might wanna look at the minimum and maximum nsfw level.
@@ -199,10 +206,23 @@ export async function submitWorkflow({
     console.log('------');
   }
 
-  const result = await submitWorkflowWithRetry({
-    client,
-    body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
-    query,
+  const result = await submitWorkflowWithRetry(
+    {
+      client,
+      body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
+      query,
+    },
+    // whatIf: 1 attempt (fail fast — avoid the 3×~30s ≈ 93s amplification on a
+    // transient brownout). generate keeps the default 3 retries.
+    isWhatif ? { maxAttempts: 1 } : {}
+  ).catch((thrown) => {
+    // With maxAttempts=1 a network/timeout failure THROWS out of the retry wrapper
+    // (today that propagates raw → tRPC 500). For whatIf, classify a transient
+    // upstream network/timeout error as a retry-able 503. generate (isWhatif=false)
+    // re-throws unchanged = today's behavior.
+    if (isWhatif && isUpstreamNetworkError(thrown))
+      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, thrown);
+    throw thrown;
   });
 
   // Narrow on `result.data` (not a destructured copy) so this always-throwing
@@ -244,6 +264,8 @@ export async function submitWorkflow({
         // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
         throw throwRateLimitError(message);
       case 500:
+        // whatIf: a transient orchestrator 5xx estimate failure → retry-able 503.
+        if (isWhatif) throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
         throw throwInternalServerError(message);
       default:
         if (message?.startsWith('<!DOCTYPE'))
@@ -256,6 +278,9 @@ export async function submitWorkflow({
         // upstream 5xx / status-less failures still fall through to a server error.
         if (typeof response.status === 'number' && response.status >= 400 && response.status < 500)
           throw throwBadRequestError(message);
+        // Genuine upstream 5xx / status-less failure. whatIf → retry-able 503;
+        // generate re-throws raw (today's behavior → tRPC INTERNAL_SERVER_ERROR).
+        if (isWhatif) throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
         throw error;
     }
   }
