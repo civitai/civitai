@@ -74,6 +74,8 @@ const CreateSteps = ({
   const result = querySchema.safeParse(router.query);
   const templateId = result.success ? result.data.templateId : undefined;
   const bountyId = result.success ? result.data.bountyId : undefined;
+  const modelVersionId = result.success ? result.data.modelVersionId : undefined;
+  const src = result.success ? result.data.src : undefined;
 
   const { data: templateFields, isInitialLoading: isTemplateLoading } =
     trpc.model.getTemplateFields.useQuery({ id: templateId as number }, { enabled: !!templateId });
@@ -95,9 +97,11 @@ const CreateSteps = ({
 
   const navigateToStep = (urlStep: number) =>
     router
-      .replace(getWizardUrl({ id: modelId, step: urlStep, templateId }), undefined, {
-        shallow: true,
-      })
+      .replace(
+        getWizardUrl({ id: modelId, step: urlStep, templateId, bountyId, modelVersionId, src }),
+        undefined,
+        { shallow: true }
+      )
       .then();
   const { formId, handleStepSelect, withSavedNav, clearPendingStep } =
     useWizardStepSave(navigateToStep);
@@ -222,9 +226,25 @@ const TrainSteps = ({
   router: NextRouter;
   postId: number | undefined;
 }) => {
+  const result = querySchema.safeParse(router.query);
+  const templateId = result.success ? result.data.templateId : undefined;
+  const bountyId = result.success ? result.data.bountyId : undefined;
+  const src = result.success ? result.data.src : undefined;
+
   const navigateToStep = (urlStep: number) =>
     router
-      .replace(getWizardUrl({ id: modelId, step: urlStep }), undefined, { shallow: true })
+      .replace(
+        getWizardUrl({
+          id: modelId,
+          step: urlStep,
+          templateId,
+          bountyId,
+          modelVersionId: modelVersion.id,
+          src,
+        }),
+        undefined,
+        { shallow: true }
+      )
       .then();
   const { formId, handleStepSelect, withSavedNav, clearPendingStep } =
     useWizardStepSave(navigateToStep);
