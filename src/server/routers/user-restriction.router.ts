@@ -21,6 +21,7 @@ import {
   resetProhibitedRequestCount,
 } from '~/server/services/orchestrator/promptAuditing';
 import { updateUserById } from '~/server/services/user.service';
+import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 import { refreshSession } from '~/server/auth/session-invalidation';
@@ -129,6 +130,16 @@ export const userRestrictionRouter = router({
         data: { mutedAt: new Date() },
         updateSource: 'moderator:generationRestrictionUpheld',
       });
+      // Stop the recurring membership from auto-renewing for the restricted
+      // user. Cancel at period end (reversible) rather than waiting for the
+      // daily confirm-mutes safety-net job.
+      await cancelSubscription({ userId: restriction.userId, atPeriodEnd: true }).catch((error) =>
+        logToAxiom({
+          name: 'cancel-stripe-subscription-restriction-upheld',
+          type: 'error',
+          message: (error as Error).message,
+        })
+      );
       await refreshSession(restriction.userId);
     } else if (status === UserRestrictionStatus.Overturned) {
       // Unmute the user and reset their violation count
@@ -137,6 +148,14 @@ export const userRestrictionRouter = router({
         data: { muted: false },
         updateSource: 'moderator:generationRestrictionOverturned',
       });
+      // Reverse the at-period-end cancellation if the membership is still live.
+      await reinstateSubscription({ userId: restriction.userId }).catch((error) =>
+        logToAxiom({
+          name: 'reinstate-stripe-subscription-restriction-overturned',
+          type: 'error',
+          message: (error as Error).message,
+        })
+      );
       await resetProhibitedRequestCount(restriction.userId);
       await refreshSession(restriction.userId);
     }

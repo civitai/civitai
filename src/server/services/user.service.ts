@@ -2,7 +2,12 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
-import { banReasonDetails, CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import {
+  banReasonDetails,
+  CacheTTL,
+  constants,
+  USERS_SEARCH_INDEX,
+} from '~/server/common/constants';
 import { moderationActionEmail } from '~/server/email/templates';
 import {
   BanReasonCode,
@@ -121,7 +126,7 @@ import type {
   UserSettingsSchema,
 } from './../schema/user.schema';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
-import { cancelSubscription } from '~/server/services/stripe.service';
+import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds } },
@@ -423,13 +428,7 @@ export async function clearUserProfileFields({
 /**
  * Mod-driven: explicit mute/unmute (vs. legacy toggle).
  */
-export async function setUserMuted({
-  userId,
-  muted,
-}: {
-  userId: number;
-  muted: boolean;
-}) {
+export async function setUserMuted({ userId, muted }: { userId: number; muted: boolean }) {
   const date = new Date();
   const user = await updateUserById({
     id: userId,
@@ -991,12 +990,7 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
  * (email magic-link or OAuth) which creates new rows.
  */
-export const restoreUser = async ({
-  id,
-  username,
-  email,
-  restoreModels,
-}: RestoreUserInput) => {
+export const restoreUser = async ({ id, username, email, restoreModels }: RestoreUserInput) => {
   const user = await dbWrite.user.findFirst({
     where: { id },
     select: { id: true, deletedAt: true },
@@ -1663,6 +1657,13 @@ export const toggleBan = async ({
 
       // Group B: External operations (subscription + search indexes)
       Promise.all([
+        // Stop the recurring membership from auto-renewing while banned. Cancel
+        // at period end so the charge stops but the action is reversible if the
+        // ban is later lifted (see reinstate in the unban branch below).
+        cancelSubscription({ userId: id, atPeriodEnd: true }).catch((error) =>
+          logToAxiom({ name: 'cancel-stripe-subscription', type: 'error', message: error.message })
+        ),
+
         // Cancel their subscription
         cancelSubscriptionPlan({ userId: id }).catch((error) =>
           logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
@@ -1680,6 +1681,12 @@ export const toggleBan = async ({
         ),
       ]),
     ]);
+  } else {
+    // Unbanning: reverse the at-period-end cancellation applied on ban, if the
+    // membership is still within its paid period.
+    await reinstateSubscription({ userId: id }).catch((error) =>
+      logToAxiom({ name: 'reinstate-stripe-subscription', type: 'error', message: error.message })
+    );
   }
 
   // Notify the user by email of the ban/unban decision. Skip the admin
