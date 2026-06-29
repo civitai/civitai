@@ -88,6 +88,13 @@ describe('GetStartedBody (public App builders landing)', () => {
     expect(appSdk.element().getAttribute('href')).toBe(APP_SDK_NPM_URL);
   });
 
+  test('the Quickstart subtitle links to the CLI repo on GitHub', async () => {
+    renderWithProviders(<GetStartedBody />);
+    const ghLink = page.getByRole('link', { name: 'view it on GitHub' });
+    await expect.element(ghLink).toBeInTheDocument();
+    expect(ghLink.element().getAttribute('href')).toBe(CIVITAI_CLI_GITHUB_URL);
+  });
+
   test('renders the Request-access CTA wired to a prefilled civitai/cli issue', async () => {
     renderWithProviders(<GetStartedBody />);
     const cta = page.getByRole('link', { name: 'Request access on GitHub' });

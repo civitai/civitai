@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Box,
   Button,
@@ -114,6 +115,13 @@ export function GetStartedBody() {
       {/* Quickstart — the whole point: copy 3 lines, you're running */}
       <Stack gap="sm">
         <Title order={2}>Quickstart</Title>
+        <Text size="sm" c="dimmed">
+          Powered by the open-source Civitai CLI —{' '}
+          <Anchor href={CIVITAI_CLI_GITHUB_URL} target="_blank" rel="noopener noreferrer">
+            view it on GitHub
+          </Anchor>
+          .
+        </Text>
         <CopyableCommand command={CLI_INSTALL_BREW} />
         <Text size="xs" c="dimmed">
           or: <Code>{CLI_INSTALL_GO}</Code>
