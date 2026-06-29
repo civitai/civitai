@@ -2482,12 +2482,12 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
 
   // Build where clause with filters
   const where: Prisma.ModelVersionFindManyArgs['where'] = {
-    // Draft/Training are in-flight trainings. Unpublished is included so a model
-    // that was published then swept (e.g. the requirements cron removed it after
-    // its showcase post was emptied/deleted) stays visible in the trainer with a
-    // republish path, instead of silently vanishing. UnpublishedViolation is
-    // intentionally excluded — genuine ToS removals should not resurface here.
-    status: { in: [ModelStatus.Draft, ModelStatus.Training, ModelStatus.Unpublished] },
+    // Only in-flight trainings. A model that was published then swept (post
+    // emptied/deleted -> requirements cron) now comes back as Draft (the cron
+    // resets trained versions to Draft, and the one-time backfill did the same
+    // for already-swept ones), so it reappears here without surfacing
+    // Unpublished — which would otherwise also pull in ToS/moderation removals.
+    status: { in: [ModelStatus.Draft, ModelStatus.Training] },
     uploadType: ModelUploadType.Trained,
     model: {
       userId,
