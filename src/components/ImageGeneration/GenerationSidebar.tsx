@@ -7,7 +7,11 @@ import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvi
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
 import { useResizeStore } from '~/components/Resizable/useResize';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
+// loading placeholder keeps the sidebar column filled while the JS chunk loads,
+// preventing a content-height collapse between first paint and chunk evaluation.
+const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'), {
+  loading: () => <div className="size-full" />,
+});
 
 const RESIZE_STORE_NAME = 'generation-sidebar';
 const DEFAULT_WIDTH = 400;

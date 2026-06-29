@@ -4,6 +4,10 @@
   display: flex;
   height: 100%;
   align-items: stretch;
+  /* Reserve default width at SSR/first-paint so the flex sibling (#main) doesn't
+     start full-width and shift right on hydration. The useResize hook overrides
+     this with element.style.width (inline > stylesheet) once mounted. */
+  width: var(--sidebar-default-width);
 }
 
 .resizer {
