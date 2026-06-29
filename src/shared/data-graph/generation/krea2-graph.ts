@@ -244,7 +244,7 @@ const rawVariantGraph = new DataGraph<Krea2VariantCtx, GenerationCtx>()
 const turboVariantGraph = new DataGraph<Krea2VariantCtx, GenerationCtx>()
   .merge(createResourcesGraph())
   .merge(negativePromptGraph)
-  .node('cfgScale', sliderNode({ min: 0, max: 2, step: 0.1, defaultValue: 0 }))
+  .node('cfgScale', sliderNode({ min: 0, max: 2, step: 0.1, defaultValue: 1 }))
   .node('steps', sliderNode({ min: 1, max: 15, defaultValue: 8 }));
 
 // =============================================================================
