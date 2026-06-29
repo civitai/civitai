@@ -1856,15 +1856,30 @@ export const toggleBookmarked = async ({
     where: { userId, type, mode: CollectionMode.Bookmark },
   });
   if (!collection) {
-    collection = await dbWrite.collection.create({
-      data: {
-        userId,
-        type,
-        mode: CollectionMode.Bookmark,
-        name: `Bookmarked ${type}`,
-        description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
-      },
-    });
+    // Race #1: the bookmark collection is guarded by a prod-only partial unique index
+    // `User_bookmark_collection UNIQUE (userId, type, mode) WHERE mode='Bookmark'` (NOT in the
+    // Prisma schema). Two concurrent toggles can both see null and both create → loser hits P2002.
+    // Prisma `upsert` can't target a partial WHERE index, so create-then-refetch on the conflict.
+    collection =
+      (await dbWrite.collection
+        .create({
+          data: {
+            userId,
+            type,
+            mode: CollectionMode.Bookmark,
+            name: `Bookmarked ${type}`,
+            description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+          },
+        })
+        .catch((e) => {
+          if (!isPrismaUniqueViolation(e)) throw e;
+          return null; // lost the create race — fall through to re-fetch
+        })) ??
+      (await dbWrite.collection.findFirst({
+        where: { userId, type, mode: CollectionMode.Bookmark },
+      }));
+    if (!collection)
+      throw new Error('toggleBookmarked: bookmark collection missing after create race');
   }
 
   const entityProp = collectionEntityProps[type];
@@ -1884,15 +1899,25 @@ export const toggleBookmarked = async ({
 
   // if the engagement exists, we only need to remove the existing engagmement
   if (exists && setTo !== true) {
-    await dbWrite.collectionItem.delete({
+    // Race #3: concurrent un-bookmarks both read the same row then both delete it → loser hits
+    // P2025 ("record not found"). `deleteMany` returns {count} and never throws on zero rows, so
+    // it's fully idempotent — no try/catch needed.
+    await dbWrite.collectionItem.deleteMany({
       where: {
         id: collectionItem.id,
       },
     });
     metricsEngine.queueUpdate(entityId);
   } else if (!exists && setTo !== false) {
-    await dbWrite.collectionItem.create({
-      data: { collectionId: collection.id, [entityProp]: entityId },
+    // Race #2: the collection item is guarded by prod-only partial unique indexes
+    // (`CollectionItem_model UNIQUE (collectionId, modelId) WHERE modelId IS NOT NULL`, and the
+    // analogous image/post/article indexes — NOT in the Prisma schema). Concurrent bookmarks both
+    // see no row and both create → loser hits P2002. `createMany({ skipDuplicates: true })` emits
+    // ON CONFLICT DO NOTHING, so the race resolves at the DB with no throw. The return value isn't
+    // used (the function returns `!exists`).
+    await dbWrite.collectionItem.createMany({
+      data: [{ collectionId: collection.id, [entityProp]: entityId }],
+      skipDuplicates: true,
     });
   }
 
