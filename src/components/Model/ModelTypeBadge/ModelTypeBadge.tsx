@@ -83,7 +83,7 @@ export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: P
         )
       )}
       {overflow > 0 && (
-        <Text size="xs" fw={700} inherit>
+        <Text size="xs" fw={700} c="inherit">
           +{overflow}
         </Text>
       )}
@@ -96,6 +96,10 @@ export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: P
       radius="xl"
       {...badgeProps}
       classNames={{ label: 'flex items-center gap-2' }}
+      onClick={(e: React.MouseEvent<HTMLDivElement>) => {
+        e.stopPropagation();
+        e.preventDefault();
+      }}
     >
       <Text size="xs" tt="capitalize" fw="bold">
         {getDisplayName(type)}
@@ -114,10 +118,12 @@ export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: P
               shadow="md"
             >
               <Popover.Target>
-                <span
-                  className="flex cursor-pointer items-center gap-2"
-                  role="button"
-                  tabIndex={0}
+                {/* Must be a <button>: globals.css re-enables pointer-events only on
+                    button/a, while the card header is pointer-events:none. A span/div
+                    here lets the click fall through to the card link and navigate. */}
+                <button
+                  type="button"
+                  className="flex cursor-pointer items-center gap-2 border-0 bg-transparent p-0 text-inherit"
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -125,7 +131,7 @@ export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: P
                   }}
                 >
                   {indicators}
-                </span>
+                </button>
               </Popover.Target>
               <Popover.Dropdown
                 onClick={(e) => {
