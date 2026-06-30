@@ -1,499 +1,67 @@
-# KoN Consensus Backfill (drain stranded Pending/Inconclusive votes) Implementation Plan
+# KoN Consensus Backfill
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Status:** Phase 1 shipped (PR #2828) and run to completion on 2026-06-30 — `remainingAutoResolvable: 0`.
 
-**Goal:** A temp admin webhook endpoint that finalizes the ~71K New-Order image-rating votes that were stranded `Pending`/`Inconclusive` during the 2026-06-23 sysRedis wipe — re-stamping them to `Correct`/`Failed` so blessed-buzz pays out and the nightly Inconclusive purge stops.
+One-time admin backfill that finalized the New-Order ("KoN") image-rating votes left stranded `Pending`/`Inconclusive` by the **2026-06-23 sysRedis wipe**, re-stamping the consensus-met ones to `Correct`/`Failed` so blessed-buzz pays out and the nightly `Inconclusive` purge stops.
 
-**Architecture:** Source of truth is the **ClickHouse `knights_new_order_image_rating` ledger, NOT the Redis queue** (the `new-order:queues:Knight{1,2,3}:{a,b}` zsets rotate/wipe and are useless as a record). For each image with ≥4 unfinalized knight votes that meet raw-count consensus (≥60% agree), the endpoint re-inserts that image's `Pending`/`Inconclusive` rows with `status = Correct/Failed` (per-voter vs the dominant rating) and `createdAt = run time`, then lazily rebuilds the affected players' judgment/fervor counters. Down-rates by >1 NSFW level are excluded (mod-only per the live guard). Work is chunked and run under `limitConcurrency`, mirroring the temp-admin-backfill convention in `src/pages/api/admin/temp/` (e.g. `backfill-swept-trained-models.ts`).
+## Background
 
-**Tech Stack:** Next.js API route, `WebhookEndpoint` (`~/server/utils/endpoint-helpers`), ClickHouse client (`~/server/clickhouse/client`), `limitConcurrency` (`~/server/utils/concurrency-helpers`), zod, Vitest.
+The wipe destroyed the `new-order:ratings:<imageId>` weighted-consensus zsets. Re-seeding `new-order:config` (a different key) fixed the abuse/limiter thresholds but **not** consensus — images stopped resolving at the 5-vote mark, piled up, and got mass-purged `Inconclusive` at the 00:00 rotation. That single daily purge drove **both** prod symptoms: the KoN earnings drop (no `Correct` rows → no blessed buzz) and the "abuse detection" false positives (the 00:00 batch-stamp inflates `avgPerMinute`). The zsets recovered, but the backlog didn't self-heal — hence this backfill. See [[project_kon_abuse_detection_false_positives]] for the full investigation.
 
-## Global Constraints
+## How it works
 
-- **Read-only first.** Every write action MUST support `dryRun` and default to it (`dryRun !== false`). Mirror `backfill-stale-nsfw-rollups.ts`.
-- **Endpoint lives at** `src/pages/api/admin/temp/new-order-consensus-backfill.ts`, guarded by `WebhookEndpoint(...)` (checks `?token=$WEBHOOK_TOKEN`). Do NOT add routes elsewhere.
-- **No unit tests under `src/pages`** (Next.js route-type validator fails `next build`). Helper + its test live in `src/server/games/new-order/` and `src/server/games/new-order/__tests__/`.
-- **Consensus = raw vote agreement** (`topCount / voters >= 0.6`, `voters >= 4`). It is a deliberate approximation of the live *weighted* algorithm (weights live only in the now-ephemeral `new-order:ratings:*` zsets). Safe because ~42K of 71K candidates are unanimous. Document this in the file header.
-- **Window:** `createdAt >= '2026-06-23 00:00:00'`, `rank = 'Knight'`, `status IN ('Pending','Inconclusive')`. Parametrize the start date with a default.
-- **Down-rate >1 level → escalate, never auto-apply** (replicates `new-order.service.ts:500`). Phase 1 SKIPS them; Phase 2 optionally routes them to the Inquisitor queue.
-- **`createdAt` is stamped to run-time on purpose.** The `new-order-grant-bless-buzz` job (`new-order-jobs.ts:44`) pays `Correct/Failed` rows from *exactly 3 days ago*; stamping run-time means payout lands run-day + 3. Preserving original vote time would drop the rows outside the payout window forever. Accept a one-time abuse-detection alert blip on run day (all rows share a timestamp) — mute it / warn mods.
-- **ClickHouse hygiene:** batch re-stamps (one `INSERT ... SELECT` per chunk of imageIds), never one INSERT per image. Table is `SharedReplacingMergeTree ORDER BY (userId, imageId)`, no version column — a re-inserted `(userId,imageId)` row supersedes on merge; queries that must see the new value use `FINAL`.
+- **Source of truth = the ClickHouse `knights_new_order_image_rating` ledger, NOT the Redis queue** (the `new-order:queues:*` zsets rotate/wipe and are useless as a record). Catches both still-`Pending` and already-purged-`Inconclusive` votes.
+- **Consensus = raw vote agreement** (`voters >= 4` AND `topCount/voters >= minAgreement`, default 0.6) — a deliberate approximation of the live *weighted* algorithm (weights lived only in the wiped zsets); safe because most stranded images were unanimous.
+- For each consensus image, re-insert its voter rows with `status = Correct/Failed` (per-voter vs the dominant rating) and `createdAt = run time`, then reset the affected players' `correctJudgments`/`allJudgments`/`fervor` counters so they lazily rebuild from CH. Buzz flows through the existing daily `new-order-grant-bless-buzz` job.
+- **Phase 1 writes only** `same_level` / `down_1lvl` / `up_rate`. **Down-rates >1 NSFW level (`down_gt1`) are excluded** — they go to mod review per the live guard (`new-order.service.ts:500`). `unknown_orig` (no original level) also excluded.
 
----
+## Files
 
-## Dry-run numbers this plan is sized against (2026-06-29, prod CH)
+- `src/server/games/new-order/consensus-backfill.ts` — `classifyDecision` (pure), `getConsensusCandidates`, `restampBatch`, `reconcileAffectedPlayers`, `countRestampedRows`.
+- `src/server/games/new-order/__tests__/consensus-backfill.test.ts` — Vitest for `classifyDecision` (kept out of `src/pages` — the route-type validator fails `next build` on test files there).
+- `src/pages/api/admin/temp/new-order-consensus-backfill.ts` — `WebhookEndpoint` GET route (the temp-admin-backfill convention).
 
-| Decision class | images | correct votes | Phase 1 action |
-|---|---|---|---|
-| `same_level` (consensus = current level) | 42,141 | 173,989 | re-stamp ✓ |
-| `down_1lvl` | 27,844 | 111,367 | re-stamp ✓ |
-| `up_rate` | 758 | 2,605 | re-stamp ✓ |
-| `down_gt1_ESCALATE` | 1,903 | 6,959 | **skip** (Phase 2 → Inquisitor) |
+## API
 
-~70,700 auto-resolve · 605 distinct users · ~286K correct votes · ≈28.6K buzz.
+`GET /api/admin/temp/new-order-consensus-backfill?token=$WEBHOOK_TOKEN&action=<action>&...params`
 
-## Open decisions (confirm before running the write path)
+| action | effect |
+|---|---|
+| `resolve` | **read-only preview** — `{ dryRun:true, totalCandidates, byDecision (all classes), wouldResolve (writable subset, post-limit), skipped:{down_gt1,unknown_orig} }` |
+| `resolve&dryRun=false` | **the write** — re-stamps the write set; `{ dryRun:false, imagesTargeted, rowsResolved, usersReconciled, byDecision, stampISO }` |
+| `verify` | `{ remainingAutoResolvable, remainingEscalate }` |
 
-1. **NSFW-level apply (Phase 2):** ~28.6K `down_1lvl`/`up_rate` images currently sit at the wrong level. Re-stamping fixes *earnings* but not the image's moderation level. Apply levels too (heavier: Postgres + search reindex), or leave to normal flow? Default plan: Phase 1 = earnings only; Phase 2 = opt-in level apply.
-2. **Escalate the 1,903 down>1 to Inquisitor**, or leave them `Inconclusive` (no buzz for those voters, but zero mod load)? Default: skip in Phase 1, opt-in action in Phase 2.
-3. **Threshold/phasing:** unanimous-only first pass (~42K, raw==weighted, zero ambiguity) then the ≥60% remainder, or one ≥60% pass? Default plan exposes `minAgreement` (default `0.6`) so either is a param.
-4. **Staleness filter on `Pending`:** only re-stamp `Pending` whose last vote is older than `staleHours` (default 12) so the drain never races the now-healthy live resolver on in-flight images. `Inconclusive` (already purged) is always eligible.
+**Write gate:** read-only unless the literal `&dryRun=false` is present (`p.dryRun !== 'false'`). Omitted / any other value stays read-only — fail-safe by default. (A side-effecting GET, accepted because it's token-gated, idempotent, and the write needs the explicit literal.)
 
----
+Params: `startDate` (def `2026-06-23 00:00:00`), `minAgreement` (def 0.6 — keep; 0.5 reintroduces domRating tie ambiguity), `staleHours` (def 12 — `Pending` newer than this is skipped so the drain never races the live resolver; `Inconclusive` always eligible), `limit`, `batchSize` (def 1000, max 5000), `concurrency` (def 4).
 
-## File Structure
+## Gotchas (for anyone touching the queries)
 
-- **Create** `src/server/games/new-order/consensus-backfill.ts` — pure/CH logic, importable + testable outside `src/pages`:
-  - `classifyDecision(domRating, origLevel)` — pure, returns `'same_level' | 'up_rate' | 'down_1lvl' | 'down_gt1' | 'unknown_orig'`.
-  - `getConsensusCandidates(opts)` — CH read; returns `{ imageId, domRating, voters, topCount, decision }[]`.
-  - `restampBatch(pairs, stampISO)` — CH write; re-stamps one chunk.
-  - `reconcilePlayerCounters(userIds)` — reset judgment/fervor counters for affected users.
-- **Create** `src/server/games/new-order/__tests__/consensus-backfill.test.ts` — Vitest for `classifyDecision`.
-- **Create** `src/pages/api/admin/temp/new-order-consensus-backfill.ts` — `WebhookEndpoint` route: actions `count`, `resolve`, `verify` (Phase 1); `apply-levels`, `escalate` (Phase 2).
+- **Use the `by_imageId` projection, not `FINAL`.** Table is `SharedReplacingMergeTree ORDER BY (userId, imageId)`, no partition, no version col. `imageId` isn't the leading key, so `FINAL ... WHERE imageId IN (...)` scans ~3958/6615 granules on the 54M-row table. The projection (`GROUP BY imageId, userId` + `argMax(col, createdAt)`, the same pattern as `updatePendingImageRatings`) serves `imageId IN` from ~7 granules and gives the schema's canonical "latest row" without `FINAL`.
+- **Status-alias shadowing (this bit us — silent 0-row write).** The re-stamp `SELECT` redefines `status` via `if(...) AS status`; a trailing `WHERE status IN ('Pending','Inconclusive')` then binds to that (Correct/Failed) alias and matches nothing. Filter on the source `status` in an `eligible` CTE **before** the if-rewrite.
+- **`createdAt` is stamped to run-time on purpose.** `grant-bless-buzz` (`new-order-jobs.ts:44`) pays `Correct/Failed` from *exactly 3 days ago*, so run-time stamping = payout at run-day + 3. Preserving original vote time would drop the rows outside the payout window forever.
+- **Report actual rows, not candidate counts.** The write reports `rowsResolved` via `countRestampedRows` (`count() WHERE createdAt = stampISO AND status IN ('Correct','Failed')`) — a 0 surfaces a no-op. `imagesTargeted` is the attempted image count.
 
----
+## Rollout (how it was run)
 
-## Task 1: Decision classifier (pure helper + test)
-
-**Files:**
-- Create: `src/server/games/new-order/consensus-backfill.ts`
-- Test: `src/server/games/new-order/__tests__/consensus-backfill.test.ts`
-
-**Interfaces:**
-- Produces: `classifyDecision(domRating: number, origLevel: number | null): 'same_level' | 'up_rate' | 'down_1lvl' | 'down_gt1' | 'unknown_orig'`. NSFW levels are bitwise flags (1,2,4,8,16,32); "level distance" = `abs(log2(a) - log2(b))`.
-
-- [ ] **Step 1: Write the failing test**
-
-```ts
-// src/server/games/new-order/__tests__/consensus-backfill.test.ts
-import { describe, it, expect } from 'vitest';
-import { classifyDecision } from '~/server/games/new-order/consensus-backfill';
-
-describe('classifyDecision', () => {
-  it('same level', () => expect(classifyDecision(4, 4)).toBe('same_level'));
-  it('up-rate (PG -> R)', () => expect(classifyDecision(4, 1)).toBe('up_rate'));
-  it('down 1 level (R -> PG13)', () => expect(classifyDecision(2, 4)).toBe('down_1lvl'));
-  it('down >1 level (XXX -> PG)', () => expect(classifyDecision(1, 16)).toBe('down_gt1'));
-  it('missing original level', () => expect(classifyDecision(4, 0)).toBe('unknown_orig'));
-  it('null original level', () => expect(classifyDecision(4, null)).toBe('unknown_orig'));
-});
 ```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `pnpm vitest run src/server/games/new-order/__tests__/consensus-backfill.test.ts`
-Expected: FAIL — `classifyDecision` is not exported.
-
-- [ ] **Step 3: Write minimal implementation**
-
-```ts
-// src/server/games/new-order/consensus-backfill.ts
-export type DecisionClass = 'same_level' | 'up_rate' | 'down_1lvl' | 'down_gt1' | 'unknown_orig';
-
-export function classifyDecision(domRating: number, origLevel: number | null): DecisionClass {
-  if (!origLevel || origLevel <= 0) return 'unknown_orig';
-  if (domRating === origLevel) return 'same_level';
-  if (domRating > origLevel) return 'up_rate';
-  const distance = Math.abs(Math.log2(domRating) - Math.log2(origLevel));
-  return distance <= 1 ? 'down_1lvl' : 'down_gt1';
-}
+?action=resolve                                        # preview
+?action=resolve&dryRun=false&limit=500&batchSize=250   # tiny write, then ?action=verify
+?action=resolve&dryRun=false&limit=10000               # staged slices until verify ~ 0
 ```
+The endpoint writes to whatever ClickHouse the deployed env points at — confirm that before a `dryRun=false` run. (During rollout, manuel's localhost app was writing to the live KoN CH.)
 
-- [ ] **Step 4: Run test to verify it passes**
+## Outcome (2026-06-30)
 
-Run: `pnpm vitest run src/server/games/new-order/__tests__/consensus-backfill.test.ts`
-Expected: PASS (6 tests).
+- `verify` → `remainingAutoResolvable: 0`, `remainingEscalate: 1876`.
+- Re-stamped ~321K rows (282,075 `Correct` + 38,787 `Failed`) across ~68.7K images / ~605 users.
+- `Inconclusive` back to ~2K/day (from the ~40K/day collapse) — consensus resolution restored.
 
-- [ ] **Step 5: Commit**
+## Follow-ups (not in PR #2828)
 
-```bash
-git add src/server/games/new-order/consensus-backfill.ts src/server/games/new-order/__tests__/consensus-backfill.test.ts
-git commit -m "feat(new-order): add consensus-backfill decision classifier"
-```
-
----
-
-## Task 2: CH candidate query (`getConsensusCandidates`)
-
-**Files:**
-- Modify: `src/server/games/new-order/consensus-backfill.ts`
-
-**Interfaces:**
-- Consumes: `classifyDecision` (Task 1); `clickhouse` from `~/server/clickhouse/client`.
-- Produces:
-  ```ts
-  type Candidate = { imageId: number; domRating: number; voters: number; topCount: number; decision: DecisionClass };
-  getConsensusCandidates(opts: { startDate?: string; minAgreement?: number; staleHours?: number; }): Promise<Candidate[]>
-  ```
-  Excludes Acolyte rank. `Pending` rows require last vote older than `staleHours`; `Inconclusive` always eligible.
-
-- [ ] **Step 1: Implement the candidate query**
-
-The dominant rating value is `vals[indexOf(counts, max(counts))]` — compute the per-rating counts once in a `scored` CTE, then index into the distinct values. This is the exact pattern verified against prod CH during planning.
-
-```ts
-// append to src/server/games/new-order/consensus-backfill.ts
-import { clickhouse } from '~/server/clickhouse/client';
-
-const DEFAULT_START = '2026-06-23 00:00:00';
-
-export type Candidate = {
-  imageId: number; domRating: number; voters: number; topCount: number; decision: DecisionClass;
-};
-
-export async function getConsensusCandidates(opts: {
-  startDate?: string; minAgreement?: number; staleHours?: number;
-} = {}): Promise<Candidate[]> {
-  if (!clickhouse) throw new Error('clickhouse not configured');
-  const startDate = opts.startDate ?? DEFAULT_START;
-  const minAgreement = opts.minAgreement ?? 0.6;
-  const staleHours = opts.staleHours ?? 12;
-
-  const rows = await clickhouse.$query<{
-    imageId: number; voters: number; topCount: number; domRating: number; origLevel: number;
-  }>`
-    WITH img AS (
-      SELECT imageId, userId, rating, status, originalLevel, createdAt
-      FROM knights_new_order_image_rating FINAL
-      WHERE rank = 'Knight'
-        AND status IN ('Pending','Inconclusive')
-        AND createdAt >= '${startDate}'
-    ),
-    arr AS (
-      SELECT imageId,
-             count() AS voters,
-             groupArray(rating) AS ratings,
-             minIf(originalLevel, originalLevel > 0) AS origLevel,
-             countIf(status='Pending') AS penCount,
-             max(createdAt) AS lastVote
-      FROM img GROUP BY imageId
-    ),
-    scored AS (
-      SELECT imageId, voters, origLevel, penCount, lastVote,
-             arrayMap(r -> arrayCount(x -> x = r, ratings), arrayDistinct(ratings)) AS counts,
-             arrayDistinct(ratings) AS vals
-      FROM arr
-    )
-    SELECT imageId,
-           voters,
-           arrayMax(counts) AS topCount,
-           vals[indexOf(counts, arrayMax(counts))] AS domRating,
-           origLevel
-    FROM scored
-    WHERE voters >= 4
-      AND arrayMax(counts) / voters >= ${minAgreement}
-      AND (penCount = 0 OR lastVote <= now() - INTERVAL ${staleHours} HOUR)
-  `;
-
-  return rows.map((r) => ({
-    imageId: r.imageId,
-    domRating: r.domRating,
-    voters: r.voters,
-    topCount: r.topCount,
-    decision: classifyDecision(r.domRating, r.origLevel),
-  }));
-}
-```
-
-- [ ] **Step 2: Verify against the known dry-run totals**
-
-Run a throwaway script (or the `count` action once Task 3 lands) and confirm the class histogram matches the table in this plan (~42K same, ~28K down_1lvl, ~1.9K down_gt1, ~0.8K up). Expected: within a few % (queue keeps moving).
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add src/server/games/new-order/consensus-backfill.ts
-git commit -m "feat(new-order): query consensus-resolvable stranded votes from ClickHouse"
-```
-
----
-
-## Task 3: Endpoint with `count` action (read-only)
-
-**Files:**
-- Create: `src/pages/api/admin/temp/new-order-consensus-backfill.ts`
-
-**Interfaces:**
-- Consumes: `getConsensusCandidates` (Task 2).
-- Produces: `POST .../new-order-consensus-backfill?token=$WEBHOOK_TOKEN` with `{ action: 'count', startDate?, minAgreement?, staleHours? }` → `{ total, byDecision }`. (Distinct-user count is not surfaced here — `count` sizes images; the 605-user figure came from the planning dry-run.)
-
-- [ ] **Step 1: Write the endpoint with the file-header doc + `count`**
-
-```ts
-/**
- * Temp admin backfill: finalize KoN votes stranded Pending/Inconclusive by the
- * 2026-06-23 sysRedis wipe (see docs/superpowers/plans/2026-06-29-kon-consensus-backfill.md).
- *
- * Source of truth is the ClickHouse ledger, NOT the Redis queue (queues rotate/wipe).
- * Consensus = raw vote agreement (topCount/voters >= minAgreement) — a deliberate
- * approximation of the live weighted algo (weights live only in the ephemeral
- * new-order:ratings:* zsets). Down-rates by >1 NSFW level are skipped (mod-only).
- *
- * Usage: POST /api/admin/temp/new-order-consensus-backfill?token=$WEBHOOK_TOKEN
- *   { "action": "count" }                       preview candidate counts (read-only)
- *   { "action": "resolve", "dryRun": true }     preview the write set (read-only)
- *   { "action": "resolve", "dryRun": false }    re-stamp Pending/Inconclusive -> Correct/Failed
- *   { "action": "verify" }                      post-run: assert no consensus-met rows remain unfinalized
- * Optional params: startDate, minAgreement (def 0.6), staleHours (def 12),
- *                  limit (cap images this run), batchSize (def 1000), concurrency (def 4).
- */
-import type { NextApiRequest, NextApiResponse } from 'next';
-import * as z from 'zod';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { getConsensusCandidates } from '~/server/games/new-order/consensus-backfill';
-
-const schema = z.object({
-  action: z.enum(['count', 'resolve', 'verify']),
-  startDate: z.string().optional(),
-  minAgreement: z.coerce.number().min(0.5).max(1).optional(),
-  staleHours: z.coerce.number().int().min(0).max(240).optional(),
-  limit: z.coerce.number().int().positive().max(100_000).optional(),
-  batchSize: z.coerce.number().int().positive().max(5_000).optional(),
-  concurrency: z.coerce.number().int().min(1).max(16).optional(),
-  dryRun: z.coerce.boolean().optional(),
-});
-
-export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const p = parsed.data;
-
-  if (p.action === 'count') {
-    const candidates = await getConsensusCandidates(p);
-    const byDecision = candidates.reduce<Record<string, number>>((acc, c) => {
-      acc[c.decision] = (acc[c.decision] ?? 0) + 1;
-      return acc;
-    }, {});
-    return res.status(200).json({ total: candidates.length, byDecision });
-  }
-
-  return res.status(400).json({ error: `action ${p.action} not yet implemented` });
-});
-```
-
-- [ ] **Step 2: Verify read-only**
-
-Run: `curl -s -X POST "https://<env>/api/admin/temp/new-order-consensus-backfill?token=$WEBHOOK_TOKEN" -H 'Content-Type: application/json' -d '{"action":"count"}'`
-Expected: JSON `{ total: ~71000, byDecision: { same_level: ~42000, down_1lvl: ~28000, up_rate: ~800, down_gt1: ~1900 } }`. No rows written.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add src/pages/api/admin/temp/new-order-consensus-backfill.ts
-git commit -m "feat(new-order): consensus-backfill endpoint with read-only count action"
-```
-
----
-
-## Task 4: `resolve` action — batched re-stamp under limitConcurrency
-
-**Files:**
-- Modify: `src/server/games/new-order/consensus-backfill.ts` (add `restampBatch`)
-- Modify: `src/pages/api/admin/temp/new-order-consensus-backfill.ts` (add `resolve`)
-
-**Interfaces:**
-- Consumes: `getConsensusCandidates`, `classifyDecision`.
-- Produces: `restampBatch(pairs: {imageId:number;domRating:number}[], stampISO: string): Promise<void>` — one CH `INSERT ... SELECT` re-stamping a chunk's `Pending`/`Inconclusive` rows to `Correct`/`Failed`.
-
-- [ ] **Step 1: Implement `restampBatch`**
-
-```ts
-// append to src/server/games/new-order/consensus-backfill.ts
-export async function restampBatch(
-  pairs: { imageId: number; domRating: number }[],
-  stampISO: string
-): Promise<void> {
-  if (!clickhouse) throw new Error('clickhouse not configured');
-  if (pairs.length === 0) return;
-  const ids = pairs.map((p) => p.imageId).join(',');
-  const rats = pairs.map((p) => p.domRating).join(',');
-  // arrayElement([rats], indexOf([ids], imageId)) -> this image's consensus rating
-  await clickhouse.$exec`
-    INSERT INTO knights_new_order_image_rating
-    SELECT
-      orig.userId,
-      orig.imageId AS imageId,
-      orig.rating,
-      orig.damnedReason,
-      if(orig.rating = arrayElement([${rats}], indexOf([${ids}], orig.imageId)), 'Correct', 'Failed') AS status,
-      orig.grantedExp,
-      if(orig.rating = arrayElement([${rats}], indexOf([${ids}], orig.imageId)), 1, 0) AS multiplier,
-      toDateTime('${stampISO}') AS createdAt,
-      orig.ip, orig.userAgent, orig.deviceId, orig.rank, orig.originalLevel
-    FROM knights_new_order_image_rating orig FINAL
-    WHERE orig.imageId IN (${ids})
-      AND orig.rank != 'Acolyte'
-      AND orig.status IN ('Pending','Inconclusive')
-  `;
-}
-```
-
-- [ ] **Step 2: Wire the `resolve` action (dryRun-gated, chunked, limitConcurrency)**
-
-```ts
-// in src/pages/api/admin/temp/new-order-consensus-backfill.ts
-// add imports:
-import { restampBatch } from '~/server/games/new-order/consensus-backfill';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { chunk } from 'lodash-es';
-
-// replace the trailing `return res.status(400)...` with:
-  if (p.action === 'resolve') {
-    const dryRun = p.dryRun !== false; // default true
-    const batchSize = p.batchSize ?? 1000;
-    const concurrency = p.concurrency ?? 4;
-
-    let candidates = await getConsensusCandidates(p);
-    // Phase 1: skip mod-only down-rates and unknown originals
-    candidates = candidates.filter((c) => c.decision === 'same_level' || c.decision === 'down_1lvl' || c.decision === 'up_rate');
-    if (p.limit) candidates = candidates.slice(0, p.limit);
-
-    const byDecision = candidates.reduce<Record<string, number>>((a, c) => ((a[c.decision] = (a[c.decision] ?? 0) + 1), a), {});
-
-    if (dryRun) {
-      return res.status(200).json({ dryRun: true, wouldResolve: candidates.length, byDecision });
-    }
-
-    const stampISO = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    const batches = chunk(candidates.map((c) => ({ imageId: c.imageId, domRating: c.domRating })), batchSize);
-    let done = 0;
-    await limitConcurrency(
-      batches.map((b) => async () => {
-        await restampBatch(b, stampISO);
-        done += b.length;
-      }),
-      concurrency
-    );
-
-    return res.status(200).json({ dryRun: false, resolved: done, byDecision, stampISO });
-  }
-```
-
-- [ ] **Step 3: Dry-run on the target env**
-
-Run: `curl ... -d '{"action":"resolve","dryRun":true,"limit":2000}'`
-Expected: `{ dryRun: true, wouldResolve: 2000, byDecision: {...} }`, nothing written.
-
-- [ ] **Step 4: Small real batch, then verify in CH**
-
-Run: `curl ... -d '{"action":"resolve","dryRun":false,"limit":500,"batchSize":250,"concurrency":2}'`
-Then in CH: confirm ~500 images now have `Correct/Failed` rows stamped at `stampISO` and no longer appear in `getConsensusCandidates`.
-Expected: `resolved: ~ (500 images × ~5 votes)` rows inserted; re-running `count` drops by ~500.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/server/games/new-order/consensus-backfill.ts src/pages/api/admin/temp/new-order-consensus-backfill.ts
-git commit -m "feat(new-order): resolve action re-stamps stranded votes in batches"
-```
-
----
-
-## Task 5: Player counter reconciliation + `verify`
-
-**Files:**
-- Modify: `src/server/games/new-order/consensus-backfill.ts` (add `reconcilePlayerCounters`)
-- Modify: `src/pages/api/admin/temp/new-order-consensus-backfill.ts` (call it after resolve; add `verify`)
-
-**Interfaces:**
-- Consumes: `correctJudgmentsCounter`, `allJudgmentsCounter`, `fervorCounter` from `~/server/games/new-order/utils`.
-- Produces: `reconcilePlayerCounters(userIds: number[]): Promise<void>` — resets judgment + fervor counters so they lazily re-fetch from the now-corrected ClickHouse rows.
-
-- [ ] **Step 1: Implement `reconcilePlayerCounters`**
-
-```ts
-// append to src/server/games/new-order/consensus-backfill.ts
-import { correctJudgmentsCounter, fervorCounter } from '~/server/games/new-order/utils';
-
-export async function reconcilePlayerCounters(userIds: number[]): Promise<void> {
-  // Counters fetchCount from ClickHouse on miss; resetting forces a rebuild
-  // against the freshly re-stamped Correct/Failed rows.
-  const unique = [...new Set(userIds)];
-  await Promise.all(
-    unique.flatMap((id) => [
-      correctJudgmentsCounter.reset({ id }),
-      fervorCounter.reset({ id }),
-    ])
-  );
-}
-```
-
-- [ ] **Step 2: Call it after a non-dry-run resolve**
-
-```ts
-// in the resolve action, after limitConcurrency(...), before the response:
-    if (!dryRun) {
-      // affected users = voters whose rows we just re-stamped
-      const userRows = await (await import('~/server/clickhouse/client')).clickhouse!.$query<{ userId: number }>`
-        SELECT DISTINCT userId FROM knights_new_order_image_rating FINAL
-        WHERE imageId IN (${candidates.map((c) => c.imageId).join(',')}) AND rank != 'Acolyte'
-      `;
-      await reconcilePlayerCounters(userRows.map((r) => r.userId));
-    }
-```
-(Import `reconcilePlayerCounters` at the top.)
-
-- [ ] **Step 3: Implement `verify` action**
-
-```ts
-  if (p.action === 'verify') {
-    const remaining = await getConsensusCandidates(p);
-    const autoResolvable = remaining.filter((c) => c.decision !== 'down_gt1' && c.decision !== 'unknown_orig');
-    return res.status(200).json({ remainingAutoResolvable: autoResolvable.length, remainingEscalate: remaining.length - autoResolvable.length });
-  }
-```
-
-- [ ] **Step 4: Verify end-to-end on the small batch**
-
-Run: `curl ... -d '{"action":"verify"}'`
-Expected: `remainingAutoResolvable` dropped by the number resolved in Task 4.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/server/games/new-order/consensus-backfill.ts src/pages/api/admin/temp/new-order-consensus-backfill.ts
-git commit -m "feat(new-order): reconcile player counters + verify action"
-```
-
----
-
-## Phase 2 (opt-in, separate sign-off) — NSFW level apply + Inquisitor escalation
-
-> Do not build until Phase 1 has run in prod and earnings recovery is confirmed (run-day + 3). Tracked as separate tasks because they carry independent moderation review.
-
-- [ ] **Task 6 — `apply-levels`:** for `down_1lvl`/`up_rate` resolved images, call `updateImageNsfwLevel` (`~/server/services/image.service.ts:6720`) in batches under `limitConcurrency`. Heavier (Postgres + search reindex); stage with `limit`.
-- [ ] **Task 7 — `escalate`:** for `down_gt1` candidates, `addImageToQueue({ imageIds, rankType: 'Inquisitor', priority: 1 })` (`new-order.service.ts:1479`) so mods adjudicate — mirrors the live excessive-down-rating guard (`new-order.service.ts:500`). Do NOT re-stamp their votes.
-
----
-
-## Rollout
-
-1. `count` on prod → confirm histogram ≈ plan table.
-2. `resolve dryRun:true` (full, no limit) → confirm `wouldResolve` ≈ 70,700.
-3. `resolve dryRun:false limit:500` → CH spot-check + `verify`.
-4. Staged full run in `limit` slices (e.g. 10K) — watch CH insert load and the `_prisma`-independent ClickHouse merge backlog between slices.
-5. Run-day + 3: confirm `new-order-grant-bless-buzz` paid the affected 605 users; confirm the Metabase "Buzz Earned" chart recovers.
-6. Warn mods of the one-time abuse-detection alert blip on run day (all re-stamped rows share `createdAt`).
-7. After confirmed recovery: delete the endpoint file (temp), keep `consensus-backfill.ts` + test if reused, or delete with the endpoint.
-
-## Self-Review
-
-- **Spec coverage:** Pending + Inconclusive both handled (status filter in `getConsensusCandidates` + `restampBatch`). Queue independence ✓ (CH-only). Escalation guard ✓ (Phase 1 filter + Phase 2 Task 7). Buzz payout ✓ (run-time stamp → 3-day job). Counters ✓ (Task 5).
-- **Placeholder scan:** the only narrative note is the ClickHouse `domRating` query caveat in Task 2, which is resolved by the provided final SQL — engineer must use the second block. Flagged explicitly.
-- **Type consistency:** `Candidate`, `DecisionClass`, `classifyDecision`, `getConsensusCandidates`, `restampBatch`, `reconcilePlayerCounters` names used identically across tasks.
-
----
-
-## Post-build revisions (2026-06-29, after task gates)
-
-Deltas from the as-written tasks, applied during review/finish:
-
-1. **Location:** endpoint moved `src/pages/api/testing/` → **`src/pages/api/admin/temp/`** (the temp-admin-webhook convention, alongside `backfill-swept-trained-models.ts`).
-2. **Method:** `POST` + JSON body → **`GET` + query params** (`?token=&action=&...`). Numeric params stay `z.coerce.number()` (query strings coerce); `dryRun` is `z.enum(['true','false'])`.
-3. **Write gate (GET-safe):** read-only unless the literal **`&dryRun=false`** is present (`p.dryRun !== 'false'`). Omitted / any other value → read-only. Replaces the strict-`z.boolean()` gate (which can't accept a string query param). Caveat: a side-effecting GET — acceptable because it's token-gated, `FINAL`-idempotent, and write requires the explicit literal.
-4. **Dropped `count`** — it was redundant with the dryRun preview. `resolve` (dryRun default) now returns the full survey: `{ dryRun, totalCandidates, byDecision (all classes), wouldResolve (writable subset, post-limit), skipped: {down_gt1, unknown_orig} }`.
-5. **`resolved` → `imagesResolved`** in the write response (clears the per-task Minor; the field counts images, not rows).
-
-Actions are now just **`resolve`** (preview or write) and **`verify`**.
-
-6. **restampBatch write-path bug (found in first prod run, fixed):** the projection rewrite's final `SELECT` redefines `status` via `if(...) AS status`; the trailing `WHERE status IN ('Pending','Inconclusive')` then bound to that alias (always `Correct`/`Failed`) → matched nothing → silent 0-row write (the run reported `imagesResolved: 500` but inserted nothing; no bad data). Fixed by filtering in an `eligible` CTE on the source `status` *before* the if-rewrite. `restampBatch` now returns the eligible row count; the write response reports **`imagesTargeted`** (images attempted) + **`rowsResolved`** (actual vote-rows written — 0 surfaces a no-op) instead of `imagesResolved`.
+- **Warn mods** of the one-time abuse-detection blip on write day (all re-stamped rows share their run timestamps → minute buckets explode `avgPerMinute`).
+- **Earnings spike** at run-day + 3: ~5 days of backlog (~28K+ buzz / ~605 users) lands in one `grant-bless-buzz` run — correct but anomalous-looking.
+- **Phase 2:** the ~1,876 `down_gt1` → escalate to the Inquisitor queue (`addImageToQueue(..., 'Inquisitor', 1)`) vs leave `Inconclusive`; optionally apply NSFW levels for `down_1lvl`/`up_rate` images via `updateImageNsfwLevel` (heavier — Postgres + search reindex).
+- **Standing metric fix:** preserve `orig.createdAt` through finalization (`new-order.service.ts:934`) so the abuse scan isn't garbage even when counters are healthy.
+- **Investigate the recurring sysRedis `new-order:*` wipe** (~2026-05-14 and ~2026-06-23).
+- Minor: zod `parsed.error.flatten()` deprecation in the endpoint.
