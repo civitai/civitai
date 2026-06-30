@@ -89,6 +89,7 @@ import { getResourceGenerationSupport } from '~/shared/constants/basemodel.const
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
+import { getBlockAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -2117,7 +2118,11 @@ export const blocksRouter = router({
       // SFW-domain block can't even PICK a mature resource — defense in depth)
       // and the generation-output clamp (`allowMatureContent`). Green AND blue
       // → sfwOnly true; red → false. Mirrors submitWorkflow below.
-      const { allowMatureContent } = resolveBlockMaturity(claims);
+      const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+      // Currency parity (on-site `resolveGenerationCurrencies`): blue-first +
+      // the domain currency, derived from the SAME authoritative ceiling as the
+      // output clamp. SFW → blue/green; mature → blue/yellow.
+      const currencies = resolveBlockCurrencies(isGreen);
       if (isPage) {
         // Resolve + validate the LoRA stack first (LoRA-only + family-match)
         // so a bad resource fails BEFORE the entitlement gate / any cost.
@@ -2151,7 +2156,7 @@ export const blocksRouter = router({
         body: {
           steps: [step],
           tags: buildWorkflowTags(claims, resolved.baseModel),
-          currencies: BLOCK_CURRENCIES,
+          currencies,
           ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         },
         query: { whatif: true },
@@ -2263,6 +2268,12 @@ export const blocksRouter = router({
       // (green/blue) block cannot widen to mature output. Fail closed: a
       // legacy/absent claim resolves to the SFW ceiling.
       const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+      // Currency parity (on-site `resolveGenerationCurrencies`): blue-first +
+      // the domain currency, derived from the SAME authoritative ceiling as the
+      // output clamp. SFW → blue/green; mature → blue/yellow. Used by BOTH the
+      // whatIf cost-check and the real submit below so the estimate matches what
+      // the real submit will actually drain.
+      const currencies = resolveBlockCurrencies(isGreen);
 
       if (isPage) {
         const loraGates = await resolvePageLoraGates({
@@ -2317,7 +2328,7 @@ export const blocksRouter = router({
         body: {
           steps: [stepForCostCheck],
           tags,
-          currencies: BLOCK_CURRENCIES,
+          currencies,
           ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         },
         query: { whatif: true },
@@ -2410,7 +2421,7 @@ export const blocksRouter = router({
           body: {
             steps: [step],
             tags,
-            currencies: BLOCK_CURRENCIES,
+            currencies,
             metadata: workflowMetadata,
             // Authoritative maturity clamp on the REAL submit — the orchestrator
             // rejects mature output when this is false. Token-claim derived.
@@ -2501,9 +2512,27 @@ export const blocksRouter = router({
           // but a per-app earnings cap / velocity check is a HARD
           // prerequisite before the spend flow opens to non-mods (track
           // alongside the Slice-4 payout gate + the rate sign-off).
+          // Record a PAYOUT-SAFE currency basis for this spend. The orchestrator
+          // drains the offered currencies in spend order (blue-FIRST — blue is
+          // the free generation Buzz) and does NOT surface a per-account debit
+          // to this path, so we cannot know how the cost split across FREE (blue)
+          // vs PAID (green/yellow) Buzz. Since green is PAID and payout-eligible
+          // (product 2026-06-30: "green buzz is paid, only blue is free"),
+          // stamping the paid domain currency would let a spend actually drained
+          // from FREE blue accrue a bounty → the farming vector. So we
+          // conservatively stamp the FREE first-drained currency (blue), which
+          // `isPayoutEligibleBuzz` (computeSpendShare) EXCLUDES → ZERO bounty.
+          // Net: spending parity ships now; block payout stays 0 until a
+          // follow-up records the REAL per-account debit (then the paid
+          // green/yellow portions can earn). DO NOT switch this to the domain
+          // currency without that real-debit signal — it reopens free-Buzz farming.
+          const spendBuzzTypes = getBlockAllowedAccountTypes(isGreen);
+          // [0] === 'blue' in both branches — the conservative free floor.
+          const spentBuzzType = spendBuzzTypes[0];
           await recordSpendAttribution({
             userId,
             buzzAmount: Math.ceil(snapshot.cost?.total ?? cost),
+            buzzType: spentBuzzType,
             workflowId: spendWorkflowId,
             appId: claims.appId,
             appBlockId: claims.appBlockId,
@@ -2996,10 +3025,26 @@ export const blocksRouter = router({
     }),
 });
 
-// Block-initiated workflows pay in yellow buzz only. Mature-content paid
-// (blue/green) and creator-only (red) are out of scope for v1 — the
-// budget is denominated in yellow, the JWT carries a yellow cap.
-const BLOCK_CURRENCIES = BuzzTypes.toOrchestratorType(['yellow']);
+// Block-initiated workflows spend at PARITY with the on-site generator
+// (`getAllowedAccountTypes` / `resolveGenerationCurrencies`): the currencies
+// are derived PER REQUEST from the block token's AUTHORITATIVE maturity ceiling
+// (`resolveBlockMaturity(claims).isGreen`), NOT hardcoded. SFW (green/blue)
+// blocks spend ['blue','green']; mature (.red) blocks spend ['blue','yellow'] —
+// blue-first, drained in array order, identical to on-site. See
+// `getBlockAllowedAccountTypes`. The maturity that picks the currency is the
+// SAME ceiling that drives the output clamp, so currency and clamp can never
+// disagree. The per-gen Buzz BUDGET plumbing (`ai:write:budgeted` +
+// `buzzBudget`) is currency-AGNOSTIC and unchanged — the cap bounds total Buzz
+// regardless of which account type pays.
+//
+// PAYOUT-SAFETY: widening the SPENDABLE currencies here is decoupled from
+// payout eligibility. The author-bounty rail (#2605) excludes free/granted
+// Buzz (blue, green) via `isPayoutEligibleBuzz` at the payout boundary
+// (`computeSpendShare`), so this widening can NEVER become platform-funded
+// farming. See buzz-helpers.ts.
+function resolveBlockCurrencies(isGreen: boolean) {
+  return BuzzTypes.toOrchestratorType(getBlockAllowedAccountTypes(isGreen));
+}
 
 /**
  * Fetch the user fields `parseGenerateImageInput` actually consumes
