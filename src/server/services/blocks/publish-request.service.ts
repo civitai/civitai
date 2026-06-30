@@ -1261,7 +1261,12 @@ export async function withdrawRequest(opts: {
   const { publishRequestId, userId } = opts;
   const row = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: publishRequestId },
-    select: { id: true, status: true, submittedByUserId: true },
+    // deployState (#2831): a dev who self-withdraws a request they previewed must
+    // also tear down the review env — otherwise the review Deployment/IngressRoute
+    // orphans (the apply Job's ttlSecondsAfterFinished only reaps the Job, not the
+    // workloads it applied). Captured here so we can fire teardownReviewForRequest
+    // after the withdraw lands.
+    select: { id: true, status: true, submittedByUserId: true, deployState: true },
   });
   if (!row) {
     throw new WithdrawRequestError('NOT_FOUND', `publish request ${publishRequestId} not found`);
@@ -1276,6 +1281,8 @@ export async function withdrawRequest(opts: {
       `cannot withdraw a request in status ${row.status}`
     );
   }
+  const hadReviewPreview =
+    typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
 
   // Status-guarded write: only flip a STILL-`pending` row. This is the atomic
   // step that closes the TOCTOU window against a concurrent approve.
@@ -1283,6 +1290,15 @@ export async function withdrawRequest(opts: {
     where: { id: publishRequestId, status: 'pending' },
     data: { status: 'withdrawn' },
   });
+  if (count > 0) {
+    // MOD REVIEW SANDBOX (#2831) — tear down any review env spun up for this
+    // request. Best-effort + non-blocking (mirrors approveRequest/rejectRequest):
+    // the withdraw has already committed, so a teardown failure must never affect
+    // the outcome. Gated on a preview actually having been started so the common
+    // no-preview withdraw does zero extra k8s work.
+    if (hadReviewPreview) void teardownReviewForRequest(publishRequestId);
+    return;
+  }
   if (count === 0) {
     // The row changed under us between the classify-read and the guarded write
     // (lost the race). Re-read from the PRIMARY (`dbWrite`) — a replica read
@@ -1293,7 +1309,10 @@ export async function withdrawRequest(opts: {
       select: { status: true },
     });
     if (!after || after.status === 'withdrawn') {
-      // Raced into withdrawn (or vanished) → idempotent success, no throw.
+      // Raced into withdrawn (or vanished) → idempotent success, no throw. Still
+      // fire the review teardown (idempotent) in case THIS call observed a
+      // preview but a concurrent withdraw committed first without tearing it down.
+      if (hadReviewPreview) void teardownReviewForRequest(publishRequestId);
       return;
     }
     // Raced into approved/rejected → the not-pending guarantee, now true under

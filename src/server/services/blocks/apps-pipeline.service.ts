@@ -399,61 +399,101 @@ export async function deleteReviewResources(args: {
 }): Promise<void> {
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
-  // Label selector restricts every deletecollection to review resources for THIS
-  // publish request — defence against ever touching a live app.
+  // Label selector restricts every LIST to review resources for THIS publish
+  // request — defence against ever touching a live app (a live app carries no
+  // review-mode label).
   const selector = encodeURIComponent(
     `civitai.com/review-mode=true,civitai.com/publish-request-id=${args.publishRequestId}`
   );
 
-  // Each entry is one apiGroup collection endpoint that supports
-  // DELETE-collection by labelSelector.
-  const collections: Array<{ path: string; label: string }> = [
+  // LIST-then-DELETE-by-name (NOT deletecollection). Each entry is a resource
+  // type's collection endpoint (used read-only with ?labelSelector=) plus the
+  // per-item endpoint builder used to DELETE each matched object by name. This
+  // mirrors how the Service teardown already worked, and means the feature needs
+  // only the `list` + `delete` RBAC verbs — NOT `deletecollection` (talos RBAC
+  // is tightened to match in datapacket-talos #316).
+  const kinds: Array<{
+    label: string;
+    listPath: string;
+    itemPath: (name: string) => string;
+  }> = [
     {
-      path: `/apis/apps/v1/namespaces/${ns}/deployments?labelSelector=${selector}`,
       label: 'deployments',
+      listPath: `/apis/apps/v1/namespaces/${ns}/deployments?labelSelector=${selector}`,
+      itemPath: (name) => `/apis/apps/v1/namespaces/${ns}/deployments/${name}`,
     },
     {
-      path: `/api/v1/namespaces/${ns}/services?labelSelector=${selector}`,
       label: 'services',
+      listPath: `/api/v1/namespaces/${ns}/services?labelSelector=${selector}`,
+      itemPath: (name) => `/api/v1/namespaces/${ns}/services/${name}`,
     },
     {
-      path: `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes?labelSelector=${selector}`,
       label: 'ingressroutes',
+      listPath: `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes?labelSelector=${selector}`,
+      itemPath: (name) => `/apis/traefik.io/v1alpha1/namespaces/${ns}/ingressroutes/${name}`,
     },
     {
-      path: `/apis/traefik.io/v1alpha1/namespaces/${ns}/middlewares?labelSelector=${selector}`,
       label: 'middlewares',
+      listPath: `/apis/traefik.io/v1alpha1/namespaces/${ns}/middlewares?labelSelector=${selector}`,
+      itemPath: (name) => `/apis/traefik.io/v1alpha1/namespaces/${ns}/middlewares/${name}`,
     },
   ];
 
-  for (const c of collections) {
+  for (const k of kinds) {
     try {
-      const res = await k8sFetch(target, c.path, {
-        method: 'DELETE',
-        body: JSON.stringify({ propagationPolicy: 'Background' }),
-      });
-      if (!res.ok && res.status !== 404) {
-        const body = await res.text().catch(() => '');
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[apps-pipeline] deleteReviewResources ${c.label} ${res.status}: ${body.slice(0, 160)}`
-        );
+      // LIST by label. A 404 here means the API group isn't present (nothing to
+      // delete); any other non-OK is logged + skipped (best-effort).
+      const listRes = await k8sFetch(target, k.listPath, { method: 'GET' });
+      if (!listRes.ok) {
+        if (listRes.status !== 404) {
+          const body = await listRes.text().catch(() => '');
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[apps-pipeline] deleteReviewResources list ${k.label} ${listRes.status}: ${body.slice(0, 160)}`
+          );
+        }
+        continue;
+      }
+      const list = await unwrap<{ items?: Array<{ metadata?: { name?: string } }> }>(listRes);
+      const names = (list?.items ?? [])
+        .map((it) => it?.metadata?.name)
+        .filter((n): n is string => typeof n === 'string' && n.length > 0);
+
+      // DELETE each matched object by name. 404 is fine (already gone) — keeps
+      // the whole sweep idempotent.
+      for (const name of names) {
+        try {
+          const delRes = await k8sFetch(
+            target,
+            `${k.itemPath(name)}?propagationPolicy=Background`,
+            { method: 'DELETE' }
+          );
+          if (!delRes.ok && delRes.status !== 404) {
+            const body = await delRes.text().catch(() => '');
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[apps-pipeline] deleteReviewResources delete ${k.label}/${name} ${delRes.status}: ${body.slice(0, 160)}`
+            );
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[apps-pipeline] deleteReviewResources delete ${k.label}/${name} threw: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
       }
     } catch (err) {
+      // A single resource-type failure must not abort the rest of the sweep.
       // eslint-disable-next-line no-console
       console.warn(
-        `[apps-pipeline] deleteReviewResources ${c.label} threw: ${
+        `[apps-pipeline] deleteReviewResources ${k.label} threw: ${
           err instanceof Error ? err.message : String(err)
         }`
       );
     }
   }
-
-  // Services don't support deletecollection on every k8s version's Service
-  // endpoint the same way; the core Service collection above DOES, but if a
-  // cluster rejects it, fall back to nothing here — the IngressRoute removal
-  // already cuts the route, and the 24h Job TTL + the review Deployment removal
-  // bound the blast radius. (No-op safeguard; left intentionally simple.)
 }
 
 // ---------- triggerApply — apply Job on dp-1 civitai-apps ------------------

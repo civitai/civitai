@@ -23,6 +23,27 @@ import { isAppBlocksReviewSandboxEnabled } from '~/server/services/app-blocks-fl
  * No body is read and no method is enforced beyond rejecting nothing: Traefik
  * forwardAuth issues a GET by default but may mirror the original method, so we
  * accept any method and only inspect the session.
+ *
+ * ============================================================================
+ * 🔴 BLOCKER — CROSS-DOMAIN COOKIE BRIDGE REQUIRED BEFORE THE FLAG IS FLIPPED
+ * ============================================================================
+ * This gate resolves the session from the civitai.com cookie, but the review
+ * hosts live on `review-<sha>.civit.ai` — a DIFFERENT registrable domain from
+ * `civitai.com`. The civitai session cookie is scoped to civitai.com (and the
+ * hub `__Secure-civ-token` to `.civitai.com`); it is NOT sent on a request to a
+ * `*.civit.ai` host. So a browser hitting a review host forwards NO civitai
+ * cookie to this forwardAuth, `getServerAuthSession` resolves no user, and this
+ * gate 401s EVERYONE — including the moderator who started the preview. The
+ * feature is therefore UNREACHABLE end-to-end until a `civit.ai`-scoped auth
+ * bridge exists. Candidate bridges (pick one, out of scope for this PR):
+ *   (a) an oauth2-proxy / forward-auth that issues a `*.civit.ai`-scoped session
+ *       cookie after the user authenticates against civitai.com, or
+ *   (b) a signed, short-TTL, mod-bound token minted by `previewRequest` and
+ *       embedded in the review URL (e.g. `?mr=<jwt>`), verified HERE instead of
+ *       (or in addition to) the cookie — so no cross-domain cookie is needed.
+ * DO NOT enable the `app-blocks-review-sandbox` flag until one of these is in
+ * place and verified — otherwise the preview button produces a 401 wall. See
+ * the PR's "PRE-FLAG-FLIP CHECKLIST".
  */
 export default withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Resolve the session from the FORWARDED request's cookies (Traefik forwardAuth

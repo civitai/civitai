@@ -22,6 +22,8 @@ const {
   mockWaitApply,
   mockMarkPreview,
   mockFindUnique,
+  mockSetNx,
+  mockRedisDel,
 } = vi.hoisted(() => {
   const SECRET = 'test-build-callback-secret';
   return {
@@ -32,6 +34,9 @@ const {
     mockWaitApply: vi.fn(async () => 'succeeded'),
     mockMarkPreview: vi.fn(async () => undefined),
     mockFindUnique: vi.fn(async () => ({ deployDetail: JSON.stringify({ url: 'https://x/y' }) })),
+    // replay-guard primitive — true = newly set (first callback → run apply).
+    mockSetNx: vi.fn(async () => true),
+    mockRedisDel: vi.fn(async () => undefined),
   };
 });
 
@@ -52,6 +57,10 @@ vi.mock('~/server/flipt/client', () => ({
 vi.mock('~/server/db/client', () => ({
   dbRead: { appBlockPublishRequest: { findUnique: mockFindUnique } },
   dbWrite: {},
+}));
+vi.mock('~/server/redis/client', () => ({
+  redis: { setNxKeepTtlWithEx: mockSetNx, del: mockRedisDel },
+  REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'blocks:token-rate-limit' } },
 }));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerApplyReview: mockTriggerApplyReview,
@@ -129,6 +138,9 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     mockFlag.enabled = true;
     mockTriggerApplyReview.mockClear();
     mockMarkPreview.mockClear();
+    mockSetNx.mockClear();
+    mockSetNx.mockResolvedValue(true);
+    mockRedisDel.mockClear();
   });
   afterEach(() => vi.clearAllMocks());
 
@@ -193,6 +205,16 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
       expect.objectContaining({ slug: SLUG, sha: SHA, publishRequestId: PUBREQ })
     );
     expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-deploying', expect.anything());
+  });
+
+  it('replay guard: a duplicate success callback short-circuits before the apply', async () => {
+    // setNx returns false → key already present → this is a replay.
+    mockSetNx.mockResolvedValueOnce(false);
+    const { req, res } = makeReqRes(goodBody());
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ applied: false, reason: 'duplicate callback (replay-guarded)' });
+    expect(mockTriggerApplyReview).not.toHaveBeenCalled();
   });
 
   it('on build failure → marks failed, no apply', async () => {

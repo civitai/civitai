@@ -3,6 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
 import { triggerApplyReview, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
 import {
@@ -113,6 +114,55 @@ export function expectedReviewImageRef(slug: string, sha: string): string {
   return `ghcr.io/civitai/app-block-review-${slug}:${sha}`;
 }
 
+// Replay guard parity with the production build-callback (#2831). A captured
+// signature-valid review callback could be replayed to re-run the review apply
+// Job (which deletes + restarts the in-flight review Deployment). Dedup the
+// review apply path on (publishRequestId, sha) with the redis client's atomic
+// `setNxKeepTtlWithEx` primitive (a single Lua SET NX + EXPIRE returning a typed
+// boolean — true = newly set). Keyed on publishRequestId (not appBlockId — a
+// PENDING request has no appBlockId yet) + the review sha. Complementary to the
+// HMAC-bound `ts` freshness check above: the `ts` window bounds replay to ±300s
+// without Redis; this dedups concurrent/duplicate authentic callbacks for the
+// same review.
+//
+// TTL must outlast the whole first attempt: the mark is set before
+// triggerApplyReview (two k8s calls, ~60s of 30s-timeouts) and waitForApplyJob
+// runs a 6m budget — worst case ~7m. 10m so the key can't expire mid-apply.
+// Legitimate same-sha retries are NOT suppressed: the apply-trigger catch frees
+// the slot on a Job-creation failure, and the watcher frees it on a definitive
+// apply failure; the TTL is only the backstop for the can't-clear cases
+// (apply 'timeout' where the Job may still run, or a watcher-crash/pod-restart).
+const REVIEW_APPLY_DEDUP_TTL_SECONDS = 10 * 60;
+function reviewApplyDedupKey(publishRequestId: string, sha: string): string {
+  // Reuse the block rate-limit key family (same convention as the production
+  // build-callback's apply dedup key).
+  return `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:review-apply:${publishRequestId}:${sha}`;
+}
+async function markReviewApplyTriggered(publishRequestId: string, sha: string): Promise<boolean> {
+  try {
+    // true = newly set (first time → apply); false = key already present (replay).
+    return await redis.setNxKeepTtlWithEx(
+      reviewApplyDedupKey(publishRequestId, sha) as never,
+      '1',
+      REVIEW_APPLY_DEDUP_TTL_SECONDS
+    );
+  } catch {
+    // Fail OPEN (mirrors the production build-callback): a Redis incident must
+    // not block a real review preview. The HMAC secret + imageRef↔slug/sha
+    // binding + the `ts` window already bound the blast radius.
+    return true;
+  }
+}
+async function clearReviewApplyMark(publishRequestId: string, sha: string): Promise<void> {
+  // Free the dedup slot after a definitive apply failure so a same-sha retry
+  // isn't suppressed within the TTL window. Best-effort; the TTL is the backstop.
+  try {
+    await redis.del(reviewApplyDedupKey(publishRequestId, sha) as never);
+  } catch {
+    // swallow — the TTL will release the slot regardless.
+  }
+}
+
 export default withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -199,6 +249,17 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
+  // Replay guard (#2831, parity with the production build-callback): only run the
+  // review apply path once per (publishRequestId, sha) per window. A replayed
+  // success callback short-circuits here before re-triggering the review apply Job
+  // (which would delete + restart the in-flight review Deployment).
+  if (!(await markReviewApplyTriggered(body.publishRequestId, body.sha))) {
+    res
+      .status(200)
+      .json({ ok: true, applied: false, reason: 'duplicate callback (replay-guarded)' });
+    return;
+  }
+
   await markReviewPreviewState(body.publishRequestId, 'preview-deploying', baseDetail);
 
   let applyJob: { name: string };
@@ -210,6 +271,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       imageRef: body.imageRef,
     });
   } catch (e) {
+    // Job creation failed — no watcher will run to free the dedup mark, so free
+    // it here or a transient k8s hiccup would wedge same-sha retries for the full
+    // TTL (symmetrical with the watcher's clear-on-failed below).
+    await clearReviewApplyMark(body.publishRequestId, body.sha);
     await markReviewPreviewState(body.publishRequestId, 'preview-failed', {
       ...baseDetail,
       error: `review apply trigger failed: ${String(e).slice(0, 80)}`,
@@ -225,6 +290,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 
   void watchReviewApplyJob({
     publishRequestId: body.publishRequestId,
+    sha: body.sha,
     jobName: applyJob.name,
     baseDetail,
   });
@@ -232,6 +298,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 
 async function watchReviewApplyJob(args: {
   publishRequestId: string;
+  sha: string;
   jobName: string;
   baseDetail: ReturnType<typeof parseReviewDetail>;
 }): Promise<void> {
@@ -240,6 +307,13 @@ async function watchReviewApplyJob(args: {
     if (outcome === 'succeeded') {
       await markReviewPreviewState(args.publishRequestId, 'preview-live', args.baseDetail);
     } else {
+      // On a DEFINITIVE failure free the replay-dedup slot so a same-sha retry
+      // isn't suppressed within the TTL window; on a 'timeout' leave it (the Job
+      // may still be running — let the TTL release it rather than race a
+      // re-trigger against an in-flight apply). Mirrors the production callback.
+      if (outcome === 'failed') {
+        await clearReviewApplyMark(args.publishRequestId, args.sha);
+      }
       await markReviewPreviewState(args.publishRequestId, 'preview-failed', {
         ...args.baseDetail,
         error: outcome === 'timeout' ? 'review deploy timed out' : 'review deploy failed',

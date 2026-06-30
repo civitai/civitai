@@ -49,6 +49,7 @@ import {
   previewRequest,
   getReviewStatus,
   teardownReviewForRequest,
+  withdrawRequest,
   parseReviewDetail,
 } from '~/server/services/blocks/publish-request.service';
 
@@ -181,6 +182,60 @@ describe('teardownReviewForRequest', () => {
     });
     mockDeleteReviewResources.mockRejectedValue(new Error('k8s down'));
     await expect(teardownReviewForRequest(PUBREQ)).resolves.toBeUndefined();
+  });
+});
+
+describe('withdrawRequest review teardown (#2831)', () => {
+  const USER = 7;
+  beforeEach(() => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockReset();
+    mockDbWrite.appBlockPublishRequest.updateMany.mockReset();
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+    mockDeleteReviewResources.mockClear();
+  });
+
+  it('tears down the review env when a previewed request is self-withdrawn', async () => {
+    // First findUnique = the classify-read in withdrawRequest; second = the read
+    // inside teardownReviewForRequest. Both return a previewed, owned, pending row.
+    mockDbRead.appBlockPublishRequest.findUnique
+      .mockResolvedValueOnce({
+        id: PUBREQ,
+        status: 'pending',
+        submittedByUserId: USER,
+        deployState: 'preview-live',
+      })
+      .mockResolvedValueOnce({
+        slug: 'my-app',
+        deployState: 'preview-live',
+        deployDetail: JSON.stringify({ sha: SHA }),
+      });
+
+    await withdrawRequest({ publishRequestId: PUBREQ, userId: USER });
+    // teardown is fire-and-forget (void) — let the microtask flush.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: PUBREQ, status: 'pending' }, data: { status: 'withdrawn' } })
+    );
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'my-app',
+      sha: SHA,
+      publishRequestId: PUBREQ,
+    });
+  });
+
+  it('does NOT tear down when no preview was started', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      id: PUBREQ,
+      status: 'pending',
+      submittedByUserId: USER,
+      deployState: null,
+    });
+
+    await withdrawRequest({ publishRequestId: PUBREQ, userId: USER });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(mockDeleteReviewResources).not.toHaveBeenCalled();
   });
 });
 

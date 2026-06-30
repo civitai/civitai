@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * MOD REVIEW SANDBOX (#2831) — triggerApplyReview + deleteReviewResources
  * against a mocked in-pod k8s API. Asserts the review apply Job carries the
  * review labels + 24h TTL and renders the review host, and that
- * deleteReviewResources sweeps every resource type by the review label selector.
+ * deleteReviewResources LISTS each resource type by the review label selector
+ * then DELETEs each matched object BY NAME (the deletecollection-free shape
+ * coordinated with the tightened talos RBAC).
  */
 
 const { mockEnv } = vi.hoisted(() => ({
@@ -42,7 +44,7 @@ describe('triggerApplyReview / deleteReviewResources', () => {
           method: String(init.method),
           body: init.body ? JSON.parse(String(init.body)) : undefined,
         });
-        // POST create → return a metadata.name; DELETE → ok.
+        // POST create → return a metadata.name.
         if (init.method === 'POST') {
           return {
             ok: true,
@@ -51,6 +53,19 @@ describe('triggerApplyReview / deleteReviewResources', () => {
             text: async () => JSON.stringify({ metadata: { name: 'review-apply-job' } }),
           } as unknown as Response;
         }
+        // GET = the deleteReviewResources LIST call. Return one matched item per
+        // resource type so the sweep issues a delete-by-name for it. (The apply
+        // Job's pre-delete is a DELETE, not a GET, so it's unaffected.)
+        if (init.method === 'GET' || init.method === undefined) {
+          return {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            text: async () =>
+              JSON.stringify({ items: [{ metadata: { name: 'review-obj-1' } }] }),
+          } as unknown as Response;
+        }
+        // DELETE → ok.
         return { ok: true, status: 200, statusText: 'OK', text: async () => '' } as unknown as Response;
       })
     );
@@ -86,24 +101,41 @@ describe('triggerApplyReview / deleteReviewResources', () => {
     expect(envVars.find((e) => e.name === 'IMAGE')!.value).toContain('app-block-review-my-app');
   });
 
-  it('deleteReviewResources DELETEs every resource type by the review label selector', async () => {
+  it('deleteReviewResources LISTs each resource type by the review label selector then DELETEs by name', async () => {
     await deleteReviewResources({
       slug: 'my-app',
       sha: 'a'.repeat(40),
       publishRequestId: 'pubreq_0123456789ABCDEFGHJKMNPQRS',
     });
-    const deletes = calls.filter((c) => c.method === 'DELETE');
+
+    // LIST: one GET per resource type, each carrying the review label selector.
+    const lists = calls.filter((c) => c.method === 'GET');
     // deployments, services, ingressroutes, middlewares
-    expect(deletes.length).toBe(4);
-    for (const d of deletes) {
-      expect(decodeURIComponent(d.url)).toContain(
+    expect(lists.length).toBe(4);
+    for (const l of lists) {
+      expect(decodeURIComponent(l.url)).toContain(
         'civitai.com/review-mode=true,civitai.com/publish-request-id=pubreq_0123456789ABCDEFGHJKMNPQRS'
       );
     }
-    expect(deletes.some((d) => d.url.includes('/deployments?'))).toBe(true);
-    expect(deletes.some((d) => d.url.includes('/services?'))).toBe(true);
-    expect(deletes.some((d) => d.url.includes('/ingressroutes?'))).toBe(true);
-    expect(deletes.some((d) => d.url.includes('/middlewares?'))).toBe(true);
+    expect(lists.some((l) => l.url.includes('/deployments?'))).toBe(true);
+    expect(lists.some((l) => l.url.includes('/services?'))).toBe(true);
+    expect(lists.some((l) => l.url.includes('/ingressroutes?'))).toBe(true);
+    expect(lists.some((l) => l.url.includes('/middlewares?'))).toBe(true);
+
+    // DELETE: each matched object deleted BY NAME (no labelSelector → no
+    // deletecollection). The mock returns one item per type → 4 deletes.
+    const deletes = calls.filter((c) => c.method === 'DELETE');
+    expect(deletes.length).toBe(4);
+    for (const d of deletes) {
+      expect(d.url).toContain('/review-obj-1');
+      // delete-by-name must NOT carry a labelSelector (that's the deletecollection
+      // verb we dropped to tighten RBAC).
+      expect(d.url).not.toContain('labelSelector');
+    }
+    expect(deletes.some((d) => d.url.includes('/deployments/review-obj-1'))).toBe(true);
+    expect(deletes.some((d) => d.url.includes('/services/review-obj-1'))).toBe(true);
+    expect(deletes.some((d) => d.url.includes('/ingressroutes/review-obj-1'))).toBe(true);
+    expect(deletes.some((d) => d.url.includes('/middlewares/review-obj-1'))).toBe(true);
   });
 
   it('deleteReviewResources swallows errors (best-effort, never throws)', async () => {
