@@ -113,11 +113,24 @@ const CreatorCardSimpleContent = ({
   return (
     <ElementInView component={Card} p="md" withBorder {...cardProps}>
       <Card.Section style={{ position: 'relative' }}>
-        {backgroundImage && backgroundImage.data.url ? (
+        {/* Default background as a base layer so the card always shows an image
+            (no blank flash) while a custom cosmetic loads on top of it. */}
+        <Image
+          src="/images/civitai-default-account-bg.png"
+          alt="default creator card background decoration"
+          pos="absolute"
+          top={0}
+          left={0}
+          w="100%"
+          h="100%"
+          styles={{
+            root: { objectFit: 'cover', height: '100% !important' },
+          }}
+        />
+        {backgroundImage && backgroundImage.data.url && (
           <EdgeMedia2
             src={backgroundImage.data.url}
             type={backgroundImage.data.type ?? 'image'}
-            // transcode={isVideo}
             anim={true}
             width={450}
             wrapperProps={{
@@ -142,19 +155,6 @@ const CreatorCardSimpleContent = ({
                     objectFit: 'cover',
                   }
             }
-          />
-        ) : (
-          <Image
-            src="/images/civitai-default-account-bg.png"
-            alt="default creator card background decoration"
-            pos="absolute"
-            top={0}
-            left={0}
-            w="100%"
-            h="100%"
-            styles={{
-              root: { objectFit: 'cover', height: '100% !important' },
-            }}
           />
         )}
         <Stack p="md">

@@ -136,9 +136,9 @@ test.describe('SSR-injected browsingSettingsAddons (logged-in)', () => {
  *  [ ] Chat icon no-flash: logged-in user WITH chat disabled — the chat icon
  *      must NOT appear-then-disappear on load. It should gate on
  *      useFeatureFlagsReady() and only render once the user flag overlay settles.
- *  [ ] No per-mount getSettings refetch: with the four ambient consumers mounted
- *      (chat icon + MatureContentMigrationAlert + NavTidyNotice +
- *      YellowBuzzMigrationNotice), client-side nav between pages must NOT trigger
+ *  [ ] No per-mount getSettings refetch: with the ambient consumers mounted
+ *      (chat icon + NavTidyNotice + YellowBuzzMigrationNotice), client-side nav
+ *      between pages must NOT trigger
  *      a `user.getSettings` refetch per mount (they now read the SSR-seeded
  *      cache + gate on useFeatureFlagsReady, not staleTime:0 + isFetched).
  *  [ ] Alert render/dismiss/persist: a migration/nav alert renders from
