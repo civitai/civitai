@@ -55,10 +55,14 @@ export async function createRole(id: string, description: string | null, created
 }
 
 export async function deleteRole(id: string) {
-  await db.transaction().execute(async (trx) => {
+  const members = await db.transaction().execute(async (trx) => {
+    const rows = await trx.selectFrom('UserRole').select('userId').where('role', '=', id).execute();
     await trx.deleteFrom('UserRole').where('role', '=', id).execute();
     await trx.deleteFrom('Role').where('id', '=', id).execute();
+    return rows;
   });
+  invalidateRoleCache(id);
+  await Promise.all(members.map((m) => invalidateSessionUser(m.userId)));
 }
 
 export function listMembers(role: string) {
