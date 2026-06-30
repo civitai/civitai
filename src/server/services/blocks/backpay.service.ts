@@ -328,6 +328,11 @@ export async function backpayTrackedAttributions(
       grossValueCents: true,
       appBlockId: true,
       appOwnerUserId: true,
+      // PAYOUT-SAFETY: the currency the spend was drained from. Threaded into
+      // computeSpendShare so free/granted Buzz (blue/green) accrues 0 bounty
+      // even at payout time — the parity widening can never become
+      // platform-funded farming. See isPayoutEligibleBuzz in buzz-helpers.ts.
+      buzzType: true,
     },
     orderBy: { attributedAt: 'asc' },
     take: limit,
@@ -343,16 +348,21 @@ export async function backpayTrackedAttributions(
       grossValueCents: row.grossValueCents,
       isSelfSpend: false,
       appOwnerUserId: row.appOwnerUserId,
+      // LOAD-BEARING: non-payout-eligible currency (blue/green) → 0 bounty.
+      buzzType: row.buzzType,
     });
 
     // INDEPENDENT re-derivation (parallels the subscription belt): the
     // platform-funded bounty must equal min(gross, floor(gross × pct / 100))
-    // AND never exceed gross. Re-derive from the card's own `spendSharePct`
-    // and skip+log on any mismatch — this catches a computeSpendShare
-    // floor/clamp bug that the bare `> gross` ceiling alone would miss (a
-    // wrong-but-≤gross bounty). Bit-identical to compute for a legit row
-    // (gross is a clean non-negative int from the track-time write), so it
-    // carries no false-positive risk on valid data.
+    // AND never exceed gross. Re-derive from the SAME effective rate the
+    // compute used — which is 0 for a non-payout-eligible currency — so the
+    // belt agrees with the payout-safety gate instead of flagging it as a
+    // mismatch. Re-derives from `share.spendSharePct` (already gated by
+    // buzzType) and skips+logs on any mismatch; this catches a
+    // computeSpendShare floor/clamp bug that the bare `> gross` ceiling alone
+    // would miss. Bit-identical to compute for a legit row (gross is a clean
+    // non-negative int from the track-time write), so it carries no
+    // false-positive risk on valid data.
     const expectedShareCents = Math.min(
       row.grossValueCents,
       Math.floor((row.grossValueCents * share.spendSharePct) / 100)

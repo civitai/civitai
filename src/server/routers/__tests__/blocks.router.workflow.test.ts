@@ -3031,3 +3031,108 @@ describe('blocks workflow — color-domain maturity enforcement', () => {
     });
   });
 });
+
+/**
+ * Buzz-type PARITY with the on-site generator. Block-initiated workflows used
+ * to hardcode currencies=['yellow']; they now derive blue-first + the domain
+ * currency from the AUTHORITATIVE token maturity ceiling (resolveBlockMaturity
+ * → isGreen), at parity with on-site resolveGenerationCurrencies:
+ *   - SFW (green/blue, SFW ceiling) → ['blue','green']
+ *   - mature (.red, mature ceiling) → ['blue','yellow']
+ * And the SPENT currency is recorded on the spend-attribution row so the
+ * (dark) payout rail can exclude free/granted Buzz.
+ */
+describe('blocks workflow — buzz-type parity + spend-attribution currency', () => {
+  function happySubmit(cost = 10) {
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: cost }, steps: [] })
+      .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: cost }, steps: [] });
+  }
+  function bodyOf(callIdx: number) {
+    return (mockSubmitWorkflow.mock.calls[callIdx][0] as { body: Record<string, unknown> }).body;
+  }
+
+  // NOTE: the orchestrator currency VALUES (the BuzzClientAccount-mapped
+  // strings) can't be asserted here — the global test setup mocks
+  // `@civitai/client` with a stub `BuzzClientAccount` lacking BLUE/GREEN/YELLOW
+  // (see src/__tests__/setup.ts), so `BuzzTypes.toOrchestratorType` yields
+  // nulls under vitest. The exact SFW→blue/green, mature→blue/yellow,
+  // blue-first ordering is asserted on the pure `BuzzSpendType` strings in
+  // src/server/utils/__tests__/buzz-helpers.test.ts. Here we assert the
+  // ROUTER-level behavior that depends on the derivation: the currency array
+  // is now the 2-element PARITY set (was a 1-element ['yellow'] hardcode), it's
+  // applied at EVERY submit site, and the recorded spend buzzType matches the
+  // domain currency (pure string, unaffected by the client mock).
+  describe('estimateWorkflow currencies (whatIf)', () => {
+    it('derives a 2-element parity currency set (was 1-element yellow-only)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ maxBrowsingLevel: SFW_CEILING }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 5 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      const currencies = bodyOf(0).currencies as unknown[];
+      expect(Array.isArray(currencies)).toBe(true);
+      expect(currencies).toHaveLength(2);
+    });
+  });
+
+  describe('submitWorkflow currencies (whatIf cost-check AND real submit MATCH)', () => {
+    it('applies the SAME 2-element parity currency set to both submit bodies', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+      const whatIf = bodyOf(0).currencies as unknown[];
+      const real = bodyOf(1).currencies as unknown[];
+      // Both sites get a 2-element set, and the real submit's set is identical
+      // to the whatIf cost-check's (so the estimate matches what's drained).
+      expect(whatIf).toHaveLength(2);
+      expect(real).toEqual(whatIf);
+    });
+  });
+
+  describe('spend-attribution records the spent currency (payout discrimination)', () => {
+    it('SFW block records buzzType="green" (the non-payout-eligible domain currency)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      // The spend write is fire-and-forget; flush the microtask queue.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+      expect(mockRecordSpendAttribution.mock.calls[0][0]).toMatchObject({
+        buzzType: 'green',
+        workflowId: 'wf_real',
+      });
+    });
+
+    it('mature (.red) block records buzzType="yellow" (the payout-eligible domain currency)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: ALL_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+      expect(mockRecordSpendAttribution.mock.calls[0][0]).toMatchObject({
+        buzzType: 'yellow',
+        workflowId: 'wf_real',
+      });
+    });
+  });
+});
