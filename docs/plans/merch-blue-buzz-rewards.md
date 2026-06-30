@@ -5,7 +5,7 @@
 ## Build status (2026-06-29)
 
 **Done (server, typecheck-clean):**
-- Env: `SHOPIFY_SHOP_DOMAIN` / `SHOPIFY_WEBHOOK_SECRET` / `SHOPIFY_ADMIN_TOKEN` (`server-schema.ts` + `.env-example`).
+- Env: `SHOPIFY_SHOP_DOMAIN` / `SHOPIFY_WEBHOOK_SECRET` / `SHOPIFY_CLIENT_ID` / `SHOPIFY_CLIENT_SECRET` (+ optional static `SHOPIFY_ADMIN_TOKEN`) in `server-schema.ts` + `.env-example`.
 - Migration: `prisma/migrations/20260629000000_shopify_merch_blue_buzz/` — `ShopifyCustomerLink` +
   `ShopifyMerchOrder` + `ShopifyMerchOrderStatus` enum. Models added to `schema.full.prisma` (the tracked
   source; root `prisma/schema.prisma` is gitignored/generated). **NOT applied** — apply SQL manually per repo rule.
@@ -41,7 +41,7 @@
 ```
 **`{{ order.id }}` must equal the webhook payload `id`** (it does — both are the numeric order id we store as
 `shopifyOrderId`). The `{% unless %}` hides the prompt for already-linked customers: on first claim we write a
-`civitai.user_id` metafield onto the Shopify customer (`setCustomerCivitaiUserId`, via `SHOPIFY_ADMIN_TOKEN`), and
+`civitai.user_id` metafield onto the Shopify customer (`setCustomerCivitaiUserId`, via the Shopify Admin API), and
 their orders auto-grant from then on. **Caveat:** on Shopify Plus / checkout-extensibility stores the Liquid
 "Additional scripts" order-status page is deprecated — there you'd add this as a Thank-you/Order-status **UI
 extension** (app block) reading the same metafield + linking to the same URL.
@@ -124,9 +124,18 @@ Customer buys merch → Shopify orders/paid webhook → Civitai app
 On-payment grant means a refunded order already paid out buzz. Options: ignore (small abuse surface, buzz is
 "blue"/restricted anyway), or subscribe to `refunds/create` and debit. Start with ignore + monitor.
 
-### Secrets needed
-- Shopify Admin API token + shop domain + **webhook signing secret** → `SHOPIFY_*` env vars
-  (`src/env/server-schema.ts` + `.env-example`).
+### Secrets / Shopify app (provided by Fredrick 2026-06-30)
+- Store: **`ff1592-5.myshopify.com`** (public `shop.civitai.com`); also the Printful-connected store.
+- Admin auth = **client_credentials grant** (NOT a static token). The dev-dashboard custom app mints a
+  ~24h token from `client_id` + `client_secret`:
+  `POST https://{SHOPIFY_SHOP_DOMAIN}/admin/oauth/access_token` (grant_type=client_credentials). Our
+  `shopify.caller.ts` mints + caches this in-process and re-mints on expiry. Admin API = GraphQL `2025-01`.
+- Env vars → `SHOPIFY_SHOP_DOMAIN` (= `ff1592-5.myshopify.com`), `SHOPIFY_CLIENT_ID`,
+  `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_WEBHOOK_SECRET`. (`SHOPIFY_ADMIN_TOKEN` optional — static fallback only.)
+- **Scopes already granted** on the app: `write_customers` (what we use, for the metafield),
+  plus `read_all_orders`, `read_orders`, `write_products`, `write_publications`, `write_inventory`.
+- Live keys are in team-private HackMD (Credentials section): https://hackmd.io/@civitai/HkUAujbQzg.
+  **Rotate the client secret + move to the app secret store before production.**
 
 ---
 

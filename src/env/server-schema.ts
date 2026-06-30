@@ -598,10 +598,15 @@ export const serverSchema = z
     EMERCHANTPAY_PASSWORD: z.string().optional(),
     EMERCHANTPAY_WEBHOOK_SECRET: z.string().optional(),
 
-    // Shopify merch store (shop.civitai.com) — Blue Buzz reward loop.
-    // Webhook secret verifies orders/* HMAC; admin token + domain back the claim flow.
+    // Shopify merch store — Blue Buzz reward loop. SHOPIFY_SHOP_DOMAIN is the
+    // *.myshopify.com admin domain (e.g. ff1592-5.myshopify.com). Webhook secret
+    // verifies orders/* HMAC. Admin auth: the custom app uses the client_credentials
+    // grant (CLIENT_ID + CLIENT_SECRET → short-lived token); set SHOPIFY_ADMIN_TOKEN
+    // instead only if using a static store custom-app token.
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
+    SHOPIFY_CLIENT_ID: z.string().optional(),
+    SHOPIFY_CLIENT_SECRET: z.string().optional(),
     SHOPIFY_ADMIN_TOKEN: z.string().optional(),
 
     FLIPT_URL: z.string(),
