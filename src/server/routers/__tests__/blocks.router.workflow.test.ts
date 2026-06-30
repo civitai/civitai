@@ -1413,10 +1413,12 @@ describe('blocks.submitWorkflow', () => {
     expect(arg.buzzAmount).toBe(55); // realized-cost floor, NOT the 70 cross-type sum
   });
 
-  it('#2833: CREDIT entries (refunds) are ignored — only debits count toward the paid amount', async () => {
+  it('#2833: CREDIT entries (refunds) NET against debits on the paid account (10 debit − 3 credit → 7)', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
     happyVersionLookup();
     happyUser();
+    // A same-submit partial refund: the author bounty must accrue off what the
+    // user NET paid (7), not the gross debit (10).
     submitWithTransactions(10, [
       { type: 'debit', amount: 10, accountType: 'green' },
       { type: 'credit', amount: 3, accountType: 'green' },
@@ -1428,7 +1430,26 @@ describe('blocks.submitWorkflow', () => {
 
     const arg = mockRecordSpendAttribution.mock.calls[0][0];
     expect(arg.buzzType).toBe('green');
-    expect(arg.buzzAmount).toBe(10);
+    expect(arg.buzzAmount).toBe(7);
+  });
+
+  it('#2833: a fully-refunded paid spend (debit == credit → net 0) falls to the blue free floor', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // Net 0 paid → nothing was net-paid → conservative blue floor + realized cost.
+    submitWithTransactions(12, [
+      { type: 'debit', amount: 8, accountType: 'green' },
+      { type: 'credit', amount: 8, accountType: 'green' },
+    ]);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzType).toBe('blue');
+    expect(arg.buzzAmount).toBe(12);
   });
 
   it('#2833: a BLUE-ONLY debit stays on the free floor — blue + realized cost, ZERO-bounty', async () => {

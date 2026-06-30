@@ -2608,8 +2608,10 @@ export const blocksRouter = router({
           // accrues off what the user actually paid, never the free blue
           // portion. The offered currencies are ['blue', green|yellow] (never
           // both green and yellow), so at most ONE paid account is ever
-          // drained; summing the paid debits and taking the first paid account
-          // is exact for that contract (and conservative otherwise).
+          // drained; we NET that paid account's debits against any same-submit
+          // credits (a partial refund / charge correction the orchestrator may
+          // emit in the SAME transactions.list) so the bounty accrues off what
+          // the user NET paid, not a gross debit that was partly refunded.
           //
           // When NO paid debit is present — a blue-only spend, OR a cache-hit /
           // 0-cost gen, OR a snapshot the orchestrator returned WITHOUT
@@ -2620,35 +2622,39 @@ export const blocksRouter = router({
           // and an absent/unknown debit signal never pays. Forge-safe:
           // `submitted` is the orchestrator's authoritative response, not
           // client input.
-          const debits = (realizedTransactions?.list ?? []).filter(
-            (t) => t.type === 'debit'
+          // ALL paid-account (green/yellow) entries — debits AND credits — so we
+          // can net them. Blue/fakeRed are excluded by isPayoutEligibleBuzz.
+          const paidEntries = (realizedTransactions?.list ?? []).filter((t) =>
+            isPayoutEligibleBuzz(t.accountType)
           );
-          const paidDebits = debits.filter((t) => isPayoutEligibleBuzz(t.accountType));
           // Defensive guard against a FUTURE change that offers BOTH green and
           // yellow (today the contract is ['blue', green|yellow], so at most one
-          // paid account is drained). If more than one distinct paid accountType
-          // shows up we can't attribute a single paid currency, so refuse to sum
-          // two different paid currencies under one type and fall back to the
-          // conservative blue floor below.
-          const distinctPaidTypes = new Set(paidDebits.map((t) => t.accountType));
-          const paidAmount =
+          // paid account is touched). If more than one distinct paid accountType
+          // shows up we can't attribute a single paid currency, so refuse to
+          // conflate them and fall back to the conservative blue floor below.
+          const distinctPaidTypes = new Set(paidEntries.map((t) => t.accountType));
+          // NET the paid account: debits add, credits (refunds/corrections in the
+          // same workflow) subtract. A net <= 0 means nothing was net-paid → floor.
+          const netPaidAmount =
             distinctPaidTypes.size > 1
               ? 0
-              : paidDebits.reduce((sum, t) => sum + Math.abs(t.amount ?? 0), 0);
-          // `isPayoutEligibleBuzz` already narrows accountType to green|yellow,
-          // both valid `BuzzSpendType`s.
-          const paidType =
-            distinctPaidTypes.size > 1
-              ? undefined
-              : (paidDebits[0]?.accountType as BuzzSpendType | undefined);
-          const hasPaidDebit = paidType != null && paidAmount > 0;
+              : paidEntries.reduce(
+                  (sum, t) =>
+                    sum + (t.type === 'debit' ? Math.abs(t.amount ?? 0) : -Math.abs(t.amount ?? 0)),
+                  0
+                );
+          const hasPaidDebit = distinctPaidTypes.size === 1 && netPaidAmount > 0;
+          // `isPayoutEligibleBuzz` already narrowed accountType to green|yellow,
+          // both valid `BuzzSpendType`s; size===1 ⇒ every paid entry shares it.
+          const paidType = hasPaidDebit
+            ? (paidEntries[0].accountType as BuzzSpendType)
+            : undefined;
 
-          const spentBuzzType: BuzzSpendType = hasPaidDebit
-            ? paidType
-            : // [0] === 'blue' in both branches — the conservative free floor.
-              getBlockAllowedAccountTypes(isGreen)[0];
+          // paidType is set iff hasPaidDebit; otherwise fall to the conservative
+          // free floor (getBlockAllowedAccountTypes[0] === 'blue' in both branches).
+          const spentBuzzType: BuzzSpendType = paidType ?? getBlockAllowedAccountTypes(isGreen)[0];
           const spentBuzzAmount = hasPaidDebit
-            ? paidAmount
+            ? netPaidAmount
             : Math.ceil(snapshot.cost?.total ?? cost);
 
           await recordSpendAttribution({
