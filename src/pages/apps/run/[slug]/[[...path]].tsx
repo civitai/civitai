@@ -7,6 +7,7 @@ import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 
 /**
  * W10 — full-page App Block route: `/apps/run/<slug>` (+ optional sub-path).
@@ -58,6 +59,17 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // missing / non-approved / non-page app → 404 (never leaks which).
     const page = await BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' });
     if (!page || !page.iframeSrc) return { notFound: true };
+
+    // NSFW-APP-RED-ONLY: a mature (r/x) page app is usable ONLY on a red-capable
+    // host (civitai.red). On civitai.com (or any non-red host) it is
+    // indistinguishable from a missing app — return the SAME fail-closed 404 the
+    // flag gate above produces, so mature content can never render off .red and
+    // the app can't be enumerated by slug. SFW apps render anywhere. The host is
+    // read from the request (the same authority the token mint uses).
+    const host = ctx.req.headers.host ?? '';
+    if (!ratingAllowedOnHost(page.contentRating, host)) {
+      return { notFound: true };
+    }
 
     return {
       props: {

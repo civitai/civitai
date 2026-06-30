@@ -68,6 +68,48 @@ export function isHostForColor(host: string, color: ColorDomain): boolean {
   return cfg.primary === normalized || cfg.aliases.includes(normalized);
 }
 
+/**
+ * App Blocks NSFW gating — the SINGLE SOURCE OF TRUTH for "this host may serve
+ * mature-rated apps". A mature app (`contentRating` ∈ {r, x}) is usable ONLY on
+ * a RED-capable host.
+ *
+ * Why `isHostForColor(host, 'red')` and NOT `getRequestDomainColor(host)`:
+ * `civitai.red` is configured as BOTH a blue and a red domain, and
+ * `getRequestDomainColor` is a first-match walk over [green, blue, red], so it
+ * returns `blue` for `civitai.red` — which would (wrongly) treat .red as SFW.
+ * `isHostForColor(host, 'red')` is the membership test that correctly returns
+ * TRUE for `civitai.red` (its primary/aliases) regardless of the color-walk
+ * ordering. This is deliberately scoped to the App-Blocks NSFW gate; it does NOT
+ * change the global color resolution.
+ */
+
+/** Mature content ratings (App Blocks). Everything else is SFW. */
+const MATURE_CONTENT_RATINGS = new Set(['r', 'x']);
+
+/**
+ * True iff the rating is mature (r/x). FAIL-CLOSED on ambiguity in the OPPOSITE
+ * direction is the caller's job: an unknown/missing/empty rating returns
+ * `false` (SFW) here, which is safe because `contentRating` is a REQUIRED,
+ * validated manifest field (`block-manifest-validator.service.ts`) stored on
+ * approve — a missing value means "not mature", and the gates that hide/refuse
+ * mature content only act when this is `true`.
+ */
+export function isMatureContentRating(rating: string | null | undefined): boolean {
+  if (typeof rating !== 'string') return false;
+  return MATURE_CONTENT_RATINGS.has(rating.toLowerCase());
+}
+
+/**
+ * True iff an app with `rating` is allowed to be listed / detailed / run on
+ * `host`. SFW ratings (g/pg/pg13 and any unknown→SFW) are allowed on ANY host;
+ * a mature rating (r/x) requires a RED-capable host. Fail-closed: a mature
+ * rating on a non-red host returns `false`.
+ */
+export function ratingAllowedOnHost(rating: string | null | undefined, host: string): boolean {
+  if (!isMatureContentRating(rating)) return true;
+  return isHostForColor(host, 'red');
+}
+
 /** True if `host` is the canonical primary for its resolved color. */
 export function isPrimaryHost(host: string): boolean {
   const normalized = host.toLowerCase();
