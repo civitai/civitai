@@ -34,8 +34,9 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { MouseEvent } from 'react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { pickReviewIframeSrc } from '~/components/Apps/reviewIframeSrc';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -955,12 +956,14 @@ function ReviewPreviewPanel({
       refetchInterval: (data) => {
         const s = data?.state;
         if (s === 'preview-building' || s === 'preview-deploying') return 3000;
-        // Keep a SLOW poll alive while the preview is live. getReviewStatus mints
-        // a fresh `?mr=<token>` in previewUrl with a 120s TTL on every poll, and
-        // the iframe `src` is read from the latest query data each render (see
-        // `url` below). A 60s poll < 120s TTL guarantees the iframe src always
-        // holds a token with >=60s of validity — so reloading/re-navigating the
-        // live preview minutes later never 401s on an expired token.
+        // Keep a SLOW poll alive while the preview is live — it detects
+        // approve/reject/teardown state changes. getReviewStatus mints a fresh
+        // `?mr=<token>` previewUrl (120s TTL) on every poll, but the IFRAME src is
+        // DECOUPLED from the poll via pickReviewIframeSrc (see `stableIframeSrc`
+        // below): the iframe keeps its src until the embedded token nears expiry,
+        // then swaps ONCE — so the live preview doesn't hard-reload every minute
+        // (which would wipe in-progress interaction). A 60s poll < 120s TTL still
+        // guarantees a fresh token is always available when a swap is due.
         if (s === 'preview-live') return 60000;
         return false; // failed or none → stop polling
       },
@@ -990,6 +993,21 @@ function ReviewPreviewPanel({
   const inProgress = state === 'preview-building' || state === 'preview-deploying';
   const isLive = state === 'preview-live';
   const isFailed = state === 'preview-failed';
+
+  // Stabilize the IFRAME src so it does NOT change on every poll. getReviewStatus
+  // mints a fresh `?mr=<token>` previewUrl every 60s poll; binding the iframe
+  // straight to `url` would hard-reload it each minute, wiping in-progress
+  // interaction in the previewed block. pickReviewIframeSrc keeps the embedded
+  // src until its token nears expiry (TTL 120s), then swaps once. The Open-host
+  // button + the `url` display still use the freshest token. Held in a ref so the
+  // chosen src survives re-renders; recomputed each render via the pure helper.
+  const iframeSrcRef = useRef<string | undefined>(undefined);
+  const stableIframeSrc = isLive
+    ? pickReviewIframeSrc(iframeSrcRef.current, url, Date.now())
+    : undefined;
+  // Persist the choice so the next render compares against the embedded token,
+  // not the latest poll's. Clear when the preview leaves the live state.
+  iframeSrcRef.current = stableIframeSrc || undefined;
 
   return (
     <Stack gap={4}>
@@ -1050,10 +1068,10 @@ function ReviewPreviewPanel({
           {detail?.error ?? 'Review preview failed.'}
         </Alert>
       )}
-      {isLive && url && (
+      {isLive && stableIframeSrc && (
         <iframe
           title={`Review preview for ${slug}`}
-          src={url}
+          src={stableIframeSrc}
           style={{
             width: '100%',
             height: 420,
