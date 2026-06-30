@@ -5,7 +5,7 @@ import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk, truncate, uniq, uniqBy } from 'lodash-es';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server';
@@ -50,9 +50,11 @@ import {
   MeilisearchFetchError,
   SEARCH_ACTOR_HEADER,
   failfastReasonForStatus,
+  failfastReasonForTransientError,
   fetchDocumentsAbortable,
   getMetricsSearchClient,
   isFailfastStatus,
+  isTransientMeiliError,
   meiliFetchFailfastTotal,
   metricsSearchClient,
   withMeili,
@@ -60,6 +62,7 @@ import {
 } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import {
+  clickhouseFailSoftCounter,
   leakingContentCounter,
   registerCounter,
   registerCounterWithLabels,
@@ -166,6 +169,7 @@ import {
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
+  isClickHouseConnectionError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -189,6 +193,7 @@ import type {
 import {
   Availability,
   BlockImageReason,
+  CollectionItemStatus,
   CollectionMode,
   AppealStatus,
   EntityType,
@@ -889,7 +894,7 @@ export const ingestImage = async ({
     image.prompt = prompt;
   }
 
-  if ((await isImageScannerNewEnabled()) || userId === 5) {
+  if (await isImageScannerNewEnabled()) {
     const { data: workflowResponse } = await createImageIngestionRequest({
       imageId: id,
       url,
@@ -1170,6 +1175,7 @@ type GetAllImagesRaw = {
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
   collectionItemNote?: string | null;
+  collectionItemStatus?: CollectionItemStatus | null;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -1263,6 +1269,7 @@ export const getAllImages = async (
     disableMinor,
     poiOnly,
     minorOnly,
+    pendingReviewOnly,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
   let { dbTarget = 'read' } = input;
@@ -1294,6 +1301,9 @@ export const getAllImages = async (
   let isPersonalized = false;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
+  // Moderators opting into the "pending review" collection filter get the same
+  // unscanned-content visibility as the existing `pending` flag (nsfwLevel = 0 allowed).
+  const effectivePending = pending || (isModerator && !!pendingReviewOnly);
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
   // Exclude unselectable browsing levels
@@ -1399,7 +1409,7 @@ export const getAllImages = async (
   // [x]
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
-  } else if (!pending) {
+  } else if (!effectivePending) {
     if (userId && !publishedOnly) {
       // userId is bound into the SQL, so each user gets their own cache key —
       // safe to cache, lower hit rate but no cross-user leakage.
@@ -1546,6 +1556,14 @@ export const getAllImages = async (
       ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
       : '';
 
+    // Moderators can opt into viewing ALL entries still under review for a collection
+    // (owner-only clause intentionally dropped — mods see every REVIEW item, not just
+    // their own). Everyone else: accepted items + the requester's own non-rejected items.
+    const collectionStatusFilter =
+      isModerator && pendingReviewOnly
+        ? `ci."status" = 'REVIEW'`
+        : `(ci."status" = 'ACCEPTED'${displayOwnedItems})`;
+
     // For random sort, use prefetched seed or parse from cursor
     if (sort === ImageSort.Random) {
       if (cursor) {
@@ -1573,11 +1591,12 @@ export const getAllImages = async (
     WITH.push(
       Prisma.sql`
         ct AS (
-          SELECT "imageId", note, "sortKey"
+          SELECT "imageId", note, status, "sortKey"
           FROM (
             SELECT
               ci."imageId",
               ci.note,
+              ci.status,
               abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
                 seedStr
               )}')), 1000000000)) as "sortKey"
@@ -1585,12 +1604,7 @@ export const getAllImages = async (
             WHERE ci."collectionId" = ${collectionId}
               ${Prisma.raw(collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``)}
               AND ci."imageId" IS NOT NULL
-              AND (
-                (
-                  ci."status" = 'ACCEPTED'
-                )
-                ${Prisma.raw(displayOwnedItems)}
-              )
+              AND ${Prisma.raw(collectionStatusFilter)}
           ) sub
           ${Prisma.raw(
             useRandomCursor &&
@@ -1748,7 +1762,7 @@ export const getAllImages = async (
     )`);
   }
 
-  if (pending && (isModerator || userId)) {
+  if (effectivePending && (isModerator || userId)) {
     isPersonalized = true; // pending view is moderator/owner-scoped
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
@@ -1835,7 +1849,7 @@ export const getAllImages = async (
       i.poi,
       i."acceptableMinor",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
-      ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote"' : '')}
+      ${Prisma.raw(collectionId ? ', ct.note as "collectionItemNote", ct.status as "collectionItemStatus"' : '')}
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
@@ -2048,6 +2062,7 @@ export const getAllImages = async (
         // Visibility-gated linked-Model3D id (or null) for the "Posted to 3D
         // Model" chip on the feed-modal path. See the model3dId override below.
         model3dId?: number | null;
+        collectionItemStatus?: CollectionItemStatus | null;
       }
     > = filtered.map(({ userId: creatorId, cursorId, unpublishedAt, collectionItemNote, ...i }) => {
       const judgeScore = parseJudgeScore(collectionItemNote ?? null);
@@ -2216,25 +2231,29 @@ export const getAllImagesIndex = async (
     // into kubelet SIGKILL on 2026-05-29. 503 is the correct code for a
     // transient backend brownout (was TIMEOUT/408 as a tRPC-v10 stopgap; v11
     // has SERVICE_UNAVAILABLE).
-    if (err instanceof MeiliCallTimeoutError) {
-      throw new TRPCError({
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'Image search is temporarily overloaded — please retry.',
-        cause: err,
+    //
+    // `isTransientMeiliError` covers the civitai wrapper errors
+    // (MeiliCallTimeoutError = local timer / circuit-open; MeilisearchFetchError
+    // with a failfast status = raw-fetch 408/429/5xx) AND the meilisearch-js
+    // SDK's own error types (MeiliSearchCommunicationError /
+    // MeiliSearchApiError / MeiliSearchTimeOutError) thrown by the SDK calls
+    // inside the search index path. 4xx-other (malformed filter / auth) and
+    // any other Error are NOT transient and still bubble as-is.
+    if (isTransientMeiliError(err)) {
+      // Keep a transient Meili outage ATTRIBUTABLE: the reclassified 503 would
+      // otherwise vanish into the unlabeled 503 bucket. Mirror the post-filter
+      // loop's counter usage (route + reason) so an outage is queryable by the
+      // same label vocabulary; `iteration:'0'` (this is the single pre-filter
+      // search, not the post-filter iteration loop).
+      meiliFetchFailfastTotal.inc({
+        route: 'getAllImagesIndex',
+        iteration: '0',
+        reason: failfastReasonForTransientError(err),
       });
-    }
-    // Upstream returned 408 (backend timeout) or 5xx (feeds-proxy shed /
-    // brownout). Same disposition as the timeout above — a retryable 503
-    // SERVICE_UNAVAILABLE so the client shows its retry banner with a friendly
-    // message, instead of a raw 500 ("Meilisearch fetch failed (503): ...")
-    // leaking to the UI.
-    // Mirrors the user/model search REST handlers. 4xx-other (malformed
-    // filter / auth) is NOT failfast-eligible and still bubbles as-is.
-    if (err instanceof MeilisearchFetchError && isFailfastStatus(err.status)) {
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
-        cause: err,
+        cause: err as Error,
       });
     }
     throw err;
@@ -2944,25 +2963,68 @@ export async function getImagesFromFeedSearch(
     };
   } catch (err) {
     console.error('Error in getImagesFromFeedSearch:', err);
-    // Meili saturation / timeout → fail fast as SERVICE_UNAVAILABLE (HTTP 503)
-    // so the caller gets a fast, retryable response instead of bleeding 30s
-    // while Traefik gives up. 503 is the correct transient-brownout code
-    // (was TIMEOUT/408 under tRPC v10, which lacked SERVICE_UNAVAILABLE).
-    if (err instanceof MeiliCallTimeoutError) {
+    // Any genuinely-transient upstream failure → fail fast as SERVICE_UNAVAILABLE
+    // (HTTP 503) so the caller gets a fast, retryable response instead of
+    // bleeding 30s while Traefik gives up. 503 is the correct transient-brownout
+    // code (was TIMEOUT/408 under tRPC v10, which lacked SERVICE_UNAVAILABLE).
+    //
+    // `isTransientMeiliError` covers BOTH civitai's own wrapper errors
+    // (MeiliCallTimeoutError / MeilisearchFetchError, from the raw-fetch path)
+    // AND the meilisearch-js SDK's own error types (MeiliSearchCommunicationError /
+    // MeiliSearchApiError / MeiliSearchTimeOutError) that the feed library's
+    // INNER SDK calls throw on a slow/shed backend — the latter were the
+    // dominant remaining HTTP-500 source on /api/v1/images (a 408/503 from the
+    // proxy surfaced as a bare {"error":"Request Timeout"} / {"error":"Service
+    // Unavailable"} 500 because they're not TRPCErrors and fell through the
+    // generic 500 mapping). 4xx-other (malformed filter / auth) and any other
+    // Error are NOT transient and still bubble as-is (→ their real status).
+    const transient = isTransientMeiliError(err);
+    if (transient) {
+      // Keep a transient Meili outage ATTRIBUTABLE (see getAllImagesIndex). The
+      // reclassified 503 would otherwise land in the unlabeled 503 bucket;
+      // mirror the post-filter loop's {route, reason} so a Meili brownout is
+      // queryable. `iteration:'0'` — this is the single feed-search call.
+      meiliFetchFailfastTotal.inc({
+        route: 'getImagesFromFeedSearch',
+        iteration: '0',
+        reason: failfastReasonForTransientError(err),
+      });
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
         message: 'Image search is temporarily overloaded — please retry.',
-        cause: err,
+        cause: err as Error,
       });
     }
-    // 408/5xx from the upstream (or feeds-proxy) → retryable 503, same as
-    // the circuit-open path above. Keeps this path symmetric with
-    // getAllImagesIndex even though it's REST-only and historically low-error.
-    if (err instanceof MeilisearchFetchError && isFailfastStatus(err.status)) {
+    // TRANSIENT ClickHouse transport blip in the metric-enrichment leg of
+    // populatedQuery (the event-engine-common MetricService read). The feed items
+    // come from Meili+Postgres; only the display-only engagement metrics are
+    // ClickHouse-backed, and they ALREADY fail-open to zero elsewhere
+    // (getImageMetricsObject → {}). But this feed path runs the metric read INSIDE
+    // populatedQuery, so a CH connection error (socket hang up / Code 279 / Code
+    // 210) thrown there isn't a Meili error → it would fall through to `throw err`
+    // → the handler's generic 500. Re-map it to the same retryable 503 as a Meili
+    // brownout: a CH transport flap is a transient upstream brownout, not a server
+    // bug, and 503+Retry-After lets the client/CF retry the (seconds-long) blip
+    // instead of surfacing a hard 500. A CH QUERY/SCHEMA error (UNKNOWN_TABLE etc.)
+    // is NOT matched by isClickHouseConnectionError and still throws → 500 → visible
+    // + alertable, exactly as the missing-table incident was. No money/entitlement
+    // is on this path — image metrics are display-only.
+    if (isClickHouseConnectionError(err)) {
+      clickhouseFailSoftCounter.inc({ path: 'image-feed' });
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'clickhouse-failsoft',
+          message: 'ClickHouse transport error in image feed metric enrichment — served 503',
+          path: 'image-feed',
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'clickhouse'
+      ).catch();
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
-        message: 'Image search is temporarily overloaded — please retry.',
-        cause: err,
+        message: 'Image feed is temporarily overloaded — please retry.',
+        cause: err as Error,
       });
     }
     throw err;

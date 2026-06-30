@@ -122,8 +122,8 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/user.service', () => ({
   getUserById: mockGetUserById,
 }));
-vi.mock('~/server/auth/session-user', () => ({
-  getSessionUser: (...args: unknown[]) => mockGetSessionUser(...args),
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
@@ -341,12 +341,11 @@ beforeEach(() => {
     written: true,
     row: {
       id: 'bsa_x',
-      // TRACK-ONLY: the write records the event + gross only — no rate applied.
-      status: 'tracked',
+      status: 'pending',
       appOwnerShareCents: 0,
       spendSharePct: 0,
       grossValueCents: 0,
-      rateCardVersion: 'unrated',
+      rateCardVersion: 'v4',
       voidedReason: null,
     },
   });
@@ -383,9 +382,15 @@ beforeEach(() => {
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockAuditPromptServer.mockResolvedValue(undefined);
   mockBuildGenerationContext.mockResolvedValue({ externalCtx: {} });
-  // createWorkflowStepsFromGraphInput returns an ARRAY of steps; the block path
-  // is single-step txt2img, so default to one step (router takes steps[0]).
-  mockCreateStepsFromGraph.mockResolvedValue([{ $type: 'textToImage', name: 's1', input: {} }]);
+  // createWorkflowStepsFromGraphInput returns `{ steps, workflowMetadata }`; the
+  // block path is single-step txt2img, so default to one step (router takes
+  // steps[0]). `workflowMetadata` is the queue/remix metadata the REAL submit
+  // attaches and the whatIf submit omits — the graph yields it ONLY on real
+  // (non-whatIf) calls, so default to undefined here and override per-test.
+  mockCreateStepsFromGraph.mockResolvedValue({
+    steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+    workflowMetadata: undefined,
+  });
   // Daily-boost autoclaim defaults: balance high enough that no claim
   // fires unless a test explicitly drops it. Reward details say boost is
   // unclaimed today with the standard 25 awardAmount. Tests that exercise
@@ -596,6 +601,119 @@ describe('blocks.submitWorkflow', () => {
     expect(mockAuditPromptServer).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: 'a cat', userId: 42 })
     );
+  });
+
+  // ---- workflow metadata parity (queue/remix view) ------------------------
+  //
+  // BUG this proves fixed: block-submitted generations carried NO `metadata` on
+  // the submit body, so the orchestrator queue/remix view (which reads
+  // `WorkflowData.params/resources/remixOfId` ← `workflow.metadata`) showed
+  // blank prompt/seed/sampler/cfg/steps/resources. The normal generation form
+  // (`generateFromGraph`) attaches `metadata: workflowMetadata` on the REAL
+  // submit only — `undefined` on whatIf. These tests pin that parity for the
+  // block path: real submit carries the metadata the graph produced; the whatIf
+  // (cost-preflight) submit omits it.
+  describe('attaches workflow metadata (queue/remix parity)', () => {
+    it('REAL submit carries metadata.params + metadata.resources from the graph', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(125);
+      // The graph yields metadata ONLY on the real (non-whatIf) call. The router
+      // calls createBlockTextToImageStep twice (whatIf cost-check, then real); the
+      // mock returns the same value both times, but only the REAL submit body
+      // should carry `metadata` (the whatIf body must omit it — asserted below).
+      const workflowMetadata = {
+        params: { prompt: 'a cat', seed: 12345, sampler: 'Euler a', cfgScale: 7, steps: 25 },
+        resources: [{ id: 99, strength: 1 }],
+      };
+      mockCreateStepsFromGraph.mockResolvedValue({
+        steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+        workflowMetadata,
+      });
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+
+      // whatIf body (first call) must NOT carry metadata — mirrors the normal
+      // path (`generateFromGraph` builds workflowMetadata only for real submits).
+      const whatIfBody = mockSubmitWorkflow.mock.calls[0][0].body;
+      expect(whatIfBody).not.toHaveProperty('metadata');
+
+      // REAL submit body (second call) carries the graph's metadata so the queue
+      // view's params/resources/remixOfId populate.
+      const realBody = mockSubmitWorkflow.mock.calls[1][0].body;
+      expect(realBody.metadata).toEqual(workflowMetadata);
+      expect(realBody.metadata.params).toMatchObject({
+        prompt: 'a cat',
+        seed: 12345,
+        sampler: 'Euler a',
+        cfgScale: 7,
+        steps: 25,
+      });
+      expect(realBody.metadata.resources).toEqual([{ id: 99, strength: 1 }]);
+    });
+
+    it('passes metadata through verbatim (no fabricated fields) — undefined when the graph omits it', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(125);
+      // Graph returns no metadata (e.g. an entry path that doesn't build it):
+      // the body must carry `metadata: undefined`, NOT a fabricated object.
+      mockCreateStepsFromGraph.mockResolvedValue({
+        steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+        workflowMetadata: undefined,
+      });
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      const realBody = mockSubmitWorkflow.mock.calls[1][0].body;
+      expect(realBody.metadata).toBeUndefined();
+    });
+
+    it('estimateWorkflow (whatIf) never attaches metadata to the body', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      // Even if the graph somehow returned metadata, the whatIf estimate body
+      // must not carry it (parity with the normal whatIf path).
+      mockCreateStepsFromGraph.mockResolvedValue({
+        steps: [{ $type: 'textToImage', name: 's1', input: {} }],
+        workflowMetadata: { params: { prompt: 'a cat' }, resources: [] },
+      });
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 12 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockSubmitWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({ query: { whatif: true } })
+      );
+      const estimateBody = mockSubmitWorkflow.mock.calls[0][0].body;
+      expect(estimateBody).not.toHaveProperty('metadata');
+    });
   });
 
   it('returns a failed-shape snapshot (no throw) when cost > budget', async () => {
@@ -2910,6 +3028,115 @@ describe('blocks workflow — color-domain maturity enforcement', () => {
       expect(mockAuditPromptServer).toHaveBeenCalledWith(
         expect.objectContaining({ isGreen: false })
       );
+    });
+  });
+});
+
+/**
+ * Buzz-type PARITY with the on-site generator. Block-initiated workflows used
+ * to hardcode currencies=['yellow']; they now derive blue-first + the domain
+ * currency from the AUTHORITATIVE token maturity ceiling (resolveBlockMaturity
+ * → isGreen), at parity with on-site resolveGenerationCurrencies:
+ *   - SFW (green/blue, SFW ceiling) → ['blue','green']
+ *   - mature (.red, mature ceiling) → ['blue','yellow']
+ * And the SPENT currency is recorded on the spend-attribution row so the
+ * (dark) payout rail can exclude free/granted Buzz.
+ */
+describe('blocks workflow — buzz-type parity + spend-attribution currency', () => {
+  function happySubmit(cost = 10) {
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: cost }, steps: [] })
+      .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: cost }, steps: [] });
+  }
+  function bodyOf(callIdx: number) {
+    return (mockSubmitWorkflow.mock.calls[callIdx][0] as { body: Record<string, unknown> }).body;
+  }
+
+  // NOTE: the orchestrator currency VALUES (the BuzzClientAccount-mapped
+  // strings) can't be asserted here — the global test setup mocks
+  // `@civitai/client` with a stub `BuzzClientAccount` lacking BLUE/GREEN/YELLOW
+  // (see src/__tests__/setup.ts), so `BuzzTypes.toOrchestratorType` yields
+  // nulls under vitest. The exact SFW→blue/green, mature→blue/yellow,
+  // blue-first ordering is asserted on the pure `BuzzSpendType` strings in
+  // src/server/utils/__tests__/buzz-helpers.test.ts. Here we assert the
+  // ROUTER-level behavior that depends on the derivation: the currency array
+  // is now the 2-element PARITY set (was a 1-element ['yellow'] hardcode), it's
+  // applied at EVERY submit site, and the recorded spend buzzType matches the
+  // domain currency (pure string, unaffected by the client mock).
+  describe('estimateWorkflow currencies (whatIf)', () => {
+    it('derives a 2-element parity currency set (was 1-element yellow-only)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ maxBrowsingLevel: SFW_CEILING }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValue({ id: '', status: 'succeeded', cost: { total: 5 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      const currencies = bodyOf(0).currencies as unknown[];
+      expect(Array.isArray(currencies)).toBe(true);
+      expect(currencies).toHaveLength(2);
+    });
+  });
+
+  describe('submitWorkflow currencies (whatIf cost-check AND real submit MATCH)', () => {
+    it('applies the SAME 2-element parity currency set to both submit bodies', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(2);
+      const whatIf = bodyOf(0).currencies as unknown[];
+      const real = bodyOf(1).currencies as unknown[];
+      // Both sites get a 2-element set, and the real submit's set is identical
+      // to the whatIf cost-check's (so the estimate matches what's drained).
+      expect(whatIf).toHaveLength(2);
+      expect(real).toEqual(whatIf);
+    });
+  });
+
+  describe('spend-attribution records a payout-safe currency basis (conservative free floor)', () => {
+    // green is PAID/payout-eligible, but the orchestrator doesn't surface the
+    // real per-account split and blocks drain blue (free) FIRST, so we stamp the
+    // conservative free floor (blue) → 0 payout until a follow-up records the
+    // real debit. Both domains stamp blue.
+    it('SFW block records buzzType="blue" (free first-drained floor → 0 payout)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: SFW_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      // The spend write is fire-and-forget; flush the microtask queue.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+      expect(mockRecordSpendAttribution.mock.calls[0][0]).toMatchObject({
+        buzzType: 'blue',
+        workflowId: 'wf_real',
+      });
+    });
+
+    it('mature (.red) block ALSO records buzzType="blue" (free first-drained floor → 0 payout)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 1000, maxBrowsingLevel: ALL_CEILING })
+      );
+      happyVersionLookup();
+      happyUser();
+      happySubmit();
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+      expect(mockRecordSpendAttribution.mock.calls[0][0]).toMatchObject({
+        buzzType: 'blue',
+        workflowId: 'wf_real',
+      });
     });
   });
 });

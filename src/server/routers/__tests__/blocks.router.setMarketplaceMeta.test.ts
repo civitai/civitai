@@ -253,7 +253,8 @@ describe('blocks.getFeaturedBlocks — anon-capable, dark behind the flag (F-E E
     expect(result).toEqual({ items: featured });
     // PAGE-ONLY LAUNCH GATE (#2622): a non-mod/anon caller passes launchOnly=true
     // so the featured rail carries launch (page) apps only.
-    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12, true);
+    // 3rd arg = redCapable (NSFW-app-red-only; no host header → false).
+    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12, true, false);
   });
 
   it('moderator (the live state today): served — sees ALL featured apps (launchOnly=false)', async () => {
@@ -261,6 +262,8 @@ describe('blocks.getFeaturedBlocks — anon-capable, dark behind the flag (F-E E
     await caller.getFeaturedBlocks({ limit: 12 });
     expect(mockGetFeaturedBlocks).toHaveBeenCalledTimes(1);
     // Mods bypass the page-only launch gate → launchOnly=false (all apps).
-    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12, false);
+    // 3rd arg = redCapable (no host → false). Maturity is a host property, not a
+    // privilege — even a mod on .com does not see mature apps here.
+    expect(mockGetFeaturedBlocks).toHaveBeenCalledWith(12, false, false);
   });
 });

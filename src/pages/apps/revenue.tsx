@@ -2,7 +2,6 @@ import {
   Anchor,
   Badge,
   Card,
-  Container,
   Group,
   Loader,
   SimpleGrid,
@@ -18,6 +17,7 @@ import Link from 'next/link';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppAnalyticsPanel } from '~/components/AppBlocks/AppAnalyticsPanel';
 import { Meta } from '~/components/Meta/Meta';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -192,7 +192,7 @@ function RevenuePanel() {
             <Title order={5}>Recent attributions</Title>
             {data.recentAttributions.length === 0 ? (
               <Text c="dimmed" size="sm" mt="sm">
-                No buzz purchases yet. Install your blocks on more models to earn share.
+                No buzz purchases yet. Install your apps on more models to earn share.
               </Text>
             ) : (
               <Table mt="sm" highlightOnHover>
@@ -261,34 +261,33 @@ export default function AppBlocksDashboardPage() {
 
   return (
     <>
-      <Meta title="App Blocks Dashboard — Civitai" deIndex />
-      <Container size="lg" py="xl">
-        <Stack gap="lg">
-          <div>
-            <Title order={2}>App Blocks Dashboard</Title>
-            <Text c="dimmed" size="sm">
-              Revenue share and analytics for your blocks. Payouts are batched weekly; see{' '}
-              <Anchor component={Link} href="/apps/installed">
-                Apps
-              </Anchor>{' '}
-              to manage installations.
-            </Text>
-          </div>
-
-          <Tabs defaultValue="revenue" keepMounted={false}>
-            <Tabs.List mb="md">
-              <Tabs.Tab value="revenue">Revenue</Tabs.Tab>
-              <Tabs.Tab value="analytics">Analytics</Tabs.Tab>
-            </Tabs.List>
-            <Tabs.Panel value="revenue">
-              <RevenuePanel />
-            </Tabs.Panel>
-            <Tabs.Panel value="analytics">
-              <AppAnalyticsPanel />
-            </Tabs.Panel>
-          </Tabs>
-        </Stack>
-      </Container>
+      <Meta title="Apps Dashboard — Civitai" deIndex />
+      <AppsPageLayout
+        size="lg"
+        title="Apps Dashboard"
+        subtitle={
+          <>
+            Revenue share and analytics for your apps. Payouts are batched weekly; see{' '}
+            <Anchor component={Link} href="/apps/installed">
+              Apps
+            </Anchor>{' '}
+            to manage installations.
+          </>
+        }
+      >
+        <Tabs defaultValue="revenue" keepMounted={false}>
+          <Tabs.List mb="md">
+            <Tabs.Tab value="revenue">Revenue</Tabs.Tab>
+            <Tabs.Tab value="analytics">Analytics</Tabs.Tab>
+          </Tabs.List>
+          <Tabs.Panel value="revenue">
+            <RevenuePanel />
+          </Tabs.Panel>
+          <Tabs.Panel value="analytics">
+            <AppAnalyticsPanel />
+          </Tabs.Panel>
+        </Tabs>
+      </AppsPageLayout>
     </>
   );
 }

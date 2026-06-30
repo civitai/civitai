@@ -6,6 +6,7 @@ import { ChallengeUpsertForm } from '~/components/Challenge/ChallengeUpsertForm'
 import { trpc } from '~/utils/trpc';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export default function EditChallengePage() {
   const router = useRouter();
@@ -90,3 +91,5 @@ export default function EditChallengePage() {
     </>
   );
 }
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });

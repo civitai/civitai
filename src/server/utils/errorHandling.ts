@@ -47,6 +47,20 @@ export function isClientAbortError(e: unknown): boolean {
   return false;
 }
 
+/**
+ * True when an error is a Prisma unique-constraint violation (P2002).
+ *
+ * Engagement "toggle" procedures follow a read-then-create pattern (findUnique →
+ * create-if-absent). Two concurrent calls can both observe "absent" and both
+ * create, so the loser hits the row's unique constraint (P2002). Because the row
+ * now exists, the toggle is idempotent: a P2002 there means "already toggled on",
+ * so the caller should treat it as success rather than bubble a 500. Use only at
+ * sites where P2002 unambiguously means "the exact row we wanted already exists".
+ */
+export function isPrismaUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
   P2000: 'BAD_REQUEST',
@@ -300,6 +314,97 @@ export function isUpstreamServerOrNetworkError(args: {
   const status = clientError?.status;
   if (typeof status === 'number' && status >= 500) return true;
   if (thrown !== undefined && isUpstreamNetworkError(thrown)) return true;
+  return false;
+}
+
+/**
+ * True ONLY for a TRANSIENT ClickHouse CONNECTION / TRANSPORT failure — the kind
+ * that flaps when reaching ClickHouse Cloud (a socket reset / broken pipe / all
+ * connection tries failed), NOT a query/schema fault.
+ *
+ * Why this is deliberately NARROW: the buzz-reward write and the image-feed metric
+ * enrichment both touch ClickHouse, and we want a CH *transport* blip to fail SOFT
+ * (so it can't 500 a user mutation or a feed page). But a *query/schema* error
+ * (`Code: 60` UNKNOWN_TABLE, `Code: 349` NULL→non-Nullable, a syntax error) is a
+ * REAL BUG / deploy break — swallowing it would have HIDDEN the missing-table
+ * incident. So this predicate is an ALLOWLIST of transient-infra signatures and
+ * returns FALSE for everything else, leaving query/schema errors to surface (and
+ * alert) as a 500 exactly as today.
+ *
+ * Matches three shapes, because the same underlying failure can surface differently
+ * depending on the call path:
+ *  1. A raw socket error thrown before any HTTP response — `.code` is the syscall
+ *     (`ECONNRESET`/`EPIPE`/`ETIMEDOUT`/`ECONNREFUSED`), or the message is
+ *     `socket hang up`. This is how `@clickhouse/client` surfaces a dropped
+ *     connection (and how the event-engine-common `MetricService` read throws).
+ *  2. A `@clickhouse/client` `ClickHouseError` carrying a numeric `.code` string —
+ *     we match the transport-class codes `279` ALL_CONNECTION_TRIES_FAILED, `210`
+ *     NETWORK_ERROR (broken pipe while writing to socket), `209` SOCKET_TIMEOUT, AND
+ *     the one transient-CAPACITY brownout code `202` TOO_MANY_SIMULTANEOUS_QUERIES
+ *     (the 2026-06-18 incident that the inline buzz-reward fail-soft #2646 was built
+ *     for — a momentary CH Cloud overload, retryable, NOT a code bug). Query/schema
+ *     codes (`60`, `349`, …) are NOT in the set.
+ *  3. Our own `$query` wrapper flattens both of the above into a plain
+ *     `Error('ClickHouse query failed: <original message>')`, losing `.code`, so we
+ *     also string-match the transient signatures in the message (`Code: 279`/`210`/
+ *     `209`/`202`, `socket hang up`, `broken pipe`, `all connection tries failed`,
+ *     `too many simultaneous queries`). The message match is still transient-ONLY —
+ *     `Code: 60` / `unknown table` never match.
+ *
+ * Walks the `.cause` chain so a wrapped error (tRPC `TRPCError{ cause }`, undici
+ * `TypeError{ cause }`) is still classified.
+ */
+export function isClickHouseConnectionError(e: unknown): boolean {
+  // Syscall codes for a dropped/refused/reset TCP connection. (Intentionally a
+  // SUBSET of isUpstreamNetworkError's set — only true transport faults, no
+  // DNS-resolution-style codes that wouldn't apply to a pooled CH connection.)
+  const TRANSPORT_SYSCALL_CODES = new Set([
+    'ECONNRESET',
+    'EPIPE',
+    'ETIMEDOUT',
+    'ECONNREFUSED',
+    'EHOSTUNREACH',
+    'ENETUNREACH',
+    'UND_ERR_SOCKET',
+    'UND_ERR_CONNECT_TIMEOUT',
+  ]);
+  // ClickHouse server error codes that are TRANSIENT INFRA brownouts (never a query
+  // or schema fault). 279/210/209 = connection/transport; 202 = momentary capacity
+  // overload. Strings, because ClickHouseError.code is a string.
+  const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
+
+  let cur = e as
+    | { name?: string; message?: string; code?: unknown; cause?: unknown }
+    | undefined;
+  for (let depth = 0; depth < 5 && cur && typeof cur === 'object'; depth++) {
+    const code = cur.code;
+    if (typeof code === 'string') {
+      // Shape 1: raw syscall code. Shape 2: numeric ClickHouseError code (string).
+      if (TRANSPORT_SYSCALL_CODES.has(code)) return true;
+      if (TRANSIENT_CH_CODES.has(code)) return true;
+    }
+    const msg = typeof cur.message === 'string' ? cur.message.toLowerCase() : '';
+    if (msg) {
+      // Shape 3: the $query-wrapped string. Transient-infra signatures ONLY — these
+      // never appear in an UNKNOWN_TABLE / NULL-insert / syntax error message.
+      if (
+        msg.includes('socket hang up') ||
+        msg.includes('broken pipe') ||
+        msg.includes('all connection tries failed') ||
+        msg.includes('connection refused') ||
+        msg.includes('connection reset') ||
+        msg.includes('too many simultaneous queries') ||
+        // The `Code: NNN` prefix our $query wrapper preserves, transient codes only.
+        msg.includes('code: 279') ||
+        msg.includes('code: 210') ||
+        msg.includes('code: 209') ||
+        msg.includes('code: 202')
+      ) {
+        return true;
+      }
+    }
+    cur = cur.cause as typeof cur;
+  }
   return false;
 }
 

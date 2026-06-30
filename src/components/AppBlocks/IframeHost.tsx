@@ -11,6 +11,7 @@ import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { resolveRequestConsent } from './requestConsentGate';
 import { hideBlock } from './hiddenBlocks';
+import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -29,11 +30,9 @@ import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/base
 import { trpc } from '~/utils/trpc';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { openLoginPopup } from '~/utils/auth-helpers';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
-// Login flow for anonymous-conversion (REQUEST_SIGN_IN). SSR-disabled to match
-// requireLogin()'s own dynamic import — LoginContent touches window/router.
-const LoginModal = dynamic(() => import('~/components/Login/LoginModal'), { ssr: false });
 // Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
 // clicks an action whose consent-gated scope the token is missing.
 const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: false });
@@ -120,23 +119,41 @@ function storageErrorMessage(err: unknown): string {
  * block can't fake, restyle, or hide it. It's the user-facing safety
  * signal that says "this is a sandboxed app block, not native Civitai UI":
  * a thin top bar with the Civitai app-block badge plus a menu whose
- * "Manage apps" item routes to /apps/installed and a "Hide app block" item
+ * "Manage apps" item routes to /apps/installed and a "Hide app" item
  * that locally hides this install for the viewer (a model owner's block shows
  * to every viewer; this lets a viewer dismiss one without affecting the
  * publisher or anyone else). Rendering it here (vs in the sandboxed iframe) is
  * the whole point — the trust boundary belongs to the host. (Roadmap W7.)
+ *
+ * SURFACE-AWARE: on the full-page run surface (`/apps/run/<slug>`, slot kind
+ * `page`) the "Hide app" action is meaningless — there is no model-page
+ * slot to dismiss the block FROM; the page IS the block. So the host passes the
+ * rendering `slotId` and we drop the "Hide" item when `isPageSlot(slotId)` is
+ * true. "Manage apps" + the provenance badge stay on every surface. (Mirrors PR
+ * #2747's `isPageSlot` page-vs-model distinction.) When `slotId` is omitted the
+ * chrome defaults to the model surface (shows Hide) — back-compat for any caller
+ * that hasn't threaded a slot.
  */
 export function AppBlockChrome({
   blockInstanceId,
   appName,
   modelId,
   modelName,
+  slotId,
 }: {
   blockInstanceId: string;
   appName?: string;
   modelId?: number;
   modelName?: string;
+  /** The slot this chrome renders in. Drives the page-vs-model surface
+   *  distinction — the "Hide" item is hidden on the full-page (`app.page`)
+   *  surface. Omitted → treated as a model surface (Hide shown). */
+  slotId?: string;
 }) {
+  // The full-page run surface (`app.page`) has no model-page slot to hide the
+  // block from — the page IS the block — so suppress the "Hide" item there.
+  const isPage = slotId != null && isPageSlot(slotId);
+  const showHide = !isPage;
   // The host-rendered name of the running app. (H2) Naming the app in the host
   // chrome — not just the iframe `title` — lets the user tell WHICH sandboxed
   // app is running and trust its provenance; the iframe can't fake it. The name
@@ -144,12 +161,25 @@ export function AppBlockChrome({
   // collapse whitespace, bound length) before rendering it in the trust label.
   const sanitizedName = sanitizeAppChromeName(appName);
   const hasName = sanitizedName !== null;
-  // Falls back to the literal "App block" so the trust label is never blank.
-  const label = sanitizedName ?? 'App block';
-  // When a real name shows, keep the icon's "App block" provenance aria-label so
-  // the icon + name read as "App block, <name>". On the fallback the visible
-  // Text already says "App block", so mark the icon decorative (aria-hidden)
-  // rather than leaving it an unlabeled SVG / double-reading "App block".
+  // Falls back to the literal "App" so the trust label is never blank.
+  const label = sanitizedName ?? 'App';
+  // De-dup the app name on the page surface. The breadcrumb's trailing crumb
+  // (`app-block-breadcrumb-name`) already carries the app name there, so the
+  // standalone badge name `Text` would render the SAME name a second time
+  // (`[icon] <name>  /  Apps  /  <name>`). Suppress the badge name `Text` when
+  // the breadcrumb is shown (page surface) and let the crumb be the sole
+  // app-name; the provenance ICON stays (see the icon aria-label below) so the
+  // trust signal is preserved. On the model surface (no breadcrumb) the badge
+  // name renders exactly as before.
+  const showBadgeName = !isPage;
+  // The icon must carry the "App" provenance aria-label whenever there is
+  // no adjacent visible Text saying "App" — i.e. when a real name shows
+  // (so the icon + name read as "App, <name>") OR when the badge name Text
+  // is suppressed on the page surface (so the provenance signal isn't lost with
+  // the dropped Text). It's marked decorative (aria-hidden) ONLY when the
+  // visible fallback "App" Text is present to carry provenance itself —
+  // avoiding an unlabeled SVG / a double-reading "App".
+  const iconProvenance = hasName || !showBadgeName;
   return (
     <Group
       justify="space-between"
@@ -168,31 +198,83 @@ export function AppBlockChrome({
       <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
         {/* Provenance signal for screen readers. role="img" is required for the
             aria-label to be reliably announced — a bare tabler <svg> has no role,
-            so without it the label is dropped. On the fallback the visible "App
-            block" Text carries provenance, so the icon is marked decorative. */}
+            so without it the label is dropped. On the fallback the visible "App"
+            Text carries provenance, so the icon is marked decorative. */}
         <IconApps
           size={14}
           stroke={1.5}
-          role={hasName ? 'img' : undefined}
-          aria-label={hasName ? 'App block' : undefined}
-          aria-hidden={hasName ? undefined : true}
+          role={iconProvenance ? 'img' : undefined}
+          aria-label={iconProvenance ? 'App' : undefined}
+          aria-hidden={iconProvenance ? undefined : true}
           style={{ flexShrink: 0 }}
         />
         {/* Host-rendered (spoof-proof) app-name label. Truncates with an
             ellipsis at a bounded width so a long name never wraps or shoves
-            the menu off the row in the narrow model.sidebar_top slot. */}
-        <Text size="xs" c="dimmed" truncate maw={160} data-testid="app-block-name">
-          {label}
-        </Text>
+            the menu off the row in the narrow model.sidebar_top slot. On the
+            page surface this is suppressed (the breadcrumb crumb below carries
+            the name once) — see `showBadgeName`. */}
+        {showBadgeName && (
+          <Text size="xs" c="dimmed" truncate maw={160} data-testid="app-block-name">
+            {label}
+          </Text>
+        )}
+        {/* Page-surface breadcrumb: `Apps / <app name>`. Only on the full-page
+            run surface (`app.page`) — the page IS the block, so an "up to the
+            apps list" trail is meaningful there; the compact model-slot chrome
+            (badge + ⋯ menu) gets nothing extra. "Apps" links back to /apps; the
+            app name reuses the SAME sanitized (spoof-proof) chrome name as the
+            provenance badge — never a raw/untrusted manifest string. */}
+        {isPage && (
+          <Group
+            gap={4}
+            wrap="nowrap"
+            style={{ minWidth: 0 }}
+            data-testid="app-block-breadcrumb"
+            aria-label="Breadcrumb"
+          >
+            <Text size="xs" c="dimmed" aria-hidden>
+              /
+            </Text>
+            {/* Link affordance: distinct link COLOR + underline so this crumb
+                reads as obviously clickable, visually separated from the static
+                dimmed crumb text + separators around it. Keeps the real anchor
+                semantics (it's a Next <Link>) for keyboard / middle-click. */}
+            <Text
+              component={Link}
+              href="/apps"
+              size="xs"
+              c="blue.6"
+              td="underline"
+              style={{ flexShrink: 0, cursor: 'pointer' }}
+              data-testid="app-block-breadcrumb-apps"
+              data-clickable="true"
+            >
+              Apps
+            </Text>
+            <Text size="xs" c="dimmed" aria-hidden>
+              /
+            </Text>
+            <Text
+              size="xs"
+              c="dimmed"
+              fw={500}
+              truncate
+              maw={200}
+              data-testid="app-block-breadcrumb-name"
+            >
+              {label}
+            </Text>
+          </Group>
+        )}
       </Group>
       <Menu position="bottom-end" shadow="md" width={180}>
         <Menu.Target>
-          <ActionIcon variant="subtle" color="gray" size="sm" aria-label="App block menu">
+          <ActionIcon variant="subtle" color="gray" size="sm" aria-label="App menu">
             <IconDots size={16} stroke={1.5} />
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
-          <Menu.Label>App block</Menu.Label>
+          <Menu.Label>App</Menu.Label>
           <Menu.Item
             component={Link}
             href="/apps/installed"
@@ -200,20 +282,22 @@ export function AppBlockChrome({
           >
             Manage apps
           </Menu.Item>
-          <Menu.Item
-            leftSection={<IconEyeOff size={14} stroke={1.5} />}
-            onClick={() =>
-              hideBlock({
-                blockInstanceId,
-                appName,
-                modelId,
-                modelName,
-                hiddenAt: Date.now(),
-              })
-            }
-          >
-            Hide app block
-          </Menu.Item>
+          {showHide && (
+            <Menu.Item
+              leftSection={<IconEyeOff size={14} stroke={1.5} />}
+              onClick={() =>
+                hideBlock({
+                  blockInstanceId,
+                  appName,
+                  modelId,
+                  modelName,
+                  hiddenAt: Date.now(),
+                })
+              }
+            >
+              Hide app
+            </Menu.Item>
+          )}
         </Menu.Dropdown>
       </Menu>
     </Group>
@@ -624,23 +708,19 @@ export function IframeHost({
   // flow when the user clicks an action that needs auth/money (e.g. Generate).
   // usePostMessage already pins origin + event.source; we additionally gate on
   // status === 'ready' (post-BLOCK_READY) so a pre-handshake block can't pop a
-  // login modal before any interaction, matching the OPEN_BUZZ_PURCHASE posture.
+  // login popup before any interaction, matching the OPEN_BUZZ_PURCHASE posture.
   //
   // returnUrl: an untrusted same-origin path the block may supply (must begin
   // with a single '/', no protocol-relative '//', so it can't redirect off-site
-  // after login). When absent or unsafe we fall through to undefined and
-  // LoginModal defaults returnUrl to the current page (router.asPath).
+  // after login). When absent or unsafe we fall through to the current page.
   useEffect(() => {
     const off = onMessage<{ returnUrl?: unknown } | undefined>('REQUEST_SIGN_IN', (raw) => {
       const resolved = resolveRequestSignIn(status, raw);
       if (resolved == null) return; // not ready — drop (gate centralises the rules)
-      dialogStore.trigger({
-        component: LoginModal,
-        props: {
-          reason: 'image-gen',
-          ...(resolved.returnUrl ? { returnUrl: resolved.returnUrl } : {}),
-        },
-      });
+      // Open the hub login in a popup (replaces the old in-page LoginModal). The host runs at TOP level — not
+      // inside the sandboxed block iframe — so the popup works here; on completion it navigates back.
+      const here = window.location.pathname + window.location.search + window.location.hash;
+      openLoginPopup(resolved.returnUrl ?? here, 'image-gen');
     });
     return off;
   }, [onMessage, status]);
@@ -1115,7 +1195,8 @@ export function IframeHost({
           requestId,
           keys: result.keys.map((k) => ({
             key: k.key,
-            updatedAt: k.updatedAt instanceof Date ? k.updatedAt.toISOString() : String(k.updatedAt),
+            updatedAt:
+              k.updatedAt instanceof Date ? k.updatedAt.toISOString() : String(k.updatedAt),
           })),
           nextCursor: result.nextCursor,
         });
@@ -1131,32 +1212,29 @@ export function IframeHost({
   }, [onMessage, send, token, trpcUtils]);
 
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown } | undefined>(
-      'APP_STORAGE_QUOTA',
-      async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string') return;
-        const requestId = raw.requestId;
-        try {
-          const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token });
-          send('APP_STORAGE_QUOTA_RESULT', {
-            requestId,
-            usedBytes: result.usedBytes,
-            rowCount: result.rowCount,
-            limitBytes: result.limitBytes,
-            limitRows: result.limitRows,
-          });
-        } catch (err) {
-          send('APP_STORAGE_QUOTA_RESULT', {
-            requestId,
-            usedBytes: 0,
-            rowCount: 0,
-            limitBytes: 0,
-            limitRows: 0,
-            error: storageErrorMessage(err),
-          });
-        }
+    const off = onMessage<{ requestId?: unknown } | undefined>('APP_STORAGE_QUOTA', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      try {
+        const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token });
+        send('APP_STORAGE_QUOTA_RESULT', {
+          requestId,
+          usedBytes: result.usedBytes,
+          rowCount: result.rowCount,
+          limitBytes: result.limitBytes,
+          limitRows: result.limitRows,
+        });
+      } catch (err) {
+        send('APP_STORAGE_QUOTA_RESULT', {
+          requestId,
+          usedBytes: 0,
+          rowCount: 0,
+          limitBytes: 0,
+          limitRows: 0,
+          error: storageErrorMessage(err),
+        });
       }
-    );
+    });
     return off;
   }, [onMessage, send, token, trpcUtils]);
 
@@ -1199,6 +1277,7 @@ export function IframeHost({
         appName={install.manifest.name}
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}
+        slotId={slotId}
       />
       {children}
     </Box>

@@ -31,6 +31,7 @@ import type {
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { toPublicBlockManifest, toPublicScreenshots } from '~/server/schema/blocks/subscription.schema';
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+import { isMatureContentRating } from '~/server/utils/server-domain';
 import { CacheTTL } from '~/server/common/constants';
 import { queryCache } from '~/server/utils/cache-helpers';
 import { BAYES_MIN_REVIEWS } from '~/server/services/appBlockReview.service';
@@ -289,6 +290,16 @@ interface ListForModelOpts {
    * otherwise leak across users in the shared (modelId, slotId) cache key.
    */
   viewerUserId?: number | null;
+  /**
+   * NSFW-APP-RED-ONLY: true when the request is on a red-capable host
+   * (`isHostForColor(host, 'red')`, computed in the router). When false (the
+   * default — fail-closed), mature-rated (r/x) apps are dropped from the result,
+   * EVEN on a cache hit (the shared (modelId, slotId) cache is host-agnostic, so
+   * the filter is applied after the cache read to avoid cross-host leakage).
+   * This stacks on top of the existing model-NSFW-level ceiling (maxRating):
+   * a mature app must clear BOTH the model's nsfw ladder AND the host gate.
+   */
+  redCapable?: boolean;
 }
 
 // Ordered ratings for ladder comparisons. Each rating implies "and below."
@@ -410,6 +421,10 @@ export interface PageBlockSsr {
    *  granted set (declared − missingScopes from the mint) for BLOCK_INIT, so the
    *  block sees the real scopes it has rather than a hardcoded empty array. */
   scopes: string[];
+  /** NSFW-APP-RED-ONLY: the authoritative content rating (app_blocks.content_rating
+   *  column, set on approve). The SSR run-page gate 404s a mature (r/x) page app
+   *  when the request host is not red-capable. NULL for pre-feature rows → SFW. */
+  contentRating: string | null;
 }
 
 interface UninstallOpts {
@@ -560,6 +575,28 @@ function launchOnlySqlFilter(launchOnly: boolean): Prisma.Sql {
   return Prisma.sql`COALESCE(ab.manifest->'page'->>'path', '') <> ''`;
 }
 
+/**
+ * NSFW-APP-RED-ONLY — the SQL embodiment of the host maturity gate, applied in
+ * the public marketplace LISTING queries (listAvailable / getFeaturedBlocks /
+ * getAppDetail). A mature-rated app (`content_rating` ∈ {r, x}, the authoritative
+ * approve-time column) is EXCLUDED from listings unless the request is on a
+ * red-capable host (`isHostForColor(host, 'red')`, computed in the router and
+ * passed as `redCapable`).
+ *
+ *   - redCapable host (civitai.red) → `TRUE` (no maturity filter; mature apps
+ *     are visible).
+ *   - any other host (civitai.com, …) → keep ONLY rows whose `content_rating`
+ *     is NOT mature. NULL / unknown rating is treated as SFW (kept) — the column
+ *     is non-null on approve, so this only defends a pre-feature row, and the
+ *     direction is fail-closed for MATURE rows (the thing we must hide).
+ *
+ * This is independent of (and stacks with) the launch-only and approved filters.
+ */
+function matureHostSqlFilter(redCapable: boolean): Prisma.Sql {
+  if (redCapable) return Prisma.sql`TRUE`;
+  return Prisma.sql`COALESCE(LOWER(ab.content_rating), '') NOT IN ('r', 'x')`;
+}
+
 function resolveRenderMode(
   manifestRenderMode: string | undefined,
   blockRenderMode: string,
@@ -595,8 +632,15 @@ export class BlockRegistry {
   static async listForModel(opts: ListForModelOpts): Promise<BlockInstallRecord[]> {
     const { modelId, slotId, modelType, modelNsfwLevel } = opts;
     const viewerUserId = opts.viewerUserId ?? null;
+    const redCapable = opts.redCapable === true;
     const maxRating = maxRatingForNsfwLevel(modelNsfwLevel);
     const maxRatingIdx = CONTENT_RATING_INDEX[maxRating];
+    // NSFW-APP-RED-ONLY: drop a record whose app is mature-rated (r/x) when the
+    // request is not on a red-capable host. The record carries `manifest.
+    // contentRating` (projected below), so this works identically on a cache hit
+    // and on a fresh DB read. Fail-closed: !redCapable hides mature apps.
+    const passesHostMaturity = (r: BlockInstallRecord): boolean =>
+      redCapable || !isMatureContentRating(r.manifest?.contentRating ?? null);
     // v1: disable the shared (modelId, slotId) cache layer whenever a
     // viewer is attached, since viewer_personal subscriptions make the
     // result per-viewer. The 60s cache for anon viewers and authed
@@ -614,7 +658,11 @@ export class BlockRegistry {
           // M-7: sentinel from getKillList() means sysRedis is unreachable;
           // suppress everything on this branch (cached path).
           if (kill.has('__KILL_LIST_UNREACHABLE__')) return [];
-          return kill.size === 0 ? cached : cached.filter((r) => !kill.has(r.blockId));
+          // Apply the host-maturity gate on the cache hit too — the cache key is
+          // host-agnostic, so a .red-populated entry must not leak mature apps to
+          // a .com reader.
+          const live = kill.size === 0 ? cached : cached.filter((r) => !kill.has(r.blockId));
+          return live.filter(passesHostMaturity);
         }
       } catch {
         // fail open — fall through to DB
@@ -1093,13 +1141,19 @@ export class BlockRegistry {
 
     if (cacheEnabled) {
       try {
+        // Cache the HOST-AGNOSTIC set (all ratings) under the host-agnostic key,
+        // so a .red and a .com read share one entry. The per-host maturity gate
+        // is applied on read (here + on the cache-hit branch above), never baked
+        // into the cached value — otherwise a .com-populated entry would hide
+        // mature apps from a subsequent .red reader.
         await redis.packed.set(key, hydrated, { EX: CACHE_TTL_SECONDS });
       } catch {
         // fail open
       }
     }
 
-    return hydrated;
+    // NSFW-APP-RED-ONLY: apply the host maturity gate to the returned set.
+    return hydrated.filter(passesHostMaturity);
   }
 
   /**
@@ -1708,6 +1762,9 @@ export class BlockRegistry {
         // model render path, which reads the `trust_tier` column (see
         // resolveRenderMode + the `r.trust_tier` raw select used by listForModel).
         trustTier: true,
+        // NSFW-APP-RED-ONLY: authoritative content rating (set on approve). The
+        // SSR run-page gate uses it to 404 a mature page app off a red host.
+        contentRating: true,
       },
     });
     if (!ab) return null;
@@ -1747,6 +1804,9 @@ export class BlockRegistry {
       name,
       pageTitle: typeof page.title === 'string' ? page.title : name,
       scopes: declaredScopes,
+      // NSFW-APP-RED-ONLY: NULL-safe (column is non-null on approve, but defend
+      // against a pre-feature / partial row → treated as SFW by the gate).
+      contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
     };
   }
 
@@ -2607,7 +2667,14 @@ export class BlockRegistry {
     // passes `!ctx.user?.isModerator`), the marketplace returns ONLY
     // launch-eligible (page) apps. Defaults false (moderator / internal callers
     // see everything — grandfather). See launchOnlySqlFilter / isLaunchSlot.
-    launchOnly = false
+    launchOnly = false,
+    // NSFW-APP-RED-ONLY: true when the request is on a red-capable host
+    // (`isHostForColor(host, 'red')`, computed in the router). When false,
+    // mature-rated apps (r/x) are excluded. Defaults false (fail-closed: a
+    // caller that forgets to thread the host hides mature apps). Independent of
+    // launchOnly — a moderator on civitai.com still does NOT see mature apps in
+    // the listing, because maturity is a HOST property, not a privilege.
+    redCapable = false
   ): Promise<{ items: AvailableBlock[]; nextCursor?: string }> {
     const { slotId, query, category, sort, cursor, limit } = input;
     type Row = {
@@ -2618,9 +2685,13 @@ export class BlockRegistry {
       manifest: unknown;
       install_count: bigint;
       category: string | null;
+      external_url: string | null;
       approved_scopes: string[] | null;
       avg_rating: number | null;
       review_count: bigint;
+      // The raw stored screenshots jsonb (the SAME column getAppDetail reads) —
+      // projected to a public cover URL below (first screenshot, opaque route).
+      screenshots: unknown;
       // The sort key for THIS row, projected so we can encode it into the
       // nextCursor for a stable keyset scan. Text so one column fits all sorts.
       sort_key: string;
@@ -2681,7 +2752,9 @@ export class BlockRegistry {
         oc.name AS app_name,
         ab.manifest,
         ab.category,
+        ab.external_url,
         ab.approved_scopes,
+        ab.screenshots,
         -- Post kill_per_model_installs: "install count" = how many distinct
         -- USERS use this app, not how many subscription rows exist. A single
         -- user can hold several rows for one app (a blanket publisher sub +
@@ -2701,6 +2774,8 @@ export class BlockRegistry {
       WHERE ab.status = 'approved'
         -- PAGE-ONLY LAUNCH GATE: non-mod callers see launch (page) apps only.
         AND ${launchOnlySqlFilter(launchOnly)}
+        -- NSFW-APP-RED-ONLY: hide mature (r/x) apps on non-red hosts.
+        AND ${matureHostSqlFilter(redCapable)}
         AND (
           ${slotFilter}::text IS NULL
           OR ab.manifest @> ${slotFilter}::jsonb
@@ -2746,6 +2821,10 @@ export class BlockRegistry {
         // Public, mod-assigned category (NULL until the E3 migration + a mod set
         // it). Display-only.
         category: r.category ?? null,
+        // Off-site (external-link) app: the off-platform URL the card opens in a
+        // new tab. NULL = a normal on-platform app. Validated https:// at
+        // registration; display/navigation-only (no token/scope attached).
+        externalUrl: r.external_url ?? null,
         // F-E E3 scopes-on-cards: the FIRST N APPROVED scope ids (the same
         // permission-disclosure list E2 surfaces). Defensive against a NULL
         // column (pre-approval rows) → empty list. NEVER the manifest's raw
@@ -2758,6 +2837,10 @@ export class BlockRegistry {
         // Marketplace reviews (aggregate-eligible). avgRating NULL = 0-review.
         avgRating: r.avg_rating ?? null,
         reviewCount: Number(r.review_count),
+        // Card cover: the FIRST public screenshot URL (or NULL when the app
+        // shipped none). Reuses the SAME toPublicScreenshots projection the
+        // detail page uses — opaque gated route, never the raw MinIO key.
+        coverUrl: toPublicScreenshots(r.id, r.screenshots)[0]?.url ?? null,
       })),
       nextCursor,
     };
@@ -2789,7 +2872,12 @@ export class BlockRegistry {
     // app resolves to null — the router maps that to the SAME NOT_FOUND a
     // missing/unapproved app produces, so a non-mod can't enumerate or read a
     // model-slot app's detail. Defaults false (mods see everything).
-    launchOnly = false
+    launchOnly = false,
+    // NSFW-APP-RED-ONLY: true when the request is on a red-capable host. When
+    // false, a mature (r/x) app resolves to null → the router surfaces the SAME
+    // NOT_FOUND as a missing app, so a mature app's DETAIL can't be read off
+    // .red (mirrors the run-page SSR 404). Defaults false (fail-closed).
+    redCapable = false
   ): Promise<PublicAppDetail | null> {
     type Row = {
       id: string;
@@ -2801,6 +2889,7 @@ export class BlockRegistry {
       content_rating: string | null;
       version: string | null;
       approved_scopes: string[] | null;
+      external_url: string | null;
       install_count: bigint;
       avg_rating: number | null;
       review_count: bigint;
@@ -2820,6 +2909,7 @@ export class BlockRegistry {
         ab.content_rating,
         ab.version,
         ab.approved_scopes,
+        ab.external_url,
         ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count,
@@ -2841,6 +2931,10 @@ export class BlockRegistry {
     // router surfaces NOT_FOUND (no detail leak). isAppLaunchEligible reuses the
     // same "declares a page" predicate as the listing filter + the page mint.
     if (launchOnly && !isAppLaunchEligible(row.manifest)) return null;
+    // NSFW-APP-RED-ONLY (non-red host): a mature (r/x) app is indistinguishable
+    // from a missing one off .red — return null → NOT_FOUND. Uses the
+    // authoritative content_rating column (set on approve), not the manifest.
+    if (!redCapable && isMatureContentRating(row.content_rating)) return null;
     return {
       id: row.id,
       blockId: row.block_id,
@@ -2862,8 +2956,13 @@ export class BlockRegistry {
       avgRating: row.avg_rating ?? null,
       reviewCount: Number(row.review_count),
       // Already-public standalone origin (no token/scope). Same host the webhook
-      // validates the submitted bundle's iframe.src against.
+      // validates the submitted bundle's iframe.src against. For an external
+      // (off-site) app this origin doesn't host anything — the client uses
+      // `externalUrl` as the open target instead (and hides install/preview).
       liveUrl: `https://${row.block_id}.${env.APPS_DOMAIN}`,
+      // Off-site (external-link) app: the off-platform URL. NULL = on-platform.
+      // Validated https:// at registration; display/navigation-only.
+      externalUrl: row.external_url ?? null,
       // F-E E5 screenshot gallery — PUBLIC display URLs only (the gated app
       // route), built server-side from appBlockId + index + ext. The stored
       // MinIO key is never exposed; a NULL column (pre-migration / no screenshots)
@@ -2895,7 +2994,10 @@ export class BlockRegistry {
     limit: number,
     // PAGE-ONLY LAUNCH GATE: non-mod callers get launch (page) apps only;
     // mods see every featured app. Defaults false. See launchOnlySqlFilter.
-    launchOnly = false
+    launchOnly = false,
+    // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the featured rail unless on
+    // a red-capable host. Defaults false (fail-closed). See matureHostSqlFilter.
+    redCapable = false
   ): Promise<AvailableBlock[]> {
     type Row = {
       id: string;
@@ -2905,9 +3007,13 @@ export class BlockRegistry {
       manifest: unknown;
       install_count: bigint;
       category: string | null;
+      external_url: string | null;
       approved_scopes: string[] | null;
       avg_rating: number | null;
       review_count: bigint;
+      // Raw screenshots jsonb — projected to a public cover URL below (same as
+      // listAvailable / getAppDetail).
+      screenshots: unknown;
     };
     const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT
@@ -2917,7 +3023,9 @@ export class BlockRegistry {
         oc.name AS app_name,
         ab.manifest,
         ab.category,
+        ab.external_url,
         ab.approved_scopes,
+        ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count,
         ${AVG_RATING_SUBQUERY} AS avg_rating,
@@ -2927,6 +3035,8 @@ export class BlockRegistry {
       WHERE ab.status = 'approved'
         -- PAGE-ONLY LAUNCH GATE: non-mod callers see launch (page) apps only.
         AND ${launchOnlySqlFilter(launchOnly)}
+        -- NSFW-APP-RED-ONLY: hide mature (r/x) apps on non-red hosts.
+        AND ${matureHostSqlFilter(redCapable)}
         AND ab.featured = true
       ORDER BY ab.featured_order ASC NULLS LAST,
                install_count DESC,
@@ -2942,6 +3052,7 @@ export class BlockRegistry {
       manifest: toPublicBlockManifest(r.manifest),
       installCount: Number(r.install_count),
       category: r.category ?? null,
+      externalUrl: r.external_url ?? null,
       scopesSummary: Array.isArray(r.approved_scopes)
         ? r.approved_scopes
             .filter((s): s is string => typeof s === 'string')
@@ -2949,6 +3060,9 @@ export class BlockRegistry {
         : [],
       avgRating: r.avg_rating ?? null,
       reviewCount: Number(r.review_count),
+      // Card cover: FIRST public screenshot URL (or NULL). Same projection as
+      // listAvailable — no widening.
+      coverUrl: toPublicScreenshots(r.id, r.screenshots)[0]?.url ?? null,
     }));
   }
 

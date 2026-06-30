@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { Session } from 'next-auth';
+import type { Session } from '~/types/session';
 import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -218,7 +218,7 @@ export default MixedAuthEndpoint(async function handler(
     // this does not work for things like Flux
     // if (targetFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
 
-    air = stringifyAIR({ ...modelVersion, fileId: modelFileId });
+    air = stringifyAIR({ ...modelVersion, fileId: modelFileId, fileType: targetFile.type });
     downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
       versionId: modelVersion.id,
       fileId: modelFileId,

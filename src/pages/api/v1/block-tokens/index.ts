@@ -19,8 +19,16 @@ import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getAllServerHosts, getRequestDomainColor } from '~/server/utils/server-domain';
-import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
+import {
+  getAllServerHosts,
+  getRequestDomainColor,
+  isHostForColor,
+  isMatureContentRating,
+} from '~/server/utils/server-domain';
+import {
+  allBrowsingLevelsFlag,
+  domainBrowsingCeiling,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
@@ -690,12 +698,40 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // from THIS claim (never a client body field), so a SFW-domain block cannot
   // generate mature output even if its own code is wrong or malicious.
   //
-  // Fail-closed: an unknown/missing domain → domainBrowsingCeiling() returns the
-  // SFW ceiling. We always emit the claim so consumers can distinguish a
-  // legacy (pre-feature) token — which has NO claim and is treated as SFW by
-  // the consumer — from an explicit red mint.
+  // NSFW-APP-RED-ONLY: `domainBrowsingCeiling(getRequestDomainColor(req))` would
+  // return the SFW ceiling on civitai.red, because `getRequestDomainColor`
+  // first-matches blue for .red (it is configured as BOTH blue and red). For the
+  // block path we want the host's RED capability to drive the ceiling: a
+  // red-capable host (`isHostForColor(host, 'red')` — TRUE for civitai.red and
+  // its aliases) mints the FULL mature ceiling; every other host keeps the
+  // domain-color SFW derivation. Scoped to the block path only — the global
+  // color resolution / domainBrowsingCeiling semantics are untouched.
+  //
+  // Fail-closed: an unknown/missing host or a non-red host → the SFW ceiling. We
+  // always emit the claim so consumers can distinguish a legacy (pre-feature)
+  // token — which has NO claim and is treated as SFW by the consumer — from an
+  // explicit red mint.
+  const host = req.headers.host ?? '';
+  const redCapableHost = host !== '' && isHostForColor(host, 'red');
   const domainColor = getRequestDomainColor(req);
-  const maxBrowsingLevel = domainBrowsingCeiling(domainColor);
+  const maxBrowsingLevel = redCapableHost
+    ? allBrowsingLevelsFlag
+    : domainBrowsingCeiling(domainColor);
+
+  // DEFENSE-IN-DEPTH cross-check (fail-closed, refuse): a mature-rated app
+  // (contentRating ∈ {r, x}, the authoritative manifest field the validator
+  // requires + approve stores) may NEVER mint a token on a non-red-capable host.
+  // The run-page SSR gate + the listing filter already hide/404 mature apps off
+  // .red, so a mint request for one on .com should not happen through the UI —
+  // but a direct API caller could try, so we refuse here rather than down-clamp
+  // (a clamp would still hand back a usable token; refusal is unambiguous and
+  // leaves the run-page 404 as the only surface). The dev-token path is a
+  // SEPARATE endpoint (forced-SFW) and is unaffected.
+  const appContentRating = (block.manifest as { contentRating?: unknown }).contentRating;
+  if (typeof appContentRating === 'string' && isMatureContentRating(appContentRating) && !redCapableHost) {
+    res.status(403).json({ error: 'This app is only available on civitai.red.' });
+    return;
+  }
 
   const result = await BlockTokenService.sign({
     userId,

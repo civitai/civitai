@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   grantedPageScopes,
   pageFallbackReason,
+  resolveCheckpointPickerRequest,
   resolveResourcePickerRequest,
   PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
@@ -141,5 +142,38 @@ describe('resolveResourcePickerRequest (OPEN_RESOURCE_PICKER — type allowlist 
 
   it('the v1 allowlist is exactly Checkpoint + LoRA (guards against scope creep)', () => {
     expect([...PAGE_RESOURCE_PICKER_TYPES].sort()).toEqual(['Checkpoint', 'LORA']);
+  });
+});
+
+describe('resolveCheckpointPickerRequest (OPEN_CHECKPOINT_PICKER — dev:live↔prod parity)', () => {
+  it('accepts a bare requestId (type is implicitly Checkpoint — no allowlist)', () => {
+    expect(resolveCheckpointPickerRequest({ requestId: 'c1' })).toEqual({ requestId: 'c1' });
+  });
+
+  it('passes through an optional baseModelGroup family hint', () => {
+    expect(resolveCheckpointPickerRequest({ requestId: 'c2', baseModelGroup: 'Flux1' })).toEqual({
+      requestId: 'c2',
+      baseModelGroup: 'Flux1',
+    });
+  });
+
+  it('omits an empty/blank baseModelGroup (no spurious family key)', () => {
+    const r = resolveCheckpointPickerRequest({ requestId: 'c3', baseModelGroup: '' });
+    expect(r).toEqual({ requestId: 'c3' });
+    expect(r).not.toHaveProperty('baseModelGroup');
+  });
+
+  it('DROPS a request with a missing or non-string requestId', () => {
+    expect(resolveCheckpointPickerRequest({})).toBeNull();
+    expect(resolveCheckpointPickerRequest({ requestId: '' })).toBeNull();
+    expect(resolveCheckpointPickerRequest({ requestId: 42 })).toBeNull();
+    expect(resolveCheckpointPickerRequest({ requestId: null })).toBeNull();
+  });
+
+  it('DROPS non-object / nullish payloads', () => {
+    expect(resolveCheckpointPickerRequest(undefined)).toBeNull();
+    expect(resolveCheckpointPickerRequest(null)).toBeNull();
+    expect(resolveCheckpointPickerRequest('Checkpoint')).toBeNull();
+    expect(resolveCheckpointPickerRequest(123)).toBeNull();
   });
 });

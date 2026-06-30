@@ -53,6 +53,7 @@ export const constants = {
   modelFileTypes: [
     'Model',
     'Text Encoder',
+    'Vision Encoder',
     'Pruned Model',
     'Negative',
     'Training Data',
@@ -127,6 +128,7 @@ export const constants = {
     'Training Data': 2,
     Config: 3,
     'Text Encoder': 4,
+    'Vision Encoder': 16,
     VAE: 5,
     Negative: 6,
     Archive: 7,
@@ -466,6 +468,7 @@ export const modelFileComponentTypes = constants.modelFileComponentTypes;
 export const componentFileTypes = [
   'VAE',
   'Text Encoder',
+  'Vision Encoder',
   'UNet',
   'Diffusion Model',
   'CLIPVision',
@@ -1736,4 +1739,5 @@ export const EARLY_ACCESS_CONFIG: {
 
 export const KEY_VALUE_KEYS = {
   REDEEM_CODE_GIFT_NOTICES: 'redeemCodeGiftNotices',
+  MODEL_FILE_OPTIONS: 'modelFileOptions',
 } as const;

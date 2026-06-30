@@ -19,8 +19,8 @@ const schema = z.object({
   type: z.enum(constants.modelFileTypes).optional(),
   format: z.enum(constants.modelFileFormats).optional(),
   size: z.enum(constants.modelFileSizes).optional(),
-  fp: z.enum(constants.modelFileFp).optional(),
-  quantType: z.enum(constants.modelFileQuantTypes).optional(),
+  fp: z.string().max(64).optional(),
+  quantType: z.string().max(64).optional(),
   fileId: z.preprocess((val) => (val ? Number(val) : undefined), z.number().optional()),
 });
 

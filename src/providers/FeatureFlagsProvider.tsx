@@ -1,4 +1,4 @@
-import { useSession } from 'next-auth/react';
+import { useSession } from '~/providers/SessionProvider';
 import { createContext, useContext, useMemo, useState } from 'react';
 import { type FeatureAccess } from '~/server/services/feature-flags.service';
 import { trpc } from '~/utils/trpc';

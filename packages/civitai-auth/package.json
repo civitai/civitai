@@ -1,0 +1,25 @@
+{
+  "name": "@civitai/auth",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./token-scope": "./src/token-scope.ts",
+    "./secret-hash": "./src/secret-hash.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@civitai/redis": "workspace:*",
+    "jose": "^6.0.11",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
+  }
+}

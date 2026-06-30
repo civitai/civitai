@@ -67,7 +67,7 @@ import {
 } from '~/server/services/orchestrator/preset-image-gen.service';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';

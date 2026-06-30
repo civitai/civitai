@@ -249,8 +249,7 @@ export function QueueItem({
   // chip in the card header so the user always sees "Image to 3D" /
   // "Text to 3D" even when the workflowConfig lookup misses.
   const polyGenStep = request.steps.find((s) => s.$type === 'polyGen');
-  const polyGenProcess = (polyGenStep?.params as { process?: string } | undefined)
-    ?.process;
+  const polyGenProcess = (polyGenStep?.params as { process?: string } | undefined)?.process;
   const polyGenChipLabel =
     polyGenProcess === 'imageTo3D'
       ? 'Image to 3D'
@@ -370,11 +369,7 @@ export function QueueItem({
         <div className="flex flex-col gap-3 py-3 @container">
           {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
           {failureReason && <Alert color="red">{failureReason}</Alert>}
-          <Model3DQueueCardOutputs
-            request={request}
-            pending={pending}
-            processing={processing}
-          />
+          <Model3DQueueCardOutputs request={request} pending={pending} processing={processing} />
         </div>
       )}
 
@@ -544,9 +539,7 @@ function StepOutputs({
   // branch above), so model3d blobs never reach this grid — narrow them out
   // here so `GeneratedOutput` keeps its image/video/audio-only contract.
   const displayImages = allDisplayImages
-    .filter(
-      (img): img is ImageBlob | VideoBlob | AudioBlob => img.type !== 'model3d'
-    )
+    .filter((img): img is ImageBlob | VideoBlob | AudioBlob => img.type !== 'model3d')
     .filter((img) => matchesMarkerTags(img, markerTags));
   const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
 
@@ -917,11 +910,11 @@ function CanUpgradeBlock({
   return (
     <>
       <Text align="center" size="sm">
-        Unlock this content with{' '}
+        Unlock with{' '}
         <Text component="span" c="yellow">
           yellow
         </Text>{' '}
-        Buzz!
+        Buzz
       </Text>
       <CurrencyBadge
         unitAmount={yellowBuzzRequired}
@@ -933,23 +926,23 @@ function CanUpgradeBlock({
         loading={isLoading}
       />
       <Text align="center" size="xs" c="dimmed">
-        The {refundedLabel} you used to generate this content will be refunded.
+        Your {refundedLabel} will be refunded.
+        {!isPaidMember && (
+          <>
+            {' '}
+            {features.isGreen ? (
+              <Anchor component={Link} href={pricingHref} size="xs">
+                Become a member
+              </Anchor>
+            ) : (
+              <Anchor href={pricingHref} target="_blank" rel="noreferrer nofollow" size="xs">
+                Become a member
+              </Anchor>
+            )}{' '}
+            to use Blue Buzz for mature content.
+          </>
+        )}
       </Text>
-      {!isPaidMember && (
-        <Text align="center" size="xs" c="dimmed">
-          Or{' '}
-          {features.isGreen ? (
-            <Anchor component={Link} href={pricingHref} size="xs">
-              become a member
-            </Anchor>
-          ) : (
-            <Anchor href={pricingHref} target="_blank" rel="noreferrer nofollow" size="xs">
-              become a member
-            </Anchor>
-          )}{' '}
-          to use Blue Buzz for mature content
-        </Text>
-      )}
     </>
   );
 }
@@ -960,9 +953,7 @@ function CanUpgradeBlock({
 // own; it falls through to Model3DViewer for the actual three.js mount.
 const Model3DVariantViewerDynamic = dynamic(
   () =>
-    import('~/components/Model3D/Viewer/Model3DVariantViewer').then(
-      (m) => m.Model3DVariantViewer
-    ),
+    import('~/components/Model3D/Viewer/Model3DVariantViewer').then((m) => m.Model3DVariantViewer),
   { ssr: false }
 );
 
@@ -993,8 +984,8 @@ function Model3DQueueCardOutputs({
   processing: boolean;
 }) {
   const router = useRouter();
+  const features = useFeatureFlags();
   const [viewerOpen, setViewerOpen] = useState(false);
-  console.log('Model3DQueueCardOutputs', { request, pending, processing });
 
   // PolyGen outputs flow through `formatStepOutputs` as `Model3DBlob`s —
   // one per generated mesh, with the 2D preview carried on `thumbnailUrl`
@@ -1002,11 +993,9 @@ function Model3DQueueCardOutputs({
   const model3dBlob = request.steps
     .flatMap((s) => s.output)
     .find((blob) => blob?.type === 'model3d');
-  const thumbnailUrl =
-    model3dBlob?.type === 'model3d' ? model3dBlob.thumbnailUrl ?? null : null;
+  const thumbnailUrl = model3dBlob?.type === 'model3d' ? model3dBlob.thumbnailUrl ?? null : null;
   const modelUrl = model3dBlob?.type === 'model3d' ? model3dBlob.url ?? null : null;
-  const modelFormat =
-    model3dBlob?.type === 'model3d' ? model3dBlob.format ?? 'glb' : 'glb';
+  const modelFormat = model3dBlob?.type === 'model3d' ? model3dBlob.format ?? 'glb' : 'glb';
 
   // Viewable variants — GLB-only siblings the inline three.js viewer can
   // mount (FBX isn't supported by GLTFLoader, armature-only files render
@@ -1038,9 +1027,7 @@ function Model3DQueueCardOutputs({
   // orchestrator auto-refunds spent buzz on these, so surface that to the
   // user instead of the ambiguous "No preview available yet".
   const isFailed =
-    request.status === 'failed' ||
-    request.status === 'expired' ||
-    request.status === 'canceled';
+    request.status === 'failed' || request.status === 'expired' || request.status === 'canceled';
   const failureLabel =
     request.status === 'expired'
       ? 'Generation expired'
@@ -1081,234 +1068,242 @@ function Model3DQueueCardOutputs({
   const ctaDisabled = !isComplete || !model3dBlob || ctaBusy;
 
   return (
-    <div className="flex flex-col gap-2">
-      <TwCard
-        className="relative flex aspect-square items-center justify-center overflow-hidden border"
-        style={{ minHeight: 240 }}
-      >
-        {viewerOpen && viewableVariants.length ? (
-          <>
-            {/* Variant-aware viewer — switches between Base / Rigged /
+    // Render inside the same responsive output grid as the image/video/audio
+    // results so the 3D card occupies a single tile and sizes identically at
+    // every breakpoint (and honors the largerGenerationImages sidebar layout).
+    <div
+      className={clsx(classes.grid, {
+        [classes.asSidebar]: !features.largerGenerationImages,
+      })}
+    >
+      <div className="flex w-full flex-col gap-2">
+        <TwCard
+          className="relative flex aspect-square items-center justify-center overflow-hidden border"
+          style={{ minHeight: 240 }}
+        >
+          {viewerOpen && viewableVariants.length ? (
+            <>
+              {/* Variant-aware viewer — switches between Base / Rigged /
                 Animated / Walking / Running via the wrapper's top-left
                 Select. Walking and Running auto-play their embedded
                 animations (AnimationMixer wired into Model3DViewer). The
                 `compact` switch makes the viewer fill its parent TwCard
                 instead of imposing min-h-[480px]. */}
-            <Model3DVariantViewerDynamic
-              variants={viewableVariants}
-              compact
-              className="size-full"
-            />
-            <Tooltip label="Close 3D preview" withinPortal position="left">
-              <LegacyActionIcon
-                variant="filled"
-                color="dark"
-                radius="xl"
-                size="sm"
-                aria-label="Close 3D preview"
-                onClick={() => setViewerOpen(false)}
-                style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
-              >
-                <IconX size={14} stroke={2} />
-              </LegacyActionIcon>
-            </Tooltip>
-          </>
-        ) : thumbnailUrl ? (
-          <>
-            {/* size-full so the thumbnail fills the aspect-square card.
-                The orchestrator-emitted thumbnail is square (1024×1024)
-                so object-cover matches object-contain visually but
-                guarantees full coverage on any future non-square sources. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={thumbnailUrl}
-              alt="3D model thumbnail"
-              className="size-full object-cover"
-            />
-            {modelUrl && (
-              <Tooltip label="View in 3D" withinPortal position="left">
+              <Model3DVariantViewerDynamic
+                variants={viewableVariants}
+                compact
+                className="size-full"
+              />
+              <Tooltip label="Close 3D preview" withinPortal position="left">
                 <LegacyActionIcon
                   variant="filled"
                   color="dark"
                   radius="xl"
                   size="sm"
-                  aria-label="Open inline 3D viewer"
-                  onClick={() => setViewerOpen(true)}
+                  aria-label="Close 3D preview"
+                  onClick={() => setViewerOpen(false)}
                   style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
                 >
-                  <IconCube size={14} stroke={2} />
+                  <IconX size={14} stroke={2} />
                 </LegacyActionIcon>
               </Tooltip>
-            )}
-          </>
-        ) : showSpinner ? (
-          <div className="flex flex-col items-center gap-2">
-            <Loader size={24} />
+            </>
+          ) : thumbnailUrl ? (
+            <>
+              {/* size-full so the thumbnail fills the aspect-square card.
+                The orchestrator-emitted thumbnail is square (1024×1024)
+                so object-cover matches object-contain visually but
+                guarantees full coverage on any future non-square sources. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={thumbnailUrl} alt="3D model thumbnail" className="size-full object-cover" />
+              {modelUrl && (
+                <Tooltip label="View in 3D" withinPortal position="left">
+                  <LegacyActionIcon
+                    variant="filled"
+                    color="dark"
+                    radius="xl"
+                    size="sm"
+                    aria-label="Open inline 3D viewer"
+                    onClick={() => setViewerOpen(true)}
+                    style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}
+                  >
+                    <IconCube size={14} stroke={2} />
+                  </LegacyActionIcon>
+                </Tooltip>
+              )}
+            </>
+          ) : showSpinner ? (
+            <div className="flex flex-col items-center gap-2">
+              <Loader size={24} />
+              <Text c="dimmed" size="xs" align="center">
+                Generating 3D model…
+              </Text>
+            </div>
+          ) : isFailed ? (
+            <div className="flex flex-col items-center gap-2 px-4 text-center">
+              <IconAlertTriangleFilled size={24} className="text-red-5" />
+              <Text size="sm" fw={600} c="red.4">
+                {failureLabel}
+              </Text>
+              <Text size="xs" c="dimmed">
+                Your Buzz has been refunded.
+              </Text>
+            </div>
+          ) : (
             <Text c="dimmed" size="xs" align="center">
-              Generating 3D model…
+              No preview available yet
             </Text>
-          </div>
-        ) : isFailed ? (
-          <div className="flex flex-col items-center gap-2 px-4 text-center">
-            <IconAlertTriangleFilled size={24} className="text-red-5" />
-            <Text size="sm" fw={600} c="red.4">
-              {failureLabel}
-            </Text>
-            <Text size="xs" c="dimmed">
-              Your Buzz has been refunded.
-            </Text>
-          </div>
-        ) : (
-          <Text c="dimmed" size="xs" align="center">
-            No preview available yet
-          </Text>
-        )}
-      </TwCard>
+          )}
+        </TwCard>
 
-      <div className="flex gap-2">
-        <Button
-          onClick={handleSaveToLibrary}
-          variant="light"
-          size="compact-sm"
-          fullWidth
-          loading={ctaBusy}
-          disabled={ctaDisabled}
-        >
-          Post
-        </Button>
-        {/* Download the orchestrator's presigned URLs directly. URLs are
+        <div className="flex gap-2">
+          <Button
+            onClick={handleSaveToLibrary}
+            variant="light"
+            size="compact-sm"
+            fullWidth
+            loading={ctaBusy}
+            disabled={ctaDisabled}
+          >
+            Post
+          </Button>
+          {/* Download the orchestrator's presigned URLs directly. URLs are
             short-lived, so this is "download now or never" — same constraint
             as Save 3D Model (after which we copy them to our own S3). The
             polyGen output can carry up to ~12 files (base + rigged +
             animated + walking + running, each with their own glb / fbx /
             armature siblings); flatten them all into the menu. */}
-        {(() => {
-          // Each downloadable file is one (variant label, format, url) row.
-          // Labels mirror the variant taxonomy used by Model3DFile.variant
-          // server-side so a user's downloaded files match what shows up
-          // later on the saved Model3D detail page.
-          type DownloadEntry = { label: string; format: string; url: string };
-          const entries: DownloadEntry[] = [];
+          {(() => {
+            // Each downloadable file is one (variant label, format, url) row.
+            // Labels mirror the variant taxonomy used by Model3DFile.variant
+            // server-side so a user's downloaded files match what shows up
+            // later on the saved Model3D detail page.
+            type DownloadEntry = { label: string; format: string; url: string };
+            const entries: DownloadEntry[] = [];
 
-          if (isComplete && model3dBlob?.type === 'model3d') {
-            const pushAsset = (
-              label: string,
-              asset:
-                | {
-                    format: string;
-                    url: string;
-                    fbx?: { format: string; url: string };
-                    armature?: { format: string; url: string };
-                  }
-                | undefined
-            ) => {
-              if (!asset?.url) return;
-              entries.push({ label, format: asset.format, url: asset.url });
-              if (asset.fbx?.url)
-                entries.push({
-                  label,
-                  format: asset.fbx.format,
-                  url: asset.fbx.url,
-                });
-              if (asset.armature?.url)
-                entries.push({
-                  label: `${label} (armature)`,
-                  format: asset.armature.format,
-                  url: asset.armature.url,
-                });
-            };
+            if (isComplete && model3dBlob?.type === 'model3d') {
+              const pushAsset = (
+                label: string,
+                asset:
+                  | {
+                      format: string;
+                      url: string;
+                      fbx?: { format: string; url: string };
+                      armature?: { format: string; url: string };
+                    }
+                  | undefined
+              ) => {
+                if (!asset?.url) return;
+                entries.push({ label, format: asset.format, url: asset.url });
+                if (asset.fbx?.url)
+                  entries.push({
+                    label,
+                    format: asset.fbx.format,
+                    url: asset.fbx.url,
+                  });
+                if (asset.armature?.url)
+                  entries.push({
+                    label: `${label} (armature)`,
+                    format: asset.armature.format,
+                    url: asset.armature.url,
+                  });
+              };
 
-            // Base mesh: the primary GLB + its alternate-format sibling
-            // (lives on the legacy `variants[]` array, where polygen still
-            // emits the base FBX).
-            if (modelUrl) entries.push({ label: 'Base', format: modelFormat, url: modelUrl });
-            for (const v of model3dBlob.variants ?? []) {
-              if (v?.url) entries.push({ label: 'Base', format: v.format, url: v.url });
+              // Base mesh: the primary GLB + its alternate-format sibling
+              // (lives on the legacy `variants[]` array, where polygen still
+              // emits the base FBX).
+              if (modelUrl) entries.push({ label: 'Base', format: modelFormat, url: modelUrl });
+              for (const v of model3dBlob.variants ?? []) {
+                if (v?.url) entries.push({ label: 'Base', format: v.format, url: v.url });
+              }
+
+              // New sibling meshes from @civitai/client 0.2.0-beta.72.
+              pushAsset('Rigged', model3dBlob.rigged);
+              pushAsset('Animated', model3dBlob.animated);
+              pushAsset('Walking', model3dBlob.basicAnimations?.walking);
+              pushAsset('Running', model3dBlob.basicAnimations?.running);
             }
 
-            // New sibling meshes from @civitai/client 0.2.0-beta.72.
-            pushAsset('Rigged', model3dBlob.rigged);
-            pushAsset('Animated', model3dBlob.animated);
-            pushAsset('Walking', model3dBlob.basicAnimations?.walking);
-            pushAsset('Running', model3dBlob.basicAnimations?.running);
-          }
-
-          if (!entries.length) {
-            return (
-              <Button
-                variant="light"
-                size="compact-sm"
-                fullWidth
-                disabled
-                leftSection={<IconDownload size={14} stroke={2} />}
-              >
-                Download
-              </Button>
-            );
-          }
-
-          // Single file — anchor button, no menu.
-          if (entries.length === 1) {
-            const f = entries[0];
-            return (
-              <Button
-                component="a"
-                href={f.url}
-                download={`civitai-3d-${request.id}.${f.format}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                variant="light"
-                size="compact-sm"
-                fullWidth
-                leftSection={<IconDownload size={14} stroke={2} />}
-              >
-                Download {f.format.toUpperCase()}
-              </Button>
-            );
-          }
-
-          // Build deterministic filenames + collision-safe React keys.
-          // Variant labels go into the filename so the user's filesystem
-          // can tell rigged.glb apart from base.glb after a "save all" sweep.
-          const slug = (s: string) =>
-            s.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-          const filename = (e: DownloadEntry) =>
-            e.label === 'Base'
-              ? `civitai-3d-${request.id}.${e.format}`
-              : `civitai-3d-${request.id}.${slug(e.label)}.${e.format}`;
-
-          return (
-            <Menu position="bottom-end" withinPortal>
-              <Menu.Target>
+            if (!entries.length) {
+              return (
                 <Button
+                  variant="light"
+                  size="compact-sm"
+                  fullWidth
+                  disabled
+                  leftSection={<IconDownload size={14} stroke={2} />}
+                >
+                  Download
+                </Button>
+              );
+            }
+
+            // Single file — anchor button, no menu.
+            if (entries.length === 1) {
+              const f = entries[0];
+              return (
+                <Button
+                  component="a"
+                  href={f.url}
+                  download={`civitai-3d-${request.id}.${f.format}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   variant="light"
                   size="compact-sm"
                   fullWidth
                   leftSection={<IconDownload size={14} stroke={2} />}
                 >
-                  Download
+                  Download {f.format.toUpperCase()}
                 </Button>
-              </Menu.Target>
-              <Menu.Dropdown>
-                {entries.map((e, i) => (
-                  <Menu.Item
-                    key={`${e.label}-${e.format}-${i}`}
-                    component="a"
-                    href={e.url}
-                    download={filename(e)}
-                    target="_blank"
-                    rel="noopener noreferrer"
+              );
+            }
+
+            // Build deterministic filenames + collision-safe React keys.
+            // Variant labels go into the filename so the user's filesystem
+            // can tell rigged.glb apart from base.glb after a "save all" sweep.
+            const slug = (s: string) =>
+              s
+                .toLowerCase()
+                .replace(/\s+/g, '-')
+                .replace(/[^a-z0-9-]/g, '');
+            const filename = (e: DownloadEntry) =>
+              e.label === 'Base'
+                ? `civitai-3d-${request.id}.${e.format}`
+                : `civitai-3d-${request.id}.${slug(e.label)}.${e.format}`;
+
+            return (
+              <Menu position="bottom-end" withinPortal>
+                <Menu.Target>
+                  <Button
+                    variant="light"
+                    size="compact-sm"
+                    fullWidth
                     leftSection={<IconDownload size={14} stroke={2} />}
                   >
-                    {e.label === 'Base'
-                      ? e.format.toUpperCase()
-                      : `${e.label} · ${e.format.toUpperCase()}`}
-                  </Menu.Item>
-                ))}
-              </Menu.Dropdown>
-            </Menu>
-          );
-        })()}
+                    Download
+                  </Button>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  {entries.map((e, i) => (
+                    <Menu.Item
+                      key={`${e.label}-${e.format}-${i}`}
+                      component="a"
+                      href={e.url}
+                      download={filename(e)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      leftSection={<IconDownload size={14} stroke={2} />}
+                    >
+                      {e.label === 'Base'
+                        ? e.format.toUpperCase()
+                        : `${e.label} · ${e.format.toUpperCase()}`}
+                    </Menu.Item>
+                  ))}
+                </Menu.Dropdown>
+              </Menu>
+            );
+          })()}
+        </div>
       </div>
     </div>
   );

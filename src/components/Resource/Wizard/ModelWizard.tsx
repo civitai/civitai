@@ -21,6 +21,7 @@ import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
+import { useWizardStepSave } from './useWizardStepSave';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
@@ -73,6 +74,8 @@ const CreateSteps = ({
   const result = querySchema.safeParse(router.query);
   const templateId = result.success ? result.data.templateId : undefined;
   const bountyId = result.success ? result.data.bountyId : undefined;
+  const modelVersionId = result.success ? result.data.modelVersionId : undefined;
+  const src = result.success ? result.data.src : undefined;
 
   const { data: templateFields, isInitialLoading: isTemplateLoading } =
     trpc.model.getTemplateFields.useQuery({ id: templateId as number }, { enabled: !!templateId });
@@ -92,14 +95,23 @@ const CreateSteps = ({
     isLoadingTemplateData ? 'loading' : 'ready'
   }`;
 
+  const navigateToStep = (urlStep: number) =>
+    router
+      .replace(
+        getWizardUrl({ id: modelId, step: urlStep, templateId, bountyId, modelVersionId, src }),
+        undefined,
+        { shallow: true }
+      )
+      .then();
+  const { formId, handleStepSelect, withSavedNav, clearPendingStep } =
+    useWizardStepSave(navigateToStep);
+
   return (
     <Stepper
       active={activeIndex}
       onStepClick={(idx) => {
         const urlStep = skipFiles && idx >= 2 ? idx + 2 : idx + 1;
-        router.replace(getWizardUrl({ id: modelId, step: urlStep, templateId }), undefined, {
-          shallow: true,
-        });
+        handleStepSelect(urlStep, step);
       }}
       allowNextStepsSelect={false}
       size="sm"
@@ -112,15 +124,16 @@ const CreateSteps = ({
           <Title order={3}>{editing ? 'Edit model' : 'Create your model'}</Title>
           <ModelUpsertForm
             key={formKey}
+            id={formId}
             model={modelData}
-            onSubmit={({ id }) => {
+            onSubmit={withSavedNav(({ id }) => {
               if (editing) return goNext();
               router.replace(getWizardUrl({ id, step: 2, templateId, bountyId })).then();
-            }}
+            })}
           >
             {({ loading }) => (
               <Group mt="xl" justify="flex-end">
-                <Button type="submit" loading={loading}>
+                <Button type="submit" loading={loading} onClick={clearPendingStep}>
                   Next
                 </Button>
               </Group>
@@ -134,9 +147,10 @@ const CreateSteps = ({
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>{hasVersions ? 'Edit version' : 'Add version'}</Title>
           <ModelVersionUpsertForm
+            id={formId}
             model={model ?? templateFields ?? bountyFields}
             version={modelVersion ?? templateFields?.version ?? bountyFields?.version}
-            onSubmit={(result) => {
+            onSubmit={withSavedNav((result) => {
               // ExternalGeneration versions are file-less — jump directly to the post step.
               if (result?.usageControl === ModelUsageControl.ExternalGeneration) {
                 router
@@ -149,14 +163,14 @@ const CreateSteps = ({
                 return;
               }
               goNext();
-            }}
+            })}
           >
             {({ loading, canSave }) => (
               <Group mt="xl" justify="flex-end">
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
-                <Button type="submit" loading={loading} disabled={!canSave}>
+                <Button type="submit" loading={loading} disabled={!canSave} onClick={clearPendingStep}>
                   Next
                 </Button>
               </Group>
@@ -212,14 +226,33 @@ const TrainSteps = ({
   router: NextRouter;
   postId: number | undefined;
 }) => {
+  const result = querySchema.safeParse(router.query);
+  const templateId = result.success ? result.data.templateId : undefined;
+  const bountyId = result.success ? result.data.bountyId : undefined;
+  const src = result.success ? result.data.src : undefined;
+
+  const navigateToStep = (urlStep: number) =>
+    router
+      .replace(
+        getWizardUrl({
+          id: modelId,
+          step: urlStep,
+          templateId,
+          bountyId,
+          modelVersionId: modelVersion.id,
+          src,
+        }),
+        undefined,
+        { shallow: true }
+      )
+      .then();
+  const { formId, handleStepSelect, withSavedNav, clearPendingStep } =
+    useWizardStepSave(navigateToStep);
+
   return (
     <Stepper
       active={step - 1}
-      onStepClick={(step) =>
-        router.replace(getWizardUrl({ id: modelId, step: step + 1 }), undefined, {
-          shallow: true,
-        })
-      }
+      onStepClick={(idx) => handleStepSelect(idx + 1, step)}
       allowNextStepsSelect={false}
       size="sm"
       classNames={{ steps: 'container max-w-sm' }}
@@ -256,13 +289,18 @@ const TrainSteps = ({
       <Stepper.Step label="Edit model">
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit model</Title>
-          <ModelUpsertForm model={model} modelVersionId={modelVersion.id} onSubmit={goNext}>
+          <ModelUpsertForm
+            id={formId}
+            model={model}
+            modelVersionId={modelVersion.id}
+            onSubmit={withSavedNav(() => goNext())}
+          >
             {({ loading }) => (
               <Group mt="xl" justify="flex-end">
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
-                <Button type="submit" loading={loading}>
+                <Button type="submit" loading={loading} onClick={clearPendingStep}>
                   Next
                 </Button>
               </Group>
@@ -275,13 +313,18 @@ const TrainSteps = ({
       <Stepper.Step label="Edit version">
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit version</Title>
-          <ModelVersionUpsertForm model={model} version={modelVersion} onSubmit={goNext}>
+          <ModelVersionUpsertForm
+            id={formId}
+            model={model}
+            version={modelVersion}
+            onSubmit={withSavedNav(() => goNext())}
+          >
             {({ loading, canSave }) => (
               <Group mt="xl" justify="flex-end">
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
-                <Button type="submit" loading={loading} disabled={!canSave}>
+                <Button type="submit" loading={loading} disabled={!canSave} onClick={clearPendingStep}>
                   Next
                 </Button>
               </Group>

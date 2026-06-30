@@ -1,0 +1,73 @@
+// @civitai/auth — verify/receive SDK (Path C: asymmetric JWT + JWKS).
+// See docs/auth-verification-strategy.md and docs/centralized-auth-app.md.
+//
+//  SPOKE (every app):   createAuthVerifier — local verify, no per-request hop.
+//                       createAuthMiddleware — edge route guard.
+//  HUB   (apps/auth):    createSessionSigner / maybeCreateSessionSigner — ES256 issuance,
+//                       JWKS endpoint, swap-token + id_token minting.
+//  SHARED CONTRACTS:    cookie naming, the returnUrl/sync redirect contract, constants, and the
+//                       session-revocation marker protocol (createSessionRegistry).
+export { loadAuthEnv } from './env';
+export type { AuthEnv } from './env';
+export { createAuthVerifier } from './verify';
+export type { AuthVerifier, AuthVerifierConfig } from './verify';
+export { decodeLegacySessionCookie } from './legacy-cookie'; // read legacy next-auth civitai-token (no next-auth dep)
+// Server-side consumer→hub clients (each file's header has the detail). All hub interaction goes through these,
+// so app code never hand-rolls a hub fetch.
+export { createSessionClient } from './session-client'; // token→user + invalidate/refresh
+export type { SessionClient, SessionClientConfig } from './session-client';
+export { createDeviceAccountClient } from './device-client'; // multi-account switching (cookie-forwarded)
+export type { DeviceAccountClient, DeviceAccount } from './device-client';
+export { createSessionTokenClient } from './session-token-client'; // rolling refresh + revoke
+export type { SessionTokenClient } from './session-token-client';
+export { createImpersonationClient } from './impersonation-client'; // moderator impersonate / exit
+export type { ImpersonationClient, ImpersonationResult } from './impersonation-client';
+export { createSpokeGuard } from './spoke-guard'; // framework-agnostic first-party app session+role gate
+export type { SpokeGuard, SpokeGuardConfig, SpokeGuardResult } from './spoke-guard';
+export {
+  buildAuthorizeRedirect,
+  completeFirstPartyCallback,
+  clearBridgeCookie,
+  generatePkce,
+  randomState,
+  safePath,
+  OAUTH_BRIDGE_COOKIE,
+} from './first-party-bridge'; // framework-agnostic first-party login bridge (spoke side)
+export type { AuthorizeRedirect, FirstPartyCallbackResult } from './first-party-bridge';
+export { createSessionSigner, maybeCreateSessionSigner } from './sign';
+export type { SessionSigner, SessionSignerConfig } from './sign';
+export { createAuthMiddleware } from './middleware';
+export type { AuthMiddlewareConfig } from './middleware';
+export {
+  createSessionRegistry,
+  type SessionRegistry,
+  type SessionRegistryConfig,
+  type SessionRegistryRedis,
+  type SessionKeys,
+  type InvalidateInfo,
+} from './session-registry';
+export {
+  cookiePrefix,
+  isSecureCookie,
+  sessionCookieName,
+  deviceCookieName,
+  legacySessionCookieName,
+} from './cookies';
+export {
+  readReturnUrl,
+  readSync,
+  isSafeReturnTarget,
+  isCivitaiOrigin,
+  buildPostLoginRedirect,
+  type ReturnTargetOptions,
+} from './redirect';
+export {
+  createTrustedDomainRegistry,
+  type TrustedDomain,
+  type TrustedDomainRegistry,
+  type TrustedDomainRegistryConfig,
+} from './trusted-domains';
+export * from './constants';
+export { firstPartyClientId, FIRST_PARTY_ID_PREFIX, SPOKE_CALLBACK_PATH } from './first-party'; // shared first-party client-id contract (hub + spoke; pure, browser-safe)
+export { hubLoginUrl, hubLogoutUrl, type ProviderId, type HubLoginUrlOptions } from './providers';
+export type { SessionUser, SessionClaims } from './types';

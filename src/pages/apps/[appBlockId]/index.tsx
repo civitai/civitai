@@ -45,6 +45,7 @@ import {
   SLOT_DESCRIPTIONS,
 } from '~/server/services/blocks/scope-descriptions.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -126,6 +127,23 @@ export default function AppDetailPage() {
   const name = detail?.manifest.name ?? detail?.blockId ?? appBlockId;
   const description = detail?.manifest.description ?? '';
   const slots = detail?.manifest.targets?.map((t) => t.slotId).filter(Boolean) ?? [];
+  // Show Install ONLY for an app that installs into a model/in-context slot.
+  // A page app (target slot `app.page`) is STATELESS (installModel `'none'`) — no
+  // install row, and the Install/Manage CTA (openAppSettingsModal → slot
+  // subscription) is a dead/forbidden action (slot installs are server-gated
+  // dark, #2622). `hasInstallSlot` is the SHARED predicate (with the card) — it
+  // scans ALL targets for ANY non-page slot, so it's correct for multi-target
+  // and empty-slotId manifests, not just index `[0]`. Keyed on the APP's slot,
+  // not the viewer. The header always renders "Open live", so even a page app
+  // keeps ≥1 affordance here.
+  // Off-site (external-link) app — PURE EXTERNAL LINK. When set, the detail page
+  // surfaces the external URL as the primary CTA and HIDES install / scopes /
+  // iframe-preview / target-slots (there is nothing on-platform). NULL = a
+  // normal on-platform app (the existing flow).
+  const externalUrl = detail?.externalUrl ?? null;
+  const isExternal = Boolean(externalUrl);
+  // An external app never installs.
+  const showInstall = !isExternal && hasInstallSlot(detail?.manifest);
   const scopes = detail?.scopes ?? [];
   // F-E E5 publisher screenshot gallery — public display URLs (gated app route),
   // magic-byte-validated + mod-reviewed at approval. Empty when the app shipped
@@ -148,9 +166,16 @@ export default function AppDetailPage() {
       // scopes from the authenticated getInstallConfig), so safe placeholders.
       category: null,
       scopesSummary: [],
+      // handleInstall only runs for an on-platform (installable) app — an
+      // external-link app shows no Install CTA — so carry the detail's value
+      // (null here in practice).
+      externalUrl: detail.externalUrl,
       // Marketplace reviews — carry through from the detail (display-safe).
       avgRating: detail.avgRating,
       reviewCount: detail.reviewCount,
+      // Card cover = the first public screenshot (the detail already carries the
+      // projected gallery). Unused by the settings modal, but kept consistent.
+      coverUrl: detail.screenshots[0]?.url ?? null,
     };
     openAppSettingsModal({ block, existingByScope });
   }
@@ -168,7 +193,7 @@ export default function AppDetailPage() {
       */}
       <Meta
         title={`${name} — Civitai Apps`}
-        description={description || `${name} on the Civitai App Blocks marketplace.`}
+        description={description || `${name} on the Civitai Apps marketplace.`}
         deIndex
       />
       <Container size="md" py="md">
@@ -213,52 +238,72 @@ export default function AppDetailPage() {
                   </Group>
                 </Stack>
                 <Group gap="xs" wrap="nowrap">
-                  {/* W10 — "Open app" affordance: shown only when the app
-                      declares a full-page surface AND the viewer has the
-                      appBlocksPages flag (dark today). Links to the in-host
-                      full-page route (`/apps/run/<slug>`), where the block runs
-                      with a minted viewer-scoped page token under the trust
-                      chrome — distinct from "Open live" (the raw standalone
-                      origin, no token). */}
-                  {detail.manifest.hasPage && features.appBlocksPages && (
+                  {isExternal ? (
+                    /* Off-site (external-link) app: the external URL is the
+                       PRIMARY (filled) CTA — opens off-site in a new tab. No
+                       "Open app" / "Open live" / Install affordances (nothing is
+                       hosted on-platform). */
                     <Button
-                      component={Link}
-                      href={`/apps/run/${encodeURIComponent(detail.blockId)}`}
+                      component="a"
+                      href={externalUrl!}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       leftSection={<IconExternalLink size={16} />}
                     >
-                      Open app
+                      Open external site
                     </Button>
+                  ) : (
+                    <>
+                      {/* W10 — "Open app" affordance: shown only when the app
+                          declares a full-page surface AND the viewer has the
+                          appBlocksPages flag (dark today). Links to the in-host
+                          full-page route (`/apps/run/<slug>`), where the block
+                          runs with a minted viewer-scoped page token under the
+                          trust chrome — distinct from "Open live" (the raw
+                          standalone origin, no token). */}
+                      {detail.manifest.hasPage && features.appBlocksPages && (
+                        <Button
+                          component={Link}
+                          href={`/apps/run/${encodeURIComponent(detail.blockId)}`}
+                          leftSection={<IconExternalLink size={16} />}
+                        >
+                          Open app
+                        </Button>
+                      )}
+                      <Button
+                        component="a"
+                        href={detail.liveUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        variant="default"
+                        leftSection={<IconExternalLink size={16} />}
+                      >
+                        Open live
+                      </Button>
+                    </>
                   )}
-                  <Button
-                    component="a"
-                    href={detail.liveUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    variant="default"
-                    leftSection={<IconExternalLink size={16} />}
-                  >
-                    Open live
-                  </Button>
                   {/*
                     Install CTA — reuses the E1 sign-in-gated path: anon → the
                     LoginModal (via LoginRedirect); logged-in → the install/
                     settings modal. Dark today (page is mod-gated).
                   */}
-                  <LoginRedirect reason="perform-action">
-                    <Button
-                      leftSection={
-                        alreadySubscribed ? (
-                          <IconSettings size={16} />
-                        ) : (
-                          <IconPlugConnected size={16} />
-                        )
-                      }
-                      variant={alreadySubscribed ? 'default' : 'filled'}
-                      onClick={handleInstall}
-                    >
-                      {alreadySubscribed ? 'Manage' : 'Install'}
-                    </Button>
-                  </LoginRedirect>
+                  {showInstall && (
+                    <LoginRedirect reason="perform-action">
+                      <Button
+                        leftSection={
+                          alreadySubscribed ? (
+                            <IconSettings size={16} />
+                          ) : (
+                            <IconPlugConnected size={16} />
+                          )
+                        }
+                        variant={alreadySubscribed ? 'default' : 'filled'}
+                        onClick={handleInstall}
+                      >
+                        {alreadySubscribed ? 'Manage' : 'Install'}
+                      </Button>
+                    </LoginRedirect>
+                  )}
                 </Group>
               </Group>
 
@@ -305,105 +350,127 @@ export default function AppDetailPage() {
                 </>
               )}
 
-              <Divider />
+              {/* Off-site (external-link) app: no on-platform iframe preview
+                  (nothing is hosted on a civit subdomain). Instead, surface the
+                  external destination as a plain link. */}
+              {isExternal ? (
+                <>
+                  <Divider />
+                  <Stack gap="xs">
+                    <Title order={4}>External site</Title>
+                    <Text size="sm" c="dimmed">
+                      This app opens an external, off-site link in a new tab:{' '}
+                      <Anchor href={externalUrl!} target="_blank" rel="noopener noreferrer">
+                        {externalUrl!.replace(/^https?:\/\//, '')}
+                      </Anchor>
+                      . It runs entirely off-platform — no Civitai install, account access, or
+                      permissions.
+                    </Text>
+                  </Stack>
+                </>
+              ) : (
+                <>
+                  <Divider />
 
-              {/* Live preview — a sandboxed iframe of the already-public
-                  standalone block origin (detail.liveUrl). See the tradeoff
-                  note in the page docstring / PR: this avoids introducing any
-                  new anon-token or scope-exposure path that an in-page block
-                  host (model-context + minted block JWT) would require. */}
-              <Stack gap="xs">
-                <Title order={4}>Live preview</Title>
-                <Card withBorder padding={0} radius="md" style={{ overflow: 'hidden' }}>
-                  <iframe
-                    src={detail.liveUrl}
-                    title={`${name} live preview`}
-                    // Minimal sandbox: allow the block's own scripts + same-origin
-                    // (it's served from its own subdomain), nothing else. No
-                    // top-navigation, no popups, no form submission.
-                    sandbox="allow-scripts allow-same-origin"
-                    referrerPolicy="no-referrer"
-                    loading="lazy"
-                    style={{
-                      width: '100%',
-                      height: 420,
-                      border: 0,
-                      display: 'block',
-                    }}
-                  />
-                </Card>
-                <Text size="xs" c="dimmed">
-                  Preview of the standalone block at{' '}
-                  <Anchor href={detail.liveUrl} target="_blank" rel="noopener noreferrer">
-                    {detail.liveUrl.replace(/^https?:\/\//, '')}
-                  </Anchor>
-                  . The live block on a model page runs with your granted permissions; this
-                  standalone preview does not.
-                </Text>
-              </Stack>
+                  {/* Live preview — a sandboxed iframe of the already-public
+                      standalone block origin (detail.liveUrl). See the tradeoff
+                      note in the page docstring / PR: this avoids introducing any
+                      new anon-token or scope-exposure path that an in-page block
+                      host (model-context + minted block JWT) would require. */}
+                  <Stack gap="xs">
+                    <Title order={4}>Live preview</Title>
+                    <Card withBorder padding={0} radius="md" style={{ overflow: 'hidden' }}>
+                      <iframe
+                        src={detail.liveUrl}
+                        title={`${name} live preview`}
+                        // Minimal sandbox: allow the block's own scripts + same-origin
+                        // (it's served from its own subdomain), nothing else. No
+                        // top-navigation, no popups, no form submission.
+                        sandbox="allow-scripts allow-same-origin"
+                        referrerPolicy="no-referrer"
+                        loading="lazy"
+                        style={{
+                          width: '100%',
+                          height: 420,
+                          border: 0,
+                          display: 'block',
+                        }}
+                      />
+                    </Card>
+                    <Text size="xs" c="dimmed">
+                      Preview of the standalone block at{' '}
+                      <Anchor href={detail.liveUrl} target="_blank" rel="noopener noreferrer">
+                        {detail.liveUrl.replace(/^https?:\/\//, '')}
+                      </Anchor>
+                      . The live block on a model page runs with your granted permissions; this
+                      standalone preview does not.
+                    </Text>
+                  </Stack>
 
-              <Divider />
+                  <Divider />
 
-              {/* Permissions disclosure — the approved scopes, rendered via
-                  SCOPE_DESCRIPTIONS (closes the H3 "no permission disclosure at
-                  decision time" gap at the marketplace level). */}
-              <Stack gap="xs">
-                <Group gap="xs">
-                  <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
-                    <IconShieldCheck size={14} />
-                  </ThemeIcon>
-                  <Title order={4}>This app can…</Title>
-                </Group>
-                {scopes.length === 0 ? (
-                  <Text size="sm" c="dimmed">
-                    This app does not request any permissions.
-                  </Text>
-                ) : (
-                  <List
-                    spacing="xs"
-                    size="sm"
-                    icon={
-                      <ThemeIcon variant="light" color="gray" size="sm" radius="xl">
-                        <IconLock size={12} />
+                  {/* Permissions disclosure — the approved scopes, rendered via
+                      SCOPE_DESCRIPTIONS (closes the H3 "no permission disclosure at
+                      decision time" gap at the marketplace level). */}
+                  <Stack gap="xs">
+                    <Group gap="xs">
+                      <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
+                        <IconShieldCheck size={14} />
                       </ThemeIcon>
-                    }
-                  >
-                    {scopes.map((scope) => (
-                      <List.Item key={scope}>
-                        {SCOPE_DESCRIPTIONS[scope] ?? scope}
-                      </List.Item>
-                    ))}
-                  </List>
-                )}
-              </Stack>
+                      <Title order={4}>This app can…</Title>
+                    </Group>
+                    {scopes.length === 0 ? (
+                      <Text size="sm" c="dimmed">
+                        This app does not request any permissions.
+                      </Text>
+                    ) : (
+                      <List
+                        spacing="xs"
+                        size="sm"
+                        icon={
+                          <ThemeIcon variant="light" color="gray" size="sm" radius="xl">
+                            <IconLock size={12} />
+                          </ThemeIcon>
+                        }
+                      >
+                        {scopes.map((scope) => (
+                          <List.Item key={scope}>
+                            {SCOPE_DESCRIPTIONS[scope] ?? scope}
+                          </List.Item>
+                        ))}
+                      </List>
+                    )}
+                  </Stack>
 
-              <Divider />
+                  <Divider />
 
-              {/* Target slots — where the block mounts, via SLOT_DESCRIPTIONS. */}
-              <Stack gap="xs">
-                <Title order={4}>Appears in</Title>
-                {slots.length === 0 ? (
-                  <Text size="sm" c="dimmed">
-                    This app declares no target slots.
-                  </Text>
-                ) : (
-                  <List spacing="xs" size="sm">
-                    {slots.map((slotId) => (
-                      <List.Item key={slotId}>
-                        <Text component="span" fw={500}>
-                          {slotLabel(slotId)}
-                        </Text>
-                        {SLOT_DESCRIPTIONS[slotId as string] && (
-                          <Text component="span" c="dimmed">
-                            {' '}
-                            — {SLOT_DESCRIPTIONS[slotId as string]}
-                          </Text>
-                        )}
-                      </List.Item>
-                    ))}
-                  </List>
-                )}
-              </Stack>
+                  {/* Target slots — where the block mounts, via SLOT_DESCRIPTIONS. */}
+                  <Stack gap="xs">
+                    <Title order={4}>Appears in</Title>
+                    {slots.length === 0 ? (
+                      <Text size="sm" c="dimmed">
+                        This app declares no target slots.
+                      </Text>
+                    ) : (
+                      <List spacing="xs" size="sm">
+                        {slots.map((slotId) => (
+                          <List.Item key={slotId}>
+                            <Text component="span" fw={500}>
+                              {slotLabel(slotId)}
+                            </Text>
+                            {SLOT_DESCRIPTIONS[slotId as string] && (
+                              <Text component="span" c="dimmed">
+                                {' '}
+                                — {SLOT_DESCRIPTIONS[slotId as string]}
+                              </Text>
+                            )}
+                          </List.Item>
+                        ))}
+                      </List>
+                    )}
+                  </Stack>
+                </>
+              )}
 
               <Divider />
 

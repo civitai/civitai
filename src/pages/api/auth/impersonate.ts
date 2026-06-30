@@ -1,45 +1,47 @@
 import * as z from 'zod';
-import { civTokenEncrypt } from '~/server/auth/civ-token';
-import { dbRead } from '~/server/db/client';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { trackModActivity } from '~/server/services/moderator.service';
+import { createImpersonationClient } from '@civitai/auth';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { setSessionCookie } from '~/server/auth/civ-cookie';
 
-const schema = z.object({
-  userId: z.coerce.number(),
-});
+// Moderator impersonation proxy (section F) — a DUMB pass-through to the hub, which owns ALL the logic: the
+// granted-permission gate, the mint (stamped impersonatedBy), and the ModActivity audit. This proxy exists only
+// because the main app also deploys cross-site as civitai.red, where the browser can't reach the hub directly;
+// it forwards the moderator's session cookie and sets the civ-token the hub returns. Touches no device set.
+//   POST   { userId }  → start impersonating that user
+//   DELETE             → stop impersonating (the hub reads `impersonatedBy` from the current token)
+const impersonation = createImpersonationClient();
+const schema = z.object({ userId: z.coerce.number() });
 
-export default AuthedEndpoint(async function handler(req, res, user) {
-  if (req.method !== 'GET') return res.status(405).send('Method Not Allowed');
+export default AuthedEndpoint(
+  async function handler(req, res) {
+    const cookie = req.headers.cookie ?? '';
 
-  const features = getFeatureFlags({ user, req });
-  if (!features || !features.impersonation) return res.status(401).send('Unauthorized');
+    if (req.method === 'DELETE') {
+      const result = await impersonation.exit(cookie);
+      // Forward the hub's REAL status + reason (e.g. 400 "not an impersonation session", 404, 500) instead of
+      // masking every failure as a generic message. status 0 = hub unreachable → 502.
+      if (!result.ok) {
+        return res
+          .status(result.status || 502)
+          .json({ error: result.error ?? 'could not exit impersonation' });
+      }
+      setSessionCookie(res, result.token, { host: req.headers.host });
+      return res.status(200).json({ ok: true });
+    }
 
-  const result = schema.safeParse(req.query);
-  if (!result.success) return res.status(400).send(result.error.message);
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
 
-  const { userId } = result.data;
-  if (userId === user.id) return res.status(400).send('Cannot switch to same user');
+    const minted = await impersonation.impersonate(cookie, parsed.data.userId);
+    if (!minted.ok) {
+      return res
+        .status(minted.status || 502)
+        .json({ error: minted.error ?? 'Could not impersonate' });
+    }
 
-  const switchToUser = await dbRead.user.findFirst({
-    where: { id: userId },
-    select: { id: true },
-  });
-  if (!switchToUser) {
-    return res.status(404).send(`No user found with ID: ${userId}`);
-  }
-
-  try {
-    const token = civTokenEncrypt(userId.toString());
-
-    await trackModActivity(user.id, {
-      entityType: 'impersonate',
-      entityId: userId,
-      activity: 'on',
-    });
-
-    return res.status(200).json({ token });
-  } catch (error: unknown) {
-    return res.status(500).send((error as Error).message);
-  }
-});
+    // NB: impersonation deliberately does NOT touch the device account-set
+    setSessionCookie(res, minted.token, { host: req.headers.host });
+    return res.status(200).json({ ok: true });
+  },
+  ['POST', 'DELETE']
+);

@@ -2,7 +2,12 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
-import { banReasonDetails, CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import {
+  banReasonDetails,
+  CacheTTL,
+  constants,
+  USERS_SEARCH_INDEX,
+} from '~/server/common/constants';
 import { moderationActionEmail } from '~/server/email/templates';
 import {
   BanReasonCode,
@@ -82,10 +87,11 @@ import {
   BlockedUsers,
   HiddenModels,
 } from '~/server/services/user-preferences.service';
-import { createCachedObject } from '~/server/utils/cache-helpers';
+import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
 import {
   handleLogError,
+  isPrismaUniqueViolation,
   throwBadRequestError,
   throwConflictError,
   throwNotFoundError,
@@ -120,7 +126,7 @@ import type {
   UserSettingsSchema,
 } from './../schema/user.schema';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
-import { cancelSubscription } from '~/server/services/stripe.service';
+import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds } },
@@ -422,13 +428,7 @@ export async function clearUserProfileFields({
 /**
  * Mod-driven: explicit mute/unmute (vs. legacy toggle).
  */
-export async function setUserMuted({
-  userId,
-  muted,
-}: {
-  userId: number;
-  muted: boolean;
-}) {
+export async function setUserMuted({ userId, muted }: { userId: number; muted: boolean }) {
   const date = new Date();
   const user = await updateUserById({
     id: userId,
@@ -690,8 +690,47 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   });
 
   if (count) {
-    const count = await dbRead.user.count({ where });
-    return { items, count };
+    // The count scans the whole ~892k-row Model table (index-only scan on
+    // Model_userId → HashAggregate distinct userIds → nested-loop to User,
+    // ~1174ms in EXPLAIN ANALYZE) on EVERY request and dominates this endpoint's
+    // latency. It's a slowly-moving aggregate, so cache it: a few-minutes-stale
+    // totalItems/totalPages is harmless. Cache unconditionally (no IS_DATAPACKET
+    // gate) — the 892k-row scan is expensive on every cluster. TTL = 10min
+    // (CacheTTL.md): cheap-to-refresh, bounds staleness to a sub-page drift on an
+    // ~86.5k-creator total.
+    //
+    // Cache ONLY the hot default-listing count (no `query`). `query` is
+    // user-controlled on a public endpoint with no `.max()` in its zod schema and
+    // is interpolated raw into the cache key, so caching per-query would let
+    // arbitrary `?query=<random>` values mint UNBOUNDED distinct keys (each held
+    // EX=2×600s) on the shared cache cluster — a keyspace-growth vector. Per-query
+    // counts are also low-hit-rate. So run the username-search count inline.
+    if (query) {
+      const queryCount = await dbRead.user.count({ where });
+      return { items, count: queryCount };
+    }
+    // No-query path: key by `excludeIds` only (the only remaining varying part of
+    // `where`; models:{some:{}} and deletedAt:null are constant).
+    const sortedExcludeIds = [...excludeIds].sort((a, b) => a - b).join(',');
+    const cacheKey = `${REDIS_KEYS.CACHES.CREATORS_COUNT}:${sortedExcludeIds}` as const;
+    // fetchThroughCache is fail-open on a Redis read/lock ERROR (degrades to the
+    // origin fetch). But on lock-retry EXHAUSTION (cold key + concurrent burst) it
+    // throws 'Failed to fetch data through cache' — fall back to the inline count
+    // there too so this endpoint never 500s from the caching machinery. (A genuine
+    // dbRead.user.count DB error still propagates — the fallback re-runs and throws
+    // again — which matches pre-cache behavior.)
+    const cachedCount = await fetchThroughCache(
+      cacheKey,
+      () => dbRead.user.count({ where }),
+      { ttl: CacheTTL.md }
+    ).catch((e) => {
+      // Only the lock-retry-exhaustion throw falls back to the inline count. Any
+      // OTHER throw from the cache helper (e.g. a future key-type/serialization
+      // invariant) must surface, not be silently swallowed into a count.
+      if (!String((e as Error)?.message).includes('Failed to fetch data through cache')) throw e;
+      return dbRead.user.count({ where });
+    });
+    return { items, count: cachedCount };
   }
 
   return { items };
@@ -731,7 +770,13 @@ export const toggleModelEngagement = async ({
     return true; // no change
   } else if (setTo === false) return false;
 
-  await dbWrite.modelEngagement.create({ data: { type, modelId, userId } });
+  await dbWrite.modelEngagement.create({ data: { type, modelId, userId } }).catch((error) => {
+    // Toggle racing itself: both calls saw no engagement and both create, so the
+    // loser hits the (userId, modelId) unique constraint (P2002). The engagement
+    // now exists — a toggle is idempotent, so treat it as success (still run the
+    // Hide cache-refresh + return true) instead of bubbling a 500.
+    if (!isPrismaUniqueViolation(error)) throw error;
+  });
   if (type === 'Hide') await HiddenModels.refreshCache({ userId });
   return true;
 };
@@ -773,23 +818,35 @@ export const toggleFollowUser = async ({
     return false;
   }
 
-  const ret = await dbWrite.userEngagement.create({
-    data: { type: 'Follow', targetUserId, userId },
-    select: { user: { select: { username: true } } },
-  });
+  const ret = await dbWrite.userEngagement
+    .create({
+      data: { type: 'Follow', targetUserId, userId },
+      select: { user: { select: { username: true } } },
+    })
+    .catch((error) => {
+      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
+      // constraint (P2002). The follow already exists — idempotent, so return
+      // null and fall through to the cache refresh. The racing winner already
+      // created the follow-notification (deduped by `key`), so we skip it here
+      // rather than bubble a 500.
+      if (!isPrismaUniqueViolation(error)) throw error;
+      return null;
+    });
   await userFollowsCache.refresh(userId);
 
-  const details: NotifDetailsFollowedBy = {
-    username: ret.user.username,
-    userId,
-  };
-  await createNotification({
-    category: NotificationCategory.Update,
-    type: 'followed-by',
-    userId: targetUserId,
-    key: `followed-by:${userId}:${targetUserId}`,
-    details,
-  });
+  if (ret) {
+    const details: NotifDetailsFollowedBy = {
+      username: ret.user.username,
+      userId,
+    };
+    await createNotification({
+      category: NotificationCategory.Update,
+      type: 'followed-by',
+      userId: targetUserId,
+      key: `followed-by:${userId}:${targetUserId}`,
+      details,
+    });
+  }
 
   return true;
 };
@@ -820,7 +877,14 @@ export const toggleHideUser = async ({
     return false;
   }
 
-  await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
+  await dbWrite.userEngagement
+    .create({ data: { type: 'Hide', targetUserId, userId } })
+    .catch((error) => {
+      // Toggle racing itself: the loser hits the (userId, targetUserId) unique
+      // constraint (P2002). The engagement now exists — idempotent, so still
+      // refresh the cache + return true instead of bubbling a 500.
+      if (!isPrismaUniqueViolation(error)) throw error;
+    });
   await userFollowsCache.refresh(userId);
   return true;
 };
@@ -965,12 +1029,7 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
  * (email magic-link or OAuth) which creates new rows.
  */
-export const restoreUser = async ({
-  id,
-  username,
-  email,
-  restoreModels,
-}: RestoreUserInput) => {
+export const restoreUser = async ({ id, username, email, restoreModels }: RestoreUserInput) => {
   const user = await dbWrite.user.findFirst({
     where: { id },
     select: { id: true, deletedAt: true },
@@ -1637,6 +1696,13 @@ export const toggleBan = async ({
 
       // Group B: External operations (subscription + search indexes)
       Promise.all([
+        // Stop the recurring membership from auto-renewing while banned. Cancel
+        // at period end so the charge stops but the action is reversible if the
+        // ban is later lifted (see reinstate in the unban branch below).
+        cancelSubscription({ userId: id, atPeriodEnd: true }).catch((error) =>
+          logToAxiom({ name: 'cancel-stripe-subscription', type: 'error', message: error.message })
+        ),
+
         // Cancel their subscription
         cancelSubscriptionPlan({ userId: id }).catch((error) =>
           logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
@@ -1654,6 +1720,12 @@ export const toggleBan = async ({
         ),
       ]),
     ]);
+  } else {
+    // Unbanning: reverse the at-period-end cancellation applied on ban, if the
+    // membership is still within its paid period.
+    await reinstateSubscription({ userId: id }).catch((error) =>
+      logToAxiom({ name: 'reinstate-stripe-subscription', type: 'error', message: error.message })
+    );
   }
 
   // Notify the user by email of the ban/unban decision. Skip the admin
@@ -1771,7 +1843,15 @@ export const toggleUserArticleEngagement = async ({
   }
 
   if (!exists) {
-    await dbWrite.articleEngagement.create({ data: { userId, articleId, type } });
+    await dbWrite.articleEngagement.create({ data: { userId, articleId, type } }).catch((error) => {
+      // Toggle racing itself → P2002 on the articleEngagement PK. NOTE the PK is
+      // (userId, articleId) — it does NOT include `type` — so the dominant case
+      // (same-type double-click) is cleanly idempotent, but a concurrent
+      // DIFFERENT-type write (Favorite vs Hide) on the same article can also
+      // trip this. Either way the row exists and the client re-reads engagement
+      // state, so swallowing P2002 is strictly better than a 500.
+      if (!isPrismaUniqueViolation(error)) throw error;
+    });
   }
 
   return !exists;
@@ -1815,15 +1895,30 @@ export const toggleBookmarked = async ({
     where: { userId, type, mode: CollectionMode.Bookmark },
   });
   if (!collection) {
-    collection = await dbWrite.collection.create({
-      data: {
-        userId,
-        type,
-        mode: CollectionMode.Bookmark,
-        name: `Bookmarked ${type}`,
-        description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
-      },
-    });
+    // Race #1: the bookmark collection is guarded by a prod-only partial unique index
+    // `User_bookmark_collection UNIQUE (userId, type, mode) WHERE mode='Bookmark'` (NOT in the
+    // Prisma schema). Two concurrent toggles can both see null and both create → loser hits P2002.
+    // Prisma `upsert` can't target a partial WHERE index, so create-then-refetch on the conflict.
+    collection =
+      (await dbWrite.collection
+        .create({
+          data: {
+            userId,
+            type,
+            mode: CollectionMode.Bookmark,
+            name: `Bookmarked ${type}`,
+            description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+          },
+        })
+        .catch((e) => {
+          if (!isPrismaUniqueViolation(e)) throw e;
+          return null; // lost the create race — fall through to re-fetch
+        })) ??
+      (await dbWrite.collection.findFirst({
+        where: { userId, type, mode: CollectionMode.Bookmark },
+      }));
+    if (!collection)
+      throw new Error('toggleBookmarked: bookmark collection missing after create race');
   }
 
   const entityProp = collectionEntityProps[type];
@@ -1843,15 +1938,25 @@ export const toggleBookmarked = async ({
 
   // if the engagement exists, we only need to remove the existing engagmement
   if (exists && setTo !== true) {
-    await dbWrite.collectionItem.delete({
+    // Race #3: concurrent un-bookmarks both read the same row then both delete it → loser hits
+    // P2025 ("record not found"). `deleteMany` returns {count} and never throws on zero rows, so
+    // it's fully idempotent — no try/catch needed.
+    await dbWrite.collectionItem.deleteMany({
       where: {
         id: collectionItem.id,
       },
     });
     metricsEngine.queueUpdate(entityId);
   } else if (!exists && setTo !== false) {
-    await dbWrite.collectionItem.create({
-      data: { collectionId: collection.id, [entityProp]: entityId },
+    // Race #2: the collection item is guarded by prod-only partial unique indexes
+    // (`CollectionItem_model UNIQUE (collectionId, modelId) WHERE modelId IS NOT NULL`, and the
+    // analogous image/post/article indexes — NOT in the Prisma schema). Concurrent bookmarks both
+    // see no row and both create → loser hits P2002. `createMany({ skipDuplicates: true })` emits
+    // ON CONFLICT DO NOTHING, so the race resolves at the DB with no throw. The return value isn't
+    // used (the function returns `!exists`).
+    await dbWrite.collectionItem.createMany({
+      data: [{ collectionId: collection.id, [entityProp]: entityId }],
+      skipDuplicates: true,
     });
   }
 
@@ -1955,7 +2060,12 @@ export const toggleUserBountyEngagement = async ({
   });
 
   if (!engagement) {
-    await dbWrite.bountyEngagement.create({ data: { userId, bountyId, type } });
+    await dbWrite.bountyEngagement.create({ data: { userId, bountyId, type } }).catch((error) => {
+      // Toggle racing itself → P2002 on the (type, bountyId, userId) PK. The
+      // engagement already exists — idempotent, so return true (toggled on)
+      // instead of bubbling a 500.
+      if (!isPrismaUniqueViolation(error)) throw error;
+    });
     return true;
   } else {
     await dbWrite.bountyEngagement.delete({

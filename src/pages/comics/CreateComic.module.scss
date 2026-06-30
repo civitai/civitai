@@ -25,7 +25,7 @@
   }
 }
 
-/* ── Images row: Hero + Cover side by side ────────── */
+/* ── Images: hero + cover side by side ────────────────────── */
 
 .imagesRow {
   display: flex;
@@ -44,12 +44,8 @@
 
 .coverSection {
   flex-shrink: 0;
-  width: 100px;
-
-  @media (max-width: 560px) {
-    width: 100%;
-    max-width: 120px;
-  }
+  width: 160px;
+  max-width: 100%;
 }
 
 .heroDropzone {
@@ -58,11 +54,11 @@
   border-radius: 8px;
   overflow: hidden;
   background: light-dark(var(--mantine-color-gray-1), #2c2e33);
-  max-height: 160px;
+  max-height: 220px;
 }
 
 .heroPickerWrap {
-  max-height: 160px;
+  max-height: 220px;
 
   /* Constrain the inner frame to match. The picker's internal frame
      already clips the draggable image with its own overflow:hidden, so
@@ -70,10 +66,13 @@
      top:-8 right:-8, just outside the frame, and any wrapper-level
      overflow:hidden chops it off (visible on the create page only). */
   > div {
-    max-height: 160px;
+    max-height: 220px;
   }
 }
 
+/* Cover is a compact card: dropzone on top, full-width action buttons
+   stacked beneath (so "Pick from generator" gets the full 160px and is
+   never clipped, as it was in the old 100px column). */
 .coverDropzone {
   width: 100%;
   aspect-ratio: 3 / 4;
@@ -84,12 +83,12 @@
 
 .coverPreviewWrap {
   position: relative;
-  display: inline-block;
+  width: 100%;
 }
 
 .coverPreview {
-  width: 100px;
-  height: 133px;
+  width: 100%;
+  aspect-ratio: 3 / 4;
   border-radius: 8px;
   overflow: hidden;
   background: #2c2e33;

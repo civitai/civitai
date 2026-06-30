@@ -1,4 +1,5 @@
 import type { BlockAttributionScope } from '~/server/schema/blocks/attribution.schema';
+import { isPayoutEligibleBuzz } from '~/server/utils/buzz-helpers';
 
 /**
  * Revenue-share rate card for buzz purchases originated inside an App
@@ -213,19 +214,9 @@ export const RATE_CARD_V3: RateCard = {
  * V4 — adds the W3 flow A buzz-SPEND author bounty (`spendSharePct`).
  *
  * Carries V3's purchase percentages UNCHANGED (15/15/25/0/0) and sets
- * `spendSharePct` to the FIRST non-zero spend rate.
- *
- * ⚠️ NOT APPLIED AT ATTRIBUTION-WRITE TIME. As of the TRACK-ONLY rework
- *    (mirroring #2629), `recordSpendAttribution` does NOT call
- *    `computeSpendShare` and does NOT stamp this percentage onto the row.
- *    Spend rows are written `status='tracked'` with `app_owner_share_cents=0`,
- *    `spend_share_pct=0`, and `rate_card_version='unrated'` — they record the
- *    EVENT + the money BASIS (gross) only. The author bounty is deferred to
- *    PAYOUT TIME: the future payout rail (Slice 4) reads `status='tracked'`
- *    rows and computes `bounty = gross × <signed-off spendSharePct>` as a
- *    clean retroactive BACKPAY. WHY: committing a bounty at this placeholder
- *    5% before monetization sign-off would lock those immutable rows to the
- *    placeholder rate forever.
+ * `spendSharePct` to the FIRST non-zero spend rate. This is the first
+ * card emitted for the spend flow: a block-initiated generation that
+ * burns the viewer's own Buzz now accrues an author bounty.
  *
  * ⚠️ PLACEHOLDER RATE — `spendSharePct: 5` is a CONSERVATIVE DEFAULT
  *    chosen pending monetization sign-off (Zach's call: ship a documented
@@ -446,12 +437,6 @@ export type SpendShareResult = {
 /**
  * Compute the author bounty for a single block-initiated Buzz SPEND.
  *
- * ⚠️ PAYOUT-TIME ONLY. This is NOT called by `recordSpendAttribution`
- * anymore (the TRACK-ONLY rework, mirroring #2629). Spend rows are written
- * `status='tracked'` with a 0 bounty and no stamped rate. This function is
- * retained for the future payout rail (Slice 4) to call against the
- * signed-off card, computing each tracked row's bounty as a backpay.
- *
  * `grossValueCents` is the USD value of the Buzz the generation burned
  * (buzzDollarRatio 1000 Buzz = $1 = 100 cents — the caller converts). The
  * bounty is `spendSharePct` % of that value, floored so the platform
@@ -464,6 +449,20 @@ export type SpendShareResult = {
  *     the payout pipeline.
  *   - `appOwnerUserId` ∈ `internalAppOwnerUserIds` → 0 bounty (internal
  *     civitai app — same legal entity on both sides).
+ *   - `buzzType` NOT payout-eligible → 0 bounty. ⚠️ LOAD-BEARING
+ *     PAYOUT-SAFETY GATE (App Blocks Sybil / payout review). Block
+ *     currencies were widened to on-site PARITY (blue/green/yellow); to
+ *     keep that widening from EVER becoming platform-funded farming, only
+ *     PAID Buzz (`isPayoutEligibleBuzz` → green + yellow) can accrue an
+ *     author bounty. The FREE type — blue (free generation Buzz) — is
+ *     EXCLUDED here so a Sybil ring spending free Buzz mints ZERO
+ *     platform-funded bounty. (green is PAID — product confirmed
+ *     2026-06-30: "green buzz is paid, only blue is free".)
+ *     `buzzType` defaults to the legacy 'yellow' (the pre-widening
+ *     currency) so existing/untyped callers are behavior-preserved.
+ *     Whoever enables the #2605 payout rail MUST keep this gate — it is the
+ *     single boundary that decouples spendable-currency parity from
+ *     payout-eligibility. See `isPayoutEligibleBuzz` in buzz-helpers.ts.
  *
  * Invariants (also enforced by the migration's CHECKs):
  *   - appOwnerShareCents >= 0
@@ -475,16 +474,27 @@ export function computeSpendShare({
   grossValueCents,
   isSelfSpend,
   appOwnerUserId,
+  buzzType = 'yellow',
 }: {
   rateCard?: RateCard;
   grossValueCents: number;
   isSelfSpend: boolean;
   appOwnerUserId: number;
+  /**
+   * The account type the spend was drained from. Defaults to 'yellow' (the
+   * pre-parity currency) so legacy callers are unchanged. The free type
+   * (blue) is non-payout-eligible and zeroes the bounty. See the PAYOUT-SAFETY
+   * note above.
+   */
+  buzzType?: string;
 }): SpendShareResult {
   const safeGross = Math.max(0, Math.floor(grossValueCents));
 
   const isInternal = rateCard.internalAppOwnerUserIds.includes(appOwnerUserId);
-  const sharePct = isSelfSpend || isInternal ? 0 : rateCard.spendSharePct ?? 0;
+  // PAYOUT-SAFETY: the free Buzz type (blue) is never payout-eligible.
+  const isPayoutIneligible = !isPayoutEligibleBuzz(buzzType);
+  const sharePct =
+    isSelfSpend || isInternal || isPayoutIneligible ? 0 : rateCard.spendSharePct ?? 0;
   // Floor so the platform never over-pays a sub-cent remainder, then clamp
   // to the gross as a defensive ceiling (the bounty can never exceed the
   // spend's USD value — matches the migration's _share_le_gross_check).

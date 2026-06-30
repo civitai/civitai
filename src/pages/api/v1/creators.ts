@@ -7,6 +7,29 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
+type CreatorItem = {
+  username: string | null;
+  image?: string | null;
+  // Published-model count is computed in the DB via Prisma `_count` (see
+  // getCreatorsHandler) instead of fetching every model row.
+  _count?: { models?: number } | null;
+};
+
+/**
+ * Map a getCreators item to the public v1 response shape. Exported (and pure) so
+ * the modelCount derivation from `_count.models` is unit-testable without the
+ * Next API handler harness. Keeps the historical shape: modelCount is omitted
+ * (undefined) when zero/absent.
+ */
+export function mapCreatorItem({ _count, username, image }: CreatorItem, baseUrlOrigin: string) {
+  return {
+    username,
+    modelCount: _count?.models ? _count.models : undefined,
+    link: `${baseUrlOrigin}/api/v1/models?username=${username}`,
+    image: image ? getEdgeUrl(image, { width: 96, name: username ?? undefined }) : undefined,
+  };
+}
+
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const apiCaller = await publicApiContext2(req, res);
   try {
@@ -14,12 +37,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const { nextPage, prevPage, baseUrl } = getPaginationLinks({ ...metadata, req });
 
     return res.status(200).json({
-      items: items.map(({ models = [], username, image }) => ({
-        username,
-        modelCount: models.length ? models.length : undefined,
-        link: `${baseUrl.origin}/api/v1/models?username=${username}`,
-        image: image ? getEdgeUrl(image, { width: 96, name: username }) : undefined,
-      })),
+      items: items.map((item) => mapCreatorItem(item, baseUrl.origin)),
       metadata: {
         ...metadata,
         nextPage,

@@ -3,6 +3,7 @@ import type { MRT_ColumnDef, MRT_PaginationState } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { formatDateNullable } from '~/utils/date-helpers';
 import { Container, Stack, Group, Title, Badge } from '@mantine/core';
@@ -10,6 +11,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
 
 const limit = 20;
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function CsamReports() {
   const router = useRouter();

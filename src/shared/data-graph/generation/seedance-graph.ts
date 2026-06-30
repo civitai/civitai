@@ -4,9 +4,10 @@
  * Controls for Seedance video generation ecosystem (ByteDance).
  * Meta contains only dynamic props - static props defined in components.
  *
- * Two models:
+ * Models:
  * - v2: Standard quality video generation
  * - v2-fast: Faster generation with lower cost
+ * - v2-mini: Smaller/cheaper variant (480p/720p only)
  *
  * Supports txt2vid and img2vid workflows.
  * Features: aspect ratio, duration (4-15s), resolution (480p/720p),
@@ -41,12 +42,14 @@ import {
 export const seedanceVersionIds = {
   v2: 2864671,
   'v2-fast': 2868300,
+  'v2-mini': 3069790,
 } as const;
 
 /** Options for seedance version selector */
 const seedanceVersionOptions = [
   { label: 'v2', value: seedanceVersionIds.v2 },
   { label: 'v2 fast', value: seedanceVersionIds['v2-fast'] },
+  { label: 'v2 mini', value: seedanceVersionIds['v2-mini'] },
 ];
 
 // =============================================================================

@@ -100,7 +100,7 @@ Handler: src/server/services/orchestrator/ecosystems/<name>.handler.ts
 
 Wiring:
 - basemodel.constants.ts: uncomment/add ecosystem support + settings
-- workflows.ts: add to <TXT2IMG_IDS | TXT2VID_IDS | etc.> and NEW_FORM_ONLY
+- workflows.ts: add to <TXT2IMG_IDS | TXT2VID_IDS | etc.>
 - ecosystem-graph.ts: add to grouped discriminator
 - ecosystems/index.ts: import, type, export, router case
 ```
@@ -139,15 +139,6 @@ Two sections:
 #### 5b. `src/shared/data-graph/generation/config/workflows.ts`
 
 - Add `ECO.<Name>` to the appropriate workflow array (`TXT2IMG_IDS`, `TXT2VID_IDS`, `EDIT_IMG_IDS`, `I2V_ONLY_IDS`, etc.)
-- Add to the `NEW_FORM_ONLY` rules for every workflow the ecosystem supports (every new ecosystem is new-form-only):
-  ```ts
-  [
-    'txt2img',
-    (ecoId, modelId) =>
-      // ... existing conditions ...
-      ecoId === ECO.<Name>,
-  ],
-  ```
 
 #### 5c. Create the graph file: `src/shared/data-graph/generation/<name>-graph.ts`
 

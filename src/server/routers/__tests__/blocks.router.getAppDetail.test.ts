@@ -159,7 +159,9 @@ describe('blocks.getAppDetail — anon-capable, dark behind the flag (F-E E2)', 
     // passed to the service (which restricts to page apps; that filtering is
     // covered in block-registry.page-only-launch.test.ts — here the service is
     // mocked, so we only assert the forwarded arg).
-    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', true);
+    // NSFW-APP-RED-ONLY: the 3rd arg is redCapable, derived from the request
+    // host. The fake ctx carries no host header → not red-capable → false.
+    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', true, false);
   });
 
   it('moderator (the live state today): served, launchOnly=false (grandfather)', async () => {
@@ -167,8 +169,8 @@ describe('blocks.getAppDetail — anon-capable, dark behind the flag (F-E E2)', 
     const result = await caller.getAppDetail(input);
     expect(result).toEqual(PUBLIC_DETAIL);
     expect(mockGetAppDetail).toHaveBeenCalledTimes(1);
-    // A moderator sees everything → launchOnly=false.
-    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', false);
+    // A moderator sees everything → launchOnly=false. redCapable=false (no host).
+    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', false, false);
   });
 
   it('NOT_FOUND when the service returns null (missing / non-approved app)', async () => {

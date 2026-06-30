@@ -69,11 +69,18 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'rl' } },
 }));
 vi.mock('~/server/utils/server-domain', () => ({
-  getAllServerHosts: () => ['civitai.com'],
+  getAllServerHosts: () => ['civitai.com', 'civitai.red'],
   // #2670 (color-domain maturity) added a getRequestDomainColor(req) call to the
   // mint. The test reqs carry no `host` header, so the real impl returns
   // undefined → SFW ceiling; mirror that here so the module mock stays complete.
   getRequestDomainColor: () => undefined,
+  // NSFW-APP-RED-ONLY: the mint now reads the request host's RED capability to
+  // pick the maturity ceiling and to refuse a mature app off .red. Mirror the
+  // real isHostForColor(host, 'red') semantics for the test hosts.
+  isHostForColor: (host: string, color: string) =>
+    color === 'red' && (host === 'civitai.red' || host === 'www.civitai.red'),
+  isMatureContentRating: (rating: unknown) =>
+    typeof rating === 'string' && (rating.toLowerCase() === 'r' || rating.toLowerCase() === 'x'),
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: vi.fn(async () => true),
@@ -667,6 +674,103 @@ describe('POST /api/v1/block-tokens', () => {
     };
     expect(new Set(signArgs.scopes)).toEqual(new Set(['models:read:self', 'buzz:read:self']));
     expect(signArgs.userId).toBe(42);
+  });
+
+  // ===========================================================================
+  // NSFW-APP-RED-ONLY — host-driven maturity ceiling + mature-app refusal.
+  // ===========================================================================
+  describe('NSFW-app-red-only maturity', () => {
+    it('red-capable host (civitai.red) mints the FULL mature ceiling', async () => {
+      mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+      const { allBrowsingLevelsFlag } = await import('~/shared/constants/browsingLevel.constants');
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(
+        makeReq({ origin: 'https://civitai.red', headers: { host: 'civitai.red' }, body: validBody() }),
+        res
+      );
+      expect(res._status).toBe(200);
+      expect(mockTokenService.sign).toHaveBeenCalled();
+      const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { maxBrowsingLevel: number };
+      expect(signArgs.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
+      expect((res._body as { maxBrowsingLevel: number }).maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
+    });
+
+    it('civitai.com (non-red host) keeps the SFW ceiling (not the mature flag)', async () => {
+      mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+      const { allBrowsingLevelsFlag, sfwBrowsingLevelsFlag } = await import(
+        '~/shared/constants/browsingLevel.constants'
+      );
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(
+        makeReq({ origin: 'https://civitai.com', headers: { host: 'civitai.com' }, body: validBody() }),
+        res
+      );
+      expect(res._status).toBe(200);
+      const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { maxBrowsingLevel: number };
+      expect(signArgs.maxBrowsingLevel).not.toBe(allBrowsingLevelsFlag);
+      expect(signArgs.maxBrowsingLevel).toBe(sfwBrowsingLevelsFlag);
+    });
+
+    it('a MATURE-rated app is REFUSED (403) on civitai.com (fail-closed cross-check)', async () => {
+      mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+        ...RESOLVED_INSTALL,
+        appBlock: {
+          ...RESOLVED_INSTALL.appBlock,
+          manifest: { scopes: ['models:read:self'], contentRating: 'x' },
+        },
+      });
+      mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(
+        makeReq({ origin: 'https://civitai.com', headers: { host: 'civitai.com' }, body: validBody() }),
+        res
+      );
+      expect(res._status).toBe(403);
+      expect(mockTokenService.sign).not.toHaveBeenCalled();
+    });
+
+    it('a MATURE-rated app MINTS on civitai.red (with the mature ceiling)', async () => {
+      mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+        ...RESOLVED_INSTALL,
+        appBlock: {
+          ...RESOLVED_INSTALL.appBlock,
+          manifest: { scopes: ['models:read:self'], contentRating: 'x' },
+        },
+      });
+      mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+      const { allBrowsingLevelsFlag } = await import('~/shared/constants/browsingLevel.constants');
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(
+        makeReq({ origin: 'https://civitai.red', headers: { host: 'civitai.red' }, body: validBody() }),
+        res
+      );
+      expect(res._status).toBe(200);
+      const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { maxBrowsingLevel: number };
+      expect(signArgs.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
+    });
+
+    it('an SFW (g) app mints fine on civitai.com (host gate only touches mature)', async () => {
+      mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+        ...RESOLVED_INSTALL,
+        appBlock: {
+          ...RESOLVED_INSTALL.appBlock,
+          manifest: { scopes: ['models:read:self'], contentRating: 'g' },
+        },
+      });
+      mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(
+        makeReq({ origin: 'https://civitai.com', headers: { host: 'civitai.com' }, body: validBody() }),
+        res
+      );
+      expect(res._status).toBe(200);
+      expect(mockTokenService.sign).toHaveBeenCalled();
+    });
   });
 
   // Last in file: this test resets modules to swap out the env mock; vitest

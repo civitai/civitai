@@ -112,6 +112,13 @@ export type GetPublishRequestScreenshotsInput = z.infer<
   typeof getPublishRequestScreenshotsSchema
 >;
 
+/** Input for the MOD-ONLY `blocks.getPublishRequestDiff` (line-level code diff). */
+export const getPublishRequestDiffSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type GetPublishRequestDiffInput = z.infer<typeof getPublishRequestDiffSchema>;
+
 export const backfillPublishRequestSchema = z.object({
   slug: z.string().min(3).max(40).regex(SLUG_REGEX),
   approvalNotes: z.string().max(2000).optional(),

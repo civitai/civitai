@@ -46,6 +46,10 @@ vi.mock('~/server/logging/client', () => ({
 vi.mock('~/server/prom/client', () => ({
   rewardFailedCounter: { inc: (...a: any[]) => h.rewardFailedInc(...a) },
   rewardGivenCounter: { inc: (...a: any[]) => h.rewardGivenInc(...a) },
+  // base.reward.ts increments this on the ClickHouse fail-soft path; without it
+  // in the mock the fail-soft branch calls `.inc` on undefined and rejects,
+  // making the "insert throw does NOT propagate" test fail.
+  clickhouseFailSoftCounter: { inc: vi.fn() },
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: (...args: any[]) => h.createBuzzTransactionMany(...args),

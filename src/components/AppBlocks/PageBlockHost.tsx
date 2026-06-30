@@ -1,7 +1,8 @@
-import { Box } from '@mantine/core';
+import { Box, Center, Loader } from '@mantine/core';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
@@ -10,6 +11,7 @@ import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   grantedPageScopes,
   pageFallbackReason,
+  resolveCheckpointPickerRequest,
   resolveResourcePickerRequest,
 } from './pageBlockHostLogic';
 import { projectBlockInitMaturity } from './projectBlockInit';
@@ -17,9 +19,11 @@ import { sendBlockRender } from './sendBlockRender';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
+import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openLoginPopup } from '~/utils/auth-helpers';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
@@ -38,9 +42,9 @@ const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // Login flow for anonymous-conversion (REQUEST_SIGN_IN). The page route renders
 // for logged-out viewers (the BLOCK_INIT context is viewer-scoped, viewer:null),
 // so a block can ask the host to start the civitai login flow when the user
-// clicks an action that needs auth/money. SSR-disabled to match IframeHost's
-// dynamic import (the modal pulls in client-only providers).
-const LoginModal = dynamic(() => import('~/components/Login/LoginModal'), { ssr: false });
+// clicks an action that needs auth/money. Login is now hub-driven (a popup to
+// auth.civitai.com) — see openLoginPopup; the old in-page LoginModal was removed
+// in the auth cutover.
 
 // Normalise a thrown storage error into a string the block can surface. Mirrors
 // IframeHost.storageErrorMessage EXACTLY — the apps.storage.* procs throw
@@ -132,6 +136,14 @@ export interface PageBlockHostProps {
    *  granted scopes (pushed to the iframe via TOKEN_REFRESH). Mirrors
    *  IframeHost.onConsentGranted → useBlockToken.refresh. */
   onConsentGranted?: () => void;
+  /** Re-mint the page token on a Retry from an AUTH-failure terminal state
+   *  (`error` / `no_token`). The token is a PROP minted by useBlockToken in the
+   *  route; `handleRetry`'s local reset alone can never clear an auth failure
+   *  because `token`/`tokenError` are owned upstream — only re-minting can. Wired
+   *  to the same useBlockToken.refresh as onConsentGranted (it aborts any
+   *  in-flight mint; the endpoint is rate-limited 60/min). Omitted → Retry on an
+   *  auth error only remounts (the pre-fix dead-end), so the route MUST pass it. */
+  onRetryToken?: () => void;
 }
 
 export function PageBlockHost({
@@ -155,10 +167,21 @@ export function PageBlockHost({
   viewer,
   theme,
   onConsentGranted,
+  onRetryToken,
 }: PageBlockHostProps) {
   const router = useRouter();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
+  // Mirror of `status` for the Retry handler to read the prior terminal state
+  // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater
+  // (which React may double-invoke under StrictMode → a double re-mint). Kept in
+  // sync via the effect below.
+  const statusRef = useRef<Status>('loading');
+  // #4 Retry: bumped by the terminal-fallback Retry button to re-key the
+  // <iframe> below. Re-keying forces React to unmount + remount the iframe (a
+  // fresh `contentWindow`), so the re-armed init handshake talks to a clean
+  // frame instead of a wedged one. See `handleRetry`.
+  const [reloadNonce, setReloadNonce] = useState<number>(0);
   const initSentRef = useRef<boolean>(false);
   const controllerRef = useRef<IframeInitController | null>(null);
   const buildInitPayloadRef = useRef<() => BlockInitPayload>();
@@ -168,6 +191,12 @@ export function PageBlockHost({
   // 'ready' state could each still observe `current === 'loading'`. This ref
   // makes the per-mount emit deterministic regardless of ack timing.
   const blockRenderEmittedRef = useRef<boolean>(false);
+
+  // Keep statusRef tracking the live status so handleRetry can branch on the
+  // prior terminal state without reading it inside the setStatus updater.
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const expectedOrigin = useMemo(() => {
     try {
@@ -702,13 +731,11 @@ export function PageBlockHost({
       const gateStatus = status === 'error' ? 'no_token' : status;
       const resolved = resolveRequestSignIn(gateStatus, raw);
       if (resolved == null) return; // not ready — drop (gate centralises the rules)
-      dialogStore.trigger({
-        component: LoginModal,
-        props: {
-          reason: 'image-gen',
-          ...(resolved.returnUrl ? { returnUrl: resolved.returnUrl } : {}),
-        },
-      });
+      // Hub-driven login (popup to auth.civitai.com). Falls back to the current page when the
+      // block didn't supply a sanitised same-origin returnUrl. `reason` rides to the hub for the
+      // LoginRedirect funnel analytics.
+      const here = window.location.pathname + window.location.search + window.location.hash;
+      openLoginPopup(resolved.returnUrl ?? here, 'image-gen');
     });
     return off;
   }, [onMessage, status]);
@@ -1018,6 +1045,122 @@ export function PageBlockHost({
     return off;
   }, [onMessage, send]);
 
+  // ── OPEN_CHECKPOINT_PICKER → CHECKPOINT_PICKER_RESULT (dev:live↔prod parity) ─
+  //
+  // The SDK hook `useCheckpointPicker()` posts OPEN_CHECKPOINT_PICKER. The
+  // model-slot host (IframeHost) handles it, AND the dev:live SDK host serves it
+  // — but this PAGE host only ever handled the newer/wider OPEN_RESOURCE_PICKER,
+  // so a page block calling `useCheckpointPicker()` had its request hit NO host
+  // handler (gotcha-#73): the "Change model" button spun forever — no network
+  // call, no error. Authors tested it working locally (dev:live serves it) then
+  // it silently broke in prod. This handler MIRRORS IframeHost's so that hook
+  // works identically on pages; it is purely additive (OPEN_RESOURCE_PICKER is
+  // unchanged) and a deliberately narrow checkpoint-only superset of it.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_CHECKPOINT_PICKER', (raw) => {
+      const req = resolveCheckpointPickerRequest(raw);
+      if (!req) return; // missing / non-string requestId → drop, never open the modal
+      const { requestId, baseModelGroup } = req;
+
+      // Normalize the optional family hint through getBaseModelGroup (accepts an
+      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). Empty /
+      // unresolved group → baseModels:[] → no checkpoints rather than all
+      // families (matching IframeHost: "all" would include incompatible families
+      // that 400 at submit).
+      const groupKey = baseModelGroup ? getBaseModelGroup(baseModelGroup) : null;
+      const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
+
+      let answered = false;
+      openResourceSelectModal({
+        title: 'Choose a checkpoint',
+        options: {
+          canGenerate: true,
+          resources: [{ type: 'Checkpoint', baseModels }],
+        },
+        onSelect: (resource) => {
+          answered = true;
+          // Same name/id-only projection IframeHost's CHECKPOINT_PICKER_RESULT
+          // uses — the public display names of the user-picked resource plus the
+          // body-building IDs; NO full GenerationResource spread, so no
+          // availability/access/early-access/nsfw/poi/minor internals reach the
+          // iframe.
+          send('CHECKPOINT_PICKER_RESULT', {
+            requestId,
+            selected: {
+              // GenerationResource.id is the modelVersionId at the wire.
+              versionId: resource.id,
+              modelId: resource.model.id,
+              modelName: resource.model.name,
+              versionName: resource.name,
+              baseModel: resource.baseModel,
+            },
+          });
+        },
+        onClose: () => {
+          // Dialog dismiss fires after onSelect when the user picks (the modal
+          // closes itself); only emit the "closed without picking" result if
+          // onSelect never ran. answered=true short-circuits so a pick isn't
+          // followed by a spurious cancel.
+          if (answered) return;
+          send('CHECKPOINT_PICKER_RESULT', { requestId });
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send]);
+
+  // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
+  //
+  // `useCheckpointPicker().persist(versionId)` posts SET_USER_CHECKPOINT and
+  // AWAITS USER_CHECKPOINT_SET (it's a request, not fire-and-forget). The
+  // model-slot host (IframeHost) handles it by writing `checkpoint_version_id`
+  // into `block_user_settings` for the (blockInstance, viewer) row, AND the
+  // dev:live SDK host serves it — so a block author who calls `persist()` sees
+  // it resolve locally, then (before this handler existed) had the SAME call
+  // hit NO page-host handler in prod: the persist promise hung to the SDK's
+  // request timeout (gotcha-#73, the "spins forever, no network call, no
+  // console error" class). This handler closes that silent hang.
+  //
+  // CRUCIAL: a page CANNOT persist a checkpoint override the way the model slot
+  // can. The server proc `blocks.updateUserSettings` HARD-REQUIRES `modelId`
+  // in the block-token ctx (it resolves a model-bound install via
+  // resolveBlockInstance({ modelId, slotId, ... })). A PAGE token's ctx is
+  // `{ slotId, entityType:'none' }` with NO modelId (isPageToken) — a page is
+  // stateless and binds to no model — so driving updateUserSettings with the
+  // page token would throw BAD_REQUEST ("block token lacks modelId context").
+  // There is no page-scoped user-settings row to write into today.
+  //
+  // So rather than INVENT a persistence target (a guess), this replies with an
+  // explicit, KNOWN-shape NACK: `USER_CHECKPOINT_SET { ok:false, error }`. That
+  // is the exact reply type+shape `persist()` awaits (it throws the `error`
+  // string when `ok:false`), so the block fails FAST and surfaces a clear
+  // message instead of hanging. The page's checkpoint flow is the in-memory
+  // OPEN_CHECKPOINT_PICKER result (above), which the block already holds — it
+  // does not need a persisted override.
+  //
+  // OPEN DECISION for a human (documented in
+  // claudedocs/app-blocks-host-handler-parity-2026-06-29.md): if pages should
+  // ever persist a viewer checkpoint preference, that needs a NEW page-scoped
+  // storage target (e.g. via the app-storage KV the page token already
+  // authorises) + a server proc that doesn't demand modelId — out of scope
+  // here. Until then a NACK is the correct, non-guessing behavior.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>('SET_USER_CHECKPOINT', (raw) => {
+      // NOTE: `payload.versionId` is intentionally NOT read or validated here —
+      // the page path always NACKs regardless of which checkpoint was requested
+      // (there is no page-scoped persistence target), so the versionId is moot.
+      // Mirror IframeHost's drop rule: a missing / non-string requestId can't be
+      // answered (no correlation id), so drop it silently rather than reply.
+      if (!raw || typeof raw.requestId !== 'string' || raw.requestId.length === 0) return;
+      send('USER_CHECKPOINT_SET', {
+        requestId: raw.requestId,
+        ok: false,
+        error: 'page blocks cannot persist a checkpoint override (no model binding)',
+      });
+    });
+    return off;
+  }, [onMessage, send]);
+
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';
 
@@ -1025,6 +1168,56 @@ export function PageBlockHost({
   // frame instead of a blank viewport. See pageBlockHostLogic.pageFallbackReason
   // for the status→reason mapping + the anti-spoof rationale.
   const fallbackReason = pageFallbackReason(status);
+
+  // #4 Retry: re-attempt the load from a terminal fallback. The full re-arm in
+  // one place so there's no stuck state and no timer leak across retries:
+  //   1. Dispose any controller the terminal cleanup may not have torn down yet
+  //      (defensive — the init effect's cleanup already disposes + nulls it when
+  //      status left 'loading'; this guarantees no orphaned interval/timeout
+  //      survives a retry).
+  //   2. Reset the per-mount handshake/analytics guards so init re-fires and a
+  //      successful retry re-emits exactly one impression.
+  //   3. Bump `reloadNonce` → re-keys the <iframe> → React remounts it (fresh
+  //      contentWindow), so the re-armed handshake talks to a clean frame.
+  //   4. Flip status back to 'loading'. shouldStartInit then re-passes and the
+  //      init effect (controllerRef now null) builds a NEW controller whose
+  //      start() re-posts BLOCK_INIT and re-arms the readiness timeout — so a
+  //      second failure routes back to the fallback (no stuck state), and a
+  //      BLOCK_READY clears it (success-after-retry).
+  // Only meaningful from a terminal state; a no-op while loading/ready (status
+  // stays put, nonce churn is harmless but we still gate to avoid a spurious
+  // iframe remount mid-handshake).
+  //
+  // AUTH-FAILURE branch (the HIGH this fix closes): the `error` (hard mint
+  // failure) and `no_token` (token never arrived) terminals are AUTH failures —
+  // the iframe never received a usable token. A local-only retry (reset +
+  // reloadNonce) can NEVER recover them: the token is a PROP minted upstream by
+  // useBlockToken (route), and `shouldStartInit` gates on `hasToken`. With
+  // `token`/`tokenError` unchanged, the re-armed handshake just times out to the
+  // SAME terminal again (the 15s dead-end). So for `error`/`no_token` we ALSO
+  // call onRetryToken (= useBlockToken.refresh) to re-mint the token; the rotated
+  // token flips the props, init re-fires, and a successful mint loads the block.
+  // For `fatal`/`timeout` the token was fine — the block crashed or didn't ack —
+  // so remount-only (no re-mint) is the right, unchanged behavior. refresh()
+  // aborts any in-flight mint and the endpoint is rate-limited (60/min); Retry is
+  // user-initiated, so no auto-retry loop is added.
+  const handleRetry = useCallback(() => {
+    const prior = statusRef.current;
+    // Double-click no-op guard (mirrors the pre-fix gate): a Retry while the
+    // status is already loading/ready does nothing — no re-mint, no remount.
+    if (prior === 'loading' || prior === 'ready') return;
+    // AUTH failures (`error`/`no_token`) need a token re-mint — the local reset
+    // below alone can't change the upstream `token`/`tokenError` props. Fire it
+    // BEFORE the local re-arm (the rotated token then flips props → init
+    // re-fires). `fatal`/`timeout` are not auth failures → remount only.
+    if (prior === 'error' || prior === 'no_token') onRetryToken?.();
+    controllerRef.current?.dispose();
+    controllerRef.current = null;
+    initSentRef.current = false;
+    blockRenderEmittedRef.current = false;
+    setReloadNonce((n) => n + 1);
+    setStatus('loading');
+  }, [onRetryToken]);
 
   return (
     <Box
@@ -1047,28 +1240,72 @@ export function PageBlockHost({
       // silently swallowed.
       data-needs-consent={needsConsent ? 'true' : 'false'}
     >
-      <AppBlockChrome blockInstanceId={blockInstanceId} appName={appName} />
+      <AppBlockChrome blockInstanceId={blockInstanceId} appName={appName} slotId={PAGE_SLOT_ID} />
       {showIframe ? (
-        <iframe
-          ref={iframeRef}
-          src={iframeSrc}
-          sandbox={effectiveSandbox}
-          referrerPolicy="no-referrer"
-          title={appName || blockId}
-          data-testid="app-page-iframe"
-          data-block-instance-id={blockInstanceId}
-          data-block-ready={isReady ? 'true' : 'false'}
-          style={{
-            flex: 1,
-            display: 'block',
-            width: '100%',
-            border: 0,
-            pointerEvents: isReady ? 'auto' : 'none',
-          }}
-        />
+        // The iframe fills the remaining viewport. While the block is still
+        // handshaking (status === 'loading', before BLOCK_READY), the surface
+        // would otherwise be blank — the iframe is mounted but visually empty and
+        // non-interactive (pointerEvents:none). Overlay a centered Loader on top
+        // so the user sees a loading state instead of a blank page. The overlay
+        // is gated purely on `status === 'loading'`: it unmounts the instant the
+        // status machine leaves loading — on BLOCK_READY (→ ready) AND on every
+        // terminal path (timeout / fatal / no_token / error, which also flip
+        // `showIframe` to false and render the BlockFallback below) — so it can
+        // never spin forever.
+        <Box style={{ position: 'relative', flex: 1, display: 'flex' }}>
+          <iframe
+            // #4 Retry: re-key on `reloadNonce` so a retry UNMOUNTS + REMOUNTS
+            // the iframe (fresh contentWindow), not just reloads its src — the
+            // re-armed init handshake then talks to a clean frame.
+            key={reloadNonce}
+            ref={iframeRef}
+            src={iframeSrc}
+            sandbox={effectiveSandbox}
+            referrerPolicy="no-referrer"
+            // Sanitize the publisher-controlled appName for the iframe title too
+            // (same sanitizer as the visible chrome + the loader aria-label), so
+            // every appName-derived plain-text attribute is consistent. Falls
+            // back to blockId when nothing legible remains.
+            title={sanitizeAppChromeName(appName) || blockId}
+            data-testid="app-page-iframe"
+            data-block-instance-id={blockInstanceId}
+            data-block-ready={isReady ? 'true' : 'false'}
+            style={{
+              flex: 1,
+              display: 'block',
+              width: '100%',
+              border: 0,
+              pointerEvents: isReady ? 'auto' : 'none',
+            }}
+          />
+          {status === 'loading' && (
+            <Center
+              data-testid="app-page-loading"
+              // Announce the loading state on the REGION, not just the graphic:
+              // role="status" + aria-busy mark the overlay container as a live
+              // busy region so a screen reader announces "loading" when it
+              // appears (the bare <Loader> below only exposes a labeled graphic).
+              role="status"
+              aria-busy={true}
+              aria-live="polite"
+              style={{ position: 'absolute', inset: 0, background: 'var(--mantine-color-body)' }}
+            >
+              {/* Run the publisher-controlled appName through the SAME sanitizer
+                  the visible chrome uses (sanitizeAppChromeName) so the accessible
+                  name a screen reader reads can't carry control/bidi/zalgo
+                  spoofing — consistency with AppBlockChrome, not a new gate. Falls
+                  back to 'app' when nothing legible remains. */}
+              <Loader aria-label={`Loading ${sanitizeAppChromeName(appName) || 'app'}`} />
+            </Center>
+          )}
+        </Box>
       ) : fallbackReason ? (
         <Box style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }} data-testid="app-page-fallback">
-          <BlockFallback reason={fallbackReason} blockName={appName} />
+          <BlockFallback
+            reason={fallbackReason}
+            blockName={sanitizeAppChromeName(appName) || blockId}
+            onRetry={handleRetry}
+          />
         </Box>
       ) : null}
     </Box>

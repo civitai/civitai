@@ -29,7 +29,7 @@ export const imagePostedToModelReward = createBuzzEvent({
   },
   getKey: async (input: ImagePostedToModelEvent, ctx) => {
     if (!input.modelOwnerId) {
-      const [{ userId }] = await ctx.db.$queryRaw<[{ userId: number }]>`
+      const [{ userId } = { userId: undefined }] = await ctx.db.$queryRaw<{ userId?: number }[]>`
         SELECT m."userId"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m."id" = mv."modelId"
@@ -37,7 +37,9 @@ export const imagePostedToModelReward = createBuzzEvent({
       `;
       input.modelOwnerId = userId;
     }
-    if (input.modelOwnerId === input.posterId) return false;
+    // No owner resolved (deleted model/version) or self-post → no reward. The destructure default guards
+    // against a `[]` result throwing out of this inline reward.
+    if (!input.modelOwnerId || input.modelOwnerId === input.posterId) return false;
 
     return {
       toUserId: input.modelOwnerId,

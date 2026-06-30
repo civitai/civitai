@@ -38,9 +38,9 @@ export const updateEntityMetric = async ({
   // (v5.0.1871). It wrote the in-app `entitymetric:Image:*` Redis cache, which
   // nothing reads anymore — image metric reads go through the watcher-fed
   // `metrics:*` cache via MetricService (`getImageMetricsObject`,
-  // `bitdex-stats.ts`). The comic read path uses a separate `entitymetric:Comic:*`
-  // key populated independently from ClickHouse (`populateComicMetrics`), so it
-  // never read what this increment wrote.
+  // `bitdex-stats.ts`). Comics no longer use this path either: every comic counter
+  // (incl. reads) is now Postgres-owned via `ComicProjectMetric`, and the old
+  // `entitymetric:Comic:*` Redis cache + its populator were removed.
   //
   // The `ctx.track.entityMetric(...)` emission below is intentionally KEPT: it is
   // the Kafka event that feeds the watcher (reactions/comments/collects/buzz ->

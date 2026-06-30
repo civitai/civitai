@@ -58,6 +58,7 @@ export const componentTypeConfig: Record<
  */
 export const comfyFileTypeLabels: Record<string, string> = {
   'Text Encoder': 'Text Encoder',
+  'Vision Encoder': 'Vision Encoder',
   UNet: 'UNet',
   'Diffusion Model': 'Diffusion Model',
   CLIPVision: 'CLIP Vision',
@@ -137,6 +138,7 @@ export function filterFileTypeByExtension(value: ModelFileType, fileName: string
         'ControlNet',
         'Upscaler',
         'Text Encoder',
+        'Vision Encoder',
         'Enhancement LoRA',
         'Other',
       ].includes(value);
@@ -174,6 +176,7 @@ const SPECIFIC_FALLBACK_TYPES = new Set([
   'ControlNet',
   'Upscaler',
   'Text Encoder',
+  'Vision Encoder',
   'Workflow',
   'Archive',
   'Config',
@@ -271,6 +274,8 @@ export const primaryFileTypesByModelType: Record<ModelType, readonly ModelFileTy
   TextEncoder: ['Model'],
   UNet: ['Model'],
   CLIPVision: ['Model'],
+  VisionLanguage: ['Model', 'Pruned Model'],
+  CLIP: ['Text Encoder', 'Vision Encoder'],
   Poses: ['Archive', 'Config'],
   Wildcards: ['Archive', 'Config'],
   Workflows: ['Archive', 'Config'],

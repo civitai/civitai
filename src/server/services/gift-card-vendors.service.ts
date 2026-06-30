@@ -1,4 +1,4 @@
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type { Vendor } from '~/utils/gift-cards/vendors';

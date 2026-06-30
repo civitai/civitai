@@ -980,8 +980,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: loraOnly },
 
-  // Krea 2 - checkpoint only (locked, no LoRA support)
-  { ecosystemId: ECO.Krea2, supportType: 'generation', modelTypes: checkpointOnly },
+  // Krea 2 - checkpoint locked, but base/turbo comfy variants support LoRA (medium/large FAL tiers do not); LoRA training via AI-Toolkit
+  { ecosystemId: ECO.Krea2, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Krea2, supportType: 'training', modelTypes: loraOnly },
 
   // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
   { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
@@ -3272,7 +3273,6 @@ export function getRootEcosystem(ecosystemIdOrBaseModel: number | string): Ecosy
   }
   return ecosystem;
 }
-
 
 /**
  * Clip skip is a CLIP text-encoder concept that only applies to the Stable

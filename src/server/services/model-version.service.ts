@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import {
@@ -29,8 +29,13 @@ import {
   modelVersionAccessCache,
   modelVersionResourceCache,
 } from '~/server/redis/caches';
-import { REDIS_KEYS } from '~/server/redis/client';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -222,9 +227,18 @@ export const toggleModelVersionEngagement = async ({
     return;
   }
 
-  await dbWrite.modelVersionEngagement.create({
-    data: { type, modelVersionId: versionId, userId },
-  });
+  await dbWrite.modelVersionEngagement
+    .create({
+      data: { type, modelVersionId: versionId, userId },
+    })
+    .catch((error) => {
+      // A toggle racing itself: both calls see no engagement and both create,
+      // so the second hits the (userId, modelVersionId) unique constraint
+      // (P2002). The engagement already exists — a toggle is idempotent, so
+      // treat this as success instead of bubbling a 500.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return;
+      throw error;
+    });
   return;
 };
 
@@ -1729,10 +1743,24 @@ export const modelVersionDonationGoals = async ({
       },
     },
   } as const;
-  const version = await dbRead.modelVersion.findFirstOrThrow(donationFindArgs).catch(() => {
-    dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
-    return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
-  });
+  const version = await dbRead.modelVersion
+    .findFirstOrThrow(donationFindArgs)
+    .catch(() => {
+      // Replica miss (often replica lag) — retry against the primary before
+      // deciding the record is truly gone.
+      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
+      return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
+    })
+    .catch((error) => {
+      // Genuinely not found on the primary too (P2025) is a client/not-found
+      // condition — surface 404 at the source. (The controller handler also
+      // maps P2025→NOT_FOUND via throwDbError, but only once its `return` is
+      // awaited; throwing here makes the 404 correct regardless of that.)
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw throwNotFoundError(`No model version with id ${id}`);
+      }
+      throw error;
+    });
 
   const canSeeAllGoals = userId === version.model.userId || isModerator;
 
@@ -1806,6 +1834,37 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
   return { items, nextCursor };
 }
 
+// Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
+// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
+const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
+
+export function publicModelResponseKey(
+  modelId: number,
+  browsingLevel: number
+): RedisKeyTemplateCache {
+  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${modelId}:${browsingLevel}`;
+}
+
+// Best-effort, fail-open invalidation of the origin-side public response cache for
+// GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
+// unpublish / takedown / update / delete drops the cached 200 immediately rather
+// than serving stale for up to the cache TTL globally. Busts BOTH browsing-level
+// keys the handler can write (all-levels for unrestricted regions, sfw-only for
+// region-restricted ones). Deletes the physical key — the handler's read keys off
+// key PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT
+// throw into the mutation path, so it is swallowed (the entry otherwise expires
+// via its TTL).
+export async function bustPublicModelResponseCache(modelId: number | number[]) {
+  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
+  const modelIds = Array.isArray(modelId) ? modelId : [modelId];
+  if (modelIds.length === 0) return;
+  const keys = modelIds.flatMap((id) => [
+    publicModelResponseKey(id, allBrowsingLevelsFlag),
+    publicModelResponseKey(id, sfwBrowsingLevelsFlag),
+  ]);
+  await redis.del(keys).catch(() => undefined);
+}
+
 export const bustMvCache = async (
   ids: number | number[],
   modelIds?: number | number[],
@@ -1826,6 +1885,9 @@ export const bustMvCache = async (
     // separately. Stale entries here filter the model out of feeds (versions
     // with status='Draft' get dropped by the post-fetch transform).
     await dataForModelsCache.refresh(mIds);
+    // Drop the origin-side public GET /api/v1/models/[id] response cache for these
+    // models so a takedown / unpublish / update stops serving a stale 200.
+    await bustPublicModelResponseCache(mIds);
     await modelsSearchIndex.queueUpdate(
       mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
@@ -1931,6 +1993,10 @@ export const createModelVersionPostFromTraining = async ({
       })
     )
   );
+
+  // Returned so request handlers can emit the post-create ClickHouse event
+  // (track.post) — the service-level createPost above doesn't track on its own.
+  return post;
 };
 
 export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularityInput) => {
@@ -2181,6 +2247,14 @@ export const mergeVersions = async ({
   }
   if (sourceVersionIds.includes(targetVersionId)) {
     throw throwBadRequestError('Target version cannot be in the source versions list.');
+  }
+  // Defensive: every raw query below interpolates `Prisma.join(sourceVersionIds)`,
+  // which throws "Expected join([]) to be called with an array of multiple
+  // elements" on an empty array. The tRPC schema enforces `.min(1)`, but guard
+  // here too so any non-router caller gets a clean 400 (nothing to merge) rather
+  // than an INTERNAL_SERVER_ERROR.
+  if (sourceVersionIds.length === 0) {
+    throw throwBadRequestError('No source versions to merge.');
   }
 
   // Block if any source version has active monetization or early access purchases

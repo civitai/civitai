@@ -862,7 +862,11 @@ export const modelVersionDonationGoalsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return modelVersionDonationGoals({
+    // `await` is load-bearing: without it the rejected promise escapes this
+    // try/catch (so a Prisma error bypassed the P2025→NOT_FOUND mapping in
+    // throwDbError and surfaced as INTERNAL_SERVER_ERROR). The service now also
+    // throws NOT_FOUND at the source, so this is belt-and-suspenders.
+    return await modelVersionDonationGoals({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
@@ -1083,10 +1087,19 @@ export async function publishPrivateModelVersionHandler({
   }
 
   if (!version.posts.length) {
-    await createModelVersionPostFromTraining({
+    const post = await createModelVersionPostFromTraining({
       modelVersionId: version.id,
       user: ctx.user,
     });
+    // createPost (service) doesn't emit the post-create ClickHouse event, so do it
+    // here, tagged 'training' to mark the origin. nsfw is hardcoded false rather
+    // than derived from nsfwLevel (as other track.post calls do): the sample
+    // images were just uploaded and aren't scanned yet, so the post's nsfwLevel
+    // is still 0 and !getIsSafeBrowsingLevel(0) would flag every training post as
+    // NSFW. The scan pipeline sets the real level later.
+    if (post) {
+      await ctx.track.post({ type: 'Create', postId: post.id, nsfw: false, tags: ['training'] });
+    }
   }
 
   const modelVersion = await updateModelVersionById({

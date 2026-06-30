@@ -443,6 +443,10 @@ describe('BlockRegistry.listForModel content-rating filter (audit I15)', () => {
       modelId: 1,
       slotId: 'model.sidebar_top',
       modelNsfwLevel: 8, // 'x'
+      // NSFW-APP-RED-ONLY: this test exercises the model-NSFW-ladder gate, not the
+      // host gate, so run as if on a red-capable host (mature apps allowed). The
+      // host gate has its own dedicated tests in listForModel.behavior.test.ts.
+      redCapable: true,
     });
     expect(result.map((r) => r.blockId).sort()).toEqual(['blk_g', 'blk_x']);
   });

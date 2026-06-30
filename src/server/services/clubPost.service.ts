@@ -24,7 +24,7 @@ import { getPostsInfinite } from './post.service';
 import { ArticleSort, ModelSort, PostSort } from '../common/enums';
 import { clubMetrics } from '../metrics';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 
 export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
   input: { cursor, limit: take, clubId, isModerator, userId },

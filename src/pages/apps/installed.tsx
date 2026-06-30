@@ -5,7 +5,6 @@ import {
   Button,
   Card,
   Center,
-  Container,
   Divider,
   Group,
   Loader,
@@ -14,7 +13,6 @@ import {
   Table,
   Tabs,
   Text,
-  Title,
   Tooltip,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
@@ -32,6 +30,7 @@ import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { groupSubscriptionsByApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
 import { useHiddenBlockList, unhideBlock } from '~/components/AppBlocks/hiddenBlocks';
@@ -127,7 +126,7 @@ function PinnedInstallRow({ sub }: PinnedInstallRowProps) {
       children: (
         <Stack gap="xs">
           <Text size="sm">
-            This removes the install row entirely. The block will stop appearing on{' '}
+            This removes the install row entirely. The app will stop appearing on{' '}
             <strong>{targetName}</strong>. Any platform default for the same slot will become
             eligible again. The app's data and any other installs of it are untouched.
           </Text>
@@ -675,7 +674,7 @@ function HiddenBlocksPanel() {
         <Stack align="center" gap="xs">
           <IconEyeOff size={28} opacity={0.5} />
           <Text size="sm" c="dimmed" ta="center" maw={420}>
-            You haven't hidden any app blocks. Use the ⋯ menu on a block to hide it on this
+            You haven't hidden any apps. Use the ⋯ menu on an app to hide it on this
             device — it only affects what you see, never the publisher or other viewers.
           </Text>
         </Stack>
@@ -690,7 +689,7 @@ function HiddenBlocksPanel() {
           <Group justify="space-between" wrap="nowrap" gap="md" align="center">
             <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
               <Text fw={600} className="truncate">
-                {block.appName ?? 'App block'}
+                {block.appName ?? 'App'}
               </Text>
               <Group gap={6} wrap="wrap">
                 {block.modelId ? (
@@ -712,7 +711,7 @@ function HiddenBlocksPanel() {
                 unhideBlock(block.blockInstanceId);
                 showSuccessNotification({
                   title: 'Restored',
-                  message: `${block.appName ?? 'App block'} will show again.`,
+                  message: `${block.appName ?? 'App'} will show again.`,
                 });
               }}
             >
@@ -749,9 +748,15 @@ export default function InstalledAppsPage() {
       // E3 marketplace-card fields — unused on the Manage path (modal-only).
       category: null,
       scopesSummary: [],
+      // An installed app is on-platform by definition (external-link apps have
+      // no install) — never an external listing on this path.
+      externalUrl: null,
       // Marketplace reviews — unused on the Manage path (modal-only).
       avgRating: null,
       reviewCount: 0,
+      // Card cover — unused on the Manage path (the modal renders no cover) and
+      // the subscription row carries no screenshot data, so null.
+      coverUrl: null,
     };
     const existingByScope: Partial<Record<typeof sub.scope, SubscriptionRecord>> = {};
     for (const candidate of subs ?? []) {
@@ -767,26 +772,22 @@ export default function InstalledAppsPage() {
   return (
     <>
       <Meta title="Installed Apps — Civitai" deIndex />
-      <Container size="lg" py="md">
-        <Stack gap="lg">
-          <Group justify="space-between">
-            <Stack gap={2}>
-              <Title order={2}>Your installed apps</Title>
-              <Text size="sm" c="dimmed">
-                Manage where Civitai App Blocks show up across the site.
-              </Text>
-            </Stack>
-            <Button
-              component={Link}
-              href="/apps"
-              leftSection={<IconPlus size={16} />}
-              variant="default"
-            >
-              Browse marketplace
-            </Button>
-          </Group>
-
-          <Tabs defaultValue="subscriptions" variant="outline">
+      <AppsPageLayout
+        size="lg"
+        title="Your installed apps"
+        subtitle="Manage where Civitai Apps show up across the site."
+        actions={
+          <Button
+            component={Link}
+            href="/apps"
+            leftSection={<IconPlus size={16} />}
+            variant="default"
+          >
+            Browse marketplace
+          </Button>
+        }
+      >
+        <Tabs defaultValue="subscriptions" variant="outline">
             <Tabs.List>
               <Tabs.Tab value="subscriptions" leftSection={<IconPlugConnected size={14} />}>
                 Installs
@@ -846,16 +847,15 @@ export default function InstalledAppsPage() {
             <Tabs.Panel value="hidden" pt="md">
               <Stack gap="sm">
                 <Text size="sm" c="dimmed">
-                  App blocks you've hidden on this device. Hiding is local to your browser —
+                  Apps you've hidden on this device. Hiding is local to your browser —
                   it never affects the publisher's install or other viewers. Restore one to
                   have it show on its model page again.
                 </Text>
                 <HiddenBlocksPanel />
               </Stack>
             </Tabs.Panel>
-          </Tabs>
-        </Stack>
-      </Container>
+        </Tabs>
+      </AppsPageLayout>
     </>
   );
 }

@@ -115,6 +115,7 @@ async function listForModel(args: {
   modelType?: string;
   modelNsfwLevel?: number;
   viewerUserId?: number | null;
+  redCapable?: boolean;
 }) {
   const { BlockRegistry } = await import('../block-registry.service');
   return BlockRegistry.listForModel({
@@ -123,6 +124,11 @@ async function listForModel(args: {
     modelType: args.modelType,
     modelNsfwLevel: args.modelNsfwLevel ?? 8, // 'x' ceiling unless a test lowers it
     viewerUserId: args.viewerUserId,
+    // NSFW-APP-RED-ONLY: the precedence/content-rating tests below exercise the
+    // model-NSFW-ladder gate, NOT the host gate, so they run as if on a
+    // red-capable host (mature apps allowed). Default true here; the dedicated
+    // host-gate describe block flips it to false to test the .com posture.
+    redCapable: args.redCapable ?? true,
   });
 }
 
@@ -478,5 +484,67 @@ describe('listForModel suppressor-gap bugs (assert desired behavior)', () => {
 
     const rows = await listForModel({ modelNsfwLevel: 1 });
     expect(ids(rows)).toEqual(['bus_pub_sub_blanket']);
+  });
+});
+
+// =============================================================================
+// NSFW-APP-RED-ONLY — the HOST maturity gate (independent of the model-NSFW
+// ladder). A mature (r/x) app renders in a model slot ONLY on a red-capable
+// host. SFW apps render anywhere. Fail-closed: !redCapable hides mature apps,
+// even on an x-rated model (the existing nsfw ladder permits them; the host gate
+// does not).
+// =============================================================================
+describe('listForModel — NSFW-app-red-only host gate', () => {
+  it('mature (x) app is HIDDEN on a non-red host even when the model nsfw allows it', async () => {
+    await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
+    await seedAppBlock(db, { id: 'ab_x', blockId: 'blk_x', manifest: manifestX });
+    await seedPlatformDefault(db, { appBlockId: 'ab_x', slotId: SLOT });
+    // model nsfw 8 = 'x' ceiling → the ladder permits it; the host gate must not.
+    const rows = await listForModel({ modelNsfwLevel: 8, redCapable: false });
+    expect(ids(rows)).toEqual([]);
+  });
+
+  it('mature (x) app is SHOWN on a red-capable host', async () => {
+    await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
+    await seedAppBlock(db, { id: 'ab_x', blockId: 'blk_x', manifest: manifestX });
+    await seedPlatformDefault(db, { appBlockId: 'ab_x', slotId: SLOT });
+    const rows = await listForModel({ modelNsfwLevel: 8, redCapable: true });
+    expect(ids(rows)).toEqual(['pdb_ab_x']);
+  });
+
+  it('SFW (g) app renders on a non-red host (host gate only touches mature)', async () => {
+    await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
+    await seedAppBlock(db, { id: 'ab_g', blockId: 'blk_g', manifest: manifestG });
+    await seedPlatformDefault(db, { appBlockId: 'ab_g', slotId: SLOT });
+    const rows = await listForModel({ modelNsfwLevel: 8, redCapable: false });
+    expect(ids(rows)).toEqual(['pdb_ab_g']);
+  });
+
+  it('SFW (g) app renders on a red-capable host too', async () => {
+    await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
+    await seedAppBlock(db, { id: 'ab_g', blockId: 'blk_g', manifest: manifestG });
+    await seedPlatformDefault(db, { appBlockId: 'ab_g', slotId: SLOT });
+    const rows = await listForModel({ modelNsfwLevel: 8, redCapable: true });
+    expect(ids(rows)).toEqual(['pdb_ab_g']);
+  });
+
+  it('mixed slot: only the SFW app survives on a non-red host', async () => {
+    await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
+    await seedAppBlock(db, { id: 'ab_g', blockId: 'blk_g', manifest: manifestG });
+    await seedAppBlock(db, { id: 'ab_x', blockId: 'blk_x', manifest: manifestX });
+    await seedPlatformDefault(db, { appBlockId: 'ab_g', slotId: SLOT, priority: 10 });
+    await seedPlatformDefault(db, { appBlockId: 'ab_x', slotId: SLOT, priority: 5 });
+    const rows = await listForModel({ modelNsfwLevel: 8, redCapable: false });
+    expect(blockIds(rows)).toEqual(['blk_g']);
+  });
+
+  it('mixed slot: BOTH apps survive on a red-capable host', async () => {
+    await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
+    await seedAppBlock(db, { id: 'ab_g', blockId: 'blk_g', manifest: manifestG });
+    await seedAppBlock(db, { id: 'ab_x', blockId: 'blk_x', manifest: manifestX });
+    await seedPlatformDefault(db, { appBlockId: 'ab_g', slotId: SLOT, priority: 10 });
+    await seedPlatformDefault(db, { appBlockId: 'ab_x', slotId: SLOT, priority: 5 });
+    const rows = await listForModel({ modelNsfwLevel: 8, redCapable: true });
+    expect(blockIds(rows)).toEqual(['blk_g', 'blk_x']);
   });
 });

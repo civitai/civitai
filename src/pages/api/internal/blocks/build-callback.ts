@@ -8,6 +8,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
+import { autogenerateScreenshotIfMissing } from '~/server/services/blocks/autogenerate-screenshot.service';
 import { markRequestDeployState } from '~/server/services/blocks/publish-request.service';
 
 /**
@@ -403,6 +404,12 @@ async function watchApplyJobAndRecord(args: {
         context: 'civitai/deploy',
         description: 'Deployed to civitai-apps',
       });
+      // F-E E5 autogen — now that the new version is actually serving at
+      // https://<slug>.<APPS_DOMAIN>, capture a marketplace screenshot IFF the
+      // app shipped no publisher screenshots. Best-effort + fire-and-forget:
+      // a screenshot failure must never affect the deploy outcome (the user
+      // response already shipped; this watcher only records side-effects).
+      void safe(autogenerateScreenshotIfMissing, args.appBlockId, args.slug);
     } else {
       // Failure or timeout — leave the existing currentVersionDeployedAt
       // alone (it correctly reflects the LAST successful deploy, not the

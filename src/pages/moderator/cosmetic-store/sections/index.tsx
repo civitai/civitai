@@ -35,8 +35,11 @@ import { Meta } from '~/components/Meta/Meta';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { constants } from '~/server/common/constants';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+
+export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function CosmeticStoreSections() {
   const { cosmeticShopSections, isLoading: isLoadingSections } = useQueryCosmeticShopSections();

@@ -14,7 +14,6 @@
  * | useSourceMetadataStore             | store/source-metadata.store.ts               | ImageUploadMultipleInput, FormFooter, useGeneratedItemWorkflows  | sessionStorage |
  * | useRemixStore                      | store/remix.store.ts                         | FormFooter, useRemixOfId, useGeneratedItemWorkflows              | localStorage   |
  * | useEcosystemGroupPreferencesStore  | store/ecosystem-group-preferences.store.ts   | BaseModelInput                                                   | localStorage   |
- * | useLegacyGeneratorStore            | store/legacy-generator.store.ts              | useGeneratedItemWorkflows                                        | localStorage   |
  * | usePromptFocusedStore              | inputs/PromptInput.tsx (local)               | PromptInput                                                      | memory         |
  */
 

@@ -38,6 +38,7 @@ import {
   approveRequestSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
+  getPublishRequestDiffSchema,
   getPublishRequestScreenshotsSchema,
   listApprovedRequestsSchema,
   listPendingRequestsSchema,
@@ -45,6 +46,7 @@ import {
   rejectRequestSchema,
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
+import { registerExternalAppSchema } from '~/server/schema/blocks/external-app.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import {
   allowMatureContentForCeiling,
@@ -70,7 +72,7 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
@@ -86,7 +88,9 @@ import {
 } from '~/server/services/blocks/workflow.service';
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
+import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
+import { getBlockAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -95,7 +99,7 @@ import {
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { getUserById } from '~/server/services/user.service';
-import { getSessionUser } from '~/server/auth/session-user';
+import { sessionClient } from '~/server/auth/session-client';
 import {
   guardedProcedure,
   moderatorProcedure,
@@ -105,7 +109,7 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 
 /**
  * H-2: every blocks router procedure gates on the Flipt flag. When the
@@ -181,9 +185,9 @@ async function assertViewerIsModerator(userId: number): Promise<void> {
  * (budget cap, daily Buzz cap, reserveBlockBuzzSpend, getOrchestratorToken,
  * forced-SFW) are unchanged — this only swaps which identity the FLAG sees.
  *
- * Resolves the FULL server-side SessionUser via `getSessionUser` (never a
- * client-supplied value) so the segment match can't be spoofed AND every
- * property `buildFliptContext` consumes is real.
+ * Resolves the FULL server-side SessionUser via `sessionClient.getSessionUserById`
+ * (the hub-backed resolver; never a client-supplied value) so the segment match
+ * can't be spoofed AND every property `buildFliptContext` consumes is real.
  *
  * ## Why the full SessionUser, not a trimmed `{ id, isModerator }` cast
  *
@@ -206,8 +210,10 @@ async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void>
   // not type-defaults. A vanished user → undefined → global eval → flag false
   // → blocked (fail-closed; the subsequent assertViewerIsModerator would also
   // reject).
-  const user = await getSessionUser({ userId });
-  if (!(await isAppBlocksEnabled({ user }))) {
+  // getSessionUserById returns the package SessionUser (loosely typed at this boundary — cast as bearer-token.ts
+  // does) or null for a vanished user. null → undefined → isAppBlocksEnabled's global eval → flag false → blocked.
+  const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
+  if (!(await isAppBlocksEnabled({ user: user ?? undefined }))) {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
   }
 }
@@ -617,6 +623,20 @@ function assertLaunchSlotForCaller(
 }
 
 /**
+ * NSFW-APP-RED-ONLY: true when the request is on a red-capable host
+ * (civitai.red or a red alias). Drives whether mature (r/x) apps appear in the
+ * marketplace listing / featured rail / detail / model-slot reads. Uses
+ * `isHostForColor(host, 'red')` (NOT `getRequestDomainColor`, which returns
+ * `blue` for civitai.red). Maturity is a HOST property — independent of
+ * moderator status — so even a mod on civitai.com does not see mature apps in
+ * these viewer-facing surfaces. Fail-closed: a missing host → false (SFW only).
+ */
+function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): boolean {
+  const host = ctx.req?.headers?.host ?? '';
+  return host !== '' && isHostForColor(host, 'red');
+}
+
+/**
  * Manifest-level variant of {@link assertLaunchSlotForCaller} for the
  * subscription path, where the slot isn't an input — it's implied by the app's
  * manifest targets. A model-slot app (the only kind that takes a subscription;
@@ -686,7 +706,7 @@ async function createBlockTextToImageStep(opts: {
     id: opts.user.id,
     isModerator: opts.user.isModerator,
   });
-  const steps = await createWorkflowStepsFromGraphInput({
+  const { steps, workflowMetadata } = await createWorkflowStepsFromGraphInput({
     input: opts.input,
     externalCtx,
     user: { id: opts.user.id, isModerator: opts.user.isModerator },
@@ -703,7 +723,15 @@ async function createBlockTextToImageStep(opts: {
       message: 'expected a single generation step',
     });
   }
-  return step;
+  // `workflowMetadata` (params/resources/remixOfId/isPrivateGeneration, already
+  // `removeEmpty`-cleaned) is what populates the orchestrator queue/remix view
+  // (`WorkflowData.params/resources/remixOfId`). The normal generation form
+  // attaches it on submit; the block path historically dropped it, leaving
+  // block-generated images with blank queue metadata (no prompt/seed/sampler/
+  // resources). It is `undefined` on whatIf calls (the graph omits it then), so
+  // callers can attach it to the REAL submit body only — mirroring the normal
+  // path's `isWhatIf ? undefined : metadata` semantics — without a separate flag.
+  return { step, workflowMetadata };
 }
 
 export const blocksRouter = router({
@@ -738,6 +766,9 @@ export const blocksRouter = router({
       return BlockRegistry.listForModel({
         ...input,
         viewerUserId: ctx.user?.id ?? null,
+        // NSFW-APP-RED-ONLY: mature (r/x) apps render in a model slot only on a
+        // red-capable host. Threaded from the request host.
+        redCapable: isRedCapableRequest(ctx),
       });
     }),
 
@@ -982,6 +1013,30 @@ export const blocksRouter = router({
     }),
 
   /**
+   * MOD-ONLY line-level code diff for a publish request. Computes the per-file
+   * UNIFIED diff between the pending bundle and the previous approved version so
+   * a reviewer can read the actual code change in the modal instead of clicking
+   * out to Forgejo per file. Bounded server-side (text-only, per-file byte +
+   * line caps, total file cap) — elided files are explicitly marked so the UI
+   * shows the "diff too large / binary — view in Forgejo" fallback.
+   *
+   * Same auth shape as getPublishRequestScreenshots: `moderatorProcedure` +
+   * `isModerator` belt + `enforceAppBlocksFlag` — no public path.
+   */
+  getPublishRequestDiff: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getPublishRequestDiffSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review is restricted to civitai team');
+      }
+      const { getPublishRequestDiff } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      return getPublishRequestDiff({ publishRequestId: input.publishRequestId });
+    }),
+
+  /**
    * Approve a pending publish request: pre-creates the OauthClient +
    * app_blocks row (first version), commits the bundle to Forgejo in a
    * single atomic commit, and lets the existing git-push webhook fire
@@ -1002,6 +1057,43 @@ export const blocksRouter = router({
           publishRequestId: input.publishRequestId,
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
+        });
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+        });
+      }
+    }),
+
+  /**
+   * Register an off-site (external-link) app — PURE EXTERNAL LINK model.
+   *
+   * MOD-ONLY, single-step (no bundle / Forgejo / approve pipeline): inserts an
+   * `status='approved'` app_blocks row with `external_url` set so the
+   * marketplace renders a listing that opens the URL in a new tab. The app has
+   * NO install, NO scopes, NO block token, NO subscription, and NO on-platform
+   * hosting. The service validates the https:// URL + the
+   * external-vs-on-platform mutual exclusivity.
+   */
+  registerExternalApp: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(registerExternalAppSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { registerExternalApp } = await import(
+        '~/server/services/blocks/external-app.service'
+      );
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Registering external apps is restricted to civitai team');
+      }
+      try {
+        return await registerExternalApp({
+          slug: input.slug,
+          name: input.name,
+          description: input.description,
+          externalUrl: input.externalUrl,
+          category: input.category,
+          reviewerUserId: ctx.user.id,
         });
       } catch (err) {
         throw new TRPCError({
@@ -1040,6 +1132,29 @@ export const blocksRouter = router({
           message: (err as Error).message,
         });
       }
+    }),
+
+  /**
+   * F-E E5 autogen — moderator-only backfill of autogenerated marketplace
+   * screenshots for EXISTING approved apps that lack any. The deploy-success
+   * hook only fires autogen on a NEW deploy; this lets a mod populate the
+   * CURRENT catalog without waiting for each app to redeploy.
+   *
+   * Best-effort + serialised (verify-runner is single-replica). Returns a
+   * per-app summary. Gated like the other mod management procs: moderatorProcedure
+   * + the isModerator belt + enforceAppBlocksFlag (dark behind the flag).
+   */
+  backfillScreenshots: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ limit: z.number().int().min(1).max(200).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Screenshot backfill is restricted to civitai team');
+      }
+      const { backfillMissingScreenshots } = await import(
+        '~/server/services/blocks/autogenerate-screenshot.service'
+      );
+      return backfillMissingScreenshots({ limit: input.limit });
     }),
 
   /**
@@ -1360,6 +1475,58 @@ export const blocksRouter = router({
     }),
 
   /**
+   * Lightweight booleans that drive the conditional links in the apps
+   * sub-nav (`AppsSubNav`). One round-trip instead of fanning out to
+   * `listMySubscriptions` + `listMyPublishRequests` + `getMyApps` (the
+   * heavyweight per-page queries) just to decide which tabs to show.
+   *
+   * Booleans ONLY — no rows, no manifests, no per-app data. Each check is a
+   * `findFirst({ select: { id } })` so Prisma pushes `LIMIT 1` into SQL and
+   * stops at the first matching row (a `count({ take: 1 })` would NOT — Prisma
+   * ignores `take` for `count` and runs a full `COUNT(*)`). Stays cheap even
+   * for a user with many installs/submissions.
+   *
+   * `protectedProcedure` + `enforceAppBlocksFlag`: own-data scoped to
+   * `ctx.user.id`; returns the all-false shape when the flag is dark so
+   * the sub-nav degrades to just the always-on tabs.
+   */
+  getNavSummary: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .query(async ({ ctx }) => {
+      const allFalse = {
+        hasInstalls: false,
+        hasSubmissions: false,
+        hasApprovedApps: false,
+        isReviewer: false,
+      };
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return allFalse;
+      const user = ctx.user;
+      if (!user) return allFalse;
+
+      const [install, submission, approvedApp] = await Promise.all([
+        dbRead.blockUserSubscription.findFirst({
+          where: { userId: user.id },
+          select: { id: true },
+        }),
+        dbRead.appBlockPublishRequest.findFirst({
+          where: { submittedByUserId: user.id },
+          select: { id: true },
+        }),
+        dbRead.appBlock.findFirst({
+          where: { app: { userId: user.id }, status: 'approved' },
+          select: { id: true },
+        }),
+      ]);
+
+      return {
+        hasInstalls: install !== null,
+        hasSubmissions: submission !== null,
+        hasApprovedApps: approvedApp !== null,
+        isReviewer: isAppReviewer(user),
+      };
+    }),
+
+  /**
    * Marketplace listing — approved app blocks, optionally filtered by slot
    * and/or a free-text query. Cursor-paginated. Public, ANON-CAPABLE (F-E E1):
    * any viewer the appBlocks flag grants can browse the marketplace without a
@@ -1414,7 +1581,12 @@ export const blocksRouter = router({
       // mod-only model-slot apps like generate-from-model). Mod status comes
       // from the server-stamped session `ctx.user?.isModerator` (cannot be
       // spoofed client-side — same source as every other belt in this router).
-      return BlockRegistry.listAvailable(input, !ctx.user?.isModerator);
+      return BlockRegistry.listAvailable(
+        input,
+        !ctx.user?.isModerator,
+        // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the listing off .red.
+        isRedCapableRequest(ctx)
+      );
     }),
 
   /**
@@ -1473,7 +1645,10 @@ export const blocksRouter = router({
       // the server-stamped session flag.
       const detail = await BlockRegistry.getAppDetail(
         input.appBlockId,
-        !ctx.user?.isModerator
+        !ctx.user?.isModerator,
+        // NSFW-APP-RED-ONLY: a mature (r/x) app's detail resolves to NOT_FOUND
+        // off a red-capable host (mirrors the run-page SSR 404).
+        isRedCapableRequest(ctx)
       );
       if (!detail) throw throwNotFoundError('App block not found');
       return detail;
@@ -1517,7 +1692,9 @@ export const blocksRouter = router({
       // non-mod featured rail carries launch (page) apps only; mods see all.
       const items = await BlockRegistry.getFeaturedBlocks(
         input.limit,
-        !ctx.user?.isModerator
+        !ctx.user?.isModerator,
+        // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the featured rail off .red.
+        isRedCapableRequest(ctx)
       );
       return { items };
     }),
@@ -2016,7 +2193,11 @@ export const blocksRouter = router({
       // SFW-domain block can't even PICK a mature resource — defense in depth)
       // and the generation-output clamp (`allowMatureContent`). Green AND blue
       // → sfwOnly true; red → false. Mirrors submitWorkflow below.
-      const { allowMatureContent } = resolveBlockMaturity(claims);
+      const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+      // Currency parity (on-site `resolveGenerationCurrencies`): blue-first +
+      // the domain currency, derived from the SAME authoritative ceiling as the
+      // output clamp. SFW → blue/green; mature → blue/yellow.
+      const currencies = resolveBlockCurrencies(isGreen);
       if (isPage) {
         // Resolve + validate the LoRA stack first (LoRA-only + family-match)
         // so a bad resource fails BEFORE the entitlement gate / any cost.
@@ -2041,13 +2222,16 @@ export const blocksRouter = router({
         checkpointVersionId: checkpoint.versionId,
         checkpointBaseModel: checkpoint.baseModel,
       });
-      const step = await createBlockTextToImageStep({ input: generateInput, user, whatIf: true });
+      // whatIf: no `metadata` on the body — matches the normal path
+      // (`generateFromGraph` builds workflowMetadata only for real submits) and
+      // `createBlockTextToImageStep` returns `workflowMetadata: undefined` here.
+      const { step } = await createBlockTextToImageStep({ input: generateInput, user, whatIf: true });
       const workflow = await submitWorkflow({
         token,
         body: {
           steps: [step],
           tags: buildWorkflowTags(claims, resolved.baseModel),
-          currencies: BLOCK_CURRENCIES,
+          currencies,
           ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         },
         query: { whatif: true },
@@ -2159,6 +2343,12 @@ export const blocksRouter = router({
       // (green/blue) block cannot widen to mature output. Fail closed: a
       // legacy/absent claim resolves to the SFW ceiling.
       const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+      // Currency parity (on-site `resolveGenerationCurrencies`): blue-first +
+      // the domain currency, derived from the SAME authoritative ceiling as the
+      // output clamp. SFW → blue/green; mature → blue/yellow. Used by BOTH the
+      // whatIf cost-check and the real submit below so the estimate matches what
+      // the real submit will actually drain.
+      const currencies = resolveBlockCurrencies(isGreen);
 
       if (isPage) {
         const loraGates = await resolvePageLoraGates({
@@ -2200,7 +2390,9 @@ export const blocksRouter = router({
       // two (the graph fills a random seed when none is supplied), but that
       // doesn't affect cost — the estimate is computed against the same
       // resources/params the real submit uses.
-      const stepForCostCheck = await createBlockTextToImageStep({
+      // whatIf cost preflight: `workflowMetadata` is undefined here (graph omits
+      // it on whatIf), and the whatif body never carries `metadata` anyway.
+      const { step: stepForCostCheck } = await createBlockTextToImageStep({
         input: generateInput,
         user,
         whatIf: true,
@@ -2211,7 +2403,7 @@ export const blocksRouter = router({
         body: {
           steps: [stepForCostCheck],
           tags,
-          currencies: BLOCK_CURRENCIES,
+          currencies,
           ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         },
         query: { whatif: true },
@@ -2288,13 +2480,24 @@ export const blocksRouter = router({
           ip: ctx.ip,
         });
 
-        const step = await createBlockTextToImageStep({ input: generateInput, user, isGreen });
+        // REAL submit: attach `workflowMetadata` so the orchestrator queue/remix
+        // view shows the prompt/seed/sampler/cfg/steps/resources. This is the
+        // non-whatIf call (no `whatIf` flag), so the graph builds metadata and
+        // `createBlockTextToImageStep` returns it. Mirrors the normal form path
+        // (`generateFromGraph` passes `metadata: workflowMetadata`). `removeEmpty`
+        // already stripped fields the block context lacks (e.g. remixOfId).
+        const { step, workflowMetadata } = await createBlockTextToImageStep({
+          input: generateInput,
+          user,
+          isGreen,
+        });
         const submitted = await submitWorkflow({
           token,
           body: {
             steps: [step],
             tags,
-            currencies: BLOCK_CURRENCIES,
+            currencies,
+            metadata: workflowMetadata,
             // Authoritative maturity clamp on the REAL submit — the orchestrator
             // rejects mature output when this is false. Token-claim derived.
             ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
@@ -2384,9 +2587,27 @@ export const blocksRouter = router({
           // but a per-app earnings cap / velocity check is a HARD
           // prerequisite before the spend flow opens to non-mods (track
           // alongside the Slice-4 payout gate + the rate sign-off).
+          // Record a PAYOUT-SAFE currency basis for this spend. The orchestrator
+          // drains the offered currencies in spend order (blue-FIRST — blue is
+          // the free generation Buzz) and does NOT surface a per-account debit
+          // to this path, so we cannot know how the cost split across FREE (blue)
+          // vs PAID (green/yellow) Buzz. Since green is PAID and payout-eligible
+          // (product 2026-06-30: "green buzz is paid, only blue is free"),
+          // stamping the paid domain currency would let a spend actually drained
+          // from FREE blue accrue a bounty → the farming vector. So we
+          // conservatively stamp the FREE first-drained currency (blue), which
+          // `isPayoutEligibleBuzz` (computeSpendShare) EXCLUDES → ZERO bounty.
+          // Net: spending parity ships now; block payout stays 0 until a
+          // follow-up records the REAL per-account debit (then the paid
+          // green/yellow portions can earn). DO NOT switch this to the domain
+          // currency without that real-debit signal — it reopens free-Buzz farming.
+          const spendBuzzTypes = getBlockAllowedAccountTypes(isGreen);
+          // [0] === 'blue' in both branches — the conservative free floor.
+          const spentBuzzType = spendBuzzTypes[0];
           await recordSpendAttribution({
             userId,
             buzzAmount: Math.ceil(snapshot.cost?.total ?? cost),
+            buzzType: spentBuzzType,
             workflowId: spendWorkflowId,
             appId: claims.appId,
             appBlockId: claims.appBlockId,
@@ -2879,10 +3100,26 @@ export const blocksRouter = router({
     }),
 });
 
-// Block-initiated workflows pay in yellow buzz only. Mature-content paid
-// (blue/green) and creator-only (red) are out of scope for v1 — the
-// budget is denominated in yellow, the JWT carries a yellow cap.
-const BLOCK_CURRENCIES = BuzzTypes.toOrchestratorType(['yellow']);
+// Block-initiated workflows spend at PARITY with the on-site generator
+// (`getAllowedAccountTypes` / `resolveGenerationCurrencies`): the currencies
+// are derived PER REQUEST from the block token's AUTHORITATIVE maturity ceiling
+// (`resolveBlockMaturity(claims).isGreen`), NOT hardcoded. SFW (green/blue)
+// blocks spend ['blue','green']; mature (.red) blocks spend ['blue','yellow'] —
+// blue-first, drained in array order, identical to on-site. See
+// `getBlockAllowedAccountTypes`. The maturity that picks the currency is the
+// SAME ceiling that drives the output clamp, so currency and clamp can never
+// disagree. The per-gen Buzz BUDGET plumbing (`ai:write:budgeted` +
+// `buzzBudget`) is currency-AGNOSTIC and unchanged — the cap bounds total Buzz
+// regardless of which account type pays.
+//
+// PAYOUT-SAFETY: widening the SPENDABLE currencies here is decoupled from
+// payout eligibility. The author-bounty rail (#2605) excludes free/granted
+// Buzz (blue, green) via `isPayoutEligibleBuzz` at the payout boundary
+// (`computeSpendShare`), so this widening can NEVER become platform-funded
+// farming. See buzz-helpers.ts.
+function resolveBlockCurrencies(isGreen: boolean) {
+  return BuzzTypes.toOrchestratorType(getBlockAllowedAccountTypes(isGreen));
+}
 
 /**
  * Fetch the user fields `parseGenerateImageInput` actually consumes

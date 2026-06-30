@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionUser } from 'next-auth';
+import type { SessionUser } from '~/types/session';
 
 /**
  * H2 — server/client flag-gate divergence.
