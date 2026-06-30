@@ -2,7 +2,11 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import { merchClaimConfirmationEmail, merchClaimInviteEmail } from '~/server/email/templates';
+import {
+  merchBuzzCreditedEmail,
+  merchClaimConfirmationEmail,
+  merchClaimInviteEmail,
+} from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import { setCustomerCivitaiUserId } from '~/server/http/shopify/shopify.caller';
@@ -260,9 +264,26 @@ export async function processShopifyOrderPaid(order: ShopifyOrderPaid) {
       amount: buzzAmount,
       details: { couponCodes, subtotal },
     });
+    // Already linked → auto-credited. Send a receipt (no claim link) naming the
+    // Civitai account that got the Buzz, so they can confirm it went to the right one.
+    if (!existing && buzzAmount > 0 && email) {
+      try {
+        const user = await dbWrite.user.findUnique({
+          where: { id: userId },
+          select: { username: true },
+        });
+        await merchBuzzCreditedEmail.send({
+          to: email,
+          username: user?.username ?? 'your account',
+          buzzAmount,
+        });
+      } catch (error) {
+        log({ message: 'Failed to send merch buzz-credited receipt', shopifyOrderId, error });
+      }
+    }
   } else if (!existing && buzzAmount > 0 && email) {
     // First time seeing an unlinked order — invite the buyer to claim. Once they
-    // claim, the customer is linked and future orders auto-grant (no email).
+    // claim, the customer is linked and future orders auto-grant (receipt above).
     try {
       await merchClaimInviteEmail.send({
         to: email,

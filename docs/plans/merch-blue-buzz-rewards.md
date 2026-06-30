@@ -23,8 +23,10 @@
   rate-limit (20 / 10 min, fail-open). Shopify never grants — it only hands off the order id.
 - `src/pages/merch/claim.tsx` — handles `?order=<id>` (claim / mismatch-email entry) and `?token=` (confirm).
 - `src/server/routers/merch.router.ts` (registered as `merch`) + `src/server/schema/merch.schema.ts`.
-- Emails: `merchClaimInvite.email.ts` (sent automatically by the webhook — see below) +
-  `merchClaimConfirmation.email.ts` (the email-mismatch confirmation link).
+- Emails (all sent to the order's email, on first-seen orders only — retry-safe):
+  `merchClaimInvite.email.ts` (unlinked → signed claim link), `merchBuzzCredited.email.ts` (already linked →
+  receipt naming the credited Civitai account, no link), `merchClaimConfirmation.email.ts` (the
+  email-mismatch confirmation link for the unsigned `?order=` path).
 
 ### Primary delivery: webhook-driven claim email (no Shopify-side UI needed)
 shop.civitai.com is on **checkout extensibility**, so the Thank-you/Order-status page is not

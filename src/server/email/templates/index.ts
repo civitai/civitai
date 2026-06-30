@@ -10,4 +10,5 @@ export { moderationActionEmail } from './moderation/moderationAction.email';
 export { tipaltiTaxFormRequiredEmail } from './tipaltiTaxFormRequired.email';
 export { merchClaimConfirmationEmail } from './merchClaimConfirmation.email';
 export { merchClaimInviteEmail } from './merchClaimInvite.email';
+export { merchBuzzCreditedEmail } from './merchBuzzCredited.email';
 export type { Email } from './base.email';
