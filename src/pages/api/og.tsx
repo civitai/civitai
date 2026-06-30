@@ -4,13 +4,12 @@ import { ImageResponse } from 'next/og';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ArticleIngestionStatus } from '~/shared/utils/prisma/enums';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
-import { fetchImageAsDataUri } from '~/server/utils/og-image-helpers';
+import { buildOgCoverEdgeUrl, fetchImageAsDataUri } from '~/server/utils/og-image-helpers';
 
 // --- Schema & Types ---
 
@@ -117,20 +116,10 @@ function buildEntityImage(
   image: OgImage | null
 ): Pick<EntityData, 'imageUrl' | 'imageAspectRatio'> {
   if (!image) return { imageUrl: null, imageAspectRatio: 1 };
-  // Video covers require an on-demand CDN video→image transcode
-  // (`transcode:true`) that is known-slow and sometimes returns mp4 — it stalls
-  // the render and would burn the entire prefetch budget on every video card.
-  // There's no cheap static-frame path here, so skip the cover entirely and let
-  // the card render with the logo placeholder. (The bounded prefetch below would
-  // also cap it, but skipping avoids paying the timeout at all.)
-  if (image.type === 'video') return { imageUrl: null, imageAspectRatio: 1 };
+  // Video covers resolve to a bounded still frame (not a skip) — see
+  // buildOgCoverEdgeUrl. The handler's bounded prefetch caps the cold-miss cost.
   return {
-    imageUrl: getEdgeUrl(image.url, {
-      width: IMAGE_WIDTH,
-      height: IMAGE_HEIGHT,
-      fit: 'cover',
-      quality: 90,
-    }),
+    imageUrl: buildOgCoverEdgeUrl(image, { width: IMAGE_WIDTH, height: IMAGE_HEIGHT }),
     imageAspectRatio: getAspectRatio(image),
   };
 }
