@@ -1719,12 +1719,22 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       forgejoCommitSha: true,
       submittedByUserId: true,
       appBlockId: true,
+      // MOD REVIEW SANDBOX (#2831) — read the current deploy_state so we can tell
+      // (synchronously, before this approve flips it to a production value) whether
+      // a review preview was ever started for this request. Only then do we fire
+      // the teardown at the end. (deploy_state is null for the common no-preview
+      // case, so teardown — and its k8s calls — are skipped entirely.)
+      deployState: true,
     },
   });
   if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (request.status !== 'pending') {
     throw new Error(`cannot approve a request in status ${request.status}`);
   }
+  // Captured BEFORE markRequestDeployState below flips deploy_state to a
+  // production 'building' value — drives the end-of-flow review teardown.
+  const hadReviewPreview =
+    typeof request.deployState === 'string' && request.deployState.startsWith('preview-');
 
   const manifest = request.manifest as Record<string, unknown>;
   const manifestScopes = Array.isArray(manifest.scopes) ? (manifest.scopes as string[]) : [];
@@ -2167,6 +2177,14 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // advances it deploying → live, or flips it to failed.
   await markRequestDeployState(request.slug, forgejoCommitSha, 'building');
 
+  // MOD REVIEW SANDBOX (#2831) — tear down any review env the mod spun up while
+  // reviewing this request. Best-effort + non-blocking: the decision has already
+  // landed (status='approved', build triggered), so a teardown failure must
+  // never affect the approve outcome. Gated on `hadReviewPreview` (captured from
+  // deploy_state BEFORE markRequestDeployState flipped it to production
+  // 'building'), so the common no-preview approve does zero extra DB/k8s work.
+  if (hadReviewPreview) void teardownReviewForRequest(request.id);
+
   return {
     publishRequestId: request.id,
     appBlockId,
@@ -2214,6 +2232,261 @@ export async function markRequestDeployState(
     // eslint-disable-next-line no-console
     console.warn(
       `[markRequestDeployState] write failed (slug=${slug}, state=${state}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MOD REVIEW SANDBOX (#2831) — run a PENDING version in a temporary, mod-gated
+// preview before approving.
+//
+// State is stored on the PENDING request's deploy_state / deploy_detail columns
+// (which markRequestDeployState only ever writes for APPROVED rows, so there's
+// no collision): deploy_state carries a `preview-*` lifecycle value and
+// deploy_detail carries a JSON `ReviewPreviewDetail` blob with the review sha +
+// URL + last error. No schema migration — the columns already exist + are
+// nullable, and a pending request never uses them otherwise.
+// ---------------------------------------------------------------------------
+
+/** Preview lifecycle states (PENDING request's deploy_state). Distinct prefix
+ *  from the production DeployState values so the two never collide. */
+export type ReviewPreviewState =
+  | 'preview-building'
+  | 'preview-deploying'
+  | 'preview-live'
+  | 'preview-failed';
+
+export type ReviewPreviewDetail = {
+  /** Full review build sha (in-review repo HEAD). */
+  sha?: string;
+  /** review-<sha[:16]>.<APPS_DOMAIN> host the preview serves at. */
+  host?: string;
+  /** Full https URL to embed (`https://<host>/<slug>`). */
+  url?: string;
+  /** Human-readable failure detail when state is preview-failed. */
+  error?: string;
+  /** Mod who started the preview (audit). */
+  modUserId?: number;
+};
+
+/** Pack a ReviewPreviewDetail into the deploy_detail string column. */
+function packReviewDetail(detail: ReviewPreviewDetail): string {
+  return JSON.stringify(detail);
+}
+
+/** Parse a deploy_detail string back into a ReviewPreviewDetail (tolerant of a
+ *  legacy plain-string detail — returns {} so polling degrades gracefully). */
+export function parseReviewDetail(raw: string | null | undefined): ReviewPreviewDetail {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as ReviewPreviewDetail) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Stamp the review-preview lifecycle state onto the PENDING request. Keyed on
+ * `{ id, status:'pending' }` so it can never write a non-pending row. Best-effort
+ * (a status write must not break the preview/approve flow) but logged on miss.
+ */
+export async function markReviewPreviewState(
+  publishRequestId: string,
+  state: ReviewPreviewState,
+  detail: ReviewPreviewDetail
+): Promise<void> {
+  try {
+    const { dbWrite } = await import('~/server/db/client');
+    const res = await dbWrite.appBlockPublishRequest.updateMany({
+      where: { id: publishRequestId, status: 'pending' },
+      data: {
+        deployState: state,
+        deployDetail: packReviewDetail(detail),
+        deployUpdatedAt: new Date(),
+      },
+    });
+    if (res.count === 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[markReviewPreviewState] no pending request matched (id=${publishRequestId}, state=${state})`
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[markReviewPreviewState] write failed (id=${publishRequestId}, state=${state}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+export type PreviewRequestParams = {
+  publishRequestId: string;
+  modUserId: number;
+};
+
+export type PreviewRequestResult = {
+  publishRequestId: string;
+  slug: string;
+  sha: string;
+  host: string;
+  url: string;
+  pipelineRun: string;
+};
+
+/**
+ * Start a review preview for a PENDING publish request. Reads the in-review repo
+ * HEAD (the pending bundle's source), triggers a REVIEW build (separate image +
+ * host from production), stamps state `preview-building`, and returns the review
+ * URL the UI polls toward. The build-callback (review-build-callback) advances
+ * deploying → live, or flips to failed.
+ *
+ * Throws (BAD_REQUEST upstream) if the request isn't pending or the trigger
+ * fails — the router maps it. The whole feature is dark behind the mod-only
+ * review-sandbox flag (gated in the router), so this never runs in prod until
+ * enabled.
+ */
+export async function previewRequest(
+  params: PreviewRequestParams
+): Promise<PreviewRequestResult> {
+  const [{ dbRead }, { env }] = await Promise.all([
+    import('~/server/db/client'),
+    import('~/env/server'),
+  ]);
+  const { getReviewRepoHeadSha } = await import('./forgejo.service');
+  const { triggerReviewBuild, reviewHost } = await import('./apps-pipeline.service');
+
+  const request = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: params.publishRequestId },
+    select: { id: true, status: true, slug: true },
+  });
+  if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
+  if (request.status !== 'pending') {
+    throw new Error(`can only preview a pending request (status is ${request.status})`);
+  }
+
+  // The in-review repo HEAD is the pending bundle's source (submitVersion pushed
+  // it there; one pending per slug). Build clones + tags at this sha.
+  const sha = await getReviewRepoHeadSha(request.slug);
+  const host = reviewHost(sha, env.APPS_DOMAIN);
+  const url = `https://${host}/${request.slug}`;
+
+  const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(
+    /\/$/,
+    ''
+  )}/api/internal/blocks/review-build-callback`;
+
+  // Mark building BEFORE the trigger so the UI sees state immediately even if the
+  // trigger response is slow; a trigger failure flips it back to failed below.
+  await markReviewPreviewState(request.id, 'preview-building', {
+    sha,
+    host,
+    url,
+    modUserId: params.modUserId,
+  });
+
+  let run: { name: string };
+  try {
+    run = await triggerReviewBuild({
+      slug: request.slug,
+      sha,
+      publishRequestId: request.id,
+      modUserId: params.modUserId,
+      callbackUrl,
+    });
+  } catch (err) {
+    await markReviewPreviewState(request.id, 'preview-failed', {
+      sha,
+      host,
+      url,
+      modUserId: params.modUserId,
+      error: `review build trigger failed: ${(err as Error).message}`.slice(0, 240),
+    });
+    throw new Error(`could not start review build: ${(err as Error).message}`);
+  }
+
+  return {
+    publishRequestId: request.id,
+    slug: request.slug,
+    sha,
+    host,
+    url,
+    pipelineRun: run.name,
+  };
+}
+
+export type ReviewStatusResult = {
+  publishRequestId: string;
+  status: string;
+  state: ReviewPreviewState | null;
+  detail: ReviewPreviewDetail;
+  updatedAt: Date | null;
+};
+
+/**
+ * Poll target for the mod-review UI: returns the current preview lifecycle state
+ * + detail (sha / host / url / error) for a publish request. Reads the same
+ * deploy_state / deploy_detail columns previewRequest + the review-build-callback
+ * write. Returns `state:null` when no preview has been started.
+ */
+export async function getReviewStatus(opts: {
+  publishRequestId: string;
+}): Promise<ReviewStatusResult> {
+  const { dbRead } = await import('~/server/db/client');
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: opts.publishRequestId },
+    select: { id: true, status: true, deployState: true, deployDetail: true, deployUpdatedAt: true },
+  });
+  if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
+  const isPreviewState =
+    typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
+  return {
+    publishRequestId: row.id,
+    status: row.status,
+    state: isPreviewState ? (row.deployState as ReviewPreviewState) : null,
+    detail: isPreviewState ? parseReviewDetail(row.deployDetail) : {},
+    updatedAt: row.deployUpdatedAt ?? null,
+  };
+}
+
+/**
+ * Best-effort teardown of any review env attached to a publish request. Called
+ * from approveRequest/rejectRequest after the decision lands. NEVER throws into
+ * the decision path: it reads the stored review sha (if any) + deletes the
+ * review k8s resources by label selector, swallowing every error.
+ */
+export async function teardownReviewForRequest(publishRequestId: string): Promise<void> {
+  try {
+    const { dbRead } = await import('~/server/db/client');
+    const row = await dbRead.appBlockPublishRequest.findUnique({
+      where: { id: publishRequestId },
+      select: { slug: true, deployState: true, deployDetail: true },
+    });
+    if (!row) return;
+    // Delete by the review LABEL SELECTOR scoped to this publishRequestId. The
+    // selector (civitai.com/review-mode=true,publish-request-id=<id>) only ever
+    // matches review resources — a live app carries no review-mode label — so
+    // this is safe to call unconditionally (idempotent: deletes nothing if no
+    // preview was started). We deliberately do NOT gate on deploy_state being a
+    // preview-* value: by the time approveRequest calls this, markRequestDeployState
+    // has already flipped the (now approved) row's deploy_state to a production
+    // 'building' value, so a deploy_state guard would skip the teardown and leak
+    // the review env. The label selector is the real safety boundary.
+    const detail = parseReviewDetail(row.deployDetail);
+    const { deleteReviewResources } = await import('./apps-pipeline.service');
+    await deleteReviewResources({
+      slug: row.slug,
+      sha: detail.sha ?? '',
+      publishRequestId,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[teardownReviewForRequest] best-effort teardown failed (id=${publishRequestId}): ${
         err instanceof Error ? err.message : String(err)
       }`
     );
@@ -2518,12 +2791,15 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
 
   const row = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: params.publishRequestId },
-    select: { id: true, status: true },
+    // deployState (#2831): only fire the review teardown if a preview was started.
+    select: { id: true, status: true, deployState: true },
   });
   if (!row) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (row.status !== 'pending') {
     throw new Error(`cannot reject a request in status ${row.status}`);
   }
+  const hadReviewPreview =
+    typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
 
   await dbWrite.appBlockPublishRequest.update({
     where: { id: row.id },
@@ -2534,4 +2810,10 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
       rejectionReason: reason,
     },
   });
+
+  // MOD REVIEW SANDBOX (#2831) — tear down any review env the mod spun up.
+  // Best-effort + non-blocking: the reject has landed, so a teardown failure
+  // must never affect the outcome. Gated on a preview actually having been
+  // started so the common no-preview reject does zero extra work.
+  if (hadReviewPreview) void teardownReviewForRequest(row.id);
 }

@@ -764,6 +764,11 @@ function ReviewModal({
             : 'View code in Forgejo'}
         </Button>
 
+        {/* MOD REVIEW SANDBOX (#2831) — run the PENDING version in a temporary,
+            mod-gated preview before approving. Pending requests only; dark
+            unless the mod-only review-sandbox flag is enabled. */}
+        {mode === 'pending' && <ReviewPreviewPanel publishRequestId={request.id} slug={request.slug} />}
+
         {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
             images are an abuse vector → the mod sees them (here, derived from
             the submitted bundle) before approving. Renders for every mode so an
@@ -917,6 +922,142 @@ function ReviewModal({
 // URLs returned by the mod-only blocks.getPublishRequestScreenshots query (the
 // pending app has no public screenshot URL yet — it isn't approved).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// MOD REVIEW SANDBOX (#2831) — run a PENDING version in a temporary, mod-gated
+// preview before approving. The Preview button starts a review build via
+// blocks.previewRequest, then polls blocks.getReviewStatus (preview-building →
+// deploying → live | failed) and, once live, embeds the review host in an
+// iframe + offers a deep-link. The whole feature is dark behind the mod-only
+// `app-blocks-review-sandbox` flag — when it's off, previewRequest throws
+// UNAUTHORIZED and the panel surfaces a "not enabled" message instead.
+// ---------------------------------------------------------------------------
+
+function ReviewPreviewPanel({
+  publishRequestId,
+  slug,
+}: {
+  publishRequestId: string;
+  slug: string;
+}) {
+  const features = useFeatureFlags();
+  const utils = trpc.useUtils();
+  const [started, setStarted] = useState(false);
+
+  // Poll the review status. Only enabled once a preview has been started (or a
+  // prior preview state exists on the row); building/deploying poll fast, live/
+  // failed stop.
+  const statusQuery = trpc.blocks.getReviewStatus.useQuery(
+    { publishRequestId },
+    {
+      enabled: !!features?.appBlocks && started,
+      retry: false,
+      refetchInterval: (data) => {
+        const s = data?.state;
+        if (s === 'preview-building' || s === 'preview-deploying') return 3000;
+        return false; // live, failed, or none → stop polling
+      },
+    }
+  );
+
+  const previewMut = trpc.blocks.previewRequest.useMutation({
+    onSuccess: async () => {
+      setStarted(true);
+      showSuccessNotification({ message: `Review build started for ${slug}.` });
+      await utils.blocks.getReviewStatus.invalidate({ publishRequestId });
+    },
+    onError: (e) => {
+      showErrorNotification({ title: 'Could not start preview', error: new Error(e.message) });
+    },
+  });
+
+  const state = statusQuery.data?.state ?? null;
+  const detail = statusQuery.data?.detail;
+  const url = detail?.url;
+  const inProgress = state === 'preview-building' || state === 'preview-deploying';
+  const isLive = state === 'preview-live';
+  const isFailed = state === 'preview-failed';
+
+  return (
+    <Stack gap={4}>
+      <Group gap={6}>
+        <IconWindow size={14} />
+        <Text size="sm" fw={600}>
+          Review preview
+        </Text>
+        {state && (
+          <Badge
+            size="sm"
+            variant="light"
+            color={isLive ? 'green' : isFailed ? 'red' : 'blue'}
+          >
+            {state.replace('preview-', '')}
+          </Badge>
+        )}
+      </Group>
+      <Text size="xs" c="dimmed">
+        Run this pending version in a temporary, mod-only preview before approving.
+        Torn down automatically when you approve or reject.
+      </Text>
+
+      <Group gap="xs">
+        <Button
+          size="xs"
+          variant="light"
+          leftSection={<IconWindow size={14} />}
+          loading={previewMut.isPending}
+          disabled={previewMut.isPending || inProgress}
+          onClick={() => previewMut.mutate({ publishRequestId })}
+        >
+          {state ? 'Rebuild preview' : 'Start preview'}
+        </Button>
+        {isLive && url && (
+          <Button
+            size="xs"
+            variant="default"
+            component="a"
+            href={url}
+            target="_blank"
+            rel="noopener"
+            rightSection={<IconExternalLink size={12} />}
+          >
+            Open review host
+          </Button>
+        )}
+      </Group>
+
+      {inProgress && (
+        <Text size="xs" c="dimmed">
+          Building + deploying the review preview…
+          {detail?.sha ? ` (sha ${detail.sha.slice(0, 12)})` : ''}
+        </Text>
+      )}
+      {isFailed && (
+        <Alert color="red" variant="light" icon={<IconX size={14} />}>
+          {detail?.error ?? 'Review preview failed.'}
+        </Alert>
+      )}
+      {isLive && url && (
+        <iframe
+          title={`Review preview for ${slug}`}
+          src={url}
+          style={{
+            width: '100%',
+            height: 420,
+            border: '1px solid var(--mantine-color-default-border)',
+            borderRadius: 6,
+          }}
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        />
+      )}
+      {statusQuery.error && (
+        <Text size="xs" c="dimmed">
+          {statusQuery.error.message}
+        </Text>
+      )}
+    </Stack>
+  );
+}
 
 function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId: string }) {
   const features = useFeatureFlags();

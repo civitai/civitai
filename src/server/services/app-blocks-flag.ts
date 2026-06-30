@@ -254,3 +254,49 @@ export const APP_BLOCKS_BACKPAY_FLAG = 'app-blocks-backpay-enabled';
 export async function isAppBlocksBackpayEnabled(): Promise<boolean> {
   return isFlipt(APP_BLOCKS_BACKPAY_FLAG);
 }
+
+/**
+ * Dedicated mod-segmented flag for the MOD REVIEW SANDBOX (#2831 second half).
+ *
+ * When a moderator reviews a PENDING publish request they can spin up the
+ * pending version in a temporary, mod-gated preview at
+ * `https://review-<sha>.<APPS_DOMAIN>/<slug>` before approving, torn down on the
+ * approve/reject decision. The whole feature is DORMANT until this flag is on,
+ * so it can ship dark and be enabled per-moderator without touching the
+ * user-facing `app-blocks-enabled` rollout or the build pipeline.
+ *
+ * This is a USER-VISIBILITY gate (the Preview button + the previewRequest /
+ * getReviewStatus tRPC procedures), so — like `app-blocks-enabled` — it is
+ * mod-segmented and MUST be evaluated WITH the moderator's context. Create it in
+ * Flipt as base `enabled: false` with the SAME `moderators` segment the
+ * user-facing flag uses (`isModerator == "true"`); a plain-boolean global flag
+ * would also work but the segment shape keeps it consistent + lets it be scoped
+ * to a subset of mods during early dogfood.
+ *
+ * NB: the actual review BUILD/DEPLOY machinery (the review-build-callback
+ * webhook, the apply Job) is machine-to-machine with no user context and gates
+ * on the existing GLOBAL `app-blocks-pipeline-enabled` flag — the same fail-safe
+ * as the production build path. So even with this flag on for a mod, the review
+ * build only runs when the pipeline flag is also on, exactly like a real deploy.
+ *
+ * Fail-safe: the flag does NOT exist in Flipt yet (created only AFTER this
+ * merges) → `isFlipt` returns `false` → previewRequest returns UNAUTHORIZED and
+ * the Preview button never mounts. So the as-merged behaviour is fully dark and
+ * cannot regress the gate open.
+ */
+export const APP_BLOCKS_REVIEW_SANDBOX_FLAG = 'app-blocks-review-sandbox-enabled';
+
+/**
+ * Mod-segmented gate for the MOD REVIEW SANDBOX (#2831). Evaluated WITH the
+ * moderator's context (entityId = user id, context carries server-side
+ * `isModerator`) so the `moderators` segment can match — identical eval shape to
+ * `isAppBlocksEnabled({ user })`. No user → preserves a global eval that can
+ * never match the segment (fail-closed). See APP_BLOCKS_REVIEW_SANDBOX_FLAG.
+ */
+export async function isAppBlocksReviewSandboxEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_REVIEW_SANDBOX_FLAG);
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_REVIEW_SANDBOX_FLAG, String(user.id), buildFliptContext(user));
+}

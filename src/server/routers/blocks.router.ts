@@ -40,9 +40,11 @@ import {
   getMyPendingForSlugSchema,
   getPublishRequestDiffSchema,
   getPublishRequestScreenshotsSchema,
+  getReviewStatusSchema,
   listApprovedRequestsSchema,
   listPendingRequestsSchema,
   listRejectedRequestsSchema,
+  previewRequestSchema,
   rejectRequestSchema,
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
@@ -1034,6 +1036,67 @@ export const blocksRouter = router({
         '~/server/services/blocks/publish-request.service'
       );
       return getPublishRequestDiff({ publishRequestId: input.publishRequestId });
+    }),
+
+  /**
+   * MOD REVIEW SANDBOX (#2831) — start a temporary, mod-gated preview of a
+   * PENDING version so the mod can run the actual block before approving.
+   * Triggers a SEPARATE review build (distinct image + host from production)
+   * and returns the review URL the UI polls toward. Torn down on the
+   * approve/reject decision.
+   *
+   * DORMANT until the mod-only `app-blocks-review-sandbox` flag is enabled: the
+   * extra flag check (on top of moderatorProcedure + the isModerator belt +
+   * enforceAppBlocksFlag) makes the whole feature ship dark.
+   */
+  previewRequest: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(previewRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Review previews are restricted to civitai team');
+      }
+      const { isAppBlocksReviewSandboxEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('The review sandbox is not enabled');
+      }
+      const { previewRequest } = await import('~/server/services/blocks/publish-request.service');
+      try {
+        return await previewRequest({
+          publishRequestId: input.publishRequestId,
+          modUserId: ctx.user.id,
+        });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * MOD REVIEW SANDBOX (#2831) — poll target for the preview lifecycle state
+   * (preview-building → deploying → live | failed) + the review URL. Same
+   * mod-only flag gate as previewRequest.
+   */
+  getReviewStatus: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getReviewStatusSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Review previews are restricted to civitai team');
+      }
+      const { isAppBlocksReviewSandboxEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('The review sandbox is not enabled');
+      }
+      const { getReviewStatus } = await import('~/server/services/blocks/publish-request.service');
+      try {
+        return await getReviewStatus({ publishRequestId: input.publishRequestId });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
     }),
 
   /**
