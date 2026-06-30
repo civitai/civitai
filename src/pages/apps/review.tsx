@@ -953,8 +953,10 @@ function ReviewPreviewPanel({
     {
       enabled: !!features?.appBlocks && started,
       retry: false,
-      refetchInterval: (data) => {
-        const s = data?.state;
+      refetchInterval: (query) => {
+        // react-query v5: the callback receives the Query; the data is at
+        // query.state.data (matches the my-submissions.tsx idiom).
+        const s = query.state.data?.state;
         if (s === 'preview-building' || s === 'preview-deploying') return 3000;
         // Keep a SLOW poll alive while the preview is live — it detects
         // approve/reject/teardown state changes. getReviewStatus mints a fresh
