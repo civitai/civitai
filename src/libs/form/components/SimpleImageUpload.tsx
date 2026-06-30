@@ -19,6 +19,7 @@ import { constants, isOrchestratorUrl } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
+import { reportApplicationError } from '~/utils/application-error';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
 
@@ -65,17 +66,16 @@ export function SimpleImageUpload({
     setError('');
     const [file] = droppedFiles;
 
-    // const toUpload = { url: URL.createObjectURL(file), file };
-    // setImage((current) => ({
-    //   ...current,
-    //   previewUrl: toUpload.url,
-    //   url: '',
-    //   file: toUpload.file,
-    // }));
-
-    await uploadToCF(file);
-    // setImage((current) => ({ ...current, url: id, file: undefined, previewUrl: undefined }));
-    // URL.revokeObjectURL(objectUrl);
+    try {
+      await uploadToCF(file);
+    } catch (e) {
+      const reason = e instanceof Error && e.message ? e.message : '';
+      setError(reason ? `Image upload failed: ${reason}` : 'Image upload failed. Please try again.');
+      reportApplicationError(e, {
+        name: 'SimpleImageUpload',
+        message: `upload failed | file: ${file.name} (${file.type || 'unknown'}, ${file.size}b)`,
+      });
+    }
   };
 
   // Handles drags from the generator, which arrive as a `text/uri-list` orchestrator URL rather
@@ -97,6 +97,7 @@ export function SimpleImageUpload({
     } catch (e) {
       console.error('Failed to load dropped image', e);
       setError("Couldn't load that image. Try saving it and uploading the file instead.");
+      reportApplicationError(e, { name: 'SimpleImageUpload', message: `drag-from-url failed | ${url}` });
     }
   };
 
