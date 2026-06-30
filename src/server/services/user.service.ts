@@ -697,20 +697,33 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
     // totalItems/totalPages is harmless. Cache unconditionally (no IS_DATAPACKET
     // gate) — the 892k-row scan is expensive on every cluster. TTL = 10min
     // (CacheTTL.md): cheap-to-refresh, bounds staleness to a sub-page drift on an
-    // ~86.5k-creator total. The key captures only the parts of `where` that vary:
-    // the username `contains` filter (`query`) and `excludeIds`; the
-    // models:{some:{}} and deletedAt:null parts are constant. fetchThroughCache is
-    // fail-open — a Redis stall falls back to running the count, so a Redis blip
-    // can't 500 this endpoint.
+    // ~86.5k-creator total.
+    //
+    // Cache ONLY the hot default-listing count (no `query`). `query` is
+    // user-controlled on a public endpoint with no `.max()` in its zod schema and
+    // is interpolated raw into the cache key, so caching per-query would let
+    // arbitrary `?query=<random>` values mint UNBOUNDED distinct keys (each held
+    // EX=2×600s) on the shared cache cluster — a keyspace-growth vector. Per-query
+    // counts are also low-hit-rate. So run the username-search count inline.
+    if (query) {
+      const queryCount = await dbRead.user.count({ where });
+      return { items, count: queryCount };
+    }
+    // No-query path: key by `excludeIds` only (the only remaining varying part of
+    // `where`; models:{some:{}} and deletedAt:null are constant).
     const sortedExcludeIds = [...excludeIds].sort((a, b) => a - b).join(',');
-    const cacheKey = `${REDIS_KEYS.CACHES.CREATORS_COUNT}:${
-      query ?? ''
-    }:${sortedExcludeIds}` as const;
+    const cacheKey = `${REDIS_KEYS.CACHES.CREATORS_COUNT}:${sortedExcludeIds}` as const;
+    // fetchThroughCache is fail-open on a Redis read/lock ERROR (degrades to the
+    // origin fetch). But on lock-retry EXHAUSTION (cold key + concurrent burst) it
+    // throws 'Failed to fetch data through cache' — fall back to the inline count
+    // there too so this endpoint never 500s from the caching machinery. (A genuine
+    // dbRead.user.count DB error still propagates — the fallback re-runs and throws
+    // again — which matches pre-cache behavior.)
     const cachedCount = await fetchThroughCache(
       cacheKey,
       () => dbRead.user.count({ where }),
       { ttl: CacheTTL.md }
-    );
+    ).catch(() => dbRead.user.count({ where }));
     return { items, count: cachedCount };
   }
 

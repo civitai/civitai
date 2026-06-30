@@ -8,12 +8,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // wrapped in `fetchThroughCache` (fail-open) keyed only by the parts of `where`
 // that vary: `query` (username contains) and `excludeIds`.
 //
+// The count is cached ONLY for the hot default listing (no `query`). `query` is
+// user-controlled (public endpoint, no schema max) and interpolated raw into the
+// cache key, so caching per-query would mint unbounded distinct Redis keys — a
+// keyspace-growth vector. So a username-search (`query` truthy) runs the count
+// inline and never touches the cache. The no-query key is `excludeIds`-only.
+//
 // These tests exercise:
-//   - MISS  → runs dbRead.user.count once and returns the value
-//   - HIT   → same (query, excludeIds) does NOT call dbRead.user.count again
-//   - key VARIES by query and by excludeIds (different inputs → separate counts)
+//   - no-query MISS  → runs dbRead.user.count once and returns the value
+//   - no-query HIT   → same excludeIds does NOT call dbRead.user.count again
+//   - WITH query     → count is NOT cached; dbRead.user.count runs every call
+//   - key VARIES by excludeIds (different inputs → separate counts)
 //   - count:false/unset → never touches the count cache
-//   - fail-open → a cache/redis error still returns a correct count (no throw)
+//   - cache-throws fallback → a fetchThroughCache throw still returns a correct
+//     count via the inline fallback (no 500)
 
 const { mockDb } = vi.hoisted(() => ({
   mockDb: {
@@ -94,7 +102,7 @@ beforeEach(() => {
 });
 
 describe('getCreators — count cache', () => {
-  it('MISS: runs dbRead.user.count once and returns the value', async () => {
+  it('MISS (no query): runs dbRead.user.count once and returns the value', async () => {
     mockDb.user.count.mockResolvedValueOnce(123);
 
     const result = await getCreators({ select, count: true, excludeIds: [-1] });
@@ -103,11 +111,11 @@ describe('getCreators — count cache', () => {
     expect(mockDb.user.count).toHaveBeenCalledTimes(1);
   });
 
-  it('HIT: second call with same (query, excludeIds) does NOT re-run dbRead.user.count', async () => {
+  it('HIT (no query): second call with same excludeIds does NOT re-run dbRead.user.count', async () => {
     mockDb.user.count.mockResolvedValue(50);
 
-    const first = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo' });
-    const second = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo' });
+    const first = await getCreators({ select, count: true, excludeIds: [-1] });
+    const second = await getCreators({ select, count: true, excludeIds: [-1] });
 
     expect(first.count).toBe(50);
     expect(second.count).toBe(50);
@@ -115,16 +123,21 @@ describe('getCreators — count cache', () => {
     expect(mockDb.user.count).toHaveBeenCalledTimes(1);
   });
 
-  it('cache key VARIES by query → separate counts', async () => {
-    mockDb.user.count.mockResolvedValueOnce(10).mockResolvedValueOnce(20);
+  it('WITH query: count is NOT cached — dbRead.user.count runs on every call', async () => {
+    // `query` is user-controlled with no schema max → caching per-query would mint
+    // unbounded keys. So the username-search count runs inline and never consults
+    // the cache: two calls with the SAME query both invoke dbRead.user.count, and
+    // nothing is written to the cache store.
+    mockDb.user.count.mockResolvedValueOnce(10).mockResolvedValueOnce(11);
 
-    const a = await getCreators({ select, count: true, excludeIds: [-1], query: 'alice' });
-    const b = await getCreators({ select, count: true, excludeIds: [-1], query: 'bob' });
+    const a = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo' });
+    const b = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo' });
 
     expect(a.count).toBe(10);
-    expect(b.count).toBe(20);
+    expect(b.count).toBe(11);
     expect(mockDb.user.count).toHaveBeenCalledTimes(2);
-    expect(cacheStore.size).toBe(2);
+    // The cache machinery was never consulted for a query'd request.
+    expect(cacheStore.size).toBe(0);
   });
 
   it('cache key VARIES by excludeIds → separate counts', async () => {
@@ -189,6 +202,25 @@ describe('getCreators — count cache', () => {
     const result = await getCreators({ select, count: true, excludeIds: [-1] });
 
     expect(result.count).toBe(456);
+    expect(mockDb.user.count).toHaveBeenCalledTimes(1);
+  });
+
+  it('cache-throws fallback: fetchThroughCache rejecting still returns the count inline (no 500)', async () => {
+    // FIX 🟡-2: on lock-retry exhaustion fetchThroughCache THROWS
+    // ('Failed to fetch data through cache'). The caller wraps it in
+    // `.catch(() => dbRead.user.count(...))` so the endpoint never 500s — it falls
+    // back to running the count inline once.
+    fetchThroughCacheImpl.fn = async () => {
+      throw new Error('Failed to fetch data through cache');
+    };
+    mockDb.user.count.mockResolvedValueOnce(789);
+
+    // Must NOT throw — resolves to the inline count.
+    const result = await getCreators({ select, count: true, excludeIds: [-1] });
+
+    expect(result.count).toBe(789);
+    // The inline fallback ran the count exactly once (the throwing cache attempt
+    // never reached fetchFn in this mock).
     expect(mockDb.user.count).toHaveBeenCalledTimes(1);
   });
 });
