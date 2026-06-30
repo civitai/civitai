@@ -87,7 +87,7 @@ import {
   BlockedUsers,
   HiddenModels,
 } from '~/server/services/user-preferences.service';
-import { createCachedObject } from '~/server/utils/cache-helpers';
+import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
 import {
   handleLogError,
@@ -690,8 +690,28 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   });
 
   if (count) {
-    const count = await dbRead.user.count({ where });
-    return { items, count };
+    // The count scans the whole ~892k-row Model table (index-only scan on
+    // Model_userId → HashAggregate distinct userIds → nested-loop to User,
+    // ~1174ms in EXPLAIN ANALYZE) on EVERY request and dominates this endpoint's
+    // latency. It's a slowly-moving aggregate, so cache it: a few-minutes-stale
+    // totalItems/totalPages is harmless. Cache unconditionally (no IS_DATAPACKET
+    // gate) — the 892k-row scan is expensive on every cluster. TTL = 10min
+    // (CacheTTL.md): cheap-to-refresh, bounds staleness to a sub-page drift on an
+    // ~86.5k-creator total. The key captures only the parts of `where` that vary:
+    // the username `contains` filter (`query`) and `excludeIds`; the
+    // models:{some:{}} and deletedAt:null parts are constant. fetchThroughCache is
+    // fail-open — a Redis stall falls back to running the count, so a Redis blip
+    // can't 500 this endpoint.
+    const sortedExcludeIds = [...excludeIds].sort((a, b) => a - b).join(',');
+    const cacheKey = `${REDIS_KEYS.CACHES.CREATORS_COUNT}:${
+      query ?? ''
+    }:${sortedExcludeIds}` as const;
+    const cachedCount = await fetchThroughCache(
+      cacheKey,
+      () => dbRead.user.count({ where }),
+      { ttl: CacheTTL.md }
+    );
+    return { items, count: cachedCount };
   }
 
   return { items };

@@ -718,7 +718,10 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
       excludeIds: [-1], // Exclude civitai user
       select: {
         username: true,
-        models: { select: { id: true }, where: { status: 'Published' } },
+        // Count published models in the DB instead of fetching every published
+        // model id per creator just to take `.length`. The only consumer
+        // (src/pages/api/v1/creators.ts) reads modelCount, not the model rows.
+        _count: { select: { models: { where: { status: 'Published' } } } },
         image: true,
       },
     });
