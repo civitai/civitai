@@ -173,6 +173,9 @@ export default function AppDetailPage() {
       // Marketplace reviews — carry through from the detail (display-safe).
       avgRating: detail.avgRating,
       reviewCount: detail.reviewCount,
+      // Card cover = the first public screenshot (the detail already carries the
+      // projected gallery). Unused by the settings modal, but kept consistent.
+      coverUrl: detail.screenshots[0]?.url ?? null,
     };
     openAppSettingsModal({ block, existingByScope });
   }
