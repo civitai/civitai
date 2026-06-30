@@ -723,7 +723,13 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
       cacheKey,
       () => dbRead.user.count({ where }),
       { ttl: CacheTTL.md }
-    ).catch(() => dbRead.user.count({ where }));
+    ).catch((e) => {
+      // Only the lock-retry-exhaustion throw falls back to the inline count. Any
+      // OTHER throw from the cache helper (e.g. a future key-type/serialization
+      // invariant) must surface, not be silently swallowed into a count.
+      if (!String((e as Error)?.message).includes('Failed to fetch data through cache')) throw e;
+      return dbRead.user.count({ where });
+    });
     return { items, count: cachedCount };
   }
 
