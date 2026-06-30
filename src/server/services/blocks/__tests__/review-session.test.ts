@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   signReviewAccessToken,
   verifyReviewAccessToken,
+  signReviewSessionCookie,
+  verifyReviewSessionCookie,
   REVIEW_ACCESS_TOKEN_TTL_SECONDS,
+  REVIEW_SESSION_COOKIE_TTL_SECONDS,
 } from '~/server/services/blocks/review-session';
 
 /**
@@ -133,6 +136,124 @@ describe('signReviewAccessToken / verifyReviewAccessToken', () => {
       delete process.env.NEXTAUTH_SECRET;
       expect(() => verifyReviewAccessToken(token, HOST)).not.toThrow();
       expect(verifyReviewAccessToken(token, HOST).ok).toBe(false);
+    });
+  });
+});
+
+describe('signReviewSessionCookie / verifyReviewSessionCookie (CHIPS subresource gate, #2847)', () => {
+  it('roundtrips: a freshly-minted session cookie verifies for the bound host + returns modUserId', () => {
+    const value = signReviewSessionCookie({ modUserId: MOD, host: HOST, secret: SECRET });
+    expect(value).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    expect(verifyReviewSessionCookie(value, HOST, { secret: SECRET })).toEqual({
+      ok: true,
+      modUserId: MOD,
+    });
+  });
+
+  it('rejects a session cookie verified against a DIFFERENT host (host binding)', () => {
+    const value = signReviewSessionCookie({ modUserId: MOD, host: HOST, secret: SECRET });
+    expect(
+      verifyReviewSessionCookie(value, 'review-deadbeef.civit.ai', { secret: SECRET })
+    ).toEqual({ ok: false });
+  });
+
+  it('rejects a session cookie signed with a different secret (sig mismatch)', () => {
+    const value = signReviewSessionCookie({ modUserId: MOD, host: HOST, secret: 'other-secret' });
+    expect(verifyReviewSessionCookie(value, HOST, { secret: SECRET })).toEqual({ ok: false });
+  });
+
+  it('rejects an expired session cookie (exp in the past)', () => {
+    const value = signReviewSessionCookie({
+      modUserId: MOD,
+      host: HOST,
+      secret: SECRET,
+      ttlSeconds: -1,
+    });
+    expect(verifyReviewSessionCookie(value, HOST, { secret: SECRET })).toEqual({ ok: false });
+  });
+
+  it('accepts a session cookie still within TTL (boundary sanity)', () => {
+    const value = signReviewSessionCookie({
+      modUserId: MOD,
+      host: HOST,
+      secret: SECRET,
+      ttlSeconds: REVIEW_SESSION_COOKIE_TTL_SECONDS,
+    });
+    expect(verifyReviewSessionCookie(value, HOST, { secret: SECRET }).ok).toBe(true);
+  });
+
+  it('rejects a tampered payload (modUserId changed → signing string differs)', () => {
+    const value = signReviewSessionCookie({ modUserId: MOD, host: HOST, secret: SECRET });
+    const [payloadB64, sigB64] = value.split('.');
+    const payload = JSON.parse(
+      Buffer.from(payloadB64.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')
+    );
+    payload.m = 9999;
+    const forgedPayloadB64 = Buffer.from(JSON.stringify(payload))
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+    expect(
+      verifyReviewSessionCookie(`${forgedPayloadB64}.${sigB64}`, HOST, { secret: SECRET })
+    ).toEqual({ ok: false });
+  });
+
+  it('rejects a sig of the wrong byte length without throwing (length guard)', () => {
+    const value = signReviewSessionCookie({ modUserId: MOD, host: HOST, secret: SECRET });
+    const [payloadB64] = value.split('.');
+    const forged = `${payloadB64}.AAAA`;
+    expect(() => verifyReviewSessionCookie(forged, HOST, { secret: SECRET })).not.toThrow();
+    expect(verifyReviewSessionCookie(forged, HOST, { secret: SECRET })).toEqual({ ok: false });
+  });
+
+  it.each([
+    ['empty string', ''],
+    ['null', null],
+    ['undefined', undefined],
+    ['no dot', 'notatoken'],
+    ['leading dot', '.abc'],
+    ['trailing dot', 'abc.'],
+    ['non-json payload', `${Buffer.from('nope').toString('base64url')}.AAAA`],
+  ])('returns ok:false (no throw) for malformed input: %s', (_label, input) => {
+    expect(() =>
+      verifyReviewSessionCookie(input as string | null | undefined, HOST, { secret: SECRET })
+    ).not.toThrow();
+    expect(
+      verifyReviewSessionCookie(input as string | null | undefined, HOST, { secret: SECRET }).ok
+    ).toBe(false);
+  });
+
+  it('verify returns ok:false (no throw) when NEXTAUTH_SECRET is unset (fail-closed)', () => {
+    const value = signReviewSessionCookie({ modUserId: MOD, host: HOST, secret: SECRET });
+    const prev = process.env.NEXTAUTH_SECRET;
+    delete process.env.NEXTAUTH_SECRET;
+    try {
+      expect(() => verifyReviewSessionCookie(value, HOST)).not.toThrow();
+      expect(verifyReviewSessionCookie(value, HOST).ok).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.NEXTAUTH_SECRET;
+      else process.env.NEXTAUTH_SECRET = prev;
+    }
+  });
+
+  // ── DOMAIN-SEPARATION: the two token types must be NON-interchangeable. This is
+  //    the load-bearing isolation — an attacker who captures a 120s `mr` entry
+  //    token must NOT be able to replay it as a 30min subresource session cookie,
+  //    and vice-versa. ──
+  describe('domain separation (entry token vs session cookie are non-interchangeable)', () => {
+    it('an `mr` ENTRY token does NOT verify as a SESSION cookie', () => {
+      const entry = signReviewAccessToken({ modUserId: MOD, host: HOST, secret: SECRET });
+      // sanity: it IS a valid entry token
+      expect(verifyReviewAccessToken(entry, HOST, { secret: SECRET }).ok).toBe(true);
+      // but it MUST NOT verify as a session cookie
+      expect(verifyReviewSessionCookie(entry, HOST, { secret: SECRET })).toEqual({ ok: false });
+    });
+
+    it('a SESSION cookie does NOT verify as an `mr` ENTRY token', () => {
+      const sess = signReviewSessionCookie({ modUserId: MOD, host: HOST, secret: SECRET });
+      expect(verifyReviewSessionCookie(sess, HOST, { secret: SECRET }).ok).toBe(true);
+      expect(verifyReviewAccessToken(sess, HOST, { secret: SECRET })).toEqual({ ok: false });
     });
   });
 });

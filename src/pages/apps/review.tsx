@@ -1072,6 +1072,13 @@ function ReviewPreviewPanel({
         <iframe
           title={`Review preview for ${slug}`}
           src={stableIframeSrc}
+          // no-referrer: the `?mr=<token>` entry-token URL must NOT leak via the
+          // `Referer` header to assets the previewed (untrusted) block loads.
+          // (We deliberately do NOT bind the token to a publishRequestId: that
+          // binding isn't statelessly verifiable at the mod-gate without a DB
+          // lookup, which the stateless forwardAuth gate intentionally avoids.
+          // Host + mod + short TTL + no-referrer is the chosen containment.)
+          referrerPolicy="no-referrer"
           style={{
             width: '100%',
             height: 420,
