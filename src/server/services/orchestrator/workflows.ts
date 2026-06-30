@@ -55,6 +55,23 @@ const ORCHESTRATOR_UNAVAILABLE_MESSAGE =
 // queryWorkflowsByTags, queue-status, admin) — every one a request-scoped read.
 const ORCHESTRATOR_QUERY_TIMEOUT_MS = 20_000;
 
+// Per-attempt backstop for the whatIf cost-estimate SUBMIT only (not generate). whatIf
+// (orchestrator.whatIfFromGraph) is a side-effect-free estimate that, on img2img inputs,
+// can hang ~30s on an orchestrator source-image-download step; with the default 3
+// retries that amplifies to ~90s AND head-of-line-blocks the entire api pool at the
+// connection layer (a 7ms buzz.getBuzzAccount handler was observed taking 40s at the
+// edge during these parks). 8s is chosen safely above the observed orchestrator submit
+// P99 (~4.7s) so it fires only on the genuine source-hang tail, not on legit slow-but-OK
+// submits. We KEEP the 3-attempt retry (transient blips still recover — koenbeuk's
+// concern from the closed #2776/#2807) but bound EACH attempt: a fresh
+// AbortSignal.timeout per iteration aborts only the stuck attempt and the loop retries.
+// With 3 attempts + backoff (~0.5s + 1.5s) the whatIf worst case becomes ~26s instead
+// of ~90s; tighten later if the p99 headroom allows. A fired timeout throws a
+// TimeoutError, which the existing catch treats as a transient failure → backoff + retry,
+// and the final exhaustion is classified as a retry-able 503 (see submitWorkflow). The
+// orchestrator-side root fix (stamp source dims / bound the download) is orch #261.
+const WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS = 8_000;
+
 export async function queryWorkflows({
   token,
   fromDate,
@@ -199,11 +216,37 @@ export async function submitWorkflow({
     console.log('------');
   }
 
-  const result = await submitWorkflowWithRetry({
-    client,
-    body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
-    query,
-  });
+  // whatIf is a side-effect-free cost estimate and passes `query:{whatif:true}`;
+  // generate passes no whatif. Scope the per-attempt timeout to whatIf ONLY so a real
+  // generation submit is never false-aborted (same marker used by the closed #2807).
+  const isWhatif = (query as { whatif?: boolean } | undefined)?.whatif === true;
+
+  let result: ClientSubmitResult & { attempts: number };
+  try {
+    result = await submitWorkflowWithRetry(
+      {
+        client,
+        body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
+        query,
+      },
+      // KEEP the default 3 retries on BOTH paths (transient orchestrator blips still
+      // recover). For whatIf, additionally bound each attempt so a stuck img2img
+      // source-download can't park ~30s × 3 (~90s) and head-of-line-block the api pool.
+      isWhatif ? { perAttemptTimeoutMs: WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS } : undefined
+    );
+  } catch (e) {
+    // The retry wrapper throws (rather than returning a `{ data:undefined }` result)
+    // only on a network/timeout/abort failure of the FINAL attempt — there is no HTTP
+    // status to map in the switch below. A recognized transient upstream failure
+    // (including the whatIf per-attempt AbortSignal.timeout) → retry-able 503, mirroring
+    // the read-path (queryWorkflows/getWorkflow) catch. whatIf's client
+    // (useWhatIfFromGraph) degrades a 503 to a default cost estimate, so the user gets
+    // an instant fallback instead of a ~90s hang. A genuine code-bug throw bubbles
+    // unchanged (→ 500) so real bugs stay visible.
+    if (isUpstreamNetworkError(e))
+      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, e);
+    throw e;
+  }
 
   // Narrow on `result.data` (not a destructured copy) so this always-throwing
   // guard both exposes `error`/`response` on the failure member here AND narrows
@@ -271,6 +314,15 @@ export type SubmitWorkflowRetryOptions = {
   maxAttempts?: number;
   /** Base backoff in ms; delay before retry N = baseDelayMs * 3 ** (N - 1). Default 500. */
   baseDelayMs?: number;
+  /**
+   * Bounds EACH attempt with a FRESH `AbortSignal.timeout(perAttemptTimeoutMs)` created
+   * per loop iteration — a fired timeout aborts only that one attempt and the loop still
+   * retries (NOT a single deadline shared across all attempts). The aborted attempt
+   * throws a `TimeoutError`, which the existing catch below treats as a transient network
+   * failure → backoff + retry until `maxAttempts`. `undefined` ⇒ unbounded attempts
+   * (current behavior; the generate/write path passes nothing and is byte-identical).
+   */
+  perAttemptTimeoutMs?: number;
   /** Invoked right before each backoff sleep — useful for logging/metrics. */
   onRetry?: (info: { attempt: number; status?: number; delayMs: number }) => void;
 };
@@ -289,14 +341,31 @@ export type SubmitWorkflowRetryOptions = {
  */
 export async function submitWorkflowWithRetry(
   options: SubmitOptions,
-  { maxAttempts = 3, baseDelayMs = 500, onRetry }: SubmitWorkflowRetryOptions = {}
+  {
+    maxAttempts = 3,
+    baseDelayMs = 500,
+    perAttemptTimeoutMs,
+    onRetry,
+  }: SubmitWorkflowRetryOptions = {}
 ): Promise<ClientSubmitResult & { attempts: number }> {
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let result: ClientSubmitResult | undefined;
     try {
-      result = await clientSubmitWorkflow(options);
+      // Bound this attempt with a FRESH timeout signal (created inside the loop) so a
+      // fired deadline aborts only this attempt — the loop still retries with a new
+      // budget. If the caller already passed a signal, compose so either source aborts.
+      const attemptOptions =
+        perAttemptTimeoutMs == null
+          ? options
+          : {
+              ...options,
+              signal: options.signal
+                ? AbortSignal.any([options.signal, AbortSignal.timeout(perAttemptTimeoutMs)])
+                : AbortSignal.timeout(perAttemptTimeoutMs),
+            };
+      result = await clientSubmitWorkflow(attemptOptions);
     } catch (e) {
       // Network failure / no response. Out of retries → surface it like a direct call would.
       lastError = e;
