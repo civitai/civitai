@@ -894,6 +894,7 @@ export const updatePost = async ({
   const publishedAt = data.publishedAt instanceof Date ? data.publishedAt : undefined;
   const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
 
+  let publishedAtWritten = false;
   const post = await dbWrite.$transaction(async (tx) => {
     const updated = await tx.post.update({
       where: { id, userId: !user.isModerator ? user.id : undefined },
@@ -945,6 +946,7 @@ export const updatePost = async ({
       // rather than masking malformed stash data behind a truthy check.
       if (writtenRows.length > 0) {
         updated.publishedAt = writtenRows[0].publishedAt;
+        publishedAtWritten = true;
       }
     }
     return updated;
@@ -952,6 +954,24 @@ export const updatePost = async ({
 
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(post.userId);
+
+  // A publishedAt change moves the images' feed sort position
+  // (GREATEST(publishedAt, scannedAt, createdAt)), but the DB-trigger-driven
+  // updatedAt bump isn't reliably picked up by the metrics_images index — so
+  // a reschedule would otherwise leave the index frozen at the original time.
+  // Enqueue an explicit reindex so sortAt/publishedAtUnix get recomputed.
+  if (publishedAtWritten) {
+    const images = await dbWrite.image.findMany({
+      where: { postId: post.id },
+      select: { id: true },
+    });
+    if (images.length) {
+      await queueImageSearchIndexUpdate({
+        ids: images.map((i) => i.id),
+        action: SearchIndexUpdateQueueAction.Update,
+      });
+    }
+  }
 
   return post;
 };

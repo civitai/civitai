@@ -1,8 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import {
   bustMvCache,
   publishModelVersionsWithEarlyAccess,
@@ -70,7 +71,14 @@ export const processScheduledPublishing = createJob(
 
     // Get scheduled comic chapters
     const scheduledComicChapters = await dbWrite.$queryRaw<
-      { projectId: number; position: number; userId: number; projectName: string; chapterName: string; username: string | null }[]
+      {
+        projectId: number;
+        position: number;
+        userId: number;
+        projectName: string;
+        chapterName: string;
+        username: string | null;
+      }[]
     >`
       SELECT
         cc."projectId",
@@ -194,15 +202,9 @@ export const processScheduledPublishing = createJob(
             AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
             AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
         `;
-
-          // commenting this out, because it should be covered by the db_trigger `update_image_sort_at`
-          // if (returnedIds.length) {
-          //   await tx.$executeRaw`
-          //     UPDATE "Image"
-          //     SET "updatedAt" = NOW()
-          //     WHERE "postId" IN (${Prisma.join(returnedIds.map((r) => r.id))})
-          //   `;
-          // }
+          // Images are reindexed post-commit via queueImageSearchIndexUpdate
+          // below — the db trigger's updatedAt bump isn't reliably picked up by
+          // the metrics_images index.
         }
 
         if (scheduledModelVersions.length) {
@@ -275,6 +277,21 @@ export const processScheduledPublishing = createJob(
         entityType: 'post',
         entityId: post.id,
       });
+    }
+
+    // Reindex the just-published posts' images so the metrics_images feed picks
+    // up their new sort position (GREATEST(publishedAt, scannedAt, createdAt)).
+    if (scheduledPosts.length) {
+      const images = await dbWrite.image.findMany({
+        where: { postId: { in: scheduledPosts.map((p) => p.id) } },
+        select: { id: true },
+      });
+      if (images.length) {
+        await queueImageSearchIndexUpdate({
+          ids: images.map((i) => i.id),
+          action: SearchIndexUpdateQueueAction.Update,
+        });
+      }
     }
 
     const processedModelIds = [
