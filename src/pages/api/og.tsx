@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { ImageResponse } from 'next/og';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
@@ -8,6 +10,7 @@ import { ArticleIngestionStatus } from '~/shared/utils/prisma/enums';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
+import { fetchImageAsDataUri } from '~/server/utils/og-image-helpers';
 
 // --- Schema & Types ---
 
@@ -62,6 +65,29 @@ const ogImageSelect = {
   height: true,
 } as const;
 
+// --- Static app assets (inlined) ---
+//
+// The card embeds a couple of small app PNGs (the logo placeholder / stats-bar
+// icon and the fallback logo). Referenced as `${baseUrl}/images/...` they'd make
+// satori do a self-HTTP-fetch back to our own origin on every render. They're
+// tiny (≈10KB / ≈3KB) and static, so read them from `public/` once at module
+// load and inline as data URIs. If the read fails (e.g. `public/` not on disk in
+// some runtime), fall back to the HTTP URL so the card still renders.
+function loadStaticAssetDataUri(relPath: string, contentType: string): string | null {
+  try {
+    const file = fs.readFileSync(path.join(process.cwd(), 'public', relPath));
+    return `data:${contentType};base64,${file.toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
+const APPLE_TOUCH_ICON_DATA_URI = loadStaticAssetDataUri(
+  'images/apple-touch-icon.png',
+  'image/png'
+);
+const LOGO_DARK_DATA_URI = loadStaticAssetDataUri('images/logo_dark_mode.png', 'image/png');
+
 // --- Utilities ---
 
 function truncate(text: string, max: number): string {
@@ -91,13 +117,19 @@ function buildEntityImage(
   image: OgImage | null
 ): Pick<EntityData, 'imageUrl' | 'imageAspectRatio'> {
   if (!image) return { imageUrl: null, imageAspectRatio: 1 };
+  // Video covers require an on-demand CDN video→image transcode
+  // (`transcode:true`) that is known-slow and sometimes returns mp4 — it stalls
+  // the render and would burn the entire prefetch budget on every video card.
+  // There's no cheap static-frame path here, so skip the cover entirely and let
+  // the card render with the logo placeholder. (The bounded prefetch below would
+  // also cap it, but skipping avoids paying the timeout at all.)
+  if (image.type === 'video') return { imageUrl: null, imageAspectRatio: 1 };
   return {
     imageUrl: getEdgeUrl(image.url, {
       width: IMAGE_WIDTH,
       height: IMAGE_HEIGHT,
       fit: 'cover',
       quality: 90,
-      ...(image.type === 'video' ? { anim: false, transcode: true } : {}),
     }),
     imageAspectRatio: getAspectRatio(image),
   };
@@ -489,7 +521,7 @@ function LogoPlaceholder({ baseUrl }: { baseUrl: string }) {
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={`${baseUrl}/images/apple-touch-icon.png`}
+        src={APPLE_TOUCH_ICON_DATA_URI ?? `${baseUrl}/images/apple-touch-icon.png`}
         width={120}
         height={120}
         alt=""
@@ -616,7 +648,7 @@ function OgCard({ data }: { data: EntityData }) {
         </div>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={`${baseUrl}/images/apple-touch-icon.png`}
+          src={APPLE_TOUCH_ICON_DATA_URI ?? `${baseUrl}/images/apple-touch-icon.png`}
           width={36}
           height={36}
           alt=""
@@ -666,7 +698,12 @@ function FallbackCard() {
             so any missing entity (or any OgCard render error) hit the catch's
             fallback and STILL returned 500. logo_dark_mode.png is 142x30 (≈4.733),
             so width 284 keeps aspect at height 60. */}
-        <img src={`${baseUrl}/images/logo_dark_mode.png`} width={284} height={60} alt="" />
+        <img
+          src={LOGO_DARK_DATA_URI ?? `${baseUrl}/images/logo_dark_mode.png`}
+          width={284}
+          height={60}
+          alt=""
+        />
         <div style={{ display: 'flex', fontSize: 16, color: colors.textSecondary }}>
           The Home of Open-Source Generative AI
         </div>
@@ -701,6 +738,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const fetcher = dataFetchers[type];
     const data = await fetcher(id);
 
+    // Prefetch the cover image ourselves with a bounded timeout and embed it as
+    // a data URI, so satori does NOT fetch the remote CF URL internally (which it
+    // does with NO timeout — the source of the p99 19.4s tail). On timeout /
+    // non-2xx / oversize / empty / error, fetchImageAsDataUri returns null and we
+    // drop to the logo-placeholder path — a slow cover must never block the
+    // render. This is an ADDITIONAL bounded step; it does NOT change the
+    // data ? OgCard : FallbackCard logic.
+    //
+    // We DO track whether this prefetch FAILED (had a cover URL, got null back)
+    // so the cache decision below can distinguish a transient cover-fetch failure
+    // (short cache → retry once the CDN recovers) from "no cover by design"
+    // (NSFW-filtered / video-skip / genuinely no image — where data.imageUrl was
+    // already null and no prefetch ran, so coverFetchFailed stays false → those
+    // permanent placeholders correctly keep the long edge cache).
+    let coverFetchFailed = false;
+    if (data?.imageUrl) {
+      const dataUri = await fetchImageAsDataUri(data.imageUrl);
+      coverFetchFailed = dataUri === null;
+      data.imageUrl = dataUri;
+    }
+
     const element = data ? <OgCard data={data} /> : <FallbackCard />;
 
     const imageResponse = new ImageResponse(element, {
@@ -711,17 +769,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const buffer = Buffer.from(await imageResponse.arrayBuffer());
 
     res.setHeader('Content-Type', 'image/png');
-    if (data) {
-      // Real entity card → long edge cache.
+    if (data && !coverFetchFailed) {
+      // Real entity card with the cover embedded, OR no cover by design (NSFW /
+      // video / genuinely no image — a PERMANENT placeholder) → long edge cache.
       res.setHeader(
         'Cache-Control',
         'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400'
       );
       res.setHeader('CDN-Cache-Control', 'max-age=604800');
     } else {
-      // Missing/deleted/unpublished/NSFW entity → generic fallback card. Cache SHORT
-      // (mirror the catch-block fallback) so a later-published or replica-lagged
-      // entity isn't pinned to the generic card at the CF edge for up to 7 days.
+      // Missing/deleted/unpublished entity (no data) → generic fallback card; OR a
+      // real entity whose cover prefetch FAILED (timeout/non-2xx/empty — a
+      // TRANSIENT placeholder). Cache SHORT (mirror the catch-block fallback) so a
+      // later-published / replica-lagged entity, or a placeholder pinned only by a
+      // transient CDN blip, isn't stuck at the CF edge for up to 7 days — the next
+      // request retries once the underlying condition recovers.
       res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600');
     }
     res.send(buffer);
