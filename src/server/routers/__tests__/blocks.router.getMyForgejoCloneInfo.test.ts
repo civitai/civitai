@@ -177,6 +177,22 @@ describe('blocks.getMyForgejoCloneInfo — Phase 2 CLI pull credential', () => {
     );
   });
 
+  it('banned owner: FORBIDDEN, nothing provisioned', async () => {
+    findUnique.mockResolvedValue({
+      blockId: 'my-app',
+      status: 'approved',
+      app: { userId: ownerUser.id },
+    });
+    const caller = blocksRouter.createCaller(
+      fakeCtx({ ...ownerUser, bannedAt: new Date('2026-01-01') }) as never
+    );
+    await expect(caller.getMyForgejoCloneInfo({ appBlockId: 'ab_1' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockEnsureForgejoIdentity).not.toHaveBeenCalled();
+    expect(mockAddCollaborator).not.toHaveBeenCalled();
+  });
+
   it('neither appBlockId nor slug: input validation error (BAD_REQUEST)', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
     await expect(caller.getMyForgejoCloneInfo({} as never)).rejects.toMatchObject({

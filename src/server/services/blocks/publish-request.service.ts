@@ -1569,29 +1569,58 @@ export async function recordPendingFromPush(args: {
   // Park the review IMMEDIATELY with an empty summary, then enrich the real
   // file/manifest diff OFF the response path (below). The empty summary is the
   // durable fallback if enrichment never lands.
-  await dbWrite.appBlockPublishRequest.create({
-    data: {
-      id: publishRequestId,
-      appBlockId: args.appBlockId,
-      slug: args.slug,
-      submittedByUserId: ownerUserId,
-      version: args.version,
-      manifest: args.manifest,
-      // No bundle: the Forgejo repo at forgejoCommitSha IS the reviewable
-      // artifact; mods browse it directly. bundleKey stays empty as the
-      // push-originated marker.
-      bundleKey: '',
-      bundleSha256: '',
-      bundleSizeBytes: BigInt(0),
-      fileSummary: { files: [], added: [], removed: [], changed: [] },
-      manifestDiffSummary: {
-        kind: 'first-version' as const,
-        fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
+  //
+  // RACE (audit follow-up): `updateManifest` calls this explicitly AND the
+  // Forgejo push webhook the same commit fires ALSO calls it for the same
+  // (slug, sha). Both can miss the `existingForSha` read above and both reach
+  // this create. The partial unique index
+  // `app_block_publish_requests_one_pending_per_slug` ((slug) WHERE
+  // status='pending') makes the loser's INSERT trip a P2002 — catch it, re-read
+  // the winner's pending row, and return it (the loser no-ops gracefully
+  // instead of throwing). Mirrors submitVersion's C-4 catch.
+  try {
+    await dbWrite.appBlockPublishRequest.create({
+      data: {
+        id: publishRequestId,
+        appBlockId: args.appBlockId,
+        slug: args.slug,
+        submittedByUserId: ownerUserId,
+        version: args.version,
+        manifest: args.manifest,
+        // No bundle: the Forgejo repo at forgejoCommitSha IS the reviewable
+        // artifact; mods browse it directly. bundleKey stays empty as the
+        // push-originated marker.
+        bundleKey: '',
+        bundleSha256: '',
+        bundleSizeBytes: BigInt(0),
+        fileSummary: { files: [], added: [], removed: [], changed: [] },
+        manifestDiffSummary: {
+          kind: 'first-version' as const,
+          fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
+        },
+        status: 'pending',
+        forgejoCommitSha: args.sha,
       },
-      status: 'pending',
-      forgejoCommitSha: args.sha,
-    },
-  });
+    });
+  } catch (err) {
+    const code = (err as { code?: unknown })?.code;
+    if (code !== 'P2002') throw err;
+    // Lost the race: another concurrent recorder for this slug already parked a
+    // pending row. Re-read it and return it so this caller no-ops gracefully.
+    // Prefer the exact-sha row (this commit), falling back to whatever pending
+    // row exists for the slug (the winner may have parked a newer sha).
+    const winner =
+      (await dbWrite.appBlockPublishRequest.findFirst({
+        where: { slug: args.slug, status: 'pending', forgejoCommitSha: args.sha },
+        select: { id: true },
+      })) ??
+      (await dbWrite.appBlockPublishRequest.findFirst({
+        where: { slug: args.slug, status: 'pending' },
+        select: { id: true },
+      }));
+    if (!winner) throw err; // index fired but no pending row visible — re-throw
+    return { publishRequestId: winner.id };
+  }
 
   // Fire-and-forget: fill in the real diff + bundle size. enrichPushRequestRow
   // has its own try/catch + is scoped to status='pending', so it never gates the

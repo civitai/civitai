@@ -270,6 +270,59 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
     );
   });
 
+  it('banned owner: FORBIDDEN, nothing committed', async () => {
+    findUnique.mockResolvedValue(approvedBlock);
+    const caller = blocksRouter.createCaller(
+      fakeCtx({ ...ownerUser, bannedAt: new Date('2026-01-01') }) as never
+    );
+    await expect(
+      caller.updateManifest({ appBlockId: 'ab_1', patch: validPatch })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockCommitFiles).not.toHaveBeenCalled();
+    expect(mockRecordPending).not.toHaveBeenCalled();
+  });
+
+  it('SSRF: a client-supplied off-origin iframe.src is OVERWRITTEN to the canonical per-app subdomain in the committed bytes', async () => {
+    // iframe.src is platform-owned. Even if the client smuggles a hostile
+    // off-origin URL (an SSRF / origin-confusion vector) through the patch, the
+    // server unconditionally stamps the canonical `https://<slug>.<APPS_DOMAIN>/`
+    // before committing. Use the REAL stamper here (not the pass-through mock)
+    // so this asserts the actual normalization, on the bytes that get committed.
+    mockStamp.mockImplementation(
+      (m: Record<string, unknown>, slug: string, appsDomain: string) => {
+        const existing =
+          m.iframe && typeof m.iframe === 'object' && !Array.isArray(m.iframe)
+            ? (m.iframe as Record<string, unknown>)
+            : {};
+        m.iframe = { ...existing, src: `https://${slug}.${appsDomain}/` };
+        return m;
+      }
+    );
+    findUnique.mockResolvedValue({
+      ...approvedBlock,
+      // Stored manifest already carries a hostile src; the patch tries to set
+      // another one. Neither must survive the stamp.
+      manifest: { ...approvedBlock.manifest, iframe: { src: 'https://evil.example.com/steal' } },
+    });
+    const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+    await caller.updateManifest({
+      appBlockId: 'ab_1',
+      // The input schema doesn't accept iframe.src, but a stored/leaked hostile
+      // value (above) must still be overwritten — assert on the committed bytes.
+      patch: validPatch,
+    });
+
+    const commitArg = mockCommitFiles.mock.calls[0][0];
+    const committed = JSON.parse(commitArg.files[0].content.toString('utf8'));
+    expect(committed.iframe.src).toBe('https://my-app.civit.ai/');
+    // The hostile origin is gone from the committed manifest.
+    expect(commitArg.files[0].content.toString('utf8')).not.toContain('evil.example.com');
+    // The validator also saw the canonical-stamped manifest (the security
+    // boundary runs AFTER the stamp).
+    const validated = mockValidate.mock.calls[0][0] as { iframe: { src: string } };
+    expect(validated.iframe.src).toBe('https://my-app.civit.ai/');
+  });
+
   it('immutable blockId: the committed manifest carries the SLUG even if the stored manifest blockId drifted', async () => {
     // Stored manifest has a stale/wrong blockId; the slug (block.blockId) is the
     // source of truth and must win in the committed manifest.
