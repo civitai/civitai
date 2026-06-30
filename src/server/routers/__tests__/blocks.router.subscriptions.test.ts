@@ -244,6 +244,8 @@ describe('blocks.listAvailable (public)', () => {
     // everything).
     expect(mockListAvailable).toHaveBeenCalledWith(
       expect.objectContaining({ query: 'generate', slotId: 'model.sidebar_top', limit: 5 }),
+      false,
+      // 3rd arg = redCapable (NSFW-app-red-only; no host header → false).
       false
     );
   });
@@ -257,7 +259,9 @@ describe('blocks.listAvailable (public)', () => {
     await caller.listAvailable({ limit: 20 });
     expect(mockListAvailable).toHaveBeenCalledWith(
       expect.objectContaining({ limit: 20 }),
-      true
+      true,
+      // 3rd arg = redCapable (no host → false).
+      false
     );
   });
 

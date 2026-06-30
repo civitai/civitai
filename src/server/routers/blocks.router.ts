@@ -72,7 +72,7 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
@@ -623,6 +623,20 @@ function assertLaunchSlotForCaller(
 }
 
 /**
+ * NSFW-APP-RED-ONLY: true when the request is on a red-capable host
+ * (civitai.red or a red alias). Drives whether mature (r/x) apps appear in the
+ * marketplace listing / featured rail / detail / model-slot reads. Uses
+ * `isHostForColor(host, 'red')` (NOT `getRequestDomainColor`, which returns
+ * `blue` for civitai.red). Maturity is a HOST property — independent of
+ * moderator status — so even a mod on civitai.com does not see mature apps in
+ * these viewer-facing surfaces. Fail-closed: a missing host → false (SFW only).
+ */
+function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): boolean {
+  const host = ctx.req?.headers?.host ?? '';
+  return host !== '' && isHostForColor(host, 'red');
+}
+
+/**
  * Manifest-level variant of {@link assertLaunchSlotForCaller} for the
  * subscription path, where the slot isn't an input — it's implied by the app's
  * manifest targets. A model-slot app (the only kind that takes a subscription;
@@ -752,6 +766,9 @@ export const blocksRouter = router({
       return BlockRegistry.listForModel({
         ...input,
         viewerUserId: ctx.user?.id ?? null,
+        // NSFW-APP-RED-ONLY: mature (r/x) apps render in a model slot only on a
+        // red-capable host. Threaded from the request host.
+        redCapable: isRedCapableRequest(ctx),
       });
     }),
 
@@ -1541,7 +1558,12 @@ export const blocksRouter = router({
       // mod-only model-slot apps like generate-from-model). Mod status comes
       // from the server-stamped session `ctx.user?.isModerator` (cannot be
       // spoofed client-side — same source as every other belt in this router).
-      return BlockRegistry.listAvailable(input, !ctx.user?.isModerator);
+      return BlockRegistry.listAvailable(
+        input,
+        !ctx.user?.isModerator,
+        // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the listing off .red.
+        isRedCapableRequest(ctx)
+      );
     }),
 
   /**
@@ -1600,7 +1622,10 @@ export const blocksRouter = router({
       // the server-stamped session flag.
       const detail = await BlockRegistry.getAppDetail(
         input.appBlockId,
-        !ctx.user?.isModerator
+        !ctx.user?.isModerator,
+        // NSFW-APP-RED-ONLY: a mature (r/x) app's detail resolves to NOT_FOUND
+        // off a red-capable host (mirrors the run-page SSR 404).
+        isRedCapableRequest(ctx)
       );
       if (!detail) throw throwNotFoundError('App block not found');
       return detail;
@@ -1644,7 +1669,9 @@ export const blocksRouter = router({
       // non-mod featured rail carries launch (page) apps only; mods see all.
       const items = await BlockRegistry.getFeaturedBlocks(
         input.limit,
-        !ctx.user?.isModerator
+        !ctx.user?.isModerator,
+        // NSFW-APP-RED-ONLY: hide mature (r/x) apps from the featured rail off .red.
+        isRedCapableRequest(ctx)
       );
       return { items };
     }),
