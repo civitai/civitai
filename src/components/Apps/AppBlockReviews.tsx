@@ -14,13 +14,16 @@ import {
   Title,
 } from '@mantine/core';
 import {
+  IconLogin,
   IconMoodSmile,
+  IconPlugConnected,
   IconStarFilled,
   IconThumbDown,
   IconThumbUp,
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -59,6 +62,15 @@ type AppBlockReviewsProps = {
  *     client-visible owner signal in PublicAppDetail, so it is enforced on the
  *     server — if an owner somehow installs + tries to review, the upsert 403s
  *     and we surface the friendly "You cannot review your own app" message.
+ *   - When the form is gated off we render an explanatory PROMPT instead of
+ *     nothing, so the path to reviewing is discoverable: a "sign in to review"
+ *     affordance for anon viewers (LoginRedirect, mirroring the install CTA on
+ *     AppBlockCard), or an "install this app to leave a review" message for a
+ *     signed-in viewer with no enabled install. This only makes the EXISTING
+ *     requirement VISIBLE — the install requirement is still enforced (the
+ *     server is the source of truth). There is no client-side owner signal, so
+ *     the owner sees the generic install prompt; the server still 403s their
+ *     self-review.
  *
  * SECURITY: review `details` is rendered as PLAIN TEXT via React's default
  * escaping (a `<Text>` child) — NEVER dangerouslySetInnerHTML. `details` is not
@@ -85,9 +97,55 @@ export function AppBlockReviews({
   return (
     <Stack gap="lg">
       <ReviewSummary avgRating={avgRating} reviewCount={reviewCount} />
-      {canReview && <ReviewForm appBlockId={appBlockId} />}
+      {canReview ? (
+        <ReviewForm appBlockId={appBlockId} />
+      ) : (
+        <ReviewPrompt signedIn={!!currentUser} />
+      )}
       <ReviewList appBlockId={appBlockId} viewerUserId={currentUser?.id} />
     </Stack>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Prompt — shown in place of the form when the viewer can't review yet, so the
+// path to reviewing is discoverable instead of silently empty. Anon → sign-in
+// affordance; signed-in-but-no-install → install requirement made visible.
+// ---------------------------------------------------------------------------
+
+function ReviewPrompt({ signedIn }: { signedIn: boolean }) {
+  if (!signedIn) {
+    return (
+      <Card withBorder radius="md" p="md">
+        <Group justify="space-between" align="center" wrap="nowrap">
+          <Text size="sm" c="dimmed">
+            Sign in to leave a review.
+          </Text>
+          <LoginRedirect reason="perform-action">
+            <Button size="xs" variant="light" leftSection={<IconLogin size={14} />}>
+              Sign in
+            </Button>
+          </LoginRedirect>
+        </Group>
+      </Card>
+    );
+  }
+
+  // Signed in, but no enabled install for this app — surface the install
+  // requirement (the server enforces it; this just makes it visible). There is
+  // no client-side owner signal, so the app owner sees this too; their
+  // self-review is still blocked server-side.
+  return (
+    <Card withBorder radius="md" p="md">
+      <Group gap="xs" align="center" wrap="nowrap">
+        <ThemeIcon variant="light" size="sm" radius="xl">
+          <IconPlugConnected size={12} />
+        </ThemeIcon>
+        <Text size="sm" c="dimmed">
+          Install this app to leave a review.
+        </Text>
+      </Group>
+    </Card>
   );
 }
 
