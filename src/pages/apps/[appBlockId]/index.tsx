@@ -17,6 +17,7 @@ import {
 } from '@mantine/core';
 import {
   IconArrowLeft,
+  IconEdit,
   IconExternalLink,
   IconLock,
   IconPlugConnected,
@@ -114,6 +115,16 @@ export default function AppDetailPage() {
     return map;
   }, [mySubs, appBlockId]);
   const alreadySubscribed = Object.keys(existingByScope).length > 0;
+
+  // Owner-only probe: getMyAppManifest is owner-gated server-side (FORBIDDEN for
+  // a non-owner), so a successful response means the viewer owns this app — the
+  // "Edit manifest" affordance shows only then. retry:false so a non-owner's
+  // FORBIDDEN settles quietly without surfacing an error on the public page.
+  const { data: ownerManifest } = trpc.blocks.getMyAppManifest.useQuery(
+    { appBlockId },
+    { enabled: !!features.appBlocks && !!currentUser && !!appBlockId, retry: false }
+  );
+  const isOwner = !!ownerManifest;
   // Subscriptions for THIS app — feeds the reviews write-form gate (an enabled
   // install is required to review, mirroring the server gate).
   const mySubsForApp = useMemo(
@@ -238,6 +249,21 @@ export default function AppDetailPage() {
                   </Group>
                 </Stack>
                 <Group gap="xs" wrap="nowrap">
+                  {/* Owner-only "Edit manifest" affordance — opens the Phase 1
+                      web manifest editor. Gated on isOwner (a successful
+                      owner-only getMyAppManifest). Shown only for an approved app
+                      (the canonical repo exists only after first ZIP approval —
+                      the editor server-side rejects non-approved apps anyway). */}
+                  {isOwner && ownerManifest?.status === 'approved' && (
+                    <Button
+                      component={Link}
+                      href={`/apps/${appBlockId}/edit-manifest`}
+                      variant="default"
+                      leftSection={<IconEdit size={16} />}
+                    >
+                      Edit manifest
+                    </Button>
+                  )}
                   {isExternal ? (
                     /* Off-site (external-link) app: the external URL is the
                        PRIMARY (filled) CTA — opens off-site in a new tab. No
