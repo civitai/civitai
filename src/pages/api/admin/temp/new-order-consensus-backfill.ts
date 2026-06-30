@@ -22,6 +22,7 @@ import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
+  countRestampedRows,
   getConsensusCandidates,
   reconcileAffectedPlayers,
   restampBatch,
@@ -80,19 +81,19 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       batchSize
     );
     let imagesTargeted = 0;
-    let rowsResolved = 0;
     await limitConcurrency(
       batches.map((b) => async () => {
-        rowsResolved += await restampBatch(b, stampISO);
+        await restampBatch(b, stampISO);
         imagesTargeted += b.length;
       }),
       concurrency
     );
 
     const usersReconciled = await reconcileAffectedPlayers(writeSet.map((c) => c.imageId));
+    // Authoritative actual vote-rows written this run (0 = no-op); imagesTargeted is the
+    // image count attempted.
+    const rowsResolved = await countRestampedRows(stampISO);
 
-    // rowsResolved is the actual vote-rows re-stamped (0 = no-op); imagesTargeted is the
-    // image count this run attempted.
     return res
       .status(200)
       .json({ dryRun: false, imagesTargeted, rowsResolved, usersReconciled, byDecision, stampISO });

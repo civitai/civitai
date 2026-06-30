@@ -87,26 +87,11 @@ export async function getConsensusCandidates(opts: {
 export async function restampBatch(
   pairs: { imageId: number; domRating: number }[],
   stampISO: string
-): Promise<number> {
+): Promise<void> {
   if (!clickhouse) throw new Error('clickhouse not configured');
-  if (pairs.length === 0) return 0;
+  if (pairs.length === 0) return;
   const ids = pairs.map((p) => p.imageId).join(',');
   const rats = pairs.map((p) => p.domRating).join(',');
-
-  // Count the eligible voter rows (= exactly what the INSERT writes) up front so the
-  // caller can surface a no-op write. Runs on the by_imageId projection (~7 granules).
-  const countRows = await clickhouse.$query<{ n: number }>`
-    SELECT count() AS n FROM (
-      SELECT argMax(status, createdAt) AS status, argMax(rank, createdAt) AS rank
-      FROM knights_new_order_image_rating
-      WHERE imageId IN (${ids})
-      GROUP BY imageId, userId
-    )
-    WHERE status IN ('Pending','Inconclusive') AND rank != 'Acolyte'
-  `;
-  const eligibleRows = Number(countRows[0]?.n ?? 0);
-  if (!eligibleRows) return 0;
-
   // arrayElement([rats], indexOf([ids], imageId)) -> this image's consensus rating.
   // GROUP BY imageId,userId + argMax(.,createdAt) WHERE imageId IN is served by the
   // by_imageId projection (~7 granules vs a 3958-granule FINAL scan); the argMax dedup
@@ -152,7 +137,19 @@ export async function restampBatch(
       originalLevel
     FROM eligible
   `;
-  return eligibleRows;
+}
+
+// Authoritative count of vote-rows written by a resolve run: the re-stamp uses the
+// run timestamp, and live votes at that exact second are Pending, so Correct/Failed
+// rows at `stampISO` are precisely what this backfill inserted. 0 => no-op write.
+export async function countRestampedRows(stampISO: string): Promise<number> {
+  if (!clickhouse) throw new Error('clickhouse not configured');
+  const rows = await clickhouse.$query<{ n: number }>`
+    SELECT count() AS n
+    FROM knights_new_order_image_rating
+    WHERE createdAt = toDateTime('${stampISO}') AND status IN ('Correct','Failed')
+  `;
+  return Number(rows[0]?.n ?? 0);
 }
 
 // Resets judgment + fervor counters for every non-Acolyte voter on the given
