@@ -955,7 +955,14 @@ function ReviewPreviewPanel({
       refetchInterval: (data) => {
         const s = data?.state;
         if (s === 'preview-building' || s === 'preview-deploying') return 3000;
-        return false; // live, failed, or none → stop polling
+        // Keep a SLOW poll alive while the preview is live. getReviewStatus mints
+        // a fresh `?mr=<token>` in previewUrl with a 120s TTL on every poll, and
+        // the iframe `src` is read from the latest query data each render (see
+        // `url` below). A 60s poll < 120s TTL guarantees the iframe src always
+        // holds a token with >=60s of validity — so reloading/re-navigating the
+        // live preview minutes later never 401s on an expired token.
+        if (s === 'preview-live') return 60000;
+        return false; // failed or none → stop polling
       },
     }
   );
