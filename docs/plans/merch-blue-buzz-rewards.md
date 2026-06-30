@@ -29,10 +29,17 @@
 ### Primary delivery: webhook-driven claim email (no Shopify-side UI needed)
 shop.civitai.com is on **checkout extensibility**, so the Thank-you/Order-status page is not
 merchant-editable Liquid (and isn't part of the theme). Instead, **`processShopifyOrderPaid` emails the
-buyer a claim link** (`merchClaimInviteEmail` → `/merch/claim?order=<id>`) the first time it sees an
-**unlinked** order. Once they claim, the customer is linked and future orders auto-grant with no email.
-Retry-safe: the invite only sends on first insert of an order (guarded by an existence check), and not when
-`buzzAmount` is 0 or the order has no email. This removes all Shopify-side UI work.
+buyer a claim link** (`merchClaimInviteEmail`) the first time it sees an **unlinked** order. Once they
+claim, the customer is linked and future orders auto-grant with no email. Retry-safe: the invite only sends
+on first insert of an order (guarded by an existence check), and not when `buzzAmount` is 0 or the order has
+no email. This removes all Shopify-side UI work.
+
+**Gapless claim — signed key.** The invite link is `/merch/claim?key=<signed>` where the key is an
+HMAC-signed order id (`signOrderKey`, `NEXTAUTH_SECRET`, 90-day exp). Because the link was delivered to the
+order's email, possessing a valid key *is* the mailbox-ownership proof — so `claimMerchOrderByKey` links
+whatever Civitai account the clicker is signed into and grants immediately, with **no email-match and no
+confirmation step**. The unsigned `?order=<id>` path (manual entry / optional classic-checkout snippet)
+still uses the email-match-or-confirm flow since it carries no proof.
 
 ### Optional: order-status page snippet (classic-checkout stores only)
 On a **classic-checkout** store you could *additionally* surface the button on the order-status page via

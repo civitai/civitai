@@ -1,11 +1,13 @@
 import { TRPCError } from '@trpc/server';
 import {
+  claimMerchByKeySchema,
   confirmMerchClaimSchema,
   merchOrderIdSchema,
   requestMerchClaimConfirmationSchema,
 } from '~/server/schema/merch.schema';
 import {
   claimMerchOrder,
+  claimMerchOrderByKey,
   confirmMerchClaim,
   getClaimableMerchOrder,
   requestMerchClaimConfirmation,
@@ -54,4 +56,11 @@ export const merchRouter = router({
         throw toTRPCError(error);
       }
     }),
+  claimByKey: protectedProcedure.input(claimMerchByKeySchema).mutation(async ({ input, ctx }) => {
+    try {
+      return await claimMerchOrderByKey({ userId: ctx.user.id, key: input.key });
+    } catch (error) {
+      throw toTRPCError(error);
+    }
+  }),
 });

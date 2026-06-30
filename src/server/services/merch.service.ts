@@ -66,6 +66,40 @@ function verifyClaimToken(token: string): { shopifyOrderId: string; userId: numb
   }
 }
 
+// Signed order key for the webhook-driven invite link. Unlike the confirmation
+// token it binds only the order id (we don't know the Civitai user at send time):
+// possession of a valid key proves the invite email — sent to the order's email —
+// was received, which is the mailbox-ownership proof. So clicking it is enough to
+// link whatever account the clicker is signed into; no separate email check.
+const ORDER_KEY_TTL_MS = 1000 * 60 * 60 * 24 * 90; // 90d
+
+function signOrderKey(shopifyOrderId: string) {
+  const exp = Date.now() + ORDER_KEY_TTL_MS;
+  const payload = b64url(Buffer.from(JSON.stringify({ o: shopifyOrderId, exp })));
+  const sig = b64url(crypto.createHmac('sha256', env.NEXTAUTH_SECRET).update(payload).digest());
+  return `${payload}.${sig}`;
+}
+
+function verifyOrderKey(key: string): string | null {
+  const [payload, sig] = key.split('.');
+  if (!payload || !sig) return null;
+  const expected = b64url(
+    crypto.createHmac('sha256', env.NEXTAUTH_SECRET).update(payload).digest()
+  );
+  if (
+    sig.length !== expected.length ||
+    !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
+  )
+    return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    if (typeof data.exp !== 'number' || data.exp < Date.now()) return null;
+    return String(data.o);
+  } catch {
+    return null;
+  }
+}
+
 function maskEmail(email: string) {
   const [name, domain] = email.split('@');
   if (!domain) return '***';
@@ -233,7 +267,9 @@ export async function processShopifyOrderPaid(order: ShopifyOrderPaid) {
       await merchClaimInviteEmail.send({
         to: email,
         buzzAmount,
-        claimUrl: `${getBaseUrl()}/merch/claim?order=${shopifyOrderId}`,
+        claimUrl: `${getBaseUrl()}/merch/claim?key=${encodeURIComponent(
+          signOrderKey(shopifyOrderId)
+        )}`,
       });
     } catch (error) {
       log({ message: 'Failed to send merch claim invite', shopifyOrderId, error });
@@ -292,6 +328,27 @@ export async function claimMerchOrder({
   }
 
   return { status: 'needs_confirmation' as const, maskedEmail: maskEmail(order.email) };
+}
+
+/**
+ * Claim via a signed invite key (from the webhook claim email). A valid key proves
+ * the invite — delivered to the order's email — was received, so we link whatever
+ * account the user is signed into and grant immediately. No email match or
+ * confirmation step needed.
+ */
+export async function claimMerchOrderByKey({ userId, key }: { userId: number; key: string }) {
+  if (!(await withinClaimRateLimit(userId)))
+    throw new Error('Too many claim attempts. Please try again later.');
+
+  const shopifyOrderId = verifyOrderKey(key);
+  if (!shopifyOrderId) throw new Error('This claim link is invalid or has expired.');
+
+  const order = await dbWrite.shopifyMerchOrder.findUnique({ where: { shopifyOrderId } });
+  if (!order) throw new Error('Order not found.');
+  if (order.status === 'Granted') return { status: 'already_claimed' as const, grantedBuzz: 0 };
+
+  const { grantedBuzz } = await linkAndGrantPending(userId, order);
+  return { status: 'granted' as const, grantedBuzz };
 }
 
 /**

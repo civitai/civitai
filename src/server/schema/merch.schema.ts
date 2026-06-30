@@ -16,3 +16,8 @@ export const confirmMerchClaimSchema = z.object({
   token: z.string().min(1),
 });
 export type ConfirmMerchClaimInput = z.infer<typeof confirmMerchClaimSchema>;
+
+export const claimMerchByKeySchema = z.object({
+  key: z.string().min(1),
+});
+export type ClaimMerchByKeyInput = z.infer<typeof claimMerchByKeySchema>;

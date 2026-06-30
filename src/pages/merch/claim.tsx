@@ -56,6 +56,32 @@ const GrantedMessage = ({ buzz }: { buzz: number }) => (
   </Alert>
 );
 
+function KeyFlow({ orderKey }: { orderKey: string }) {
+  const ran = useRef(false);
+  const claimByKey = trpc.merch.claimByKey.useMutation();
+
+  useEffect(() => {
+    if (ran.current) return;
+    ran.current = true;
+    claimByKey.mutate({ key: orderKey });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderKey]);
+
+  if (!claimByKey.data && !claimByKey.error)
+    return (
+      <Center>
+        <Loader />
+      </Center>
+    );
+  if (claimByKey.error)
+    return (
+      <Alert color="red" title="Couldn't claim">
+        {claimByKey.error.message}
+      </Alert>
+    );
+  return <GrantedMessage buzz={claimByKey.data?.grantedBuzz ?? 0} />;
+}
+
 function ConfirmFlow({ token }: { token: string }) {
   const ran = useRef(false);
   const confirm = trpc.merch.confirmClaim.useMutation();
@@ -185,9 +211,16 @@ function ClaimFlow({ shopifyOrderId }: { shopifyOrderId: string }) {
 
 export default function MerchClaimPage() {
   const router = useRouter();
+  const orderKey = typeof router.query.key === 'string' ? router.query.key : undefined;
   const token = typeof router.query.token === 'string' ? router.query.token : undefined;
   const order = typeof router.query.order === 'string' ? router.query.order : undefined;
 
+  if (orderKey)
+    return (
+      <Wrapper>
+        <KeyFlow orderKey={orderKey} />
+      </Wrapper>
+    );
   if (token)
     return (
       <Wrapper>
