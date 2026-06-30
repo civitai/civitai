@@ -30,12 +30,24 @@ export async function getConsensusCandidates(opts: {
   const rows = await clickhouse.$query<{
     imageId: number; voters: number; topCount: number; domRating: number; origLevel: number;
   }>`
-    WITH img AS (
-      SELECT imageId, userId, rating, status, originalLevel, createdAt
-      FROM knights_new_order_image_rating FINAL
+    WITH latest AS (
+      -- GROUP BY imageId,userId + argMax(.,createdAt) is served by the by_imageId
+      -- projection (no FINAL full scan); one row per voter = the latest state.
+      SELECT imageId, userId,
+             argMax(rating, createdAt) AS rating,
+             argMax(status, createdAt) AS status,
+             argMax(originalLevel, createdAt) AS originalLevel,
+             argMax(rank, createdAt) AS rank,
+             max(createdAt) AS lastCreatedAt
+      FROM knights_new_order_image_rating
+      GROUP BY imageId, userId
+    ),
+    img AS (
+      SELECT imageId, rating, status, originalLevel, lastCreatedAt
+      FROM latest
       WHERE rank = 'Knight'
         AND status IN ('Pending','Inconclusive')
-        AND createdAt >= '${startDate}'
+        AND lastCreatedAt >= '${startDate}'
     ),
     arr AS (
       SELECT imageId,
@@ -43,7 +55,7 @@ export async function getConsensusCandidates(opts: {
              groupArray(rating) AS ratings,
              minIf(originalLevel, originalLevel > 0) AS origLevel,
              countIf(status='Pending') AS penCount,
-             max(createdAt) AS lastVote
+             max(lastCreatedAt) AS lastVote
       FROM img GROUP BY imageId
     ),
     scored AS (
@@ -80,23 +92,46 @@ export async function restampBatch(
   if (pairs.length === 0) return;
   const ids = pairs.map((p) => p.imageId).join(',');
   const rats = pairs.map((p) => p.domRating).join(',');
-  // arrayElement([rats], indexOf([ids], imageId)) -> this image's consensus rating
+  // arrayElement([rats], indexOf([ids], imageId)) -> this image's consensus rating.
+  // GROUP BY imageId,userId + argMax(.,createdAt) WHERE imageId IN is served by the
+  // by_imageId projection (~7 granules vs a 3958-granule FINAL scan); the argMax dedup
+  // is the schema's canonical latest row (same pattern as updatePendingImageRatings).
   await clickhouse.$exec`
     INSERT INTO knights_new_order_image_rating
+    WITH latest AS (
+      SELECT
+        imageId,
+        userId,
+        argMax(rating, createdAt) AS rating,
+        argMax(damnedReason, createdAt) AS damnedReason,
+        argMax(status, createdAt) AS status,
+        argMax(grantedExp, createdAt) AS grantedExp,
+        argMax(ip, createdAt) AS ip,
+        argMax(userAgent, createdAt) AS userAgent,
+        argMax(deviceId, createdAt) AS deviceId,
+        argMax(rank, createdAt) AS rank,
+        argMax(originalLevel, createdAt) AS originalLevel
+      FROM knights_new_order_image_rating
+      WHERE imageId IN (${ids})
+      GROUP BY imageId, userId
+    )
     SELECT
-      orig.userId,
-      orig.imageId AS imageId,
-      orig.rating,
-      orig.damnedReason,
-      if(orig.rating = arrayElement([${rats}], indexOf([${ids}], orig.imageId)), 'Correct', 'Failed') AS status,
-      orig.grantedExp,
-      if(orig.rating = arrayElement([${rats}], indexOf([${ids}], orig.imageId)), 1, 0) AS multiplier,
+      userId,
+      imageId,
+      rating,
+      damnedReason,
+      if(rating = arrayElement([${rats}], indexOf([${ids}], imageId)), 'Correct', 'Failed') AS status,
+      grantedExp,
+      if(rating = arrayElement([${rats}], indexOf([${ids}], imageId)), 1, 0) AS multiplier,
       toDateTime('${stampISO}') AS createdAt,
-      orig.ip, orig.userAgent, orig.deviceId, orig.rank, orig.originalLevel
-    FROM knights_new_order_image_rating orig FINAL
-    WHERE orig.imageId IN (${ids})
-      AND orig.rank != 'Acolyte'
-      AND orig.status IN ('Pending','Inconclusive')
+      ip,
+      userAgent,
+      deviceId,
+      rank,
+      originalLevel
+    FROM latest
+    WHERE rank != 'Acolyte'
+      AND status IN ('Pending','Inconclusive')
   `;
 }
 
@@ -108,10 +143,15 @@ export async function reconcileAffectedPlayers(imageIds: number[]): Promise<numb
   if (imageIds.length === 0) return 0;
   const userIds = new Set<number>();
   for (const idChunk of chunk(imageIds, 5000)) {
+    // by_imageId projection (GROUP BY imageId,userId + argMax) instead of FINAL scan.
     const rows = await clickhouse.$query<{ userId: number }>`
-      SELECT DISTINCT userId
-      FROM knights_new_order_image_rating FINAL
-      WHERE imageId IN (${idChunk.join(',')}) AND rank != 'Acolyte'
+      SELECT DISTINCT userId FROM (
+        SELECT imageId, userId, argMax(rank, createdAt) AS rank
+        FROM knights_new_order_image_rating
+        WHERE imageId IN (${idChunk.join(',')})
+        GROUP BY imageId, userId
+      )
+      WHERE rank != 'Acolyte'
     `;
     for (const r of rows) userIds.add(r.userId);
   }
