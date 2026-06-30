@@ -23,8 +23,11 @@
     "@sveltejs/kit": "^2.43.2",
     "@sveltejs/vite-plugin-svelte": "^6.0.0",
     "@types/node": "^20.19.9",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.5.3",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
+    "tailwindcss": "^3.4.3",
     "typescript": "^5.9.2",
     "vite": "^7.0.4"
   }

@@ -1,87 +1,64 @@
 <script lang="ts">
-  import { buildWordmarkSvg } from '@civitai/brand';
-  import { IconShieldCheck } from '@tabler/icons-svelte';
+  import { IconFlag, IconPhoto, IconUsers } from '@tabler/icons-svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
+  const name = $derived(data.user?.username ?? 'moderator');
 
-  const wordmarkSvg = buildWordmarkSvg({ base: '#e8eaed' });
-  const who = $derived(data.moderator.username ?? `user #${data.moderator.id}`);
+  const stats = [
+    { label: 'Open reports', value: '—', icon: IconFlag, href: '/reports' },
+    { label: 'Images to review', value: '—', icon: IconPhoto, href: '/images' },
+    { label: 'Flagged users', value: '—', icon: IconUsers, href: '/users' },
+  ];
 </script>
 
-<main class="shell">
-  <header class="brand">
-    <span class="wordmark">{@html wordmarkSvg}</span>
-    <span class="tag">moderator</span>
-  </header>
+<header class="page-header">
+  <h1>Dashboard</h1>
+  <p>Welcome back, {name}.</p>
+</header>
 
-  <section class="card">
-    <IconShieldCheck size={32} stroke={1.5} />
+<section class="mb-8 rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <h2 class="mb-3 text-base font-semibold text-white">Your access</h2>
+  <div class="flex flex-col gap-3 sm:flex-row sm:gap-10">
     <div>
-      <h1>Moderator app</h1>
-      <p>
-        A SvelteKit app in <code>apps/moderator</code>, wired to the shared
-        <code>@civitai/*</code> packages. Auth runs as a <code>*.civitai.com</code> spoke — only
-        moderators reach this page.
-      </p>
-      <p class="who">Signed in as <strong>{who}</strong></p>
+      <div class="mb-1.5 text-xs font-medium uppercase tracking-wider text-dark-2">Roles</div>
+      {#if data.roles.length > 0}
+        <div class="flex flex-wrap gap-1.5">
+          {#each data.roles as role (role)}
+            <span class="rounded bg-blue-8/15 px-2 py-0.5 text-xs font-medium text-blue-4">{role}</span>
+          {/each}
+        </div>
+      {:else}
+        <span class="text-sm text-dark-3">None — assigned in the auth hub.</span>
+      {/if}
     </div>
-  </section>
-</main>
+    <div>
+      <div class="mb-1.5 text-xs font-medium uppercase tracking-wider text-dark-2">Features</div>
+      {#if data.features.length > 0}
+        <div class="flex flex-wrap gap-1.5">
+          {#each data.features as feature (feature)}
+            <span class="rounded bg-dark-7 px-2 py-0.5 text-xs text-dark-1">{feature}</span>
+          {/each}
+        </div>
+      {:else}
+        <span class="text-sm text-dark-3">None.</span>
+      {/if}
+    </div>
+  </div>
+</section>
 
-<style>
-  .shell {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 64px 24px;
-    font-family: system-ui, sans-serif;
-    color: #e8eaed;
-  }
-  :global(body) {
-    background: #1a1b1e;
-  }
-  .brand {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 32px;
-  }
-  .wordmark :global(svg) {
-    height: 28px;
-    width: auto;
-    display: block;
-  }
-  .tag {
-    font-size: 13px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #909296;
-  }
-  .card {
-    display: flex;
-    gap: 16px;
-    padding: 24px;
-    border: 1px solid #2c2e33;
-    border-radius: 12px;
-    background: #25262b;
-  }
-  h1 {
-    margin: 0 0 8px;
-    font-size: 22px;
-  }
-  p {
-    margin: 0 0 8px;
-    color: #c1c2c5;
-    line-height: 1.55;
-  }
-  .who {
-    margin-top: 12px;
-    color: #909296;
-  }
-  code {
-    background: #1a1b1e;
-    padding: 1px 5px;
-    border-radius: 4px;
-    font-size: 0.9em;
-  }
-</style>
+<section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  {#each stats as stat (stat.label)}
+    {@const Icon = stat.icon}
+    <a
+      href={stat.href}
+      class="flex flex-col gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5 transition-colors hover:border-dark-3"
+    >
+      <span class="grid size-9 place-items-center rounded-lg bg-blue-8/15 text-blue-4">
+        <Icon size={20} stroke={1.5} />
+      </span>
+      <span class="text-3xl font-semibold text-white">{stat.value}</span>
+      <span class="text-sm text-dark-2">{stat.label}</span>
+    </a>
+  {/each}
+</section>

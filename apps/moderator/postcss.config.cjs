@@ -1,5 +1,8 @@
-// This SvelteKit app uses plain CSS — no Tailwind/Mantine. Without this file,
-// PostCSS walks up the monorepo and inherits the root Next.js config (Tailwind,
-// postcss-preset-mantine, etc.), which warns about empty Tailwind `content`.
-// An empty config here stops that upward search.
-module.exports = {};
+// Tailwind v3 + autoprefixer. Having a config here also stops PostCSS from walking up
+// the monorepo to the root Next app's postcss config (Mantine preset etc.).
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
