@@ -7,7 +7,7 @@
  * approximation of the live weighted algo (weights live only in the ephemeral
  * new-order:ratings:* zsets). Down-rates by >1 NSFW level are skipped (mod-only).
  *
- * Usage: POST /api/testing/new-order-consensus-backfill?token=$WEBHOOK_TOKEN
+ * Usage: POST /api/admin/temp/new-order-consensus-backfill?token=$WEBHOOK_TOKEN
  *   { "action": "count" }                       preview candidate counts (read-only)
  *   { "action": "resolve", "dryRun": true }     preview the write set (read-only)
  *   { "action": "resolve", "dryRun": false }    re-stamp Pending/Inconclusive -> Correct/Failed

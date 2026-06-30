@@ -4,14 +4,14 @@
 
 **Goal:** A temp admin webhook endpoint that finalizes the ~71K New-Order image-rating votes that were stranded `Pending`/`Inconclusive` during the 2026-06-23 sysRedis wipe — re-stamping them to `Correct`/`Failed` so blessed-buzz pays out and the nightly Inconclusive purge stops.
 
-**Architecture:** Source of truth is the **ClickHouse `knights_new_order_image_rating` ledger, NOT the Redis queue** (the `new-order:queues:Knight{1,2,3}:{a,b}` zsets rotate/wipe and are useless as a record). For each image with ≥4 unfinalized knight votes that meet raw-count consensus (≥60% agree), the endpoint re-inserts that image's `Pending`/`Inconclusive` rows with `status = Correct/Failed` (per-voter vs the dominant rating) and `createdAt = run time`, then lazily rebuilds the affected players' judgment/fervor counters. Down-rates by >1 NSFW level are excluded (mod-only per the live guard). Work is chunked and run under `limitConcurrency`, mirroring `src/pages/api/testing/backfill-stale-nsfw-rollups.ts`.
+**Architecture:** Source of truth is the **ClickHouse `knights_new_order_image_rating` ledger, NOT the Redis queue** (the `new-order:queues:Knight{1,2,3}:{a,b}` zsets rotate/wipe and are useless as a record). For each image with ≥4 unfinalized knight votes that meet raw-count consensus (≥60% agree), the endpoint re-inserts that image's `Pending`/`Inconclusive` rows with `status = Correct/Failed` (per-voter vs the dominant rating) and `createdAt = run time`, then lazily rebuilds the affected players' judgment/fervor counters. Down-rates by >1 NSFW level are excluded (mod-only per the live guard). Work is chunked and run under `limitConcurrency`, mirroring the temp-admin-backfill convention in `src/pages/api/admin/temp/` (e.g. `backfill-swept-trained-models.ts`).
 
 **Tech Stack:** Next.js API route, `WebhookEndpoint` (`~/server/utils/endpoint-helpers`), ClickHouse client (`~/server/clickhouse/client`), `limitConcurrency` (`~/server/utils/concurrency-helpers`), zod, Vitest.
 
 ## Global Constraints
 
 - **Read-only first.** Every write action MUST support `dryRun` and default to it (`dryRun !== false`). Mirror `backfill-stale-nsfw-rollups.ts`.
-- **Endpoint lives at** `src/pages/api/testing/new-order-consensus-backfill.ts`, guarded by `WebhookEndpoint(...)` (checks `?token=$WEBHOOK_TOKEN`). Do NOT add routes elsewhere.
+- **Endpoint lives at** `src/pages/api/admin/temp/new-order-consensus-backfill.ts`, guarded by `WebhookEndpoint(...)` (checks `?token=$WEBHOOK_TOKEN`). Do NOT add routes elsewhere.
 - **No unit tests under `src/pages`** (Next.js route-type validator fails `next build`). Helper + its test live in `src/server/games/new-order/` and `src/server/games/new-order/__tests__/`.
 - **Consensus = raw vote agreement** (`topCount / voters >= 0.6`, `voters >= 4`). It is a deliberate approximation of the live *weighted* algorithm (weights live only in the now-ephemeral `new-order:ratings:*` zsets). Safe because ~42K of 71K candidates are unanimous. Document this in the file header.
 - **Window:** `createdAt >= '2026-06-23 00:00:00'`, `rank = 'Knight'`, `status IN ('Pending','Inconclusive')`. Parametrize the start date with a default.
@@ -49,7 +49,7 @@
   - `restampBatch(pairs, stampISO)` — CH write; re-stamps one chunk.
   - `reconcilePlayerCounters(userIds)` — reset judgment/fervor counters for affected users.
 - **Create** `src/server/games/new-order/__tests__/consensus-backfill.test.ts` — Vitest for `classifyDecision`.
-- **Create** `src/pages/api/testing/new-order-consensus-backfill.ts` — `WebhookEndpoint` route: actions `count`, `resolve`, `verify` (Phase 1); `apply-levels`, `escalate` (Phase 2).
+- **Create** `src/pages/api/admin/temp/new-order-consensus-backfill.ts` — `WebhookEndpoint` route: actions `count`, `resolve`, `verify` (Phase 1); `apply-levels`, `escalate` (Phase 2).
 
 ---
 
@@ -211,7 +211,7 @@ git commit -m "feat(new-order): query consensus-resolvable stranded votes from C
 ## Task 3: Endpoint with `count` action (read-only)
 
 **Files:**
-- Create: `src/pages/api/testing/new-order-consensus-backfill.ts`
+- Create: `src/pages/api/admin/temp/new-order-consensus-backfill.ts`
 
 **Interfaces:**
 - Consumes: `getConsensusCandidates` (Task 2).
@@ -229,7 +229,7 @@ git commit -m "feat(new-order): query consensus-resolvable stranded votes from C
  * approximation of the live weighted algo (weights live only in the ephemeral
  * new-order:ratings:* zsets). Down-rates by >1 NSFW level are skipped (mod-only).
  *
- * Usage: POST /api/testing/new-order-consensus-backfill?token=$WEBHOOK_TOKEN
+ * Usage: POST /api/admin/temp/new-order-consensus-backfill?token=$WEBHOOK_TOKEN
  *   { "action": "count" }                       preview candidate counts (read-only)
  *   { "action": "resolve", "dryRun": true }     preview the write set (read-only)
  *   { "action": "resolve", "dryRun": false }    re-stamp Pending/Inconclusive -> Correct/Failed
@@ -273,13 +273,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
 - [ ] **Step 2: Verify read-only**
 
-Run: `curl -s -X POST "https://<env>/api/testing/new-order-consensus-backfill?token=$WEBHOOK_TOKEN" -H 'Content-Type: application/json' -d '{"action":"count"}'`
+Run: `curl -s -X POST "https://<env>/api/admin/temp/new-order-consensus-backfill?token=$WEBHOOK_TOKEN" -H 'Content-Type: application/json' -d '{"action":"count"}'`
 Expected: JSON `{ total: ~71000, byDecision: { same_level: ~42000, down_1lvl: ~28000, up_rate: ~800, down_gt1: ~1900 } }`. No rows written.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/pages/api/testing/new-order-consensus-backfill.ts
+git add src/pages/api/admin/temp/new-order-consensus-backfill.ts
 git commit -m "feat(new-order): consensus-backfill endpoint with read-only count action"
 ```
 
@@ -289,7 +289,7 @@ git commit -m "feat(new-order): consensus-backfill endpoint with read-only count
 
 **Files:**
 - Modify: `src/server/games/new-order/consensus-backfill.ts` (add `restampBatch`)
-- Modify: `src/pages/api/testing/new-order-consensus-backfill.ts` (add `resolve`)
+- Modify: `src/pages/api/admin/temp/new-order-consensus-backfill.ts` (add `resolve`)
 
 **Interfaces:**
 - Consumes: `getConsensusCandidates`, `classifyDecision`.
@@ -331,7 +331,7 @@ export async function restampBatch(
 - [ ] **Step 2: Wire the `resolve` action (dryRun-gated, chunked, limitConcurrency)**
 
 ```ts
-// in src/pages/api/testing/new-order-consensus-backfill.ts
+// in src/pages/api/admin/temp/new-order-consensus-backfill.ts
 // add imports:
 import { restampBatch } from '~/server/games/new-order/consensus-backfill';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -383,7 +383,7 @@ Expected: `resolved: ~ (500 images × ~5 votes)` rows inserted; re-running `coun
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/server/games/new-order/consensus-backfill.ts src/pages/api/testing/new-order-consensus-backfill.ts
+git add src/server/games/new-order/consensus-backfill.ts src/pages/api/admin/temp/new-order-consensus-backfill.ts
 git commit -m "feat(new-order): resolve action re-stamps stranded votes in batches"
 ```
 
@@ -393,7 +393,7 @@ git commit -m "feat(new-order): resolve action re-stamps stranded votes in batch
 
 **Files:**
 - Modify: `src/server/games/new-order/consensus-backfill.ts` (add `reconcilePlayerCounters`)
-- Modify: `src/pages/api/testing/new-order-consensus-backfill.ts` (call it after resolve; add `verify`)
+- Modify: `src/pages/api/admin/temp/new-order-consensus-backfill.ts` (call it after resolve; add `verify`)
 
 **Interfaces:**
 - Consumes: `correctJudgmentsCounter`, `allJudgmentsCounter`, `fervorCounter` from `~/server/games/new-order/utils`.
@@ -451,7 +451,7 @@ Expected: `remainingAutoResolvable` dropped by the number resolved in Task 4.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/server/games/new-order/consensus-backfill.ts src/pages/api/testing/new-order-consensus-backfill.ts
+git add src/server/games/new-order/consensus-backfill.ts src/pages/api/admin/temp/new-order-consensus-backfill.ts
 git commit -m "feat(new-order): reconcile player counters + verify action"
 ```
 
