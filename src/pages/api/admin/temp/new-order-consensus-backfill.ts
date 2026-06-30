@@ -1,6 +1,6 @@
 /**
  * Temp admin backfill: finalize KoN votes stranded Pending/Inconclusive by the
- * 2026-06-23 sysRedis wipe (see docs/superpowers/plans/2026-06-29-kon-consensus-backfill.md).
+ * 2026-06-23 sysRedis wipe.
  *
  * Source of truth is the ClickHouse ledger, NOT the Redis queue (queues rotate/wipe).
  * Consensus = raw vote agreement (topCount/voters >= minAgreement) — a deliberate
