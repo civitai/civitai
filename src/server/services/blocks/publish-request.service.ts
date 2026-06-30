@@ -1,5 +1,6 @@
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createHash } from 'crypto';
+import { structuredPatch } from 'diff';
 import JSZip from 'jszip';
 import {
   MAX_BUNDLE_SIZE_BYTES,
@@ -541,6 +542,258 @@ export function computeFileDiff(
   removed.sort();
   changed.sort();
   return { files: currentFiles, added, removed, changed };
+}
+
+// ---------------------------------------------------------------------------
+// Per-file LINE-level diff for the moderator review UI.
+//
+// The file-level summary (computeFileDiff) tells a mod WHICH files changed; this
+// computes the unified line diff of WHAT changed inside each changed/added text
+// file between the pending bundle and the previous approved version, so the
+// reviewer can read the actual code change in the modal instead of clicking out
+// to Forgejo for every file.
+//
+// HARD BOUNDS (the correctness concern — never load unbounded content into the
+// response or memory):
+//   - TEXT FILES ONLY: a binary file (by extension or a NUL byte in the first
+//     few KiB of either side) is reported as `skipped: 'binary'`, never diffed.
+//   - PER-FILE BYTE CAP: a file whose current OR previous side exceeds
+//     MAX_DIFF_FILE_BYTES is reported `skipped: 'too-large'` (no diff computed).
+//   - PER-FILE LINE CAP: a unified diff that produces more than MAX_DIFF_LINES
+//     total hunk lines is elided (`skipped: 'diff-too-large'`) and its lines
+//     dropped from the payload.
+//   - TOTAL FILE CAP: at most MAX_DIFF_FILES files are diffed; the rest are
+//     reported `skipped: 'file-cap'` so the UI can point them at Forgejo.
+// Every elision is explicitly marked so the UI shows "diff too large / binary —
+// view in Forgejo" rather than silently omitting a change.
+// ---------------------------------------------------------------------------
+
+/** Why a changed/added file's line diff was NOT inlined (UI shows the Forgejo
+ *  fallback for these). `null` ⇒ the diff is present in `hunks`. */
+export type DiffSkipReason = 'binary' | 'too-large' | 'diff-too-large' | 'file-cap';
+
+/** One contiguous unified-diff hunk for a file (mirrors `diff`'s Hunk shape,
+ *  trimmed to what the UI renders). `lines` are prefixed `+`/`-`/` `. */
+export type DiffHunk = {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+};
+
+export type FileLineDiff = {
+  path: string;
+  /** 'added' (no previous content) or 'changed' (content differs). Removed +
+   *  unchanged files are not emitted — the file-level summary already lists
+   *  removals, and unchanged files have no diff. */
+  changeKind: 'added' | 'changed';
+  /** Present iff skipReason is null. Empty array ⇒ no textual change (e.g. a
+   *  trailing-newline-only delta that produced no hunks). */
+  hunks: DiffHunk[];
+  /** null ⇒ diffed; otherwise the file was elided for this reason. */
+  skipReason: DiffSkipReason | null;
+  added: number;
+  removed: number;
+};
+
+export type BundleLineDiff = {
+  files: FileLineDiff[];
+  /** Files the per-file cap elided (changeKind known, no hunks). */
+  truncated: boolean;
+};
+
+// Bounds. Tuned for a code review UI, not a data export — a single oversized
+// file or a generated lockfile diff must never balloon the tRPC response.
+const DEFAULT_BINARY_EXTENSIONS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'webp',
+  'gif',
+  'bmp',
+  'ico',
+  'avif',
+  'tiff',
+  'woff',
+  'woff2',
+  'ttf',
+  'otf',
+  'eot',
+  'zip',
+  'gz',
+  'tar',
+  'tgz',
+  'br',
+  '7z',
+  'rar',
+  'pdf',
+  'mp3',
+  'mp4',
+  'mov',
+  'avi',
+  'webm',
+  'wav',
+  'ogg',
+  'flac',
+  'wasm',
+  'so',
+  'dll',
+  'dylib',
+  'bin',
+  'exe',
+  'class',
+  'node',
+  'pyc',
+  'jar',
+  'icns',
+  'psd',
+  'sketch',
+]);
+const MAX_DIFF_FILE_BYTES = 256 * 1024; // 256 KiB per side
+const MAX_DIFF_LINES = 2000; // total +/-/context lines across all hunks per file
+const MAX_DIFF_FILES = 300; // most files we'll diff in one request
+const NUL_SNIFF_BYTES = 8192; // bytes inspected for a NUL byte (binary sniff)
+
+/** Extension-based binary check (lower-cased final extension). */
+function isBinaryExtension(path: string): boolean {
+  const dot = path.lastIndexOf('.');
+  if (dot < 0) return false;
+  return DEFAULT_BINARY_EXTENSIONS.has(path.slice(dot + 1).toLowerCase());
+}
+
+/** NUL-byte sniff over the first NUL_SNIFF_BYTES — a NUL byte never appears in
+ *  UTF-8/ASCII text, so it's a reliable binary signal for files an extension
+ *  check misses (e.g. an extension-less compiled artifact). */
+function looksBinary(buf: Buffer): boolean {
+  const n = Math.min(buf.length, NUL_SNIFF_BYTES);
+  for (let i = 0; i < n; i++) {
+    if (buf[i] === 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Pure, IO-free per-file unified line diff between the current bundle's files
+ * and the previous approved version's files. Operates on already-extracted
+ * `{ path, content }` buffers so it's unit-testable without MinIO/Forgejo.
+ *
+ * Emits ONE entry per added/changed text file (in sorted path order), each
+ * either carrying its unified hunks or a `skipReason` marking why it was elided.
+ * Removed + unchanged files are omitted (the file summary covers removals;
+ * unchanged files have no diff).
+ *
+ * `previousFiles === null` ⇒ first version: every file is `changeKind:'added'`
+ * and diffed against the empty string (whole-file add), still subject to the
+ * same binary/size/line caps.
+ *
+ * Caps are injectable for tests; production passes the module defaults.
+ */
+export function computeBundleLineDiff(
+  currentFiles: Array<{ path: string; content: Buffer }>,
+  previousFiles: Array<{ path: string; content: Buffer }> | null,
+  opts: {
+    maxFileBytes?: number;
+    maxDiffLines?: number;
+    maxFiles?: number;
+  } = {}
+): BundleLineDiff {
+  const maxFileBytes = opts.maxFileBytes ?? MAX_DIFF_FILE_BYTES;
+  const maxDiffLines = opts.maxDiffLines ?? MAX_DIFF_LINES;
+  const maxFiles = opts.maxFiles ?? MAX_DIFF_FILES;
+
+  const prevByPath = new Map((previousFiles ?? []).map((f) => [f.path, f.content]));
+
+  // Determine which files to diff: added (not in prev) or changed (bytes
+  // differ). Sorted for a deterministic, scannable UI ordering.
+  const candidates: Array<{ path: string; changeKind: 'added' | 'changed' }> = [];
+  for (const f of currentFiles) {
+    const prev = prevByPath.get(f.path);
+    if (prev === undefined) {
+      candidates.push({ path: f.path, changeKind: 'added' });
+    } else if (!prev.equals(f.content)) {
+      candidates.push({ path: f.path, changeKind: 'changed' });
+    }
+  }
+  candidates.sort((a, b) => a.path.localeCompare(b.path));
+
+  const currByPath = new Map(currentFiles.map((f) => [f.path, f.content]));
+  const files: FileLineDiff[] = [];
+  let truncated = false;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const { path, changeKind } = candidates[i];
+    const curBuf = currByPath.get(path) as Buffer;
+    const prevBuf = prevByPath.get(path) ?? null;
+
+    // TOTAL FILE CAP — beyond maxFiles, emit a marker (no diff) so the UI can
+    // say "view in Forgejo" rather than silently dropping the file.
+    if (i >= maxFiles) {
+      truncated = true;
+      files.push({ path, changeKind, hunks: [], skipReason: 'file-cap', added: 0, removed: 0 });
+      continue;
+    }
+
+    // BINARY — extension OR NUL-byte sniff on either side.
+    if (
+      isBinaryExtension(path) ||
+      looksBinary(curBuf) ||
+      (prevBuf !== null && looksBinary(prevBuf))
+    ) {
+      files.push({ path, changeKind, hunks: [], skipReason: 'binary', added: 0, removed: 0 });
+      continue;
+    }
+
+    // PER-FILE BYTE CAP — either side over the cap is elided undiffed.
+    if (curBuf.length > maxFileBytes || (prevBuf !== null && prevBuf.length > maxFileBytes)) {
+      files.push({ path, changeKind, hunks: [], skipReason: 'too-large', added: 0, removed: 0 });
+      continue;
+    }
+
+    const oldStr = prevBuf !== null ? prevBuf.toString('utf8') : '';
+    const newStr = curBuf.toString('utf8');
+    const patch = structuredPatch(path, path, oldStr, newStr, '', '', { context: 3 });
+
+    // PER-FILE LINE CAP — count total emitted hunk lines; elide if over cap.
+    let totalLines = 0;
+    let added = 0;
+    let removed = 0;
+    for (const h of patch.hunks) {
+      totalLines += h.lines.length;
+      for (const line of h.lines) {
+        if (line.startsWith('+')) added++;
+        else if (line.startsWith('-')) removed++;
+      }
+    }
+    if (totalLines > maxDiffLines) {
+      files.push({
+        path,
+        changeKind,
+        hunks: [],
+        skipReason: 'diff-too-large',
+        added,
+        removed,
+      });
+      continue;
+    }
+
+    files.push({
+      path,
+      changeKind,
+      hunks: patch.hunks.map((h) => ({
+        oldStart: h.oldStart,
+        oldLines: h.oldLines,
+        newStart: h.newStart,
+        newLines: h.newLines,
+        lines: h.lines,
+      })),
+      skipReason: null,
+      added,
+      removed,
+    });
+  }
+
+  return { files, truncated };
 }
 
 /**
@@ -2159,6 +2412,79 @@ export async function getPublishRequestScreenshots(opts: {
     contentType: s.contentType,
     dataUrl: `data:${s.contentType};base64,${s.content.toString('base64')}`,
   }));
+}
+
+/**
+ * Re-fetch the file CONTENTS of the previous APPROVED version's bundle for a
+ * slug, excluding a given publish-request id (so a re-review of an already-
+ * approved row diffs against the version BEFORE it, not itself). Returns null on
+ * a first version (no prior approved row) or a prior row with no fetchable
+ * bundle (empty bundleKey + no forgejoCommitSha — shouldn't happen for an
+ * approved row, but handled defensively → treated as first-version).
+ *
+ * Unlike getPreviousApprovedState (which reads only the stored path+sha
+ * fileSummary), the line diff needs the actual bytes, so this GETs the prior
+ * bundle from MinIO (ZIP path) or reconstructs it from Forgejo (push path).
+ */
+async function getPreviousApprovedFiles(
+  slug: string,
+  excludePublishRequestId?: string
+): Promise<Array<{ path: string; content: Buffer }> | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const prior = await dbRead.appBlockPublishRequest.findFirst({
+    where: {
+      slug,
+      status: 'approved',
+      ...(excludePublishRequestId ? { NOT: { id: excludePublishRequestId } } : {}),
+    },
+    orderBy: { reviewedAt: 'desc' },
+    select: { bundleKey: true, slug: true, forgejoCommitSha: true },
+  });
+  if (!prior) return null;
+  if (!prior.bundleKey && !prior.forgejoCommitSha) return null;
+  const bundleBuffer = prior.bundleKey
+    ? await fetchBundleBuffer(prior.bundleKey)
+    : await reconstructBundleFromForgejo(prior.slug, prior.forgejoCommitSha as string);
+  return extractBundleFilesFromBuffer(bundleBuffer);
+}
+
+/**
+ * MOD review: compute the per-file UNIFIED LINE diff between a publish request's
+ * pending bundle and the previous approved version, so the reviewer can read the
+ * actual code change in the modal (closing the "see exactly what changed" gap —
+ * the file/manifest summaries only show WHICH files changed).
+ *
+ * Re-fetches the pending bundle (MinIO ZIP path or Forgejo push path, mirroring
+ * getPublishRequestScreenshots) + the previous approved bundle's bytes, then
+ * runs the pure, bounded computeBundleLineDiff. Binary / oversized / huge-diff
+ * files are explicitly marked elided (never inlined) so the UI shows the Forgejo
+ * fallback. First version ⇒ every file is a whole-file add.
+ *
+ * Mod-only at the router layer.
+ */
+export async function getPublishRequestDiff(opts: {
+  publishRequestId: string;
+}): Promise<BundleLineDiff> {
+  const { dbRead } = await import('~/server/db/client');
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: opts.publishRequestId },
+    select: { bundleKey: true, slug: true, forgejoCommitSha: true },
+  });
+  if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
+  // PUSH-ORIGINATED requests carry an empty bundleKey — reconstruct from Forgejo
+  // at the pushed sha (as approveRequest / getPublishRequestScreenshots do). A
+  // row with neither pointer is unexpected → no diffable artifact.
+  if (!row.bundleKey && !row.forgejoCommitSha) {
+    return { files: [], truncated: false };
+  }
+  const bundleBuffer = row.bundleKey
+    ? await fetchBundleBuffer(row.bundleKey)
+    : await reconstructBundleFromForgejo(row.slug, row.forgejoCommitSha as string);
+  const currentFiles = await extractBundleFilesFromBuffer(bundleBuffer);
+  // Diff against the version BEFORE this row (exclude self so re-reviewing an
+  // approved row doesn't compare it to itself → an all-empty diff).
+  const previousFiles = await getPreviousApprovedFiles(row.slug, opts.publishRequestId);
+  return computeBundleLineDiff(currentFiles, previousFiles);
 }
 
 export type RejectRequestParams = {

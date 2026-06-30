@@ -322,6 +322,9 @@ importers:
       decimal.js:
         specifier: ^10.5.0
         version: 10.6.0
+      diff:
+        specifier: 4.0.2
+        version: 4.0.2
       discord-api-types:
         specifier: ^0.38.37
         version: 0.38.37
@@ -635,6 +638,9 @@ importers:
       '@types/cloudflare':
         specifier: ^2.7.9
         version: 2.7.15
+      '@types/diff':
+        specifier: 4.0.2
+        version: 4.0.2
       '@types/file-saver':
         specifier: ^2.0.7
         version: 2.0.7
@@ -4258,6 +4264,9 @@ packages:
 
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
+
+  '@types/diff@4.0.2':
+    resolution: {integrity: sha512-mIenTfsIe586/yzsyfql69KRnA75S8SVXQbTLpDejRrjH0QSJcpu3AUOi/Vjnt9IOsXKxPhJfGpQUNMueIU1fQ==}
 
   '@types/dom-speech-recognition@0.0.1':
     resolution: {integrity: sha512-udCxb8DvjcDKfk1WTBzDsxFbLgYxmQGKrE/ricoMqHRNjSlSUCcamVTA5lIQqzY10mY5qCY0QDwBfFEwhfoDPw==}
@@ -14821,6 +14830,8 @@ snapshots:
       '@types/ms': 2.1.0
 
   '@types/deep-eql@4.0.2': {}
+
+  '@types/diff@4.0.2': {}
 
   '@types/dom-speech-recognition@0.0.1': {}
 

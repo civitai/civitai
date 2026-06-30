@@ -802,6 +802,14 @@ function ReviewModal({
           {mds.kind === 'update' && (
             <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
           )}
+          {/* Line-level code diff — lazy (only fetched when the mod toggles it
+              open) so the modal stays light by default. Bounded server-side;
+              binary / oversized / huge-diff files fall back to the Forgejo link
+              above. */}
+          <CodeDiffPanel
+            publishRequestId={request.id}
+            forgejoUrl={request.pushCommitUrl ?? request.reviewRepoUrl}
+          />
         </Stack>
 
         <Stack gap={4}>
@@ -1144,6 +1152,226 @@ function FileListPreview({
         ))}
       </Stack>
     </ScrollArea.Autosize>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Line-level code diff — expands the file-level summary with the actual unified
+// line diff per changed/added text file. Lazy: the query only fires once the mod
+// toggles "Show code diff" on, so the modal default stays light. Bounded
+// server-side (text-only, byte/line/file caps); elided files render a "view in
+// Forgejo" fallback rather than inlining unbounded content.
+// ---------------------------------------------------------------------------
+
+type FileLineDiff = {
+  path: string;
+  changeKind: 'added' | 'changed';
+  hunks: Array<{
+    oldStart: number;
+    oldLines: number;
+    newStart: number;
+    newLines: number;
+    lines: string[];
+  }>;
+  skipReason: 'binary' | 'too-large' | 'diff-too-large' | 'file-cap' | null;
+  added: number;
+  removed: number;
+};
+
+const SKIP_LABEL: Record<NonNullable<FileLineDiff['skipReason']>, string> = {
+  binary: 'Binary file — view in Forgejo',
+  'too-large': 'File too large to diff — view in Forgejo',
+  'diff-too-large': 'Diff too large to display — view in Forgejo',
+  'file-cap': 'Too many changed files — view this one in Forgejo',
+};
+
+function CodeDiffPanel({
+  publishRequestId,
+  forgejoUrl,
+}: {
+  publishRequestId: string;
+  forgejoUrl: string;
+}) {
+  const features = useFeatureFlags();
+  const [show, setShow] = useState(false);
+
+  const { data, isLoading, error } = trpc.blocks.getPublishRequestDiff.useQuery(
+    { publishRequestId },
+    // Only fetch once toggled on (lazy). retry:false keeps a failed fetch from
+    // hammering MinIO/Forgejo for a request with no diffable artifact.
+    { enabled: !!features?.appBlocks && show, retry: false }
+  );
+
+  const files = (data?.files ?? []) as FileLineDiff[];
+
+  return (
+    <Stack gap={4}>
+      <Group gap={8}>
+        <Switch
+          size="sm"
+          label="Show code diff"
+          checked={show}
+          onChange={(e) => setShow(e.currentTarget.checked)}
+        />
+        {show && !isLoading && !error && (
+          <Text size="xs" c="dimmed">
+            {files.length} file{files.length === 1 ? '' : 's'} changed
+            {data?.truncated ? ' (some elided — view in Forgejo)' : ''}
+          </Text>
+        )}
+      </Group>
+
+      {show &&
+        (isLoading ? (
+          <Text size="xs" c="dimmed">
+            Computing line diff from the submitted bundle…
+          </Text>
+        ) : error ? (
+          <Text size="xs" c="red">
+            Could not load code diff: {error.message}
+          </Text>
+        ) : files.length === 0 ? (
+          <Text size="xs" c="dimmed">
+            No textual file changes to show.
+          </Text>
+        ) : (
+          <Stack gap={6}>
+            {files.map((f) => (
+              <FileDiffEntry key={f.path} file={f} forgejoUrl={forgejoUrl} />
+            ))}
+          </Stack>
+        ))}
+    </Stack>
+  );
+}
+
+function FileDiffEntry({ file, forgejoUrl }: { file: FileLineDiff; forgejoUrl: string }) {
+  const [open, setOpen] = useState(false);
+  const elided = file.skipReason !== null;
+
+  return (
+    <Card withBorder p={0}>
+      <Group
+        justify="space-between"
+        wrap="nowrap"
+        p={8}
+        style={{ cursor: elided ? 'default' : 'pointer' }}
+        onClick={() => {
+          if (!elided) setOpen((v) => !v);
+        }}
+      >
+        <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+          <Badge
+            size="xs"
+            color={file.changeKind === 'added' ? 'green' : 'yellow'}
+            variant="light"
+          >
+            {file.changeKind === 'added' ? 'added' : 'changed'}
+          </Badge>
+          <Code style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {file.path}
+          </Code>
+        </Group>
+        <Group gap={6} wrap="nowrap">
+          {!elided && file.added > 0 && (
+            <Text size="xs" c="green" fw={700}>
+              +{file.added}
+            </Text>
+          )}
+          {!elided && file.removed > 0 && (
+            <Text size="xs" c="red" fw={700}>
+              −{file.removed}
+            </Text>
+          )}
+          {elided && (
+            <Text size="xs" c="dimmed" fs="italic">
+              {SKIP_LABEL[file.skipReason!]}
+            </Text>
+          )}
+          {!elided && (
+            <Text size="xs" c="blue">
+              {open ? 'hide' : 'show'}
+            </Text>
+          )}
+        </Group>
+      </Group>
+
+      {elided && (
+        <Group p={8} pt={0}>
+          <Button
+            component="a"
+            href={forgejoUrl}
+            target="_blank"
+            rel="noopener"
+            size="compact-xs"
+            variant="subtle"
+            leftSection={<IconCode size={12} />}
+            rightSection={<IconExternalLink size={10} />}
+          >
+            View in Forgejo
+          </Button>
+        </Group>
+      )}
+
+      {open && !elided && (
+        <ScrollArea.Autosize mah={320} style={{ background: 'var(--mantine-color-gray-0)' }}>
+          <Stack gap={0} p={6} style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
+            {file.hunks.length === 0 ? (
+              <Text size="xs" c="dimmed">
+                No textual change (whitespace/metadata only).
+              </Text>
+            ) : (
+              file.hunks.map((h, hi) => <DiffHunkView key={hi} hunk={h} />)
+            )}
+          </Stack>
+        </ScrollArea.Autosize>
+      )}
+    </Card>
+  );
+}
+
+function DiffHunkView({
+  hunk,
+}: {
+  hunk: {
+    oldStart: number;
+    oldLines: number;
+    newStart: number;
+    newLines: number;
+    lines: string[];
+  };
+}) {
+  return (
+    <>
+      <Text size="xs" c="cyan" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+        {`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`}
+      </Text>
+      {hunk.lines.map((line, i) => {
+        const sigil = line[0];
+        const color = sigil === '+' ? 'green' : sigil === '-' ? 'red' : undefined;
+        const bg =
+          sigil === '+'
+            ? 'var(--mantine-color-green-0)'
+            : sigil === '-'
+            ? 'var(--mantine-color-red-0)'
+            : undefined;
+        return (
+          <Text
+            key={i}
+            size="xs"
+            c={color}
+            style={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              background: bg,
+              paddingLeft: 4,
+            }}
+          >
+            {line.length === 0 ? ' ' : line}
+          </Text>
+        );
+      })}
+    </>
   );
 }
 

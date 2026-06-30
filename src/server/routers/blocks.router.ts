@@ -38,6 +38,7 @@ import {
   approveRequestSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
+  getPublishRequestDiffSchema,
   getPublishRequestScreenshotsSchema,
   listApprovedRequestsSchema,
   listPendingRequestsSchema,
@@ -991,6 +992,30 @@ export const blocksRouter = router({
         publishRequestId: input.publishRequestId,
       });
       return { items };
+    }),
+
+  /**
+   * MOD-ONLY line-level code diff for a publish request. Computes the per-file
+   * UNIFIED diff between the pending bundle and the previous approved version so
+   * a reviewer can read the actual code change in the modal instead of clicking
+   * out to Forgejo per file. Bounded server-side (text-only, per-file byte +
+   * line caps, total file cap) — elided files are explicitly marked so the UI
+   * shows the "diff too large / binary — view in Forgejo" fallback.
+   *
+   * Same auth shape as getPublishRequestScreenshots: `moderatorProcedure` +
+   * `isModerator` belt + `enforceAppBlocksFlag` — no public path.
+   */
+  getPublishRequestDiff: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getPublishRequestDiffSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review is restricted to civitai team');
+      }
+      const { getPublishRequestDiff } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      return getPublishRequestDiff({ publishRequestId: input.publishRequestId });
     }),
 
   /**
