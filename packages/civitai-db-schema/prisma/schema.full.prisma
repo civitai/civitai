@@ -2268,12 +2268,25 @@ model UserRole {
   userId    Int
   role      String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleRef   Role     @relation(fields: [role], references: [id], onDelete: Cascade)
   note      String?
   addedById Int?
   createdAt DateTime @default(now())
 
   @@id([userId, role])
   @@index([role])
+}
+
+/// Role definitions, managed from the auth hub. `id` is the app-namespaced role string (e.g.
+/// "moderator:volunteer") that `UserRole.role` references. Exists so a role can be created before any
+/// members; what a role unlocks is decided per-app in code, not stored here.
+model Role {
+  id          String     @id
+  description String?
+  createdById Int?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @default(now()) @updatedAt
+  members     UserRole[]
 }
 
 /// App Blocks — v1 substrate. Registry of all blocks across all apps (OauthClients).

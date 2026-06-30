@@ -70,4 +70,5 @@ export {
 export * from './constants';
 export { firstPartyClientId, FIRST_PARTY_ID_PREFIX, SPOKE_CALLBACK_PATH } from './first-party'; // shared first-party client-id contract (hub + spoke; pure, browser-safe)
 export { hubLoginUrl, hubLogoutUrl, type ProviderId, type HubLoginUrlOptions } from './providers';
+export { appRole, appRoles, hasAppRole, APP_ROLE_SEPARATOR } from './roles'; // app-namespaced role helpers (read SessionUser.roles by prefix)
 export type { SessionUser, SessionClaims } from './types';

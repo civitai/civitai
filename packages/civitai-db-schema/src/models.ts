@@ -1766,9 +1766,19 @@ export interface UserRole {
   userId: number;
   role: string;
   user?: User;
+  roleRef?: Role;
   note: string | null;
   addedById: number | null;
   createdAt: Date;
+}
+
+export interface Role {
+  id: string;
+  description: string | null;
+  createdById: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+  members?: UserRole[];
 }
 
 export interface AppBlock {
