@@ -93,7 +93,7 @@
     "@civitai/app-sdk": "^0.6.0",
     "@civitai/auth": "workspace:*",
     "@civitai/blocks-react": "^0.4.0",
-    "@civitai/client": "0.2.0-beta.77",
+    "@civitai/client": "0.2.0-beta.78",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/next-axiom": "^0.17.0",
     "@clavata/sdk": "^0.2.3",
