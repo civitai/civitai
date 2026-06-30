@@ -12,8 +12,8 @@
   let showSwitcher = $state(false);
   // User images are sometimes bare CDN keys, not URLs — only render an <img> for an absolute URL, else
   // fall back to an initial avatar so the picker never shows a broken image.
-  const isUrl = (s?: string) => !!s && /^https?:\/\//.test(s);
-  const initial = (username?: string) => (username ?? '?').charAt(0).toUpperCase();
+  const isUrl = (s: string | undefined) => !!s && /^https?:\/\//.test(s);
+  const initial = (username: string | undefined) => (username ?? '?').charAt(0).toUpperCase();
 </script>
 
 <main>
