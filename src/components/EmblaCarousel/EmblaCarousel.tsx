@@ -123,14 +123,18 @@ function EmblaSlide({
   index,
   className,
   ...props
-}: React.HTMLProps<HTMLDivElement> & {
+}: Omit<React.HTMLProps<HTMLDivElement>, 'children'> & {
   index?: number;
+  // A function child receives `inView` so the slide can reserve its size up
+  // front (e.g. an aspect-ratio box) while lazy-loading the heavy content only
+  // when in view. A plain node keeps the original render-when-in-view behavior.
+  children?: React.ReactNode | ((state: { inView: boolean }) => React.ReactNode);
 }) {
   const inView = useEmblaStore((state) => (index ? state.slidesInView[index] === true : true));
 
   return (
     <div {...props} className={clsx('transform-3d', className)}>
-      {inView && children}
+      {typeof children === 'function' ? children({ inView }) : inView && children}
     </div>
   );
 }

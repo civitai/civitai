@@ -1,7 +1,6 @@
 import {
   Progress,
   Paper,
-  Skeleton,
   Stack,
   Text,
   Title,
@@ -185,18 +184,10 @@ const ModelVersionDonationGoals = ({ modelVersionId }: Props) => {
     return null;
   }
 
-  if (donationGoals?.length === 0 && !isLoading) {
+  // Donation goals are absent on most models, so a loading skeleton would just
+  // appear then collapse (layout shift). Render nothing until there are goals.
+  if (isLoading || !donationGoals?.length) {
     return null;
-  }
-
-  if (isLoading) {
-    // Return skeleton...
-    return (
-      <Stack>
-        <Skeleton height={20} width="100%" />
-        <Skeleton height={50} width="100%" />
-      </Stack>
-    );
   }
 
   return (

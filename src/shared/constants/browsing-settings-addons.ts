@@ -1,4 +1,5 @@
 import { NsfwLevel } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 
 export type BrowsingSettingsAddon = {
   type: 'all' | 'some' | 'none';
@@ -10,6 +11,75 @@ export type BrowsingSettingsAddon = {
   generationMinValues?: { denoise?: number };
   excludedFooterLinks?: string[];
 };
+
+export type ResolvedBrowsingSettingsAddons = {
+  disablePoi: boolean;
+  disableMinor: boolean;
+  excludedTagIds: number[];
+  excludedFooterLinks: string[];
+  generationDefaultValues: { denoise?: number };
+  generationMinValues: { denoise?: number };
+};
+
+function emptyResolvedAddons(): ResolvedBrowsingSettingsAddons {
+  return {
+    disablePoi: false,
+    disableMinor: false,
+    excludedTagIds: [],
+    excludedFooterLinks: [],
+    generationDefaultValues: {},
+    generationMinValues: {},
+  };
+}
+
+/**
+ * Resolve the active addon list down to a flat settings object for a given
+ * browsing level. Pure + isomorphic so the client provider and SSR prefetch
+ * (which must reproduce the same `image.getInfinite` query key) share one
+ * source of truth. Moderators bypass all addons.
+ */
+export function resolveBrowsingSettingsAddons(
+  data: BrowsingSettingsAddon[],
+  browsingLevel: number,
+  opts?: { isModerator?: boolean }
+): ResolvedBrowsingSettingsAddons {
+  if (opts?.isModerator) return emptyResolvedAddons();
+
+  return data.reduce((acc, elem) => {
+    try {
+      const intersection = Flags.intersection(
+        browsingLevel,
+        Flags.arrayToInstance(elem.nsfwLevels)
+      );
+      let apply = false;
+      if (elem.type === 'some') apply = intersection !== 0;
+      if (elem.type === 'all') apply = intersection === Flags.arrayToInstance(elem.nsfwLevels);
+      if (elem.type === 'none') apply = intersection === 0;
+
+      if (apply) {
+        // booleans: last-explicit-wins. arrays: accumulate. A later rule
+        // setting disablePoi/disableMinor=false cannot undo excludedTagIds
+        // pushed by an earlier rule — scope rules narrowly instead.
+        if (elem.disablePoi !== undefined) acc.disablePoi = elem.disablePoi;
+        if (elem.disableMinor !== undefined) acc.disableMinor = elem.disableMinor;
+        acc.excludedTagIds.push(...(elem.excludedTagIds ?? []));
+        acc.excludedFooterLinks.push(...(elem.excludedFooterLinks ?? []));
+        acc.generationDefaultValues = {
+          ...acc.generationDefaultValues,
+          ...(elem.generationDefaultValues ?? {}),
+        };
+        acc.generationMinValues = {
+          ...acc.generationMinValues,
+          ...(elem.generationMinValues ?? {}),
+        };
+      }
+      return acc;
+    } catch (error) {
+      console.error('Error evaluating browsing settings addon:', error);
+      return acc;
+    }
+  }, emptyResolvedAddons());
+}
 
 export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
   {
