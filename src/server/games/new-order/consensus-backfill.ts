@@ -21,6 +21,7 @@ export async function getConsensusCandidates(opts: {
 } = {}): Promise<Candidate[]> {
   if (!clickhouse) throw new Error('clickhouse not configured');
   const startDate = opts.startDate ?? DEFAULT_START;
+  if (!/^\d{4}-\d{2}-\d{2}/.test(startDate)) throw new Error(`invalid startDate: ${startDate}`);
   const minAgreement = opts.minAgreement ?? 0.6;
   const staleHours = opts.staleHours ?? 12;
 
