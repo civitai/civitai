@@ -84,7 +84,7 @@ export function ManifestEditForm({
       await utils.blocks.getMyAppManifest.invalidate({ appBlockId });
     },
     onError: (err) => {
-      showErrorNotification({ title: 'Could not submit manifest update', error: err as Error });
+      showErrorNotification({ title: 'Could not submit manifest update', error: new Error(err.message) });
     },
   });
 
