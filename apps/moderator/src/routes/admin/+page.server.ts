@@ -1,12 +1,7 @@
-import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-import { isModeratorAdmin, FEATURES, ROLE_FEATURES } from '$lib/server/features';
+import { requireAccess, ROLE_HIERARCHY } from '$lib/server/access';
 
-export const load: PageServerLoad = ({ locals }) => {
-  if (!isModeratorAdmin(locals.user)) error(403, 'Requires the moderator:admin role.');
-
-  return {
-    features: Object.entries(FEATURES).map(([key, def]) => ({ key, ...def })),
-    roles: Object.entries(ROLE_FEATURES).map(([role, features]) => ({ role, features })),
-  };
+export const load: PageServerLoad = ({ locals, url }) => {
+  requireAccess(locals.user, url.pathname);
+  return { hierarchy: ROLE_HIERARCHY };
 };

@@ -1,4 +1,5 @@
 import { sveltekit } from '@sveltejs/kit/vite';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
@@ -10,11 +11,18 @@ export default defineConfig(({ mode }) => {
   for (const key in fileEnv) process.env[key] ??= fileEnv[key];
 
   return {
-    plugins: [sveltekit()],
+    plugins: [tailwindcss(), sveltekit()],
     // @civitai/* packages ship raw TS (main: ./src/index.ts) — let Vite transpile them.
     // (Their deps like pg/kysely/jose stay external/node_modules.)
     ssr: {
-      noExternal: ['@civitai/auth', '@civitai/brand', '@civitai/db', '@civitai/db-schema'],
+      noExternal: [
+        '@civitai/auth',
+        '@civitai/brand',
+        '@civitai/clickhouse',
+        '@civitai/db',
+        '@civitai/db-schema',
+        '@civitai/ui',
+      ],
     },
   };
 });
