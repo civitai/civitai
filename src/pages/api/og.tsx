@@ -741,12 +741,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Prefetch the cover image ourselves with a bounded timeout and embed it as
     // a data URI, so satori does NOT fetch the remote CF URL internally (which it
     // does with NO timeout — the source of the p99 19.4s tail). On timeout /
-    // non-2xx / oversize / error, fetchImageAsDataUri returns null and we drop to
-    // the no-image placeholder path — a slow cover must never block the render.
-    // This is an ADDITIONAL bounded step; it does NOT change the data ? OgCard :
-    // FallbackCard logic or the cache semantics below.
+    // non-2xx / oversize / empty / error, fetchImageAsDataUri returns null and we
+    // drop to the logo-placeholder path — a slow cover must never block the
+    // render. This is an ADDITIONAL bounded step; it does NOT change the
+    // data ? OgCard : FallbackCard logic.
+    //
+    // We DO track whether this prefetch FAILED (had a cover URL, got null back)
+    // so the cache decision below can distinguish a transient cover-fetch failure
+    // (short cache → retry once the CDN recovers) from "no cover by design"
+    // (NSFW-filtered / video-skip / genuinely no image — where data.imageUrl was
+    // already null and no prefetch ran, so coverFetchFailed stays false → those
+    // permanent placeholders correctly keep the long edge cache).
+    let coverFetchFailed = false;
     if (data?.imageUrl) {
-      data.imageUrl = await fetchImageAsDataUri(data.imageUrl);
+      const dataUri = await fetchImageAsDataUri(data.imageUrl);
+      coverFetchFailed = dataUri === null;
+      data.imageUrl = dataUri;
     }
 
     const element = data ? <OgCard data={data} /> : <FallbackCard />;
@@ -759,17 +769,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const buffer = Buffer.from(await imageResponse.arrayBuffer());
 
     res.setHeader('Content-Type', 'image/png');
-    if (data) {
-      // Real entity card → long edge cache.
+    if (data && !coverFetchFailed) {
+      // Real entity card with the cover embedded, OR no cover by design (NSFW /
+      // video / genuinely no image — a PERMANENT placeholder) → long edge cache.
       res.setHeader(
         'Cache-Control',
         'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400'
       );
       res.setHeader('CDN-Cache-Control', 'max-age=604800');
     } else {
-      // Missing/deleted/unpublished/NSFW entity → generic fallback card. Cache SHORT
-      // (mirror the catch-block fallback) so a later-published or replica-lagged
-      // entity isn't pinned to the generic card at the CF edge for up to 7 days.
+      // Missing/deleted/unpublished entity (no data) → generic fallback card; OR a
+      // real entity whose cover prefetch FAILED (timeout/non-2xx/empty — a
+      // TRANSIENT placeholder). Cache SHORT (mirror the catch-block fallback) so a
+      // later-published / replica-lagged entity, or a placeholder pinned only by a
+      // transient CDN blip, isn't stuck at the CF edge for up to 7 days — the next
+      // request retries once the underlying condition recovers.
       res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600');
     }
     res.send(buffer);

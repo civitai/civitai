@@ -62,6 +62,11 @@ export async function fetchImageAsDataUri(
     }
 
     const arrayBuffer = await res.arrayBuffer();
+    // Empty-body guard: a 200 with a 0-byte body would otherwise produce an
+    // empty `data:image/...;base64,` payload that satori throws on — degrading
+    // to the generic FallbackCard. Return null so the caller routes to the
+    // nicer entity-card-with-placeholder path instead.
+    if (arrayBuffer.byteLength === 0) return null;
     // Post-buffer guard: header may be absent or lie (e.g. chunked).
     if (arrayBuffer.byteLength > maxBytes) return null;
 

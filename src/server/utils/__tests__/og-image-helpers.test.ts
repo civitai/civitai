@@ -107,6 +107,17 @@ describe('fetchImageAsDataUri', () => {
     expect(arrayBufferSpy).not.toHaveBeenCalled();
   });
 
+  it('returns null on a 200 with an empty (0-byte) body', async () => {
+    // A 200 with an empty body would otherwise yield `data:image/...;base64,`
+    // (empty payload) that satori throws on → generic FallbackCard. The empty
+    // guard returns null so the caller routes to the entity-card placeholder.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => makeResponse({ body: new Uint8Array(0) }))
+    );
+    expect(await fetchImageAsDataUri('https://x/empty.png')).toBeNull();
+  });
+
   it('returns null when the actual body exceeds the cap (header absent)', async () => {
     const big = new Uint8Array(OG_IMAGE_MAX_BYTES + 1);
     vi.stubGlobal(
