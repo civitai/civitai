@@ -1577,7 +1577,10 @@ export async function recordPendingFromPush(args: {
   // `app_block_publish_requests_one_pending_per_slug` ((slug) WHERE
   // status='pending') makes the loser's INSERT trip a P2002 — catch it, re-read
   // the winner's pending row, and return it (the loser no-ops gracefully
-  // instead of throwing). Mirrors submitVersion's C-4 catch.
+  // instead of throwing). NOTE: unlike submitVersion's C-4 catch (which THROWS
+  // a human-readable conflict error on P2002), this races to record the SAME
+  // commit, so the right outcome is to return the winner's id, not to surface a
+  // conflict — a same-commit re-delivery must be idempotent, not an error.
   try {
     await dbWrite.appBlockPublishRequest.create({
       data: {
