@@ -1,5 +1,5 @@
 import { Kysely, PostgresDialect } from 'kysely';
-import { Pool, type PoolConfig } from 'pg';
+import { Pool, types, type PoolConfig } from 'pg';
 
 // Kysely client builder. Standalone — imports only kysely + pg (NOT the Prisma client /
 // db-helpers / env), so a Vite/SSR app can import `@civitai/db/kysely` without pulling Prisma.
@@ -13,6 +13,30 @@ import { Pool, type PoolConfig } from 'pg';
 //   createKyselyClients<DB>({ pool: getClient({ instance: 'primary' }),
 //                             readPool: getClient({ instance: 'primaryRead' }) })
 
+// pg returns NUMERIC/INT8 as strings by default (to preserve precision); for Kysely query results we
+// want JS numbers. setTypeParser mutates pg's PROCESS-GLOBAL parser registry, so we register lazily
+// from inside the factory (not at module load) — a Prisma-only consumer that merely imports
+// `@civitai/db` (which re-exports this module) must not have its global pg parsing flipped without
+// asking. Only callers that actually build a Kysely client opt in. Idempotent.
+let numericParsersRegistered = false;
+function registerNumericTypeParsers() {
+  if (numericParsersRegistered) return;
+  types.setTypeParser(types.builtins.NUMERIC, (val) => parseFloat(val));
+  types.setTypeParser(types.builtins.INT8, (val) => parseFloat(val));
+  numericParsersRegistered = true;
+}
+
+// Force `sslmode=no-verify` on a connection string: keep SSL on, skip chain verification. node-postgres
+// maps a URL's `sslmode=require` to FULL verification (unlike libpq), which rejects the cnpg pooler's
+// self-signed cert — and a separate `ssl` option is overridden by the URL's sslmode. Centralized here so
+// every spoke app stops re-deriving it. Mirrors the main app's db-helpers.
+function forceSslNoVerify(connectionString?: string): string | undefined {
+  if (!connectionString) return connectionString;
+  const url = new URL(connectionString);
+  url.searchParams.set('sslmode', 'no-verify');
+  return url.toString();
+}
+
 export type KyselyReadWrite<DB> = { dbRead: Kysely<DB>; dbWrite: Kysely<DB> };
 
 export interface CreateKyselyClientsOptions extends PoolConfig {
@@ -24,6 +48,12 @@ export interface CreateKyselyClientsOptions extends PoolConfig {
   replicaConnectionString?: string;
   /** Collapse to a single `{ db }` — no replica, or read-your-writes flows. */
   singleClient?: boolean;
+  /**
+   * Force `sslmode=no-verify` on the derived connection strings (SSL on, verification off) — for the
+   * cnpg pooler's self-signed cert. Applies to `connectionString` and `replicaConnectionString`;
+   * pre-built pools are passed through untouched (configure SSL where you build them).
+   */
+  sslNoVerify?: boolean;
 }
 
 export function createKyselyClients<DB>(
@@ -33,15 +63,23 @@ export function createKyselyClients<DB>(options?: CreateKyselyClientsOptions): K
 export function createKyselyClients<DB>(
   options: CreateKyselyClientsOptions = {}
 ): { db: Kysely<DB> } | KyselyReadWrite<DB> {
-  const { pool, readPool, replicaConnectionString, singleClient, ...poolConfig } = options;
+  registerNumericTypeParsers();
+
+  const { pool, readPool, replicaConnectionString, singleClient, sslNoVerify, ...poolConfig } =
+    options;
+  if (sslNoVerify && poolConfig.connectionString) {
+    poolConfig.connectionString = forceSslNoVerify(poolConfig.connectionString);
+  }
+  const replicaString = sslNoVerify ? forceSslNoVerify(replicaConnectionString) : replicaConnectionString;
+
   const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }) });
 
   const primary = make(pool ?? new Pool(poolConfig));
   if (singleClient) return { db: primary };
 
   const dbRead =
-    readPool || replicaConnectionString
-      ? make(readPool ?? new Pool({ ...poolConfig, connectionString: replicaConnectionString }))
+    readPool || replicaString
+      ? make(readPool ?? new Pool({ ...poolConfig, connectionString: replicaString }))
       : primary;
   return { dbRead, dbWrite: primary };
 }
