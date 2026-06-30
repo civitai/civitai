@@ -453,10 +453,11 @@ export type SpendShareResult = {
  *     PAYOUT-SAFETY GATE (App Blocks Sybil / payout review). Block
  *     currencies were widened to on-site PARITY (blue/green/yellow); to
  *     keep that widening from EVER becoming platform-funded farming, only
- *     PURCHASED/EARNED Buzz (`isPayoutEligibleBuzz` → yellow) can accrue an
- *     author bounty. FREE/GRANTED-sourced Buzz — blue (free generation
- *     Buzz) and green (includes free daily Buzz) — is EXCLUDED here so a
- *     Sybil ring spending free Buzz mints ZERO platform-funded bounty.
+ *     PAID Buzz (`isPayoutEligibleBuzz` → green + yellow) can accrue an
+ *     author bounty. The FREE type — blue (free generation Buzz) — is
+ *     EXCLUDED here so a Sybil ring spending free Buzz mints ZERO
+ *     platform-funded bounty. (green is PAID — product confirmed
+ *     2026-06-30: "green buzz is paid, only blue is free".)
  *     `buzzType` defaults to the legacy 'yellow' (the pre-widening
  *     currency) so existing/untyped callers are behavior-preserved.
  *     Whoever enables the #2605 payout rail MUST keep this gate — it is the
@@ -481,8 +482,8 @@ export function computeSpendShare({
   appOwnerUserId: number;
   /**
    * The account type the spend was drained from. Defaults to 'yellow' (the
-   * pre-parity currency) so legacy callers are unchanged. Non-payout-eligible
-   * types (blue/green — free/granted) zero the bounty. See the PAYOUT-SAFETY
+   * pre-parity currency) so legacy callers are unchanged. The free type
+   * (blue) is non-payout-eligible and zeroes the bounty. See the PAYOUT-SAFETY
    * note above.
    */
   buzzType?: string;
@@ -490,7 +491,7 @@ export function computeSpendShare({
   const safeGross = Math.max(0, Math.floor(grossValueCents));
 
   const isInternal = rateCard.internalAppOwnerUserIds.includes(appOwnerUserId);
-  // PAYOUT-SAFETY: free/granted Buzz (blue, green) is never payout-eligible.
+  // PAYOUT-SAFETY: the free Buzz type (blue) is never payout-eligible.
   const isPayoutIneligible = !isPayoutEligibleBuzz(buzzType);
   const sharePct =
     isSelfSpend || isInternal || isPayoutIneligible ? 0 : rateCard.spendSharePct ?? 0;

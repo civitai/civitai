@@ -2512,21 +2512,23 @@ export const blocksRouter = router({
           // but a per-app earnings cap / velocity check is a HARD
           // prerequisite before the spend flow opens to non-mods (track
           // alongside the Slice-4 payout gate + the rate sign-off).
-          // Record the DOMAIN currency basis for this spend so the payout rail
-          // can discriminate payout-eligible (purchased/earned) Buzz from
-          // free/granted Buzz. `getBlockAllowedAccountTypes` returns the spend
-          // order blue-first + the domain currency LAST; the domain currency is
-          // the only one of the offered set that could carry payout-eligible
-          // value (yellow on .red), so it is the conservative, honest basis to
-          // stamp. PAYOUT-SAFE EITHER WAY: the orchestrator does not surface a
-          // per-account debit to this path, but `isPayoutEligibleBuzz`
-          // (computeSpendShare) is the authoritative gate — it EXCLUDES blue
-          // AND green, so a SFW (green) block stamps a non-eligible type and a
-          // mature (.red) block stamps the eligible `yellow`. This matches the
-          // currency-parity widening: free/green Buzz can never accrue a
-          // platform-funded bounty.
+          // Record a PAYOUT-SAFE currency basis for this spend. The orchestrator
+          // drains the offered currencies in spend order (blue-FIRST — blue is
+          // the free generation Buzz) and does NOT surface a per-account debit
+          // to this path, so we cannot know how the cost split across FREE (blue)
+          // vs PAID (green/yellow) Buzz. Since green is PAID and payout-eligible
+          // (product 2026-06-30: "green buzz is paid, only blue is free"),
+          // stamping the paid domain currency would let a spend actually drained
+          // from FREE blue accrue a bounty → the farming vector. So we
+          // conservatively stamp the FREE first-drained currency (blue), which
+          // `isPayoutEligibleBuzz` (computeSpendShare) EXCLUDES → ZERO bounty.
+          // Net: spending parity ships now; block payout stays 0 until a
+          // follow-up records the REAL per-account debit (then the paid
+          // green/yellow portions can earn). DO NOT switch this to the domain
+          // currency without that real-debit signal — it reopens free-Buzz farming.
           const spendBuzzTypes = getBlockAllowedAccountTypes(isGreen);
-          const spentBuzzType = spendBuzzTypes[spendBuzzTypes.length - 1];
+          // [0] === 'blue' in both branches — the conservative free floor.
+          const spentBuzzType = spendBuzzTypes[0];
           await recordSpendAttribution({
             userId,
             buzzAmount: Math.ceil(snapshot.cost?.total ?? cost),

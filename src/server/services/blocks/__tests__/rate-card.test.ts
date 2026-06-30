@@ -416,8 +416,9 @@ describe('computeSpendShare', () => {
   // ---------------------------------------------------------------
   // PAYOUT-SAFETY GATE (App Blocks Sybil / payout review). Block currencies
   // were widened to on-site parity (blue/green/yellow); the bounty must only
-  // accrue on PURCHASED/EARNED Buzz (yellow), never on free/granted Buzz
-  // (blue/green), so the widening can never become platform-funded farming.
+  // accrue on PAID Buzz (green + yellow), never on the free type (blue), so the
+  // widening can never become platform-funded farming. (green is PAID — product
+  // confirmed 2026-06-30: "green buzz is paid, only blue is free".)
   // ---------------------------------------------------------------
   describe('payout-eligibility by buzzType', () => {
     it('defaults to yellow (legacy/pre-parity) → pays the bounty (behavior-preserving)', () => {
@@ -456,7 +457,7 @@ describe('computeSpendShare', () => {
       expect(res.appOwnerShareCents).toBe(0);
     });
 
-    it('green (includes free/granted daily Buzz) → ZERO bounty (excluded)', () => {
+    it('green (paid/purchasable) → pays the bounty', () => {
       const res = computeSpendShare({
         rateCard: fixedCard,
         grossValueCents: 1000,
@@ -464,8 +465,8 @@ describe('computeSpendShare', () => {
         appOwnerUserId: 1,
         buzzType: 'green',
       });
-      expect(res.spendSharePct).toBe(0);
-      expect(res.appOwnerShareCents).toBe(0);
+      expect(res.spendSharePct).toBe(10);
+      expect(res.appOwnerShareCents).toBe(100);
     });
 
     it('unknown / garbage buzzType → ZERO bounty (fail-closed)', () => {

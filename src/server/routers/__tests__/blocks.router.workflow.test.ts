@@ -3097,8 +3097,12 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
     });
   });
 
-  describe('spend-attribution records the spent currency (payout discrimination)', () => {
-    it('SFW block records buzzType="green" (the non-payout-eligible domain currency)', async () => {
+  describe('spend-attribution records a payout-safe currency basis (conservative free floor)', () => {
+    // green is PAID/payout-eligible, but the orchestrator doesn't surface the
+    // real per-account split and blocks drain blue (free) FIRST, so we stamp the
+    // conservative free floor (blue) → 0 payout until a follow-up records the
+    // real debit. Both domains stamp blue.
+    it('SFW block records buzzType="blue" (free first-drained floor → 0 payout)', async () => {
       mockVerifyBlockToken.mockResolvedValue(
         validClaims({ buzzBudget: 1000, maxBrowsingLevel: SFW_CEILING })
       );
@@ -3112,12 +3116,12 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
       await Promise.resolve();
       expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
       expect(mockRecordSpendAttribution.mock.calls[0][0]).toMatchObject({
-        buzzType: 'green',
+        buzzType: 'blue',
         workflowId: 'wf_real',
       });
     });
 
-    it('mature (.red) block records buzzType="yellow" (the payout-eligible domain currency)', async () => {
+    it('mature (.red) block ALSO records buzzType="blue" (free first-drained floor → 0 payout)', async () => {
       mockVerifyBlockToken.mockResolvedValue(
         validClaims({ buzzBudget: 1000, maxBrowsingLevel: ALL_CEILING })
       );
@@ -3130,7 +3134,7 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
       await Promise.resolve();
       expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
       expect(mockRecordSpendAttribution.mock.calls[0][0]).toMatchObject({
-        buzzType: 'yellow',
+        buzzType: 'blue',
         workflowId: 'wf_real',
       });
     });

@@ -329,9 +329,9 @@ export async function backpayTrackedAttributions(
       appBlockId: true,
       appOwnerUserId: true,
       // PAYOUT-SAFETY: the currency the spend was drained from. Threaded into
-      // computeSpendShare so free/granted Buzz (blue/green) accrues 0 bounty
-      // even at payout time — the parity widening can never become
-      // platform-funded farming. See isPayoutEligibleBuzz in buzz-helpers.ts.
+      // computeSpendShare so the free Buzz type (blue) accrues 0 bounty even at
+      // payout time — the parity widening can never become platform-funded
+      // farming. (green is PAID, eligible.) See isPayoutEligibleBuzz in buzz-helpers.ts.
       buzzType: true,
     },
     orderBy: { attributedAt: 'asc' },
@@ -348,7 +348,7 @@ export async function backpayTrackedAttributions(
       grossValueCents: row.grossValueCents,
       isSelfSpend: false,
       appOwnerUserId: row.appOwnerUserId,
-      // LOAD-BEARING: non-payout-eligible currency (blue/green) → 0 bounty.
+      // LOAD-BEARING: the free currency (blue) is non-payout-eligible → 0 bounty.
       buzzType: row.buzzType,
     });
 

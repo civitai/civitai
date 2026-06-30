@@ -105,27 +105,31 @@ export function getBlockAllowedAccountTypes(isGreen: boolean): BuzzSpendType[] {
  * (`spendSharePct` > 0 / the dark #2605 rev-share rail) when spent inside a
  * block. This is the load-bearing rule that lets block currencies widen to
  * on-site parity (blue/green/yellow) WITHOUT ever turning into a
- * platform-funded farming loop: free/granted-sourced Buzz is EXCLUDED so a
- * Sybil ring can never mint platform-funded bounty out of free daily Buzz.
+ * platform-funded farming loop: FREE Buzz is EXCLUDED so a Sybil ring can
+ * never mint platform-funded bounty out of free daily Buzz.
  *
- * Determination (from `src/shared/constants/buzz.constants.ts` buzzTypeConfig):
- *   - blue   ('Generation')  → EXCLUDED. The free generation Buzz — not
- *                              `bankable`, not `purchasable`; this is the
- *                              daily-granted / reward generation balance.
- *   - green  ('Green')       → EXCLUDED. bankable + purchasable, but per the
- *                              constants it INCLUDES free/granted daily Buzz, so
- *                              it is not a clean "purchased/earned" signal.
- *   - yellow ('User')        → ELIGIBLE. bankable + purchasable, carries no
- *                              free/granted value — purchased/earned Buzz.
+ * Determination (from `src/shared/constants/buzz.constants.ts` buzzTypeConfig;
+ * PAID vs FREE confirmed by product 2026-06-30 — "green buzz is paid, only
+ * blue is free"):
+ *   - blue   ('Generation')  → EXCLUDED. The ONLY free type — not `bankable`,
+ *                              not `purchasable`; the free/daily-granted
+ *                              generation balance. The farming vector.
+ *   - green  ('Green')       → ELIGIBLE. `purchasable` — PAID Buzz (the user
+ *                              bought/earned it; spending it is a real,
+ *                              non-farmable signal).
+ *   - yellow ('User')        → ELIGIBLE. `purchasable` — PAID/earned Buzz.
  *   - red    ('FakeRed')     → EXCLUDED. disabled; never a real spend.
  *
- * Conservative default: ONLY yellow (purchased/earned) is payout-eligible.
- * The payout rail (#2605) MUST route every tracked spend row through this
+ * Rule: PAID (purchasable) types are payout-eligible; the free type (blue) is
+ * not. The payout rail (#2605) MUST route every tracked spend row through this
  * predicate before paying — see `computeSpendShare`, which zeroes the share
  * for any non-eligible type. DO NOT widen this set without monetization +
  * Sybil-economics sign-off.
  */
-export const PAYOUT_ELIGIBLE_BUZZ_TYPES: ReadonlySet<string> = new Set<BuzzSpendType>(['yellow']);
+export const PAYOUT_ELIGIBLE_BUZZ_TYPES: ReadonlySet<string> = new Set<BuzzSpendType>([
+  'green',
+  'yellow',
+]);
 
 export function isPayoutEligibleBuzz(buzzType: string | null | undefined): boolean {
   return buzzType != null && PAYOUT_ELIGIBLE_BUZZ_TYPES.has(buzzType);

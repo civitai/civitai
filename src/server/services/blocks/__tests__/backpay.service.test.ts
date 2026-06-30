@@ -277,30 +277,30 @@ describe('happy path (gate forced open)', () => {
 /**
  * PAYOUT-SAFETY at the payout boundary (App Blocks Sybil / payout review).
  * Block currencies were widened to on-site parity (blue/green/yellow); the
- * backpay rail MUST exclude free/granted Buzz (blue/green) from the author
- * bounty so the widening can never become platform-funded farming. The gate
- * lives in computeSpendShare (via isPayoutEligibleBuzz) and is threaded the
- * row's buzzType here.
+ * backpay rail MUST exclude the FREE type (blue) from the author bounty so the
+ * widening can never become platform-funded farming. PAID Buzz (green + yellow)
+ * is eligible. The gate lives in computeSpendShare (via isPayoutEligibleBuzz)
+ * and is threaded the row's buzzType here.
  */
-describe('payout-safety — free/granted currency is excluded from the bounty', () => {
+describe('payout-safety — the free currency (blue) is excluded from the bounty', () => {
   beforeEach(() => {
     mockFlag.mockResolvedValue(true);
     signOff();
   });
 
-  it('a green (free/granted) spend row confirms with ZERO bounty', async () => {
+  it('a green (paid) spend row confirms WITH the bounty', async () => {
     mockDbRead.blockSpendAttribution.findMany.mockResolvedValue([
       spendRow({ id: 'bsa_green', grossValueCents: 1000, appOwnerUserId: 7, buzzType: 'green' }),
     ]);
 
     const out = await backpayTrackedAttributions();
 
-    // The row is processed + closed (not left dangling) but pays nothing.
-    expect(out.confirmedShareCents).toBe(0);
+    // green is PAID → pays the bounty (1000 @ 10%).
+    expect(out.confirmedShareCents).toBe(100);
     const call = mockDbWrite.blockSpendAttribution.updateMany.mock.calls[0][0];
     expect(call.data.status).toBe('confirmed');
-    expect(call.data.spendSharePct).toBe(0);
-    expect(call.data.appOwnerShareCents).toBe(0);
+    expect(call.data.spendSharePct).toBe(10);
+    expect(call.data.appOwnerShareCents).toBe(100);
   });
 
   it('a blue (free generation) spend row confirms with ZERO bounty', async () => {

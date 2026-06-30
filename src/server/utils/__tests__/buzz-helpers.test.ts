@@ -52,8 +52,8 @@ describe('isPayoutEligibleBuzz — payout-safety allowlist', () => {
     expect(isPayoutEligibleBuzz('blue')).toBe(false);
   });
 
-  it('green (includes free/granted daily Buzz) is EXCLUDED', () => {
-    expect(isPayoutEligibleBuzz('green')).toBe(false);
+  it('green (paid/purchasable) is payout-eligible', () => {
+    expect(isPayoutEligibleBuzz('green')).toBe(true);
   });
 
   it('red (disabled) is EXCLUDED', () => {
@@ -67,19 +67,22 @@ describe('isPayoutEligibleBuzz — payout-safety allowlist', () => {
     expect(isPayoutEligibleBuzz('')).toBe(false);
   });
 
-  it('the allowlist contains ONLY yellow (conservative default — guards against silent widening)', () => {
-    expect([...PAYOUT_ELIGIBLE_BUZZ_TYPES]).toEqual(['yellow']);
+  it('the allowlist is the PAID types green + yellow (free blue excluded — guards against silent widening)', () => {
+    expect([...PAYOUT_ELIGIBLE_BUZZ_TYPES].sort()).toEqual(['green', 'yellow']);
   });
 
-  it('every currency a block can SPEND that is free/granted is non-payout-eligible', () => {
-    // Cross-check the parity widening against the payout gate: of the
-    // currencies a block can spend (blue/green/yellow), exactly the
-    // free/granted ones (blue, green) are excluded from payout.
+  it('of the currencies a block can SPEND, only the free type (blue) is excluded from payout', () => {
+    // Cross-check the parity widening against the payout gate: blocks spend
+    // blue/green/yellow; blue is the ONLY free type, so it is the only one
+    // excluded — the paid domain currency (green on .com, yellow on .red) is
+    // payout-eligible (a real, non-farmable spend).
     const sfwSpendable = getBlockAllowedAccountTypes(true); // ['blue','green']
     const matureSpendable = getBlockAllowedAccountTypes(false); // ['blue','yellow']
-    // SFW block: NOTHING it spends is payout-eligible (free-Buzz farming impossible).
-    expect(sfwSpendable.some(isPayoutEligibleBuzz)).toBe(false);
-    // Mature block: only the domain currency (yellow) is eligible; blue is not.
+    // blue (free) is never payout-eligible in either branch.
+    expect(isPayoutEligibleBuzz('blue')).toBe(false);
+    // SFW block: the paid domain currency (green) is eligible; blue is not.
+    expect(sfwSpendable.filter(isPayoutEligibleBuzz)).toEqual(['green']);
+    // Mature block: the paid domain currency (yellow) is eligible; blue is not.
     expect(matureSpendable.filter(isPayoutEligibleBuzz)).toEqual(['yellow']);
   });
 });
