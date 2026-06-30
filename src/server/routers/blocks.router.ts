@@ -90,7 +90,8 @@ import { getResourceGenerationSupport } from '~/shared/constants/basemodel.const
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
-import { getBlockAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import { getBlockAllowedAccountTypes, isPayoutEligibleBuzz } from '~/server/utils/buzz-helpers';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -2462,6 +2463,10 @@ export const blocksRouter = router({
       // snapshot) — so we do NOT refund on a non-throwing failed snapshot.
       let snapshot: ReturnType<typeof snapshotFromWorkflow>;
       let autoClaim: Awaited<ReturnType<typeof maybeAutoClaimDailyBoost>>;
+      // Hoisted out of the try so the post-submit spend-attribution closure
+      // (which runs AFTER the try/catch) can read the REALIZED per-account
+      // debit — `submitted` is a try-block `const` and is out of scope there.
+      let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
       try {
         // Daily-boost autoclaim. Cost cleared the install's budget cap; check
         // whether the user's actual spendable Buzz can pay for it. If they're
@@ -2504,6 +2509,7 @@ export const blocksRouter = router({
           },
         });
         snapshot = snapshotFromWorkflow(submitted);
+        realizedTransactions = submitted.transactions;
       } catch (e) {
         // No resolved submit → undo the reservation (net-equivalent to the old
         // "only record after a resolved submit" behavior) and propagate. Refund
@@ -2587,26 +2593,57 @@ export const blocksRouter = router({
           // but a per-app earnings cap / velocity check is a HARD
           // prerequisite before the spend flow opens to non-mods (track
           // alongside the Slice-4 payout gate + the rate sign-off).
-          // Record a PAYOUT-SAFE currency basis for this spend. The orchestrator
-          // drains the offered currencies in spend order (blue-FIRST — blue is
-          // the free generation Buzz) and does NOT surface a per-account debit
-          // to this path, so we cannot know how the cost split across FREE (blue)
-          // vs PAID (green/yellow) Buzz. Since green is PAID and payout-eligible
-          // (product 2026-06-30: "green buzz is paid, only blue is free"),
-          // stamping the paid domain currency would let a spend actually drained
-          // from FREE blue accrue a bounty → the farming vector. So we
-          // conservatively stamp the FREE first-drained currency (blue), which
-          // `isPayoutEligibleBuzz` (computeSpendShare) EXCLUDES → ZERO bounty.
-          // Net: spending parity ships now; block payout stays 0 until a
-          // follow-up records the REAL per-account debit (then the paid
-          // green/yellow portions can earn). DO NOT switch this to the domain
-          // currency without that real-debit signal — it reopens free-Buzz farming.
-          const spendBuzzTypes = getBlockAllowedAccountTypes(isGreen);
-          // [0] === 'blue' in both branches — the conservative free floor.
-          const spentBuzzType = spendBuzzTypes[0];
+          // Record a PAYOUT-SAFE currency basis for this spend off the REAL
+          // per-account debit. The orchestrator drains the offered currencies
+          // in spend order (blue-FIRST — blue is the free generation Buzz) and
+          // surfaces the REALIZED per-account debit on the SAME `submitted`
+          // workflow this handler already holds: `transactions.list` carries
+          // one entry per charge with `type` (debit/credit), `amount`, and
+          // `accountType` (blue | green | yellow). On-site generation earns at
+          // parity off this exact signal, so block payout must too.
+          //
+          // Rule: a generation can split across FREE (blue) and PAID
+          // (green/yellow) Buzz. ONLY the PAID portion earns — stamp the paid
+          // account and the SUMMED paid debit amount, so the author bounty
+          // accrues off what the user actually paid, never the free blue
+          // portion. The offered currencies are ['blue', green|yellow] (never
+          // both green and yellow), so at most ONE paid account is ever
+          // drained; summing the paid debits and taking the first paid account
+          // is exact for that contract (and conservative otherwise).
+          //
+          // When NO paid debit is present — a blue-only spend, OR a cache-hit /
+          // 0-cost gen, OR a snapshot the orchestrator returned WITHOUT
+          // transactions — we fall back to the conservative FREE floor (blue +
+          // the realized/estimated cost), which `isPayoutEligibleBuzz`
+          // (computeSpendShare) EXCLUDES → ZERO bounty. This preserves the
+          // anti-farming guarantee: free-Buzz spend can never accrue a bounty,
+          // and an absent/unknown debit signal never pays. Forge-safe:
+          // `submitted` is the orchestrator's authoritative response, not
+          // client input.
+          const debits = (realizedTransactions?.list ?? []).filter(
+            (t) => t.type === 'debit'
+          );
+          const paidDebits = debits.filter((t) => isPayoutEligibleBuzz(t.accountType));
+          const paidAmount = paidDebits.reduce(
+            (sum, t) => sum + Math.abs(t.amount ?? 0),
+            0
+          );
+          // `isPayoutEligibleBuzz` already narrows accountType to green|yellow,
+          // both valid `BuzzSpendType`s.
+          const paidType = paidDebits[0]?.accountType as BuzzSpendType | undefined;
+          const hasPaidDebit = paidType != null && paidAmount > 0;
+
+          const spentBuzzType: BuzzSpendType = hasPaidDebit
+            ? paidType
+            : // [0] === 'blue' in both branches — the conservative free floor.
+              getBlockAllowedAccountTypes(isGreen)[0];
+          const spentBuzzAmount = hasPaidDebit
+            ? paidAmount
+            : Math.ceil(snapshot.cost?.total ?? cost);
+
           await recordSpendAttribution({
             userId,
-            buzzAmount: Math.ceil(snapshot.cost?.total ?? cost),
+            buzzAmount: spentBuzzAmount,
             buzzType: spentBuzzType,
             workflowId: spendWorkflowId,
             appId: claims.appId,
