@@ -708,6 +708,12 @@ export const serverSchema = z
     APPS_TEKTON_TRIGGER_SECRET: z.string().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
+    // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
+    // used to autogenerate a marketplace screenshot for an approved App Block that
+    // shipped no publisher screenshots. In-cluster service (devpod-devops ns), e.g.
+    // http://verify-runner.devpod-devops.svc.cluster.local:8080. OPTIONAL — when
+    // unset, autogeneration is silently skipped (best-effort; never blocks deploy).
+    BLOCK_SCREENSHOT_RUNNER_URL: z.string().url().optional(),
 
     // App Blocks W1 (publish-request flow). S3-compatible storage for
     // dev-uploaded ZIP bundles. Production points at ssd-minio-backups
