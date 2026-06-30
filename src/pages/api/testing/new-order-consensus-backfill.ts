@@ -33,7 +33,7 @@ const schema = z.object({
   limit: z.coerce.number().int().positive().max(100_000).optional(),
   batchSize: z.coerce.number().int().positive().max(5_000).optional(),
   concurrency: z.coerce.number().int().min(1).max(16).optional(),
-  dryRun: z.coerce.boolean().optional(),
+  dryRun: z.boolean().optional(),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
