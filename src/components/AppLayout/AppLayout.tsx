@@ -102,7 +102,9 @@ function AdhesiveFooter() {
   const router = useRouter();
 
   if (currentUser?.isPaidMember || router.asPath.includes('/moderator')) return null;
-  return <AdhesiveAd />;
+  // Reserve the footer height up front for logged-out users (the bulk of ad
+  // traffic) so the bar doesn't shove content when it fills ~1-2s after paint.
+  return <AdhesiveAd preserveLayout={!currentUser} />;
 }
 
 export function MainContent({
