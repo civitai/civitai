@@ -37,6 +37,8 @@ const mocks = vi.hoisted(() => ({
     details: string | null;
     createdAt: Date;
   },
+  // Per-test-controllable current user (null = anonymous viewer).
+  currentUser: { id: 42, username: 'viewer' } as null | { id: number; username: string },
 }));
 
 vi.mock('~/utils/trpc', () => ({
@@ -80,7 +82,13 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 42, username: 'viewer' }),
+  useCurrentUser: () => mocks.currentUser,
+}));
+
+// LoginRedirect pulls in the router + tour context; it's a pass-through wrapper
+// for the sign-in CTA here — stub it to render its child unchanged.
+vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
+  LoginRedirect: ({ children }: { children: React.ReactElement }) => children,
 }));
 
 // UserAvatar pulls in edge-url/cosmetics machinery we don't need here — stub it
@@ -114,9 +122,63 @@ beforeEach(() => {
   mocks.invalidate.mockClear();
   mocks.listItems = [];
   mocks.myReview = null;
+  mocks.currentUser = { id: 42, username: 'viewer' };
 });
 
 describe('AppBlockReviews', () => {
+  test('signed-in viewer with an enabled install sees the write form (not the prompt)', async () => {
+    renderWithProviders(
+      <AppBlockReviews
+        appBlockId="app-1"
+        avgRating={null}
+        reviewCount={0}
+        subscriptions={[ENABLED_SUB]}
+      />
+    );
+
+    // The form is present...
+    await expect.element(page.getByRole('button', { name: /post review/i })).toBeInTheDocument();
+    // ...and neither gating prompt is shown.
+    await expect
+      .element(page.getByText(/install this app to leave a review/i))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByText(/sign in to leave a review/i)).not.toBeInTheDocument();
+  });
+
+  test('signed-in viewer with NO enabled install sees the install prompt, form hidden', async () => {
+    renderWithProviders(
+      <AppBlockReviews appBlockId="app-1" avgRating={null} reviewCount={0} subscriptions={[]} />
+    );
+
+    // The install prompt is shown...
+    await expect
+      .element(page.getByText(/install this app to leave a review/i))
+      .toBeInTheDocument();
+    // ...and the write form is NOT rendered.
+    await expect
+      .element(page.getByRole('button', { name: /post review/i }))
+      .not.toBeInTheDocument();
+  });
+
+  test('anonymous viewer sees the sign-in prompt, form hidden', async () => {
+    mocks.currentUser = null;
+
+    renderWithProviders(
+      <AppBlockReviews appBlockId="app-1" avgRating={null} reviewCount={0} subscriptions={[]} />
+    );
+
+    // The sign-in affordance is shown...
+    await expect.element(page.getByText(/sign in to leave a review/i)).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: /^sign in$/i })).toBeInTheDocument();
+    // ...and neither the write form nor the install prompt are rendered.
+    await expect
+      .element(page.getByRole('button', { name: /post review/i }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByText(/install this app to leave a review/i))
+      .not.toBeInTheDocument();
+  });
+
   test('write form submits upsertReview with the entered rating and details', async () => {
     renderWithProviders(
       <AppBlockReviews
