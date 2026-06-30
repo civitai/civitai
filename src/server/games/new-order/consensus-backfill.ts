@@ -69,3 +69,31 @@ export async function getConsensusCandidates(opts: {
     decision: classifyDecision(r.domRating, r.origLevel),
   }));
 }
+
+export async function restampBatch(
+  pairs: { imageId: number; domRating: number }[],
+  stampISO: string
+): Promise<void> {
+  if (!clickhouse) throw new Error('clickhouse not configured');
+  if (pairs.length === 0) return;
+  const ids = pairs.map((p) => p.imageId).join(',');
+  const rats = pairs.map((p) => p.domRating).join(',');
+  // arrayElement([rats], indexOf([ids], imageId)) -> this image's consensus rating
+  await clickhouse.$exec`
+    INSERT INTO knights_new_order_image_rating
+    SELECT
+      orig.userId,
+      orig.imageId AS imageId,
+      orig.rating,
+      orig.damnedReason,
+      if(orig.rating = arrayElement([${rats}], indexOf([${ids}], orig.imageId)), 'Correct', 'Failed') AS status,
+      orig.grantedExp,
+      if(orig.rating = arrayElement([${rats}], indexOf([${ids}], orig.imageId)), 1, 0) AS multiplier,
+      toDateTime('${stampISO}') AS createdAt,
+      orig.ip, orig.userAgent, orig.deviceId, orig.rank, orig.originalLevel
+    FROM knights_new_order_image_rating orig FINAL
+    WHERE orig.imageId IN (${ids})
+      AND orig.rank != 'Acolyte'
+      AND orig.status IN ('Pending','Inconclusive')
+  `;
+}

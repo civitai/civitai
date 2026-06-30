@@ -15,10 +15,15 @@
  * Optional params: startDate, minAgreement (def 0.6), staleHours (def 12),
  *                  limit (cap images this run), batchSize (def 1000), concurrency (def 4).
  */
+import { chunk } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { getConsensusCandidates } from '~/server/games/new-order/consensus-backfill';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import {
+  getConsensusCandidates,
+  restampBatch,
+} from '~/server/games/new-order/consensus-backfill';
 
 const schema = z.object({
   action: z.enum(['count', 'resolve', 'verify']),
@@ -43,6 +48,44 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       return acc;
     }, {});
     return res.status(200).json({ total: candidates.length, byDecision });
+  }
+
+  if (p.action === 'resolve') {
+    const dryRun = p.dryRun !== false; // default true
+    const batchSize = p.batchSize ?? 1000;
+    const concurrency = p.concurrency ?? 4;
+
+    let candidates = await getConsensusCandidates(p);
+    // Phase 1: skip mod-only down-rates and unknown originals
+    candidates = candidates.filter(
+      (c) => c.decision === 'same_level' || c.decision === 'down_1lvl' || c.decision === 'up_rate'
+    );
+    if (p.limit) candidates = candidates.slice(0, p.limit);
+
+    const byDecision = candidates.reduce<Record<string, number>>(
+      (a, c) => ((a[c.decision] = (a[c.decision] ?? 0) + 1), a),
+      {}
+    );
+
+    if (dryRun) {
+      return res.status(200).json({ dryRun: true, wouldResolve: candidates.length, byDecision });
+    }
+
+    const stampISO = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const batches = chunk(
+      candidates.map((c) => ({ imageId: c.imageId, domRating: c.domRating })),
+      batchSize
+    );
+    let done = 0;
+    await limitConcurrency(
+      batches.map((b) => async () => {
+        await restampBatch(b, stampISO);
+        done += b.length;
+      }),
+      concurrency
+    );
+
+    return res.status(200).json({ dryRun: false, resolved: done, byDecision, stampISO });
   }
 
   return res.status(400).json({ error: `action ${p.action} not yet implemented` });
