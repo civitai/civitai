@@ -23,9 +23,20 @@
   rate-limit (20 / 10 min, fail-open). Shopify never grants — it only hands off the order id.
 - `src/pages/merch/claim.tsx` — handles `?order=<id>` (claim / mismatch-email entry) and `?token=` (confirm).
 - `src/server/routers/merch.router.ts` (registered as `merch`) + `src/server/schema/merch.schema.ts`.
-- Email: `src/server/email/templates/merchClaimConfirmation.email.ts`.
+- Emails: `merchClaimInvite.email.ts` (sent automatically by the webhook — see below) +
+  `merchClaimConfirmation.email.ts` (the email-mismatch confirmation link).
 
-### Shopify order-status page snippet (paste into Settings → Checkout → Additional scripts)
+### Primary delivery: webhook-driven claim email (no Shopify-side UI needed)
+shop.civitai.com is on **checkout extensibility**, so the Thank-you/Order-status page is not
+merchant-editable Liquid (and isn't part of the theme). Instead, **`processShopifyOrderPaid` emails the
+buyer a claim link** (`merchClaimInviteEmail` → `/merch/claim?order=<id>`) the first time it sees an
+**unlinked** order. Once they claim, the customer is linked and future orders auto-grant with no email.
+Retry-safe: the invite only sends on first insert of an order (guarded by an existence check), and not when
+`buzzAmount` is 0 or the order has no email. This removes all Shopify-side UI work.
+
+### Optional: order-status page snippet (classic-checkout stores only)
+On a **classic-checkout** store you could *additionally* surface the button on the order-status page via
+Settings → Checkout → Additional scripts:
 ```liquid
 {% comment %} Civitai Blue Buzz claim — only shown until the customer is linked {% endcomment %}
 {% unless customer.metafields.civitai.user_id %}
@@ -47,11 +58,12 @@ their orders auto-grant from then on. **Caveat:** on Shopify Plus / checkout-ext
 extension** (app block) reading the same metafield + linking to the same URL.
 
 **Remaining:**
-- Register the Shopify webhook → `/api/webhooks/shopify` for `orders/paid` (needs `SHOPIFY_WEBHOOK_SECRET`).
-- Paste the snippet (or add the UI extension) on the Shopify order-status page.
-- Flag-gate / ramp to testers; decide refund handling (currently: ignore + monitor).
-- Apply the migration to preview/staging/prod manually.
-- Optional later: #3 cart-attribute identity to skip claiming for shop-from-Civitai traffic.
+- Merge PR #2824 + deploy. (Secrets live in prod+preview; `orders/paid` webhook registered; migration
+  applied to prod + dev — all done 2026-06-30.)
+- Decide refund handling (currently: ignore + monitor).
+- Optional later: the order-status UI extension (app block) for a Thank-you-page button, and #3
+  cart-attribute identity to skip claiming for shop-from-Civitai traffic. Neither is needed — the
+  webhook-driven email covers claiming.
 
 ---
 

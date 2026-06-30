@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import { merchClaimConfirmationEmail } from '~/server/email/templates';
+import { merchClaimConfirmationEmail, merchClaimInviteEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import { setCustomerCivitaiUserId } from '~/server/http/shopify/shopify.caller';
@@ -189,6 +189,13 @@ export async function processShopifyOrderPaid(order: ShopifyOrderPaid) {
   const couponCodes = (order.discount_codes ?? []).map((d) => d.code);
   const buzzAmount = computeMerchBuzz(subtotal, couponCodes);
 
+  // Track whether this is the first time we see the order so a webhook retry
+  // (Shopify redelivers) doesn't re-send the claim invite email.
+  const existing = await dbWrite.shopifyMerchOrder.findUnique({
+    where: { shopifyOrderId },
+    select: { shopifyOrderId: true },
+  });
+
   const link = await dbWrite.shopifyCustomerLink.findFirst({
     where: shopifyCustomerId ? { shopifyCustomerId } : { email },
     select: { userId: true },
@@ -219,6 +226,18 @@ export async function processShopifyOrderPaid(order: ShopifyOrderPaid) {
       amount: buzzAmount,
       details: { couponCodes, subtotal },
     });
+  } else if (!existing && buzzAmount > 0 && email) {
+    // First time seeing an unlinked order — invite the buyer to claim. Once they
+    // claim, the customer is linked and future orders auto-grant (no email).
+    try {
+      await merchClaimInviteEmail.send({
+        to: email,
+        buzzAmount,
+        claimUrl: `${getBaseUrl()}/merch/claim?order=${shopifyOrderId}`,
+      });
+    } catch (error) {
+      log({ message: 'Failed to send merch claim invite', shopifyOrderId, error });
+    }
   }
 
   return { shopifyOrderId, buzzAmount, userId, status: userId ? 'Granted' : 'Pending' };
