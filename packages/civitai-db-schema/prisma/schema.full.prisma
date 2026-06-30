@@ -2461,6 +2461,13 @@ model AppBlockPublishRequest {
   @@index([appBlockId, submittedAt(sort: Desc)], map: "app_block_publish_requests_app_history_idx")
   @@index([submittedByUserId, status], map: "app_block_publish_requests_my_submissions_idx")
   @@index([slug, status], map: "app_block_publish_requests_slug_idx")
+  // RAW partial unique index (NOT expressible in Prisma @@unique — it carries a
+  // WHERE clause): "app_block_publish_requests_one_pending_per_slug" UNIQUE
+  // (slug) WHERE status='pending'. Enforces at-most-one PENDING request per slug
+  // at the DB; submitVersion + recordPendingFromPush rely on its P2002 to close
+  // the read-then-write race. Created/re-asserted in
+  // 20260528210000_w1_uniqueness_constraints and
+  // 20260630130000_app_block_one_pending_per_slug_idempotent (manual-apply).
   @@map("app_block_publish_requests")
 }
 

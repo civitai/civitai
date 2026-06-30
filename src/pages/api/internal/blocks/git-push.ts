@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
 import {
   BlockManifestValidator,
@@ -11,6 +11,7 @@ import {
 } from '~/server/services/block-manifest-validator.service';
 import { FORGEJO_ORG, getRawFile, setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+import { recordPendingFromPush } from '~/server/services/blocks/publish-request.service';
 
 /**
  * POST /api/internal/blocks/git-push
@@ -439,120 +440,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
 
   res.status(202).json({ ok: true, slug, sha, status: 'pending-review', deployed: false });
 });
-
-/**
- * Record (or refresh) a `pending` publish request for an unreviewed push to
- * civitai-apps/<slug>:main. This is the no-trust-on-push gate: a direct push
- * cannot auto-approve or deploy, so we capture it as the same kind of review
- * artifact a submitVersion produces and leave it for a moderator.
- *
- * The bundle bytes are NOT available to the webhook (Forgejo only hands us the
- * push event + the manifest at the sha), so this row's bundle pointers are left
- * empty and a `forgejoCommitSha` is stored instead — a moderator reviews the
- * code in the Forgejo repo directly. `approveRequest` already supports
- * approving a `pending` request against the existing app_blocks row.
- *
- * Idempotent at the (slug, sha) level: a re-delivery of the same push event
- * refreshes the existing pending row rather than stacking duplicates. Only ONE
- * pending request per slug is allowed (matches the submitVersion invariant +
- * the partial unique index), so a newer unreviewed sha supersedes an older
- * still-pending one.
- */
-async function recordPendingFromPush(args: {
-  slug: string;
-  sha: string;
-  appBlockId: string;
-  manifest: object;
-  version: string;
-}): Promise<void> {
-  const { newUlid } = await import('~/server/utils/app-block-ids');
-
-  // Already captured this exact (slug, sha) as pending? Refresh + done.
-  const existingForSha = await dbWrite.appBlockPublishRequest.findFirst({
-    where: { slug: args.slug, status: 'pending', forgejoCommitSha: args.sha },
-    select: { id: true },
-  });
-  if (existingForSha) {
-    await dbWrite.appBlockPublishRequest.update({
-      where: { id: existingForSha.id },
-      data: { manifest: args.manifest, version: args.version, appBlockId: args.appBlockId },
-    });
-    return;
-  }
-
-  // Supersede any OTHER still-pending request for this slug (older sha or a
-  // dev submitVersion) so the partial unique index (one pending per slug)
-  // doesn't reject the insert and the queue shows the newest unreviewed sha.
-  await dbWrite.appBlockPublishRequest.updateMany({
-    where: { slug: args.slug, status: 'pending' },
-    data: { status: 'withdrawn' },
-  });
-
-  const ownerUserId = await resolvePushOwnerUserId(args.appBlockId);
-  const publishRequestId = `pubreq_${newUlid()}`;
-
-  // Park the review IMMEDIATELY with an empty summary, then enrich the real
-  // file/manifest diff + bundle size OFF the response path (below). A full
-  // Forgejo bundle reconstruct inline would (a) add seconds to the webhook
-  // response and (b) widen the supersede→create window enough for concurrent
-  // pushes to collide on the one-pending-per-slug index. The mod-review modal's
-  // "View code in Forgejo @ sha" link works regardless; the diff fills in within
-  // a moment. The empty summary is the durable fallback if enrichment never lands.
-  await dbWrite.appBlockPublishRequest.create({
-    data: {
-      id: publishRequestId,
-      appBlockId: args.appBlockId,
-      slug: args.slug,
-      submittedByUserId: ownerUserId,
-      version: args.version,
-      manifest: args.manifest,
-      // No bundle: the webhook doesn't receive the ZIP. The Forgejo repo at
-      // forgejoCommitSha IS the reviewable artifact; mods browse it directly.
-      // bundleKey stays empty as the push-originated marker.
-      bundleKey: '',
-      bundleSha256: '',
-      bundleSizeBytes: BigInt(0),
-      fileSummary: { files: [], added: [], removed: [], changed: [] },
-      manifestDiffSummary: {
-        kind: 'first-version' as const,
-        fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
-      },
-      status: 'pending',
-      forgejoCommitSha: args.sha,
-    },
-  });
-
-  // Fire-and-forget: fill in the real diff + bundle size so the mod sees actual
-  // changes (added/changed/removed) instead of 0 files + a misleading
-  // "first-version" label. enrichPushRequestRow has its own try/catch + is
-  // scoped to status='pending', so it never gates the park and can't clobber a
-  // row that was approved/rejected/superseded in the meantime. civitai-web is a
-  // long-lived server, so the microtask completes after the 202.
-  void (async () => {
-    const { enrichPushRequestRow } = await import(
-      '~/server/services/blocks/publish-request.service'
-    );
-    await enrichPushRequestRow(publishRequestId, args.slug, args.sha);
-  })().catch(() => undefined); // guard the dynamic import itself (house convention: no unhandled rejection)
-}
-
-/**
- * Attribute the pending-review row to the app owner (the OauthClient.userId),
- * falling back to the app block's own app relation. submittedByUserId is a
- * required, FK-constrained column — we can't leave it null — and the app owner
- * is the most meaningful actor for an unreviewed push to their repo.
- */
-async function resolvePushOwnerUserId(appBlockId: string): Promise<number> {
-  const row = await dbRead.appBlock.findUnique({
-    where: { id: appBlockId },
-    select: { app: { select: { userId: true } } },
-  });
-  const userId = row?.app?.userId;
-  if (typeof userId !== 'number') {
-    throw new Error(`could not resolve owner userId for appBlock ${appBlockId}`);
-  }
-  return userId;
-}
 
 async function setCommitStatusSafe(args: Parameters<typeof setCommitStatus>[0]): Promise<void> {
   // Don't let a Forgejo flakiness in setCommitStatus mask the original

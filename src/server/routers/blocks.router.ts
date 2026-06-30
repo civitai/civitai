@@ -3151,7 +3151,405 @@ export const blocksRouter = router({
         firstVersionIsZip: false as const,
       };
     }),
+
+  /**
+   * App management (Phase 1) — return the FULL stored manifest for one of the
+   * caller's OWN apps so the web editor can pre-fill the edit form. Owner-gated
+   * exactly like getMyAppRepo (OauthClient.userId is the v1 ownership source of
+   * truth). Distinct from the public getAppDetail (which returns only the
+   * PublicAppDetail allowlist, no scopes/full manifest) — this is the owner's
+   * own private read.
+   */
+  getMyAppManifest: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      if (!ctx.features.appBlocks) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'App Blocks is not available to this account',
+        });
+      }
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: {
+          id: true,
+          blockId: true,
+          status: true,
+          version: true,
+          manifest: true,
+          app: {
+            select: { userId: true, allowedScopes: true, allowedOrigins: true },
+          },
+        },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      if (block.app?.userId !== ctx.user!.id) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
+      }
+      return {
+        appBlockId: block.id,
+        slug: block.blockId,
+        status: block.status,
+        version: block.version,
+        manifest: block.manifest as Record<string, unknown>,
+        // Surfaced so the client can preview which scopes/origins the edit is
+        // bounded by (the SERVER re-derives + enforces these on save — the
+        // client copy is advisory only).
+        allowedScopes: block.app?.allowedScopes ?? 0,
+        allowedOrigins: block.app?.allowedOrigins ?? [],
+      };
+    }),
+
+  /**
+   * App management (Phase 1) — edit an app's manifest from the web UI. On save
+   * this does a BACKGROUND commit of the new block.manifest.json to the app's
+   * canonical Forgejo repo (civitai-apps/<slug>), which RE-ENTERS the existing
+   * no-trust review flow: the commit is recorded as a `pending` publish request
+   * and NEVER auto-approves or deploys. A moderator must approve it through the
+   * existing /apps/review → approveRequest → build → deploy path.
+   *
+   * HARD RULES enforced here:
+   *   - OWNER-only (OauthClient.userId), authenticated, app must be `approved`
+   *     (the canonical repo only exists after the first ZIP approval).
+   *   - blockId is IMMUTABLE — the caller cannot rename the slug; we force the
+   *     merged manifest's blockId back to the stored slug.
+   *   - iframe.src is platform-owned — re-stamped to the canonical subdomain.
+   *   - the merged manifest is RE-VALIDATED server-side with
+   *     BlockManifestValidator against the app's OauthClient context (scope
+   *     subset + allowedOrigins SSRF binding) — the client manifest is NEVER
+   *     trusted.
+   *   - version must strictly increase (semver) so each edit is a new version.
+   *
+   * The commit itself fires the git-push webhook too, but we ALSO call
+   * recordPendingFromPush explicitly (idempotent at (slug, sha)) so the editor
+   * gets a stable publishRequestId back without depending on webhook delivery.
+   */
+  updateManifest: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        // Editable manifest fields. blockId / iframe.src are intentionally
+        // ABSENT — blockId is immutable (forced server-side) and iframe.src is
+        // platform-owned (stamped server-side). Everything is optional so the
+        // client can send a sparse patch; we deep-merge onto the stored manifest.
+        patch: z
+          .object({
+            name: z.string().min(1).max(200).optional(),
+            // New version — REQUIRED so every manifest edit is a distinct
+            // version (mirrors a ZIP submitVersion). Must strictly exceed the
+            // stored version (checked below).
+            version: z.string().min(1).max(64),
+            contentRating: z.string().min(1).max(8).optional(),
+            renderMode: z.string().min(1).max(16).optional(),
+            trustTier: z.string().min(1).max(16).optional(),
+            description: z.string().max(5000).optional(),
+            scopes: z.array(z.string().min(1).max(128)).max(64).optional(),
+            publicSettingsKeys: z.array(z.string().min(1).max(64)).max(32).optional(),
+            targets: z
+              .array(z.object({ slotId: z.string().min(1).max(64) }).passthrough())
+              .max(16)
+              .optional(),
+            page: z
+              .object({
+                path: z.string().min(1).max(256),
+                title: z.string().min(1).max(128),
+                icon: z.string().max(128).optional(),
+                buzzBudgetPerGen: z.number().int().positive().optional(),
+              })
+              .passthrough()
+              .nullable()
+              .optional(),
+            // Editable iframe sub-fields (NOT src — that's platform-owned).
+            iframe: z
+              .object({
+                minHeight: z.number().optional(),
+                maxHeight: z.number().nullable().optional(),
+                resizable: z.boolean().optional(),
+                sandbox: z.string().max(256).optional(),
+              })
+              .partial()
+              .optional(),
+          })
+          .strict(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.features.appBlocks) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'App Blocks is not available to this account',
+        });
+      }
+
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: {
+          id: true,
+          blockId: true,
+          status: true,
+          version: true,
+          // trustTier is SERVER-OWNED (moderator-controlled, NOT
+          // publisher-declared) — loaded so we can re-stamp it onto the merged
+          // manifest before validation (see below), mirroring
+          // submitVersion/approveRequest.
+          trustTier: true,
+          manifest: true,
+          app: { select: { userId: true, allowedScopes: true, allowedOrigins: true } },
+        },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      // Owner gate — OauthClient.userId is the v1 ownership source of truth.
+      if (block.app?.userId !== ctx.user!.id) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
+      }
+      // A banned/suspended account must not be able to mutate a live app.
+      if (ctx.user!.bannedAt) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Account is not eligible to edit apps',
+        });
+      }
+      // The canonical Forgejo repo only exists once the first version is
+      // ZIP-approved (approveRequest pre-creates civitai-apps/<slug>); until
+      // then there's nothing to commit to.
+      if (block.status !== 'approved') {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message:
+            'Your first version must be submitted as a ZIP and approved before you can edit the manifest from the web.',
+        });
+      }
+
+      const slug = block.blockId;
+      const { patch } = input;
+
+      // Merge the patch onto the STORED manifest (the source of truth) — never
+      // trust a client-supplied full manifest. Deep-merge `iframe` so the
+      // editable sub-fields override but the platform-owned `src` survives the
+      // merge (it's then re-stamped below regardless).
+      const stored = (block.manifest ?? {}) as Record<string, unknown>;
+      const storedIframe =
+        stored.iframe && typeof stored.iframe === 'object' && !Array.isArray(stored.iframe)
+          ? (stored.iframe as Record<string, unknown>)
+          : {};
+      const merged: Record<string, unknown> = {
+        ...stored,
+        ...patch,
+        // blockId is IMMUTABLE — force back to the stored slug regardless of
+        // anything the client sent (the input schema doesn't even accept it, but
+        // belt-and-suspenders against a future schema widening).
+        blockId: slug,
+        iframe: { ...storedIframe, ...(patch.iframe ?? {}) },
+      };
+
+      // version must STRICTLY increase so each edit is a new, ordered version
+      // (mirrors a ZIP submitVersion). Reject equal/lower to keep the version
+      // monotonic and avoid a no-op review churn.
+      const { SEMVER_REGEX } = await import('~/server/schema/blocks/publish-request.schema');
+      const newVersion = patch.version;
+      if (!SEMVER_REGEX.test(newVersion)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `version "${newVersion}" must be semver (e.g. 1.2.3)`,
+        });
+      }
+      if (compareSemver(newVersion, block.version) <= 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `version must be greater than the current version (${block.version})`,
+        });
+      }
+      merged.version = newVersion;
+
+      // iframe.src is PLATFORM-OWNED — stamp the canonical per-app subdomain
+      // root so the validator's origin-binding + the webhook's exact-match gate
+      // both pass, exactly as submit/approve/git-push do.
+      const { stampCanonicalIframeSrc } = await import(
+        '~/server/services/blocks/manifest-normalize'
+      );
+      stampCanonicalIframeSrc(merged, slug, env.APPS_DOMAIN);
+
+      // trustTier is SERVER-OWNED (moderator-controlled, NOT publisher-declared)
+      // — force it back to the tier already on the app's row regardless of what
+      // the client patched. Raising the tier is a deliberate out-of-band
+      // moderator/DB action, never a manifest field. This makes the validator
+      // below (which reads `manifest.trustTier` to gate the iframe sandbox
+      // allowlist) run against the tier we'll actually persist, exactly as
+      // submitVersion/approveRequest do — closing the gap where a client could
+      // self-declare `internal` to pass a sandbox/scope combo their real tier
+      // forbids.
+      merged.trustTier = block.trustTier ?? 'unverified';
+
+      // RE-VALIDATE server-side against the app's OauthClient context. This is
+      // the security boundary: scope-subset + allowedOrigins SSRF binding are
+      // enforced here, never trusting the client. (The git-push webhook will
+      // also re-validate the committed manifest — defense in depth.)
+      const { BlockManifestValidator } = await import(
+        '~/server/services/block-manifest-validator.service'
+      );
+      const appContext = {
+        allowedScopes: block.app?.allowedScopes ?? 0,
+        allowedOrigins: (block.app?.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
+      };
+      const validation = BlockManifestValidator.validate(merged, appContext);
+      if (!validation.valid) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `Invalid manifest: ${validation.errors.join('; ')}`,
+        });
+      }
+
+      // Background commit of the new manifest to the CANONICAL repo. We use the
+      // admin-token commitFiles (same call approveRequest uses) — Forgejo fires
+      // the push webhook regardless of which token committed, so this naturally
+      // re-enters the no-trust review path. replaceAllFiles is FALSE: we only
+      // touch block.manifest.json, leaving the app's source untouched.
+      const { commitFiles } = await import('~/server/services/blocks/forgejo.service');
+      const manifestJson = Buffer.from(JSON.stringify(merged, null, 2) + '\n', 'utf8');
+      const { sha } = await commitFiles({
+        org: FORGEJO_ORG,
+        slug,
+        files: [{ path: 'block.manifest.json', content: manifestJson }],
+        message: `Manifest update: ${slug} v${newVersion}`,
+      });
+
+      // Deterministically record the pending review (idempotent at (slug, sha)
+      // with the webhook the commit also fires). This is what makes the edit
+      // enter the SAME no-trust pending-review gate a direct git push does.
+      const { recordPendingFromPush } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      const { publishRequestId } = await recordPendingFromPush({
+        slug,
+        sha,
+        appBlockId: block.id,
+        manifest: merged,
+        version: newVersion,
+      });
+
+      return {
+        publishRequestId,
+        slug,
+        version: newVersion,
+        sha,
+        status: 'pending' as const,
+      };
+    }),
+
+  /**
+   * App management (Phase 2) — return the caller's per-user Forgejo clone info
+   * for one of THEIR apps, for the read-only `civitai app pull` CLI command.
+   * Owner-gated identically to getMyAppRepo; lazily provisions the scoped,
+   * restricted per-user Forgejo identity (ensureForgejoIdentity) and grants it
+   * read on the app's own civitai-apps/<slug> repo.
+   *
+   * Distinct from getMyAppRepo only in intent (pull/sync vs push instructions);
+   * it returns the raw { forgejoUsername, token, cloneUrl } the CLI assembles
+   * its git command from. The token is embedded in the returned cloneUrl exactly
+   * as getMyAppRepo does (the CLI documents the token-in-URL leakage caveat).
+   */
+  getMyForgejoCloneInfo: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    // Accept EITHER the appBlockId (ab_…) OR the slug (blockId / repo name) — the
+    // CLI `civitai app pull --app <slug|appBlockId>` lets a developer pass the
+    // human-friendly slug, which is the repo name they think in.
+    .input(
+      z
+        .object({
+          appBlockId: z.string().min(1).max(64).optional(),
+          slug: z.string().min(1).max(64).optional(),
+        })
+        .refine((v) => !!v.appBlockId || !!v.slug, {
+          message: 'one of appBlockId or slug is required',
+        })
+    )
+    .query(async ({ ctx, input }) => {
+      if (!ctx.features.appBlocks) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'App Blocks is not available to this account',
+        });
+      }
+      const block = input.appBlockId
+        ? await dbRead.appBlock.findUnique({
+            where: { id: input.appBlockId },
+            select: { blockId: true, status: true, app: { select: { userId: true } } },
+          })
+        : await dbRead.appBlock.findFirst({
+            where: { blockId: input.slug },
+            select: { blockId: true, status: true, app: { select: { userId: true } } },
+          });
+      if (!block) throw throwNotFoundError('App block not found');
+      if (block.app?.userId !== ctx.user!.id) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
+      }
+      if (ctx.user!.bannedAt) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Account is not eligible for git access',
+        });
+      }
+      const slug = block.blockId;
+      if (block.status !== 'approved') {
+        return {
+          notYetAvailable: true as const,
+          slug,
+          message:
+            'Your first version must be submitted as a ZIP and approved before git access is available.',
+        };
+      }
+
+      const { ensureForgejoIdentity } = await import(
+        '~/server/services/blocks/dev-git-access.service'
+      );
+      const { addCollaborator } = await import('~/server/services/blocks/forgejo.service');
+      const { forgejoUsername, token } = await ensureForgejoIdentity(ctx.user!.id);
+      // Read is enough to pull/sync; grant `read` (idempotent). getMyAppRepo
+      // grants `write` for the push flow — the CLI `pull` only needs read.
+      await addCollaborator({ slug, username: forgejoUsername, permission: 'read' });
+
+      const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const httpUrl = `https://${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+      const cloneUrl = `https://${encodeURIComponent(forgejoUsername)}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+
+      return {
+        notYetAvailable: false as const,
+        slug,
+        forgejoUsername,
+        token,
+        httpUrl,
+        cloneUrl,
+      };
+    }),
 });
+
+/**
+ * Compare two semver strings (x.y.z[-pre]). Returns -1 / 0 / 1 for a<b / a==b /
+ * a>b. Pre-release handling is intentionally simple: any prerelease is ordered
+ * BELOW its release (1.2.3-rc < 1.2.3) and two prereleases compare lexically —
+ * enough to enforce "the new version must strictly increase" for the manifest
+ * editor (the canonical SEMVER_REGEX already validated the shape).
+ */
+function compareSemver(a: string, b: string): number {
+  const split = (v: string): { nums: number[]; pre: string | null } => {
+    const [core, pre = null] = v.split('-', 2);
+    const nums = core.split('.').map((n) => parseInt(n, 10) || 0);
+    while (nums.length < 3) nums.push(0);
+    return { nums, pre };
+  };
+  const A = split(a);
+  const B = split(b);
+  for (let i = 0; i < 3; i++) {
+    if (A.nums[i] !== B.nums[i]) return A.nums[i] < B.nums[i] ? -1 : 1;
+  }
+  // Cores equal — a release outranks any prerelease of the same core.
+  if (A.pre === null && B.pre === null) return 0;
+  if (A.pre === null) return 1; // a is the release, b is a prerelease
+  if (B.pre === null) return -1;
+  return A.pre < B.pre ? -1 : A.pre > B.pre ? 1 : 0;
+}
 
 // Block-initiated workflows spend at PARITY with the on-site generator
 // (`getAllowedAccountTypes` / `resolveGenerationCurrencies`): the currencies

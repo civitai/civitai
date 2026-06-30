@@ -1493,6 +1493,147 @@ export async function enrichPushRequestRow(
 }
 
 /**
+ * Record (or refresh) a `pending` publish request for an UNREVIEWED commit to
+ * civitai-apps/<slug>:main. This is the canonical no-trust-on-push gate: a
+ * direct git push OR a background commit (e.g. the web manifest editor) cannot
+ * auto-approve or deploy, so we capture it as the same kind of review artifact a
+ * submitVersion produces and leave it for a moderator.
+ *
+ * The bundle bytes are NOT available here (the only inputs are the commit sha +
+ * the manifest at that sha), so this row's bundle pointers are left empty and a
+ * `forgejoCommitSha` is stored instead — a moderator reviews the code in the
+ * Forgejo repo directly. `approveRequest` already supports approving a `pending`
+ * request against the existing app_blocks row. The empty `bundleKey` is the
+ * durable PUSH-ORIGINATED marker (distinguishes a manifest-edit / git-push from
+ * a ZIP submitVersion).
+ *
+ * Idempotent at the (slug, sha) level: a re-delivery of the same commit (e.g.
+ * the git-push webhook AND an explicit caller both invoking this for the same
+ * sha) refreshes the existing pending row rather than stacking duplicates. Only
+ * ONE pending request per slug is allowed (matches the submitVersion invariant +
+ * the partial unique index), so a newer unreviewed sha supersedes an older
+ * still-pending one. Returns the publish-request id so a UI caller can deep-link
+ * the submitter to it.
+ *
+ * Extracted from the git-push webhook handler so both the webhook and the web
+ * manifest editor share ONE recorder (and one gate). The webhook still calls
+ * this; the editor calls it explicitly after its commit so it gets a stable
+ * publishRequestId back without depending on webhook delivery.
+ */
+export async function recordPendingFromPush(args: {
+  slug: string;
+  sha: string;
+  appBlockId: string;
+  manifest: object;
+  version: string;
+}): Promise<{ publishRequestId: string }> {
+  const [{ dbWrite, dbRead }, { newUlid }] = await Promise.all([
+    import('~/server/db/client'),
+    import('~/server/utils/app-block-ids'),
+  ]);
+
+  // Already captured this exact (slug, sha) as pending? Refresh + done.
+  const existingForSha = await dbWrite.appBlockPublishRequest.findFirst({
+    where: { slug: args.slug, status: 'pending', forgejoCommitSha: args.sha },
+    select: { id: true },
+  });
+  if (existingForSha) {
+    await dbWrite.appBlockPublishRequest.update({
+      where: { id: existingForSha.id },
+      data: { manifest: args.manifest, version: args.version, appBlockId: args.appBlockId },
+    });
+    return { publishRequestId: existingForSha.id };
+  }
+
+  // Supersede any OTHER still-pending request for this slug (older sha or a
+  // dev submitVersion) so the partial unique index (one pending per slug)
+  // doesn't reject the insert and the queue shows the newest unreviewed sha.
+  await dbWrite.appBlockPublishRequest.updateMany({
+    where: { slug: args.slug, status: 'pending' },
+    data: { status: 'withdrawn' },
+  });
+
+  // Attribute the row to the app owner (OauthClient.userId). submittedByUserId
+  // is required + FK-constrained, and the owner is the most meaningful actor for
+  // a commit to their repo.
+  const ownerRow = await dbRead.appBlock.findUnique({
+    where: { id: args.appBlockId },
+    select: { app: { select: { userId: true } } },
+  });
+  const ownerUserId = ownerRow?.app?.userId;
+  if (typeof ownerUserId !== 'number') {
+    throw new Error(`could not resolve owner userId for appBlock ${args.appBlockId}`);
+  }
+  const publishRequestId = `pubreq_${newUlid()}`;
+
+  // Park the review IMMEDIATELY with an empty summary, then enrich the real
+  // file/manifest diff OFF the response path (below). The empty summary is the
+  // durable fallback if enrichment never lands.
+  //
+  // RACE (audit follow-up): `updateManifest` calls this explicitly AND the
+  // Forgejo push webhook the same commit fires ALSO calls it for the same
+  // (slug, sha). Both can miss the `existingForSha` read above and both reach
+  // this create. The partial unique index
+  // `app_block_publish_requests_one_pending_per_slug` ((slug) WHERE
+  // status='pending') makes the loser's INSERT trip a P2002 — catch it, re-read
+  // the winner's pending row, and return it (the loser no-ops gracefully
+  // instead of throwing). NOTE: unlike submitVersion's C-4 catch (which THROWS
+  // a human-readable conflict error on P2002), this races to record the SAME
+  // commit, so the right outcome is to return the winner's id, not to surface a
+  // conflict — a same-commit re-delivery must be idempotent, not an error.
+  try {
+    await dbWrite.appBlockPublishRequest.create({
+      data: {
+        id: publishRequestId,
+        appBlockId: args.appBlockId,
+        slug: args.slug,
+        submittedByUserId: ownerUserId,
+        version: args.version,
+        manifest: args.manifest,
+        // No bundle: the Forgejo repo at forgejoCommitSha IS the reviewable
+        // artifact; mods browse it directly. bundleKey stays empty as the
+        // push-originated marker.
+        bundleKey: '',
+        bundleSha256: '',
+        bundleSizeBytes: BigInt(0),
+        fileSummary: { files: [], added: [], removed: [], changed: [] },
+        manifestDiffSummary: {
+          kind: 'first-version' as const,
+          fields: Object.keys(args.manifest as Record<string, unknown>).sort(),
+        },
+        status: 'pending',
+        forgejoCommitSha: args.sha,
+      },
+    });
+  } catch (err) {
+    const code = (err as { code?: unknown })?.code;
+    if (code !== 'P2002') throw err;
+    // Lost the race: another concurrent recorder for this slug already parked a
+    // pending row. Re-read it and return it so this caller no-ops gracefully.
+    // Prefer the exact-sha row (this commit), falling back to whatever pending
+    // row exists for the slug (the winner may have parked a newer sha).
+    const winner =
+      (await dbWrite.appBlockPublishRequest.findFirst({
+        where: { slug: args.slug, status: 'pending', forgejoCommitSha: args.sha },
+        select: { id: true },
+      })) ??
+      (await dbWrite.appBlockPublishRequest.findFirst({
+        where: { slug: args.slug, status: 'pending' },
+        select: { id: true },
+      }));
+    if (!winner) throw err; // index fired but no pending row visible — re-throw
+    return { publishRequestId: winner.id };
+  }
+
+  // Fire-and-forget: fill in the real diff + bundle size. enrichPushRequestRow
+  // has its own try/catch + is scoped to status='pending', so it never gates the
+  // park and can't clobber a row that was approved/rejected/superseded.
+  void enrichPushRequestRow(publishRequestId, args.slug, args.sha).catch(() => undefined);
+
+  return { publishRequestId };
+}
+
+/**
  * Mod queue: paginated list of publish requests in status='pending',
  * oldest first (FIFO). Includes the submitter's basic profile so the
  * review UI doesn't round-trip per row.
