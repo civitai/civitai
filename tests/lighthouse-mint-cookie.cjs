@@ -14,9 +14,9 @@
  *
  * This is the SAME mechanism tests/preview-auth.setup.ts uses for the smoke
  * suite; kept as a standalone .cjs so the Tekton lighthouse task can run it
- * with plain `node` (no ts/playwright). Its only external dep is `jose` (loaded
- * from the shared workspace node_modules the typecheck task installs); the rest
- * (HKDF key derivation, UUID) uses Node's built-in `node:crypto`.
+ * with plain `node` (no ts/playwright) and NO external dependencies — the JWE
+ * (dir/A256GCM), HKDF key derivation, and UUID all use Node's built-in
+ * `node:crypto`, so it can't fail on an incomplete workspace install.
  *
  * Usage:
  *   NEXTAUTH_SECRET=... BASE_URL=https://pr-123.civitaic.com \
@@ -26,16 +26,31 @@
  */
 const fs = require('fs');
 const path = require('path');
-// jose is ESM-only since v6 — require() throws ERR_REQUIRE_ESM from this .cjs,
-// so load it via dynamic import() inside main() (the only EncryptJWT consumer).
+// Self-contained: the cookie JWE is built with Node's built-in node:crypto only
+// (no jose / next-auth). This script runs in the constrained lhci-client image
+// against the shared-workspace node_modules, which is occasionally an incomplete
+// pnpm install — depending on ANY external package made the mint flaky
+// ("Cannot find module 'jose'/'uuid'" -> Lighthouse silently skipped).
+// node:crypto needs nothing installed, so the mint can no longer fail on deps.
 const nodeCrypto = require('node:crypto');
-const { hkdfSync, randomUUID } = nodeCrypto;
+const { hkdfSync, randomUUID, randomBytes, createCipheriv } = nodeCrypto;
 
-// jose v6 uses Web Crypto via the global `crypto`. The lhci-client image runs
-// Node 18, which doesn't expose `crypto` as a global (it became global in Node
-// 19+), so the import below throws "crypto is not defined". Polyfill from
-// node:crypto.webcrypto when absent — no-op on Node 19+.
-if (!globalThis.crypto) globalThis.crypto = nodeCrypto.webcrypto;
+const b64url = (buf) =>
+  Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+// Compact-serialize a next-auth v4 session JWE: dir + A256GCM, with the AAD set
+// to the ASCII base64url(protected header) per RFC 7516. Byte-for-byte the same
+// shape jose's EncryptJWT produces (verified: jose.jwtDecrypt round-trips this
+// output), so @civitai/auth's decodeLegacySessionCookie accepts it unchanged.
+function encryptJWE(payload, key) {
+  const header = b64url(Buffer.from(JSON.stringify({ alg: 'dir', enc: 'A256GCM' }), 'utf8'));
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
+  cipher.setAAD(Buffer.from(header, 'ascii'));
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${header}..${b64url(iv)}.${b64url(ciphertext)}.${b64url(tag)}`;
+}
 
 const SECRET = process.env.NEXTAUTH_SECRET;
 const BASE_URL = process.env.BASE_URL;
@@ -76,14 +91,12 @@ async function main() {
   if (!SECRET) throw new Error('NEXTAUTH_SECRET is required to mint the preview cookie');
   if (!BASE_URL) throw new Error('BASE_URL is required (e.g. https://pr-123.civitaic.com)');
 
-  const { EncryptJWT } = await import('jose');
-
+  const nowSec = Math.floor(Date.now() / 1000);
   const token = { user: GOLD, sub: String(GOLD.id), id: randomUUID(), signedAt: Date.now() };
-  const value = await new EncryptJWT(token)
-    .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
-    .setIssuedAt()
-    .setExpirationTime(Math.floor(Date.now() / 1000) + MAX_AGE_S)
-    .encrypt(derivedKey(SECRET));
+  // JWT claims set, then encrypt as a JWE — mirrors next-auth v4 EncryptJWT
+  // (.setIssuedAt()/.setExpirationTime()).
+  const claims = { ...token, iat: nowSec, exp: nowSec + MAX_AGE_S };
+  const value = encryptJWE(claims, derivedKey(SECRET));
 
   const base = JSON.parse(
     fs.readFileSync(path.join(process.cwd(), 'lighthouserc.json'), 'utf8')
