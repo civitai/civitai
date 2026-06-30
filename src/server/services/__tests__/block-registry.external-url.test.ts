@@ -97,6 +97,7 @@ function listRow(over: Partial<Record<string, unknown>> = {}) {
     approved_scopes: [],
     avg_rating: null,
     review_count: 0n,
+    screenshots: null,
     sort_key: '0',
     ...over,
   };
@@ -176,5 +177,41 @@ describe('BlockRegistry.getFeaturedBlocks — externalUrl projection', () => {
     const { BlockRegistry } = await import('../block-registry.service');
     const items = await BlockRegistry.getFeaturedBlocks(10);
     expect(items[0].externalUrl).toBe('https://example.com/cool');
+  });
+});
+
+describe('BlockRegistry.getFeaturedBlocks — coverUrl projection', () => {
+  beforeEach(() => {
+    mockDbRead.$queryRaw.mockClear();
+    mockDbRead.$queryRaw.mockResolvedValue([listRow()]);
+  });
+
+  it('SELECTs the screenshots column', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.getFeaturedBlocks(10);
+    expect(capturedSql()).toMatch(/ab\.screenshots/);
+  });
+
+  it('coverUrl = the FIRST public screenshot URL when screenshots exist', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([
+      listRow({
+        id: 'ab_cover',
+        screenshots: [
+          { key: 'blocks/ab_cover/0.png', index: 0, ext: 'png', contentType: 'image/png' },
+        ],
+      }),
+    ]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const items = await BlockRegistry.getFeaturedBlocks(10);
+    expect(items[0].coverUrl).toBe('/api/blocks/screenshot/ab_cover/0.png');
+    // The raw MinIO key must never appear on the wire.
+    expect(JSON.stringify(items)).not.toContain('blocks/ab_cover/0.png');
+  });
+
+  it('coverUrl is null when the app shipped no screenshots', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([listRow({ screenshots: null })]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const items = await BlockRegistry.getFeaturedBlocks(10);
+    expect(items[0].coverUrl).toBeNull();
   });
 });

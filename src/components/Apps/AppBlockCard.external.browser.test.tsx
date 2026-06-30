@@ -44,6 +44,7 @@ function makeExternalBlock(overrides: Partial<AvailableBlock> = {}): AvailableBl
     externalUrl: 'https://example.com/launch',
     avgRating: null,
     reviewCount: 0,
+    coverUrl: null,
     ...overrides,
   };
 }
@@ -62,6 +63,7 @@ function makeModelBlock(overrides: Partial<AvailableBlock> = {}): AvailableBlock
     externalUrl: null,
     avgRating: null,
     reviewCount: 0,
+    coverUrl: null,
     ...overrides,
   };
 }

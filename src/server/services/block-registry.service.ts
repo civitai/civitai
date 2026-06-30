@@ -2689,6 +2689,9 @@ export class BlockRegistry {
       approved_scopes: string[] | null;
       avg_rating: number | null;
       review_count: bigint;
+      // The raw stored screenshots jsonb (the SAME column getAppDetail reads) —
+      // projected to a public cover URL below (first screenshot, opaque route).
+      screenshots: unknown;
       // The sort key for THIS row, projected so we can encode it into the
       // nextCursor for a stable keyset scan. Text so one column fits all sorts.
       sort_key: string;
@@ -2751,6 +2754,7 @@ export class BlockRegistry {
         ab.category,
         ab.external_url,
         ab.approved_scopes,
+        ab.screenshots,
         -- Post kill_per_model_installs: "install count" = how many distinct
         -- USERS use this app, not how many subscription rows exist. A single
         -- user can hold several rows for one app (a blanket publisher sub +
@@ -2833,6 +2837,10 @@ export class BlockRegistry {
         // Marketplace reviews (aggregate-eligible). avgRating NULL = 0-review.
         avgRating: r.avg_rating ?? null,
         reviewCount: Number(r.review_count),
+        // Card cover: the FIRST public screenshot URL (or NULL when the app
+        // shipped none). Reuses the SAME toPublicScreenshots projection the
+        // detail page uses — opaque gated route, never the raw MinIO key.
+        coverUrl: toPublicScreenshots(r.id, r.screenshots)[0]?.url ?? null,
       })),
       nextCursor,
     };
@@ -3003,6 +3011,9 @@ export class BlockRegistry {
       approved_scopes: string[] | null;
       avg_rating: number | null;
       review_count: bigint;
+      // Raw screenshots jsonb — projected to a public cover URL below (same as
+      // listAvailable / getAppDetail).
+      screenshots: unknown;
     };
     const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT
@@ -3014,6 +3025,7 @@ export class BlockRegistry {
         ab.category,
         ab.external_url,
         ab.approved_scopes,
+        ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count,
         ${AVG_RATING_SUBQUERY} AS avg_rating,
@@ -3048,6 +3060,9 @@ export class BlockRegistry {
         : [],
       avgRating: r.avg_rating ?? null,
       reviewCount: Number(r.review_count),
+      // Card cover: FIRST public screenshot URL (or NULL). Same projection as
+      // listAvailable — no widening.
+      coverUrl: toPublicScreenshots(r.id, r.screenshots)[0]?.url ?? null,
     }));
   }
 

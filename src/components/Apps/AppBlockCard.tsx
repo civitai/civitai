@@ -1,5 +1,6 @@
-import { Anchor, Badge, Button, Card, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Box, Button, Card, Group, Image, Stack, Text, Title } from '@mantine/core';
 import {
+  IconApps,
   IconExternalLink,
   IconPlugConnected,
   IconSettings,
@@ -83,6 +84,59 @@ function categoryIcon(category: string): Icon {
   return isMarketplaceCategory(category) ? CATEGORY_ICONS[category] : FALLBACK_CATEGORY_ICON;
 }
 
+/**
+ * The card's cover image — the app's FIRST publisher-supplied screenshot
+ * (`block.coverUrl`, projected server-side via `toPublicScreenshots`). Sits in
+ * a fixed-height box at the top of the card so every card is the same height and
+ * the grid/featured-rail/recently-opened layouts stay aligned.
+ *
+ * When the app shipped no screenshot (`coverUrl` null), render a tasteful
+ * PLACEHOLDER instead of a broken/empty `<img>`: a neutral gradient with the
+ * app's category glyph (or a generic apps glyph when no category is set). Never
+ * an empty box — the cover is always SOMETHING.
+ *
+ * `coverUrl` is optional on the prop so existing callers / fixtures that predate
+ * the field don't break — `undefined` is treated as "no cover" (placeholder).
+ */
+function AppCover({
+  coverUrl,
+  category,
+  name,
+}: {
+  coverUrl: string | null | undefined;
+  category: string | null;
+  name: string;
+}) {
+  // Fixed-height cover box. `Card.Section` makes the cover bleed to the card
+  // edges (above the padded body) — the standard Mantine card-cover pattern.
+  if (coverUrl) {
+    return (
+      <Card.Section>
+        <Image src={coverUrl} alt={`${name} listing image`} h={140} fit="cover" />
+      </Card.Section>
+    );
+  }
+  // Placeholder: neutral gradient + the category glyph (generic apps glyph when
+  // no category). Marked aria-hidden — it carries no information the card text
+  // doesn't already convey (title/category chip), so it's decorative.
+  const PlaceholderIcon = category ? categoryIcon(category) : IconApps;
+  return (
+    <Card.Section>
+      <Box
+        aria-hidden
+        h={140}
+        className="flex items-center justify-center"
+        style={{
+          background:
+            'linear-gradient(135deg, var(--mantine-color-dark-5) 0%, var(--mantine-color-dark-7) 100%)',
+        }}
+      >
+        <PlaceholderIcon size={44} className="opacity-40" />
+      </Box>
+    </Card.Section>
+  );
+}
+
 export function AppBlockCard({
   block,
   alreadySubscribed,
@@ -131,7 +185,14 @@ export function AppBlockCard({
   // user. "Open app" / Install remain the RUN/INSTALL affordances on top of it.
   return (
     <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
-      <Stack gap="sm" h="100%">
+      {/* Cover image (first publisher screenshot) above the card body, or a
+          tasteful category-glyph placeholder when the app shipped none. */}
+      <AppCover
+        coverUrl={block.coverUrl}
+        category={block.category}
+        name={manifest.name ?? block.blockId}
+      />
+      <Stack gap="sm" h="100%" pt="sm">
         <Group justify="space-between" align="flex-start" wrap="nowrap">
           <Stack gap={2}>
             {/*
