@@ -7,6 +7,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * apps render on any host; mature apps render on civitai.red. We mock
  * `createServerSideProps` to capture the resolver (so we can invoke it with a
  * controlled `ctx`/`features`), the registry resolve, and the host gate helper.
+ *
+ * NOTE: this test lives under `src/tests/` (NOT co-located under `src/pages/`).
+ * Next treats every file under `pages/` as a route needing a default export, so
+ * a `*.test.ts` there fails `next build`'s route-type validator (tsc/vitest do
+ * not catch it). Page modules are imported via the `~/pages/...` alias, matching
+ * the rest of `src/tests/api/**`.
  */
 
 const { capturedResolver } = vi.hoisted(() => ({
@@ -66,7 +72,7 @@ function makeCtx(host: string, slug = 'cool-app') {
 }
 
 async function loadResolver() {
-  await import('./[[...path]]');
+  await import('~/pages/apps/run/[slug]/[[...path]]');
   if (!capturedResolver.fn) throw new Error('resolver not captured');
   return capturedResolver.fn;
 }
