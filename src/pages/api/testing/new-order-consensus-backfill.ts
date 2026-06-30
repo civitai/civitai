@@ -22,6 +22,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   getConsensusCandidates,
+  reconcileAffectedPlayers,
   restampBatch,
 } from '~/server/games/new-order/consensus-backfill';
 
@@ -85,8 +86,19 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       concurrency
     );
 
-    return res.status(200).json({ dryRun: false, resolved: done, byDecision, stampISO });
+    const usersReconciled = await reconcileAffectedPlayers(candidates.map((c) => c.imageId));
+
+    return res.status(200).json({ dryRun: false, resolved: done, byDecision, stampISO, usersReconciled });
   }
 
-  return res.status(400).json({ error: `action ${p.action} not yet implemented` });
+  if (p.action === 'verify') {
+    const remaining = await getConsensusCandidates(p);
+    const autoResolvable = remaining.filter(
+      (c) => c.decision !== 'down_gt1' && c.decision !== 'unknown_orig'
+    );
+    return res.status(200).json({
+      remainingAutoResolvable: autoResolvable.length,
+      remainingEscalate: remaining.length - autoResolvable.length,
+    });
+  }
 });

@@ -1,4 +1,6 @@
+import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
+import { correctJudgmentsCounter, fervorCounter } from '~/server/games/new-order/utils';
 
 const DEFAULT_START = '2026-06-23 00:00:00';
 
@@ -96,4 +98,28 @@ export async function restampBatch(
       AND orig.rank != 'Acolyte'
       AND orig.status IN ('Pending','Inconclusive')
   `;
+}
+
+// Resets judgment + fervor counters for every non-Acolyte voter on the given
+// images so they lazily rebuild from the freshly re-stamped Correct/Failed rows.
+// Returns the number of distinct players reconciled.
+export async function reconcileAffectedPlayers(imageIds: number[]): Promise<number> {
+  if (!clickhouse) throw new Error('clickhouse not configured');
+  if (imageIds.length === 0) return 0;
+  const userIds = new Set<number>();
+  for (const idChunk of chunk(imageIds, 5000)) {
+    const rows = await clickhouse.$query<{ userId: number }>`
+      SELECT DISTINCT userId
+      FROM knights_new_order_image_rating FINAL
+      WHERE imageId IN (${idChunk.join(',')}) AND rank != 'Acolyte'
+    `;
+    for (const r of rows) userIds.add(r.userId);
+  }
+  await Promise.all(
+    [...userIds].flatMap((id) => [
+      correctJudgmentsCounter.reset({ id }),
+      fervorCounter.reset({ id }),
+    ])
+  );
+  return userIds.size;
 }
