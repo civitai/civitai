@@ -1,4 +1,4 @@
-import { appRoles } from '@civitai/auth';
+import { appRoles, hasAppRole } from '@civitai/auth';
 import type { SessionUser } from '@civitai/auth';
 
 // Roles (`moderator:<role>`) are owned by the auth hub; this app maps them to the features they unlock.
@@ -35,4 +35,8 @@ export function userHasFeature(
   feature: FeatureKey
 ): boolean {
   return featuresForUser(user).has(feature);
+}
+
+export function isModeratorAdmin(user: Pick<SessionUser, 'roles'> | null | undefined): boolean {
+  return hasAppRole(user, APP, 'admin');
 }

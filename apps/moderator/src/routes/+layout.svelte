@@ -7,6 +7,7 @@
     IconFlag,
     IconPhoto,
     IconUsers,
+    IconShieldLock,
     IconLogout,
   } from '@tabler/icons-svelte';
   import type { LayoutData } from './$types';
@@ -15,12 +16,13 @@
 
   const wordmark = buildWordmarkSvg({ base: '#e8eaed' });
 
-  const nav = [
+  const nav = $derived([
     { href: '/', label: 'Dashboard', icon: IconLayoutDashboard },
     { href: '/reports', label: 'Reports', icon: IconFlag },
     { href: '/images', label: 'Images', icon: IconPhoto },
     { href: '/users', label: 'Users', icon: IconUsers },
-  ];
+    ...(data.isAdmin ? [{ href: '/admin', label: 'Permissions', icon: IconShieldLock }] : []),
+  ]);
 
   const isActive = (href: string, path: string) =>
     href === '/' ? path === '/' : path === href || path.startsWith(href + '/');

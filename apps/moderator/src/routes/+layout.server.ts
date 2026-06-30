@@ -1,6 +1,7 @@
 import { hubLogoutUrl } from '@civitai/auth';
 import { env } from '$env/dynamic/private';
 import type { LayoutServerLoad } from './$types';
+import { isModeratorAdmin } from '$lib/server/features';
 
 // The spoke guard (hooks.server.ts) guarantees `locals.user` is a moderator here. Surface a thin slice
 // for the sidebar chrome, plus a hub logout URL (a spoke can't clear the shared cookie itself — it sends
@@ -12,5 +13,6 @@ export const load: LayoutServerLoad = ({ locals, url }) => {
       ? { id: user.id, username: user.username ?? null, image: user.image ?? null }
       : null,
     logoutUrl: env.AUTH_JWT_ISSUER ? hubLogoutUrl(env.AUTH_JWT_ISSUER, url.origin) : null,
+    isAdmin: isModeratorAdmin(user),
   };
 };
