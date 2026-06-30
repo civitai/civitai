@@ -87,15 +87,33 @@ export async function getConsensusCandidates(opts: {
 export async function restampBatch(
   pairs: { imageId: number; domRating: number }[],
   stampISO: string
-): Promise<void> {
+): Promise<number> {
   if (!clickhouse) throw new Error('clickhouse not configured');
-  if (pairs.length === 0) return;
+  if (pairs.length === 0) return 0;
   const ids = pairs.map((p) => p.imageId).join(',');
   const rats = pairs.map((p) => p.domRating).join(',');
+
+  // Count the eligible voter rows (= exactly what the INSERT writes) up front so the
+  // caller can surface a no-op write. Runs on the by_imageId projection (~7 granules).
+  const countRows = await clickhouse.$query<{ n: number }>`
+    SELECT count() AS n FROM (
+      SELECT argMax(status, createdAt) AS status, argMax(rank, createdAt) AS rank
+      FROM knights_new_order_image_rating
+      WHERE imageId IN (${ids})
+      GROUP BY imageId, userId
+    )
+    WHERE status IN ('Pending','Inconclusive') AND rank != 'Acolyte'
+  `;
+  const eligibleRows = Number(countRows[0]?.n ?? 0);
+  if (!eligibleRows) return 0;
+
   // arrayElement([rats], indexOf([ids], imageId)) -> this image's consensus rating.
   // GROUP BY imageId,userId + argMax(.,createdAt) WHERE imageId IN is served by the
   // by_imageId projection (~7 granules vs a 3958-granule FINAL scan); the argMax dedup
   // is the schema's canonical latest row (same pattern as updatePendingImageRatings).
+  // The `eligible` CTE filters on the SOURCE status BEFORE the SELECT below redefines
+  // `status` via if() — otherwise the filter binds to the (Correct/Failed) alias and
+  // matches nothing (the bug that made the first run a silent 0-row write).
   await clickhouse.$exec`
     INSERT INTO knights_new_order_image_rating
     WITH latest AS (
@@ -114,6 +132,9 @@ export async function restampBatch(
       FROM knights_new_order_image_rating
       WHERE imageId IN (${ids})
       GROUP BY imageId, userId
+    ),
+    eligible AS (
+      SELECT * FROM latest WHERE status IN ('Pending','Inconclusive') AND rank != 'Acolyte'
     )
     SELECT
       userId,
@@ -129,10 +150,9 @@ export async function restampBatch(
       deviceId,
       rank,
       originalLevel
-    FROM latest
-    WHERE rank != 'Acolyte'
-      AND status IN ('Pending','Inconclusive')
+    FROM eligible
   `;
+  return eligibleRows;
 }
 
 // Resets judgment + fervor counters for every non-Acolyte voter on the given

@@ -495,3 +495,5 @@ Deltas from the as-written tasks, applied during review/finish:
 5. **`resolved` → `imagesResolved`** in the write response (clears the per-task Minor; the field counts images, not rows).
 
 Actions are now just **`resolve`** (preview or write) and **`verify`**.
+
+6. **restampBatch write-path bug (found in first prod run, fixed):** the projection rewrite's final `SELECT` redefines `status` via `if(...) AS status`; the trailing `WHERE status IN ('Pending','Inconclusive')` then bound to that alias (always `Correct`/`Failed`) → matched nothing → silent 0-row write (the run reported `imagesResolved: 500` but inserted nothing; no bad data). Fixed by filtering in an `eligible` CTE on the source `status` *before* the if-rewrite. `restampBatch` now returns the eligible row count; the write response reports **`imagesTargeted`** (images attempted) + **`rowsResolved`** (actual vote-rows written — 0 surfaces a no-op) instead of `imagesResolved`.

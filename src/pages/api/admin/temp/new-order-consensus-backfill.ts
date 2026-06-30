@@ -79,18 +79,23 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       writeSet.map((c) => ({ imageId: c.imageId, domRating: c.domRating })),
       batchSize
     );
-    let imagesResolved = 0;
+    let imagesTargeted = 0;
+    let rowsResolved = 0;
     await limitConcurrency(
       batches.map((b) => async () => {
-        await restampBatch(b, stampISO);
-        imagesResolved += b.length;
+        rowsResolved += await restampBatch(b, stampISO);
+        imagesTargeted += b.length;
       }),
       concurrency
     );
 
     const usersReconciled = await reconcileAffectedPlayers(writeSet.map((c) => c.imageId));
 
-    return res.status(200).json({ dryRun: false, imagesResolved, usersReconciled, byDecision, stampISO });
+    // rowsResolved is the actual vote-rows re-stamped (0 = no-op); imagesTargeted is the
+    // image count this run attempted.
+    return res
+      .status(200)
+      .json({ dryRun: false, imagesTargeted, rowsResolved, usersReconciled, byDecision, stampISO });
   }
 
   if (p.action === 'verify') {
