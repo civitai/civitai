@@ -215,7 +215,7 @@ git commit -m "feat(new-order): query consensus-resolvable stranded votes from C
 
 **Interfaces:**
 - Consumes: `getConsensusCandidates` (Task 2).
-- Produces: `POST .../new-order-consensus-backfill?token=$WEBHOOK_TOKEN` with `{ action: 'count', startDate?, minAgreement?, staleHours? }` → `{ total, byDecision, distinctUsersApprox }`.
+- Produces: `POST .../new-order-consensus-backfill?token=$WEBHOOK_TOKEN` with `{ action: 'count', startDate?, minAgreement?, staleHours? }` → `{ total, byDecision }`. (Distinct-user count is not surfaced here — `count` sizes images; the 605-user figure came from the planning dry-run.)
 
 - [ ] **Step 1: Write the endpoint with the file-header doc + `count`**
 
