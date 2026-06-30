@@ -2624,13 +2624,23 @@ export const blocksRouter = router({
             (t) => t.type === 'debit'
           );
           const paidDebits = debits.filter((t) => isPayoutEligibleBuzz(t.accountType));
-          const paidAmount = paidDebits.reduce(
-            (sum, t) => sum + Math.abs(t.amount ?? 0),
-            0
-          );
+          // Defensive guard against a FUTURE change that offers BOTH green and
+          // yellow (today the contract is ['blue', green|yellow], so at most one
+          // paid account is drained). If more than one distinct paid accountType
+          // shows up we can't attribute a single paid currency, so refuse to sum
+          // two different paid currencies under one type and fall back to the
+          // conservative blue floor below.
+          const distinctPaidTypes = new Set(paidDebits.map((t) => t.accountType));
+          const paidAmount =
+            distinctPaidTypes.size > 1
+              ? 0
+              : paidDebits.reduce((sum, t) => sum + Math.abs(t.amount ?? 0), 0);
           // `isPayoutEligibleBuzz` already narrows accountType to green|yellow,
           // both valid `BuzzSpendType`s.
-          const paidType = paidDebits[0]?.accountType as BuzzSpendType | undefined;
+          const paidType =
+            distinctPaidTypes.size > 1
+              ? undefined
+              : (paidDebits[0]?.accountType as BuzzSpendType | undefined);
           const hasPaidDebit = paidType != null && paidAmount > 0;
 
           const spentBuzzType: BuzzSpendType = hasPaidDebit
@@ -3150,10 +3160,11 @@ export const blocksRouter = router({
 // regardless of which account type pays.
 //
 // PAYOUT-SAFETY: widening the SPENDABLE currencies here is decoupled from
-// payout eligibility. The author-bounty rail (#2605) excludes free/granted
-// Buzz (blue, green) via `isPayoutEligibleBuzz` at the payout boundary
-// (`computeSpendShare`), so this widening can NEVER become platform-funded
-// farming. See buzz-helpers.ts.
+// payout eligibility. The author-bounty rail (#2605) excludes only free
+// (blue) Buzz via `isPayoutEligibleBuzz` at the payout boundary
+// (`computeSpendShare`); green and yellow are PAID and payout-eligible. So
+// this widening can NEVER make free Buzz become platform-funded farming.
+// See buzz-helpers.ts.
 function resolveBlockCurrencies(isGreen: boolean) {
   return BuzzTypes.toOrchestratorType(getBlockAllowedAccountTypes(isGreen));
 }

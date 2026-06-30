@@ -1389,6 +1389,30 @@ describe('blocks.submitWorkflow', () => {
     expect(arg.buzzAmount).toBe(60);
   });
 
+  it('#2833: TWO distinct PAID currencies (green + yellow) → defensive fall to blue floor, never sum across types', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // The current contract offers ['blue', green|yellow] so at most ONE paid
+    // account drains. This guards a FUTURE change that offers BOTH: if two
+    // distinct paid accountTypes appear we must NOT sum them under one type —
+    // fall back to the conservative blue floor (blue + realized cost).
+    // Realized cost (55) is deliberately != the 40+30=70 cross-type sum so a
+    // regression that summed across types would assert 70, not the 55 floor.
+    submitWithTransactions(55, [
+      { type: 'debit', amount: 40, accountType: 'green' },
+      { type: 'debit', amount: 30, accountType: 'yellow' },
+    ]);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    const arg = mockRecordSpendAttribution.mock.calls[0][0];
+    expect(arg.buzzType).toBe('blue'); // conservative floor, not green/yellow
+    expect(arg.buzzAmount).toBe(55); // realized-cost floor, NOT the 70 cross-type sum
+  });
+
   it('#2833: CREDIT entries (refunds) are ignored — only debits count toward the paid amount', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
     happyVersionLookup();
