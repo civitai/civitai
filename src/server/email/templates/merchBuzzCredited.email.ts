@@ -1,5 +1,4 @@
 import { createEmail } from '~/server/email/templates/base.email';
-import { getBaseUrl } from '~/server/utils/url-helpers';
 import { simpleEmailWithTemplate } from '~/server/email/templates/util';
 
 type MerchBuzzCreditedData = {
@@ -23,14 +22,13 @@ export const merchBuzzCreditedEmail = createEmail({
       </p>
       <p>
         Your store account is already linked to Civitai, so it was credited automatically - nothing else
-        to do. If that isn't the right account, reply to this email and we'll sort it out.
+        to do. If that isn't the right account, contact
+        <a href="mailto:hello@civitai.com">hello@civitai.com</a> and we'll sort it out.
       </p>`,
-      btnLabel: 'Open Civitai',
-      btnUrl: getBaseUrl(),
     });
   },
   text({ username, buzzAmount }: MerchBuzzCreditedData) {
-    return `${buzzAmount.toLocaleString()} Blue Buzz was added to your Civitai account ${username}. It was credited automatically since your store account is linked.`;
+    return `${buzzAmount.toLocaleString()} Blue Buzz was added to your Civitai account ${username}. It was credited automatically since your store account is linked. Wrong account? Contact hello@civitai.com.`;
   },
   testData: async () => ({
     to: 'test@tester.com',
