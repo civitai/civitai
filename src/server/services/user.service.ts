@@ -87,7 +87,7 @@ import {
   BlockedUsers,
   HiddenModels,
 } from '~/server/services/user-preferences.service';
-import { createCachedObject } from '~/server/utils/cache-helpers';
+import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
 import {
   handleLogError,
@@ -690,8 +690,47 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   });
 
   if (count) {
-    const count = await dbRead.user.count({ where });
-    return { items, count };
+    // The count scans the whole ~892k-row Model table (index-only scan on
+    // Model_userId → HashAggregate distinct userIds → nested-loop to User,
+    // ~1174ms in EXPLAIN ANALYZE) on EVERY request and dominates this endpoint's
+    // latency. It's a slowly-moving aggregate, so cache it: a few-minutes-stale
+    // totalItems/totalPages is harmless. Cache unconditionally (no IS_DATAPACKET
+    // gate) — the 892k-row scan is expensive on every cluster. TTL = 10min
+    // (CacheTTL.md): cheap-to-refresh, bounds staleness to a sub-page drift on an
+    // ~86.5k-creator total.
+    //
+    // Cache ONLY the hot default-listing count (no `query`). `query` is
+    // user-controlled on a public endpoint with no `.max()` in its zod schema and
+    // is interpolated raw into the cache key, so caching per-query would let
+    // arbitrary `?query=<random>` values mint UNBOUNDED distinct keys (each held
+    // EX=2×600s) on the shared cache cluster — a keyspace-growth vector. Per-query
+    // counts are also low-hit-rate. So run the username-search count inline.
+    if (query) {
+      const queryCount = await dbRead.user.count({ where });
+      return { items, count: queryCount };
+    }
+    // No-query path: key by `excludeIds` only (the only remaining varying part of
+    // `where`; models:{some:{}} and deletedAt:null are constant).
+    const sortedExcludeIds = [...excludeIds].sort((a, b) => a - b).join(',');
+    const cacheKey = `${REDIS_KEYS.CACHES.CREATORS_COUNT}:${sortedExcludeIds}` as const;
+    // fetchThroughCache is fail-open on a Redis read/lock ERROR (degrades to the
+    // origin fetch). But on lock-retry EXHAUSTION (cold key + concurrent burst) it
+    // throws 'Failed to fetch data through cache' — fall back to the inline count
+    // there too so this endpoint never 500s from the caching machinery. (A genuine
+    // dbRead.user.count DB error still propagates — the fallback re-runs and throws
+    // again — which matches pre-cache behavior.)
+    const cachedCount = await fetchThroughCache(
+      cacheKey,
+      () => dbRead.user.count({ where }),
+      { ttl: CacheTTL.md }
+    ).catch((e) => {
+      // Only the lock-retry-exhaustion throw falls back to the inline count. Any
+      // OTHER throw from the cache helper (e.g. a future key-type/serialization
+      // invariant) must surface, not be silently swallowed into a count.
+      if (!String((e as Error)?.message).includes('Failed to fetch data through cache')) throw e;
+      return dbRead.user.count({ where });
+    });
+    return { items, count: cachedCount };
   }
 
   return { items };

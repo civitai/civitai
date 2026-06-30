@@ -1715,6 +1715,11 @@ export const REDIS_KEYS = {
     CRYPTO_CONVERSION_RATE: 'packed:caches:crypto-conversion-rate',
     CRYPTO_MIN_AMOUNT: 'packed:caches:crypto-min-amount',
     TAG_PAGE_SEO: 'packed:caches:tag-page-seo',
+    // Total-creators count for the v1 /api/v1/creators pagination metadata. The
+    // underlying dbRead.user.count scans the whole ~892k-row Model table on every
+    // call (~1174ms in EXPLAIN ANALYZE); the total is a slowly-moving aggregate so
+    // a few-minutes-stale value in totalItems/totalPages is harmless.
+    CREATORS_COUNT: 'packed:caches:creators-count',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
