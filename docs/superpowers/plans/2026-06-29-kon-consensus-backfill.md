@@ -481,3 +481,17 @@ git commit -m "feat(new-order): reconcile player counters + verify action"
 - **Spec coverage:** Pending + Inconclusive both handled (status filter in `getConsensusCandidates` + `restampBatch`). Queue independence ✓ (CH-only). Escalation guard ✓ (Phase 1 filter + Phase 2 Task 7). Buzz payout ✓ (run-time stamp → 3-day job). Counters ✓ (Task 5).
 - **Placeholder scan:** the only narrative note is the ClickHouse `domRating` query caveat in Task 2, which is resolved by the provided final SQL — engineer must use the second block. Flagged explicitly.
 - **Type consistency:** `Candidate`, `DecisionClass`, `classifyDecision`, `getConsensusCandidates`, `restampBatch`, `reconcilePlayerCounters` names used identically across tasks.
+
+---
+
+## Post-build revisions (2026-06-29, after task gates)
+
+Deltas from the as-written tasks, applied during review/finish:
+
+1. **Location:** endpoint moved `src/pages/api/testing/` → **`src/pages/api/admin/temp/`** (the temp-admin-webhook convention, alongside `backfill-swept-trained-models.ts`).
+2. **Method:** `POST` + JSON body → **`GET` + query params** (`?token=&action=&...`). Numeric params stay `z.coerce.number()` (query strings coerce); `dryRun` is `z.enum(['true','false'])`.
+3. **Write gate (GET-safe):** read-only unless the literal **`&dryRun=false`** is present (`p.dryRun !== 'false'`). Omitted / any other value → read-only. Replaces the strict-`z.boolean()` gate (which can't accept a string query param). Caveat: a side-effecting GET — acceptable because it's token-gated, `FINAL`-idempotent, and write requires the explicit literal.
+4. **Dropped `count`** — it was redundant with the dryRun preview. `resolve` (dryRun default) now returns the full survey: `{ dryRun, totalCandidates, byDecision (all classes), wouldResolve (writable subset, post-limit), skipped: {down_gt1, unknown_orig} }`.
+5. **`resolved` → `imagesResolved`** in the write response (clears the per-task Minor; the field counts images, not rows).
+
+Actions are now just **`resolve`** (preview or write) and **`verify`**.
