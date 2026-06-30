@@ -973,7 +973,13 @@ function ReviewPreviewPanel({
 
   const state = statusQuery.data?.state ?? null;
   const detail = statusQuery.data?.detail;
-  const url = detail?.url;
+  // Prefer the FRESH, mod-bound, short-TTL tokened URL (`?mr=<token>`) the server
+  // mints on every poll when the preview is live — that token is the cross-origin
+  // access bridge the `*.civit.ai` mod-gate forwardAuth verifies on the iframe's
+  // entry document request. Read from the latest query data each render so the
+  // iframe never mounts with an expired token. Fall back to the bare host URL
+  // (e.g. while building) only for display.
+  const url = statusQuery.data?.previewUrl ?? detail?.url;
   const inProgress = state === 'preview-building' || state === 'preview-deploying';
   const isLive = state === 'preview-live';
   const isFailed = state === 'preview-failed';

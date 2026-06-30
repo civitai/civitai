@@ -1093,7 +1093,13 @@ export const blocksRouter = router({
       }
       const { getReviewStatus } = await import('~/server/services/blocks/publish-request.service');
       try {
-        return await getReviewStatus({ publishRequestId: input.publishRequestId });
+        // Pass the calling mod's id so getReviewStatus mints a FRESH, mod-bound,
+        // short-TTL tokened previewUrl when the preview is live — the cross-origin
+        // access bridge the `*.civit.ai` mod-gate forwardAuth verifies.
+        return await getReviewStatus({
+          publishRequestId: input.publishRequestId,
+          modUserId: ctx.user.id,
+        });
       } catch (err) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
       }

@@ -154,6 +154,85 @@ describe('getReviewStatus', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// getReviewStatus mint surface (#2847 auth bridge): a live preview + a calling
+// mod id → a FRESH mod-bound, host-bound, short-TTL `previewUrl` (?mr=<token>).
+// ---------------------------------------------------------------------------
+describe('getReviewStatus previewUrl mint surface', () => {
+  const SECRET = 'test-nextauth-secret-cccccccccccccccccccc';
+  const HOST = 'review-aaaaaaaaaaaaaaaa.civit.ai';
+  const URL = `https://${HOST}/my-app`;
+  const prevSecret = process.env.NEXTAUTH_SECRET;
+
+  beforeEach(() => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockReset();
+    process.env.NEXTAUTH_SECRET = SECRET;
+  });
+  afterEach(() => {
+    if (prevSecret === undefined) delete process.env.NEXTAUTH_SECRET;
+    else process.env.NEXTAUTH_SECRET = prevSecret;
+  });
+
+  it('mints a previewUrl bound to the calling mod when preview-live + modUserId supplied', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-live',
+      deployDetail: JSON.stringify({ url: URL, host: HOST, sha: SHA }),
+      deployUpdatedAt: new Date(),
+    });
+    const r = await getReviewStatus({ publishRequestId: PUBREQ, modUserId: 4242 });
+    expect(r.previewUrl).toBeDefined();
+    expect(r.previewUrl!.startsWith(`${URL}?mr=`)).toBe(true);
+
+    // The minted token verifies for THIS host + carries the calling mod id.
+    const { verifyReviewAccessToken } = await import(
+      '~/server/services/blocks/review-session'
+    );
+    const token = decodeURIComponent(r.previewUrl!.split('?mr=')[1]);
+    expect(verifyReviewAccessToken(token, HOST, { secret: SECRET })).toEqual({
+      ok: true,
+      modUserId: 4242,
+    });
+  });
+
+  it('does NOT mint a previewUrl when modUserId is omitted', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-live',
+      deployDetail: JSON.stringify({ url: URL, host: HOST, sha: SHA }),
+      deployUpdatedAt: new Date(),
+    });
+    const r = await getReviewStatus({ publishRequestId: PUBREQ });
+    expect(r.previewUrl).toBeUndefined();
+  });
+
+  it('does NOT mint a previewUrl when the preview is not live (building)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-building',
+      deployDetail: JSON.stringify({ url: URL, host: HOST, sha: SHA }),
+      deployUpdatedAt: new Date(),
+    });
+    const r = await getReviewStatus({ publishRequestId: PUBREQ, modUserId: 4242 });
+    expect(r.previewUrl).toBeUndefined();
+  });
+
+  it('does NOT mint a previewUrl when detail.host is missing', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      deployState: 'preview-live',
+      deployDetail: JSON.stringify({ url: URL, sha: SHA }), // no host
+      deployUpdatedAt: new Date(),
+    });
+    const r = await getReviewStatus({ publishRequestId: PUBREQ, modUserId: 4242 });
+    expect(r.previewUrl).toBeUndefined();
+  });
+});
+
 describe('teardownReviewForRequest', () => {
   beforeEach(() => {
     mockDbRead.appBlockPublishRequest.findUnique.mockReset();

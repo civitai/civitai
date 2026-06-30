@@ -2444,6 +2444,15 @@ export type ReviewStatusResult = {
   state: ReviewPreviewState | null;
   detail: ReviewPreviewDetail;
   updatedAt: Date | null;
+  /**
+   * A FRESH, mod-bound, short-TTL tokened URL to embed in the review iframe,
+   * present ONLY when the preview is live AND a calling mod id was supplied.
+   * `https://<host>/<slug>?mr=<token>`. The parent re-reads this on every poll,
+   * so the live iframe never serves a stale (expired) token. The token is the
+   * cross-origin access bridge — the `*.civit.ai` mod-gate forwardAuth verifies
+   * it on the entry document request (no cross-domain cookie).
+   */
+  previewUrl?: string;
 };
 
 /**
@@ -2451,9 +2460,20 @@ export type ReviewStatusResult = {
  * + detail (sha / host / url / error) for a publish request. Reads the same
  * deploy_state / deploy_detail columns previewRequest + the review-build-callback
  * write. Returns `state:null` when no preview has been started.
+ *
+ * When `modUserId` is supplied (server-derived from the calling moderator) AND
+ * the preview is live with a known host/url, mints a fresh mod-bound access
+ * token and returns `previewUrl` = `<detail.url>?mr=<token>`. The token is bound
+ * to THIS mod's id + the review host and expires in ~120s, so the parent must
+ * read it fresh on each poll (which the UI does). The mint is gated by the
+ * router (moderatorProcedure + enforceAppBlocksFlag + the review-sandbox flag),
+ * so an unauthenticated / non-mod / flag-off caller never reaches here.
  */
 export async function getReviewStatus(opts: {
   publishRequestId: string;
+  /** Calling moderator's id — bind the minted preview token to it. Omit to skip
+   *  minting (e.g. a non-mod-gated read, which the router does not expose). */
+  modUserId?: number;
 }): Promise<ReviewStatusResult> {
   const { dbRead } = await import('~/server/db/client');
   const row = await dbRead.appBlockPublishRequest.findUnique({
@@ -2463,12 +2483,24 @@ export async function getReviewStatus(opts: {
   if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
   const isPreviewState =
     typeof row.deployState === 'string' && row.deployState.startsWith('preview-');
+  const state = isPreviewState ? (row.deployState as ReviewPreviewState) : null;
+  const detail = isPreviewState ? parseReviewDetail(row.deployDetail) : {};
+
+  let previewUrl: string | undefined;
+  if (state === 'preview-live' && opts.modUserId != null && detail.host && detail.url) {
+    const { signReviewAccessToken } = await import('./review-session');
+    const token = signReviewAccessToken({ modUserId: opts.modUserId, host: detail.host });
+    const sep = detail.url.includes('?') ? '&' : '?';
+    previewUrl = `${detail.url}${sep}mr=${encodeURIComponent(token)}`;
+  }
+
   return {
     publishRequestId: row.id,
     status: row.status,
-    state: isPreviewState ? (row.deployState as ReviewPreviewState) : null,
-    detail: isPreviewState ? parseReviewDetail(row.deployDetail) : {},
+    state,
+    detail,
     updatedAt: row.deployUpdatedAt ?? null,
+    previewUrl,
   };
 }
 
