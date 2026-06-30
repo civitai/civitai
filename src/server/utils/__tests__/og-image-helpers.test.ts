@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  buildOgCoverEdgeUrl,
   fetchImageAsDataUri,
   OG_IMAGE_MAX_BYTES,
   OG_IMAGE_FETCH_TIMEOUT_MS,
 } from '../og-image-helpers';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 /**
  * Unit coverage for the OG cover-image prefetch helper. The full ImageResponse
@@ -139,5 +141,35 @@ describe('fetchImageAsDataUri', () => {
     vi.stubGlobal('fetch', vi.fn(async () => makeResponse({})));
     await fetchImageAsDataUri('https://x/y.png');
     expect(timeoutSpy).toHaveBeenCalledWith(OG_IMAGE_FETCH_TIMEOUT_MS);
+  });
+});
+
+describe('buildOgCoverEdgeUrl', () => {
+  const dims = { width: 450, height: 444 };
+
+  it('builds a plain resize URL for an image cover (no transcode/anim params)', () => {
+    const url = buildOgCoverEdgeUrl({ url: 'abc-image-id', type: MediaType.image }, dims);
+    expect(url).toContain('fit=cover');
+    expect(url).toContain('quality=90');
+    // an image cover must NOT request a video still-frame transcode
+    expect(url).not.toContain('transcode=true');
+    expect(url).not.toContain('anim=false');
+    // edge URL names the file with the image extension
+    expect(url.endsWith('.jpeg')).toBe(true);
+  });
+
+  it('requests a bounded STILL FRAME for a video cover (transcode + anim:false, jpeg — never mp4)', () => {
+    const url = buildOgCoverEdgeUrl({ url: 'abc-video-id.mp4', type: MediaType.video }, dims);
+    // the still-frame contract the site poster uses: image extension, no anim, transcode on
+    expect(url).toContain('transcode=true');
+    expect(url).toContain('anim=false');
+    expect(url).toContain('fit=cover');
+    // CRUCIAL: the file the cacher SERVES (the last path segment / name) is a
+    // .jpeg still — NOT the .mp4 satori can't embed. The source ref segment may
+    // still carry the original `.mp4`, but the served extension is what decides
+    // the CDN output format.
+    const servedName = url.split('/').pop();
+    expect(servedName).toMatch(/\.jpeg$/);
+    expect(servedName).not.toMatch(/\.mp4$/);
   });
 });

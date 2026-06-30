@@ -1,3 +1,6 @@
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { MediaType } from '~/shared/utils/prisma/enums';
+
 /**
  * Helpers for the OG-image endpoint (`src/pages/api/og.tsx`).
  *
@@ -34,6 +37,32 @@ export const OG_IMAGE_FETCH_TIMEOUT_MS = 2500;
  * length (in case the header lies / is absent).
  */
 export const OG_IMAGE_MAX_BYTES = 6 * 1024 * 1024;
+
+/**
+ * Build the edge URL for an entity's cover image as embedded in the OG card.
+ *
+ * For an IMAGE cover this is a plain `fit:cover` resize. For a VIDEO cover we
+ * request a STILL FRAME — `type:image` (→ `.jpeg` extension) + `anim:false` +
+ * `transcode:true` — the exact edge-URL the site's own video poster uses
+ * (`EdgeVideoBase`'s `<video poster>`). That returns a JPEG, NOT an mp4, so it
+ * embeds in the OG PNG like any image cover. The still frame can be slow on a
+ * cold cacher miss, but the caller pipes this through `fetchImageAsDataUri`'s
+ * bounded timeout and falls back to the logo placeholder — so a video model
+ * gets a real preview when the frame is warm, and never stalls the render.
+ */
+export function buildOgCoverEdgeUrl(
+  image: { url: string; type: MediaType },
+  dims: { width: number; height: number }
+): string {
+  const isVideo = image.type === MediaType.video;
+  return getEdgeUrl(image.url, {
+    width: dims.width,
+    height: dims.height,
+    fit: 'cover',
+    quality: 90,
+    ...(isVideo ? { type: MediaType.image, anim: false, transcode: true } : {}),
+  });
+}
 
 export type FetchImageAsDataUriOptions = {
   timeoutMs?: number;
