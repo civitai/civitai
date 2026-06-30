@@ -274,6 +274,20 @@ export async function submitWorkflow({
       console.dir(JSON.stringify(body));
       console.log('----Workflow End Error Request Body----');
     }
+    // LOAD-BEARING: `createOrchestratorClient` does NOT set `throwOnError`, so the
+    // @civitai/client RESOLVES (it does NOT reject) when the underlying fetch throws —
+    // a network failure OR a fired per-attempt `AbortSignal.timeout` both come back as
+    // `{ error, response: undefined }`. That means the abort path does NOT hit the
+    // try/catch above; it lands here with `response === undefined`. We must map that to a
+    // retry-able 503 — mirroring the read-path (queryWorkflows/getWorkflow) default —
+    // BEFORE the `response.status` switch below, which would otherwise crash on
+    // `undefined.status` (→ a raw 500, the exact metric this PR targets). A status-less
+    // result is NEVER a valid success: whether it's a recognized network/abort signature
+    // (isUpstreamNetworkError) or any other status-less shape, treat it as transient →
+    // 503 (with the original error preserved as `cause`), never re-throw raw / crash.
+    if (!response) {
+      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
+    }
     switch (response.status) {
       case 400:
         throw throwBadRequestError(message);

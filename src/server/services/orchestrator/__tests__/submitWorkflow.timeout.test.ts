@@ -42,27 +42,44 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// A TimeoutError as thrown by a fired AbortSignal.timeout() (a DOMException named
-// 'TimeoutError'). isUpstreamNetworkError matches `.name === 'TimeoutError'`.
+// A TimeoutError as a fired AbortSignal.timeout() surfaces it (named 'TimeoutError').
+// isUpstreamNetworkError matches `.name === 'TimeoutError'`.
 const timeoutError = () =>
   Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+
+// The REAL `@civitai/client` shape on a fetch failure / fired AbortSignal.timeout.
+// `createOrchestratorClient` does NOT set `throwOnError`, so the client RESOLVES with
+// `{ error, response: undefined }` — it does NOT reject. Tests that mock the abort path
+// MUST use this shape, not `mockRejectedValue`, or they exercise a branch the real
+// client never reaches.
+const timeoutResolveResult = () => ({
+  data: undefined,
+  response: undefined,
+  error: timeoutError(),
+});
 
 const okResult = (id = 'wf-1') => ({ data: { id }, response: { status: 200 } });
 
 describe('submitWorkflowWithRetry — per-attempt timeout', () => {
   it('fires the per-attempt timeout on a hanging attempt, retries with a FRESH deadline, and honors maxAttempts', async () => {
-    // Every attempt "times out" (the per-attempt AbortSignal fires). The wrapper must
-    // treat each as a transient throw → backoff → retry, so all maxAttempts run. A hang
+    // Every attempt "times out". The REAL client (no throwOnError) RESOLVES with
+    // `{ error, response: undefined }` on a fired AbortSignal.timeout — it does NOT
+    // reject. A status-less, data-less result is `retryable`, so the wrapper backs off
+    // and retries, then RETURNS the final attempt's result (it does NOT throw). A hang
     // on attempt 1 must NOT consume attempt 2's budget (each gets a fresh signal).
-    mockSubmitWorkflow.mockRejectedValue(timeoutError());
+    mockSubmitWorkflow.mockResolvedValue(timeoutResolveResult());
 
-    const err = await submitWorkflowWithRetry(
+    const result = await submitWorkflowWithRetry(
       { client: {} as any, body: {} as any, query: { whatif: true } as any },
       { maxAttempts: 3, baseDelayMs: 1, perAttemptTimeoutMs: 8_000 }
-    ).catch((e) => e);
+    );
 
-    // Final attempt's throw propagates out of the wrapper (classified by the caller).
-    expect((err as Error).name).toBe('TimeoutError');
+    // The wrapper RETURNS the final resolve shape (status-less, data-less) — it does NOT
+    // throw on the resolve path. Classification to 503 happens in `submitWorkflow`.
+    expect(result.data).toBeUndefined();
+    expect(result.response).toBeUndefined();
+    expect((result.error as Error).name).toBe('TimeoutError');
+    expect(result.attempts).toBe(3);
     // Each attempt got its own (fresh) deadline → all 3 attempts were made.
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(3);
     // A FRESH AbortSignal per attempt: the signals passed on attempt 1 vs 2 differ.
@@ -75,7 +92,7 @@ describe('submitWorkflowWithRetry — per-attempt timeout', () => {
 
   it('a transient hang on attempt 1 then success on attempt 2 returns success (retry preserved)', async () => {
     mockSubmitWorkflow
-      .mockRejectedValueOnce(timeoutError())
+      .mockResolvedValueOnce(timeoutResolveResult())
       .mockResolvedValueOnce(okResult('wf-ok'));
 
     const result = await submitWorkflowWithRetry(
@@ -108,8 +125,14 @@ describe('submitWorkflow — whatIf per-attempt timeout → 503, generate untouc
     return p;
   };
 
-  it('maps an exhausted whatIf per-attempt timeout to SERVICE_UNAVAILABLE (503), not 500', async () => {
-    mockSubmitWorkflow.mockRejectedValue(timeoutError());
+  it('maps an exhausted whatIf per-attempt timeout (REAL resolve shape) to SERVICE_UNAVAILABLE (503), never a TypeError/500', async () => {
+    // The REAL client (no throwOnError) RESOLVES with `{ error, response: undefined }` on
+    // a fired AbortSignal.timeout — it does NOT reject. This is the exact deploy-blocking
+    // bug the audit found: the catch in submitWorkflow never fires on this path, so the
+    // `!result.data` block runs with `response === undefined`. The `!response` guard must
+    // map it to 503 BEFORE the `response.status` switch (which would crash on
+    // `undefined.status` → a raw TypeError/500 — worsening the very metric this PR targets).
+    mockSubmitWorkflow.mockResolvedValue(timeoutResolveResult());
 
     const err = await runWithFakeTimers(() =>
       submitWorkflow({
@@ -122,10 +145,32 @@ describe('submitWorkflow — whatIf per-attempt timeout → 503, generate untouc
     expect(err).toBeInstanceOf(TRPCError);
     expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
     expect((err as TRPCError).message).toMatch(/temporarily unavailable/i);
+    // CRITICAL regression guard: the abort path must NOT crash on `undefined.status`.
+    expect(err).not.toBeInstanceOf(TypeError);
+    expect((err as Error).message).not.toMatch(/Cannot read properties of undefined/i);
     // Retry preserved on whatIf — all 3 attempts ran before the final 503.
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(3);
     // Each whatIf attempt is bounded by a fresh per-attempt signal.
     expect(mockSubmitWorkflow.mock.calls[0][0].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('also maps a GENUINELY THROWN network error (belt-and-suspenders catch / future throwOnError) to 503', async () => {
+    // If the client is ever configured with throwOnError, or a non-fetch network error
+    // truly throws, the try/catch around submitWorkflowWithRetry must still map it to 503.
+    // Keep this case so the fix is robust to BOTH client behaviors (resolve AND throw).
+    mockSubmitWorkflow.mockRejectedValue(timeoutError());
+
+    const err = await runWithFakeTimers(() =>
+      submitWorkflow({
+        token: 'tok',
+        body: {} as any,
+        query: { whatif: true } as any,
+      }).catch((e) => e)
+    );
+
+    expect(err).toBeInstanceOf(TRPCError);
+    expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(3);
   });
 
   it('passes a per-attempt signal ONLY for whatIf, never for generate', async () => {
