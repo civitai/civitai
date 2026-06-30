@@ -39,6 +39,7 @@ import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
 import { useFilesContext } from '~/components/Resource/FilesProvider';
 import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
 import { componentFileTypes, constants, zipModelFileTypes } from '~/server/common/constants';
+import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -867,6 +868,7 @@ function FileEditForm({
   const [initialFile, setInitialFile] = useState({ ...versionFile });
   const { errors, updateFile, validationCheck } = useFilesContext();
   const error = errors?.[index];
+  const { precisions, quantTypes } = useModelFileOptions();
 
   const { mutate, isPending: isLoading } = trpc.modelFile.update.useMutation({
     onSuccess: () => {
@@ -981,7 +983,7 @@ function FileEditForm({
                 placeholder="Quant"
                 searchable
                 error={error?.quantType?._errors[0]}
-                data={constants.modelFileQuantTypes}
+                data={quantTypes}
                 value={versionFile.quantType ?? null}
                 onChange={(value) => {
                   updateFile(versionFile.uuid, {
@@ -999,7 +1001,7 @@ function FileEditForm({
                 w={85}
                 placeholder="fp16"
                 error={error?.fp?._errors[0]}
-                data={constants.modelFileFp}
+                data={precisions}
                 value={versionFile.fp ?? null}
                 onChange={(value) => {
                   updateFile(versionFile.uuid, { fp: value as ModelFileFp | null });

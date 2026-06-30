@@ -1739,4 +1739,5 @@ export const EARLY_ACCESS_CONFIG: {
 
 export const KEY_VALUE_KEYS = {
   REDEEM_CODE_GIFT_NOTICES: 'redeemCodeGiftNotices',
+  MODEL_FILE_OPTIONS: 'modelFileOptions',
 } as const;

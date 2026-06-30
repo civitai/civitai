@@ -162,8 +162,8 @@ export const getFileForModelVersion = async ({
   type?: ModelFileType;
   format?: ModelFileFormat;
   size?: ModelFileSize;
-  fp?: ModelFileFp;
-  quantType?: ModelFileQuantType;
+  fp?: string;
+  quantType?: string;
   user?: {
     isModerator?: boolean | null;
     id?: number;
@@ -298,10 +298,10 @@ export const getFileForModelVersion = async ({
     if (type) fileWhere.type = type;
     if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
     const files = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
-    const metadata: FileMetadata = {
+    const metadata = {
       ...user?.filePreferences,
       ...removeEmpty({ format, size, fp, quantType }),
-    };
+    } as FileMetadata;
     const castedFiles = files as Array<Omit<FileResult, 'metadata'> & { metadata: FileMetadata }>;
     file = getPrimaryFile(castedFiles, { metadata });
 
