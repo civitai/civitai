@@ -190,6 +190,8 @@ export function UserAvatar({
                 type="image"
                 name="user avatar decoration"
                 alt=""
+                width={imageSize * 2}
+                original={false}
                 style={{
                   position: 'absolute',
                   top: '50%',
