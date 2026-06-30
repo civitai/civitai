@@ -1,6 +1,6 @@
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
-import { correctJudgmentsCounter, fervorCounter } from '~/server/games/new-order/utils';
+import { allJudgmentsCounter, correctJudgmentsCounter, fervorCounter } from '~/server/games/new-order/utils';
 
 const DEFAULT_START = '2026-06-23 00:00:00';
 
@@ -118,6 +118,7 @@ export async function reconcileAffectedPlayers(imageIds: number[]): Promise<numb
   await Promise.all(
     [...userIds].flatMap((id) => [
       correctJudgmentsCounter.reset({ id }),
+      allJudgmentsCounter.reset({ id }),
       fervorCounter.reset({ id }),
     ])
   );
