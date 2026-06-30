@@ -3237,6 +3237,11 @@ export const blocksRouter = router({
           blockId: true,
           status: true,
           version: true,
+          // trustTier is SERVER-OWNED (moderator-controlled, NOT
+          // publisher-declared) — loaded so we can re-stamp it onto the merged
+          // manifest before validation (see below), mirroring
+          // submitVersion/approveRequest.
+          trustTier: true,
           manifest: true,
           app: { select: { userId: true, allowedScopes: true, allowedOrigins: true } },
         },
@@ -3312,6 +3317,17 @@ export const blocksRouter = router({
         '~/server/services/blocks/manifest-normalize'
       );
       stampCanonicalIframeSrc(merged, slug, env.APPS_DOMAIN);
+
+      // trustTier is SERVER-OWNED (moderator-controlled, NOT publisher-declared)
+      // — force it back to the tier already on the app's row regardless of what
+      // the client patched. Raising the tier is a deliberate out-of-band
+      // moderator/DB action, never a manifest field. This makes the validator
+      // below (which reads `manifest.trustTier` to gate the iframe sandbox
+      // allowlist) run against the tier we'll actually persist, exactly as
+      // submitVersion/approveRequest do — closing the gap where a client could
+      // self-declare `internal` to pass a sandbox/scope combo their real tier
+      // forbids.
+      merged.trustTier = block.trustTier ?? 'unverified';
 
       // RE-VALIDATE server-side against the app's OauthClient context. This is
       // the security boundary: scope-subset + allowedOrigins SSRF binding are

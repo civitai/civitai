@@ -340,4 +340,52 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
     const validated = mockValidate.mock.calls[0][0] as { blockId: string };
     expect(validated.blockId).toBe('my-app');
   });
+
+  it('server-owned trustTier: a client patch tier is OVERRIDDEN to the stored tier in the committed bytes AND the value the validator saw', async () => {
+    // trustTier is moderator-controlled, NOT publisher-declared. The stored row
+    // has trustTier=unverified; the client patch tries to self-declare the most
+    // privileged tier (`internal`, which grants allow-same-origin in the sandbox
+    // allowlist). The server must force the merged manifest's trustTier back to
+    // the STORED value BEFORE validating + committing — so the validator gates
+    // the sandbox against the real tier, and the pending row records the real
+    // tier. Mirrors how submitVersion/approveRequest re-stamp it.
+    findUnique.mockResolvedValue({
+      ...approvedBlock,
+      trustTier: 'unverified',
+      // Stored manifest also carries a (possibly drifted) tier — must not survive.
+      manifest: { ...approvedBlock.manifest, trustTier: 'verified' },
+    });
+    const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+    await caller.updateManifest({
+      appBlockId: 'ab_1',
+      patch: { ...validPatch, trustTier: 'internal' },
+    });
+
+    const commitArg = mockCommitFiles.mock.calls[0][0];
+    const committed = JSON.parse(commitArg.files[0].content.toString('utf8'));
+    // The committed bytes carry the STORED tier, not the client-claimed one.
+    expect(committed.trustTier).toBe('unverified');
+    expect(commitArg.files[0].content.toString('utf8')).not.toContain('internal');
+    // And the validator (the sandbox-allowlist security boundary) saw the stored
+    // tier — never the self-declared `internal`.
+    const validated = mockValidate.mock.calls[0][0] as { trustTier: string };
+    expect(validated.trustTier).toBe('unverified');
+  });
+
+  it('server-owned trustTier: with no stored tier on the row it defaults to `unverified` (never the patched value)', async () => {
+    // approvedBlock has no trustTier field at all (null/undefined on the row) —
+    // the override must fall back to `unverified`, not honour the client patch.
+    findUnique.mockResolvedValue(approvedBlock);
+    const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+    await caller.updateManifest({
+      appBlockId: 'ab_1',
+      patch: { ...validPatch, trustTier: 'internal' },
+    });
+
+    const validated = mockValidate.mock.calls[0][0] as { trustTier: string };
+    expect(validated.trustTier).toBe('unverified');
+    const commitArg = mockCommitFiles.mock.calls[0][0];
+    const committed = JSON.parse(commitArg.files[0].content.toString('utf8'));
+    expect(committed.trustTier).toBe('unverified');
+  });
 });
