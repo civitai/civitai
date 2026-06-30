@@ -2,7 +2,6 @@ import { db } from '../db/db';
 import { invalidateSessionUser } from './session-producer';
 import { invalidateRoleCache } from '../oauth/access';
 
-export const ROLE_APPS = ['moderator', 'civitai'] as const;
 const SEP = ':';
 
 const roleSlug = (s: string) =>
@@ -12,10 +11,22 @@ const roleSlug = (s: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
-/** `app:slug` for a new role, or null if the name is empty. */
+/** `app:slug`, or bare `slug` when no app, for a new role. Null if the name is empty. */
 export function roleId(app: string, name: string): string | null {
   const slug = roleSlug(name);
-  return slug ? `${app}${SEP}${slug}` : null;
+  if (!slug) return null;
+  const appSlug = roleSlug(app);
+  return appSlug ? `${appSlug}${SEP}${slug}` : slug;
+}
+
+/** Distinct `app` prefixes already in use, for autocomplete suggestions. */
+export function roleApps(ids: string[]): string[] {
+  const apps = new Set<string>();
+  for (const id of ids) {
+    const i = id.indexOf(SEP);
+    if (i > 0) apps.add(id.slice(0, i));
+  }
+  return [...apps].sort();
 }
 
 export async function listRoles() {

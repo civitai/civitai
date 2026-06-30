@@ -24,12 +24,13 @@
   <h2>Create a role</h2>
   <form method="POST" action="?/create" use:enhance class="add-form">
     <div class="field">
-      <label for="app">App</label>
-      <select id="app" name="app">
+      <label for="app">App <span class="muted">(optional)</span></label>
+      <input id="app" name="app" list="apps" placeholder="e.g. moderator" autocomplete="off" />
+      <datalist id="apps">
         {#each data.apps as app (app)}
-          <option value={app}>{app}</option>
+          <option value={app}></option>
         {/each}
-      </select>
+      </datalist>
     </div>
     <div class="field">
       <label for="name">Role name</label>
@@ -158,8 +159,7 @@
   .muted {
     color: #6b7177;
   }
-  .field input,
-  select {
+  .field input {
     background: #0f1115;
     border: 1px solid #2a2d34;
     border-radius: 8px;
@@ -168,11 +168,7 @@
     font-size: 0.9rem;
     width: 100%;
   }
-  select {
-    cursor: pointer;
-  }
-  input:focus,
-  select:focus {
+  input:focus {
     outline: none;
     border-color: #4285f4;
   }
