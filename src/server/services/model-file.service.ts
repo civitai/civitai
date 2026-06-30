@@ -396,7 +396,16 @@ async function mutateModelFileOptions(
     quantTypes: input.quantTypes ? merge(current.quantTypes, input.quantTypes) : current.quantTypes,
   };
   await dbKV.set(KEY_VALUE_KEYS.MODEL_FILE_OPTIONS, next);
-  await purgeCache({ tags: [MODEL_FILE_OPTIONS_EDGE_TAG] });
+  // Best-effort: the DB write is the source of truth, so a purge failure must not fail the
+  // caller — worst case the CDN serves stale until its TTL expires.
+  purgeCache({ tags: [MODEL_FILE_OPTIONS_EDGE_TAG] }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'purge-model-file-options-cache',
+      message: (error as Error).message,
+      error,
+    })
+  );
   return next;
 }
 
@@ -412,5 +421,8 @@ export function addModelFileOptions(input: Partial<ModelFileOptions>) {
 
 // DELETE: remove the provided value(s) from the existing list(s).
 export function removeModelFileOptions(input: Partial<ModelFileOptions>) {
-  return mutateModelFileOptions(input, (current, next) => current.filter((x) => !next.includes(x)));
+  return mutateModelFileOptions(input, (current, next) => {
+    const removal = new Set(dedupeOptions(next));
+    return current.filter((x) => !removal.has(x));
+  });
 }
