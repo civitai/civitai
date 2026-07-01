@@ -9,6 +9,18 @@ users; writes are swallowed → notifications silently stop).
 
 Work top-to-bottom. Do not skip the ordering — each phase gates the next.
 
+## Deploy order — HARD REQUIREMENT
+
+**The `apps/notifications` app must be deployed, healthy, and reachable BEFORE the monolith changes ship.**
+There is deliberately **no monolith fallback** — the monolith depends entirely on the app for every
+notification path. The sequence is non-negotiable:
+
+1. Deploy **`apps/notifications`** (worker OFF) → verify `/health` + producer/read API (§2).
+2. Only then deploy the **monolith** cutover (§3).
+
+A monolith deploy that lands before the app is up breaks notifications site-wide. Never ship them
+together or in the reverse order.
+
 ---
 
 ## 0. Gaps to close BEFORE any deploy (code changes not yet done)
@@ -17,11 +29,10 @@ Work top-to-bottom. Do not skip the ordering — each phase gates the next.
       only when `WORKER_ENABLED=true` (default off); the API always runs. Lets the app deploy **API-only**
       during the soak while the external notification-server stays the sole fan-out worker. Flip it ON
       only at the worker-cutover step (§4), and never while the external worker is also running.
-- [ ] **(Decide) monolith fallback.** As written there is no direct-DB fallback — the monolith depends
-      entirely on the app. If you want the monolith to be able to deploy/rollback *independently*, add a
-      flag so `createNotification`/reads fall back to a direct notif-DB path when the app is unreachable
-      (this is what migration-plan R3 — "two paths during transition" — actually envisioned, and would
-      mean **not** deleting `notifDb.ts` yet). Skip only if you accept the strict deploy ordering below.
+- [x] **Monolith fallback — DECIDED: none.** No direct-DB fallback; the monolith depends entirely on the
+      app. Accepted the strict deploy order (app first, above). `notifDb.ts` stays deleted. This is a
+      conscious departure from migration-plan R3's "two paths during transition" — the ordering guarantee
+      replaces the fallback.
 - [ ] **Deploy wiring** (migration plan §5 steps 6–8), none of which is in this branch:
   - [ ] datapacket-talos app dir cloned from `civitai-auth` — namespace / deployment
         (image `ghcr.io/civitai/civitai-notifications`) / service / **internal** IngressRoute / image trio /
@@ -92,9 +103,9 @@ Work top-to-bottom. Do not skip the ordering — each phase gates the next.
 
 - [ ] **App worker misbehaves:** set `WORKER_ENABLED=false` on the app and re-enable the external
       notification-server worker (instant). Keep the external repo **deployable** until fully soaked.
-- [ ] **App unreachable / producer+read broken:** if a monolith fallback was added (§0), it degrades to
-      direct notif-DB; if not, roll the **monolith** back to the pre-cutover image (the app + external
-      worker keep running).
+- [ ] **App unreachable / producer+read broken:** there is no fallback (§0) — roll the **monolith** back
+      to the pre-cutover image (the app + external worker keep running). This is why the app must be
+      soaked-healthy *before* the monolith ships.
 - [ ] **DB-layer regression:** note this branch also refactored `@civitai/db` `getClient`
       (`createPool`/`createClients`) and `db-lag-helpers` — these touch **every** monolith pg pool and all
       lag routing, not just notifications. A rollback of the monolith image reverts them together.
@@ -106,8 +117,6 @@ Work top-to-bottom. Do not skip the ordering — each phase gates the next.
 - [ ] Decommission the external `notification-server` deploy.
 - [ ] Remove the now-unused `NOTIFICATION_DB_URL`/`_REPLICA_URL` from the monolith env (already optional in
       schema).
-- [ ] If a monolith fallback was added for the transition, remove it (delete `notifDb.ts` + the direct
-      path) to reach true full domain ownership.
 
 ---
 
