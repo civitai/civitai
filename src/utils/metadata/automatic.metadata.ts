@@ -131,15 +131,21 @@ function parseDetailsLine(line: string | undefined): Record<string, any> {
 
 export function normalizeGenerationDetails(details: string): string {
   if (!details) return '';
-  let clean = details.replace(/^Parameters\s*:\s*/, '');
+  const clean = details.replace(/^Parameters\s*:\s*/, '');
 
-  // Ensure "Negative prompt:" starts on its own line if it's currently on the same line.
-  clean = clean.replace(/(?<!\n)[ \t\r]*(?:,[ \t\r]*|\.[ \t\r]*)*Negative prompt:/gi, '\nNegative prompt:');
+  // If a "Steps:" line already exists, the metadata is already structured across lines —
+  // leave it untouched. This is what protects keywords that appear inside prompt text
+  // (e.g. "Hires steps:", or a prompt that literally says "steps:"). Only jammed
+  // single-line formats need fixing below.
+  if (/(^|\n)Steps: ?\d/.test(clean)) return clean;
 
-  // Ensure "Steps:" starts on its own line if it's currently on the same line.
-  clean = clean.replace(/(?<!\n)[ \t\r]*(?:,[ \t\r]*|\.[ \t\r]*)*Steps:(?=\s*\d+)/gi, '\nSteps:');
-
-  return clean;
+  // Put each section keyword on its own line. Split only when preceded by a real `,`/`.`
+  // delimiter (what the single-line formats use as separators). Keep every quantifier
+  // bounded ({0,7}, not *) so a crafted run of delimiters can't cause catastrophic
+  // backtracking (ReDoS) — this runs on untrusted uploaded image metadata.
+  return clean
+    .replace(/[ \t\r]{0,7}[.,][ \t\r.,]{0,7}(Negative prompt:)/gi, '\n$1')
+    .replace(/[ \t\r]{0,7}[.,][ \t\r.,]{0,7}(Steps:)(?=\s*\d)/gi, '\n$1');
 }
 // #endregion
 

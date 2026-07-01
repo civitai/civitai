@@ -202,4 +202,54 @@ describe('automaticMetadataProcessor - single-line and delimited metadata parsin
       { modelVersionId: 0, type: 'model', weight: 1.0 }
     ]);
   });
+
+  it('does not split the "Hires steps" parameter onto its own line', () => {
+    const rawMetadata = `masterpiece, best quality, 1girl
+Negative prompt: bad quality, worst quality
+Steps: 30, Sampler: DPM++ 2M Karras, CFG scale: 7, Seed: 12345, Size: 512x768, Denoising strength: 0.4, Hires upscale: 2, Hires steps: 15, Hires upscaler: Latent`;
+    const exif = { generationDetails: rawMetadata, parameters: rawMetadata };
+
+    expect(automaticMetadataProcessor.canParse(exif)).toBe(true);
+
+    const result = automaticMetadataProcessor.parse(exif);
+    expect(result.prompt).toBe('masterpiece, best quality, 1girl');
+    // "Hires steps: 15" must not leak into the negative prompt as a second Steps line
+    expect(result.negativePrompt).toBe('bad quality, worst quality');
+    expect(result.steps).toBe('30');
+    expect(result.seed).toBe('12345');
+    expect(result['Hires steps']).toBe('15');
+    expect(result['Hires upscaler']).toBe('Latent');
+  });
+
+  it('does not split a "steps:" that appears inside the prompt of already-structured metadata', () => {
+    const rawMetadata = `tutorial diagram, steps: 1 2 3, colorful
+Negative prompt: ugly
+Steps: 25, Sampler: Euler, CFG scale: 7`;
+    const exif = { generationDetails: rawMetadata, parameters: rawMetadata };
+
+    expect(automaticMetadataProcessor.canParse(exif)).toBe(true);
+
+    const result = automaticMetadataProcessor.parse(exif);
+    expect(result.prompt).toBe('tutorial diagram, steps: 1 2 3, colorful');
+    expect(result.negativePrompt).toBe('ugly');
+    expect(result.steps).toBe('25');
+    expect(result.sampler).toBe('Euler');
+  });
+
+  it('normalizes a long delimiter run in linear time (no catastrophic backtracking)', () => {
+    // The delimiter run must NOT terminate in the keyword the regex is scanning for —
+    // otherwise the match succeeds immediately and even the old unbounded regex is fast.
+    // Here the run is followed by "Steps: 5" (so canParse's `Steps: ` gate passes and the
+    // guard does not bail, since Steps is inline), which means the "Negative prompt:" pass
+    // scans the entire run fruitlessly — the true catastrophic-backtracking case
+    // (~9s on the unbounded regex at this size).
+    const rawMetadata = `x${', '.repeat(50000)}Steps: 5`;
+    const exif = { generationDetails: rawMetadata, parameters: rawMetadata };
+
+    const start = Date.now();
+    automaticMetadataProcessor.canParse(exif);
+    const result = automaticMetadataProcessor.parse(exif);
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(result.steps).toBe('5');
+  });
 });
