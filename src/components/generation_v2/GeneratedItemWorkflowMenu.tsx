@@ -23,6 +23,8 @@ import {
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { filterWorkflowsByFeatureFlags } from '~/shared/data-graph/generation/config/workflows';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { generationGraphStore } from '~/store/generation-graph.store';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
@@ -59,11 +61,17 @@ export function GeneratedItemWorkflowMenu({
   const status = useGenerationStatus();
   const currentUser = useCurrentUser();
   const isMember = status.tier !== 'free' || !!currentUser?.isModerator;
+  const features = useFeatureFlags();
 
-  const { groups, isCompatible } = useGeneratedItemWorkflows({
+  const { groups: allGroups } = useGeneratedItemWorkflows({
     outputType: image.mediaType,
     ecosystemKey: image.ecosystemKey,
   });
+  // Hide flag-gated workflows (e.g. img2model3d behind `model3dGenerator`),
+  // matching how the workflow picker gates its options.
+  const groups = filterWorkflowsByFeatureFlags(allGroups, features).filter(
+    (g) => g.workflows.length > 0
+  );
 
   // ---------------------------------------------------------------------------
   // Handlers
