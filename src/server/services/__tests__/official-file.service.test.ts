@@ -39,7 +39,8 @@ describe('findOfficialFilesBySize', () => {
 describe('findOfficialFileByHash', () => {
   it('matches a canonical file that is itself type="Model" and derives componentType from the host', async () => {
     mockDbRead.modelFile.findFirst.mockResolvedValue(officialVaeRow);
-    const match = await findOfficialFileByHash({ sha256: 'ABCDEF', hostType: 'VAE' });
+    // Pass lowercase input (as computeBlobSha256 produces); query must uppercase it to match stored UPPERCASE hex
+    const match = await findOfficialFileByHash({ sha256: 'abcdef', hostType: 'VAE' });
     expect(match).toEqual({
       versionId: 42,
       fileId: 900,
@@ -50,9 +51,10 @@ describe('findOfficialFileByHash', () => {
       sizeKB: 300_000,
       componentType: 'VAE',
     });
-    // hash lowercased in the query
+    // hash uppercased in the query (stored ModelFileHash.hash is UPPERCASE hex)
     const arg = mockDbRead.modelFile.findFirst.mock.calls[0][0];
-    expect(arg.where.hashes.some.hash).toBe('abcdef');
+    expect(arg.where.hashes.some.hash).toBe('ABCDEF');
+    expect(arg.where.hashes.some.type).toBe('SHA256');
     expect(arg.where.modelVersion.model.userId).toBe(OFFICIAL);
   });
 

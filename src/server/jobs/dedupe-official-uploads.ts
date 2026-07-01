@@ -117,6 +117,8 @@ export async function processDedupePairs(pairs: DedupePair[], concurrency: numbe
   await limitConcurrency(groups, concurrency);
 }
 
+const MAX_ITERATIONS = 50;
+
 export const dedupeOfficialUploadsJob = createJob(
   'dedupe-official-uploads',
   '0 * * * *',
@@ -124,9 +126,26 @@ export const dedupeOfficialUploadsJob = createJob(
     // 1h overlap; the pointer dedupe in addLinkedComponent makes re-processing safe.
     const [lastRun, setLastRun] = await getJobDate('dedupe-official-uploads');
     const since = new Date(lastRun.getTime() - 60 * 60 * 1000);
-    const pairs = await findOfficialDedupePairs(since, BATCH_LIMIT);
-    await processDedupePairs(pairs, CONCURRENCY);
+
+    let total = 0;
+    for (let i = 0; i < MAX_ITERATIONS; i++) {
+      const pairs = await findOfficialDedupePairs(since, BATCH_LIMIT);
+      if (pairs.length === 0) break;
+      await processDedupePairs(pairs, CONCURRENCY);
+      total += pairs.length;
+      if (pairs.length < BATCH_LIMIT) break;
+      // Each processed pair creates a RecommendedResource pointer, so it won't
+      // appear in the next query. If we exhaust MAX_ITERATIONS the remaining
+      // backlog (persistently-failing pairs) will be retried on the next hourly run.
+      if (i === MAX_ITERATIONS - 1) {
+        logToAxiom(
+          { type: 'warning', name: 'b2-official-dedup', message: 'hit MAX_ITERATIONS safety guard; backlog may be incomplete' },
+          'webhooks'
+        ).catch(() => null);
+      }
+    }
+
     await setLastRun();
-    return { pairs: pairs.length };
+    return { pairs: total };
   }
 );

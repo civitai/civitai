@@ -42,7 +42,7 @@ export async function findOfficialFileByHash({
   // type is not constrained (a standalone VAE's file is type='Model').
   const file = await dbRead.modelFile.findFirst({
     where: {
-      hashes: { some: { type: ModelHashType.SHA256, hash: sha256.toLowerCase() } },
+      hashes: { some: { type: ModelHashType.SHA256, hash: sha256.toUpperCase() } }, // stored ModelFileHash.hash is UPPERCASE hex
       modelVersion: { model: { userId: OFFICIAL_USER_ID } },
     },
     orderBy: { modelVersionId: 'asc' },
