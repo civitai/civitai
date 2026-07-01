@@ -1,6 +1,7 @@
 import type { Handle } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { guard } from '$lib/server/auth';
+import { canAccess } from '$lib/server/access';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
@@ -30,5 +31,13 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   event.locals.user = result.user;
+
+  // Global role-tier gate — one place covering loads, actions, and endpoints (canAccess keys off
+  // route.id, so dynamic routes and `__data.json` data requests resolve to their page's nav entry).
+  // A matched route above the user's tier bounces to the dashboard; unmatched routes fall through to 404.
+  if (event.route.id && !canAccess(result.user, event.route.id)) {
+    return new Response(null, { status: 303, headers: { location: '/' } });
+  }
+
   return resolve(event);
 };

@@ -1,6 +1,5 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { requireAccess } from '$lib/server/access';
 import { getReports, setReportStatus, updateReportNotes } from '$lib/server/reports.service';
 import {
   ReportEntity,
@@ -20,8 +19,6 @@ const isStatus = (v: string): v is ReportStatus => (reportStatuses as string[]).
 const isReason = (v: string): v is ReportReason => (reportReasons as string[]).includes(v);
 
 export const load: PageServerLoad = async ({ locals, url }) => {
-  requireAccess(locals.user, url.pathname);
-
   // Canonicalize a bare landing so the active default filters are explicit (and shareable) in the URL.
   // Only absent params get defaults — a present-but-empty `?status=` is a deliberate clear, left alone.
   if (!url.searchParams.has('type') || !url.searchParams.has('status') || !url.searchParams.has('reason')) {
@@ -52,6 +49,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   return { type, statuses, reasons, reportedBy, ...data };
 };
 
+// Access is gated globally in hooks.server.ts (route-tier check), so actions don't re-check here.
 export const actions: Actions = {
   setStatus: async ({ request, locals }) => {
     const data = await request.formData();

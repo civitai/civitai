@@ -41,6 +41,10 @@
 		)
 	);
 
+	const uid = $props.id();
+	const listId = `${uid}-list`;
+	const activeId = $derived(open && filtered.length ? `${uid}-opt-${highlighted}` : undefined);
+
 	// Keep the keyboard highlight within the (shrinking) filtered list.
 	$effect(() => {
 		if (highlighted > filtered.length - 1) highlighted = Math.max(0, filtered.length - 1);
@@ -119,6 +123,11 @@
 			bind:value={search}
 			{disabled}
 			{placeholder}
+			role="combobox"
+			aria-expanded={open}
+			aria-controls={listId}
+			aria-activedescendant={activeId}
+			aria-autocomplete="list"
 			class="min-w-16 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
 			onfocus={() => (open = true)}
 			onkeydown={onKeydown}
@@ -127,6 +136,8 @@
 
 	{#if open}
 		<div
+			id={listId}
+			role="listbox"
 			class={cn(
 				"absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md",
 				contentClass
@@ -135,6 +146,9 @@
 			{#each filtered as opt, i (opt.value)}
 				<button
 					type="button"
+					id={`${uid}-opt-${i}`}
+					role="option"
+					aria-selected={i === highlighted}
 					disabled={opt.disabled}
 					class={cn(
 						"flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm outline-none",

@@ -14,6 +14,10 @@ Established in the **reports** page and meant to be reused on the other filter-h
 - Filter changes **navigate** via `goto()` (re-runs `load`). The root layout shows a top loading bar off `navigating` — no per-page spinner needed.
 - **Every filter change resets `page` to 1.**
 
+> **Auth — gated globally, not per-page.** Role-tier access is enforced once in `hooks.server.ts`
+> (`canAccess(user, event.route.id)`), which runs for every load, action, and endpoint. Don't call
+> `requireAccess` per-page; just register the page's path + tier in `ROLE_HIERARCHY` (access.ts).
+
 ## The three filter kinds
 
 | Kind | Control | Applies via |
