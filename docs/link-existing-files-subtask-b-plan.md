@@ -6,7 +6,7 @@
 
 **Architecture:** All three paths reuse the already-shipped `addLinkedComponent` service (creates a `RecommendedResource` linked-component pointer + deletes the redundant `ModelFile` in one call). Identity is full-file **SHA256**. Two new read-only service helpers (`findOfficialFilesBySize`, `findOfficialFileByHash`) back the size gate + hash confirm. A required read-path staleness fix drops linked components whose source file was deleted, making "rehome onto official" self-healing.
 
-**Tech Stack:** TypeScript, Next.js 14, Prisma/PostgreSQL, tRPC, Zustand, Vitest, `hash-wasm` (new dep) in a Web Worker.
+**Tech Stack:** TypeScript, Next.js 14, Prisma/PostgreSQL, tRPC, Zustand, Vitest. Client hashing uses native **WebCrypto** SHA-256 (≤1 GB) and **jsSHA** streaming (>1 GB), run in a Web Worker.
 
 Spec: [`link-existing-files-subtask-b-spec.md`](./link-existing-files-subtask-b-spec.md). Parent design: [`link-existing-files-design.md`](./link-existing-files-design.md).
 
@@ -17,7 +17,7 @@ Spec: [`link-existing-files-subtask-b-spec.md`](./link-existing-files-subtask-b-
 - **`inferComponentType` is not a weights filter:** it returns `'Checkpoint'` (not `null`) for `Model`/`Pruned Model` (`src/server/utils/model-helpers.ts:284-286`). Exclude primary weights by explicit type name. `componentType` for a pointer always derives from the **host** file's type.
 - **Hashes are stored/compared lowercased** (`ModelFileHash`, `type='SHA256'`), full-file byte range.
 - **Reuse the primitive:** `addLinkedComponent(input & { userId, isModerator })` from `src/server/services/model-version.service.ts:2075`. Server callers pass `userId: officialUserId, isModerator: true`.
-- **Client worker hash cap:** `OFFICIAL_MATCH_HASH_MAX_BYTES = 5 * 1024 ** 3` (5 GB). Larger files skip client hashing and rely on B.1b.
+- **Client worker hash cap:** `OFFICIAL_MATCH_HASH_MAX_BYTES = 5 * 1024 ** 3` (5 GB) — a *time* guard (jsSHA streaming keeps memory flat, but multi-GB pure-JS hashing is slow). Larger files skip client hashing and rely on B.1b. Hashing dispatches native WebCrypto (≤1 GB, whole-file in RAM, fastest) vs jsSHA streaming (1–5 GB, flat memory).
 - **Test runner:** Vitest — `pnpm vitest run <path>`.
 - **Never edit `prisma/schema.prisma` directly** (auto-generated) — but this plan adds **no** schema changes.
 
@@ -789,7 +789,7 @@ git commit -m "feat(model-files): B.2 hourly job rehoming non-official dupes ont
 A pure, node-testable SHA256-over-a-Blob function; a classic Web Worker wrapping it (bundled to `public/workers` like the existing workers); and a hook to run it with the 5 GB cap.
 
 **Files:**
-- Add dep: `hash-wasm`
+- Add dep: `jssha`
 - Create: `src/utils/file-hash.ts` (pure core)
 - Create: `src/workers/file-hash.worker.ts` (worker entry)
 - Modify: `scripts/build-workers.mjs` (register the worker)
@@ -798,35 +798,41 @@ A pure, node-testable SHA256-over-a-Blob function; a classic Web Worker wrapping
 
 **Interfaces:**
 - Produces:
-  - `computeBlobSha256(blob: Blob, chunkSize?: number): Promise<string>` (lowercase hex)
+  - `computeBlobSha256(blob: Blob): Promise<string>` (full-file, lowercase hex; native WebCrypto ≤1 GB, jsSHA streaming above)
+  - `sha256WebCrypto(blob: Blob): Promise<string>` and `sha256Streaming(blob: Blob, chunkSize?: number): Promise<string>` (exported for testing that both strategies agree)
   - `OFFICIAL_MATCH_HASH_MAX_BYTES = 5 * 1024 ** 3`
   - `useFileHash(): { hashFile: (file: File) => Promise<string | null> }` (returns `null` when the file exceeds the cap or the worker errors)
 
 - [ ] **Step 1: Install the dependency**
 
-Run: `pnpm add hash-wasm`
-Expected: `hash-wasm` added to `package.json` dependencies.
+Run: `pnpm add jssha`
+Expected: `jssha` added to `package.json` dependencies.
 
-- [ ] **Step 2: Write the failing test (known-vector, byte-for-byte)**
+- [ ] **Step 2: Write the failing test (known-vector + strategy agreement)**
 
 ```ts
 // src/utils/__tests__/file-hash.test.ts
 import { describe, it, expect } from 'vitest';
-import { computeBlobSha256 } from '~/utils/file-hash';
+import { computeBlobSha256, sha256WebCrypto, sha256Streaming } from '~/utils/file-hash';
 
-describe('computeBlobSha256', () => {
-  it('matches the known SHA256 of "abc" (lowercase hex)', async () => {
+const KNOWN_ABC = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad';
+
+describe('file-hash', () => {
+  it('computeBlobSha256 matches the known SHA256 of "abc" (lowercase hex)', async () => {
     const blob = new Blob([new TextEncoder().encode('abc')]);
-    const hash = await computeBlobSha256(blob);
-    expect(hash).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+    expect(await computeBlobSha256(blob)).toBe(KNOWN_ABC);
   });
 
-  it('produces the same digest regardless of chunk size (streaming correctness)', async () => {
-    const bytes = new Uint8Array(100_000).map((_, i) => i % 256);
+  it('native and streaming strategies both match the known vector', async () => {
+    const blob = new Blob([new TextEncoder().encode('abc')]);
+    expect(await sha256WebCrypto(blob)).toBe(KNOWN_ABC);
+    expect(await sha256Streaming(blob, 1)).toBe(KNOWN_ABC); // 1-byte chunks exercise the update loop
+  });
+
+  it('streaming matches native on a larger buffer', async () => {
+    const bytes = new Uint8Array(50_000).map((_, i) => i % 256);
     const blob = new Blob([bytes]);
-    const whole = await computeBlobSha256(blob, 1 << 30);
-    const chunked = await computeBlobSha256(blob, 1024);
-    expect(chunked).toBe(whole);
+    expect(await sha256Streaming(blob, 1024)).toBe(await sha256WebCrypto(blob));
   });
 });
 ```
@@ -840,32 +846,50 @@ Expected: FAIL — module not found.
 
 ```ts
 // src/utils/file-hash.ts
-import { createSHA256 } from 'hash-wasm';
+import jsSHA from 'jssha';
 
-export const OFFICIAL_MATCH_HASH_MAX_BYTES = 5 * 1024 ** 3; // 5 GB
-const DEFAULT_CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB — flat memory at any file size
+export const OFFICIAL_MATCH_HASH_MAX_BYTES = 5 * 1024 ** 3; // 5 GB — above this, defer to server B.1b
+const WEBCRYPTO_MAX_BYTES = 1024 ** 3; // ≤1 GB: native one-shot; larger: streamed jsSHA
+const STREAM_CHUNK = 100 * 1024 * 1024; // 100 MB
 
-// Full-file SHA256 (lowercase hex) over a Blob, streamed in chunks so memory
-// stays flat regardless of size. Runs in node (tests) and the browser (worker).
-export async function computeBlobSha256(
-  blob: Blob,
-  chunkSize: number = DEFAULT_CHUNK_SIZE
-): Promise<string> {
-  const hasher = await createSHA256();
-  hasher.init();
+function toHex(bytes: Uint8Array): string {
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+
+// Native WebCrypto SHA-256 over the whole file — fastest, but buffers the
+// entire file in memory. Used for ≤1 GB. Available in workers + node 20+.
+export async function sha256WebCrypto(blob: Blob): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return toHex(new Uint8Array(digest));
+}
+
+// Streaming SHA-256 via jsSHA — flat memory, handles arbitrarily large files.
+// Used above the WebCrypto threshold. (NOT the broken hash-chaining variant —
+// this feeds every chunk into one running digest via jsSHA.update.)
+export async function sha256Streaming(blob: Blob, chunkSize: number = STREAM_CHUNK): Promise<string> {
+  const sha = new jsSHA('SHA-256', 'ARRAYBUFFER');
   for (let offset = 0; offset < blob.size; offset += chunkSize) {
-    const slice = blob.slice(offset, offset + chunkSize);
-    const buf = new Uint8Array(await slice.arrayBuffer());
-    hasher.update(buf);
+    const chunk = blob.slice(offset, offset + chunkSize);
+    sha.update(await chunk.arrayBuffer());
   }
-  return hasher.digest('hex');
+  return sha.getHash('HEX');
+}
+
+// Full-file SHA256 (lowercase hex) = byte identity, matching the stored
+// ModelFileHash.SHA256. Dispatches native vs streaming on size.
+export async function computeBlobSha256(blob: Blob): Promise<string> {
+  return blob.size <= WEBCRYPTO_MAX_BYTES ? sha256WebCrypto(blob) : sha256Streaming(blob);
 }
 ```
+
+> `jssha` v3 has a default export and ships its own types. `crypto.subtle` needs a secure context (HTTPS or `localhost`) — both dev and prod qualify. Do **not** port `computeSHA256InChunks` from the reference snippet — it hash-chains and produces a wrong digest.
 
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `pnpm vitest run src/utils/__tests__/file-hash.test.ts`
-Expected: PASS (2 tests).
+Expected: PASS (3 tests).
 
 - [ ] **Step 6: Write the worker entry**
 

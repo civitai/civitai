@@ -120,11 +120,11 @@ bytes.
 1. **Size gate (instant, no hashing).** `file.size` is known. Call
    `trpc.modelFile.findOfficialFilesBySize({ size })` (new query, §5). Empty → `return` to normal
    upload; never hash. Eliminates hashing for ~all unique large files.
-2. **Hash (only on size collision).** Compute **full-file SHA256** in a **Web Worker** via `hash-wasm`,
-   streaming `file.slice` in **16 MB chunks** (read → hash → discard) so memory stays flat at any file
-   size. Optional CRC32 first-chunk early-out. **Safety cap** the worker hash at a named const
-   `OFFICIAL_MATCH_HASH_MAX_BYTES = 5 GB` and let B.1b reclaim anything larger server-side (see
-   §2.4).
+2. **Hash (only on size collision).** Compute **full-file SHA256** in a **Web Worker**: native
+   **WebCrypto** (`crypto.subtle.digest('SHA-256', …)`) for files ≤1 GB (fastest; whole file in RAM),
+   **jsSHA** streaming in 100 MB chunks above that (flat memory, any size). Output hex, lowercased →
+   matches the stored `ModelFileHash.SHA256`. **Safety cap** at `OFFICIAL_MATCH_HASH_MAX_BYTES = 5 GB`
+   (a *time* guard) — larger files skip client hashing and B.1b reclaims them server-side (see §2.4).
 3. **Confirm.** `trpc.modelFile.findOfficialFileByHash({ sha256, hostType: chosenType })`. No match →
    normal upload.
 4. **On match — skip upload, create pointer.** Do **not** call `upload()` or `createFileMutation`.
@@ -148,19 +148,20 @@ bytes.
 
 ### 2.3 New client pieces
 
-- `src/workers/file-hash.worker.ts` (+ a `useFileHash` hook) — single streaming pass over `file.slice`
-  chunks feeding `hash-wasm` SHA256 (CRC32 optional). Output hex lowercased. Validate the digest
-  **once** against a known file's stored SHA256 before trusting it.
+- `src/utils/file-hash.ts` + `src/workers/file-hash.worker.ts` (+ a `useFileHash` hook) — full-file
+  SHA256 via native WebCrypto (≤1 GB) / jsSHA streaming (>1 GB), run in the worker. Output hex,
+  lowercased. Validate the digest **once** against a known file's stored SHA256. (Reference snippet's
+  `computeSHA256InChunks` hash-chains — do not use it.)
 - Wire the two-gate check into `handleUpload`. Keep it isolated (a small `checkOfficialMatch(file,
   type)` helper) so the upload path stays readable.
 
-### 2.4 Cost profile & why 20 GB
+### 2.4 Cost profile & why 5 GB
 
-Chunked-streaming reads keep worker memory **flat regardless of file size** — the cap is not about
-memory or crashing the client, only about bounding CPU time. Hashing only fires on a size collision
-with an official file, and `findOfficialFileByHash` excludes primary weights → only **component
-files** can ever collide (VAE/CLIP are MB–GB; text encoders run larger). hash-wasm SHA256 runs
-~300–800 MB/s in-browser. **Cap = 5 GB** (conservative): covers VAE/CLIP and mid-size encoders on the
+The cap is a **time** guard, not memory: ≤1 GB uses native WebCrypto (whole-file in RAM, but ~1 GB is
+fine in a worker), and >1 GB uses jsSHA streaming (flat memory, any size). Hashing only fires on a size
+collision with an official file, and the host-type guard means only **component files** can ever
+collide (VAE/CLIP are MB–GB; text encoders run larger). Native WebCrypto is very fast; jsSHA (pure JS)
+is slower on multi-GB files. **Cap = 5 GB** (conservative): covers VAE/CLIP and mid-size encoders on the
 client; large text encoders (T5XXL ~9 GB, umT5 ~11 GB) exceed the cap and are reclaimed by B.1b
 server-side after scan instead of prevented up front. B.1b is the backstop, so nothing is missed — the
 cap only shifts the biggest files from prevent-upload to post-scan-reclaim.
@@ -284,13 +285,18 @@ B ships on the same branch as A, this fix also retro-covers A's already-created 
 ## 9. File-by-file change list
 
 **Shared**
-- `src/server/services/model-file.service.ts` — `findOfficialFilesBySize`, `findOfficialFileByHash`.
+- `src/server/services/official-file.service.ts` (new, dependency-light) — `findOfficialFilesBySize`,
+  `findOfficialFileByHash`. (Kept out of the ~huge `model-file.service.ts` for testability.)
 - `src/server/routers/model-file.router.ts`, `src/server/schema/model-file.schema.ts` — expose both.
 
 **B.1a**
-- `src/workers/file-hash.worker.ts` + `useFileHash` hook — streaming SHA256 (CRC32 optional).
-- `src/components/Resource/FilesProvider.tsx` — two-gate `checkOfficialMatch` at the top of
-  `handleUpload`; on match, create pointer + convert pending file to a linked component.
+- `src/utils/file-hash.ts` — `computeBlobSha256` (WebCrypto ≤1 GB / jsSHA streaming above).
+- `src/workers/file-hash.worker.ts` + `src/hooks/useFileHash.ts` + `scripts/build-workers.mjs`
+  registration — run the hash off-thread with the 5 GB cap.
+- `src/components/Resource/official-match.ts` — pure `resolveOfficialMatch` (host-type gate → size gate
+  → hash → confirm).
+- `src/components/Resource/FilesProvider.tsx` — call it at the top of `handleUpload`; on match, create
+  pointer + convert pending file to a linked component.
 
 **B.1b**
 - `src/server/services/model-file-scan.service.ts` — post-hash official-match → `addLinkedComponent`
