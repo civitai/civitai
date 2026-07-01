@@ -25,12 +25,21 @@ not required. Hashes are stored/compared **lowercased**.
 
 ### 1.1 What B dedupes
 
-**Component/accessory files only** — VAE, Text Encoder, CLIP, ControlNet, etc. (anything
-`inferComponentType` resolves + that `addLinkedComponent` accepts). **Primary `Model` / `Pruned
-Model` weights are out of scope** and cannot be replaced: `addLinkedComponent`'s existing
-`replaceFileId` guard (`model-version.service.ts:2153-2154`) rejects those types. This is enforced for
-free — B.1b/B.2 must additionally pre-filter so they never *attempt* a primary-weights replacement
-(cheaper than catching the throw).
+**Component/accessory files only** — VAE, Text Encoder, CLIP, ControlNet, etc. The guard is
+**host-side**: the *user's* file being deduped must not be primary weights (`Model` / `Pruned Model`).
+`addLinkedComponent`'s `replaceFileId` guard (`model-version.service.ts:2153-2154`) rejects those types
+for free; B.1a/B.1b/B.2 additionally pre-filter by **host file type** so they never *attempt* a
+primary-weights dedup.
+
+⚠️ **The canonical (official) file is NOT type-filtered.** A standalone VAE/encoder stores its bytes as
+a `type='Model'` file inside a model whose `Model.type` is `VAE`/`TextEncoder` (exactly A.2's matching
+rule). So the official file we link *to* is frequently `type='Model'` — filtering the canonical by file
+type would drop every real target. Match the canonical purely on **SHA256 + official ownership**.
+
+⚠️ **`inferComponentType` is not a primary-weights filter.** It returns `'Checkpoint'` (not `null`) for
+`Model`/`Pruned Model` (`model-helpers.ts:284-286`). Exclude primary weights by **explicit type name**,
+never by `componentType === null`. And `componentType` for the pointer must derive from the **host**
+file's type (the user's `'VAE'`), never the canonical's (`'Model'` → `'Checkpoint'`, wrong).
 
 ### 1.2 The reused primitive (already shipped in A)
 
@@ -68,17 +77,25 @@ official account while the host version belongs to a different user — the owne
 
 Add to `src/server/services/model-file.service.ts`, scoped to `constants.system.officialUserId`:
 
-- **`findOfficialFilesBySize(sizeKB: number, fileType: string): Promise<{ id: number }[]>`**
-  — backs the B.1a size gate. `ModelFile.sizeKB` is KB-rounded, so this is a loose pre-filter (a few
-  false collisions → a few extra hashes), never a positive match on its own.
-- **`findOfficialFileByHash(sha256: string): Promise<OfficialFileMatch | null>`**
-  — backs B.1a confirm, B.1b, and B.2. Lowercase-join `ModelFileHash` on `type = 'SHA256'`, scope to
-  official-owned, **exclude primary `Model`/`Pruned Model` types**, prefer lowest version id on ties.
-  Returns `{ versionId, fileId, fileType, modelId, modelName, versionName, fileName, sizeKB }` — the
-  exact shape `addLinkedComponent` + the client `LinkedComponent` model need.
+- **`findOfficialFilesBySize(sizeKB: number): Promise<{ id: number }[]>`**
+  — backs the B.1a size gate. Official-owned files of that exact `sizeKB` (any file type).
+  `ModelFile.sizeKB` is KB-rounded, so this is a loose pre-filter (a few false collisions → a few extra
+  hashes), never a positive match on its own.
+- **`findOfficialFileByHash({ sha256: string; hostType: string }): Promise<OfficialFileMatch | null>`**
+  — backs B.1a confirm, B.1b, and B.2.
+  - **Host guard first:** if `hostType ∈ {'Model','Pruned Model'}` → return `null` (never dedup primary
+    weights). Compute `componentType = inferComponentType(hostType)`; if `null` → return `null`.
+  - **Match the canonical** by lowercase-join `ModelFileHash` on `type = 'SHA256'`, scoped to
+    official-owned (`Model.userId = officialUserId`), **any canonical file type**, prefer lowest version
+    id on ties.
+  - Returns `OfficialFileMatch = { versionId, fileId, modelId, modelName, versionName, fileName,
+    sizeKB, componentType }` where `componentType` is derived from **`hostType`** — the shape
+    `addLinkedComponent` + the client `LinkedComponent` model need.
 
 Both are plain `dbRead` queries (raw SQL or Prisma). The SHA256 join shape mirrors
-`retroactive-hash-blocking.ts:11-18` and the A.2 backfill CTE.
+`retroactive-hash-blocking.ts:11-18` and the A.2 backfill CTE. Client callers gate on
+`!primaryModelFileTypes.includes(hostType)` (`~/utils/file-display-helpers`, client-safe) before ever
+calling these, so the size gate isn't hit for checkpoints.
 
 ---
 
@@ -98,23 +115,27 @@ bytes.
 
 ### 2.2 Flow (start of `handleUpload`, before `upload()`)
 
+0. **Host-type gate (instant).** If `primaryModelFileTypes.includes(chosenType)` (checkpoint) →
+   `return` to normal upload; B never dedups primary weights.
 1. **Size gate (instant, no hashing).** `file.size` is known. Call
-   `trpc.modelFile.findOfficialFilesBySize({ size, type: chosenType })` (new query, §5). Empty →
-   `return` to normal upload; never hash. Eliminates hashing for ~all unique large checkpoints.
+   `trpc.modelFile.findOfficialFilesBySize({ size })` (new query, §5). Empty → `return` to normal
+   upload; never hash. Eliminates hashing for ~all unique large files.
 2. **Hash (only on size collision).** Compute **full-file SHA256** in a **Web Worker** via `hash-wasm`,
    streaming `file.slice` in **16 MB chunks** (read → hash → discard) so memory stays flat at any file
    size. Optional CRC32 first-chunk early-out. **Safety cap** the worker hash at a named const
    `OFFICIAL_MATCH_HASH_MAX_BYTES = 5 GB` and let B.1b reclaim anything larger server-side (see
    §2.4).
-3. **Confirm.** `trpc.modelFile.findOfficialFileByHash({ sha256 })`. No match → normal upload.
+3. **Confirm.** `trpc.modelFile.findOfficialFileByHash({ sha256, hostType: chosenType })`. No match →
+   normal upload.
 4. **On match — skip upload, create pointer.** Do **not** call `upload()` or `createFileMutation`.
-   Instead reuse the existing client mutation (`FilesProvider.tsx:214`):
+   Instead reuse the existing client mutation (`FilesProvider.tsx:214`). `componentType` comes from the
+   server match (derived from `hostType`), so the client never imports `inferComponentType`:
    ```ts
    const result = await addLinkedComponentMutation.mutateAsync({
      id: versionId,
      targetVersionId: match.versionId,
      targetFileId: match.fileId,
-     componentType: inferComponentType(chosenType),
+     componentType: match.componentType,
      modelId: match.modelId,
      modelName: match.modelName,
      versionName: match.versionName,
@@ -153,18 +174,18 @@ Catches whatever B.1a misses: size-capped files, older clients, races.
 In `applyScanOutcome` (`model-file-scan.service.ts:118`), **after** the hash rows are written
 (`:194-204`):
 
-1. Guard: `outcome.hashes?.SHA256` present; the file's version is **not** official; the file type is
-   **not** primary weights.
-2. `const match = await findOfficialFileByHash(outcome.hashes.SHA256)`. No match → done.
+1. Guard: `outcome.hashes?.SHA256` present; the file's model owner is **not** official.
+2. `const match = await findOfficialFileByHash({ sha256: outcome.hashes.SHA256, hostType:
+   uploadedFileType })`. Returns `null` if no match **or** the uploaded file is primary weights (the
+   helper's host guard), so no separate primary-type check is needed here. No match → done.
 3. Match → `addLinkedComponent({ id: file.modelVersionId, targetVersionId: match.versionId,
-   targetFileId: match.fileId, replaceFileId: fileId, componentType:
-   inferComponentType(uploadedFileType), modelId/modelName/versionName: match, isRequired: true,
-   userId: OFFICIAL_USER_ID, isModerator: true })`. Converts the just-uploaded row to a pointer +
-   reclaims bytes.
+   targetFileId: match.fileId, replaceFileId: fileId, componentType: match.componentType,
+   modelId/modelName/versionName: match, isRequired: true, userId: OFFICIAL_USER_ID, isModerator: true
+   })`. Converts the just-uploaded row to a pointer + reclaims bytes.
 
 Wrap in try/catch + `logToAxiom` (like the rest of the function) so a dedup failure never breaks scan
-finalization. Fetch the uploaded file's `type` (need it for `inferComponentType` and the
-primary-weights guard) — extend the `file` select at `:121-128`.
+finalization. Extend the `file` select at `:121-128` to include the uploaded file's `type` (host guard
+input) and `modelVersion.model.userId` (the not-official check).
 
 ---
 
@@ -178,10 +199,13 @@ New `src/server/jobs/dedupe-official-uploads.ts`, registered in the run-jobs arr
   `lastRun` timestamp in `sysRedis`, with a small overlap buffer). Idempotency comes from the pointer
   dedupe, so a slightly-overlapping window is safe.
 - For each official file's SHA256, find all **other** `ModelFile`s where: different version,
-  **not** owned by official, model **published**, type **not** primary weights, no existing pointer
-  → the match set (join shape from `retroactive-hash-blocking.ts:11-18` + the A.2 CTE).
-- For each match: `addLinkedComponent({ id: matchVersionId, targetVersionId/targetFileId = official,
-  replaceFileId: matchFileId, componentType, …, userId: OFFICIAL_USER_ID, isModerator: true })`.
+  **not** owned by official, model **published**, **host type ∉ {'Model','Pruned Model'}**, no existing
+  pointer → the match set (join shape from `retroactive-hash-blocking.ts:11-18` + the A.2 CTE). The
+  official file being matched against may itself be `type='Model'` — do not filter the official side by
+  type (see §1.1).
+- For each match: `componentType = inferComponentType(matchHostType)` (skip if `null`), then
+  `addLinkedComponent({ id: matchVersionId, targetVersionId/targetFileId = official, replaceFileId:
+  matchFileId, componentType, …, userId: OFFICIAL_USER_ID, isModerator: true })`.
 - `limitConcurrency(tasks, 10)`; run **sequentially within a single source version** to avoid the
   check-then-act pointer race the A.2 endpoint documents (`dedupe-official-files.ts:39-44`).
 - This is the "retroactive reclaim" the old design punted — tractable because we delete + repoint
@@ -193,10 +217,10 @@ New `src/server/jobs/dedupe-official-uploads.ts`, registered in the run-jobs arr
 
 `src/server/routers/model-file.router.ts` + `src/server/schema/model-file.schema.ts`:
 
-- `findOfficialFilesBySize` — `guardedProcedure`, input `{ size: number, type: string }`, returns
-  `{ id: number }[]`.
-- `findOfficialFileByHash` — `guardedProcedure`, input `{ sha256: string }`, returns the match shape
-  or `null`.
+- `findOfficialFilesBySize` — `protectedProcedure` (`.meta({ requiredScope: TokenScope.ModelsRead })`,
+  matching the existing router style), input `{ size: number }`, returns `{ id: number }[]`.
+- `findOfficialFileByHash` — `protectedProcedure` (same meta), input `{ sha256: string; hostType:
+  string }`, returns `OfficialFileMatch | null`.
 
 Both are read-only lookups against official-owned public files → safe for any authed user (they only
 ever reveal that an official file of a given size/hash exists, which is public).
@@ -238,8 +262,10 @@ B ships on the same branch as A, this fix also retro-covers A's already-created 
 
 ## 8. Testing (Vitest)
 
-- **Helpers:** `findOfficialFileByHash` — official scoping, lowercase match, primary-weights excluded,
-  lowest-version tie-break; `findOfficialFilesBySize` — size + type filter, official scoping.
+- **Helpers:** `findOfficialFileByHash` — official scoping, lowercase match, **host-type guard**
+  (`hostType='Model'` → `null`), **canonical `type='Model'` still matches** (standalone VAE case),
+  `componentType` derived from `hostType`, lowest-version tie-break; `findOfficialFilesBySize` — size +
+  official scoping (no canonical type filter).
 - **B.1b:** scan outcome whose SHA256 matches an official file → pointer created + uploaded row
   deleted; non-match → file untouched; uploader is official → skipped; primary-weights type → skipped;
   helper throw → scan still finalizes.
