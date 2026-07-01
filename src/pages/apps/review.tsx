@@ -34,8 +34,9 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { MouseEvent } from 'react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { pickReviewIframeSrc } from '~/components/Apps/reviewIframeSrc';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -764,6 +765,11 @@ function ReviewModal({
             : 'View code in Forgejo'}
         </Button>
 
+        {/* MOD REVIEW SANDBOX (#2831) — run the PENDING version in a temporary,
+            mod-gated preview before approving. Pending requests only; dark
+            unless the mod-only review-sandbox flag is enabled. */}
+        {mode === 'pending' && <ReviewPreviewPanel publishRequestId={request.id} slug={request.slug} />}
+
         {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
             images are an abuse vector → the mod sees them (here, derived from
             the submitted bundle) before approving. Renders for every mode so an
@@ -917,6 +923,181 @@ function ReviewModal({
 // URLs returned by the mod-only blocks.getPublishRequestScreenshots query (the
 // pending app has no public screenshot URL yet — it isn't approved).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// MOD REVIEW SANDBOX (#2831) — run a PENDING version in a temporary, mod-gated
+// preview before approving. The Preview button starts a review build via
+// blocks.previewRequest, then polls blocks.getReviewStatus (preview-building →
+// deploying → live | failed) and, once live, embeds the review host in an
+// iframe + offers a deep-link. The whole feature is dark behind the mod-only
+// `app-blocks-review-sandbox` flag — when it's off, previewRequest throws
+// UNAUTHORIZED and the panel surfaces a "not enabled" message instead.
+// ---------------------------------------------------------------------------
+
+function ReviewPreviewPanel({
+  publishRequestId,
+  slug,
+}: {
+  publishRequestId: string;
+  slug: string;
+}) {
+  const features = useFeatureFlags();
+  const utils = trpc.useUtils();
+  const [started, setStarted] = useState(false);
+
+  // Poll the review status. Only enabled once a preview has been started (or a
+  // prior preview state exists on the row); building/deploying poll fast, live/
+  // failed stop.
+  const statusQuery = trpc.blocks.getReviewStatus.useQuery(
+    { publishRequestId },
+    {
+      enabled: !!features?.appBlocks && started,
+      retry: false,
+      refetchInterval: (query) => {
+        // react-query v5: the callback receives the Query; the data is at
+        // query.state.data (matches the my-submissions.tsx idiom).
+        const s = query.state.data?.state;
+        if (s === 'preview-building' || s === 'preview-deploying') return 3000;
+        // Keep a SLOW poll alive while the preview is live — it detects
+        // approve/reject/teardown state changes. getReviewStatus mints a fresh
+        // `?mr=<token>` previewUrl (120s TTL) on every poll, but the IFRAME src is
+        // DECOUPLED from the poll via pickReviewIframeSrc (see `stableIframeSrc`
+        // below): the iframe keeps its src until the embedded token nears expiry,
+        // then swaps ONCE — so the live preview doesn't hard-reload every minute
+        // (which would wipe in-progress interaction). A 60s poll < 120s TTL still
+        // guarantees a fresh token is always available when a swap is due.
+        if (s === 'preview-live') return 60000;
+        return false; // failed or none → stop polling
+      },
+    }
+  );
+
+  const previewMut = trpc.blocks.previewRequest.useMutation({
+    onSuccess: async () => {
+      setStarted(true);
+      showSuccessNotification({ message: `Review build started for ${slug}.` });
+      await utils.blocks.getReviewStatus.invalidate({ publishRequestId });
+    },
+    onError: (e) => {
+      showErrorNotification({ title: 'Could not start preview', error: new Error(e.message) });
+    },
+  });
+
+  const state = statusQuery.data?.state ?? null;
+  const detail = statusQuery.data?.detail;
+  // Prefer the FRESH, mod-bound, short-TTL tokened URL (`?mr=<token>`) the server
+  // mints on every poll when the preview is live — that token is the cross-origin
+  // access bridge the `*.civit.ai` mod-gate forwardAuth verifies on the iframe's
+  // entry document request. Read from the latest query data each render so the
+  // iframe never mounts with an expired token. Fall back to the bare host URL
+  // (e.g. while building) only for display.
+  const url = statusQuery.data?.previewUrl ?? detail?.url;
+  const inProgress = state === 'preview-building' || state === 'preview-deploying';
+  const isLive = state === 'preview-live';
+  const isFailed = state === 'preview-failed';
+
+  // Stabilize the IFRAME src so it does NOT change on every poll. getReviewStatus
+  // mints a fresh `?mr=<token>` previewUrl every 60s poll; binding the iframe
+  // straight to `url` would hard-reload it each minute, wiping in-progress
+  // interaction in the previewed block. pickReviewIframeSrc keeps the embedded
+  // src until its token nears expiry (TTL 120s), then swaps once. The Open-host
+  // button + the `url` display still use the freshest token. Held in a ref so the
+  // chosen src survives re-renders; recomputed each render via the pure helper.
+  const iframeSrcRef = useRef<string | undefined>(undefined);
+  const stableIframeSrc = isLive
+    ? pickReviewIframeSrc(iframeSrcRef.current, url, Date.now())
+    : undefined;
+  // Persist the choice so the next render compares against the embedded token,
+  // not the latest poll's. Clear when the preview leaves the live state.
+  iframeSrcRef.current = stableIframeSrc || undefined;
+
+  return (
+    <Stack gap={4}>
+      <Group gap={6}>
+        <IconWindow size={14} />
+        <Text size="sm" fw={600}>
+          Review preview
+        </Text>
+        {state && (
+          <Badge
+            size="sm"
+            variant="light"
+            color={isLive ? 'green' : isFailed ? 'red' : 'blue'}
+          >
+            {state.replace('preview-', '')}
+          </Badge>
+        )}
+      </Group>
+      <Text size="xs" c="dimmed">
+        Run this pending version in a temporary, mod-only preview before approving.
+        Torn down automatically when you approve or reject.
+      </Text>
+
+      <Group gap="xs">
+        <Button
+          size="xs"
+          variant="light"
+          leftSection={<IconWindow size={14} />}
+          loading={previewMut.isPending}
+          disabled={previewMut.isPending || inProgress}
+          onClick={() => previewMut.mutate({ publishRequestId })}
+        >
+          {state ? 'Rebuild preview' : 'Start preview'}
+        </Button>
+        {isLive && url && (
+          <Button
+            size="xs"
+            variant="default"
+            component="a"
+            href={url}
+            target="_blank"
+            rel="noopener"
+            rightSection={<IconExternalLink size={12} />}
+          >
+            Open review host
+          </Button>
+        )}
+      </Group>
+
+      {inProgress && (
+        <Text size="xs" c="dimmed">
+          Building + deploying the review preview…
+          {detail?.sha ? ` (sha ${detail.sha.slice(0, 12)})` : ''}
+        </Text>
+      )}
+      {isFailed && (
+        <Alert color="red" variant="light" icon={<IconX size={14} />}>
+          {detail?.error ?? 'Review preview failed.'}
+        </Alert>
+      )}
+      {isLive && stableIframeSrc && (
+        <iframe
+          title={`Review preview for ${slug}`}
+          src={stableIframeSrc}
+          // no-referrer: the `?mr=<token>` entry-token URL must NOT leak via the
+          // `Referer` header to assets the previewed (untrusted) block loads.
+          // (We deliberately do NOT bind the token to a publishRequestId: that
+          // binding isn't statelessly verifiable at the mod-gate without a DB
+          // lookup, which the stateless forwardAuth gate intentionally avoids.
+          // Host + mod + short TTL + no-referrer is the chosen containment.)
+          referrerPolicy="no-referrer"
+          style={{
+            width: '100%',
+            height: 420,
+            border: '1px solid var(--mantine-color-default-border)',
+            borderRadius: 6,
+          }}
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        />
+      )}
+      {statusQuery.error && (
+        <Text size="xs" c="dimmed">
+          {statusQuery.error.message}
+        </Text>
+      )}
+    </Stack>
+  );
+}
 
 function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId: string }) {
   const features = useFeatureFlags();

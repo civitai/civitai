@@ -706,6 +706,15 @@ export const serverSchema = z
     BLOCK_BUILD_CALLBACK_SECRET_NEXT: z.string().optional(),
     APPS_TEKTON_TRIGGER_URL: z.string().url().optional(),
     APPS_TEKTON_TRIGGER_SECRET: z.string().optional(),
+    // MOD REVIEW SANDBOX (#2831) — endpoint on the SAME app-blocks-trigger
+    // receiver that creates a review-mode PipelineRun (clones the in-review repo,
+    // builds ghcr.io/civitai/app-block-review-<slug>:<sha>, posts to
+    // review-build-callback). HMAC-signed with the SAME APPS_TEKTON_TRIGGER_SECRET
+    // (no new secret). OPTIONAL — when unset, triggerReviewBuild derives it from
+    // APPS_TEKTON_TRIGGER_URL by swapping the trailing `/trigger-build` segment
+    // for `/trigger-review-build`, so a typical deploy needs no extra env. Example:
+    // http://wireguard-proxy-service.civitai-submodel-proxy.svc.cluster.local:8088/trigger-review-build
+    APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
     // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
